@@ -1,0 +1,42 @@
+---
+title: What is computer use
+description: What computer use is, how a computer-use agent sees and acts on a computer, background versus foreground control, and where Cua Driver and Cua Spaces fit.
+---
+
+**Computer use** means an AI agent works on a computer the way a person does. It looks at what is on the screen, decides what to do next, clicks or types, checks what changed, and keeps going until the job is done.
+
+The model alone does not do this. A **computer-use model** reads an observation and proposes an action. A **computer-use agent** is the program around it: the loop, the instructions, the permissions and the computer it acts on. Claude Code and Codex are examples of agent harnesses. They run the model and the loop, and they call tools to reach the computer.
+
+```text output
+model -> agent harness -> tool layer -> operating system and apps
+```
+
+Cua Driver is the tool layer in that chain. It does not choose or run a model.
+
+## How an agent sees a computer
+
+An agent can read a computer in two ways, and the best results use both:
+
+- **The accessibility tree.** Operating systems describe every window to assistive software such as screen readers: each button, field and menu, with its role and label. This tells the agent what can be acted on, and it is compact text.
+- **Screenshots.** A picture shows what the tree leaves out or gets wrong: a canvas, a video, an app that labels nothing. It also lets a vision model check that the result looks right.
+
+In Cua Driver, one call (`get_window_state`) returns the tree and a screenshot of a window together. Each element in the tree gets a token the agent can act on, so it does not have to guess pixel coordinates.
+
+## How an agent acts
+
+The agent clicks, types, presses keys, scrolls and drags. A good tool layer prefers the most exact route: act on a named element through the accessibility API, and fall back to pixel coordinates only for things the tree does not expose. After each step the agent reads the state again to confirm the step worked before it plans the next one.
+
+Not every task needs the screen. An agent should use the most direct route that works: run code for text-heavy work, call an API or an MCP tool where one exists, and drive the interface for software that offers nothing else.
+
+## Background and foreground control
+
+**Foreground** control moves the real mouse and takes the keyboard. It works everywhere, but the person cannot use the computer at the same time, and a stray click from either side can break the run.
+
+**Background** control sends input to the target app without moving the cursor or bringing its window to the front. You keep working in another app while the agent works in this one. Cua Driver acts in the background by default on macOS, Windows and Linux.
+
+## Where Cua Driver and Cua Spaces fit
+
+- **[Cua Driver](/cua-driver)** lets an agent use the apps on the computer it runs on, in the background. [Install it](/cua-driver/quickstart), then [connect your agent](/cua-driver/guides/connect-your-agent).
+- **[Cua Spaces](/spaces)** gives agents their own computers that you can watch and step into, on machines you own, and share with your team. Start with the [Spaces quickstart](/spaces/quickstart).
+
+To see how the pieces work in detail, read [How Cua Driver works](/cua-driver/concepts/how-cua-driver-works).

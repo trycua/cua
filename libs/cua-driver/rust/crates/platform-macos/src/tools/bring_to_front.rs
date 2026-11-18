@@ -1,26 +1,28 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS `bring_to_front`.
 //!
 //! This is the explicit persistent-foreground escape hatch for focus-proxy
 //! applications.  A successful native request is only a request receipt: when
 //! an exact `window_id` is supplied, the tool independently verifies the
-//! process, semantic key window, and WindowServer layer-0 order before it says
-//! `activated: true`.
+//! process, semantic key window, and per-display front position before it
+//! says `activated: true`.
 
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use core_foundation::base::{CFRelease, CFTypeRef};
+use core_graphics::display::CGDisplay;
 use cua_driver_core::{
     protocol::ToolResult,
-    tool::{Tool, ToolDef},
+    tool::{DesktopLease, Tool, ToolDef},
 };
+use objc2::rc::Retained;
 use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
 use serde_json::{json, Value};
 
-use crate::ax::bindings::{
-    ax_get_window_id, copy_ax_windows, perform_action, set_bool_attr_true,
-    AXUIElementCreateApplication,
-};
+use crate::ax::bindings::raise_exact_window_of_pid;
+use crate::windows::{WindowBounds, WindowInfo};
 
 pub struct BringToFrontTool;
 
@@ -30,22 +32,107 @@ const VERIFY_TIMEOUT: Duration = Duration::from_millis(900);
 const VERIFY_POLL: Duration = Duration::from_millis(20);
 const VERIFY_STABLE: Duration = Duration::from_millis(100);
 
+/// How long AppKit may lag the kernel before a live pid counts as not an
+/// application. On the macOS E2E guest the lookup missed a live, frontmost
+/// app for under 200 ms; the bound leaves room for a loaded machine.
+const APP_LOOKUP_GRACE: Duration = Duration::from_secs(1);
+const APP_LOOKUP_POLL: Duration = Duration::from_millis(20);
+
+/// Why no `NSRunningApplication` could be had for a pid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AppMissing {
+    /// The kernel has no such process.
+    Exited,
+    /// The process lives, but AppKit never reported it as an application.
+    NotAnApplication,
+}
+
+impl AppMissing {
+    fn result(self, pid: i32) -> ToolResult {
+        let (code, message) = match self {
+            Self::Exited => (
+                "bring_to_front_pid_not_found",
+                format!("bring_to_front: no running application for pid {pid} (process not found or exited)."),
+            ),
+            Self::NotAnApplication => (
+                "bring_to_front_pid_not_application",
+                format!("bring_to_front: pid {pid} is running but is not a registered application."),
+            ),
+        };
+        ToolResult::error(message).with_structured(json!({
+            "code": code,
+            "pid": pid,
+            "activated": false,
+            "request_accepted": false,
+        }))
+    }
+}
+
+/// Whether the kernel has `pid`. `EPERM` still proves the process exists.
+fn process_exists(pid: i32) -> bool {
+    pid > 0
+        && (unsafe { libc::kill(pid, 0) } == 0
+            || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM))
+}
+
+/// The running application for `pid`.
+///
+/// `runningApplicationWithProcessIdentifier` answers from AppKit's cache of
+/// running applications, which can briefly miss a live app (seen right after
+/// another app took activation). A nil there is not proof the process exited,
+/// so ask the kernel, and wait for AppKit only while the process is alive.
+fn running_application(pid: i32) -> Result<Retained<NSRunningApplication>, AppMissing> {
+    await_application(
+        || unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) },
+        || process_exists(pid),
+        APP_LOOKUP_GRACE,
+        APP_LOOKUP_POLL,
+    )
+}
+
+fn await_application<T>(
+    mut lookup: impl FnMut() -> Option<T>,
+    mut alive: impl FnMut() -> bool,
+    grace: Duration,
+    poll: Duration,
+) -> Result<T, AppMissing> {
+    let deadline = Instant::now() + grace;
+    loop {
+        if let Some(app) = lookup() {
+            return Ok(app);
+        }
+        if !alive() {
+            return Err(AppMissing::Exited);
+        }
+        if Instant::now() >= deadline {
+            return Err(AppMissing::NotAnApplication);
+        }
+        std::thread::sleep(poll);
+    }
+}
+
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "bring_to_front".into(),
         description: "Persistently activate an app and leave it in the foreground. Most input \
              does not need this; use it only for a focus-proxy surface that must remain \
              foreground across interactions. With window_id, success means the exact ordinary \
-             macOS window was independently verified as the focused window and first in \
-             WindowServer layer-0 order. Request acceptance alone is reported as a partial \
-             result, never as activation. This DOES steal foreground."
+             macOS window was independently verified as the frontmost process's focused window \
+             and the front window of that process on the display it sits on. \
+             `exact_window_effect.frontmost_ordinary` additionally reports whether it is first \
+             in the global WindowServer layer-0 order; another application (an always-raised \
+             utility window, another display's front window) can hold that spot without the \
+             requested window losing keyboard focus, so it is reported and not required. \
+             Request acceptance alone is reported as a partial \
+             result, never as activation. This DOES steal foreground and does NOT restore the \
+             previously frontmost application."
             .into(),
         input_schema: json!({
             "type": "object",
             "required": ["pid"],
             "properties": {
-                "pid": { "type": "integer" },
-                "window_id": { "type": "integer" }
+                "pid": { "type": "integer", "description": "Process ID of the app to activate." },
+                "window_id": { "type": "integer", "description": "CGWindowID to verify as the focused, frontmost window. Omit to activate the app only." }
             },
             "additionalProperties": false,
         }),
@@ -62,6 +149,7 @@ struct ExactWindowObservation {
     front_process_matches_target: Option<bool>,
     focused_window_id: Option<u32>,
     frontmost_ordinary_window_id: Option<u32>,
+    process_front_window_on_display: Option<u32>,
     target_visible_ordinary: bool,
 }
 
@@ -82,6 +170,10 @@ impl ExactWindowObservation {
         self.focused_window_id == Some(window_id)
     }
 
+    fn exact_window_front_in_process_on_display(self, window_id: u32) -> bool {
+        self.target_visible_ordinary && self.process_front_window_on_display == Some(window_id)
+    }
+
     fn exact_window_frontmost_ordinary(self, window_id: u32) -> bool {
         self.target_visible_ordinary && self.frontmost_ordinary_window_id == Some(window_id)
     }
@@ -89,7 +181,7 @@ impl ExactWindowObservation {
     fn exact_postcondition(self, pid: i32, window_id: u32) -> bool {
         self.process_activated(pid)
             && self.exact_window_focused(window_id)
-            && self.exact_window_frontmost_ordinary(window_id)
+            && self.exact_window_front_in_process_on_display(window_id)
     }
 }
 
@@ -111,12 +203,67 @@ fn classify_exact_outcome(
     } else if request_accepted
         || observation.process_activated(pid)
         || observation.exact_window_focused(window_id)
-        || observation.exact_window_frontmost_ordinary(window_id)
+        || observation.exact_window_front_in_process_on_display(window_id)
     {
         ExactOutcome::Partial
     } else {
         ExactOutcome::Failed
     }
+}
+
+fn active_display_bounds() -> Vec<WindowBounds> {
+    let Ok(displays) = CGDisplay::active_displays() else {
+        return Vec::new();
+    };
+    displays
+        .into_iter()
+        .map(|display| {
+            let bounds = CGDisplay::new(display).bounds();
+            WindowBounds {
+                x: bounds.origin.x,
+                y: bounds.origin.y,
+                width: bounds.size.width,
+                height: bounds.size.height,
+            }
+        })
+        .collect()
+}
+
+fn overlap_area(left: &WindowBounds, right: &WindowBounds) -> f64 {
+    let width = (left.x + left.width).min(right.x + right.width) - left.x.max(right.x);
+    let height = (left.y + left.height).min(right.y + right.height) - left.y.max(right.y);
+    if width > 0.0 && height > 0.0 {
+        width * height
+    } else {
+        0.0
+    }
+}
+
+fn display_holding(bounds: &WindowBounds, displays: &[WindowBounds]) -> Option<usize> {
+    displays
+        .iter()
+        .enumerate()
+        .map(|(index, display)| (index, overlap_area(bounds, display)))
+        .filter(|(_, area)| *area > 0.0)
+        .max_by(|(_, left), (_, right)| left.total_cmp(right))
+        .map(|(index, _)| index)
+}
+
+fn front_window_of_process_on_target_display(
+    windows: &[WindowInfo],
+    displays: &[WindowBounds],
+    pid: i32,
+    window_id: u32,
+) -> Option<u32> {
+    let target = windows.iter().find(|w| w.window_id == window_id)?;
+    let target_display = display_holding(&target.bounds, displays);
+    windows
+        .iter()
+        .filter(|window| {
+            window.pid == pid && display_holding(&window.bounds, displays) == target_display
+        })
+        .max_by_key(|window| window.z_index)
+        .map(|window| window.window_id)
 }
 
 fn observe_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
@@ -129,11 +276,19 @@ fn observe_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
         .iter()
         .max_by_key(|window| window.z_index)
         .map(|window| window.window_id);
+    let process_front_window_on_display = front_window_of_process_on_target_display(
+        &windows,
+        &active_display_bounds(),
+        pid,
+        window_id,
+    );
     ExactWindowObservation {
         workspace_frontmost_pid: crate::apps::frontmost_pid(),
         front_process_matches_target: crate::input::skylight::front_process_matches(pid, window_id),
-        focused_window_id: crate::ax::bindings::focused_window_id_of_pid(pid),
+        focused_window_id: crate::ax::bindings::focused_window_id_of_pid(pid)
+            .map(|window| window.own),
         frontmost_ordinary_window_id,
+        process_front_window_on_display,
         target_visible_ordinary,
     }
 }
@@ -160,32 +315,35 @@ fn wait_for_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
     }
 }
 
-/// Best-effort completion of the one exact-window request. This addresses only
-/// the requested AX window; it never orders every window owned by the process.
-fn raise_exact_ax_window(pid: i32, window_id: u32) -> bool {
+/// Activate `pid` and make `window_id` its key window exactly as
+/// `bring_to_front` does (SkyLight process front, exact make-key, Cocoa
+/// activation, AX raise), then wait for the exact postcondition. Blocking.
+///
+/// Used by the foreground `type_text` rung: a SkyLight front alone does not
+/// make the app active for AppKit, so a window the typing opens (Chrome's
+/// omnibox suggestions) hands the front back to the previous app mid-string.
+pub(crate) fn activate_exact_window_blocking(pid: i32, window_id: u32) -> bool {
+    let Ok(app) = running_application(pid) else {
+        return false;
+    };
+    crate::input::skylight::set_front_process_persistently(pid, window_id);
+    crate::input::skylight::make_exact_window_key(pid, window_id);
     unsafe {
-        let app = AXUIElementCreateApplication(pid);
-        if app.is_null() {
-            return false;
-        }
-        let mut target = None;
-        for window in copy_ax_windows(app) {
-            if target.is_none() && ax_get_window_id(window) == Some(window_id) {
-                target = Some(window);
-            } else {
-                CFRelease(window as CFTypeRef);
-            }
-        }
-        CFRelease(app as CFTypeRef);
-        let Some(target) = target else {
-            return false;
-        };
-        let raised = perform_action(target, "AXRaise") == 0;
-        let main = set_bool_attr_true(target, "AXMain") == 0;
-        let focused = set_bool_attr_true(target, "AXFocused") == 0;
-        CFRelease(target as CFTypeRef);
-        raised || main || focused
-    }
+        app.activateWithOptions(NSApplicationActivationOptions::NSApplicationActivateAllWindows)
+    };
+    raise_exact_window_of_pid(pid, window_id);
+    wait_for_exact_window(pid, window_id).exact_postcondition(pid, window_id)
+}
+
+/// Ask `pid` to take activation back through Cocoa after a foreground action
+/// that activated another app with [`activate_exact_window_blocking`]. Only
+/// the app's own key window comes forward. Best effort: macOS may refuse an
+/// activation requested by a background process.
+pub(crate) fn reactivate_application(pid: i32) -> bool {
+    let Ok(app) = running_application(pid) else {
+        return false;
+    };
+    unsafe { app.activateWithOptions(NSApplicationActivationOptions::empty()) }
 }
 
 fn exact_result(
@@ -200,6 +358,8 @@ fn exact_result(
     let process_activated = observation.process_activated(pid);
     let frontmost_pid = observation.frontmost_pid(pid);
     let exact_window_focused = observation.exact_window_focused(window_id);
+    let exact_window_front_on_display =
+        observation.exact_window_front_in_process_on_display(window_id);
     let exact_window_frontmost_ordinary = observation.exact_window_frontmost_ordinary(window_id);
     let status = match outcome {
         ExactOutcome::Activated => "activated",
@@ -218,6 +378,7 @@ fn exact_result(
         "exact_window_effect": {
             "verified": activated,
             "focused": exact_window_focused,
+            "front_in_process_on_display": exact_window_front_on_display,
             "frontmost_ordinary": exact_window_frontmost_ordinary,
             "target_visible_ordinary": observation.target_visible_ordinary,
         },
@@ -227,6 +388,7 @@ fn exact_result(
             "front_process_matches_target": observation.front_process_matches_target,
             "focused_window_id": observation.focused_window_id,
             "frontmost_ordinary_window_id": observation.frontmost_ordinary_window_id,
+            "process_front_window_on_display": observation.process_front_window_on_display,
         }
     });
     if activated {
@@ -237,9 +399,10 @@ fn exact_result(
     } else {
         ToolResult::error(format!(
             "bring_to_front: exact window {window_id} for pid {pid} was not verified \
-             as frontmost and focused (request_accepted={request_accepted}, \
+             as the frontmost process's focused window and the front window of that process \
+             on its display (request_accepted={request_accepted}, \
              process_activated={process_activated}, focused={exact_window_focused}, \
-             frontmost_ordinary={exact_window_frontmost_ordinary})."
+             front_in_process_on_display={exact_window_front_on_display})."
         ))
         .with_structured(structured)
     }
@@ -252,6 +415,7 @@ impl Tool for BringToFrontTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        crate::focus_arbiter::note_intentional();
         let pid = match args.get("pid").and_then(Value::as_i64) {
             Some(p) => match libc::pid_t::try_from(p) {
                 Ok(pid) => pid,
@@ -284,18 +448,26 @@ impl Tool for BringToFrontTool {
             None => None,
         };
 
-        let Some(app) =
-            (unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) })
-        else {
-            return ToolResult::error(format!(
-                "bring_to_front: no running application for pid {pid} (process not found or exited)."
-            ))
-            .with_structured(json!({
-                "code": "bring_to_front_pid_not_found",
-                "pid": pid,
-                "activated": false,
-                "request_accepted": false,
-            }));
+        // Activation, the own-process main-queue raise and the verification
+        // poll all block; keep them off the async worker. The worker keeps the
+        // desktop lease, so a cancelled call cannot hand the lane on early.
+        let lease = DesktopLease::current();
+        tokio::task::spawn_blocking(move || {
+            let _lease = lease;
+            Self::activate_blocking(pid, window_id)
+        })
+        .await
+        .unwrap_or_else(|error| {
+            ToolResult::error(format!("bring_to_front: activation worker failed: {error}"))
+        })
+    }
+}
+
+impl BringToFrontTool {
+    fn activate_blocking(pid: i32, window_id: Option<u32>) -> ToolResult {
+        let app = match running_application(pid) {
+            Ok(app) => app,
+            Err(missing) => return missing.result(pid),
         };
 
         if let Some(window_id) = window_id {
@@ -355,7 +527,7 @@ impl Tool for BringToFrontTool {
                     NSApplicationActivationOptions::NSApplicationActivateAllWindows,
                 )
             };
-            let ax_window_requested = raise_exact_ax_window(pid, window_id);
+            let ax_window_requested = raise_exact_window_of_pid(pid, window_id);
             let path = match (
                 skylight_process_accepted,
                 skylight_exact_accepted,
@@ -425,6 +597,71 @@ impl Tool for BringToFrontTool {
 mod tests {
     use super::*;
 
+    const NO_WAIT: Duration = Duration::ZERO;
+
+    #[test]
+    fn a_live_app_that_appkit_reports_late_is_found() {
+        let mut lookups = 0;
+        let found = await_application(
+            || {
+                lookups += 1;
+                (lookups == 3).then_some("app")
+            },
+            || true,
+            Duration::from_secs(5),
+            NO_WAIT,
+        );
+        assert_eq!(found, Ok("app"));
+        assert_eq!(lookups, 3);
+    }
+
+    #[test]
+    fn an_exited_process_fails_without_waiting() {
+        let started = Instant::now();
+        let found = await_application(
+            || None::<()>,
+            || false,
+            Duration::from_secs(5),
+            Duration::from_secs(1),
+        );
+        assert_eq!(found, Err(AppMissing::Exited));
+        assert!(started.elapsed() < Duration::from_millis(500));
+    }
+
+    #[test]
+    fn a_live_process_appkit_never_reports_is_not_an_application() {
+        let found = await_application(
+            || None::<()>,
+            || true,
+            Duration::from_millis(30),
+            Duration::from_millis(5),
+        );
+        assert_eq!(found, Err(AppMissing::NotAnApplication));
+    }
+
+    #[test]
+    fn the_kernel_oracle_tells_a_live_pid_from_a_reaped_one() {
+        assert!(process_exists(std::process::id() as i32));
+        let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+        let pid = child.id() as i32;
+        child.wait().unwrap();
+        assert!(!process_exists(pid));
+        assert!(!process_exists(0));
+        assert!(!process_exists(-1));
+    }
+
+    #[test]
+    fn a_reaped_pid_is_reported_as_exited() {
+        let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+        let pid = child.id() as i32;
+        child.wait().unwrap();
+        let result = BringToFrontTool::activate_blocking(pid, None);
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured refusal");
+        assert_eq!(structured["code"], "bring_to_front_pid_not_found");
+        assert_eq!(structured["activated"], false);
+    }
+
     fn observation(
         workspace_frontmost_pid: Option<i32>,
         front_process_matches_target: Option<bool>,
@@ -437,12 +674,233 @@ mod tests {
             front_process_matches_target,
             focused_window_id,
             frontmost_ordinary_window_id,
+            process_front_window_on_display: frontmost_ordinary_window_id,
             target_visible_ordinary,
         }
     }
 
+    fn contested_observation(
+        focused_window_id: Option<u32>,
+        global_front_window_id: Option<u32>,
+        process_front_window_on_display: Option<u32>,
+    ) -> ExactWindowObservation {
+        ExactWindowObservation {
+            workspace_frontmost_pid: Some(42),
+            front_process_matches_target: Some(true),
+            focused_window_id,
+            frontmost_ordinary_window_id: global_front_window_id,
+            process_front_window_on_display,
+            target_visible_ordinary: true,
+        }
+    }
+
+    fn side_by_side_displays() -> Vec<WindowBounds> {
+        vec![
+            WindowBounds {
+                x: 0.0,
+                y: 0.0,
+                width: 1920.0,
+                height: 1080.0,
+            },
+            WindowBounds {
+                x: 1920.0,
+                y: 0.0,
+                width: 1920.0,
+                height: 1080.0,
+            },
+        ]
+    }
+
+    fn window(window_id: u32, pid: i32, z_index: usize, x: f64) -> WindowInfo {
+        WindowInfo {
+            window_id,
+            pid,
+            app_name: "Target".into(),
+            title: format!("window {window_id}"),
+            bounds: WindowBounds {
+                x,
+                y: 100.0,
+                width: 800.0,
+                height: 600.0,
+            },
+            layer: 0,
+            z_index,
+            is_on_screen: true,
+            current_space_id: None,
+            on_current_space: Some(true),
+            space_ids: None,
+        }
+    }
+
+    const OWN_PROCESS_CHILD: &str = "CUA_TEST_BRING_TO_FRONT_OWN_PROCESS_CHILD";
+
+    /// Runs in a child process: registering this process with AppKit would
+    /// send every other test's input-source call to a main queue the test
+    /// harness never drains.
     #[test]
-    fn exact_success_requires_process_focus_and_layer_zero_order() {
+    fn own_process_activation_does_not_block_the_async_worker() {
+        if !crate::session::has_graphic_access() {
+            eprintln!("skipped: no window server session");
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tools::bring_to_front::tests::own_process_activation_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env(OWN_PROCESS_CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "child failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+
+    #[test]
+    #[ignore = "child of own_process_activation_does_not_block_the_async_worker"]
+    fn own_process_activation_child() {
+        use objc2::{class, msg_send, runtime::AnyObject};
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::Arc;
+
+        assert!(
+            std::env::var_os(OWN_PROCESS_CHILD).is_some(),
+            "run through own_process_activation_does_not_block_the_async_worker"
+        );
+        // A Prohibited app never activates, so the process check polls for
+        // the whole VERIFY_TIMEOUT.
+        unsafe {
+            let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+            let _: bool = msg_send![app, setActivationPolicy: 2i64];
+        }
+        let pid = std::process::id() as i32;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let ticks = Arc::new(AtomicU32::new(0));
+        let (result, elapsed, ticks_during) = runtime.block_on(async {
+            let counter = Arc::clone(&ticks);
+            let ticker = tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    counter.fetch_add(1, Ordering::Relaxed);
+                }
+            });
+            let started = Instant::now();
+            let result = BringToFrontTool.invoke(json!({ "pid": pid })).await;
+            let elapsed = started.elapsed();
+            let ticks_during = ticks.load(Ordering::Relaxed);
+            ticker.abort();
+            (result, elapsed, ticks_during)
+        });
+        let structured = result.structured_content.expect("structured result");
+        assert_eq!(structured["code"], "bring_to_front_process_unverified");
+        assert!(elapsed >= VERIFY_TIMEOUT, "poll ended early: {elapsed:?}");
+        // One worker thread: a blocked invoke lets the ticker run zero times.
+        assert!(
+            ticks_during >= 20,
+            "async worker stalled: {ticks_during} ticks in {elapsed:?}"
+        );
+        // A call cancelled mid-activation keeps the desktop lane until its
+        // worker stops.
+        let lane_wait = runtime.block_on(async {
+            let call = cua_driver_core::tool::DesktopCall::acquire().await.unwrap();
+            let invoke = call.scope(BringToFrontTool.invoke(json!({ "pid": pid })));
+            assert!(tokio::time::timeout(Duration::from_millis(100), invoke)
+                .await
+                .is_err());
+            drop(call);
+            let started = Instant::now();
+            let next = cua_driver_core::tool::DesktopCall::acquire().await;
+            assert!(next.is_ok(), "the lane refused instead of waiting");
+            started.elapsed()
+        });
+        assert!(
+            lane_wait >= VERIFY_TIMEOUT / 2,
+            "lane handed on while the worker still ran: {lane_wait:?}"
+        );
+    }
+
+    #[test]
+    fn another_applications_window_on_top_does_not_unverify_the_reveal() {
+        let contested = contested_observation(Some(7), Some(900), Some(7));
+        assert_eq!(
+            classify_exact_outcome(true, 42, 7, contested),
+            ExactOutcome::Activated
+        );
+        let structured = exact_result(42, 7, "skylight_process_exact_cocoa_ax", true, contested)
+            .structured_content
+            .expect("structured result");
+        assert_eq!(structured["activated"], true);
+        assert_eq!(
+            structured["exact_window_effect"]["front_in_process_on_display"],
+            true
+        );
+        assert_eq!(
+            structured["exact_window_effect"]["frontmost_ordinary"],
+            false
+        );
+        assert_eq!(structured["observed"]["process_front_window_on_display"], 7);
+        assert_eq!(structured["observed"]["frontmost_ordinary_window_id"], 900);
+    }
+
+    #[test]
+    fn a_sibling_window_of_the_same_application_in_front_is_only_partial() {
+        assert_eq!(
+            classify_exact_outcome(
+                true,
+                42,
+                7,
+                contested_observation(Some(7), Some(8), Some(8))
+            ),
+            ExactOutcome::Partial
+        );
+    }
+
+    #[test]
+    fn a_sibling_in_front_on_another_display_leaves_the_target_front_where_it_sits() {
+        let windows = vec![window(7, 42, 10, 100.0), window(8, 42, 30, 2000.0)];
+        let displays = side_by_side_displays();
+        assert_eq!(
+            front_window_of_process_on_target_display(&windows, &displays, 42, 7),
+            Some(7)
+        );
+        assert_eq!(
+            front_window_of_process_on_target_display(&windows, &displays, 42, 8),
+            Some(8)
+        );
+    }
+
+    #[test]
+    fn a_sibling_in_front_on_the_same_display_takes_the_front_position() {
+        let windows = vec![
+            window(7, 42, 10, 100.0),
+            window(8, 42, 30, 500.0),
+            window(9, 99, 40, 200.0),
+        ];
+        assert_eq!(
+            front_window_of_process_on_target_display(&windows, &side_by_side_displays(), 42, 7),
+            Some(8)
+        );
+    }
+
+    #[test]
+    fn without_display_bounds_every_window_of_the_process_competes() {
+        let windows = vec![window(7, 42, 10, 100.0), window(8, 42, 30, 2000.0)];
+        assert_eq!(
+            front_window_of_process_on_target_display(&windows, &[], 42, 7),
+            Some(8)
+        );
+    }
+
+    #[test]
+    fn exact_success_requires_process_focus_and_front_position_on_its_display() {
         assert_eq!(
             classify_exact_outcome(
                 true,

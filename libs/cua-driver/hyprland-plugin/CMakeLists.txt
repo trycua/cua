@@ -53,6 +53,44 @@ if(BUILD_TESTING)
     target_compile_options(cua_hyprland_foreground_route_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     add_test(NAME cua_hyprland_foreground_route_test COMMAND cua_hyprland_foreground_route_test)
 
+    add_executable(cua_hyprland_user_seat_policy_test tests/user_seat_policy_test.cpp)
+    target_compile_features(cua_hyprland_user_seat_policy_test PRIVATE cxx_std_26)
+    target_include_directories(cua_hyprland_user_seat_policy_test PRIVATE src)
+    target_compile_options(cua_hyprland_user_seat_policy_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    add_test(NAME cua_hyprland_user_seat_policy_test COMMAND cua_hyprland_user_seat_policy_test)
+
+    # Keyboard layout and foreground modifier tests compile real XKB keymaps.
+    # Set CUA_HYPRLAND_REQUIRE_XKBCOMMON in the environment to fail instead of
+    # skipping them when the xkbcommon development files are missing.
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(CUA_XKBCOMMON QUIET IMPORTED_TARGET xkbcommon)
+    endif()
+    if(NOT CUA_XKBCOMMON_FOUND AND DEFINED ENV{CUA_HYPRLAND_REQUIRE_XKBCOMMON})
+        message(FATAL_ERROR "xkbcommon development files are required for the keyboard tests")
+    endif()
+    if(CUA_XKBCOMMON_FOUND)
+        foreach(xkb_test IN ITEMS keymap_equivalence keyboard_layout)
+            add_executable(cua_hyprland_${xkb_test}_test tests/${xkb_test}_test.cpp)
+            target_compile_features(cua_hyprland_${xkb_test}_test PRIVATE cxx_std_26)
+            target_include_directories(cua_hyprland_${xkb_test}_test PRIVATE src)
+            target_compile_options(cua_hyprland_${xkb_test}_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+            target_link_libraries(cua_hyprland_${xkb_test}_test PRIVATE PkgConfig::CUA_XKBCOMMON)
+            add_test(NAME cua_hyprland_${xkb_test}_test COMMAND cua_hyprland_${xkb_test}_test)
+            set_tests_properties(cua_hyprland_${xkb_test}_test PROPERTIES SKIP_RETURN_CODE 77)
+        endforeach()
+    else()
+        message(STATUS "xkbcommon not found; keyboard layout tests are not built")
+    endif()
+    add_test(NAME cua_hyprland_foreground_modifiers_test
+        COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/tests/foreground_modifiers_test.py)
+    set_tests_properties(cua_hyprland_foreground_modifiers_test PROPERTIES
+        ENVIRONMENT "CXX=${CMAKE_CXX_COMPILER}")
+    add_test(NAME cua_hyprland_agent_key_repeat_test
+        COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/tests/agent_key_repeat_test.py)
+    set_tests_properties(cua_hyprland_agent_key_repeat_test PROPERTIES
+        ENVIRONMENT "CXX=${CMAKE_CXX_COMPILER}")
+
     add_executable(cua_hyprland_passive_pointer_target_test tests/passive_pointer_target_test.cpp)
     target_compile_features(cua_hyprland_passive_pointer_target_test PRIVATE cxx_std_26)
     target_include_directories(cua_hyprland_passive_pointer_target_test PRIVATE src)
@@ -86,6 +124,12 @@ if(BUILD_TESTING)
     target_link_libraries(cua_hyprland_protocol_test PRIVATE cua_hyprland_protocol)
     target_compile_options(cua_hyprland_protocol_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     add_test(NAME cua_hyprland_protocol_test COMMAND cua_hyprland_protocol_test)
+
+    add_executable(cua_hyprland_session_availability_test tests/session_availability_test.cpp)
+    target_compile_features(cua_hyprland_session_availability_test PRIVATE cxx_std_26)
+    target_include_directories(cua_hyprland_session_availability_test PRIVATE src)
+    target_compile_options(cua_hyprland_session_availability_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    add_test(NAME cua_hyprland_session_availability_test COMMAND cua_hyprland_session_availability_test)
 
     add_executable(cua_hyprland_status_test tests/status_test.cpp)
     target_link_libraries(cua_hyprland_status_test PRIVATE cua_hyprland_protocol)
@@ -214,10 +258,20 @@ if(CUA_HYPRLAND_BUILD_PLUGIN)
 
     add_library(cua_hyprland_plugin MODULE src/plugin.cpp)
     if(CUA_HYPRLAND_TEST_INPUT OR CUA_HYPRLAND_INPUT)
-        if(NOT HYPRLAND_VERSION STREQUAL "0.56.2")
-            message(FATAL_ERROR "Input is pinned to Hyprland 0.56.2")
+        cua_detect_hyprland_window_api(cua_hyprland_window_backend_api
+            "${HYPRLAND_INCLUDE_DIRS}" "${HYPRLAND_CFLAGS_OTHER}")
+        if(cua_hyprland_window_backend_api STREQUAL "1")
+            message(STATUS "Using Hyprland window-backend input API")
+        elseif(cua_hyprland_window_backend_api STREQUAL "0")
+            message(STATUS "Using Hyprland legacy window input API")
+        else()
+            message(FATAL_ERROR
+                "Hyprland ${HYPRLAND_VERSION} headers expose no supported window input API")
         endif()
-        target_sources(cua_hyprland_plugin PRIVATE src/input_experiment.cpp)
+        target_sources(cua_hyprland_plugin PRIVATE src/input_experiment.cpp src/user_seat_guard.cpp
+            src/ime_popup_guard.cpp)
+        target_compile_definitions(cua_hyprland_plugin PRIVATE
+            CUA_HYPRLAND_WINDOW_BACKEND_API=${cua_hyprland_window_backend_api})
     endif()
     if(CUA_HYPRLAND_INPUT)
         target_compile_definitions(cua_hyprland_plugin PRIVATE CUA_HYPRLAND_INPUT=1)

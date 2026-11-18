@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Guest-side dispatch for an already authorized, private service carrier.
 //!
 //! This module opens no listener and authenticates no credentials. The service
@@ -430,5 +433,4 @@ fn now_ms() -> u128 {
 }
 
 #[cfg(test)]
-#[path = "remote_receiver_tests.rs"]
 mod tests;

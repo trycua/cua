@@ -1,0 +1,36 @@
+{
+  "id": "web",
+  "version": "1.0",
+  "repository": "ghcr.io/trycua/bench-web",
+  "visibility": "public",
+  "sources": [
+    "https://github.com/Farama-Foundation/miniwob-plusplus.git@a7658beb68e1d3572329e06734c5822bd284ddc8"
+  ],
+  "stamp": "20261002-01636cb",
+  "dry_run": false,
+  "promoted": true,
+  "index": {
+    "ref": "ghcr.io/trycua/bench-web:1.0-20261002-01636cb",
+    "digest": "sha256:3b7e1d9d4e34694175cf1b44ffefc09b557c94b1c8f946fe50646d68df39ca87",
+    "floating": "ghcr.io/trycua/bench-web:1.0"
+  },
+  "disk_index": {
+    "ref": "ghcr.io/trycua/bench-web:1.0-disk-20261002-01636cb",
+    "digest": "sha256:989c072b0da8319b232f775f0c4731cfaa9e894fc8bcc1ef67c640ee895a8908",
+    "floating": "ghcr.io/trycua/bench-web:1.0-disk"
+  },
+  "children": [
+    {
+      "arch": "amd64",
+      "rootfs": "sha256:0790eca5ce1634c2eaca7b4a9b742b74bd00c86be6b531acee3933be462ff4eb",
+      "containerdisk": "sha256:40cc136209172c5179503e8aca961dc2c63e9c483e99be38e4ecb0154434b8fd"
+    },
+    {
+      "arch": "arm64",
+      "rootfs": "sha256:0033ca069035cd8fd494bc69a3f3253224efc2c2b484e8620b012b7031aa2c67",
+      "containerdisk": "sha256:e60878ebdff70751567a44e18bb48fbed3c1a4bb05726a1e6d0cf7f8ff15eb92"
+    }
+  ],
+  "pinned": "ghcr.io/trycua/bench-web@sha256:3b7e1d9d4e34694175cf1b44ffefc09b557c94b1c8f946fe50646d68df39ca87",
+  "written": "2026-10-02T07:25:05Z"
+}

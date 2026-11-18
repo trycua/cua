@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Linux worker containment: process group, parent-death signal, resource
 //! limits, `PR_SET_NO_NEW_PRIVS`, a Landlock ruleset that confines reads,
 //! executes and writes to an exact allowlist, and a seccomp filter that denies
@@ -44,6 +47,11 @@ const SYS_LANDLOCK_ADD_RULE: libc::c_long = 445;
 const SYS_LANDLOCK_RESTRICT_SELF: libc::c_long = 446;
 const SYS_CLOSE_RANGE: libc::c_long = 436;
 const CLOSE_RANGE_CLOEXEC: u32 = 1 << 2;
+// musl's libc crate lacks the number.
+#[cfg(target_arch = "x86_64")]
+const SYS_KEXEC_FILE_LOAD: libc::c_long = 320;
+#[cfg(target_arch = "aarch64")]
+const SYS_KEXEC_FILE_LOAD: libc::c_long = 294;
 
 const LANDLOCK_CREATE_RULESET_VERSION: u32 = 1 << 0;
 const LANDLOCK_RULE_PATH_BENEATH: u32 = 1;
@@ -157,6 +165,8 @@ const BPF_ALU: u16 = 0x04;
 const BPF_AND: u16 = 0x50;
 const BPF_JMP: u16 = 0x05;
 const BPF_JEQ: u16 = 0x10;
+// Only x86_64 needs an ordered compare (the x32 syscall-number range check).
+#[cfg(target_arch = "x86_64")]
 const BPF_JGE: u16 = 0x30;
 const BPF_K: u16 = 0x00;
 const BPF_RET: u16 = 0x06;
@@ -430,7 +440,7 @@ fn open_path(path: &Path, required: bool) -> Result<Option<OwnedFd>, VisualParse
 /// reopen every route above.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn denied_syscalls() -> Vec<libc::c_long> {
-    let mut denied = vec![
+    let denied = vec![
         // Sockets: creation, connection and every operation on one.
         libc::SYS_socket,
         libc::SYS_socketpair,
@@ -490,7 +500,7 @@ fn denied_syscalls() -> Vec<libc::c_long> {
         libc::SYS_finit_module,
         libc::SYS_delete_module,
         libc::SYS_kexec_load,
-        libc::SYS_kexec_file_load,
+        SYS_KEXEC_FILE_LOAD,
         libc::SYS_reboot,
         libc::SYS_syslog,
         libc::SYS_acct,
@@ -507,7 +517,10 @@ fn denied_syscalls() -> Vec<libc::c_long> {
     // Process creation. Runtime threads stay available through the
     // `CLONE_THREAD` rule in the assembled filter.
     #[cfg(target_arch = "x86_64")]
-    denied.extend([libc::SYS_fork, libc::SYS_vfork]);
+    let denied: Vec<_> = denied
+        .into_iter()
+        .chain([libc::SYS_fork, libc::SYS_vfork])
+        .collect();
     denied
 }
 

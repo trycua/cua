@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Z-drop harness + Track A background-input probe.
 //!
 //! Measures the foreground "flash": when actuating input into a *background*
@@ -256,7 +259,7 @@ mod probe {
             let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         }
         let args: Vec<String> = std::env::args().skip(1).collect();
-        let mode = args.get(0).map(|s| s.as_str()).unwrap_or("both");
+        let mode = args.first().map(|s| s.as_str()).unwrap_or("both");
         let forced_pid: Option<u32> = args.get(1).and_then(|s| s.parse().ok());
 
         let mut wins: Vec<HWND> = Vec::new();

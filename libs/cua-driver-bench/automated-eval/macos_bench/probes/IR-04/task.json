@@ -1,0 +1,21 @@
+{
+  "id": "IR-04",
+  "title": "Sign up on a web page; a cookie-consent overlay appears once typing starts",
+  "group": "IR",
+  "category": "interruptions",
+  "ability": "interruption_consent_overlay",
+  "dimension_tags": [
+    "interruption",
+    "web_overlay",
+    "consent",
+    "web_form"
+  ],
+  "timeout_s": 360,
+  "max_turns": 45,
+  "app_args": [
+    "--mode",
+    "irconsent"
+  ],
+  "separate_run": true,
+  "coverage_caveat": "Interruptions are simulated inside BenchLab (sheets, a non-activating panel, a WKWebView overlay); none is a real system prompt. Amendment 14."
+}

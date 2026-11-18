@@ -23,6 +23,7 @@ tracing = { workspace = true }
 uniffi = { workspace = true, features = ["tokio"] }
 uuid = { workspace = true }
 cursor-overlay = { path = "../cursor-overlay" }
+cua-cursor-motion = { path = "../cua-cursor-motion" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 platform-macos = { path = "../platform-macos" }
@@ -31,7 +32,9 @@ core-foundation = "0.10"
 [target.'cfg(target_os = "windows")'.dependencies]
 platform-windows = { path = "../platform-windows" }
 
-[target.'cfg(target_os = "linux")'.dependencies]
+# A musl Linux build is the static headless guest daemon (cua-spacesd in any
+# OCI image): no desktop platform, so none of the X11/AT-SPI C libraries.
+[target.'cfg(all(target_os = "linux", not(target_env = "musl")))'.dependencies]
 platform-linux = { path = "../platform-linux" }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]

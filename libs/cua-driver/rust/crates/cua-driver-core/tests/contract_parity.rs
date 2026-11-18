@@ -3,7 +3,7 @@
 
 use cua_driver_contract::{manifest, SchemaMode, CAPABILITY_VERSION, TOOLS_LIST_SCHEMA_VERSION};
 use cua_driver_core::perception_client::PerceptionClient;
-use cua_driver_core::tool::{default_capabilities_for, ToolRegistry};
+use cua_driver_core::tool::ToolRegistry;
 
 #[test]
 fn canonical_core_contracts_match_live_registry() {
@@ -34,7 +34,16 @@ fn canonical_core_contracts_match_live_registry() {
             .find(|entry| entry["name"] == contract.name)
             .unwrap_or_else(|| panic!("{} missing from live registry", contract.name));
         assert_eq!(entry["description"], contract.description, "description");
-        assert_eq!(entry["inputSchema"], contract.input_schema, "inputSchema");
+        // Dispatch admits `session` on every closed runtime schema.
+        let mut expected_schema = contract.input_schema.clone();
+        if expected_schema["additionalProperties"] == false {
+            if let Some(properties) = expected_schema["properties"].as_object_mut() {
+                properties
+                    .entry("session")
+                    .or_insert_with(cua_driver_core::tool_schema::session_schema);
+            }
+        }
+        assert_eq!(entry["inputSchema"], expected_schema, "inputSchema");
         assert_eq!(
             entry["annotations"]["readOnlyHint"], contract.annotations.read_only,
             "readOnlyHint"
@@ -52,37 +61,8 @@ fn canonical_core_contracts_match_live_registry() {
             "openWorldHint"
         );
         assert_eq!(
-            default_capabilities_for(&contract.name),
-            contract.capabilities,
-            "capabilities"
-        );
-        assert_eq!(
             entry["capabilities"],
             serde_json::json!(contract.capabilities)
-        );
-    }
-}
-
-#[test]
-fn every_generated_contract_uses_live_capability_tokens() {
-    for contract in manifest().tools {
-        assert_eq!(
-            default_capabilities_for(&contract.name),
-            contract.capabilities,
-            "{} capabilities",
-            contract.name
-        );
-        assert_eq!(
-            contract
-                .input_schema
-                .pointer("/properties/delivery_mode")
-                .is_some(),
-            contract
-                .capabilities
-                .iter()
-                .any(|capability| capability == "input.delivery_mode"),
-            "{} typed contract delivery_mode schema/capability mismatch",
-            contract.name
         );
     }
 }

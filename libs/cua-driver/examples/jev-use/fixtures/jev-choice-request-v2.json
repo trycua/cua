@@ -1,0 +1,28 @@
+{
+  "schema": "cua.jev_choice_request_v2",
+  "goal": "Set the counter to 3 by pressing Increment.",
+  "capture_id": "capture-native-1",
+  "snapshot_id": "s0000002a",
+  "regions": [],
+  "elements": [
+    { "role_class": "button", "label": "Increment", "state": "enabled" },
+    { "role_class": "checkbox", "label": "I agree", "state": "unchecked" },
+    { "role_class": "text_input", "label": "Note", "state": "empty" }
+  ],
+  "history": [{ "selected_id": "ax:button:increment", "outcome": "pressed the button \"Increment\"" }],
+  "candidates": [
+    {
+      "id": "ax:button:increment",
+      "source": "ax",
+      "description": "Press the button labeled \"Increment\"."
+    },
+    {
+      "id": "reobserve",
+      "description": "Take no action and obtain a fresh observation."
+    },
+    {
+      "id": "abstain",
+      "description": "Stop without acting if no supplied action is safe."
+    }
+  ]
+}

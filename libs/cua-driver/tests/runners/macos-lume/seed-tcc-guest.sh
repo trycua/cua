@@ -73,6 +73,40 @@ bundle_executable_path() {
   printf '%s/Contents/MacOS/%s\n' "${app}" "${executable_name}"
 }
 
+# Classify a designated requirement (the text after "designated => " in
+# `codesign -d -r-`). Prints the accepted form and returns 0 when the
+# requirement is certificate-backed; prints "rejected" and returns 1 otherwise.
+#
+# Accepted forms:
+#   leaf-hash     A requirement that pins a certificate leaf or root SHA-1 hash,
+#                 as produced by local self-signed or stable signing identities.
+#   developer-id  The exact Apple-anchored Developer ID Application requirement
+#                 that codesign derives for notarized releases:
+#                 identifier "<id>" and anchor apple generic and the Developer
+#                 ID intermediate and leaf markers and a 10-character team ID.
+#                 When a second argument is given, the requirement identifier
+#                 must equal it.
+# Everything else, including ad hoc cdhash-only requirements, is rejected.
+DEVELOPER_ID_REQUIREMENT_RE='^identifier "([A-Za-z0-9][A-Za-z0-9.-]*)" and anchor apple generic and certificate 1\[field\.1\.2\.840\.113635\.100\.6\.2\.6\] /\* exists \*/ and certificate leaf\[field\.1\.2\.840\.113635\.100\.6\.1\.13\] /\* exists \*/ and certificate leaf\[subject\.OU\] = ([A-Z0-9]{10}|"[A-Z0-9]{10}")$'
+LEAF_HASH_REQUIREMENT_RE='certificate (leaf|root) = H"[[:xdigit:]]{40}"'
+
+classify_designated_requirement() {
+  local requirement="$1"
+  local expected_identifier="${2:-}"
+  if [[ "${requirement}" =~ ${LEAF_HASH_REQUIREMENT_RE} ]]; then
+    echo "leaf-hash"
+    return 0
+  fi
+  if [[ "${requirement}" =~ ${DEVELOPER_ID_REQUIREMENT_RE} ]]; then
+    if [[ -z "${expected_identifier}" || "${BASH_REMATCH[1]}" == "${expected_identifier}" ]]; then
+      echo "developer-id"
+      return 0
+    fi
+  fi
+  echo "rejected"
+  return 1
+}
+
 sql_escape() {
   /usr/bin/sed "s/'/''/g" <<< "$1"
 }
@@ -86,6 +120,16 @@ run_sudo() {
     /usr/bin/sudo -n "$@"
   fi
 }
+
+# Tests source this script with CUA_TCC_SEED_LIB_ONLY=1 to exercise the
+# classifier without a VM. Executing it in that mode is refused.
+if [[ "${CUA_TCC_SEED_LIB_ONLY:-0}" == 1 ]]; then
+  if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    echo "CUA_TCC_SEED_LIB_ONLY is valid only when this script is sourced" >&2
+    exit 2
+  fi
+  return 0
+fi
 
 MODEL="$(/usr/sbin/sysctl -n hw.model 2>/dev/null || true)"
 [[ "${MODEL}" == VirtualMac* ]] || fail "refusing to edit TCC outside a Lume/VirtualMac guest (hw.model=${MODEL:-unknown})"
@@ -158,10 +202,10 @@ if [[ "${ALLOW_ADHOC}" != 1 ]]; then
   if printf '%s\n' "${CODESIGN_INFO}" | /usr/bin/grep -q '^Signature=adhoc$'; then
     fail "${SIGN_TARGET} has an ad hoc signature; rerun install-local with --require-stable-signing, or use --allow-adhoc only for an explicitly authorized one-build grant"
   fi
-  if ! printf '%s\n' "${REQUIREMENT}" |
-    /usr/bin/grep -Eq 'certificate (leaf|root) = H"[[:xdigit:]]{40}"'; then
-    fail "${SIGN_TARGET} is not signed with a certificate-backed identity; expected its designated requirement to bind a certificate leaf or root hash"
+  if ! REQUIREMENT_KIND="$(classify_designated_requirement "${REQUIREMENT}" "${SIGNING_IDENTIFIER}")"; then
+    fail "${SIGN_TARGET} is not signed with a certificate-backed identity; expected its designated requirement to bind a certificate leaf or root hash, or to be an Apple-anchored Developer ID requirement for ${SIGNING_IDENTIFIER} (got: ${REQUIREMENT})"
   fi
+  echo "seed-tcc: designated requirement accepted as ${REQUIREMENT_KIND}"
 fi
 
 CSREQ_TMPDIR="$(/usr/bin/mktemp -d /tmp/cua-driver-tcc-csreq.XXXXXX)"
@@ -190,7 +234,11 @@ if [[ "$(/usr/bin/id -u)" -ne 0 ]]; then
 fi
 
 [[ -f "${TCC_DB}" ]] || fail "system TCC.db does not exist at ${TCC_DB}"
-ACCESS_COLUMNS="$(run_sudo /usr/bin/sqlite3 "${TCC_DB}" 'PRAGMA table_info(access);')"
+# tccd keeps TCC.db open and writes to it at any time, so a bare sqlite3 call
+# can fail at once with "database is locked". Wait up to 30 s for the lock
+# instead, and take the write lock when the transaction starts.
+TCC_SQLITE=(/usr/bin/sqlite3 -cmd ".timeout 30000")
+ACCESS_COLUMNS="$(run_sudo "${TCC_SQLITE[@]}" "${TCC_DB}" 'PRAGMA table_info(access);')"
 CLIENT_SQL="$(sql_escape "${CLIENT}")"
 
 if ! /usr/bin/grep -q '|auth_value|' <<< "${ACCESS_COLUMNS}"; then
@@ -198,7 +246,7 @@ if ! /usr/bin/grep -q '|auth_value|' <<< "${ACCESS_COLUMNS}"; then
 fi
 
 SQL="
-BEGIN;
+BEGIN IMMEDIATE;
 INSERT OR REPLACE INTO access(
   service,client,client_type,auth_value,auth_reason,auth_version,
   csreq,flags,indirect_object_identifier_type,
@@ -212,8 +260,8 @@ COMMIT;
 "
 VERIFY_SQL="SELECT count(*) FROM access WHERE client='${CLIENT_SQL}' AND client_type=${CLIENT_TYPE} AND auth_value=2 AND service IN ('kTCCServiceAccessibility','kTCCServiceScreenCapture');"
 
-run_sudo /usr/bin/sqlite3 "${TCC_DB}" "${SQL}"
-ROW_COUNT="$(run_sudo /usr/bin/sqlite3 "${TCC_DB}" "${VERIFY_SQL}")"
+run_sudo "${TCC_SQLITE[@]}" "${TCC_DB}" "${SQL}"
+ROW_COUNT="$(run_sudo "${TCC_SQLITE[@]}" "${TCC_DB}" "${VERIFY_SQL}")"
 [[ "${ROW_COUNT}" == 2 ]] || fail "expected two granted rows for ${CLIENT}, found ${ROW_COUNT}"
 
 if run_sudo /usr/bin/pgrep -x tccd >/dev/null 2>&1; then

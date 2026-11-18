@@ -1,0 +1,359 @@
+{
+ "background": {
+  "ok": {
+   "callback": [
+    "done\n"
+   ],
+   "exit_code_after": 0,
+   "exit_code_before": null,
+   "handle_type": "AsyncCommandHandle",
+   "pid_is_int": true,
+   "result_type": "CommandResult",
+   "stdout": "done\n"
+  }
+ },
+ "background_disconnect_keeps_running": {
+  "ok": "late\n"
+ },
+ "background_kill": {
+  "ok": {
+   "kill": true,
+   "wait_raised": {
+    "error": "signal: killed",
+    "exit_code": -1,
+    "message": "Command exited with code -1 and error:\n",
+    "mro": [
+     "CommandExitException",
+     "SandboxException",
+     "CommandResult"
+    ],
+    "stderr": "",
+    "stdout": "",
+    "type": "CommandExitException"
+   }
+  }
+ },
+ "connect_by_id": {
+  "ok": "reconnected\n"
+ },
+ "create": {
+  "id_is_str": true,
+  "type": "AsyncSandbox"
+ },
+ "dirs": {
+  "ok": {
+   "again": false,
+   "deep": [
+    "/tmp/d1/d2",
+    "/tmp/d1/d2/f.txt"
+   ],
+   "list": [
+    [
+     "d2",
+     "FileType.DIR"
+    ]
+   ],
+   "made": true,
+   "moved": [
+    "g.txt",
+    "/tmp/d1/g.txt",
+    "FileType.FILE"
+   ],
+   "old_exists": false
+  }
+ },
+ "download_url": {
+  "ok": {
+   "download": {
+    "body": "signed",
+    "status": 200
+   }
+  }
+ },
+ "file_metadata": {
+  "ok": {
+   "info": {
+    "kind": "input"
+   },
+   "write": {
+    "kind": "input"
+   }
+  }
+ },
+ "files": {
+  "ok": {
+   "bytes_type": "bytearray",
+   "exists_after_remove": false,
+   "info": {
+    "mode": "0o644",
+    "name": "a.txt",
+    "owner": "root",
+    "path": "/tmp/conf/a.txt",
+    "permissions": "-rw-r--r--",
+    "size": 6,
+    "type": "FileType.FILE"
+   },
+   "stream": "h\u00e9llo",
+   "text": "h\u00e9llo",
+   "write": [
+    "a.txt",
+    "/tmp/conf/a.txt",
+    "FileType.FILE"
+   ],
+   "write_type": "WriteInfo"
+  }
+ },
+ "files_default_user": {
+  "ok": {
+   "owner": "user",
+   "path": "/home/user/conf-rel.txt",
+   "stat_owner": "user\n"
+  }
+ },
+ "files_owner": {
+  "ok": {
+   "default": "user",
+   "root": "root"
+  }
+ },
+ "files_write_root_only_dir": {
+  "ok": "ok"
+ },
+ "get_host": {
+  "ok": {
+   "fetch": {
+    "body": "hello-from-sandbox",
+    "status": 200
+   },
+   "format_has_port_prefix": true,
+   "has_scheme": false
+  }
+ },
+ "get_info": {
+  "ok": {
+   "has_end_at": true,
+   "has_started_at": true,
+   "metadata": {
+    "suite": "conformance"
+   },
+   "state": "running",
+   "type": "SandboxInfo"
+  }
+ },
+ "get_info_missing": {
+  "raised": {
+   "message": "file not found: lstat /tmp/nope-404: no such file or directory",
+   "mro": [
+    "FileNotFoundException",
+    "NotFoundException",
+    "SandboxException"
+   ],
+   "type": "FileNotFoundException"
+  }
+ },
+ "get_metrics": {
+  "ok": {
+   "item": "SandboxMetrics",
+   "type": "list"
+  }
+ },
+ "is_running": {
+  "ok": true
+ },
+ "kill": true,
+ "kill_again": {
+  "ok": false
+ },
+ "kill_unknown_pid": {
+  "ok": false
+ },
+ "lifetime_expired_run": {
+  "raised": {
+   "message": "The sandbox was not found: The sandbox was killed or reached its timeout. You can modify the sandbox timeout by passing 'timeout' when starting the sandbox or calling '.set_timeout' on the sandbox with the desired timeout.",
+   "mro": [
+    "SandboxNotRunningException",
+    "TimeoutException",
+    "SandboxException"
+   ],
+   "type": "SandboxNotRunningException"
+  }
+ },
+ "list_and_connect": {
+  "ok": {
+   "args_tail": [
+    "sleep 2; echo joined"
+   ],
+   "cmd": "/bin/bash",
+   "connected_stdout": "joined\n",
+   "listed": 1,
+   "proc_type": "ProcessInfo"
+  }
+ },
+ "list_by_metadata": {
+  "ok": {
+   "found": true,
+   "item_type": "SandboxInfo"
+  }
+ },
+ "list_missing": {
+  "raised": {
+   "message": "path not found: lstat /tmp/nope-404: no such file or directory",
+   "mro": [
+    "FileNotFoundException",
+    "NotFoundException",
+    "SandboxException"
+   ],
+   "type": "FileNotFoundException"
+  }
+ },
+ "no_internet": {
+  "ok": {
+   "outbound": "connected",
+   "runs": "ok\n"
+  }
+ },
+ "pause_resume": {
+  "ok": {
+   "after_resume": "kept",
+   "paused": true,
+   "state_while_paused": "paused"
+  }
+ },
+ "pty": {
+  "ok": {
+   "saw_output": true
+  }
+ },
+ "read_missing": {
+  "raised": {
+   "message": "path '/tmp/nope-404' does not exist",
+   "mro": [
+    "FileNotFoundException",
+    "NotFoundException",
+    "SandboxException"
+   ],
+   "type": "FileNotFoundException"
+  }
+ },
+ "remove_missing": {
+  "ok": null
+ },
+ "run_after_kill": {
+  "raised": {
+   "message": "The sandbox was not found: The sandbox was killed or reached its timeout. You can modify the sandbox timeout by passing 'timeout' when starting the sandbox or calling '.set_timeout' on the sandbox with the desired timeout.",
+   "mro": [
+    "SandboxNotRunningException",
+    "TimeoutException",
+    "SandboxException"
+   ],
+   "type": "SandboxNotRunningException"
+  }
+ },
+ "run_bg_nonzero": {
+  "raised": {
+   "error": "exit status 5",
+   "exit_code": 5,
+   "message": "Command exited with code 5 and error:\n",
+   "mro": [
+    "CommandExitException",
+    "SandboxException",
+    "CommandResult"
+   ],
+   "stderr": "",
+   "stdout": "",
+   "type": "CommandExitException"
+  }
+ },
+ "run_callbacks": {
+  "ok": {
+   "result": "a\n|b\n",
+   "stderr": "b\n",
+   "stdout": "a\n"
+  }
+ },
+ "run_default_user": {
+  "ok": "user\n/home/user\n/home/user\n"
+ },
+ "run_envs_cwd": {
+  "ok": "1:/tmp\n"
+ },
+ "run_fg": {
+  "ok": {
+   "error": null,
+   "exit_code": 0,
+   "stderr": "",
+   "stdout": "hi\n",
+   "type": "CommandResult"
+  }
+ },
+ "run_login_shell": {
+  "ok": "/bin/bash\nlogin\n"
+ },
+ "run_nonzero": {
+  "raised": {
+   "error": "exit status 3",
+   "exit_code": 3,
+   "message": "Command exited with code 3 and error:\nerr\n",
+   "mro": [
+    "CommandExitException",
+    "SandboxException",
+    "CommandResult"
+   ],
+   "stderr": "err\n",
+   "stdout": "out\n",
+   "type": "CommandExitException"
+  }
+ },
+ "run_root": {
+  "ok": "0\n"
+ },
+ "run_timeout": {
+  "raised": {
+   "message": "Request timed out: This error is likely due to exceeding 'timeout' \u2014 the total time a long running request (like process or directory watch) can be active \u2014 or 'request_timeout'. You can modify these by passing 'timeout' or 'request_timeout' when making the request. Use '0' to disable the timeout.",
+   "mro": [
+    "TimeoutException",
+    "SandboxException"
+   ],
+   "type": "TimeoutException"
+  }
+ },
+ "sdk_version": "2.56.0",
+ "send_stdin": {
+  "ok": "got:hello\n"
+ },
+ "set_timeout": {
+  "ok": null
+ },
+ "snapshot_create_fork": {
+  "ok": {
+   "child_sees_file": "baked",
+   "deleted": true,
+   "listed": true,
+   "type": "SnapshotInfo"
+  }
+ },
+ "sync_api": {
+  "ok": {
+   "read": "s",
+   "stdout": "sync\n",
+   "type": "Sandbox"
+  }
+ },
+ "watch_dir": {
+  "ok": {
+   "saw_create_or_write": true
+  }
+ },
+ "write_files": {
+  "ok": {
+   "bin": [
+    0,
+    1
+   ],
+   "names": [
+    "1.txt",
+    "2.bin"
+   ]
+  }
+ }
+}

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Stateful typed MCP carrier. The host supplies only authenticated service bytes.
 
 use std::collections::{HashMap, HashSet};
@@ -313,9 +316,8 @@ impl Inner {
                 initializing,
             )
             .await?;
-        decode_rpc(&response, &id).map_err(|error| {
+        decode_rpc(&response, &id).inspect_err(|_| {
             self.state.lock().unwrap().broken = true;
-            error
         })
     }
 
@@ -807,5 +809,4 @@ fn strict_json(text: &str) -> Result<Value, String> {
 }
 
 #[cfg(test)]
-#[path = "remote_mcp_tests.rs"]
 mod tests;

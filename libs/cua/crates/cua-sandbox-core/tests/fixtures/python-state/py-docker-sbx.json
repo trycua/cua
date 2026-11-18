@@ -1,0 +1,27 @@
+{
+  "name": "py-docker-sbx",
+  "runtime_type": "docker",
+  "image": {
+    "os_type": "linux",
+    "distro": "ubuntu",
+    "version": "24.04",
+    "kind": "vm",
+    "layers": []
+  },
+  "host": "localhost",
+  "api_port": 8000,
+  "exposed_ports": null,
+  "vnc_port": null,
+  "qmp_port": null,
+  "grpc_port": null,
+  "adb_serial": null,
+  "sdk_root": null,
+  "disk_path": null,
+  "os_type": null,
+  "vnc_display": null,
+  "memory_mb": null,
+  "cpu_count": null,
+  "arch": null,
+  "status": "stopped",
+  "created_at": "2026-09-22T23:19:06.056459+00:00"
+}

@@ -1,0 +1,264 @@
+{
+  "schema": "cua.transcript.frame/1",
+  "cast": "claude-subagent-and-mode",
+  "instant": "mode-manual",
+  "cli": "claude",
+  "cli_version": "2.1.278 (Claude Code)",
+  "columns": 100,
+  "rows": 34,
+  "requested_time_ms": 14000,
+  "effective_time_ms": 12849,
+  "events_applied": 18,
+  "unsupported_sequences": 0,
+  "unsupported_resize": false,
+  "alternate_screen": true,
+  "window_title": "✳ Claude Code",
+  "cursor": {
+    "row": 31,
+    "column": 92,
+    "visible": true
+  },
+  "lines": [
+    "",
+    "▗ ▗   ▖ ▖  Claude Code v2.1.278",
+    "           Opus 5 (1M context) with low effort · Claude Max",
+    "  ▘▘ ▝▝    /private/tmp/cua-cast-sandbox",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯ Use the Explore subagent to find every function defined in calc.py, then tell me the list.",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  ⏸ manual mode on"
+  ],
+  "attributes": [
+    {
+      "row": 1,
+      "runs": [
+        [
+          0,
+          0,
+          "dim"
+        ],
+        [
+          2,
+          2,
+          "dim"
+        ],
+        [
+          6,
+          6,
+          "dim"
+        ],
+        [
+          8,
+          8,
+          "dim"
+        ],
+        [
+          11,
+          16,
+          "dim"
+        ],
+        [
+          18,
+          21,
+          "dim"
+        ],
+        [
+          23,
+          30,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 2,
+      "runs": [
+        [
+          11,
+          14,
+          "dim"
+        ],
+        [
+          16,
+          16,
+          "dim"
+        ],
+        [
+          18,
+          20,
+          "dim"
+        ],
+        [
+          22,
+          29,
+          "dim"
+        ],
+        [
+          31,
+          34,
+          "dim"
+        ],
+        [
+          36,
+          38,
+          "dim"
+        ],
+        [
+          40,
+          45,
+          "dim"
+        ],
+        [
+          47,
+          47,
+          "dim"
+        ],
+        [
+          49,
+          54,
+          "dim"
+        ],
+        [
+          56,
+          58,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 3,
+      "runs": [
+        [
+          2,
+          3,
+          "dim"
+        ],
+        [
+          5,
+          6,
+          "dim"
+        ],
+        [
+          11,
+          39,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 30,
+      "runs": [
+        [
+          0,
+          99,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 31,
+      "runs": [
+        [
+          0,
+          4,
+          "dim"
+        ],
+        [
+          6,
+          39,
+          "dim"
+        ],
+        [
+          41,
+          48,
+          "dim"
+        ],
+        [
+          50,
+          56,
+          "dim"
+        ],
+        [
+          58,
+          59,
+          "dim"
+        ],
+        [
+          61,
+          68,
+          "dim"
+        ],
+        [
+          70,
+          73,
+          "dim"
+        ],
+        [
+          75,
+          78,
+          "dim"
+        ],
+        [
+          80,
+          81,
+          "dim"
+        ],
+        [
+          83,
+          85,
+          "dim"
+        ],
+        [
+          87,
+          91,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 32,
+      "runs": [
+        [
+          0,
+          99,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 33,
+      "runs": [
+        [
+          2,
+          18,
+          "dim"
+        ]
+      ]
+    }
+  ]
+}

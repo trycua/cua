@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! WKWebView detection: checks whether a process embeds WebKit.
 
 /// Returns true if the process at `pid` is a WKWebView-based app (but not Electron).

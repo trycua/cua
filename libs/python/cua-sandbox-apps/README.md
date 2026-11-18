@@ -1,7 +1,11 @@
 # cua-sandbox-apps
 
+> [!WARNING]
+> **Deprecated:** `cua-sandbox-apps` is no longer maintained by Cua and will not receive updates or fixes. Its publishing is switched off. Existing releases stay on PyPI. For sandboxes use the [`cua` SDK and CLI](https://cua.ai/docs/cua-sdk/quickstart). See [Migrate from deprecated packages](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended#deprecated-packages).
+
+
 Universal app catalog and installer pipeline for CUA sandboxes.
-Gym-Anything-style environment generation: discover software, create
+Environment generation: discover software, create
 install/launch scripts, then verify with screenshots in a sandbox.
 
 ## Usage

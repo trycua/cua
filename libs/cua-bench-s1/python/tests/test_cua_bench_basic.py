@@ -1,12 +1,11 @@
-"""Tests for the `cua_bench_basic` family: the conversion logic, and -- when
-the `cua_bench` SDK and its Playwright provider are actually installed -- two
-real live task envs end to end.
+"""Tests for the `cua_bench_basic` family: the conversion logic, and -- on
+request -- two real live task envs end to end.
 
-The live tests use cua-bench's own `simulated` (Playwright) provider, the
-same one cua-bench's own test suite uses, so nothing here needs Docker, QEMU
-or a GPU. They still need the `cua_bench` package plus a downloaded Playwright
-browser, which the `cua-bench-s1` project environment deliberately does not
-depend on -- so they skip cleanly rather than failing when it is absent.
+The live tests run the envs the way cua-bench 0.3 runs every task: in a real
+sandbox (a local Linux container by default), so they start containers and
+are opt-in: set `CUA_BENCH_S1_LIVE=1` with cua-bench installed. The pages use
+`session.launch_window`, so the image needs bench-ui. (cua-bench's Playwright
+`simulated` provider, which these used before, was removed in 0.3.)
 """
 from __future__ import annotations
 
@@ -46,15 +45,17 @@ def _dataset_dir() -> Path | None:
 DATASET_DIR = _dataset_dir()
 
 try:  # pragma: no cover - environment-dependent
-    import cua_bench  # noqa: F401
-    import playwright  # noqa: F401
+    import os
 
-    _LIVE = DATASET_DIR is not None
+    import cua_bench  # noqa: F401
+
+    _LIVE = DATASET_DIR is not None and os.environ.get("CUA_BENCH_S1_LIVE") == "1"
 except Exception:  # pragma: no cover
     _LIVE = False
 
 live_only = pytest.mark.skipif(
-    not _LIVE, reason="cua_bench + playwright + datasets/cua-bench-basic not available"
+    not _LIVE,
+    reason="opt-in: CUA_BENCH_S1_LIVE=1 with cua_bench and datasets/cua-bench-basic (starts containers)",
 )
 
 
@@ -85,7 +86,7 @@ def _episode(task_index: int = 0, text: str = "Hello World") -> RecordedEpisode:
             RecordedStep(1, els, ActionRecord("TypeAction", {"text": text}), None),
         ],
         oracle_reward=1.0,
-        provider="simulated",
+        provider="native",
     )
 
 

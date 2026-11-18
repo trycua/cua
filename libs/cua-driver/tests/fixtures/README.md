@@ -65,7 +65,7 @@ Host requirements:
 
 ## Test Mapping
 
-Rust tests under `libs/cua-driver/rust/crates/cua-driver/tests/` consume the staged
+Rust tests under `libs/cua-driver/rust/crates/cua-driver-e2e/tests/` consume the staged
 `rust/test-apps/harness-<name>/` outputs:
 
 - `cross_platform_behavior_test.rs`: typed Electron/Tauri action matrix.
@@ -74,7 +74,7 @@ Rust tests under `libs/cua-driver/rust/crates/cua-driver/tests/` consume the sta
   desktop-scope contracts.
 - `protocol_*_test.rs` and schema tests: headless protocol coverage, default.
 
-Rust integration tests under `libs/cua-driver/rust/crates/cua-driver/tests/` drive
+Rust integration tests under `libs/cua-driver/rust/crates/cua-driver-e2e/tests/` drive
 the shared Electron/Tauri harnesses through the public MCP interface.
 
 ## App Coverage

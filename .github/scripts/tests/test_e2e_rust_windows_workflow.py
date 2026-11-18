@@ -20,10 +20,8 @@ def test_canonical_certification_is_fail_closed_and_github_hosted() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
     certification = workflow.split("\n  certify:\n", 1)[1]
 
-    assert (
-        "if: success() && github.event_name == 'workflow_dispatch' && inputs.lane == 'all'"
-        in certification
-    )
+    # Manual dispatches and stable-tag release-gate calls both certify.
+    assert "if: success() && inputs.lane == 'all'" in certification
     assert "needs: [source, shared, native, capture, installer]" in certification
     assert "windows-latest|windows-2022|windows-2025" in certification
     assert "class=github-hosted" in certification
@@ -31,6 +29,18 @@ def test_canonical_certification_is_fail_closed_and_github_hosted() -> None:
     assert 'platform "windows"' in certification
     assert "runner_policy_class: $runner_policy_class" in certification
     assert "name: rust-windows-e2e-certification" in certification
+
+
+def test_release_gate_call_matches_dispatch_and_ignores_caller_artifacts() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    trigger = workflow.split("\npermissions:", 1)[0]
+    call, dispatch = trigger.split("  workflow_call:\n", 1)[1].split("  workflow_dispatch:\n", 1)
+    for name in ("ref:", "runner:", "lane:"):
+        assert name in call
+        assert name in dispatch
+    assert 'default: "windows-latest"' in call
+    assert "github.event.inputs" not in workflow
+    assert "pattern: rust-windows-*" in workflow
 
 
 def test_matrix_summary_recovers_results_when_lane_summary_is_missing(tmp_path: Path) -> None:
@@ -78,6 +88,7 @@ def test_matrix_summary_recovers_results_when_lane_summary_is_missing(tmp_path: 
             "SOURCE_SHA": "0123456789abcdef0123456789abcdef01234567",
         }
     )
+    (tmp_path / "scripts").symlink_to(ROOT / "scripts")
     subprocess.run(
         ["bash", "-euo", "pipefail", "-c", matrix_summary_script()],
         cwd=tmp_path,
@@ -96,3 +107,36 @@ def test_matrix_summary_recovers_results_when_lane_summary_is_missing(tmp_path: 
     assert f"[recordings/windows-wpf-click/recording.mp4]({artifact_url})" in summary
     assert "No lane summary artifact was produced." not in summary
     assert step_summary.read_text(encoding="utf-8") == summary
+
+
+def test_cache_saves_never_write_pull_request_scope_but_keep_dispatches() -> None:
+    """Same invariant as the Linux matrix: no PR-scoped saves, dispatches still save."""
+    workflow = (ROOT / ".github/workflows/e2e-rust-windows.yml").read_text(encoding="utf-8")
+    save_guards = [line for line in workflow.splitlines() if 'save-if:' in line]
+    assert not any("ref_type == 'branch'" in line for line in save_guards)
+    assert (
+        workflow.count(
+            "save-if: ${{ github.event_name != 'pull_request' && needs.source.outputs.sha == github.sha"
+            " && inputs.runner == 'windows-latest' }}"
+        )
+        == 3
+    )
+    assert (
+        workflow.count(
+            "save-if: ${{ github.event_name != 'pull_request' && needs.source.outputs.sha == github.sha }}"
+        )
+        == 1
+    )
+
+
+def test_shared_leg_keeps_its_own_sccache_family() -> None:
+    """Same invariant as the Linux matrix: the shared leg saves its own entry."""
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    families = {
+        name: step["with"].get("shared-key")
+        for name, job in workflow["jobs"].items()
+        for step in job.get("steps", [])
+        if step.get("uses") == "./.github/actions/rust-cache"
+    }
+    assert families["shared"] == "cua-driver-e2e-shared"
+    assert list(families.values()).count("cua-driver-e2e-shared") == 1

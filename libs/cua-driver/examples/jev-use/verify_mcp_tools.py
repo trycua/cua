@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
+from pathlib import Path
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "python"))
+
+from driver_env import driver_environment  # noqa: E402
 
 
 REQUIRED_TOOLS = {
@@ -16,7 +22,9 @@ REQUIRED_TOOLS = {
     "list_windows",
 }
 async def verify() -> None:
-    params = StdioServerParameters(command=os.getenv("CUA_DRIVER_BIN", "cua-driver"), args=["mcp"])
+    params = StdioServerParameters(
+        command=os.getenv("CUA_DRIVER_BIN", "cua-driver"), args=["mcp"], env=driver_environment()
+    )
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             initialized = await session.initialize()

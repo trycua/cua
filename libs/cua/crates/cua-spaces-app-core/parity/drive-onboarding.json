@@ -1,0 +1,807 @@
+{
+  "name": "drive-onboarding",
+  "about": "The first run's Cua Volume page (with the Cua Volume experiment on): its miniature (the volume mounting in a Finder sidebar, three files flying over from a Space), then the page on a Mac (off by default, ticked, mounting, waiting for the extension's approval, Done), on Linux (a mount), with no daemon answer (an honest disabled line), on Windows (no page), and the three places files can live: this Mac (nothing to set up), your S3 bucket (filled in, a failed test, a passing one, saved, then mounted) and set up later; the bucket path starts from the agent prompt (fields on request), and a bucket the agent connects is noticed and adopted.",
+  "times": [
+    0,
+    400,
+    900,
+    1200,
+    1700,
+    2400,
+    3000,
+    4400,
+    4799
+  ],
+  "runs": [
+    {
+      "name": "mac",
+      "steps": [
+        {
+          "action": {
+            "type": "experiments-loaded",
+            "experiments": {
+              "cuaVolume": true
+            }
+          }
+        },
+        {
+          "action": {
+            "type": "start"
+          }
+        },
+        {
+          "action": {
+            "type": "signin-done"
+          }
+        },
+        {
+          "action": {
+            "type": "agents-done",
+            "configured": []
+          }
+        },
+        {
+          "action": {
+            "type": "drive-storage-loaded",
+            "storage": {
+              "backend": "fs",
+              "fs_path": "/Users/maya/.cua/volume/data",
+              "s3": null,
+              "has_keys": false
+            },
+            "home": "/Users/maya"
+          }
+        },
+        {
+          "step": "checking",
+          "action": {
+            "type": "presentation-done"
+          }
+        },
+        {
+          "step": "off by default",
+          "action": {
+            "type": "drive-checked",
+            "os": "macos",
+            "status": {
+              "enabled": false,
+              "state": "off",
+              "method": "fskit",
+              "path": null,
+              "volume_name": "Cua Volume"
+            }
+          }
+        },
+        {
+          "step": "ticked",
+          "action": {
+            "type": "drive-toggled",
+            "on": true
+          }
+        },
+        {
+          "step": "mounting",
+          "action": {
+            "type": "drive-continue"
+          }
+        },
+        {
+          "step": "needs approval",
+          "action": {
+            "type": "drive-mounted",
+            "status": {
+              "enabled": true,
+              "state": "needs_approval",
+              "method": "fskit",
+              "path": null,
+              "volume_name": "Cua Volume",
+              "detail": "Turn on Cua Volume in File System Extensions.",
+              "settings_url": "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"
+            }
+          }
+        },
+        {
+          "step": "continue",
+          "action": {
+            "type": "drive-continue"
+          }
+        },
+        {
+          "step": "done",
+          "action": {
+            "type": "mode-chosen",
+            "mode": "client"
+          }
+        }
+      ]
+    },
+    {
+      "name": "linux",
+      "steps": [
+        {
+          "action": {
+            "type": "experiments-loaded",
+            "experiments": {
+              "cuaVolume": true
+            }
+          }
+        },
+        {
+          "action": {
+            "type": "drive-checked",
+            "os": "linux",
+            "status": {
+              "enabled": false,
+              "state": "off",
+              "method": "fuse",
+              "volume_name": "Cua Volume"
+            }
+          }
+        },
+        {
+          "action": {
+            "type": "start"
+          }
+        },
+        {
+          "action": {
+            "type": "signin-done"
+          }
+        },
+        {
+          "action": {
+            "type": "agents-done",
+            "configured": []
+          }
+        },
+        {
+          "step": "unticked",
+          "action": {
+            "type": "presentation-done"
+          }
+        },
+        {
+          "step": "ticked",
+          "action": {
+            "type": "drive-toggled",
+            "on": true
+          }
+        },
+        {
+          "step": "mounting",
+          "action": {
+            "type": "drive-continue"
+          }
+        },
+        {
+          "step": "mounted",
+          "action": {
+            "type": "drive-mounted",
+            "status": {
+              "enabled": true,
+              "state": "mounted",
+              "method": "fuse",
+              "path": "/home/maya/Cua Volume",
+              "volume_name": "Cua Volume"
+            }
+          }
+        },
+        {
+          "step": "done",
+          "action": {
+            "type": "mode-chosen",
+            "mode": "client"
+          }
+        }
+      ]
+    },
+    {
+      "name": "no daemon",
+      "steps": [
+        {
+          "action": {
+            "type": "experiments-loaded",
+            "experiments": {
+              "cuaVolume": true
+            }
+          }
+        },
+        {
+          "action": {
+            "type": "start"
+          }
+        },
+        {
+          "action": {
+            "type": "signin-done"
+          }
+        },
+        {
+          "action": {
+            "type": "agents-done",
+            "configured": []
+          }
+        },
+        {
+          "action": {
+            "type": "presentation-done"
+          }
+        },
+        {
+          "step": "not available",
+          "action": {
+            "type": "drive-checked",
+            "os": "macos",
+            "status": null
+          }
+        },
+        {
+          "step": "ticking does nothing",
+          "action": {
+            "type": "drive-toggled",
+            "on": true
+          }
+        },
+        {
+          "step": "continue",
+          "action": {
+            "type": "drive-continue"
+          }
+        }
+      ]
+    },
+    {
+      "name": "windows",
+      "steps": [
+        {
+          "action": {
+            "type": "experiments-loaded",
+            "experiments": {
+              "cuaVolume": true
+            }
+          }
+        },
+        {
+          "action": {
+            "type": "drive-checked",
+            "os": "windows",
+            "status": {
+              "state": "unsupported",
+              "method": "none"
+            }
+          }
+        },
+        {
+          "action": {
+            "type": "start"
+          }
+        },
+        {
+          "action": {
+            "type": "signin-done"
+          }
+        },
+        {
+          "step": "presentation",
+          "action": {
+            "type": "agents-done",
+            "configured": []
+          }
+        },
+        {
+          "step": "no drive page",
+          "action": {
+            "type": "presentation-done"
+          }
+        },
+        {
+          "step": "back",
+          "action": {
+            "type": "back"
+          }
+        },
+        {
+          "action": {
+            "type": "presentation-done"
+          }
+        },
+        {
+          "step": "done",
+          "action": {
+            "type": "mode-chosen",
+            "mode": "client"
+          }
+        }
+      ]
+    },
+    {
+      "name": "this mac",
+      "steps": [
+        {
+          "action": {
+            "type": "experiments-loaded",
+            "experiments": {
+              "cuaVolume": true
+            }
+          }
+        },
+        {
+          "action": {
+            "type": "start"
+          }
+        },
+        {
+          "action": {
+            "type": "signin-done"
+          }
+        },
+        {
+          "action": {
+            "type": "agents-done",
+            "configured": []
+          }
+        },
+        {
+          "action": {
+            "type": "drive-checked",
+            "os": "macos",
+            "status": {
+              "enabled": false,
+              "state": "off",
+              "method": "nfs",
+              "path": null,
+              "volume_name": "Cua Volume"
+            }
+          }
+        },
+        {
+          "action": {
+            "type": "drive-storage-loaded",
+            "storage": {
+              "backend": "fs",
+              "fs_path": "/Users/maya/.cua/volume/data",
+              "s3": null,
+              "has_keys": false
+            },
+            "home": "/Users/maya"
+          }
+        },
+        {
+          "action": {
+            "type": "drive-checked",
+            "os": "macos",
+            "status": {
+              "enabled": true,
+              "state": "mounted",
+              "method": "nfs",
+              "path": "/Users/maya/Cua Volume",
+              "volume_name": "Cua Volume"
+            }
+          }
+        },
+        {
+          "step": "this mac by default",
+          "action": {
+            "type": "presentation-done"
+          }
+        },
+        {
+          "step": "continue",
+          "action": {
+            "type": "drive-continue"
+          }
+        }
+      ]
+    },
+    {
+      "name": "your bucket",
+      "steps": [
+        {
+          "action": {
+            "type": "experiments-loaded",
+            "experiments": {
+              "cuaVolume": true
+            }
+          }
+        },
+        {
+          "action": {
+            "type": "start"
+          }
+        },
+        {
+          "action": {
+            "type": "signin-done"
+          }
+        },
+        {
+          "action": {
+            "type": "agents-done",
+            "configured": []
+          }
+        },
+        {
+          "action": {
+            "type": "drive-checked",
+            "os": "macos",
+            "status": {
+              "enabled": false,
+              "state": "off",
+              "method": "nfs",
+              "path": null,
+              "volume_name": "Cua Volume"
+            }
+          }
+        },
+        {
+          "action": {
+            "type": "drive-storage-loaded",
+            "storage": {
+              "backend": "fs",
+              "fs_path": "/Users/maya/.cua/volume/data",
+              "s3": null,
+              "has_keys": false
+            },
+            "home": "/Users/maya"
+          }
+        },
+        {
+          "action": {
+            "type": "presentation-done"
+          }
+        },
+        {
+          "step": "your bucket",
+          "action": {
+            "type": "storage-chosen",
+            "choice": "s3"
+          }
+        },
+        {
+          "step": "enter details manually",
+          "action": {
+            "type": "drive-storage",
+            "action": {
+              "type": "show-manual",
+              "on": true
+            }
+          }
+        },
+        {
+          "action": {
+            "type": "drive-storage",
+            "action": {
+              "type": "set-field",
+              "field": "endpoint",
+              "value": "http://127.0.0.1:9000"
+            }
+          }
+        },
+        {
+          "action": {
+            "type": "drive-storage",
+            "action": {
+              "type": "set-field",
+              "field": "bucket",
+              "value": "cua-volume"
+            }
+          }
+        },
+        {
+          "action": {
+            "type": "drive-storage",
+            "action": {
+              "type": "set-path-style",
+              "on": true
+            }
+          }
+        },
+        {
+          "action": {
+            "type": "drive-storage",
+            "action": {
+              "type": "set-field",
+              "field": "access-key-id",
+              "value": "maya-drive"
+            }
+          }
+        },
+        {
+          "step": "filled in",
+          "action": {
+            "type": "drive-storage",
+            "action": {
+              "type": "set-field",
+              "field": "secret-access-key",
+              "value": "fixture-secret"
+            }
+          }
+        },
+        {
+          "step": "test",
+          "action": {
+            "type": "drive-storage",
+            "action": {
+              "type": "test"
+            }
+          }
+        },
+        {
+          "step": "versioning off",
+          "action": {
+            "type": "drive-storage",
+            "action": {
+              "type": "checked",
+              "check": {
+                "ok": false,
+                "reachable": true,
+                "authorized": true,
+                "versioning": false,
+                "detail": "Bucket versioning is off; turn it on for cua-volume.",
+                "applied": false
+              }
+            }
+          }
+        },
+        {
+          "action": {
+            "type": "drive-storage",
+            "action": {
+              "type": "test"
+            }
+          }
+        },
+        {
+          "step": "connected",
+          "action": {
+            "type": "drive-storage",
+            "action": {
+              "type": "checked",
+              "check": {
+                "ok": true,
+                "reachable": true,
+                "authorized": true,
+                "versioning": true,
+                "detail": null,
+                "applied": false
+              }
+            }
+          }
+        },
+        {
+          "step": "ticked",
+          "action": {
+            "type": "drive-toggled",
+            "on": true
+          }
+        },
+        {
+          "step": "saving",
+          "action": {
+            "type": "drive-continue"
+          }
+        },
+        {
+          "step": "saved, mounting",
+          "action": {
+            "type": "drive-storage-saved",
+            "check": {
+              "ok": true,
+              "reachable": true,
+              "authorized": true,
+              "versioning": true,
+              "detail": null,
+              "applied": true
+            }
+          }
+        },
+        {
+          "step": "mounted",
+          "action": {
+            "type": "drive-mounted",
+            "status": {
+              "enabled": true,
+              "state": "mounted",
+              "method": "nfs",
+              "path": "/Users/maya/Cua Volume",
+              "volume_name": "Cua Volume"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "agent prompt",
+      "steps": [
+        {
+          "action": {
+            "type": "experiments-loaded",
+            "experiments": {
+              "cuaVolume": true
+            }
+          }
+        },
+        {
+          "action": {
+            "type": "start"
+          }
+        },
+        {
+          "action": {
+            "type": "signin-done"
+          }
+        },
+        {
+          "action": {
+            "type": "agents-done",
+            "configured": []
+          }
+        },
+        {
+          "action": {
+            "type": "drive-checked",
+            "os": "macos",
+            "status": {
+              "enabled": false,
+              "state": "off",
+              "method": "nfs",
+              "path": null,
+              "volume_name": "Cua Volume"
+            }
+          }
+        },
+        {
+          "action": {
+            "type": "drive-storage-loaded",
+            "storage": {
+              "backend": "fs",
+              "fs_path": "/Users/maya/.cua/volume/data",
+              "s3": null,
+              "has_keys": false
+            },
+            "home": "/Users/maya"
+          }
+        },
+        {
+          "action": {
+            "type": "presentation-done"
+          }
+        },
+        {
+          "step": "the prompt",
+          "action": {
+            "type": "storage-chosen",
+            "choice": "s3"
+          }
+        },
+        {
+          "step": "still waiting",
+          "action": {
+            "type": "drive-storage-loaded",
+            "storage": {
+              "backend": "fs",
+              "fs_path": "/Users/maya/.cua/volume/data",
+              "s3": null,
+              "has_keys": false
+            },
+            "home": "/Users/maya"
+          }
+        },
+        {
+          "step": "the agent connected it",
+          "action": {
+            "type": "drive-storage-loaded",
+            "storage": {
+              "backend": "s3",
+              "fs_path": "/Users/maya/.cua/volume/data",
+              "s3": {
+                "endpoint": null,
+                "region": "us-west-2",
+                "bucket": "maya-cua-volume",
+                "root": "",
+                "path_style": false
+              },
+              "has_keys": true
+            },
+            "home": "/Users/maya"
+          }
+        },
+        {
+          "step": "connected",
+          "action": {
+            "type": "drive-storage",
+            "action": {
+              "type": "adopted",
+              "check": {
+                "ok": true,
+                "reachable": true,
+                "authorized": true,
+                "versioning": true,
+                "detail": null,
+                "applied": true
+              }
+            }
+          }
+        },
+        {
+          "step": "continue",
+          "action": {
+            "type": "drive-continue"
+          }
+        }
+      ]
+    },
+    {
+      "name": "later",
+      "steps": [
+        {
+          "action": {
+            "type": "experiments-loaded",
+            "experiments": {
+              "cuaVolume": true
+            }
+          }
+        },
+        {
+          "action": {
+            "type": "start"
+          }
+        },
+        {
+          "action": {
+            "type": "signin-done"
+          }
+        },
+        {
+          "action": {
+            "type": "agents-done",
+            "configured": []
+          }
+        },
+        {
+          "action": {
+            "type": "drive-checked",
+            "os": "macos",
+            "status": {
+              "enabled": false,
+              "state": "off",
+              "method": "nfs",
+              "path": null,
+              "volume_name": "Cua Volume"
+            }
+          }
+        },
+        {
+          "action": {
+            "type": "drive-storage-loaded",
+            "storage": {
+              "backend": "fs",
+              "fs_path": "/Users/maya/.cua/volume/data",
+              "s3": null,
+              "has_keys": false
+            },
+            "home": "/Users/maya"
+          }
+        },
+        {
+          "action": {
+            "type": "presentation-done"
+          }
+        },
+        {
+          "step": "set up later",
+          "action": {
+            "type": "storage-chosen",
+            "choice": "later"
+          }
+        },
+        {
+          "step": "continue",
+          "action": {
+            "type": "drive-continue"
+          }
+        }
+      ]
+    }
+  ]
+}

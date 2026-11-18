@@ -107,6 +107,35 @@ desktop certification, and it does not replace the desktop matrix.
 
 ## Desktop runners
 
+### Canonical and supporting runners
+
+This table lists every desktop runner and its evidence authority. Only a
+canonical runner, run in full at the exact source SHA, certifies desktop
+behavior. A scoped gate certifies only its own scope and does not replace
+the three OS rows. Supporting runners help with diagnosis or convenience and
+never certify.
+
+| Runner | Workflow or environment | Authority |
+| --- | --- | --- |
+| `scripts/ci/linux/run-rust-e2e.sh` | `e2e-rust-linux.yml`, GitHub-hosted X11 | Canonical: Linux |
+| `scripts/ci/windows/run-rust-e2e.ps1 -RequireGui` | `e2e-rust-windows.yml`, GitHub-hosted, when its strict desktop preflight passes | Canonical: Windows |
+| `libs/cua-driver/tests/runners/macos-lume/run-all.sh` | Logged-in, TCC-authorized Lume worker; every complete run includes the standalone-browser matrix | Canonical: macOS |
+| `scripts/ci/macos/run-rust-e2e.sh` | Called by the Lume wrapper and the hosted macOS script | Matrix implementation behind the macOS rows; refuses to run without the wrapper's unrestricted daemon |
+| `scripts/ci/run-rust-standalone-browser-e2e.sh`, `scripts/ci/windows/run-rust-standalone-browser-e2e.ps1` | `e2e-rust-standalone-browsers.yml`; the macOS Lume wrapper runs it as well | Scoped gate: installed Chrome and Edge, required for browser-facing changes |
+| `scripts/ci/linux/run-rust-e2e-wayland.sh`, `run-rust-e2e-inject.sh` | `e2e-rust-linux-wayland.yml` (`sway`, `sway-xwayland`, `cua-compositor`, `niri`) | Scoped gate: native Wayland compositor lanes, kept separate from X11 |
+| `run-rust-e2e.sh` in a native Hyprland desktop, plus the allowlisted `hyprland_*` rows | Maintainer's prepared native Hyprland desktop | Scoped gate: native Hyprland; no automated lane |
+| `scripts/ci/macos/run-hosted-rust-e2e.sh` | `e2e-rust-macos.yml` with `mode=hosted` | Supporting: supplemental hosted macOS matrix; does not replace Lume |
+| `scripts/ci/linux/run-rust-e2e-desktop.sh` | Representative GNOME or KDE maintainer desktop | Supporting: environment coverage |
+| `libs/cua-driver/tests/runners/windows/run-all.ps1` | Local RDP or console session | Supporting: convenience wrapper that calls the canonical Windows runner; certify through the canonical row |
+| `libs/cua-driver/tests/runners/windows-sandbox/` | Windows Sandbox | Supporting: legacy local smoke; never certifies |
+| Azure RDP replay of the Windows runner | Maintainer Azure VM | Supporting: optional environment-parity replay, or a fallback when the hosted preflight cannot prove a capability |
+| `scripts/ci/linux/run-valgrind-e2e.py` | `ci-cua-driver-valgrind.yml` | Supporting: memory-safety diagnostic |
+| `scripts/ci/linux/preflight-rust-e2e.sh`, `scripts/ci/windows/preflight-rust-e2e.ps1` | `ci-cua-driver-preflight.yml` or a local desktop | Supporting: lightweight host readiness only |
+| One-off app smokes and manual recordings | Any | Supporting: diagnostics only |
+
+Nix source checks (`ci-nix-linux.yml`) are a separate build and unit gate,
+not a desktop runner.
+
 ### Choose the evidence tier
 
 Use the narrowest useful tier during implementation, then complete the required
@@ -138,6 +167,20 @@ before reusing any evidence. An empty list is advice about *new changes since
 the tested SHA*, not a certification result or a waiver of the complete stable
 candidate matrix. Keep the earlier exact-SHA result and account for each
 subsequent change in the PR review record.
+
+### Automatic release gate
+
+Stable Cua Driver releases need no manual E2E or publish dispatch. The
+`cua-driver-rs-v*` tag that Release Please creates starts
+`.github/workflows/cd-rust-cua-driver.yml`, which calls the Linux, Windows,
+hosted macOS, and standalone-browser E2E workflows through `workflow_call`
+against the exact tag SHA. The draft release is published only when those
+suites, the builds, and the release artifact checks pass. Nightly builds run
+the same four suites against the nightly source SHA whenever the nightly plan
+builds. A failed suite fails the nightly run and its prerelease is not
+published. The logged-in macOS Lume matrix is not part of the automatic gate;
+it remains pre-merge evidence. Manual dispatch of the same workflows stays the
+way to certify a pull request candidate.
 
 ### Quick development feedback
 
@@ -215,7 +258,7 @@ with each measurement.
 | Runner                          | Session                                                            | Canonical command |
 | ------------------------------- | ------------------------------------------------------------------ | ----------------- |
 | `linux/run-rust-e2e.sh`         | Existing Linux X11 or Wayland desktop                              | no selector       |
-| `linux/run-rust-e2e-wayland.sh` | Headless native Sway session                                       | no selector       |
+| `linux/run-rust-e2e-wayland.sh` | Headless native Sway, or nested niri with `CUA_E2E_WAYLAND_SESSION=niri` | no selector |
 | `linux/run-rust-e2e-inject.sh`  | Nested `cua-compositor` session                                    | no selector       |
 | `linux/run-rust-e2e-desktop.sh` | Existing representative Linux desktop                              | no selector       |
 | `windows/run-rust-e2e.ps1`      | Windows console/RDP user session                                   | `-RequireGui`     |
@@ -223,8 +266,9 @@ with each measurement.
 
 Use the command without a selector for the canonical complete run. CI sets the
 private `CUA_E2E_INTERNAL_LANE` partition to `shared`, `native`, or `capture`
-when it fans the same matrix into independent jobs. Those values are not public
-alternate suites.
+when it fans the same matrix into independent jobs. The hosted macOS wrapper
+also accepts `browser`, which it routes to the standalone browser suite instead
+of the repo-local matrix. Those values are not public alternate suites.
 
 The complete harness result at the exact source SHA is the behavioral gate.
 Manual app smokes, standalone videos, legacy runners, and environment-parity
@@ -235,13 +279,12 @@ complete repo-local matrix.
 The maintainer-facing macOS command is
 `libs/cua-driver/tests/runners/macos-lume/run-all.sh`. It verifies the private
 Lume seed, installs the exact committed source, and then delegates to the thin
-`macos/run-rust-e2e.sh` matrix runner above. Pass `--standalone-browser` to run
-the optional installed Chrome/Edge browser matrix after the canonical repo-local
-harness matrix.
+`macos/run-rust-e2e.sh` matrix runner above. It then always runs the installed
+Chrome/Edge browser matrix after the canonical repo-local harness matrix.
 
 Run the canonical logged-in Lume gate directly from Terminal in the disposable
 guest; do not install or register a GitHub Actions runner in that guest. After a
-successful `run-all.sh --standalone-browser` invocation, bundle the private
+successful `run-all.sh` invocation, bundle the private
 artifact directories, calculate their SHA-256 digest, and dispatch
 `.github/workflows/e2e-rust-macos.yml` in `lume` mode at the exact candidate SHA
 with the harness run ID and digest. That protected `ubuntu-latest` job only
@@ -257,14 +300,21 @@ exact source SHA. Probe permission checks describe only the temporary probe
 process. Dispatch only a reviewed commit SHA; the selected source is executable
 test code and the bootstrap uses the hosted runner's passwordless sudo policy.
 
-After that prerequisite passes, three fresh hosted runners execute the shared,
-native, and capture partitions through `macos/run-hosted-rust-e2e.sh`. Each
+After that prerequisite passes, four fresh hosted runners execute the shared,
+native, capture, and browser lanes through `macos/run-hosted-rust-e2e.sh`. Each
 runner refuses unexpected hosts or pre-existing app state, creates a temporary
 certificate-backed identity and Keychain, installs the exact source as
 `CuaDriverLocal.app`, seeds only its Accessibility and Screen Capture TCC rows,
 records the app's separate `replayd` approval before its first direct capture,
 verifies the daemon-attributed permission result, and delegates to
-`macos/run-rust-e2e.sh`. GitHub's image-level approval covers the hosted runner
+`macos/run-rust-e2e.sh`. The browser lane instead runs
+`run-rust-standalone-browser-e2e.sh` against the same unrestricted installed
+daemon for the image's Google Chrome and Microsoft Edge, writing evidence to
+`artifacts/cua-driver/macos-standalone-browser/` like the Lume gate. It fails
+before bootstrap when either browser is missing or fails the driver's vendor
+code-signing requirement, and it never shrinks the product set. The image's Edge
+carries a stray `com.apple.FinderInfo` attribute that strict verification
+rejects; the lane removes only that unsigned attribute and records each path. The `certify` job requires every lane. GitHub's image-level approval covers the hosted runner
 agent, while the bundled driver is its own responsible ScreenCaptureKit client
 and would otherwise show the private-window-picker reminder over the headed
 test. The lane uploads bootstrap, structured result, log, and video evidence
@@ -289,6 +339,32 @@ active output, and requires `get_window_state` to return
 the fixture accessibility state are external focus, workspace, and mutation
 oracles for that targeted regression.
 
+Run the niri lane with `CUA_E2E_WAYLAND_SESSION=niri` through
+`nix develop .#cua-driver-niri-e2e`. niri has no headless backend, so the
+wrapper starts a headless `cage` in a private runtime directory, sizes its
+output to 1920x1080 with `wlr-randr`, and runs niri's winit backend inside it.
+Before delegating to `run-rust-e2e.sh` it requires that niri drives only its
+`winit` output and that one niri process serves both the exported
+`WAYLAND_DISPLAY` and `NIRI_SOCKET`, and it writes `niri-preflight.json` with
+the niri and cage versions. Harness windows float, the sentinel opens
+fullscreen, animations are off, and `prefer-no-csd` keeps GTK 3 and Chromium
+frames the size niri reports, as Sway's server-side decorations do. `CUA_E2E_NIRI_SCALE` changes the output
+scale for focused fractional-scale checks; harness windows keep 940x780
+physical pixels, so at 1.5 they are 626x520 logical inside a 1280x720 output. The shell patches `wf-recorder`
+0.6.0, which otherwise binds `linux-dmabuf` version 4 that a GPU-less niri does
+not offer.
+
+Every Wayland mode unsets inherited `WAYLAND_SOCKET`, `NIRI_SOCKET`,
+`SWAYSOCK`, `I3SOCK`, `HYPRLAND_INSTANCE_SIGNATURE`,
+`DBUS_SESSION_BUS_ADDRESS`, and `AT_SPI_BUS_ADDRESS` before it starts its
+compositor, then starts its own session bus, AT-SPI bus, and Secret Service
+with keyrings under its runtime directory. It asks the AT-SPI launcher for
+dbus-daemon through `ATSPI_DBUS_IMPLEMENTATION`, because inside a systemd user
+unit a launcher built to prefer dbus-broker would activate services through
+the host's systemd user manager. at-spi2-core 2.60.1 in the Nix shells honours
+it. A launcher from another source that ignores the variable can still reach
+the host's activation, so run the wrapper from the Nix shells.
+
 Run the nested compositor wrapper through
 `nix develop .#cua-driver-inject-e2e`. This environment is experimental and
 proves only the private compositor-owned route. Use `run-rust-e2e-desktop.sh`
@@ -299,3 +375,88 @@ an interactive desktop. The workflow also accepts a runner label so maintainers
 can replay the same command on an Azure VM with an active RDP session for
 environment parity; that replay is not a separate test definition or source of
 behavioral truth.
+
+## Cua Driver release safety
+
+The canonical installers (`https://cua.ai/driver/install.sh` and `install.ps1`) install the version baked into them on `main`. If that version is broken, every fresh install breaks. This happened with 0.28.3: its macOS app was published unsigned, and the installer correctly refused it (#4109).
+
+A stable release has exactly one path to users, and nobody dispatches anything along it:
+
+1. Merging the Release Please pull request creates the `cua-driver-rs-v*` tag and a draft release.
+2. The tag push runs `.github/workflows/cd-rust-cua-driver.yml`. It builds every artifact, runs the Linux, Windows, hosted macOS, and standalone-browser E2E gates against the tag SHA, and verifies the candidate signatures.
+3. `release` publishes the draft only after all of those pass.
+4. The published assets are verified again. Only then does `advance-installer-version` bake the new version into the installers on `main`.
+
+These gates stop a broken release from being published or baked:
+
+| Gate | Where | Blocks |
+| --- | --- | --- |
+| Notarization is required to publish | the first preflight step, the macOS build, and the `release` job | any tag build that has macOS notarization disabled |
+| Candidate signatures | `verify-macos-release-signatures` and `verify-windows-release-signatures`, both required by `release` alongside the E2E gates | uploading archives whose `CuaDriver.app` is not Developer ID signed by `YCK386LBJ7`, not accepted as `Notarized Developer ID`, or not stapled, or whose Windows binaries lack a valid, timestamped Authenticode signature from Cua AI, Inc. |
+| Published-release verification | `verify-published-signatures` and `verify-published-installers`, both required by `advance-installer-version` | baking a version whose public assets fail the same signature checks, or that the canonical installers cannot install on macOS, Linux, or Windows |
+| Withdrawn versions | `.github/release-state/cua-driver-rs-withdrawn-versions` | baking, certifying, or installing a listed version |
+| Installer canary | `.github/workflows/monitor-branded-installers.yml` | nothing, but it opens or updates a `bug` issue within six hours when a default install fails |
+
+Every gate is a required `needs:` with no `always()` bypass. A failed gate therefore leaves the draft unpublished, or the installers on the previous version. To recover a flaky gate, re-run the failed jobs of the tag run. That re-runs the push event; it is not a publish dispatch. Don't publish, upload, or edit release assets by hand to work around a failed gate. Fix the cause and ship a new release.
+
+### Withdrawn versions
+
+The withdrawn list has one `x.y.z # reason` entry per line. The installers can't read repository files when they run through `curl | bash` or `irm | iex`, so each one carries a copy of the list:
+- `CUA_DRIVER_RS_WITHDRAWN_VERSIONS` in `libs/cua-driver/scripts/_install-rust.sh`
+- `$Script:CuaDriverRsWithdrawnVersions` in `libs/cua-driver/scripts/install.ps1`
+
+`validate_release_versions.py` fails if either copy differs from the file, or if the baked version is withdrawn.
+
+The installers treat a withdrawn version this way:
+- **Pin:** an explicit pin is refused.
+- **API resolution:** withdrawn versions are skipped.
+- **Stale baked value:** an installer copy that still bakes a withdrawn version prints a warning and resolves the newest eligible release instead.
+
+A macOS signature failure always fails closed. The installer never downgrades to another release on its own.
+
+To check a published release on a Mac:
+
+```bash
+gh release download cua-driver-rs-v0.28.2 --repo trycua/cua --dir /tmp/cua-release \
+  --pattern 'cua-driver-rs-0.28.2-darwin-*.tar.gz'
+python3 .github/scripts/verify_cua_driver_release_signatures.py macos \
+  --artifacts /tmp/cua-release --version 0.28.2 --legacy-unsigned-node-runtime
+```
+
+Releases published before #4168 ship an unsigned `cua_driver_node_runtime.node`, so checking one of them needs `--legacy-unsigned-node-runtime`. That flag skips only the Node runtime. Release candidates are always verified without it.
+
+To check Windows, run the `windows` subcommand on a Windows machine.
+
+### Runbook: roll the installers back to the last good release
+
+Use this runbook when the canary issue opens, or when users report that default installs fail. #4150 is the worked example.
+
+1. **Confirm the failure.** Read the canary run. Then run the verifier above against the baked version (`.github/release-state/cua-driver-rs-published-version`).
+2. **Choose the rollback version.** Pick the newest earlier release that passes the verifier on macOS and Windows and whose installer-compatibility run passes. List assets with `gh release view cua-driver-rs-v<version> --json assets`.
+3. **Open a `fix(cua-driver): ...` pull request** that makes these changes:
+   - Add the bad version with its reason and issue link to `.github/release-state/cua-driver-rs-withdrawn-versions`, and to both installer copies of the list.
+   - Set `CUA_DRIVER_RS_BAKED_VERSION` in `_install-rust.sh`, `$Script:CuaDriverRsBakedVersion` in `install.ps1`, and `.github/release-state/cua-driver-rs-published-version` to the rollback version. The three must agree.
+   - Run `python3 .github/scripts/validate_release_versions.py --product driver` and `python3 -m pytest libs/cua-driver/scripts/tests/test_install_version_fallback.py`.
+4. **Merge it.** The branded endpoints serve `main`. The canary runs on the push, so compare its installed version with the rollback version. To recheck the public one-liners after the endpoints refresh, dispatch `Monitor branded installer endpoints`.
+5. **Ship the fix as a new Release Please release.** Its tag run bakes the installers forward automatically once the published assets pass verification. Leave the withdrawn release and its assets in place for audit.
+
+## Cua Driver desktop E2E: quick lane on PRs, full suite after merge and at release
+
+The stable tag run certifies the exact tag commit with every desktop E2E lane (Linux, Windows, macOS hosted, standalone browsers). `E2E: Cua Driver release gate` (`.github/workflows/e2e-cua-driver-release-gate.yml`) runs the same lanes earlier, without publishing. It has two sizes:
+
+- **Quick lane (pull requests).** The core paths on each OS, on the Electron harness: the `shared` lane on Windows, Linux and hosted macOS (click, type, scroll, drag, focus, background input), plus the Linux verification-skill proof that `E2E: Rust Linux interactive` already runs on PRs. The Tauri, WebView2, WPF, WinUI3 and GTK harnesses, the capture and installer lanes and the standalone browser lanes are left to the full run. The quick lane passes `lane: shared` and `harness_filter: electron` to the Windows and Linux workflows, and `quick=true` to the hosted macOS dispatch (not a certification: its result artifact is named `rust-macos-hosted-quick-result-*`).
+- **Full suite.** Every lane, 26 to 47 minutes each. It runs after merge and at release.
+
+| Trigger | When | Size | Result |
+| --- | --- | --- | --- |
+| Push to `main` | The pushed commits touch a gated path (`.github/scripts/cua_driver_e2e_gate_paths.py`). Runs queue; a burst of merges leaves one pending run for the newest commit | full | A failure alerts (`workflow-failure-alerts.yml`, Alertmanager) and opens or updates the issue below |
+| Nightly, 06:00 UTC | main's HEAD | full | Same. The first fully clean full run closes the issue |
+| Stable tag run | The exact release commit (`cd-rust-cua-driver.yml`) | full | Blocks publishing until every lane is green |
+| Pull request | The `e2e-gate` label is present, or the PR touches the cursor overlay, focus, background input or browser routing paths. release-please PRs skip the lanes (the tag gate runs them on the release commit) unless labelled | quick | The quick lanes run on the PR merge commit. |
+| Other pull requests | Everything else | none | The lanes are skipped and `E2E gate / result` passes at once. |
+
+A failed full run opens or updates one issue, "Cua Driver release gate failing on main (nightly)" (the title predates the post-merge run). The failed run also posts to #releases through the GitHub Slack app workflow-run subscription. A break the quick lane could not see, a Windows break included, is already on `main` when the full run finds it, so it is **fixed forward** with a new PR; the stable tag gate blocks a release until `main` is green again.
+
+**Retry once.** Inside each lane a failed case is rerun once (`lib/e2e-retry-once.sh`, and `Invoke-CargoTest` in the Windows runner). A pass on the retry is flaky: it is listed under "Flaky cases" in the job summary and in the tracking issue, and does not fail the gate. Two failures are a real failure. The first attempt's rows, videos and log are kept under `retried-attempts/` in the lane artifact.
+
+**Required check.** Branch protection cannot require a check by path, so the workflow always runs and `E2E gate / result` is the one check to require on `main`. It is green when the lanes are not needed. A repository admin has to add it under Settings, Branches. Until then the gate is advisory on pull requests; the label, path and release-PR triggers still run the quick lanes.

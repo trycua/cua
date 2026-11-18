@@ -26,10 +26,10 @@ uv run python scripts/package_kicad_submission.py <submission.json> --output scr
 ```
 
 **Input JSON fields required:**
-- `submission_id` — unique ID (becomes the task directory name)
-- `circuit_prompt` — task description shown to the agent
-- `netlist.s3Uri` — S3 URI of the reference netlist zip
-- `circuit_pcb_file.s3Uri` — S3 URI of the initial KiCad project zip
+- `submission_id`: unique ID (becomes the task directory name)
+- `circuit_prompt`: task description shown to the agent
+- `netlist.s3Uri`: S3 URI of the reference netlist zip
+- `circuit_pcb_file.s3Uri`: S3 URI of the initial KiCad project zip
 
 **Output structure:**
 ```

@@ -39,27 +39,40 @@ class MetaDataset(Dataset):
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
-        self.examples: list[ChoiceExample] = []
+        self.blob = self.path.read_bytes()
+        self.spans: list[tuple[int, int, int]] = []
         self.actions: list[str] = []
-        with self.path.open(encoding="utf-8") as handle:
-            for line_number, line in enumerate(handle, start=1):
-                if not line.strip():
-                    continue
-                try:
-                    payload = json.loads(line)
-                    example = validate_example(payload)
-                except (AttributeError, json.JSONDecodeError, TypeError, ValueError) as error:
-                    raise ValueError(f"invalid example at {self.path}:{line_number}") from error
-                self.examples.append(example)
+        start = 0
+        line_number = 1
+        while start < len(self.blob):
+            newline = self.blob.find(b"\n", start)
+            end = len(self.blob) if newline == -1 else newline
+            if self.blob[start:end].strip():
+                payload, example = self._parse(start, end, line_number)
+                self.spans.append((start, end, line_number))
                 metadata = payload.get("meta")
                 action = metadata.get("action") if isinstance(metadata, Mapping) else None
                 self.actions.append(action or action_name(example))
+            if newline == -1:
+                break
+            start = newline + 1
+            line_number += 1
+
+    def _parse(self, start: int, end: int, line_number: int) -> tuple[Mapping, ChoiceExample]:
+        try:
+            payload = json.loads(self.blob[start:end])
+            example = validate_example(payload)
+        except (AttributeError, json.JSONDecodeError, TypeError, ValueError) as error:
+            raise ValueError(f"invalid example at {self.path}:{line_number}") from error
+        return payload, example
 
     def __len__(self) -> int:
-        return len(self.examples)
+        return len(self.spans)
 
     def __getitem__(self, index: int) -> ChoiceExample:
-        return self.examples[index]
+        start, end, line_number = self.spans[index]
+        _, example = self._parse(start, end, line_number)
+        return example
 
 
 def action_name(example: ChoiceExample) -> str:

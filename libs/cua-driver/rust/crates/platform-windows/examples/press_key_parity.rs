@@ -1,6 +1,11 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Parity check for `press_key`.
 
+#[cfg(target_os = "windows")]
 use std::io::{Read, Write};
+#[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "windows")]
@@ -53,15 +58,15 @@ fn main() {
     );
     println!("Missing-key err OK: {err1:?}");
 
-    // 2. element_index without window_id should error per Swift.
+    // 2. A stale element_token without window_id is refused.
     let r2 = req(
         &mut pipe,
-        r#"{"method":"call","name":"press_key","args":{"pid":1,"key":"a","element_index":0}}"#,
+        r#"{"method":"call","name":"press_key","args":{"pid":1,"key":"a","element_token":"s00000000:0"}}"#,
     );
     let v2: serde_json::Value = serde_json::from_str(r2.trim()).unwrap();
     let err2 = extract_text(&v2);
     assert!(
-        err2.contains("window_id is required when element_index is used"),
+        err2.contains("element_token is stale"),
         "Expected Swift-style element-without-window error, got: {err2:?}"
     );
     println!("Element-without-window err OK");

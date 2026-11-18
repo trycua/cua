@@ -14,11 +14,13 @@
       "mime_type": "image/png"
     },
     "action_coordinate_space": {
-      "kind": "scaled_top_left",
-      "action_origin_x": 100.0,
-      "action_origin_y": 200.0,
-      "action_units_per_pixel_x": 0.5,
-      "action_units_per_pixel_y": 2.0
+      "kind": "affine",
+      "m11": 0.5,
+      "m12": 0.0,
+      "m21": 0.0,
+      "m22": 0.5,
+      "tx": 100.0,
+      "ty": 200.0
     },
     "captured_at": "2026-09-17T12:00:00Z"
   },

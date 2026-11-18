@@ -1,0 +1,45 @@
+[package]
+name = "openkoalabot-example-tauri"
+description = "openkoalabots's Tauri shell: every command is a one-liner over openkoalabot-example-core."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "openkoalabot_example_tauri"
+path = "src/lib.rs"
+
+[[bin]]
+name = "openkoalabot-example-tauri"
+path = "src/main.rs"
+
+[features]
+# Serve the built UI (ui/dist) from the binary instead of the dev server, as
+# `tauri build` does: `cargo build -p openkoalabot-example-tauri --features
+# custom-protocol` makes a binary that runs on its own.
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+openkoalabot-example-core.workspace = true
+cua-daemon.workspace = true
+tauri = { version = "2", features = [] }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+
+# PiP windows hide the traffic lights (NSWindow standard buttons), like
+# macOS's own picture in picture. The same objc2 crates Tauri (tao) links.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSButton", "NSControl", "NSResponder", "NSView", "NSWindow"] }
+
+[dev-dependencies]
+# tests/webview_isolation.rs: a temp HOME, and the real home from the
+# password database (never from HOME) to check nothing lands there.
+tempfile.workspace = true
+libc = "0.2"

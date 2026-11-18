@@ -59,6 +59,7 @@ DAEMON_STOP_HELPER="{helper or ''}"
 daemon_pid_alive() {{ return 0; }}
 daemon_pid_is_release() {{ return 0; }}
 daemon_process_generation() {{ printf generation-1; }}
+release_daemon_fallback_pids() {{ return 0; }}
 verify_release_daemon_absent() {{ return 0; }}
 """
 
@@ -99,23 +100,39 @@ stop_release_daemon
         self.assertEqual(signals.read_text(), "TERM")
 
     def test_reused_pid_is_not_signalled(self) -> None:
+        """A pid whose process generation changed after capture gets no signal."""
         helper = self.home / "cua-driver"
         executable(helper, "exit 1")
+        generations = self.root / "generations"
+        signals = self.root / "signals"
         result = self.shell(
             self.setup(helper)
-            + """
-daemon_wait_for_exit() { return 1; }
-daemon_signal_if_current() { return 1; }
-kill() { return 99; }
+            + f"""
+daemon_wait_for_exit() {{ return 1; }}
+daemon_process_generation() {{
+  if [[ -f "{generations}" ]]; then printf new; else : > "{generations}"; printf old; fi
+}}
+kill() {{ printf '%s\\n' "$*" >> "{signals}"; }}
 stop_release_daemon
 """
         )
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(generations.exists(), "the stop path never captured a generation")
+        self.assertFalse(signals.exists(), signals.read_text() if signals.exists() else "")
 
-    def test_missing_helper_fails_before_signal(self) -> None:
-        result = self.shell(self.setup(None) + "stop_release_daemon")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("stop helper is unavailable", result.stderr)
+    def test_missing_helper_falls_back_to_the_signal_sweep(self) -> None:
+        """The installed copy may be gone, or not the one running: do not abort."""
+        signals = self.root / "signals"
+        result = self.shell(
+            self.setup(None)
+            + f"""
+stop_stray_release_daemons() {{ : > "{signals}"; }}
+stop_release_daemon
+"""
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("no trusted stop helper for pid 4242", result.stderr)
+        self.assertTrue(signals.exists(), "the signal sweep never ran")
 
     def test_process_generation_guards_signal(self) -> None:
         marker = self.root / "signal"

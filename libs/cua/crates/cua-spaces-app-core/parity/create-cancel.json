@@ -1,0 +1,91 @@
+{
+  "name": "create-cancel",
+  "about": "A create shows its download's bytes, rate and time left under a bar that moves with every byte count; Cancel turns the row into Cancelling (no stall, late progress ignored) and the row goes when the create ends cancelled; a cancel that fails says so on the row.",
+  "now": 1800000000000,
+  "rows": [],
+  "creates": [
+    {
+      "type": "start",
+      "id": "pending:1",
+      "name": "Mac",
+      "os": "macos",
+      "provider": "local",
+      "now": 1800000001000
+    },
+    {
+      "type": "progress",
+      "id": "pending:1",
+      "phase": "pulling",
+      "fraction": 0.1757,
+      "now": 1800000002000,
+      "bytesDone": 4200000000,
+      "bytesTotal": 23900000000,
+      "bytesPerSecond": 85000000.0
+    },
+    {
+      "type": "progress",
+      "id": "pending:1",
+      "phase": "pulling",
+      "fraction": 0.2092,
+      "now": 1800000006000,
+      "bytesDone": 5000000000,
+      "bytesTotal": 23900000000,
+      "bytesPerSecond": 84000000.0
+    },
+    {
+      "type": "cancel-start",
+      "id": "pending:1"
+    },
+    {
+      "type": "progress",
+      "id": "pending:1",
+      "phase": "pulling",
+      "fraction": 0.25,
+      "now": 1800000007000,
+      "bytesDone": 6000000000,
+      "bytesTotal": 23900000000,
+      "bytesPerSecond": 84000000.0
+    },
+    {
+      "type": "tick",
+      "now": 1800009000000
+    },
+    {
+      "type": "fail",
+      "id": "pending:1",
+      "error": "cancelled: Cancelled local:space-1; removed its VM or container."
+    },
+    {
+      "type": "start",
+      "id": "pending:2",
+      "name": "Box",
+      "os": "linux",
+      "provider": "local",
+      "now": 1800009001000
+    },
+    {
+      "type": "progress",
+      "id": "pending:2",
+      "phase": "pulling",
+      "fraction": 0.5,
+      "now": 1800009002000,
+      "bytesDone": 300000000,
+      "bytesTotal": 600000000,
+      "bytesPerSecond": 30000000.0
+    },
+    {
+      "type": "cancel-start",
+      "id": "pending:2"
+    },
+    {
+      "type": "cancel-fail",
+      "id": "pending:2",
+      "error": "timed out: the cua daemon did not answer"
+    },
+    {
+      "type": "dismiss",
+      "id": "pending:2"
+    }
+  ],
+  "refreshed": []
+}

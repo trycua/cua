@@ -1,6 +1,6 @@
 #!/bin/bash
 # Main Setup Script for Linux
-# Installs dependencies and sets up Cua Computer Server
+# Installs dependencies and sets up cua-spacesd
 
 set -e
 
@@ -21,13 +21,13 @@ sudo apt-get update
 log "Installing Git..."
 sudo apt-get install -y git
 
-# Setup Cua Computer Server
-log "Setting up Cua Computer Server..."
-if [ -f "$SCRIPT_DIR/setup-cua-server.sh" ]; then
-    bash "$SCRIPT_DIR/setup-cua-server.sh" 2>&1 | tee -a "$LOG_FILE"
-    log "Cua Computer Server setup completed."
+# Setup cua-spacesd
+log "Setting up cua-spacesd..."
+if [ -f "$SCRIPT_DIR/setup-spacesd.sh" ]; then
+    bash "$SCRIPT_DIR/setup-spacesd.sh" 2>&1 | tee -a "$LOG_FILE"
+    log "cua-spacesd setup completed."
 else
-    log "ERROR: setup-cua-server.sh not found at $SCRIPT_DIR/setup-cua-server.sh"
+    log "ERROR: setup-spacesd.sh not found at $SCRIPT_DIR/setup-spacesd.sh"
 fi
 
 log "=== Main Setup Completed ==="

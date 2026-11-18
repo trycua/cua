@@ -1,5 +1,7 @@
 # Cloud Windows Sandboxes GA + macOS Preview
 
+> Update, October 2026: Cua Cloud (Fleets) ended on 18 October 2026, so the cloud sandboxes, credit pricing and macOS waitlist in this post no longer apply. This post describes it as it was. See [what changed](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended) and the current plans on [cua.ai/pricing](https://cua.ai/pricing).
+
 If you've been building with our `cua` libraries, you might've hit a limitation with local computer-use sandboxes: to run agents on Windows or macOS, you need to be on that OS - Windows Sandbox for Windows, Apple Virtualization for macOS. The only cross-platform option is Linux on Docker, which limits you to virtualizing Linux environments ([see all local options here](https://cua.ai/docs/cua/reference/computer-sdk)).
 
 Today the story changes - we're announcing general availability of **Cloud Windows Sandboxes** and opening early preview access for **Cloud macOS Sandboxes**.
@@ -26,7 +28,7 @@ Cloud Windows Sandboxes are now generally available. You get a full Windows 11 d
   <video src="https://github.com/user-attachments/assets/8ab07646-6018-4128-87ce-53180cfea696" width="600" controls></video>
 </div>
 
-**Pricing:** Windows Sandboxes start at 8 credits/hour (Small), 15 credits/hour (Medium), or 31 credits/hour (Large).
+**Pricing (historical):** Windows Sandboxes started at 8 credits/hour (Small), 15 credits/hour (Medium), or 31 credits/hour (Large). For current plans see [cua.ai/pricing](https://cua.ai/pricing).
 
 ## Cloud macOS Sandboxes: Now in Preview
 
@@ -34,7 +36,7 @@ Running macOS locally comes with challenges: 30GB golden images, a maximum of 2 
 
 ![macOS Preview Waitlist](https://github.com/user-attachments/assets/343c9a3f-59d8-4b1a-bba8-6af91e8a9cf0)
 
-**Preview access:** Invite-only. [Join the waitlist](https://cua.ai/macos-waitlist) if you're building agents for macOS workflows.
+**Preview access:** Was invite-only. The waitlist is closed; [download Cua Spaces](https://cua.ai/download) to run macOS computers for your agents.
 
 ## Getting Started Today
 
@@ -117,4 +119,4 @@ If you hit issues getting either platform working, reach out in [Discord](https:
 
 ---
 
-Get started at [cua.ai](https://cua.ai) or [join the macOS waitlist](https://cua.ai/macos-waitlist).
+Get started at [cua.ai](https://cua.ai) or [download Cua Spaces](https://cua.ai/download).

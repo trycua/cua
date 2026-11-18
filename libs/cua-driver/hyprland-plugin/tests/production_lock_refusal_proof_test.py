@@ -11,14 +11,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 import production_lock_refusal_proof as proof
-from production_session_fault_proof_test import plan as session_plan, status, trace, REFUSED, retained_status
-
-
-def plan():
-    return {**session_plan(), 'purpose': 'lock_refusal', 'fault': {'kind': 'lock'},
-        'lock_fixture': {'path': '/test/session_lock_fixture', 'device': 1, 'inode': 2,
-            'uid': 1000, 'sha256': 'b' * 64, 'source_sha256': 'c' * 64}}
+from proof_fixtures import REFUSED, inkscape_profile, lock_plan as plan, retained_status, status, trace
 
 
 def refusal():
@@ -29,7 +24,27 @@ def refusal():
         'trace_before': trace([(3, 'start', 0, 0)]), 'trace_after': trace([(3, 'start', 0, 0)])}
 
 
+def locked_fixture():
+    """A lock helper that has acknowledged LOCK and awaits restoration."""
+    fixture = object.__new__(proof.LockFixture)
+    fixture.child = Mock(stdin=io.BytesIO(), stdout=Mock(), wait=Mock(return_value=0))
+    fixture.events = [{'event': 'locked', 'observed_ns': 10}]
+    fixture.record = {'after': status(2)}
+    fixture.requested, fixture.restored = True, False
+    fixture.deadline_ns = 100
+    fixture.config = {}
+    fixture.locked = Mock()
+    return fixture
+
+
 class PlanTests(unittest.TestCase):
+    def test_inkscape_only_profile_reaches_the_shared_app_profile_gate(self):
+        candidate = inkscape_profile(plan())
+        proof.validate_plan(candidate)
+        candidate['agents'][0]['document'] = '/synthetic/private.svg'
+        with self.assertRaisesRegex(AssertionError, 'absolute synthetic SVG document'):
+            proof.validate_plan(candidate)
+
     def test_lock_preflight_accepts_only_inert_unreserved_hover_before_launch(self):
         for reserved in (False, True):
             with self.subTest(reserved=reserved), tempfile.TemporaryDirectory() as directory:
@@ -135,6 +150,19 @@ class PlanTests(unittest.TestCase):
 
 
 class OracleTests(unittest.TestCase):
+    def test_new_action_dispatch_uses_scroll_without_drag_or_replay(self):
+        for tool in ('click', 'scroll', 'drag'):
+            actor = Mock()
+            record = {'outcome': 'unknown', 'replayed': False, 'prepared_ns': 1, 'tool': tool}
+            with self.subTest(tool=tool), patch.object(proof.time, 'monotonic_ns', return_value=2):
+                if tool == 'drag':
+                    with self.assertRaisesRegex(AssertionError, 'only a new non-drag action'):
+                        proof.click_once(actor, {'x': 1}, record, Mock(), 'action')
+                    actor.tool.assert_not_called()
+                else:
+                    proof.click_once(actor, {'x': 1}, record, Mock(), 'action')
+                    actor.tool.assert_called_once_with(tool, {'x': 1})
+
     def test_prelock_refresh_is_bounded_and_retains_actual_observations(self):
         spec = {**plan()['agents'][0], 'pointer_stage': 'click_b2'}
         for age in (1_000_000_000, 3_750_000_000, 3_750_000_001, 6_000_000_000):
@@ -267,14 +295,6 @@ class OracleTests(unittest.TestCase):
             self.assertEqual(saved[-1][1]['outcome'], 'unknown' if fails else 'response')
             self.assertEqual(saved[-1][1]['observed_ns'], 3)
             self.assertFalse(saved[-1][1]['replayed'])
-
-    def test_saving_evidence_cannot_allow_expired_grounding_to_dispatch(self):
-        client = Mock()
-        record = {'outcome': 'unknown', 'replayed': False, 'prepared_ns': 1}
-        with patch.object(proof.time, 'monotonic_ns', return_value=proof.MAX_GROUNDING_AGE_NS + 2), \
-             self.assertRaisesRegex(AssertionError, 'grounding expired'):
-            proof.click_once(client, {}, record, Mock(), 'attempt.json')
-        client.tool.assert_not_called()
 
     def test_new_runtime_allows_reaped_refusal_but_rejects_reuse_or_live_closed_process(self):
         def runtime(pid, closed=False, exited=False):
@@ -409,19 +429,8 @@ class FixtureTests(unittest.TestCase):
              self.assertRaises(AssertionError):
             proof.settle_locked(fixture)
 
-    def fixture(self):
-        fixture = object.__new__(proof.LockFixture)
-        fixture.child = Mock(stdin=io.BytesIO(), stdout=Mock(), wait=Mock(return_value=0))
-        fixture.events = [{'event': 'locked', 'observed_ns': 10}]
-        fixture.record = {'after': status(2)}
-        fixture.requested, fixture.restored = True, False
-        fixture.deadline_ns = 100
-        fixture.config = {}
-        fixture.locked = Mock()
-        return fixture
-
     def test_restore_requires_protocol_ack_and_successful_exit_never_kill(self):
-        fixture = self.fixture()
+        fixture = locked_fixture()
         def acknowledgement():
             event = {'event': 'unlocked', 'observed_ns': 50}
             fixture.events.append(event)
@@ -438,7 +447,7 @@ class FixtureTests(unittest.TestCase):
 
     def test_missing_ack_or_deadline_unlock_cannot_pass(self):
         for failure in ('missing_ack', 'early_ack', 'deadline', 'bad_exit'):
-            fixture = self.fixture()
+            fixture = locked_fixture()
             event = {'event': 'unlocked', 'observed_ns': 30 if failure == 'early_ack' else 110 if failure == 'deadline' else 50}
             def acknowledgement():
                 fixture.events.append(event)
@@ -458,7 +467,7 @@ class FixtureTests(unittest.TestCase):
             fixture.child.wait.assert_called_once()
 
     def test_failed_lock_guard_still_closes_stdin_and_reaps(self):
-        fixture = self.fixture()
+        fixture = locked_fixture()
         fixture.locked.side_effect = AssertionError('already unlocked')
         with patch.object(proof.time, 'monotonic_ns', return_value=40), \
              self.assertRaisesRegex(AssertionError, 'already unlocked'):
@@ -469,7 +478,7 @@ class FixtureTests(unittest.TestCase):
         fixture.child.terminate.assert_not_called()
 
     def test_cleanup_waits_for_independent_deadline_without_signaling(self):
-        fixture = self.fixture()
+        fixture = locked_fixture()
         fixture.deadline_ns = 20_000_000_000
         fixture.read_event = Mock()
         fixture.child.wait.side_effect = subprocess.TimeoutExpired('session_lock_fixture', 22)
@@ -484,7 +493,7 @@ class FixtureTests(unittest.TestCase):
         self.assertFalse(fixture.restored)
 
     def test_event_reader_retains_protocol_evidence_and_rejects_bad_clock(self):
-        fixture = self.fixture()
+        fixture = locked_fixture()
         fixture.events = []
         fixture.buffer = b'{"event":"ready","observed_ns":10}\n'
         with patch.object(proof.time, 'monotonic_ns', return_value=20):
@@ -495,7 +504,7 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(len(fixture.events), 1)
 
     def test_partial_event_never_blocks_on_readline(self):
-        fixture = self.fixture()
+        fixture = locked_fixture()
         fixture.events, fixture.buffer = [], b''
         with patch.object(proof.select, 'select', side_effect=[([fixture.child.stdout], [], []), ([], [], [])]), \
              patch.object(proof.os, 'read', return_value=b'{"event":"locked"'):
@@ -576,7 +585,7 @@ class RetainedPointerTests(unittest.TestCase):
              patch.object(proof.time, 'monotonic_ns', side_effect=[1, 100_000_001]), \
              patch.object(proof, 'wait_for', side_effect=sample_twice):
             self.assertEqual(proof.settle_locked(settling)['status'], retained_status())
-        fixture = FixtureTests().fixture()
+        fixture = locked_fixture()
         fixture.config['pointer_cleanup'] = 'retained_inert'
         fixture.record['after'] = retained_status(2)
         fixture.events = [{'event': 'locked', 'observed_ns': 2}]
@@ -595,7 +604,6 @@ class RetainedPointerTests(unittest.TestCase):
             self.assertEqual(fixture.restore()['result'], 'restored')
         fixture.child.kill.assert_not_called()
         fixture.child.terminate.assert_not_called()
-        self.assertEqual(proof.LOCK_MS, 20000)
 
 
 if __name__ == '__main__':

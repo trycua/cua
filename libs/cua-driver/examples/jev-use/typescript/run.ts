@@ -6,31 +6,56 @@ import { pathToFileURL } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import {
-  buildCandidates,
-  classify,
+  hasExecutableCandidate,
   parseVisualRegions,
   validateChoice,
+  VisualObservationError,
   type BrowserSnapshot,
+  type Candidate,
+  type HistoryEntry,
+  type VisualDelivery,
   type Outcome,
   type VisualObservation,
 } from './core.js';
-import { chooseLive, chooseMockAdapter } from './jev_adapter.js';
+import { driverEnvironment } from './driver_env.js';
+import {
+  planGuardedCompletion,
+  resolveGuardedCompletion,
+  type GuardedCompletionPlan,
+  type GuardedCompletionTelemetry,
+} from './guarded_completion.js';
+import {
+  BACKENDS,
+  browserDecisionRequest,
+  isBrowserProvider,
+  type Backend,
+  type BrowserProvider,
+} from './browser_provider.js';
+import { chooseLiveForTask, chooseMockForTask } from './jev_adapter.js';
+import { chooseS1Service, s1ServiceUrl } from './s1_service.js';
+import { FixtureFormTask, fixtureSources, type Task, type TaskSources } from './tasks.js';
+
+type VisualMode = 'auto' | 'always' | 'off';
 
 type Arguments = {
-  provider: 'mock' | 'live';
+  provider: BrowserProvider;
+  visualObservation: VisualMode;
   fixtureUrl: string;
   token?: string;
   maxSteps: number;
   dryRun: boolean;
+  guardedCompletion: boolean;
   log?: string;
 };
 
 function parseArgs(argv: string[]): Arguments {
   const result: Arguments = {
     provider: 'mock',
+    visualObservation: 'auto',
     fixtureUrl: 'http://127.0.0.1:8765/',
     maxSteps: 4,
     dryRun: false,
+    guardedCompletion: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
@@ -39,11 +64,21 @@ function parseArgs(argv: string[]): Arguments {
     else if (value === '--token') result.token = argv[++index];
     else if (value === '--max-steps') result.maxSteps = Number(argv[++index]);
     else if (value === '--dry-run') result.dryRun = true;
+    else if (value === '--guarded-completion') result.guardedCompletion = true;
     else if (value === '--log') result.log = argv[++index];
-    else throw new Error(`unknown argument: ${value}`);
+    else if (value === '--visual-observation') {
+      const mode = argv[++index];
+      if (mode !== 'auto' && mode !== 'always' && mode !== 'off') {
+        throw new Error('--visual-observation must be auto, always, or off');
+      }
+      result.visualObservation = mode;
+    } else throw new Error(`unknown argument: ${value}`);
   }
   if (!Number.isInteger(result.maxSteps) || result.maxSteps < 1) {
     throw new Error('--max-steps must be a positive integer');
+  }
+  if (!isBrowserProvider(result.provider)) {
+    throw new Error(`--provider must be one of ${Object.keys(BACKENDS).join(', ')}`);
   }
   result.fixtureUrl = validateFixtureUrl(result.fixtureUrl);
   return result;
@@ -72,23 +107,54 @@ export function selectTabId(tabs: Record<string, any>[]): string {
   return String(tabs.find((tab) => tab.active)?.tab_id ?? tabs[0].tab_id);
 }
 
+export class DriverToolError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+    readonly recommendedDelivery?: string
+  ) {
+    super(message);
+    this.name = 'DriverToolError';
+  }
+}
+
 export class Driver {
   constructor(
     private readonly client: Client,
     private readonly session: string
   ) {}
 
+  get sessionLabel(): string {
+    return this.session;
+  }
+
   async call(name: string, args: Record<string, unknown>): Promise<Record<string, any>> {
     const result = await this.client.callTool({
       name,
       arguments: { ...args, session: this.session },
     });
-    if (result.isError) throw new Error(`${name} failed: ${JSON.stringify(result.content)}`);
     const data = result.structuredContent as Record<string, any> | undefined;
-    if (!data) throw new Error(`${name} returned no structured result`);
-    if (data.status === 'refused' || data.refusal) {
-      throw new Error(`${name} refused: ${JSON.stringify(data.refusal ?? data)}`);
+    // All refusal envelopes must preserve the same recovery metadata.
+    const failed = Boolean(result.isError) || data?.effect === 'refused';
+    if (failed || data?.status === 'refused' || data?.refusal) {
+      const canonicalCode = (data?.error as Record<string, unknown> | undefined)?.code;
+      const refusalCode = (data?.refusal as Record<string, unknown> | undefined)?.code;
+      const code = [canonicalCode, data?.code, refusalCode].find(
+        (value): value is string => typeof value === 'string' && value.length > 0
+      );
+      const escalation = data?.escalation as Record<string, unknown> | undefined;
+      // A present canonical target wins; never turn an invalid/session target
+      // into a legacy foreground hint.
+      const target = escalation && Object.prototype.hasOwnProperty.call(escalation, 'target')
+        ? escalation.target
+        : escalation?.recommended;
+      const recommended = typeof target === 'string' && target ? target : undefined;
+      const message = failed
+        ? `${name} failed: ${JSON.stringify(result.content)}`
+        : `${name} refused: ${JSON.stringify(data?.refusal ?? data)}`;
+      throw new DriverToolError(message, code, recommended);
     }
+    if (!data) throw new Error(`${name} returned no structured result`);
     return data;
   }
 }
@@ -100,19 +166,72 @@ export function supportsCaptureBoundClick(
   return Boolean(click?.inputSchema?.properties?.capture_id);
 }
 
-export async function optionalVisualObservation(
+/**
+ * Return Driver's code when it refused a background visual click. Only a
+ * structured refusal counts: a background_* error code or an explicit
+ * foreground target (escalation.target or legacy recommended). Anything else
+ * stays a failure.
+ */
+export function backgroundRefusalCode(candidate: Candidate, error: unknown): string | undefined {
+  if (candidate.tool !== 'click' || candidate.arguments.delivery_mode !== 'background') {
+    return undefined;
+  }
+  if (!(error instanceof DriverToolError)) return undefined;
+  if (error.code?.startsWith('background_')) return error.code;
+  if (error.recommendedDelivery === 'foreground') return error.code ?? 'foreground_recommended';
+  return undefined;
+}
+
+export type VisualStatus = {
+  status: 'ok' | 'not_installed' | 'error' | 'unavailable' | 'skipped';
+  reason?: string;
+  error_code?: string;
+  capture_id?: string;
+  region_count?: number;
+};
+
+export type CandidatePhaseTiming = {
+  visualObserveMs: number;
+  candidateBuildMs: number;
+};
+
+/**
+ * Build the redacted per-step visual record written to the JSONL log. It never
+ * contains screenshots, screenshot references, region text, or secrets.
+ */
+export function visualStatus(
+  status: VisualStatus['status'],
+  errorCode?: string,
+  visual?: VisualObservation,
+  reason?: string
+): VisualStatus {
+  const result: VisualStatus = { status };
+  if (reason) result.reason = reason;
+  if (errorCode) result.error_code = errorCode;
+  if (visual) {
+    result.capture_id = visual.captureId;
+    result.region_count = visual.regions.length;
+  }
+  return result;
+}
+
+/**
+ * Take an optional visual observation and report what happened. Failures never
+ * stop the run: the caller continues on the page-structure path, but the
+ * returned status makes the fallback observable.
+ */
+export async function observeVisual(
   driver: Driver,
   pid: number,
   windowId: number,
   availableTools: ReadonlySet<string>,
   captureBoundClick: boolean
-): Promise<VisualObservation | undefined> {
-  if (
-    !captureBoundClick ||
-    !availableTools.has('get_window_state') ||
-    !availableTools.has('parse_visual_regions')
-  ) {
-    return undefined;
+): Promise<{ visual?: VisualObservation; status: VisualStatus }> {
+  if (!captureBoundClick) {
+    return { status: visualStatus('unavailable', 'capture_bound_click_unsupported') };
+  }
+  if (!availableTools.has('get_window_state') || !availableTools.has('parse_visual_regions')) {
+    return { status: visualStatus('unavailable', 'tool_not_advertised') };
   }
   try {
     const capture = await driver.call('get_window_state', {
@@ -120,26 +239,134 @@ export async function optionalVisualObservation(
       window_id: windowId,
       include_accessibility_tree: false,
     });
-    if (typeof capture.capture_id !== 'string') return undefined;
+    if (typeof capture.capture_id !== 'string') {
+      return { status: visualStatus('error', 'capture_missing') };
+    }
     const result = await driver.call('parse_visual_regions', {
       capture_id: capture.capture_id,
       options: { kinds: ['text', 'icon'], min_confidence: 0.8, max_regions: 100 },
     });
-    return parseVisualRegions(result, capture.capture_id, pid, windowId);
-  } catch {
-    return undefined;
+    const visual = parseVisualRegions(result, capture.capture_id, pid, windowId);
+    return { visual, status: visualStatus('ok', undefined, visual) };
+  } catch (error: unknown) {
+    if (error instanceof DriverToolError) {
+      if (error.code === 'not_installed') {
+        return { status: visualStatus('not_installed', 'not_installed') };
+      }
+      return { status: visualStatus('error', error.code ?? 'driver_error') };
+    }
+    if (error instanceof VisualObservationError) {
+      return { status: visualStatus('error', error.code) };
+    }
+    // parseVisualRegions reports other contract violations as plain errors.
+    if (
+      error instanceof Error &&
+      /^(visual (result|region)|unsupported visual)/.test(error.message)
+    ) {
+      return { status: visualStatus('error', 'invalid_visual_result') };
+    }
+    return { status: visualStatus('error', 'driver_error') };
   }
 }
 
-async function fixtureState(fixtureUrl: string): Promise<{ submitted: string | null }> {
-  const response = await fetch(new URL('state', fixtureUrl));
-  if (!response.ok) throw new Error(`fixture state failed: HTTP ${response.status}`);
-  return (await response.json()) as { submitted: string | null };
+export async function optionalVisualObservation(
+  driver: Driver,
+  pid: number,
+  windowId: number,
+  availableTools: ReadonlySet<string>,
+  captureBoundClick: boolean
+): Promise<VisualObservation | undefined> {
+  return (await observeVisual(driver, pid, windowId, availableTools, captureBoundClick)).visual;
 }
 
-async function resetFixture(fixtureUrl: string): Promise<void> {
-  const response = await fetch(new URL('reset', fixtureUrl), { method: 'POST' });
-  if (response.status !== 204) throw new Error(`fixture reset failed: HTTP ${response.status}`);
+/**
+ * Build one step's sources and candidates, parsing visual regions only when
+ * useful. In auto mode the capture and parse run only when the page structure
+ * offers no executable candidate, because only then can a visual region add
+ * one. always restores the per-step parse; off never parses.
+ */
+export async function taskCandidatesForStep(
+  driver: Driver,
+  task: Task,
+  snapshot: BrowserSnapshot,
+  pid: number,
+  windowId: number,
+  availableTools: ReadonlySet<string>,
+  captureBoundClick: boolean,
+  visualMode: VisualMode = 'auto',
+  visualDelivery: VisualDelivery = 'background'
+): Promise<{
+  candidates: Candidate[];
+  sources: TaskSources;
+  status: VisualStatus;
+  timing: CandidatePhaseTiming;
+}> {
+  // Whether a control missing from the page structure can still be found
+  // through a capture-bound visual region; reported in the task state.
+  const visualPath = captureBoundClick && visualMode !== 'off';
+  let candidateBuildStarted = performance.now();
+  let sources = fixtureSources(snapshot, undefined, captureBoundClick, visualDelivery, visualPath);
+  let candidates = task.candidates(sources);
+  let candidateBuildMs = performance.now() - candidateBuildStarted;
+  let visualObserveMs = 0;
+  if (visualMode === 'off') {
+    return {
+      candidates,
+      sources,
+      status: visualStatus('skipped', undefined, undefined, 'disabled'),
+      timing: { visualObserveMs, candidateBuildMs },
+    };
+  }
+  if (visualMode === 'auto' && hasExecutableCandidate(candidates)) {
+    return {
+      candidates,
+      sources,
+      status: visualStatus('skipped', undefined, undefined, 'page_structure_candidate'),
+      timing: { visualObserveMs, candidateBuildMs },
+    };
+  }
+  const visualStarted = performance.now();
+  const { visual, status } = await observeVisual(
+    driver,
+    pid,
+    windowId,
+    availableTools,
+    captureBoundClick
+  );
+  visualObserveMs = performance.now() - visualStarted;
+  if (visual) {
+    candidateBuildStarted = performance.now();
+    sources = fixtureSources(snapshot, visual, captureBoundClick, visualDelivery, visualPath);
+    candidates = task.candidates(sources);
+    candidateBuildMs += performance.now() - candidateBuildStarted;
+  }
+  return { candidates, sources, status, timing: { visualObserveMs, candidateBuildMs } };
+}
+
+/** Build one step's fixture-task candidates; see taskCandidatesForStep. */
+export async function candidatesForStep(
+  driver: Driver,
+  snapshot: BrowserSnapshot,
+  token: string,
+  pid: number,
+  windowId: number,
+  availableTools: ReadonlySet<string>,
+  captureBoundClick: boolean,
+  visualMode: VisualMode = 'auto',
+  visualDelivery: VisualDelivery = 'background'
+): Promise<{ candidates: Candidate[]; visual?: VisualObservation; status: VisualStatus }> {
+  const { candidates, sources, status } = await taskCandidatesForStep(
+    driver,
+    new FixtureFormTask(token),
+    snapshot,
+    pid,
+    windowId,
+    availableTools,
+    captureBoundClick,
+    visualMode,
+    visualDelivery
+  );
+  return { candidates, visual: sources.visual?.observation, status };
 }
 
 async function waitForWindow(driver: Driver, pid: number) {
@@ -165,16 +392,38 @@ async function writeEvent(path: string | undefined, event: Record<string, unknow
   if (path) await appendFile(path, `${line}\n`, 'utf8');
 }
 
+export function decisionTimingFields(args: {
+  decisionMs: number;
+  semanticObserveMs: number;
+  visualObserveMs: number;
+  candidateBuildMs: number;
+  providerDecisionMs: number;
+}): Record<string, number> {
+  return {
+    decision_ms: args.decisionMs,
+    semantic_observe_ms: Math.round(args.semanticObserveMs * 100) / 100,
+    visual_observe_ms: Math.round(args.visualObserveMs * 100) / 100,
+    candidate_build_ms: Math.round(args.candidateBuildMs * 100) / 100,
+    provider_decision_ms: Math.round(args.providerDecisionMs * 100) / 100,
+  };
+}
+
 async function run(args: Arguments): Promise<Outcome> {
   const token = args.token ?? `jev-${randomUUID().replaceAll('-', '').slice(0, 10)}`;
+  const task: Task = new FixtureFormTask(token, args.fixtureUrl, args.maxSteps);
   const transport = new StdioClientTransport({
     command: process.env.CUA_DRIVER_BIN ?? 'cua-driver',
     args: ['mcp'],
+    env: driverEnvironment(),
   });
   const client = new Client({ name: 'cua-driver-jev-use-example', version: '0.1.0' });
-  const history: Record<string, unknown>[] = [];
+  // Compact what-happened record for the decision model. The full telemetry
+  // events (timings, probabilities) go only to the JSONL log.
+  const history: HistoryEntry[] = [];
+  let visualDelivery: VisualDelivery = 'background';
+  let pendingCompletion: GuardedCompletionPlan | undefined;
   if (args.log) await writeFile(args.log, '', 'utf8');
-  await resetFixture(args.fixtureUrl);
+  await task.reset();
 
   try {
     await client.connect(transport);
@@ -200,52 +449,151 @@ async function run(args: Arguments): Promise<Outcome> {
       url: args.fixtureUrl,
     });
 
-    for (let step = 1; step <= args.maxSteps; step += 1) {
-      const oracle = await fixtureState(args.fixtureUrl);
-      const current = classify(oracle.submitted, token, step - 1, args.maxSteps);
+    for (let step = 1; step <= task.maxSteps; step += 1) {
+      const current = task.classify(await task.readOracle(), step - 1);
       if (current === 'verified' || current === 'refuted') {
-        await writeEvent(args.log, { event: 'outcome', outcome: current, token });
+        await writeEvent(args.log, { event: 'outcome', outcome: current });
         return current;
       }
 
       const decisionStarted = performance.now();
+      const semanticStarted = performance.now();
       const snapshot = (await driver.call('get_browser_state', {
         target_id: targetId,
         tab_id: tabId,
         snapshot_format: 'semantic_v2',
       })) as BrowserSnapshot;
-      const visual = await optionalVisualObservation(
+      const semanticObserveMs = performance.now() - semanticStarted;
+      const {
+        candidates,
+        sources,
+        status: visualRecord,
+        timing: candidateTiming,
+      } = await taskCandidatesForStep(
         driver,
+        task,
+        snapshot,
         pid,
         Number(window.window_id),
         availableTools,
-        captureBoundClick
+        captureBoundClick,
+        args.visualObservation,
+        visualDelivery
       );
-      const candidates = buildCandidates(snapshot, token, visual, captureBoundClick);
       if (!candidates.length) {
-        await writeEvent(args.log, { event: 'outcome', outcome: 'abstained', step });
+        await writeEvent(args.log, {
+          event: 'outcome',
+          outcome: 'abstained',
+          step,
+          visual: visualRecord,
+        });
         return 'abstained';
       }
-      const answer =
-        args.provider === 'mock'
-          ? chooseMockAdapter(candidates, snapshot, visual, history)
-          : await chooseLive(candidates, snapshot, visual, history);
-      if (!answer.choice) return 'abstained';
-      const candidate = validateChoice(answer.choice, candidates, visual?.captureId);
+      const visual = sources.visual?.observation;
+      let guardedCandidate: Candidate | undefined;
+      let guardedTelemetry: GuardedCompletionTelemetry | undefined;
+      if (args.guardedCompletion && pendingCompletion) {
+        const resolution = resolveGuardedCompletion(
+          pendingCompletion,
+          task,
+          sources,
+          candidates,
+          driver.sessionLabel
+        );
+        guardedCandidate = resolution.candidate;
+        guardedTelemetry = resolution.telemetry;
+        // A failed proof never keeps authority alive. The ordinary chooser
+        // handles this fresh step instead.
+        pendingCompletion = undefined;
+      }
+      const guardedFields = guardedTelemetry ? { guarded_completion: guardedTelemetry } : {};
+
+      let candidate: Candidate;
+      let confidence: number | null;
+      let probabilities: Record<string, number> | null;
+      let decisionRoute: 'provider' | 'guarded-completion';
+      let backend: Backend | null = null;
+      let providerDecisionMs = 0;
+      if (guardedCandidate) {
+        candidate = guardedCandidate;
+        confidence = null;
+        probabilities = null;
+        decisionRoute = 'guarded-completion';
+      } else {
+        backend = BACKENDS[args.provider];
+        const providerStarted = performance.now();
+        try {
+          const answer =
+            args.provider === 'mock'
+              ? chooseMockForTask(task, sources, candidates, history)
+              : args.provider === 's1'
+                ? await chooseS1Service(browserDecisionRequest(task, sources, candidates, history))
+                : await chooseLiveForTask(task, sources, candidates, history);
+          providerDecisionMs = performance.now() - providerStarted;
+          if (!answer.choice) {
+            await writeEvent(args.log, {
+              event: 'outcome',
+              outcome: 'abstained',
+              decision_route: 'provider',
+              backend,
+              step,
+              visual: visualRecord,
+              ...guardedFields,
+            });
+            return 'abstained';
+          }
+          candidate = validateChoice(answer.choice, candidates, visual?.captureId);
+          confidence = answer.confidence;
+          probabilities = answer.probabilities;
+          decisionRoute = 'provider';
+        } catch (error: unknown) {
+          // No action was dispatched; fail closed with a logged outcome that
+          // names only the error class.
+          await writeEvent(args.log, {
+            event: 'outcome',
+            outcome: 'unknown',
+            step,
+            phase: 'provider',
+            decision_route: 'provider',
+            backend,
+            error: error instanceof Error ? error.name : 'UnknownError',
+            visual: visualRecord,
+            ...guardedFields,
+          });
+          return 'unknown';
+        }
+      }
+      const nextCompletion =
+        args.guardedCompletion && decisionRoute === 'provider'
+          ? planGuardedCompletion(task, sources, candidate, driver.sessionLabel)
+          : undefined;
       const decisionMs = Math.round((performance.now() - decisionStarted) * 100) / 100;
+      const timing = decisionTimingFields({
+        decisionMs,
+        semanticObserveMs,
+        visualObserveMs: candidateTiming.visualObserveMs,
+        candidateBuildMs: candidateTiming.candidateBuildMs,
+        providerDecisionMs,
+      });
 
       if (candidate.id === 'reobserve') {
         const event = {
           event: 'step',
           step,
           candidate: candidate.id,
-          confidence: answer.confidence,
-          probabilities: answer.probabilities,
-          decision_ms: decisionMs,
+          confidence,
+          probabilities,
+          ...timing,
           action_ms: 0,
+          total_step_ms: Math.round((performance.now() - decisionStarted) * 100) / 100,
           dry_run: args.dryRun,
+          tool: null,
+          decision_route: decisionRoute,
+          backend,
+          visual: visualRecord,
+          ...guardedFields,
         };
-        history.push(event);
+        history.push(task.historyEntry(step, candidate.id));
         await writeEvent(args.log, event);
         continue;
       }
@@ -254,9 +602,13 @@ async function run(args: Arguments): Promise<Outcome> {
         await writeEvent(args.log, {
           event: 'outcome',
           outcome: 'abstained',
+          decision_route: decisionRoute,
+          backend,
           step,
-          confidence: answer.confidence,
-          probabilities: answer.probabilities,
+          confidence,
+          probabilities,
+          visual: visualRecord,
+          ...guardedFields,
         });
         return 'abstained';
       }
@@ -268,36 +620,76 @@ async function run(args: Arguments): Promise<Outcome> {
           if (!candidate.tool) throw new Error('selected candidate has no executable tool');
           await driver.call(candidate.tool, candidate.arguments);
         } catch (error: unknown) {
+          const refusal = backgroundRefusalCode(candidate, error);
+          if (refusal) {
+            // Do not retry background. The next step takes a fresh capture and
+            // offers a distinct foreground candidate.
+            visualDelivery = 'foreground';
+            const event = {
+              event: 'step',
+              step,
+              candidate: candidate.id,
+              confidence,
+              probabilities,
+              ...timing,
+              decision_route: decisionRoute,
+              backend,
+              action_ms: Math.round((performance.now() - actionStarted) * 100) / 100,
+              total_step_ms: Math.round((performance.now() - decisionStarted) * 100) / 100,
+              dry_run: args.dryRun,
+              tool: candidate.tool,
+              delivery_mode: 'background',
+              action_error: refusal,
+              escalation: { from: 'background', to: 'foreground', reason: refusal },
+              visual: visualRecord,
+              ...guardedFields,
+            };
+            history.push(task.historyEntry(step, candidate.id, refusal));
+            await writeEvent(args.log, event);
+            continue;
+          }
           await writeEvent(args.log, {
             event: 'outcome',
             outcome: 'unknown',
             step,
             phase: 'action',
+            decision_route: decisionRoute,
+            backend,
             error: error instanceof Error ? error.name : 'UnknownError',
+            tool: candidate.tool,
+            visual: visualRecord,
+            ...guardedFields,
           });
           return 'unknown';
         }
         actionMs = Math.round((performance.now() - actionStarted) * 100) / 100;
+        pendingCompletion = nextCompletion;
       }
       const event = {
         event: 'step',
         step,
         candidate: candidate.id,
-        confidence: answer.confidence,
-        probabilities: answer.probabilities,
-        decision_ms: decisionMs,
+        confidence,
+        probabilities,
+        ...timing,
         action_ms: actionMs,
+        total_step_ms: Math.round((performance.now() - decisionStarted) * 100) / 100,
         dry_run: args.dryRun,
+        tool: candidate.tool,
+        delivery_mode: candidate.arguments.delivery_mode ?? null,
+        decision_route: decisionRoute,
+        backend,
+        visual: visualRecord,
+        ...guardedFields,
       };
-      history.push(event);
+      history.push(task.historyEntry(step, candidate.id));
       await writeEvent(args.log, event);
       if (args.dryRun) return 'unknown';
-      if (candidate.id === 'submit-form') {
+      if (task.completionCandidateIds.has(candidate.id)) {
         for (let attempt = 0; attempt < 20; attempt += 1) {
-          const oracle = await fixtureState(args.fixtureUrl);
-          const outcome = classify(oracle.submitted, token, step, args.maxSteps);
+          const outcome = task.classify(await task.readOracle(), step);
           if (outcome === 'verified' || outcome === 'refuted') {
-            await writeEvent(args.log, { event: 'outcome', outcome, token });
+            await writeEvent(args.log, { event: 'outcome', outcome });
             return outcome;
           }
           await new Promise((resolve) => setTimeout(resolve, 100));
@@ -305,9 +697,8 @@ async function run(args: Arguments): Promise<Outcome> {
       }
     }
 
-    const oracle = await fixtureState(args.fixtureUrl);
-    const outcome = classify(oracle.submitted, token, args.maxSteps, args.maxSteps);
-    await writeEvent(args.log, { event: 'outcome', outcome, token });
+    const outcome = task.classify(await task.readOracle(), task.maxSteps);
+    await writeEvent(args.log, { event: 'outcome', outcome });
     return outcome;
   } finally {
     await client.close();
@@ -316,6 +707,8 @@ async function run(args: Arguments): Promise<Outcome> {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = parseArgs(process.argv.slice(2));
+  // Fail before touching the browser when the S1 service is not configured.
+  if (args.provider === 's1') s1ServiceUrl();
   run(args)
     .then((outcome) => {
       process.exitCode = outcome === 'verified' || args.dryRun ? 0 : 1;

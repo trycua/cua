@@ -1,0 +1,16 @@
+[package]
+name = "cua-streaming-example"
+description = "Streaming example on the cua SDK (Rust): targets, desktop + window streams, audio, input"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+# Standalone: builds against the in-repo SDK by path.
+[workspace]
+
+[dependencies]
+cua-sdk = { path = "../../../libs/cua/crates/cua-sdk" }
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
+libc = "0.2"

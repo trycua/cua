@@ -3,11 +3,10 @@
 import importlib.util
 import io
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 
@@ -24,7 +23,7 @@ def load_wrapper_module() -> Any:
 
 def test_get_binary_path():
     """Test that get_binary_path returns a valid path."""
-    from cua_driver.wrapper import get_binary_path
+    get_binary_path = load_wrapper_module().get_binary_path
 
     # This will raise FileNotFoundError if binary doesn't exist
     # In CI, we need to build the package first for this to pass
@@ -37,9 +36,46 @@ def test_get_binary_path():
         pytest.skip("Binary not bundled yet (run build_wheel.py first)")
 
 
+def _bundle_fake_binary(
+    wrapper: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mode: int
+) -> Path:
+    binary = tmp_path / "bin" / ("cua-driver.exe" if sys.platform == "win32" else "cua-driver")
+    binary.parent.mkdir()
+    binary.write_bytes(b"")
+    binary.chmod(mode)
+    monkeypatch.setattr(wrapper, "__file__", str(tmp_path / "wrapper.py"))
+    return binary
+
+
+def test_get_binary_path_does_not_chmod_an_executable_binary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A binary owned by another user (root-installed venv) starts without a chmod."""
+    wrapper = load_wrapper_module()
+    binary = _bundle_fake_binary(wrapper, monkeypatch, tmp_path, 0o755)
+    monkeypatch.setattr(
+        wrapper.os, "chmod", Mock(side_effect=PermissionError(1, "Operation not permitted"))
+    )
+
+    assert wrapper.get_binary_path() == binary
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="no executable bit on Windows")
+def test_get_binary_path_restores_a_lost_executable_bit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    wrapper = load_wrapper_module()
+    binary = _bundle_fake_binary(wrapper, monkeypatch, tmp_path, 0o644)
+
+    wrapper.get_binary_path()
+
+    assert os.access(binary, os.X_OK)
+
+
 def test_run_cua_driver_version(monkeypatch):
     """Test running cua-driver --version through the wrapper."""
-    from cua_driver.wrapper import get_binary_path, run_cua_driver
+    wrapper = load_wrapper_module()
+    get_binary_path, run_cua_driver = wrapper.get_binary_path, wrapper.run_cua_driver
 
     try:
         binary_path = get_binary_path()
@@ -53,7 +89,8 @@ def test_run_cua_driver_version(monkeypatch):
 
 def test_wrapper_preserves_exit_code():
     """Test that the wrapper preserves the binary's exit code."""
-    from cua_driver.wrapper import get_binary_path, run_cua_driver
+    wrapper = load_wrapper_module()
+    get_binary_path, run_cua_driver = wrapper.get_binary_path, wrapper.run_cua_driver
 
     try:
         binary_path = get_binary_path()
@@ -143,32 +180,34 @@ def test_subprocess_preserves_exact_exit_code(
     assert wrapper.run_cua_driver(["--version"]) == 42
 
 
-@patch("cua_driver.wrapper.subprocess.run")
-@patch("cua_driver.wrapper.get_binary_path")
-def test_subprocess_preserves_explicit_install_channel(mock_get_binary, mock_run, monkeypatch):
+def test_subprocess_preserves_explicit_install_channel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """An update/install caller's bounded channel takes precedence."""
-    from cua_driver.wrapper import run_cua_driver
-
-    mock_get_binary.return_value = Path("/fake/path/cua-driver")
-    mock_run.return_value = Mock(returncode=0)
+    wrapper = load_wrapper_module()
+    mock_run = Mock(return_value=Mock(returncode=0))
+    monkeypatch.setattr(
+        wrapper, "get_binary_path", Mock(return_value=Path("/fake/path/cua-driver"))
+    )
+    monkeypatch.setattr(wrapper.subprocess, "run", mock_run)
     monkeypatch.setenv("CUA_DRIVER_INSTALL_CHANNEL", "update_apply")
 
-    run_cua_driver(["--version"])
+    wrapper.run_cua_driver(["--version"])
 
     child_env = mock_run.call_args.kwargs["env"]
     assert child_env["CUA_DRIVER_INSTALL_CHANNEL"] == "update_apply"
     assert os.environ["CUA_DRIVER_INSTALL_CHANNEL"] == "update_apply"
 
 
-@patch("cua_driver.wrapper.subprocess.run")
-@patch("cua_driver.wrapper.get_binary_path")
-def test_keyboard_interrupt_handling(mock_get_binary, mock_run):
+def test_keyboard_interrupt_handling(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that KeyboardInterrupt returns exit code 130."""
-    from cua_driver.wrapper import run_cua_driver
+    wrapper = load_wrapper_module()
+    monkeypatch.setattr(
+        wrapper, "get_binary_path", Mock(return_value=Path("/fake/path/cua-driver"))
+    )
+    monkeypatch.setattr(
+        wrapper.subprocess, "run", Mock(side_effect=KeyboardInterrupt())
+    )
 
-    mock_binary = Path("/fake/path/cua-driver")
-    mock_get_binary.return_value = mock_binary
-    mock_run.side_effect = KeyboardInterrupt()
-
-    exit_code = run_cua_driver(["mcp"])
+    exit_code = wrapper.run_cua_driver(["mcp"])
     assert exit_code == 130

@@ -1,0 +1,70 @@
+diff --git a/dist/cjs/objects.js b/dist/cjs/objects.js
+index ff892a8fa69e42e1a1458cba7a978c49d24b3a86..260cf1e4503e652aac983c46610094832929a9d1 100644
+--- a/dist/cjs/objects.js
++++ b/dist/cjs/objects.js
+@@ -72,10 +72,15 @@ class FfiConverterObjectWithCallbacks extends FfiConverterObject {
+         this.handleMap = handleMap;
+     }
+     lower(value, alloc) {
+-        // Rust-backed objects are lowered as raw Arc pointers (even numbers).
+-        // TS-implemented objects are inserted into the handleMap as foreign handles (odd numbers).
++        return this.lowerHandle(value);
++    }
++    // Rust-backed objects are lowered as raw Arc pointers (even numbers).
++    // TS-implemented objects are inserted into the handleMap as foreign handles (odd numbers).
++    // `write` lowers through here too, so an object inside an optional, a
++    // sequence or a record is lowered the same way as a bare argument.
++    lowerHandle(value) {
+         if (this.factory.isConcreteType(value)) {
+-            return super.lower(value, alloc);
++            return super.lowerHandle(value);
+         }
+         return this.handleMap.insert(value);
+     }
+diff --git a/dist/esm/objects.js b/dist/esm/objects.js
+index bf316c60771901281603d49a4789d06588a3f7c0..c6a2118867cf25b22e3ebab23f37823358b02b9f 100644
+--- a/dist/esm/objects.js
++++ b/dist/esm/objects.js
+@@ -67,10 +67,15 @@ export class FfiConverterObjectWithCallbacks extends FfiConverterObject {
+         this.handleMap = handleMap;
+     }
+     lower(value, alloc) {
+-        // Rust-backed objects are lowered as raw Arc pointers (even numbers).
+-        // TS-implemented objects are inserted into the handleMap as foreign handles (odd numbers).
++        return this.lowerHandle(value);
++    }
++    // Rust-backed objects are lowered as raw Arc pointers (even numbers).
++    // TS-implemented objects are inserted into the handleMap as foreign handles (odd numbers).
++    // `write` lowers through here too, so an object inside an optional, a
++    // sequence or a record is lowered the same way as a bare argument.
++    lowerHandle(value) {
+         if (this.factory.isConcreteType(value)) {
+-            return super.lower(value, alloc);
++            return super.lowerHandle(value);
+         }
+         return this.handleMap.insert(value);
+     }
+diff --git a/src/objects.ts b/src/objects.ts
+index a949d1a06b7bf23b17885f8069f3893f6caf8c2d..58ff9459a108a16be739328822d222056de259d3 100644
+--- a/src/objects.ts
++++ b/src/objects.ts
+@@ -102,10 +102,16 @@ export class FfiConverterObjectWithCallbacks<T> extends FfiConverterObject<T> {
+   }
+ 
+   lower(value: T, alloc: RustBufferAllocator): UniffiHandle {
+-    // Rust-backed objects are lowered as raw Arc pointers (even numbers).
+-    // TS-implemented objects are inserted into the handleMap as foreign handles (odd numbers).
++    return this.lowerHandle(value);
++  }
++
++  // Rust-backed objects are lowered as raw Arc pointers (even numbers).
++  // TS-implemented objects are inserted into the handleMap as foreign handles (odd numbers).
++  // `write` lowers through here too, so an object inside an optional, a
++  // sequence or a record is lowered the same way as a bare argument.
++  protected lowerHandle(value: T): UniffiHandle {
+     if (this.factory.isConcreteType(value)) {
+-      return super.lower(value, alloc);
++      return super.lowerHandle(value);
+     }
+     return this.handleMap.insert(value);
+   }

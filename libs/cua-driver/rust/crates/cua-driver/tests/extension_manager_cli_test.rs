@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 #[cfg(feature = "review-trust-root")]
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use flate2::{write::GzEncoder, Compression};
@@ -307,6 +310,23 @@ fn developer_lifecycle_is_explicit_previewed_and_removable() {
     assert_eq!(preview["mutation_performed"], false);
     assert!(!home.join("extensions/cua-perception").exists());
 
+    let inspect_text = run(
+        &home,
+        &[
+            "extension",
+            "inspect",
+            "cua-perception",
+            "--archive",
+            archive.to_str().unwrap(),
+            "--allow-unsigned-local",
+        ],
+    );
+    assert!(inspect_text.status.success());
+    assert!(String::from_utf8_lossy(&inspect_text.stdout)
+        .trim_end()
+        .ends_with("Preview complete; no extension state was changed."));
+    assert!(!home.join("extensions/cua-perception").exists());
+
     let install = run(
         &home,
         &[
@@ -331,6 +351,11 @@ fn developer_lifecycle_is_explicit_previewed_and_removable() {
     assert!(install_stdout.contains("Model: models/parser.bin @ model-v1"));
     assert!(install_stdout.contains("Model license file: LICENSES/model.txt"));
     assert!(install_stdout.contains("mutation_authorized=true"));
+    assert!(install_stdout.contains("Installed cua-perception 1.2.3 at "));
+    assert!(
+        !install_stdout.contains("no extension state was changed"),
+        "install must not claim that nothing changed:\n{install_stdout}"
+    );
 
     let status = run(
         &home,
@@ -393,7 +418,7 @@ fn signed_catalog_rejects_forgery_before_state_creation() {
         "payload": {
             "schema_version": 1, "catalog_version": 1, "expires_unix": 4102444800_u64,
             "publisher_id": "cua", "publisher_name": "Cua",
-            "key_id": "cua-extension-ed25519-2026-01", "extension_id": "cua-perception",
+            "key_id": "cua-extension-ed25519-2026-09", "extension_id": "cua-perception",
             "version": "1.2.3", "target": current_target(),
             "archive": archive.file_name().unwrap().to_str().unwrap(),
             "archive_size": archive_bytes.len(),
@@ -468,25 +493,57 @@ fn mcp_inventory_exposes_only_the_confirm_gated_extension_installer() {
 fn cli_rejects_ambiguous_extension_arguments() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("driver-home");
-    for args in [
-        vec!["extension", "list", "extra"],
-        vec!["extension", "status", "--json", "--json"],
-        vec!["extension", "install", "cua-perception", "--archive"],
-        vec![
-            "extension",
-            "install",
-            "cua-perception",
-            "--archive",
-            "x",
-            "--catalog",
-            "y",
-            "--allow-unsigned-local",
-        ],
-        vec!["extension", "path", "cua-perception"],
+    for (args, message) in [
+        (vec!["extension", "bogus"], "unknown subcommand \"bogus\""),
+        (
+            vec!["extension", "status", "--bogus"],
+            "unknown extension option \"--bogus\"",
+        ),
+        (vec!["extension", "info"], "info requires an extension name"),
+        (
+            vec!["extension", "list", "extra"],
+            "list does not accept an extension name",
+        ),
+        (
+            vec!["extension", "status", "--json", "--json"],
+            "duplicate flag --json",
+        ),
+        (
+            vec!["extension", "install", "cua-perception", "--archive"],
+            "--archive requires a value",
+        ),
+        (
+            vec![
+                "extension",
+                "install",
+                "cua-perception",
+                "--archive",
+                "x",
+                "--catalog",
+                "y",
+                "--allow-unsigned-local",
+            ],
+            "--allow-unsigned-local cannot be combined with --catalog",
+        ),
     ] {
         let output = run(&home, &args);
-        assert!(!output.status.success(), "accepted {args:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(64), "{args:?}: {stderr}");
+        assert!(stderr.contains(message), "{args:?}: {stderr}");
     }
+}
+
+#[test]
+fn cli_operation_failure_is_not_a_usage_error() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path().join("driver-home");
+    let output = run(&home, &["extension", "path", "cua-perception"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("cua-perception is not installed"),
+        "{stderr}"
+    );
 }
 
 #[test]
@@ -654,6 +711,46 @@ fn review_signed_lifecycle_is_distinct_fail_closed_and_rollback_safe() {
     );
     assert!(!replay.status.success());
     assert!(String::from_utf8_lossy(&replay.stderr).contains("anti-rollback"));
+
+    // Removing the extension must not strand the user: the exact signed
+    // catalog that is already trusted can be reinstalled, while the original,
+    // older catalog stays refused.
+    let remove = run(&home, &["extension", "remove", "perception"]);
+    assert!(
+        remove.status.success(),
+        "{}",
+        String::from_utf8_lossy(&remove.stderr)
+    );
+    let rollback_install = run(
+        &home,
+        &[
+            "extension",
+            "install",
+            "perception",
+            "--catalog",
+            catalog.to_str().unwrap(),
+        ],
+    );
+    assert!(!rollback_install.status.success());
+    assert!(String::from_utf8_lossy(&rollback_install.stderr).contains("older than"));
+    let reinstall = run(
+        &home,
+        &[
+            "extension",
+            "install",
+            "perception",
+            "--catalog",
+            update_catalog.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        reinstall.status.success(),
+        "{}",
+        String::from_utf8_lossy(&reinstall.stderr)
+    );
+    let status = run(&home, &["extension", "status", "perception", "--json"]);
+    let status_json: Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(status_json["active_version"], "1.2.4");
 }
 
 #[cfg(feature = "review-trust-root")]

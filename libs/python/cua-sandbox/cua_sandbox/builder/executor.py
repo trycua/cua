@@ -1,18 +1,18 @@
-"""Layer executor — runs Image layers via computer-server API.
+"""Layer executor — runs Image layers through cua-spacesd.
 
-Given a running computer-server at some URL, translates each Image layer dict
-into shell commands and executes them sequentially.
+Given a sandbox's cua-spacesd (a ``cua.SpacesdClient``, a ``cua.Sandbox``
+handle, or its URL), translates each Image layer dict into shell commands and
+file uploads (ProcessService / FilesystemService) and executes them in order.
 """
 
 from __future__ import annotations
 
+import asyncio
 import base64
-import json
 import logging
 import os
-from typing import Any
-
-import httpx
+import time
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -58,61 +58,72 @@ def _find_app_launch_script(app_id: str, os_type: str) -> str | None:
 
 
 class LayerExecutor:
-    """Execute Image layer specs against a running computer-server."""
+    """Execute Image layer specs against a running cua-spacesd."""
 
-    def __init__(self, base_url: str, timeout: float = 600, os_type: str = "linux"):
-        self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
+    def __init__(
+        self,
+        target: Any,
+        timeout: float = 600,
+        os_type: str = "linux",
+        *,
+        token: Optional[str] = None,
+        ready_timeout: float = 300,
+    ):
+        """
+        Args:
+            target: the spacesd URL (``http://host:3211``) or a connected
+                ``cua.SpacesdClient``.
+            timeout: default per-command timeout in seconds.
+            os_type: guest OS; ``run`` layers are wrapped per OS.
+            token: spacesd token for a URL target.
+            ready_timeout: how long to wait for the driver to answer (a VM
+                that just booted starts it late).
+        """
         self.os_type = os_type  # "linux", "macos", "windows", "android"
+        self.timeout = timeout
+        self._token = token
+        self._ready_timeout = ready_timeout
+        if isinstance(target, str):
+            self.base_url = target.rstrip("/")
+            self._env: Any = None
+        else:
+            self.base_url = None
+            self._env = target
+
+    @classmethod
+    async def for_sandbox(
+        cls, handle: Any, *, os_type: str = "linux", ready_timeout: float = 300
+    ) -> "LayerExecutor":
+        """An executor for a ``cua.Sandbox`` handle (waits for the driver)."""
+        env = await _wait_for_env(lambda: handle.spacesd(15_000), ready_timeout)
+        return cls(env, os_type=os_type, ready_timeout=ready_timeout)
+
+    async def _client(self) -> Any:
+        if self._env is None:
+            from cua_sandbox._sdk import connect_url
+
+            url = self.base_url
+            assert url is not None
+            sandbox = await connect_url(url, self._token)
+            self._env = await _wait_for_env(lambda: sandbox.spacesd(15_000), self._ready_timeout)
+        return self._env
 
     async def run_command(self, command: str, timeout: float | None = None) -> dict:
-        """Run a shell command via computer-server and return the result."""
+        """Run a shell command in the guest and return the result dict."""
+        from cua_sandbox.transport.env import _output_dict
+
         t = timeout or self.timeout
-        async with httpx.AsyncClient(timeout=t) as client:
-            # computer-server uses SSE on /cmd
-            resp = await client.post(
-                f"{self.base_url}/cmd",
-                json={"command": "run_command", "params": {"command": command}},
-                timeout=t,
-            )
-            resp.raise_for_status()
-
-            # Parse SSE response — collect all data lines
-            result: dict[str, Any] = {}
-            for line in resp.text.splitlines():
-                if line.startswith("data: "):
-                    try:
-                        data = json.loads(line[6:])
-                        if isinstance(data, dict):
-                            result.update(data)
-                    except (json.JSONDecodeError, ValueError):
-                        pass
-
-            return result
+        env = await self._client()
+        return _output_dict(await env.sh(command, int(t * 1000)))
 
     async def write_file(self, path: str, content_b64: str, timeout: float | None = None) -> dict:
-        """Write a file via computer-server write_bytes command."""
-        t = timeout or self.timeout
-        async with httpx.AsyncClient(timeout=t) as client:
-            resp = await client.post(
-                f"{self.base_url}/cmd",
-                json={
-                    "command": "write_bytes",
-                    "params": {"path": path, "content_b64": content_b64},
-                },
-                timeout=t,
-            )
-            resp.raise_for_status()
-            result: dict[str, Any] = {}
-            for line in resp.text.splitlines():
-                if line.startswith("data: "):
-                    try:
-                        data = json.loads(line[6:])
-                        if isinstance(data, dict):
-                            result.update(data)
-                    except (json.JSONDecodeError, ValueError):
-                        pass
-            return result
+        """Upload a file to the guest (chunked, SHA-256 verified)."""
+        env = await self._client()
+        try:
+            await env.upload(path, base64.b64decode(content_b64), None)
+        except Exception as error:  # noqa: BLE001 - reported like a failed layer
+            return {"success": False, "return_code": 1, "error": str(error)}
+        return {"success": True, "return_code": 0}
 
     async def execute_layer(self, layer: dict) -> dict:
         """Execute a single Image layer and return the result."""
@@ -309,6 +320,26 @@ class LayerExecutor:
     async def _exec_pwa_install(self, layer: dict) -> dict:
         # PWA install — just a placeholder; actual install happens via the sandbox
         return {"success": True, "return_code": 0}
+
+
+async def _wait_for_env(open_env: Any, ready_timeout: float) -> Any:
+    """Connect to cua-spacesd, retrying while it is not up yet."""
+    from cua_sandbox._sdk import SpacesdNotAvailable, is_env_not_available
+
+    deadline = time.monotonic() + ready_timeout
+    delay = 1.0
+    while True:
+        try:
+            return await open_env()
+        except Exception as error:  # noqa: BLE001 - classified below
+            if not is_env_not_available(error):
+                raise
+            if time.monotonic() >= deadline:
+                raise SpacesdNotAvailable(
+                    f"cua-spacesd did not answer within {ready_timeout:.0f}s: {error}"
+                ) from error
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 5.0)
 
 
 def _bash_escape(s: str) -> str:

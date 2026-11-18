@@ -1,0 +1,24 @@
+==> /var/log/supervisor/cua-guestd.log <==
+[2026-09-23T23:51:00+00:00] starting /usr/local/bin/cua-guestd on 0.0.0.0:3211 (DISPLAY=:1, awaiting token file /run/cua-env/env-token)
+2026-09-23T23:51:00.140466Z  WARN platform_linux::overlay: X11 overlay: root reads cannot see this window's own pixels; save-unders will be served without readback confirmation
+2026-09-23T23:51:00.146851Z  INFO cua_guest::media_quic: QUIC media listener ready port=3212 certificate_sha256=49a071d67088613d3213ec4527cc3350dc425366025285bd93302189c8c35968
+2026-09-23T23:51:00.149383Z  INFO cua_guestd_server::token_file: token file is empty or missing; awaiting a token path=/run/cua-env/env-token
+2026-09-23T23:51:00.149438Z  INFO cua_guestd: cua-guestd 0.1.0 serving addr=0.0.0.0:3211 token=await-file:/run/cua-env/env-token stubbed={}
+[OpenH264] this = 0x0xe68b2800a100, Warning:bEnableFrameSkip = 0,bitrate can't be controlled for RC_QUALITY_MODE,RC_BITRATE_MODE and RC_TIMESTAMP_MODE without enabling skip frame.
+2026-09-23T23:51:01.373958Z  INFO cua_guestd_server::token_file: token file holds a token path=/run/cua-env/env-token
+2026-09-23T23:51:01.373967Z  INFO cua_guestd_server::context: access token installed from the token file
+2026-09-23T23:51:02.052733Z  INFO cua_guestd_server::token_file: token file holds a token path=/run/cua-env/env-token
+2026-09-23T23:51:02.052744Z  INFO cua_guestd_server::context: access token rotated by the token file; sessions revoked
+2026-09-23T23:51:02.634913Z  INFO cua_guestd_server::token_file: token file is empty or missing; awaiting a token path=/run/cua-env/env-token
+2026-09-23T23:51:02.634925Z  INFO cua_guestd_server::context: access token revoked (token file emptied); awaiting a new one
+2026-09-23T23:51:03.217476Z  INFO cua_guestd_server::token_file: token file holds a token path=/run/cua-env/env-token
+2026-09-23T23:51:03.217485Z  INFO cua_guestd_server::context: access token installed from the token file
+
+==> /var/log/supervisor/cua-env-token-sync.log <==
+[2026-09-23T23:50:59+00:00] token sync: /run/cua/env-token -> /run/cua-env/env-token (cua)
+2026-09-23T23:50:59.128338Z  INFO cua_guestd: token sync running from=/run/cua/env-token to=/run/cua-env/env-token owner=cua
+2026-09-23T23:50:59.129721Z  INFO cua_guestd_server::token_file: token file is empty or missing; awaiting a token path=/run/cua/env-token
+2026-09-23T23:51:01.328420Z  INFO cua_guestd_server::token_file: token file holds a token path=/run/cua/env-token
+2026-09-23T23:51:02.008922Z  INFO cua_guestd_server::token_file: token file holds a token path=/run/cua/env-token
+2026-09-23T23:51:02.591950Z  INFO cua_guestd_server::token_file: token file is empty or missing; awaiting a token path=/run/cua/env-token
+2026-09-23T23:51:03.172944Z  INFO cua_guestd_server::token_file: token file holds a token path=/run/cua/env-token

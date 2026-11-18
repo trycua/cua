@@ -23,6 +23,7 @@ jobs:
       github.event.action == 'labeled' &&
       github.event.label.name == 'cua-perception-live-review'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       source_pr_number: ${{ steps.resolve.outputs.source_pr_number }}
       source_sha: ${{ steps.resolve.outputs.source_sha }}

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 // Bake Swift runtime rpaths into the cua-driver binary on macOS.
 //
 // The `screencapturekit` dep ships a small Swift-bridge shim that links
@@ -12,6 +15,7 @@
 // 125%/150%/200% scaling and clicks land where screenshots say they do.
 
 fn main() {
+    embed_git_sha();
     println!("cargo:rerun-if-env-changed=CUA_DRIVER_REVIEW_EXTENSION_PUBLIC_KEY_BASE64");
     validate_review_trust_root_build();
 
@@ -25,6 +29,88 @@ fn main() {
     }
     emit_sdk_framework_search_path();
     emit_swift_runtime_link_args();
+}
+
+/// Embeds the source revision as `CUA_DRIVER_GIT_SHA` (read by `main` and
+/// handed to `cua_driver_core::build_info::init`): the `CUA_DRIVER_GIT_SHA`
+/// build environment wins (release builds in containers without `.git`),
+/// else `git rev-parse HEAD`, else empty. Reruns when HEAD or its ref moves.
+fn embed_git_sha() {
+    println!("cargo:rerun-if-env-changed=CUA_DRIVER_GIT_SHA");
+    let from_env = std::env::var("CUA_DRIVER_GIT_SHA").unwrap_or_default();
+    let sha = if !from_env.trim().is_empty() {
+        from_env.trim().to_owned()
+    } else {
+        git(&["rev-parse", "HEAD"]).unwrap_or_default()
+    };
+    // Rebuild when the checkout moves: HEAD itself (worktrees keep it in
+    // their own git dir), its reflog (appended by every commit, checkout and
+    // reset, so it also follows a branch whose ref is packed), the branch ref
+    // it names, and packed refs. Only paths that exist are watched: Cargo
+    // treats a missing `rerun-if-changed` path as always changed, which
+    // rebuilt this crate and everything above it on every cargo invocation of
+    // a CI checkout (it has no packed-refs file).
+    if let Some(git_dir) = git(&["rev-parse", "--absolute-git-dir"]) {
+        let git_dir = std::path::PathBuf::from(git_dir);
+        rerun_if_exists(&git_dir.join("HEAD"));
+        rerun_if_exists(&git_dir.join("logs").join("HEAD"));
+        if let Some(common) = git(&["rev-parse", "--git-common-dir"]) {
+            // git prints a relative path relative to the directory it ran in.
+            let common = std::path::PathBuf::from(common);
+            let common = if common.is_absolute() {
+                common
+            } else {
+                std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default())
+                    .join(common)
+            };
+            rerun_if_exists(&common.join("packed-refs"));
+            if let Some(reference) = git(&["symbolic-ref", "-q", "HEAD"]) {
+                rerun_if_ref_changes(&common, &reference);
+            }
+        }
+    }
+    println!("cargo:rustc-env=CUA_DRIVER_GIT_SHA={sha}");
+}
+
+fn rerun_if_exists(path: &std::path::Path) {
+    if path.exists() {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+}
+
+/// Watches the branch ref `reference` (for example `refs/heads/main`). While
+/// it is a loose file, watch that file. When it is packed, git writes a new
+/// loose file at the next commit without touching HEAD, the reflog (it may be
+/// disabled) or packed-refs, so watch the nearest existing directory above it
+/// instead: creating the file changes that directory. Paths that do not exist
+/// are never watched (Cargo would treat them as always changed).
+fn rerun_if_ref_changes(common: &std::path::Path, reference: &str) {
+    let refs = common.join("refs");
+    let mut path = common.join(reference);
+    loop {
+        if path.exists() {
+            println!("cargo:rerun-if-changed={}", path.display());
+            return;
+        }
+        match path.parent() {
+            Some(parent) if parent.starts_with(&refs) => path = parent.to_path_buf(),
+            _ => return,
+        }
+    }
+}
+
+fn git(args: &[&str]) -> Option<String> {
+    let dir = std::env::var("CARGO_MANIFEST_DIR").ok()?;
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(out.stdout).ok()?.trim().to_owned();
+    (!text.is_empty()).then_some(text)
 }
 
 fn validate_review_trust_root_build() {

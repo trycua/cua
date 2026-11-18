@@ -30,7 +30,7 @@ Profile schema 1 requires these fields; all digests are lowercase SHA-256:
 - `source`: `revision` = `4b3396d9fe4bd3cf723b0eb8db83c18a8764b520`,
   `driver_version` = `0.24.0`, `archive_sha256` and `manifest_sha256` measured
   from the reviewed original archive and its embedded `SOURCE-PROVENANCE.json`.
-- `hyprland`: exact `package_version`, `header_version` = `0.56.2`, compositor
+- `hyprland`: exact `package_version`, `header_version` = `0.56.2` (schema 2 also accepts `0.57.2`, Omarchy edge), compositor
   executable `sha256`, and `headers_sha256`.
 - `compiler`: full GCC `version` including date, exact `comment` (the string
   `GCC: (GNU) ` followed by that version), and executable `sha256`.
@@ -101,12 +101,12 @@ only two uniquely named archives:
 - `cua-hyprland-plugin-DRIVER_VERSION-COMMIT_SHA-build-kit.tar.gz`: `PKGBUILD`,
   `SOURCE-PROVENANCE.json`, operator `README.md`, `lifecycle.py`, and `SHA256SUMS`.
 
-The Driver release workflow generates these assets for stable component tag
-builds and publishing dispatches, with the same source override as the native
-Driver builds. The tag and committed Cargo version must match that source.
-Nightly and manual build-only runs do not generate plugin release assets.
-Recovery of historical tags that contain no bundler produces Driver-only
-assets. If a tag contains a bundler but generation fails, publication is blocked.
+The Driver release workflow generates these assets for the stable component
+tag push, which is also the run that publishes the release, from the same
+source as the native Driver builds. The tag and committed Cargo version must
+match that source. Nightly and manual build-only runs do not generate plugin
+release assets. A source that contains no bundler produces Driver-only assets.
+If a tag contains a bundler but generation fails, publication is blocked.
 Publication waits for this job and includes both archives in the component
 release checksums. The kit's `SHA256SUMS` remains inside its archive to avoid
 colliding with other release assets. Existing output directories are refused.

@@ -40,9 +40,15 @@ def test_review_pipeline_is_valid_pinned_and_nonpublishing() -> None:
     }
     assert all(access != "write" for access in parsed["permissions"].values())
     assert "contents: write" not in text
-    uses = re.findall(r"^\s*uses:\s*([^\s#]+)", text, flags=re.MULTILINE)
+    uses = re.findall(r"^\s*(?:-\s+)?uses:\s*([^\s#]+)", text, flags=re.MULTILINE)
     assert uses
-    assert all(re.fullmatch(r"[^@]+@[0-9a-f]{40}", use) for use in uses)
+    # Third-party actions are pinned to a full SHA; repo-local composite
+    # actions (./.github/actions/...) are versioned with the workflow itself.
+    assert all(
+        use.startswith("./.github/actions/")
+        or re.fullmatch(r"[^@]+@[0-9a-f]{40}", use)
+        for use in uses
+    )
     lowered = text.lower()
     assert "gh release" not in lowered
     assert "--method" not in lowered

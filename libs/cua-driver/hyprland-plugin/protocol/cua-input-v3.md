@@ -46,15 +46,18 @@ its original seat names.
 The request sequence for every Driver-admitted action is:
 
 1. Send `HELLO` once per connection. The response is
-   `{"ok":true,"protocol":3,"epoch":"<epoch>","foreground_target":true}`
-   for a production plugin implementing the foreground extension. Driver must
-   require that explicit capability before using the foreground route.
+   `{"ok":true,"protocol":3,"epoch":"<epoch>","foreground_target":true,"hover":true}`
+   for a production plugin implementing the foreground extension and `HOVER`.
+   Driver must require each explicit capability before using it: the
+   foreground route needs `foreground_target`, and `HOVER` needs `hover`.
+   Plugins older than `HOVER` omit the field.
 2. Send `CLAIM`. The response is `{"ok":true,"lane":0}` or lane `1`.
 3. For background input, send `TARGET <pid> <hex-address> <capability>`.
    For foreground input, send
    `FOREGROUND_TARGET <pid> <hex-address> <capability>`. The capability is exactly
-   one of `1` (click), `2` (key), `4` (scroll), or `8` (drag); foreground selection
-   also permits `16` (activate). Combined masks refuse.
+   one of `1` (click), `2` (key), `4` (scroll), `8` (drag), or `32` (hover);
+   foreground selection also permits `16` (activate) and refuses `32`, and
+   background selection refuses `16`. Combined masks refuse.
    The response includes `ok`, `target`, `revision`, `width`, and `height`.
 4. Send the one matching bounded operation using that token and revision.
    A subsequent action requires fresh route-specific target selection, even on
@@ -66,8 +69,12 @@ and grants at most five seconds of steady-clock technical lifetime. It first
 retires any unused previous grant. It refuses unavailable desktops, primary
 focus on the target's Wayland client, and another lane targeting that client.
 Background seats always publish a private canonical `evdev`/`pc105`/`us`
-keymap, so user layout options and remaps do not alter agent key semantics. A
-discovered address is an input to attestation, not a surface lifetime token.
+keymap, so user layout options and remaps do not alter agent key semantics.
+They advertise the user seat's key repeat rate and delay, falling back to
+Hyprland's 25 Hz and 600 ms defaults until a keyboard is active. A `KEY`
+request presses and releases every key within one compositor dispatch, so no
+agent key is held long enough to repeat. A discovered address is an input to
+attestation, not a surface lifetime token.
 Surface unmap, destruction, or replacement invalidates the binding. Geometry
 changes increment the revision and refuse stale actions.
 
@@ -76,10 +83,11 @@ The complete operation requests are:
 | Request | Limits |
 | --- | --- |
 | `ACTIVATE <sequence> <target> <revision>` | Capability 16; foreground bindings only. |
-| `CLICK <sequence> <target> <revision> <x> <y> <button> <count>` | Evdev buttons 272–274; count 1–2. |
-| `KEY <sequence> <target> <revision> <key> <modifiers>` | Evdev key 1–247 except lock keys 58, 69, and 70. Modifier bits: shift=1, ctrl=2, alt=4, super=8. |
+| `CLICK <sequence> <target> <revision> <x> <y> <button> <count>` | Evdev buttons 272-274; count 1-2. |
+| `KEY <sequence> <target> <revision> <key> <modifiers>` | Evdev key 1-247 except lock keys 58, 69, and 70. Modifier bits: shift=1, ctrl=2, alt=4, super=8. |
 | `SCROLL <sequence> <target> <revision> <x> <y> <axis> <value>` | Axis 0=vertical, 1=horizontal; nonzero value in [-1000,1000]. |
-| `DRAG <sequence> <target> <revision> <x1> <y1> <x2> <y2> <duration_ms>` | Left button; duration 50–2000 ms; the grant must cover the duration plus 50 ms. |
+| `DRAG <sequence> <target> <revision> <x1> <y1> <x2> <y2> <duration_ms>` | Left button; duration 50-2000 ms; the grant must cover the duration plus 50 ms. |
+| `HOVER <sequence> <target> <revision> <x> <y>` | Capability 32; background bindings only. Pointer enter and motion on the lane's agent seat, no button. |
 
 Coordinates are finite logical surface-local values, with `0 <= x < width`
 and `0 <= y < height`. Subsurface hits refuse. Sequence numbers increase
@@ -94,6 +102,11 @@ remaining technical authority. A drag keeps its bounded lifetime while
 running; consuming its grant does not permit another action. A dispatch without
 fresh authority returns `action_not_admitted`. Malformed or refused requests
 never imply application rollback.
+
+`HOVER` is how Driver shows a background app the pointer without moving the
+user's pointer: hover styles, hover-only controls and tooltips react to the
+agent seat's pointer, which stays at that point as the passive focus described
+below.
 
 Background pointer focus has a separate lifetime. After a successful background pointer operation,
 the lane keeps passive pointer focus on that exact live surface. This internal
@@ -172,11 +185,36 @@ makes no promise to restore focus or cursor position after delivery.
 Before taking over primary input, the plugin must refuse held physical keys or
 buttons, active grabs, pointer constraints, and drag-and-drop. It requires a
 single primary seat binding, excluding its own agent seats by resource identity,
-and refuses binding or input-resource changes during dispatch. Keyboard delivery
-requires the physical keymap to match canonical `evdev`/`pc105`/`us`, with
-neutral primary modifiers and layout group zero; remaps, latched or locked
-modifiers refuse before activation. Foreground pointer-only actions do not
-depend on the physical keyboard layout. Foreground drag
+and refuses binding or input-resource changes during dispatch. Foreground
+keyboard delivery never changes the human keyboard's modifiers or locks, so the
+focused client sees no modifier change around the action. It requires layout
+group zero and no held or latched modifiers. Num Lock may stay on; Caps Lock and
+any other lock refuse. The physical keymap qualifies when every key the KEY
+command can press (evdev 1-247 except the lock keys) produces the same keysym as
+canonical `evdev`/`pc105`/`us`, at the base level and, for non-modifier keys,
+with Shift held. Options that only change Caps Lock or modifier chords, such as
+`compose:caps` and `shift:both_capslock_cancel`, qualify; a different layout or
+a remapped typing key refuses before activation with `unsupported_layout`.
+Before consuming the grant or changing focus, the plugin also simulates the
+whole KEY chord under the live keymap and lock state and admits it only when it
+means what the wire chord means on a neutral canonical US keyboard: the same
+symbols, consumed modifiers, and resulting modifier state. These refusals use
+`primary_target_busy` before activation, with these details:
+
+- `foreground_keyboard_caps_lock`: Caps Lock is on.
+- `foreground_keyboard_numlock_keypad`: Num Lock is on and changes what a
+  keypad key in the chord means, such as `KP_End` becoming `KP_1`. Text,
+  digits, navigation keys, and keypad operators are unaffected.
+- `foreground_unsupported_layout`: the chord, such as a remapped Ctrl, Alt, or
+  Super shortcut, means something else under the live keymap.
+- `foreground_keyboard_locked`, `foreground_keyboard_depressed`,
+  `foreground_keyboard_latched`, `foreground_keyboard_group`: another lock
+  modifier, a held or latched modifier, or a nonzero layout group.
+
+A modifier, lock, or group change during the action refuses the rest of it
+with `foreground_partial_unknown` and detail `foreground_keyboard_state`; the
+unwind restores the human keyboard's current state. Foreground pointer-only
+actions do not depend on the physical keyboard layout. Foreground drag
 cancellation on primary-input and focus transitions remains subject to review
 and native verification; do not infer background isolation from this route.
 Foreground results use foreground delivery metadata. A drag cancellation after
@@ -224,9 +262,10 @@ of bounded cleanup latency.
 
 ## Compatibility and build gates
 
-For background `TARGET`, Driver restricts app/package/version/operation
-eligibility before connecting. Its qualification scope remains native Calc and
-Inkscape. Foreground `FOREGROUND_TARGET` has no Calc/Inkscape package gate; its
+For background `TARGET`, Driver admits a native Wayland window of the exact
+process before connecting, and refuses XWayland windows and inputs a toolkit is
+known to drop (Qt 6 keys). The plugin refuses `client_not_bound` when the client
+never bound the lane seat's pointer or keyboard. Foreground `FOREGROUND_TARGET`
 scope is ordinary native top-level surfaces. Native GTK3, Electron, and Tauri
 foreground coverage is planned and still requires certification. The plugin checks
 native surface identity, geometry, client conflicts, and exact compiled XKB
@@ -240,7 +279,10 @@ Driver expands bounded ASCII text into complete key operations under the exact
 US keymap. The protocol adds no text or IME stream. Background application
 qualification is unchanged by this foreground extension.
 
-Build against the exact Hyprland 0.56.2 ABI with `CUA_HYPRLAND_INPUT=ON`.
+Build against an exact supported Hyprland ABI (0.56.2 or 0.57.x) with
+`CUA_HYPRLAND_INPUT=ON`. CMake probes the installed headers for the 0.57
+`CWindow::backend()` window API and the earlier one and selects the matching
+window and layer accessors.
 This option defaults to `OFF` and is mutually exclusive with
 `CUA_HYPRLAND_TEST_INPUT`. The production build does not link an external
 signer or OpenSSL. `CUA_HYPRLAND_INPUT_TRACE=ON` adds test instrumentation for

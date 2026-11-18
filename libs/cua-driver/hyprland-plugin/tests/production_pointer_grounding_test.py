@@ -2,28 +2,9 @@
 import copy
 import unittest
 
+import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 import production_pointer_grounding as pointer
-from production_app_smoke_test import INKSCAPE, INKSCAPE_SELECTED
-from primary_trace_test import START, STOP, trace
-
-
-class Image:
-    width = height = 500
-
-    def __init__(self):
-        self.points = {}
-
-    def rgb(self, x, y):
-        assert 0 <= x < self.width and 0 <= y < self.height
-        return self.points.get((x, y), (255, 255, 255))
-
-    def rectangle(self, x, y, w, h):
-        self.points.update({(a, b): (51, 102, 153) for a in range(x, x + w) for b in range(y, y + h)})
-
-
-def snapshot(app):
-    return {'window_title': f'cua-smoke-{app}', 'window_bounds': {'x': 600, 'y': 400, 'width': 500, 'height': 500},
-            'screenshot_width': 500, 'screenshot_height': 500}
+from proof_fixtures import START, STOP, Image, app_snapshot as snapshot, ink, primary_trace as trace
 
 
 def calc(selection='A2', scroll=0):
@@ -53,23 +34,6 @@ def highlighted_calc():
     # A1:B3. C and D retain independent evidence for the first two row lines.
     image.points.update({(x, y): (205, 226, 247)
                          for x in range(45, 215) for y in range(169, 222)})
-    return state, image
-
-
-def ink(selected=True, dx=0, dy=0, scroll_y=0):
-    state = {**snapshot('inkscape'), **copy.deepcopy(INKSCAPE_SELECTED if selected else INKSCAPE)}
-    if selected:
-        for row in state['elements']:
-            if row['role'] == 'spin button':
-                row['frame'] = {'x': 700, 'y': 435, 'w': 100, 'h': 34}
-        for index, value in ((2, 40 + dx * .8), (3, 60 + dy * .8)):
-            row = next(row for row in state['elements'] if row['element_index'] == index)
-            state['tree_markdown'] = state['tree_markdown'].replace(
-                f'[{index}] spin button "{row["label"]}" value="{row["value"]}"',
-                f'[{index}] spin button "{value:.3f}" value="{value:.1f}"')
-            row.update(label=f'{value:.3f}', value=f'{value:.1f}')
-    image = Image()
-    image.rectangle(120 + dx, 150 + dy + scroll_y, 100, 60)
     return state, image
 
 
@@ -304,6 +268,55 @@ class PointerGroundingTests(unittest.TestCase):
         after['tree_markdown'] = after['tree_markdown'].replace(selected, center)
         with self.assertRaises(pointer.GroundingUnavailable):
             pointer.verify(after, after_image, drag)
+
+    @staticmethod
+    def relabel(state, labels):
+        """Replace spin-button labels (by element index) in both projections."""
+        for row in state['elements']:
+            if row.get('element_index') in labels:
+                old = f'[{row["element_index"]}] spin button "{row["label"]}"'
+                row['label'] = labels[row['element_index']]
+                state['tree_markdown'] = state['tree_markdown'].replace(
+                    old, f'[{row["element_index"]}] spin button "{row["label"]}"')
+        return state
+
+    SEMANTIC = {2: 'Horizontal coordinate of selection', 3: 'Vertical coordinate of selection',
+                4: 'Width of selection', 5: 'Height of selection'}
+
+    def test_inkscape_geometry_accepts_semantic_and_mixed_axis_labels(self):
+        expected = {'X': 40.0, 'Y': 60.0, 'W': 80.0, 'H': 50.0}
+        state, _ = ink()
+        self.assertEqual(pointer.inkscape_geometry(self.relabel(state, self.SEMANTIC)), expected)
+        state, _ = ink()
+        mixed = {index: self.SEMANTIC[index] for index in (3, 5)}
+        self.assertEqual(pointer.inkscape_geometry(self.relabel(state, mixed)), expected)
+
+    def test_inkscape_geometry_rejects_wrong_ambiguous_or_mismatched_labels(self):
+        semantic = self.SEMANTIC
+        for failure in ('wrong_axis', 'arbitrary', 'numeric_mismatch', 'nonfinite_label',
+                        'nonfinite_value', 'duplicate_control', 'markdown_mismatch'):
+            with self.subTest(failure=failure):
+                state, _ = ink()
+                if failure == 'wrong_axis':
+                    self.relabel(state, {**semantic, 2: semantic[3], 3: semantic[2]})
+                elif failure == 'arbitrary':
+                    self.relabel(state, {**semantic, 4: 'Width'})
+                elif failure == 'numeric_mismatch':
+                    self.relabel(state, {**semantic, 2: '41.000'})
+                elif failure == 'nonfinite_label':
+                    self.relabel(state, {**semantic, 2: 'nan'})
+                elif failure == 'nonfinite_value':
+                    self.relabel(state, semantic)
+                    state['elements'][1]['value'] = 'nan'
+                    state['tree_markdown'] = state['tree_markdown'].replace('value="40.0"', 'value="nan"')
+                elif failure == 'duplicate_control':
+                    self.relabel(state, semantic)
+                    state['elements'].append(copy.deepcopy(state['elements'][1]))
+                else:
+                    self.relabel(state, semantic)
+                    state['elements'][1]['label'] = '40.000'
+                with self.assertRaises(pointer.GroundingUnavailable):
+                    pointer.inkscape_geometry(state)
 
     def test_inkscape_hover_does_not_admit_ambiguous_unselected_or_in_progress_state(self):
         selected = 'Rectangle  in root. Click selection again to toggle scale/rotation handles.'

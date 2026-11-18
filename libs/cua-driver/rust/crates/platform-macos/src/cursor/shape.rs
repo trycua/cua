@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS adapter for [`cua_driver_core::cursor_shape`].
 //!
 //! Thin by design: the vocabulary, the dispatch and the "unsupported" story
@@ -88,7 +91,7 @@ fn tiff_data(image: &NSImage) -> Option<Retained<NSData>> {
 fn tiff_bytes(cursor: &NSCursor) -> Option<Vec<u8>> {
     let image = cursor_image(cursor)?;
     let data = tiff_data(&image)?;
-    Some(unsafe { data.bytes() }.to_vec())
+    Some(data.bytes().to_vec())
 }
 
 fn fingerprint(cursor: &NSCursor) -> Option<Fingerprint> {

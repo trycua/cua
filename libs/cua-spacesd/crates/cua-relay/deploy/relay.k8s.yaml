@@ -1,0 +1,140 @@
+# Example (Helm-free) deployment of cua-relay. Machines join with
+#   cua-spacesd join --relay wss://relay.example.com --relay-token <token>
+# and clients reach them at https://relay.example.com/m/<machine-id>/ (or
+# https://<machine-id>.relay.example.com/ with host mode and a wildcard
+# certificate). Connected machines live in the process: a machine
+# reconnects to whichever replica it lands on, so run one replica per
+# hostname (or route /relay/v1/connect and /m/<id> with consistent hashing
+# on the id). Account mode also keeps its directory on a ReadWriteOnce
+# volume. Deploys still overlap: the new pod starts on the same node, waits
+# in standby until the old one exits (a lock in the state directory) and
+# then takes over, with requests queued rather than refused (README,
+# "Deploys without downtime").
+#
+# Account mode (cua.ai logins, `cua host setup`): set CUA_RELAY_OIDC_ISSUER
+# (+ audience), and keep the machine directory and the assertion signing key
+# on the volume below so they survive restarts. Static tokens may be left
+# empty in account-only deployments.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cua-relay
+stringData:
+  tokens: "replace-with-a-long-random-machine-registration-token"
+  admin-token: "replace-with-a-long-random-admin-token"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cua-relay
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  selector:
+    matchLabels: { app: cua-relay }
+  template:
+    metadata:
+      labels: { app: cua-relay }
+    spec:
+      # The next pod lands on the node that has the volume mounted.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector: { matchLabels: { app: cua-relay } }
+              topologyKey: kubernetes.io/hostname
+      terminationGracePeriodSeconds: 20
+      containers:
+        - name: cua-relay
+          image: ghcr.io/trycua/cua-relay:latest
+          ports:
+            - { containerPort: 8080, name: http }
+            - { containerPort: 8081, name: health }
+          lifecycle:
+            # Keep serving while the ingress drops this pod.
+            preStop: { sleep: { seconds: 3 } }
+          env:
+            - { name: CUA_RELAY_HEALTH_LISTEN, value: "0.0.0.0:8081" }
+            - { name: CUA_RELAY_SHUTDOWN_GRACE_SECS, value: "3" }
+            - { name: CUA_RELAY_HOST_DOMAIN, value: relay.example.com }
+            - name: CUA_RELAY_TOKENS
+              valueFrom: { secretKeyRef: { name: cua-relay, key: tokens } }
+            - name: CUA_RELAY_ADMIN_TOKEN
+              valueFrom: { secretKeyRef: { name: cua-relay, key: admin-token } }
+            - { name: CUA_RELAY_OIDC_ISSUER, value: "https://auth.cua.ai/realms/<realm>" }
+            - { name: CUA_RELAY_OIDC_AUDIENCE, value: cua-relay }
+            - { name: CUA_RELAY_PUBLIC_URL, value: "https://relay.example.com" }
+            - { name: CUA_RELAY_STATE_FILE, value: /var/lib/cua-relay/machines.json }
+            - { name: CUA_RELAY_SIGNING_KEY_FILE, value: /var/lib/cua-relay/signing.key }
+            # The WireGuard-based mesh is off unless set: uncomment to
+            # coordinate it (and expose UDP 3478 for STUN).
+            # - { name: CUA_RELAY_MESH, value: "on" }
+            # - { name: CUA_RELAY_MESH_STUN_LISTEN, value: "0.0.0.0:3478" }
+          volumeMounts: [{ name: state, mountPath: /var/lib/cua-relay }]
+          readinessProbe:
+            httpGet: { path: /healthz, port: health }
+            periodSeconds: 2
+          livenessProbe:
+            httpGet: { path: /healthz, port: health }
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 100m, memory: 64Mi }
+            limits: { memory: 512Mi }
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: state
+          persistentVolumeClaim: { claimName: cua-relay-state }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cua-relay-state
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 1Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cua-relay
+spec:
+  selector: { app: cua-relay }
+  ports: [{ port: 80, targetPort: http, name: http }]
+---
+# No selector, so no endpoints: the ingress's deny target for /internal/.
+apiVersion: v1
+kind: Service
+metadata:
+  name: cua-relay-no-route
+spec:
+  ports: [{ port: 80, name: http }]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cua-relay
+  annotations:
+    # Long-lived WebSockets and gRPC streams.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+spec:
+  tls: [{ hosts: [relay.example.com, "*.relay.example.com"], secretName: cua-relay-tls }]
+  rules:
+    - host: relay.example.com
+      http:
+        paths:
+          # The hosted build's `/internal/v1/*` routes are for in-cluster
+          # callers only (straight to the Service): the ingress sends
+          # `/internal/` to a Service with no endpoints, so it never reaches
+          # the relay (the controller answers 503). The relay also refuses any
+          # `/internal/` request that carries proxy headers.
+          - { path: /internal/, pathType: Prefix, backend: { service: { name: cua-relay-no-route, port: { number: 80 } } } }
+          - { path: /, pathType: Prefix, backend: { service: { name: cua-relay, port: { name: http } } } }
+    - host: "*.relay.example.com"
+      http:
+        paths: [{ path: /, pathType: Prefix, backend: { service: { name: cua-relay, port: { name: http } } } }]

@@ -1,0 +1,295 @@
+{
+  "name": "drive-storage",
+  "about": "Settings, Storage: this Mac by default; switching to an S3-compatible bucket (a failed test, a passing one, saved with keys that never come back); the Finder volume switched on (macOS asks for the extension first), shown in Finder; the cache limit and Clear cache; then Linux (a mount), Windows (no mount) and a daemon that does not answer.",
+  "input": {
+    "os": "macos",
+    "home": "/Users/maya",
+    "storage": {
+      "backend": "fs",
+      "fs_path": "/Users/maya/.cua/volume/data",
+      "s3": null,
+      "has_keys": false
+    },
+    "mount": {
+      "enabled": false,
+      "state": "off",
+      "method": "fskit",
+      "path": null,
+      "volume_name": "Cua Volume"
+    },
+    "cache": {
+      "size_bytes": 1288490188,
+      "capacity_bytes": 10737418240
+    }
+  },
+  "steps": [
+    {
+      "step": "before the form loads"
+    },
+    {
+      "step": "this Mac",
+      "action": {
+        "type": "loaded",
+        "storage": {
+          "backend": "fs",
+          "fs_path": "/Users/maya/.cua/volume/data",
+          "s3": null,
+          "has_keys": false
+        }
+      }
+    },
+    {
+      "step": "S3-compatible",
+      "choose": [
+        "backend",
+        "s3"
+      ]
+    },
+    {
+      "step": "enter details manually",
+      "press": "s3-manual"
+    },
+    {
+      "step": "endpoint",
+      "edit": [
+        "s3-endpoint",
+        "http://127.0.0.1:9000"
+      ]
+    },
+    {
+      "step": "bucket",
+      "edit": [
+        "s3-bucket",
+        "cua-volume"
+      ]
+    },
+    {
+      "step": "path-style",
+      "choose": [
+        "s3-path-style",
+        "on"
+      ]
+    },
+    {
+      "step": "key id",
+      "edit": [
+        "s3-access-key",
+        "maya-drive"
+      ]
+    },
+    {
+      "step": "secret",
+      "edit": [
+        "s3-secret",
+        "fixture-secret"
+      ]
+    },
+    {
+      "step": "test",
+      "press": "s3-test"
+    },
+    {
+      "step": "versioning off",
+      "action": {
+        "type": "checked",
+        "check": {
+          "ok": false,
+          "reachable": true,
+          "authorized": true,
+          "versioning": false,
+          "detail": null,
+          "applied": false
+        }
+      }
+    },
+    {
+      "step": "test again",
+      "press": "s3-test"
+    },
+    {
+      "step": "connected",
+      "action": {
+        "type": "checked",
+        "check": {
+          "ok": true,
+          "reachable": true,
+          "authorized": true,
+          "versioning": true,
+          "detail": null,
+          "applied": false
+        }
+      }
+    },
+    {
+      "step": "save",
+      "action": {
+        "type": "save"
+      }
+    },
+    {
+      "step": "saved",
+      "action": {
+        "type": "saved",
+        "check": {
+          "ok": true,
+          "reachable": true,
+          "authorized": true,
+          "versioning": true,
+          "detail": null,
+          "applied": true
+        }
+      },
+      "input": {
+        "storage": {
+          "backend": "s3",
+          "fs_path": "/Users/maya/.cua/volume/data",
+          "s3": {
+            "endpoint": "http://127.0.0.1:9000",
+            "region": "us-east-1",
+            "bucket": "cua-volume",
+            "root": "",
+            "path_style": true
+          },
+          "has_keys": true
+        }
+      }
+    },
+    {
+      "step": "show in Finder on",
+      "choose": [
+        "mount",
+        "on"
+      ]
+    },
+    {
+      "step": "needs approval",
+      "action": {
+        "type": "done"
+      },
+      "input": {
+        "mount": {
+          "enabled": true,
+          "state": "needs_approval",
+          "method": "fskit",
+          "path": null,
+          "volume_name": "Cua Volume",
+          "detail": "Turn on Cua Volume in File System Extensions.",
+          "settings_url": "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"
+        }
+      }
+    },
+    {
+      "step": "open System Settings",
+      "press": "mount-approval"
+    },
+    {
+      "step": "mounted",
+      "action": {
+        "type": "done"
+      },
+      "input": {
+        "mount": {
+          "enabled": true,
+          "state": "mounted",
+          "method": "fskit",
+          "path": "/Volumes/Cua Volume",
+          "volume_name": "Cua Volume"
+        }
+      }
+    },
+    {
+      "step": "show in Finder",
+      "press": "mount-path"
+    },
+    {
+      "step": "shown",
+      "action": {
+        "type": "done"
+      }
+    },
+    {
+      "step": "cache limit",
+      "choose": [
+        "cache-limit",
+        "5368709120"
+      ]
+    },
+    {
+      "step": "limit set",
+      "action": {
+        "type": "done"
+      },
+      "input": {
+        "cache": {
+          "size_bytes": 1288490188,
+          "capacity_bytes": 5368709120
+        }
+      }
+    },
+    {
+      "step": "clear cache",
+      "press": "cache"
+    },
+    {
+      "step": "cleared",
+      "action": {
+        "type": "done"
+      },
+      "input": {
+        "cache": {
+          "size_bytes": 0,
+          "capacity_bytes": 5368709120
+        }
+      }
+    },
+    {
+      "step": "unmount",
+      "choose": [
+        "mount",
+        "off"
+      ]
+    },
+    {
+      "step": "unmount failed",
+      "action": {
+        "type": "failed",
+        "error": "A file on Cua Volume is still uploading."
+      }
+    },
+    {
+      "step": "linux",
+      "input": {
+        "os": "linux",
+        "home": "/home/maya",
+        "mount": {
+          "enabled": true,
+          "state": "mounted",
+          "method": "fuse",
+          "path": "/home/maya/Cua Volume",
+          "volume_name": "Cua Volume"
+        }
+      }
+    },
+    {
+      "step": "windows",
+      "input": {
+        "os": "windows",
+        "mount": {
+          "enabled": false,
+          "state": "unsupported",
+          "method": "none",
+          "volume_name": "Cua Volume"
+        }
+      }
+    },
+    {
+      "step": "no daemon",
+      "input": {
+        "os": "macos",
+        "storage": null,
+        "mount": null,
+        "cache": null
+      }
+    }
+  ]
+}

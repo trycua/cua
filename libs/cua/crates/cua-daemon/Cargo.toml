@@ -1,0 +1,99 @@
+[package]
+name = "cua-daemon"
+description = "The cua SDK runtime (sandboxes, env passthrough, media bridge) hosted as cua.daemon.v1 over a Unix socket or loopback + token, and its client."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["server", "client", "spaces"]
+# The Spaces runtime (`cua_spaces::Spaces`): `SpaceService`, the per-Space
+# env passthrough and the Spaces MCP server (`/mcp`, `cua daemon mcp`).
+spaces = ["cua-daemon-core/spaces", "dep:cua-spaces", "dep:cua-cluster", "dep:cua-snapshot-sync"]
+# The daemon: tonic services, env passthrough and the media bridge. Its services
+# are the Spaces runtime (`spaces_svc`), so it brings `spaces` with it.
+server = ["spaces", "tonic/server", "tonic/router", "dep:axum", "dep:tower-http", "dep:hyper", "tokio-stream/net"]
+# `DaemonClient` over the Unix socket or loopback.
+client = ["cua-daemon-core/client"]
+# Contrib sandbox providers (`--on e2b`, ...), off by default: `contrib`
+# for every one, `contrib-<name>` for one.
+contrib = ["cua-daemon-core/contrib"]
+contrib-e2b = ["cua-daemon-core/contrib-e2b"]
+contrib-daytona = ["cua-daemon-core/contrib-daytona"]
+contrib-modal = ["cua-daemon-core/contrib-modal"]
+# Your own cloud account as a location (`--on aws|gcp|hetzner|modal`): the cua-byoc
+# providers and `cua cloud`.
+byoc = ["cua-daemon-core/byoc"]
+# AWS (EC2 for `--on aws`, S3 for the checkpoint fallback): the AWS SDK
+# crates are the slowest part of a cold build, so local development builds
+# leave this off. Without it `--on aws` and an S3 fallback fail with "this
+# build doesn't include AWS support".
+aws = ["byoc", "cua-daemon-core/aws", "cua-snapshot-sync?/s3"]
+# `fixtures`: a MockServer spacesd on loopback, for tests
+# and the `cua-test-fixtures` binary behind the language-binding smoke tests
+# (libs/cua-spacesd/tests/spaces-e2e). Never shipped.
+test-fixtures = ["server", "spaces", "cua-spacesd-client/testing", "tokio-tungstenite/handshake", "dep:tempfile"]
+
+[dependencies]
+cua-daemon-core.workspace = true
+cua-home.workspace = true
+cua-proto = { workspace = true, features = ["client", "server", "serde"] }
+cua-spacesd-client.workspace = true
+cua-sandbox-core.workspace = true
+# Share a link to anything you run: records and the gateway.
+cua-share = { workspace = true }
+cua-vmm = { workspace = true, default-features = true }
+cua-image.workspace = true
+# Disk accounting, cache GC and orphan reaping.
+cua-disk.workspace = true
+cua-spaces = { workspace = true, optional = true }
+cua-snapshot-sync = { workspace = true, optional = true }
+# Ready warm-pool members, reported to `on="auto"` placement.
+cua-cluster = { workspace = true, optional = true }
+async-trait.workspace = true
+tonic = { workspace = true, default-features = false, features = ["codegen", "channel"] }
+tonic-web.workspace = true
+prost.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper-util = { workspace = true, features = ["server", "server-auto", "service", "client-legacy", "http1"] }
+hyper = { workspace = true, optional = true, features = ["server", "http1", "http2"] }
+tower.workspace = true
+tokio = { workspace = true }
+tokio-stream.workspace = true
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+bytes.workspace = true
+base64.workspace = true
+# The spawn capability's MAC (child Spaces).
+hmac = "0.12"
+rand.workspace = true
+sha2.workspace = true
+tracing.workspace = true
+url.workspace = true
+tempfile = { workspace = true, optional = true }
+axum = { workspace = true, optional = true }
+tower-http = { workspace = true, optional = true }
+
+[target.'cfg(unix)'.dependencies]
+# Host memory for the warm pool's sizing (sysctl) and process checks.
+libc = "0.2"
+
+[dev-dependencies]
+cua-agents.workspace = true
+pbjson-types.workspace = true
+cua-host = { workspace = true, features = ["testing"] }
+# tests/job_spaces_live.rs: a member's bundle (a gzip tar).
+flate2 = "1"
+tar = "0.4"
+cua-spaces = { workspace = true, features = ["mcp-client"] }
+cua-spacesd-client = { workspace = true, features = ["testing"] }
+# Keyvault delivery test: a deterministic in-memory export provider and the
+# broker types, exercised against the mock spacesd.
+tempfile.workspace = true
+tracing-subscriber.workspace = true

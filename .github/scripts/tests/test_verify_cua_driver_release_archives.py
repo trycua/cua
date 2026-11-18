@@ -144,26 +144,28 @@ def test_non_executable_unix_binary_fails_closed(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("archive_suffix", "member"),
+    ("archive_suffix", "member", "reason"),
     (
-        ("linux-x86_64-binary.tar.gz", "cua-perception"),
-        ("darwin-universal.tar.gz", "models/detector.onnx"),
-        ("windows-x86_64.zip", "onnxruntime.dll"),
-        ("windows-arm64-binary.zip", "signed-catalog.json"),
+        ("linux-x86_64-binary.tar.gz", "cua-perception", "cua-perception worker"),
+        ("darwin-universal.tar.gz", "models/detector.onnx", "model directory"),
+        ("linux-arm64-binary.tar.gz", "detector.onnx", "model payload"),
+        ("windows-x86_64.zip", "onnxruntime.dll", "ONNX Runtime"),
+        ("windows-arm64-binary.zip", "signed-catalog.json", "extension catalog"),
     ),
 )
 def test_optional_perception_payload_fails_closed(
-    tmp_path: Path, archive_suffix: str, member: str
+    tmp_path: Path, archive_suffix: str, member: str, reason: str
 ) -> None:
     contracts = _write_valid_release(tmp_path)
     target = next(contract for contract in contracts if contract.filename.endswith(archive_suffix))
     _rewrite_with_extra_member(tmp_path / target.filename, target, member)
 
-    with pytest.raises(
-        ContractError,
-        match=rf"{target.filename} contains (?:forbidden optional perception payload .*|unexpected member)",
-    ):
+    # The payload guard, not the generic unexpected-member check, must reject it.
+    with pytest.raises(ContractError) as error:
         verify_release_archives(tmp_path, VERSION)
+    assert str(error.value) == (
+        f"{target.filename} contains forbidden optional perception payload ({reason}): {member}"
+    )
 
 
 def test_agpl_notice_content_fails_closed(tmp_path: Path) -> None:

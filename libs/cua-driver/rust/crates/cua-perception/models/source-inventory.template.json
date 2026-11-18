@@ -32,5 +32,5 @@
   "immutable_external_coordinates": [
     { "component": "ONNX Runtime and redistributed OCR inputs", "url": "See scripts/artifacts.lock.json", "sha256": "See scripts/artifacts.lock.json" }
   ],
-  "review_status": "license-review-required"
+  "review_status": "maintainer-approved-agpl-distribution"
 }

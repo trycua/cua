@@ -1,0 +1,1262 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+//! `TunnelService` plus its ticket-authenticated WebSockets:
+//! `/tunnel` (client→guest TCP forwarding) and `/hotspot` (guest→client
+//! reverse-SOCKS egress, replacing the unauthenticated rcdp-socks).
+
+use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
+
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::State;
+use axum::http::{HeaderMap, StatusCode, Uri};
+use axum::response::{IntoResponse, Response};
+use cua_proto::env::v1::tunnel_service_server::{TunnelService, TunnelServiceServer};
+use cua_proto::env::v1::*;
+use cua_spacesd_socks::{Hub, Route};
+use futures_util::{SinkExt, StreamExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio_util::sync::CancellationToken;
+use tonic::{Code, Request, Response as GrpcResponse, Status};
+
+use crate::auth::{caller, TicketScope};
+use crate::context::ServerContext;
+use crate::error::{session_not_found, status};
+use crate::util::{duration, timestamp};
+
+/// Default forward ticket lifetime.
+pub const FORWARD_DEFAULT_TTL: Duration = Duration::from_secs(10 * 60);
+/// Default hotspot ticket lifetime.
+pub const HOTSPOT_DEFAULT_TTL: Duration = Duration::from_secs(60);
+/// The capability a guest with the spawn channel advertises.
+pub const SPAWN_FEATURE: &str = "spawn";
+/// The capability a guest that can be its tree's exit advertises
+/// (`StartExit`).
+pub const EXIT_FEATURE: &str = "exit";
+/// The capability a guest that publishes host ports on its loopback
+/// advertises (`StartHostPorts`).
+pub const HOST_PORTS_FEATURE: &str = "host_ports";
+/// Default host ports ticket lifetime.
+pub const HOST_PORTS_DEFAULT_TTL: Duration = Duration::from_secs(60);
+/// Default spawn ticket lifetime.
+pub const SPAWN_DEFAULT_TTL: Duration = Duration::from_secs(60);
+/// The host end every spawn connection is opened to (the host serves its
+/// child-Space API there; the name is not dialed).
+pub const SPAWN_PEER_HOST: &str = "spawn";
+
+struct Forward {
+    id: String,
+    host: String,
+    port: u16,
+    expires_at: SystemTime,
+    active: AtomicU32,
+    bytes_in: AtomicU64,
+    bytes_out: AtomicU64,
+    closed: CancellationToken,
+}
+
+struct Hotspot {
+    id: String,
+    socks_address: SocketAddr,
+    hub: Hub,
+    peer_principal: Mutex<String>,
+    stop: CancellationToken,
+    set_system_proxy: bool,
+}
+
+/// The spawn channel: a listener on guest loopback relayed to the host.
+struct Spawn {
+    id: String,
+    address: String,
+    hub: Hub,
+    stop: CancellationToken,
+    files: super::spawn::SpawnFiles,
+}
+
+/// Host ports published on guest loopback, carried by the host.
+struct HostPorts {
+    id: String,
+    hub: Hub,
+    stop: CancellationToken,
+}
+
+/// This Space as its tree's exit: a SOCKS5 listener on guest loopback that
+/// connects from the Space's own network.
+struct Exit {
+    socks_address: SocketAddr,
+    stop: CancellationToken,
+}
+
+/// State shared by the gRPC service and the WebSocket routes.
+#[derive(Clone)]
+pub struct TunnelState {
+    ctx: ServerContext,
+    forwards: Arc<Mutex<HashMap<String, Arc<Forward>>>>,
+    hotspot: Arc<Mutex<Option<Arc<Hotspot>>>>,
+    spawn: Arc<Mutex<Option<Arc<Spawn>>>>,
+    exit: Arc<Mutex<Option<Arc<Exit>>>>,
+    host_ports: Arc<Mutex<Option<Arc<HostPorts>>>>,
+    /// Public TCP shares served from this Space's share slots.
+    slots: super::share_slots::ShareSlots,
+}
+
+impl TunnelState {
+    /// Creates empty state.
+    pub fn new(ctx: ServerContext) -> Self {
+        let state = Self {
+            ctx,
+            forwards: Arc::default(),
+            hotspot: Arc::default(),
+            spawn: Arc::default(),
+            exit: Arc::default(),
+            host_ports: Arc::default(),
+            slots: super::share_slots::ShareSlots::default(),
+        };
+        // Revoked sessions (token file rotated or emptied): stop every
+        // forward and the hotspot.
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let mut revoked = state.ctx.session_revocations();
+            let shutdown = state.ctx.shutdown_token();
+            let weak = (
+                Arc::downgrade(&state.forwards),
+                Arc::downgrade(&state.hotspot),
+                Arc::downgrade(&state.spawn),
+                Arc::downgrade(&state.exit),
+                Arc::downgrade(&state.host_ports),
+            );
+            let ctx = state.ctx.clone();
+            handle.spawn(async move {
+                loop {
+                    tokio::select! {
+                        changed = revoked.changed() => if changed.is_err() { return },
+                        _ = shutdown.cancelled() => return,
+                    }
+                    let (Some(forwards), Some(hotspot), Some(spawn), Some(exit), Some(host_ports)) = (
+                        weak.0.upgrade(),
+                        weak.1.upgrade(),
+                        weak.2.upgrade(),
+                        weak.3.upgrade(),
+                        weak.4.upgrade(),
+                    ) else {
+                        return;
+                    };
+                    let state = TunnelState {
+                        ctx: ctx.clone(),
+                        forwards,
+                        hotspot,
+                        spawn,
+                        exit,
+                        host_ports,
+                        slots: Default::default(),
+                    };
+                    state.revoke_all();
+                }
+            });
+        }
+        state
+    }
+
+    /// Closes every forward, stops the hotspot and the spawn channel (a
+    /// new token is a new owner: the old Space's capability must not stay).
+    pub fn revoke_all(&self) {
+        self.stop_spawn(None);
+        self.stop_exit();
+        self.stop_host_ports();
+        let forwards: Vec<_> = self
+            .forwards
+            .lock()
+            .expect("forwards")
+            .drain()
+            .map(|(_, f)| f)
+            .collect();
+        for forward in &forwards {
+            forward.closed.cancel();
+        }
+        if self.stop_hotspot(None) || !forwards.is_empty() {
+            tracing::info!(forwards = forwards.len(), "tunnel sessions revoked");
+        }
+    }
+
+    fn gc_forwards(&self) {
+        let now = SystemTime::now();
+        self.forwards
+            .lock()
+            .expect("forwards")
+            .retain(|_, f| f.expires_at > now || f.active.load(Ordering::SeqCst) > 0);
+    }
+
+    fn stop_host_ports(&self) -> bool {
+        match self.host_ports.lock().expect("host ports").take() {
+            Some(h) => {
+                h.stop.cancel();
+                tracing::info!(session = %h.id, "host ports stopped");
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn stop_exit(&self) -> bool {
+        match self.exit.lock().expect("exit").take() {
+            Some(exit) => {
+                exit.stop.cancel();
+                tracing::info!(address = %exit.socks_address, "exit stopped");
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn stop_spawn(&self, id: Option<&str>) -> bool {
+        let mut slot = self.spawn.lock().expect("spawn");
+        let matches = match (slot.as_ref(), id) {
+            (Some(s), Some(id)) => s.id == id,
+            (Some(_), None) => true,
+            (None, _) => false,
+        };
+        if !matches {
+            return false;
+        }
+        if let Some(spawn) = slot.take() {
+            spawn.stop.cancel();
+            spawn.files.remove();
+            self.ctx.update_init(|state| state.spawn_env.clear());
+            tracing::info!(spawn = %spawn.id, "spawn channel stopped");
+        }
+        true
+    }
+
+    fn stop_hotspot(&self, id: Option<&str>) -> bool {
+        let mut slot = self.hotspot.lock().expect("hotspot");
+        let matches = match (slot.as_ref(), id) {
+            (Some(h), Some(id)) => h.id == id,
+            (Some(_), None) => true,
+            (None, _) => false,
+        };
+        if !matches {
+            return false;
+        }
+        if let Some(hotspot) = slot.take() {
+            hotspot.stop.cancel();
+            if hotspot.set_system_proxy {
+                self.ctx.update_init(|state| state.proxy_env.clear());
+            }
+            tracing::info!(hotspot = %hotspot.id, "hotspot stopped");
+        }
+        true
+    }
+}
+
+/// Addresses of the guest's own interfaces.
+fn own_addresses() -> Vec<IpAddr> {
+    let networks = sysinfo::Networks::new_with_refreshed_list();
+    networks
+        .values()
+        .flat_map(|data| {
+            data.ip_networks()
+                .iter()
+                .map(|n| n.addr)
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Forward targets are limited to loopback and the guest's own addresses.
+fn allowed_forward_host(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    match host.parse::<IpAddr>() {
+        Ok(ip) if ip.is_loopback() => true,
+        Ok(ip) => own_addresses().contains(&ip),
+        Err(_) => false,
+    }
+}
+
+fn bypass_matches(bypass: &[String], host: &str) -> bool {
+    let ip = host.parse::<IpAddr>().ok();
+    bypass.iter().any(|rule| {
+        if let (Some(ip), Some((net, bits))) = (ip, rule.split_once('/')) {
+            if let (Ok(net), Ok(bits)) = (net.parse::<IpAddr>(), bits.parse::<u32>()) {
+                return cidr_contains(net, bits, ip);
+            }
+        }
+        let suffix = rule.trim_start_matches('.').to_ascii_lowercase();
+        let host = host.to_ascii_lowercase();
+        host == suffix || host.ends_with(&format!(".{suffix}"))
+    })
+}
+
+fn cidr_contains(net: IpAddr, bits: u32, ip: IpAddr) -> bool {
+    match (net, ip) {
+        (IpAddr::V4(n), IpAddr::V4(i)) if bits <= 32 => {
+            let mask = if bits == 0 {
+                0
+            } else {
+                u32::MAX << (32 - bits)
+            };
+            u32::from(n) & mask == u32::from(i) & mask
+        }
+        (IpAddr::V6(n), IpAddr::V6(i)) if bits <= 128 => {
+            let mask = if bits == 0 {
+                0
+            } else {
+                u128::MAX << (128 - bits)
+            };
+            u128::from(n) & mask == u128::from(i) & mask
+        }
+        _ => false,
+    }
+}
+
+pub(crate) fn ticket_path(base: &str, ticket: &str) -> String {
+    format!(
+        "{base}?ticket={}",
+        percent_encoding::utf8_percent_encode(ticket, percent_encoding::NON_ALPHANUMERIC)
+    )
+}
+
+/// The gRPC service.
+#[derive(Clone)]
+pub struct TunnelServiceImpl {
+    state: TunnelState,
+}
+
+impl TunnelServiceImpl {
+    /// Creates the service.
+    pub fn new(state: TunnelState) -> Self {
+        Self { state }
+    }
+
+    /// Tonic server.
+    pub fn into_server(self) -> TunnelServiceServer<Self> {
+        TunnelServiceServer::new(self)
+    }
+}
+
+#[tonic::async_trait]
+impl TunnelService for TunnelServiceImpl {
+    async fn forward(
+        &self,
+        request: Request<ForwardRequest>,
+    ) -> Result<GrpcResponse<ForwardResponse>, Status> {
+        let caller = caller(&request);
+        let issued = caller.account.as_ref().map(|a| a.issued_at);
+        let principal = caller.principal;
+        let body = request.into_inner();
+        if body.port == 0 || body.port > u16::MAX as u32 {
+            return Err(crate::error::invalid("port must be 1-65535"));
+        }
+        let host = if body.host.is_empty() {
+            "127.0.0.1".to_owned()
+        } else {
+            body.host
+        };
+        // On a machine that does not share its desktop, a relayed caller
+        // reaches only the routed Spaces it may use, by their loopback port.
+        if caller.host_only {
+            let account = caller.account.as_ref();
+            let ok = (host.eq_ignore_ascii_case("localhost")
+                || host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback()))
+                && crate::host_spaces::routed_port_allowed(
+                    body.port as u16,
+                    account.map(|a| a.account.as_str()).unwrap_or_default(),
+                    account.is_some_and(|a| a.role == "owner"),
+                );
+            if !ok {
+                return Err(status(
+                    Code::PermissionDenied,
+                    ErrorReason::PermissionDenied,
+                    format!(
+                        "this machine does not share its desktop: only the port of a routed Space \
+                         you may use can be forwarded, not {}",
+                        body.port
+                    ),
+                ));
+            }
+        }
+        if !allowed_forward_host(&host) {
+            return Err(status(
+                Code::PermissionDenied,
+                ErrorReason::PermissionDenied,
+                format!(
+                    "forwarding is limited to loopback and the guest's own addresses, not {host:?}"
+                ),
+            ));
+        }
+        let ttl = duration(body.ttl.as_ref())
+            .filter(|d| !d.is_zero())
+            .unwrap_or(FORWARD_DEFAULT_TTL);
+        let id = format!("fwd-{}", crate::util::random_id(9));
+        let (ticket, expires_at) = self.state.ctx.mint_ticket_issued(
+            TicketScope::Tunnel,
+            &id,
+            principal.as_ref(),
+            issued,
+            ttl,
+        );
+        self.state.gc_forwards();
+        self.state.forwards.lock().expect("forwards").insert(
+            id.clone(),
+            Arc::new(Forward {
+                id: id.clone(),
+                host,
+                port: body.port as u16,
+                expires_at,
+                active: AtomicU32::new(0),
+                bytes_in: AtomicU64::new(0),
+                bytes_out: AtomicU64::new(0),
+                closed: CancellationToken::new(),
+            }),
+        );
+        Ok(GrpcResponse::new(ForwardResponse {
+            forward_id: id,
+            ws_path: ticket_path(cua_proto::metadata::TUNNEL_WS_PATH, &ticket),
+            ticket,
+            expires_at: Some(timestamp(expires_at)),
+        }))
+    }
+
+    async fn list_forwards(
+        &self,
+        _request: Request<ListForwardsRequest>,
+    ) -> Result<GrpcResponse<ListForwardsResponse>, Status> {
+        self.state.gc_forwards();
+        let forwards = self
+            .state
+            .forwards
+            .lock()
+            .expect("forwards")
+            .values()
+            .map(|f| ForwardInfo {
+                forward_id: f.id.clone(),
+                host: f.host.clone(),
+                port: f.port as u32,
+                active_connections: f.active.load(Ordering::SeqCst),
+                bytes_in: f.bytes_in.load(Ordering::Relaxed),
+                bytes_out: f.bytes_out.load(Ordering::Relaxed),
+                expires_at: Some(timestamp(f.expires_at)),
+            })
+            .collect();
+        Ok(GrpcResponse::new(ListForwardsResponse { forwards }))
+    }
+
+    async fn close_forward(
+        &self,
+        request: Request<CloseForwardRequest>,
+    ) -> Result<GrpcResponse<CloseForwardResponse>, Status> {
+        let id = request.into_inner().forward_id;
+        let forward = self
+            .state
+            .forwards
+            .lock()
+            .expect("forwards")
+            .remove(&id)
+            .ok_or_else(|| session_not_found("forward", &id))?;
+        forward.closed.cancel();
+        Ok(GrpcResponse::new(CloseForwardResponse {}))
+    }
+
+    async fn start_hotspot(
+        &self,
+        request: Request<StartHotspotRequest>,
+    ) -> Result<GrpcResponse<StartHotspotResponse>, Status> {
+        let caller = caller(&request);
+        let issued = caller.account.as_ref().map(|a| a.issued_at);
+        let principal = caller.principal;
+        let body = request.into_inner();
+        let port = match body.socks_port {
+            0 => 1080,
+            p if p > u16::MAX as u32 => {
+                return Err(crate::error::invalid("socks_port out of range"))
+            }
+            p => p as u16,
+        };
+        self.state.stop_hotspot(None);
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+            .await
+            .map_err(|e| {
+                status(
+                    Code::FailedPrecondition,
+                    ErrorReason::Unspecified,
+                    format!("cannot bind the SOCKS listener on 127.0.0.1:{port}: {e}"),
+                )
+            })?;
+        let socks_address = listener
+            .local_addr()
+            .map_err(|e| crate::error::internal(e.to_string()))?;
+        let id = format!("hs-{}", crate::util::random_id(9));
+        let hub = Hub::new();
+        let stop = CancellationToken::new();
+        let bypass = body.bypass.clone();
+        let policy: cua_spacesd_socks::Policy = Arc::new(move |host: &str, _port| {
+            if bypass_matches(&bypass, host) {
+                Route::Direct
+            } else {
+                Route::Peer
+            }
+        });
+        {
+            let hub = hub.clone();
+            let stop = stop.clone();
+            tokio::spawn(async move {
+                tokio::select! {
+                    result = cua_spacesd_socks::serve_socks(listener, hub, policy) => {
+                        if let Err(error) = result {
+                            tracing::warn!(%error, "hotspot SOCKS listener failed");
+                        }
+                    }
+                    _ = stop.cancelled() => {}
+                }
+            });
+        }
+        if body.set_system_proxy {
+            let proxy = format!("socks5h://{socks_address}");
+            let no_proxy = body.bypass.join(",");
+            self.state.ctx.update_init(|state| {
+                state.proxy_env.clear();
+                for key in [
+                    "ALL_PROXY",
+                    "all_proxy",
+                    "HTTPS_PROXY",
+                    "https_proxy",
+                    "HTTP_PROXY",
+                    "http_proxy",
+                ] {
+                    state.proxy_env.insert(key.into(), proxy.clone());
+                }
+                if !no_proxy.is_empty() {
+                    state.proxy_env.insert("NO_PROXY".into(), no_proxy.clone());
+                    state.proxy_env.insert("no_proxy".into(), no_proxy);
+                }
+            });
+        }
+        let ttl = duration(body.ticket_ttl.as_ref())
+            .filter(|d| !d.is_zero())
+            .unwrap_or(HOTSPOT_DEFAULT_TTL);
+        let (ticket, _) = self.state.ctx.mint_ticket_issued(
+            TicketScope::Hotspot,
+            &id,
+            principal.as_ref(),
+            issued,
+            ttl,
+        );
+        *self.state.hotspot.lock().expect("hotspot") = Some(Arc::new(Hotspot {
+            id: id.clone(),
+            socks_address,
+            hub,
+            peer_principal: Mutex::new(String::new()),
+            stop,
+            set_system_proxy: body.set_system_proxy,
+        }));
+        Ok(GrpcResponse::new(StartHotspotResponse {
+            hotspot_id: id,
+            ws_path: ticket_path(cua_proto::metadata::HOTSPOT_WS_PATH, &ticket),
+            ticket,
+            socks_address: socks_address.to_string(),
+        }))
+    }
+
+    async fn stop_hotspot(
+        &self,
+        request: Request<StopHotspotRequest>,
+    ) -> Result<GrpcResponse<StopHotspotResponse>, Status> {
+        let id = request.into_inner().hotspot_id;
+        if !self.state.stop_hotspot(Some(&id)) {
+            return Err(session_not_found("hotspot", &id));
+        }
+        Ok(GrpcResponse::new(StopHotspotResponse {}))
+    }
+
+    async fn get_hotspot_status(
+        &self,
+        _request: Request<GetHotspotStatusRequest>,
+    ) -> Result<GrpcResponse<GetHotspotStatusResponse>, Status> {
+        let hotspot = self.state.hotspot.lock().expect("hotspot").clone();
+        let Some(hotspot) = hotspot else {
+            return Ok(GrpcResponse::new(GetHotspotStatusResponse {
+                state: HotspotState::Stopped as i32,
+                ..Default::default()
+            }));
+        };
+        let stats = hotspot.hub.stats();
+        let peer_principal_id = hotspot.peer_principal.lock().expect("peer").clone();
+        Ok(GrpcResponse::new(GetHotspotStatusResponse {
+            state: if hotspot.hub.is_connected() {
+                HotspotState::Active
+            } else {
+                HotspotState::WaitingForPeer
+            } as i32,
+            hotspot_id: hotspot.id.clone(),
+            peer_principal_id,
+            socks_address: hotspot.socks_address.to_string(),
+            active_connections: stats.active_connections.load(Ordering::SeqCst),
+            bytes_out: stats.bytes_out.load(Ordering::Relaxed),
+            bytes_in: stats.bytes_in.load(Ordering::Relaxed),
+        }))
+    }
+
+    async fn start_exit(
+        &self,
+        request: Request<StartExitRequest>,
+    ) -> Result<GrpcResponse<StartExitResponse>, Status> {
+        if let Some(exit) = self.state.exit.lock().expect("exit").as_ref() {
+            return Ok(GrpcResponse::new(StartExitResponse {
+                socks_address: exit.socks_address.to_string(),
+            }));
+        }
+        let port = match request.into_inner().socks_port {
+            p if p > u16::MAX as u32 => {
+                return Err(crate::error::invalid("socks_port out of range"))
+            }
+            p => p as u16,
+        };
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+            .await
+            .map_err(|e| {
+                status(
+                    Code::FailedPrecondition,
+                    ErrorReason::Unspecified,
+                    format!("cannot bind the exit's listener on 127.0.0.1:{port}: {e}"),
+                )
+            })?;
+        let socks_address = listener
+            .local_addr()
+            .map_err(|e| crate::error::internal(e.to_string()))?;
+        let stop = CancellationToken::new();
+        // Every connection leaves from this Space's own network: what it may
+        // reach is what its host's rules let it.
+        let policy: cua_spacesd_socks::Policy = Arc::new(|_, _| Route::Direct);
+        {
+            let stop = stop.clone();
+            tokio::spawn(async move {
+                tokio::select! {
+                    result = cua_spacesd_socks::serve_socks(listener, Hub::new(), policy) => {
+                        if let Err(error) = result {
+                            tracing::warn!(%error, "exit SOCKS listener failed");
+                        }
+                    }
+                    _ = stop.cancelled() => {}
+                }
+            });
+        }
+        tracing::info!(address = %socks_address, "exit started");
+        *self.state.exit.lock().expect("exit") = Some(Arc::new(Exit {
+            socks_address,
+            stop,
+        }));
+        Ok(GrpcResponse::new(StartExitResponse {
+            socks_address: socks_address.to_string(),
+        }))
+    }
+
+    async fn stop_exit(
+        &self,
+        _request: Request<StopExitRequest>,
+    ) -> Result<GrpcResponse<StopExitResponse>, Status> {
+        self.state.stop_exit();
+        Ok(GrpcResponse::new(StopExitResponse {}))
+    }
+
+    async fn start_host_ports(
+        &self,
+        request: Request<StartHostPortsRequest>,
+    ) -> Result<GrpcResponse<StartHostPortsResponse>, Status> {
+        let caller = caller(&request);
+        // Only the host that runs this Space carries its host ports.
+        if !caller.token_verified || caller.account.is_some() || caller.viewer.is_some() {
+            return Err(status(
+                Code::PermissionDenied,
+                ErrorReason::Unspecified,
+                "only the host that runs this Space may publish its host ports",
+            ));
+        }
+        let body = request.into_inner();
+        if body.ports.len() > 64 {
+            return Err(crate::error::invalid("at most 64 host ports"));
+        }
+        self.state.stop_host_ports();
+        let id = format!("hp-{}", crate::util::random_id(9));
+        let hub = Hub::new();
+        let stop = CancellationToken::new();
+        let mut listening = Vec::new();
+        let mut skipped = Vec::new();
+        for port in body.ports {
+            let Ok(p) = u16::try_from(port) else {
+                skipped.push(HostPortSkipped {
+                    port,
+                    reason: "not a port".into(),
+                });
+                continue;
+            };
+            if p == 0 {
+                continue;
+            }
+            match tokio::net::TcpListener::bind(("127.0.0.1", p)).await {
+                Ok(listener) => {
+                    let (hub, stop) = (hub.clone(), stop.clone());
+                    tokio::spawn(async move {
+                        tokio::select! {
+                            r = cua_spacesd_socks::serve_forward(listener, hub, "127.0.0.1".into(), p) => {
+                                if let Err(error) = r {
+                                    tracing::warn!(%error, port = p, "host port listener failed");
+                                }
+                            }
+                            _ = stop.cancelled() => {}
+                        }
+                    });
+                    listening.push(port);
+                }
+                Err(e) => skipped.push(HostPortSkipped {
+                    port,
+                    reason: if e.kind() == std::io::ErrorKind::AddrInUse {
+                        "something in the Space listens there".into()
+                    } else {
+                        e.to_string()
+                    },
+                }),
+            }
+        }
+        let ttl = duration(body.ticket_ttl.as_ref())
+            .filter(|d| !d.is_zero())
+            .unwrap_or(HOST_PORTS_DEFAULT_TTL);
+        let (ticket, _) = self.state.ctx.mint_ticket_issued(
+            TicketScope::HostPorts,
+            &id,
+            caller.principal.as_ref(),
+            None,
+            ttl,
+        );
+        *self.state.host_ports.lock().expect("host ports") = Some(Arc::new(HostPorts {
+            id: id.clone(),
+            hub,
+            stop,
+        }));
+        tracing::info!(session = %id, ?listening, "host ports published");
+        Ok(GrpcResponse::new(StartHostPortsResponse {
+            session_id: id,
+            ws_path: ticket_path(cua_proto::metadata::HOST_PORTS_WS_PATH, &ticket),
+            ticket,
+            listening,
+            skipped,
+        }))
+    }
+
+    async fn stop_host_ports(
+        &self,
+        _request: Request<StopHostPortsRequest>,
+    ) -> Result<GrpcResponse<StopHostPortsResponse>, Status> {
+        self.state.stop_host_ports();
+        Ok(GrpcResponse::new(StopHostPortsResponse {}))
+    }
+
+    async fn start_spawn(
+        &self,
+        request: Request<StartSpawnRequest>,
+    ) -> Result<GrpcResponse<StartSpawnResponse>, Status> {
+        let caller = caller(&request);
+        // Only the host that runs this Space: it holds the Space's own
+        // token. A relayed account, a viewer or a share never may (they
+        // would put themselves between the Space and its host).
+        if !caller.token_verified || caller.account.is_some() || caller.viewer.is_some() {
+            return Err(status(
+                Code::PermissionDenied,
+                ErrorReason::Unspecified,
+                "only the host that runs this Space may start its spawn channel",
+            ));
+        }
+        let body = request.into_inner();
+        if body.capability.trim().is_empty() {
+            return Err(crate::error::invalid("capability is required"));
+        }
+        self.state.stop_spawn(None);
+        let dir = super::spawn::choose_dir().map_err(|e| {
+            status(
+                Code::FailedPrecondition,
+                ErrorReason::Unspecified,
+                format!("no private directory for the spawn files: {e}"),
+            )
+        })?;
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .map_err(|e| crate::error::internal(format!("spawn listener: {e}")))?;
+        let local = listener
+            .local_addr()
+            .map_err(|e| crate::error::internal(e.to_string()))?;
+        let address = format!("http://{local}");
+        let files = super::spawn::SpawnFiles::write(&dir, body.capability.trim(), &address)
+            .map_err(|e| crate::error::internal(format!("spawn files: {e}")))?;
+        let id = format!("sp-{}", crate::util::random_id(9));
+        let hub = Hub::new();
+        let stop = CancellationToken::new();
+        {
+            let (hub, stop) = (hub.clone(), stop.clone());
+            tokio::spawn(async move {
+                tokio::select! {
+                    r = cua_spacesd_socks::serve_forward(listener, hub, SPAWN_PEER_HOST.into(), 0) => {
+                        if let Err(error) = r {
+                            tracing::warn!(%error, "spawn listener failed");
+                        }
+                    }
+                    _ = stop.cancelled() => {}
+                }
+            });
+        }
+        let token_path = files.token.to_string_lossy().into_owned();
+        let address_path = files.address.to_string_lossy().into_owned();
+        self.state.ctx.update_init(|state| {
+            state.spawn_env.clear();
+            state
+                .spawn_env
+                .insert(super::spawn::ENV_ADDRESS.into(), address.clone());
+            state
+                .spawn_env
+                .insert(super::spawn::ENV_TOKEN_FILE.into(), token_path.clone());
+            if !body.space_id.is_empty() {
+                state
+                    .spawn_env
+                    .insert(super::spawn::ENV_SPACE.into(), body.space_id.clone());
+            }
+        });
+        let ttl = duration(body.ticket_ttl.as_ref())
+            .filter(|d| !d.is_zero())
+            .unwrap_or(SPAWN_DEFAULT_TTL);
+        let (ticket, _) = self.state.ctx.mint_ticket_issued(
+            TicketScope::Spawn,
+            &id,
+            caller.principal.as_ref(),
+            None,
+            ttl,
+        );
+        *self.state.spawn.lock().expect("spawn") = Some(Arc::new(Spawn {
+            id: id.clone(),
+            address: address.clone(),
+            hub,
+            stop,
+            files,
+        }));
+        tracing::info!(spawn = %id, %address, "spawn channel started");
+        Ok(GrpcResponse::new(StartSpawnResponse {
+            spawn_id: id,
+            ws_path: ticket_path(cua_proto::metadata::SPAWN_WS_PATH, &ticket),
+            ticket,
+            address,
+            token_path,
+            address_path,
+        }))
+    }
+
+    async fn stop_spawn(
+        &self,
+        request: Request<StopSpawnRequest>,
+    ) -> Result<GrpcResponse<StopSpawnResponse>, Status> {
+        let caller = caller(&request);
+        if !caller.token_verified || caller.account.is_some() || caller.viewer.is_some() {
+            return Err(status(
+                Code::PermissionDenied,
+                ErrorReason::Unspecified,
+                "only the host that runs this Space may stop its spawn channel",
+            ));
+        }
+        let id = request.into_inner().spawn_id;
+        let id = (!id.is_empty()).then_some(id);
+        if !self.state.stop_spawn(id.as_deref()) && id.is_some() {
+            return Err(session_not_found("spawn", id.as_deref().unwrap_or("")));
+        }
+        Ok(GrpcResponse::new(StopSpawnResponse {}))
+    }
+
+    async fn get_spawn_status(
+        &self,
+        _request: Request<GetSpawnStatusRequest>,
+    ) -> Result<GrpcResponse<GetSpawnStatusResponse>, Status> {
+        let spawn = self.state.spawn.lock().expect("spawn").clone();
+        let Some(spawn) = spawn else {
+            return Ok(GrpcResponse::new(GetSpawnStatusResponse::default()));
+        };
+        Ok(GrpcResponse::new(GetSpawnStatusResponse {
+            started: true,
+            attached: spawn.hub.is_connected(),
+            spawn_id: spawn.id.clone(),
+            address: spawn.address.clone(),
+            active_connections: spawn.hub.stats().active_connections.load(Ordering::Relaxed),
+        }))
+    }
+
+    async fn publish_share_slot(
+        &self,
+        request: Request<PublishShareSlotRequest>,
+    ) -> Result<GrpcResponse<PublishShareSlotResponse>, Status> {
+        let caller = caller(&request);
+        // The Space's host (its token) or its owner through the relay;
+        // never a viewer or someone it is shared with.
+        let owner = caller.token_verified && caller.account.is_none()
+            || caller.account.as_ref().is_some_and(|a| a.role == "owner");
+        if !owner || caller.viewer.is_some() {
+            return Err(status(
+                Code::PermissionDenied,
+                ErrorReason::Unspecified,
+                "only the Space's owner may share its ports publicly",
+            ));
+        }
+        let r = request.into_inner();
+        let spec = super::share_slots::check(
+            super::share_slots::slot_range(),
+            r.slot,
+            r.port,
+            &r.allow,
+            &r.expect_hosts,
+            duration(r.ttl.as_ref()),
+            r.max_bytes,
+        )
+        .map_err(|m| status(Code::InvalidArgument, ErrorReason::Unspecified, &m))?;
+        let slot = spec.slot;
+        let expires = self.state.slots.publish(spec).await.map_err(|e| {
+            status(
+                Code::Unavailable,
+                ErrorReason::Unspecified,
+                format!("cannot serve slot {slot}: {e}"),
+            )
+        })?;
+        Ok(GrpcResponse::new(PublishShareSlotResponse {
+            slot: u32::from(slot),
+            expires_at: Some(timestamp(expires)),
+        }))
+    }
+
+    async fn unpublish_share_slot(
+        &self,
+        request: Request<UnpublishShareSlotRequest>,
+    ) -> Result<GrpcResponse<UnpublishShareSlotResponse>, Status> {
+        let caller = caller(&request);
+        let owner = caller.token_verified && caller.account.is_none()
+            || caller.account.as_ref().is_some_and(|a| a.role == "owner");
+        if !owner || caller.viewer.is_some() {
+            return Err(status(
+                Code::PermissionDenied,
+                ErrorReason::Unspecified,
+                "only the Space's owner may stop sharing its ports",
+            ));
+        }
+        let slot = u16::try_from(request.into_inner().slot).map_err(|_| {
+            status(
+                Code::InvalidArgument,
+                ErrorReason::Unspecified,
+                "slot out of range",
+            )
+        })?;
+        self.state.slots.unpublish(slot);
+        Ok(GrpcResponse::new(UnpublishShareSlotResponse {}))
+    }
+
+    async fn list_share_slots(
+        &self,
+        request: Request<cua_proto::env::v1::ListShareSlotsRequest>,
+    ) -> Result<GrpcResponse<cua_proto::env::v1::ListShareSlotsResponse>, Status> {
+        let caller = caller(&request);
+        let owner = caller.token_verified && caller.account.is_none()
+            || caller.account.as_ref().is_some_and(|a| a.role == "owner");
+        if !owner || caller.viewer.is_some() {
+            return Err(status(
+                Code::PermissionDenied,
+                ErrorReason::Unspecified,
+                "only the Space's owner may list its share slots",
+            ));
+        }
+        let slots = self
+            .state
+            .slots
+            .stats()
+            .into_iter()
+            .map(|s| cua_proto::env::v1::ShareSlot {
+                slot: u32::from(s.slot),
+                port: u32::from(s.port),
+                bytes: s.bytes,
+                max_bytes: s.max_bytes,
+                connections: s.connections,
+                expires_at: Some(timestamp(s.expires)),
+            })
+            .collect();
+        Ok(GrpcResponse::new(
+            cua_proto::env::v1::ListShareSlotsResponse { slots },
+        ))
+    }
+}
+
+pub(crate) fn refuse(error: crate::auth::TicketError) -> Response {
+    (StatusCode::UNAUTHORIZED, error.to_string()).into_response()
+}
+
+pub(crate) fn with_protocol(
+    upgrade: WebSocketUpgrade,
+    subprotocol: Option<String>,
+) -> WebSocketUpgrade {
+    match subprotocol {
+        Some(p) => upgrade.protocols([p]),
+        None => upgrade,
+    }
+}
+
+/// `GET /tunnel?ticket=…` (WebSocket): one TCP connection to the forward's
+/// target; binary frames carry the byte stream both ways.
+pub async fn tunnel_ws(
+    State(state): State<TunnelState>,
+    uri: Uri,
+    headers: HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    let (claims, subprotocol) =
+        match state
+            .ctx
+            .validate_request_ticket(&uri, &headers, TicketScope::Tunnel)
+        {
+            Ok(v) => v,
+            Err(e) => return refuse(e),
+        };
+    let forward = state
+        .forwards
+        .lock()
+        .expect("forwards")
+        .get(&claims.resource)
+        .cloned();
+    let Some(forward) = forward else {
+        return (StatusCode::GONE, "forward closed").into_response();
+    };
+    let target = match tokio::net::TcpStream::connect((forward.host.as_str(), forward.port)).await {
+        Ok(t) => t,
+        Err(e) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                format!("connect {}:{}: {e}", forward.host, forward.port),
+            )
+                .into_response()
+        }
+    };
+    let _ = target.set_nodelay(true);
+    with_protocol(upgrade, subprotocol)
+        .max_message_size(16 * 1024 * 1024)
+        .on_upgrade(move |socket| splice_tcp(socket, target, forward))
+}
+
+async fn splice_tcp(socket: WebSocket, target: tokio::net::TcpStream, forward: Arc<Forward>) {
+    forward.active.fetch_add(1, Ordering::SeqCst);
+    let (mut ws_tx, mut ws_rx) = socket.split();
+    let (mut tcp_rx, mut tcp_tx) = target.into_split();
+    let closed = forward.closed.clone();
+    let up = {
+        let forward = forward.clone();
+        async move {
+            while let Some(Ok(message)) = ws_rx.next().await {
+                match message {
+                    Message::Binary(data) => {
+                        forward
+                            .bytes_in
+                            .fetch_add(data.len() as u64, Ordering::Relaxed);
+                        if tcp_tx.write_all(&data).await.is_err() {
+                            break;
+                        }
+                    }
+                    Message::Close(_) => break,
+                    _ => {}
+                }
+            }
+            let _ = tcp_tx.shutdown().await;
+        }
+    };
+    let down = {
+        let forward = forward.clone();
+        async move {
+            let mut buf = vec![0u8; 64 * 1024];
+            loop {
+                match tcp_rx.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        forward.bytes_out.fetch_add(n as u64, Ordering::Relaxed);
+                        if ws_tx
+                            .send(Message::Binary(bytes::Bytes::copy_from_slice(&buf[..n])))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+            let _ = ws_tx.send(Message::Close(None)).await;
+        }
+    };
+    // Half-close aware: finish when the guest side is done sending, or when
+    // the forward is revoked.
+    tokio::select! {
+        _ = async { tokio::join!(up, down) } => {}
+        _ = closed.cancelled() => {}
+    }
+    forward.active.fetch_sub(1, Ordering::SeqCst);
+}
+
+/// `GET /hotspot?ticket=…` (WebSocket): attaches the caller as the egress
+/// peer; the hotspot stops when this socket closes.
+pub async fn hotspot_ws(
+    State(state): State<TunnelState>,
+    uri: Uri,
+    headers: HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    let (claims, subprotocol) =
+        match state
+            .ctx
+            .validate_request_ticket(&uri, &headers, TicketScope::Hotspot)
+        {
+            Ok(v) => v,
+            Err(e) => return refuse(e),
+        };
+    let hotspot = state.hotspot.lock().expect("hotspot").clone();
+    let Some(hotspot) = hotspot.filter(|h| h.id == claims.resource) else {
+        return (StatusCode::GONE, "hotspot stopped").into_response();
+    };
+    if hotspot.hub.is_connected() {
+        return (StatusCode::CONFLICT, "a peer is already attached").into_response();
+    }
+    *hotspot.peer_principal.lock().expect("peer") = claims.principal_id.clone();
+    with_protocol(upgrade, subprotocol)
+        .max_message_size(16 * 1024 * 1024)
+        .on_upgrade(move |socket| async move {
+            let (ws_tx, ws_rx) = socket.split();
+            let source = ws_rx
+                .take_while(|m| {
+                    futures_util::future::ready(!matches!(m, Err(_) | Ok(Message::Close(_))))
+                })
+                .filter_map(|m| async move {
+                    match m {
+                        Ok(Message::Binary(data)) => Some(data.to_vec()),
+                        _ => None,
+                    }
+                });
+            let sink = ws_tx.with(|data: Vec<u8>| async move {
+                Ok::<_, axum::Error>(Message::Binary(data.into()))
+            });
+            let source = Box::pin(source);
+            let sink = Box::pin(sink);
+            tokio::select! {
+                _ = hotspot.hub.run_peer(source, sink) => {}
+                _ = hotspot.stop.cancelled() => {}
+            }
+            state.stop_hotspot(Some(&hotspot.id));
+        })
+}
+
+/// `/hostports`: the host's end of the published host ports.
+pub async fn host_ports_ws(
+    State(state): State<TunnelState>,
+    uri: Uri,
+    headers: HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    let (claims, subprotocol) =
+        match state
+            .ctx
+            .validate_request_ticket(&uri, &headers, TicketScope::HostPorts)
+        {
+            Ok(v) => v,
+            Err(e) => return refuse(e),
+        };
+    let session = state.host_ports.lock().expect("host ports").clone();
+    let Some(session) = session.filter(|s| s.id == claims.resource) else {
+        return (StatusCode::GONE, "host ports stopped").into_response();
+    };
+    with_protocol(upgrade, subprotocol)
+        .max_message_size(16 * 1024 * 1024)
+        .on_upgrade(move |socket| async move {
+            let (ws_tx, ws_rx) = socket.split();
+            let source = ws_rx
+                .take_while(|m| {
+                    futures_util::future::ready(!matches!(m, Err(_) | Ok(Message::Close(_))))
+                })
+                .filter_map(|m| async move {
+                    match m {
+                        Ok(Message::Binary(data)) => Some(data.to_vec()),
+                        _ => None,
+                    }
+                });
+            let sink = ws_tx.with(|data: Vec<u8>| async move {
+                Ok::<_, axum::Error>(Message::Binary(data.into()))
+            });
+            tokio::select! {
+                _ = session.hub.run_peer(Box::pin(source), Box::pin(sink)) => {}
+                _ = session.stop.cancelled() => {}
+            }
+        })
+}
+
+/// `GET /spawn?ticket=…` (WebSocket): attaches the host as the peer of the
+/// spawn listener; the listener refuses connections while it is detached.
+/// A newer host socket replaces an older one (a host that restarted).
+pub async fn spawn_ws(
+    State(state): State<TunnelState>,
+    uri: Uri,
+    headers: HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    let (claims, subprotocol) =
+        match state
+            .ctx
+            .validate_request_ticket(&uri, &headers, TicketScope::Spawn)
+        {
+            Ok(v) => v,
+            Err(e) => return refuse(e),
+        };
+    let spawn = state.spawn.lock().expect("spawn").clone();
+    let Some(spawn) = spawn.filter(|s| s.id == claims.resource) else {
+        return (StatusCode::GONE, "spawn channel stopped").into_response();
+    };
+    with_protocol(upgrade, subprotocol)
+        .max_message_size(16 * 1024 * 1024)
+        .on_upgrade(move |socket| async move {
+            let (ws_tx, ws_rx) = socket.split();
+            let source = ws_rx
+                .take_while(|m| {
+                    futures_util::future::ready(!matches!(m, Err(_) | Ok(Message::Close(_))))
+                })
+                .filter_map(|m| async move {
+                    match m {
+                        Ok(Message::Binary(data)) => Some(data.to_vec()),
+                        _ => None,
+                    }
+                });
+            let sink = ws_tx.with(|data: Vec<u8>| async move {
+                Ok::<_, axum::Error>(Message::Binary(data.into()))
+            });
+            tokio::select! {
+                _ = spawn.hub.run_peer(Box::pin(source), Box::pin(sink)) => {}
+                _ = spawn.stop.cancelled() => {}
+            }
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forward_hosts_are_limited() {
+        assert!(allowed_forward_host("127.0.0.1"));
+        assert!(allowed_forward_host("localhost"));
+        assert!(allowed_forward_host("::1"));
+        assert!(!allowed_forward_host("8.8.8.8"));
+        assert!(!allowed_forward_host("example.com"));
+    }
+
+    #[test]
+    fn bypass_rules() {
+        let rules = vec!["10.0.0.0/8".to_owned(), ".corp.example".to_owned()];
+        assert!(bypass_matches(&rules, "10.1.2.3"));
+        assert!(!bypass_matches(&rules, "11.1.2.3"));
+        assert!(bypass_matches(&rules, "git.corp.example"));
+        assert!(bypass_matches(&rules, "corp.example"));
+        assert!(!bypass_matches(&rules, "notcorp.example"));
+    }
+}

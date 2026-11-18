@@ -1,0 +1,367 @@
+{
+ "_fixture": {
+  "sanitized": "Recorded by verify_native.py --capture-dir. Screenshot bytes, tree_markdown, local file paths, and Driver guidance notes removed.",
+  "source": "CuaTestHarness task window (after-save-note), observed by get_window_state: Windows WPF harness (CUA_WPF_TASK_STATE), released Cua Driver 0.30.2 on GitHub-hosted windows-latest, run 36407837325"
+ },
+ "app_name": "CuaTestHarness.Wpf.exe",
+ "capture_id": "capture_a2b17856111448d990cb1674a031fffa_0000000000000000",
+ "element_count": 14,
+ "elements": [
+  {
+   "actions": [
+    "set_value"
+   ],
+   "depth": 1,
+   "element_index": 0,
+   "element_token": "s00000001:0",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 448,
+    "x": 296,
+    "y": 183
+   },
+   "label": "CuaTestHarness WPF Tasks",
+   "role": "TitleBar",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 448,
+    "x": 16,
+    "y": 2
+   },
+   "value": "CuaTestHarness WPF Tasks"
+  },
+  {
+   "actions": [
+    "invoke",
+    "expand"
+   ],
+   "depth": 3,
+   "element_index": 1,
+   "element_token": "s00000001:1",
+   "enabled": true,
+   "frame": {
+    "h": 22,
+    "w": 22,
+    "x": 280,
+    "y": 188
+   },
+   "label": "System",
+   "parent_index": 0,
+   "role": "MenuItem",
+   "screenshot_frame": {
+    "h": 22,
+    "w": 22,
+    "x": 0,
+    "y": 7
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 2,
+   "element_index": 2,
+   "element_token": "s00000001:2",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 47,
+    "x": 605,
+    "y": 181
+   },
+   "label": "Minimize",
+   "parent_index": 0,
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 30,
+    "w": 47,
+    "x": 325,
+    "y": 0
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 2,
+   "element_index": 3,
+   "element_token": "s00000001:3",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 46,
+    "x": 652,
+    "y": 181
+   },
+   "label": "Maximize",
+   "parent_index": 0,
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 30,
+    "w": 46,
+    "x": 372,
+    "y": 0
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 2,
+   "element_index": 4,
+   "element_token": "s00000001:4",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 47,
+    "x": 698,
+    "y": 181
+   },
+   "label": "Close",
+   "parent_index": 0,
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 30,
+    "w": 47,
+    "x": 418,
+    "y": 0
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 5,
+   "element_token": "s00000001:5",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 296,
+    "y": 251
+   },
+   "label": "Increment",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 16,
+    "y": 70
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 6,
+   "element_token": "s00000001:6",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 394,
+    "y": 251
+   },
+   "label": "Reset",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 114,
+    "y": 70
+   }
+  },
+  {
+   "actions": [
+    "toggle"
+   ],
+   "depth": 1,
+   "element_index": 7,
+   "element_token": "s00000001:7",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 432,
+    "x": 296,
+    "y": 279
+   },
+   "label": "I agree",
+   "role": "CheckBox",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 432,
+    "x": 16,
+    "y": 98
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "select"
+   ],
+   "depth": 1,
+   "element_index": 8,
+   "element_token": "s00000001:8",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 48,
+    "x": 296,
+    "y": 302
+   },
+   "label": "Small",
+   "role": "RadioButton",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 48,
+    "x": 16,
+    "y": 121
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "select"
+   ],
+   "depth": 1,
+   "element_index": 9,
+   "element_token": "s00000001:9",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 63,
+    "x": 356,
+    "y": 302
+   },
+   "label": "Medium",
+   "role": "RadioButton",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 63,
+    "x": 76,
+    "y": 121
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "select"
+   ],
+   "depth": 1,
+   "element_index": 10,
+   "element_token": "s00000001:10",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 48,
+    "x": 431,
+    "y": 302
+   },
+   "label": "Large",
+   "role": "RadioButton",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 48,
+    "x": 151,
+    "y": 121
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "set_value",
+    "text",
+    "scroll"
+   ],
+   "depth": 1,
+   "element_index": 11,
+   "element_token": "s00000001:11",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 240,
+    "x": 296,
+    "y": 325
+   },
+   "label": "Note",
+   "role": "Edit",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 240,
+    "x": 16,
+    "y": 144
+   },
+   "value": "jev-use native note"
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 12,
+   "element_token": "s00000001:12",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 536,
+    "y": 325
+   },
+   "label": "Save note",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 256,
+    "y": 144
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 13,
+   "element_token": "s00000001:13",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 296,
+    "y": 345
+   },
+   "label": "Exit",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 16,
+    "y": 164
+   }
+  }
+ ],
+ "elements_complete": false,
+ "nodes_pending": 0,
+ "nodes_visited": 25,
+ "pid": 7844,
+ "returned_element_count": 14,
+ "screenshot_height": 351,
+ "screenshot_mime_type": "image/png",
+ "screenshot_width": 464,
+ "snapshot_id": "s00000001",
+ "timeout_ms": 1000,
+ "total_element_count": 14,
+ "truncated": false,
+ "walk_elapsed_ms": 0,
+ "window_bounds": {
+  "height": 353,
+  "width": 466,
+  "x": 279,
+  "y": 180
+ },
+ "window_id": 262524,
+ "window_title": "CuaTestHarness WPF Tasks"
+}

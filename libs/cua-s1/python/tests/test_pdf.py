@@ -88,6 +88,12 @@ def test_extract_entities_refuses_a_symlink_swap_before_open(monkeypatch, tmp_pa
             path.symlink_to(outside)
         return real_open(candidate, flags)
 
+    def must_not_parse(_stream):
+        raise AssertionError("a swapped path must be refused before PDF parsing starts")
+
+    # Stub pdfplumber so this guard is exercised without the optional `pdf`
+    # extra (for example in the `four-b`-only inference environment).
+    monkeypatch.setitem(sys.modules, "pdfplumber", SimpleNamespace(open=must_not_parse))
     monkeypatch.setattr(os, "open", swap_then_open)
 
     with pytest.raises(PdfError) as caught:

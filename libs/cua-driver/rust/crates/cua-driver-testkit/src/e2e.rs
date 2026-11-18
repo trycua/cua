@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Typed contracts and result reporting for desktop E2E cells.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -136,6 +139,7 @@ pub enum DriverRoute {
     LinuxLibei,
     LinuxWaylandVirtualPointer,
     LinuxCuaCompositorInject,
+    LinuxHyprlandIsolatedInput,
     Cdp,
     Composite,
 }
@@ -316,7 +320,10 @@ pub enum RefusalCode {
     BrowserReconnectExhausted,
     BrowserInputIncomplete,
     BrowserActionUnavailable,
+    ModifiedPointerUnavailable,
     WindowMinimized,
+    ElementNotVisible,
+    ForegroundUnavailable,
 }
 
 impl RefusalCode {
@@ -341,7 +348,10 @@ impl RefusalCode {
             "browser_reconnect_exhausted" => Some(Self::BrowserReconnectExhausted),
             "browser_input_incomplete" => Some(Self::BrowserInputIncomplete),
             "browser_action_unavailable" => Some(Self::BrowserActionUnavailable),
+            "modified_pointer_unavailable" => Some(Self::ModifiedPointerUnavailable),
             "window_minimized" => Some(Self::WindowMinimized),
+            "element_not_visible" => Some(Self::ElementNotVisible),
+            "foreground_unavailable" => Some(Self::ForegroundUnavailable),
             _ => None,
         }
     }
@@ -443,6 +453,8 @@ fn compositor_from_env() -> Option<String> {
                 .to_ascii_lowercase();
             if desktop.contains("sway") {
                 Some("sway".to_owned())
+            } else if desktop.contains("niri") {
+                Some("niri".to_owned())
             } else if desktop.contains("gnome") {
                 Some("gnome-mutter".to_owned())
             } else if desktop.contains("kde") || desktop.contains("plasma") {
@@ -580,16 +592,36 @@ impl CaseSpec {
                 && self.scope == Scope::Window
                 && self.driver_route == DriverRoute::WindowState
                 && allowed_codes == &[RefusalCode::BringToFrontExactWindowUnverified];
-            if self.delivery != Delivery::Background && !exact_activation_refusal {
+            // A desktop pointer route that cannot carry keyboard modifier
+            // state (native Wayland) must refuse a modified gesture before
+            // dispatch. The fixture under the gesture is the oracle that
+            // nothing reached it.
+            let desktop_modifier_refusal = self.delivery == Delivery::Foreground
+                && self.scope == Scope::Desktop
+                && allowed_codes == &[RefusalCode::ModifiedPointerUnavailable];
+            // A coordinate-routed foreground pointer action whose target cannot
+            // be brought over a covering window must refuse before dispatch.
+            // The covering window's journal proves nothing leaked into it.
+            let covered_target_refusal = self.delivery == Delivery::Foreground
+                && self.scope == Scope::Window
+                && self.driver_route == DriverRoute::WindowsSendInput
+                && allowed_codes == &[RefusalCode::ForegroundUnavailable];
+            if self.delivery != Delivery::Background
+                && !exact_activation_refusal
+                && !desktop_modifier_refusal
+                && !covered_target_refusal
+            {
                 return Err(format!(
-                    "{}: only background delivery or exact-window activation may declare refusal",
+                    "{}: only background delivery, exact-window activation, a covered foreground target, or a desktop modified-pointer limitation may declare refusal",
                     self.cell_id
                 ));
             }
             if allowed_codes.is_empty() {
                 return Err(format!("{}: refusal has no allowed code", self.cell_id));
             }
-            let required_oracles: &[OracleKind] = if exact_activation_refusal {
+            let required_oracles: &[OracleKind] = if covered_target_refusal {
+                &[OracleKind::FixtureState, OracleKind::NoLeakedInput]
+            } else if exact_activation_refusal || desktop_modifier_refusal {
                 &[OracleKind::FixtureState]
             } else {
                 &[
@@ -844,37 +876,7 @@ pub struct ValidationSummary {
 }
 
 impl ValidationSummary {
-    pub fn markdown(&self, results: &[CaseResult]) -> String {
-        let declarations = results
-            .iter()
-            .map(|result| result.case.clone())
-            .collect::<Vec<_>>();
-        self.markdown_with_declarations(&declarations, results)
-    }
-
-    pub fn markdown_with_declarations(
-        &self,
-        declarations: &[CaseSpec],
-        results: &[CaseResult],
-    ) -> String {
-        self.markdown_with_declarations_and_source(declarations, results, None)
-    }
-
-    pub fn markdown_with_declarations_and_source(
-        &self,
-        declarations: &[CaseSpec],
-        results: &[CaseResult],
-        source_sha: Option<&str>,
-    ) -> String {
-        self.markdown_with_declarations_source_and_environment(
-            declarations,
-            results,
-            source_sha,
-            None,
-        )
-    }
-
-    pub fn markdown_with_declarations_source_and_environment(
+    pub fn markdown(
         &self,
         declarations: &[CaseSpec],
         results: &[CaseResult],
@@ -1191,22 +1193,6 @@ pub fn validate_catalog(
     artifact_root: Option<&Path>,
     require_video: bool,
 ) -> Result<ValidationSummary, Vec<String>> {
-    validate_catalog_with_evidence(
-        declarations,
-        results,
-        artifact_root,
-        require_video,
-        require_video,
-    )
-}
-
-pub fn validate_catalog_with_evidence(
-    declarations: &[CaseSpec],
-    results: &[CaseResult],
-    artifact_root: Option<&Path>,
-    require_video: bool,
-    require_turn_evidence: bool,
-) -> Result<ValidationSummary, Vec<String>> {
     let mut errors = Vec::new();
     let policy = CatalogPolicy::from_environment(&mut errors);
     if declarations.is_empty() {
@@ -1299,7 +1285,7 @@ pub fn validate_catalog_with_evidence(
                 }
             }
         }
-        if require_turn_evidence {
+        if require_video {
             match (artifact_root, recording_directory(&result.evidence)) {
                 (Some(root), Some(relative_dir)) => {
                     validate_turn_evidence(
@@ -1514,6 +1500,11 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
                 .as_str()
                 .is_some_and(|summary| summary.starts_with("refused (window_minimized):"))
     });
+    // A call on a pid that has no window errors out and the recorder names the
+    // missing window, so there is no image or tree to require.
+    let errored_without_window = action
+        .as_ref()
+        .is_some_and(|value| value["result_error"].as_bool() == Some(true));
     let restored_state_captured = manifest
         .as_ref()
         .is_some_and(|value| value["after"]["state"]["status"].as_str() == Some("captured"));
@@ -1529,6 +1520,8 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
                         && classification(phase, "screenshot") == Some("capture_failed"))))
             || (refused_minimized_action
                 && classification(phase, "screenshot") == Some("target_minimized"))
+            || (errored_without_window
+                && classification(phase, "screenshot") == Some(NO_TARGET_WINDOW))
     };
 
     for (phase, kind) in [("before", "screenshot"), ("after", "screenshot")] {
@@ -1566,8 +1559,30 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
             .as_ref()
             .and_then(|value| value["arguments"]["pid"].as_i64())
             .is_some();
+    // An action refused before dispatch cannot change the application, so
+    // the recorder skips its accessibility walk and says so explicitly.
+    let refused_without_dispatch = action.as_ref().is_some_and(|value| {
+        value["result_error"].as_bool() == Some(true)
+            && (value.get("action_truth").is_none()
+                || value["action_truth"]["effect"].as_str() == Some("refused"))
+    });
+    let state_skipped_for_refusal = |phase: &str| {
+        refused_without_dispatch
+            && manifest.as_ref().is_some_and(|value| {
+                value[phase]["state"]["status"] == "not_applicable"
+                    && value[phase]["state"]["classification"] == "action_refused_before_dispatch"
+            })
+            || (errored_without_window
+                && manifest.as_ref().is_some_and(|value| {
+                    value[phase]["state"]["status"] == "not_applicable"
+                        && value[phase]["state"]["classification"] == NO_TARGET_WINDOW
+                }))
+    };
     if state_expected {
         for phase in ["before", "after"] {
+            if state_skipped_for_refusal(phase) {
+                continue;
+            }
             validate_capture_status(
                 manifest.as_ref(),
                 &[phase, "state"],
@@ -1581,6 +1596,9 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
             ("after_state.json", "after"),
             ("app_state.json", "after"),
         ] {
+            if state_skipped_for_refusal(phase) {
+                continue;
+            }
             validate_json_file(
                 &turn.join(file),
                 cell_id,
@@ -1793,6 +1811,10 @@ fn semantic_action_without_point(action: &Value) -> bool {
         })
 }
 
+/// Recorder classification for a pid that has no window (see
+/// `cua_driver_core::recording::TARGET_UNAVAILABLE`).
+const NO_TARGET_WINDOW: &str = cua_driver_core::recording::TARGET_UNAVAILABLE;
+
 fn validate_capture_status(
     manifest: Option<&Value>,
     path: &[&str],
@@ -1810,8 +1832,13 @@ fn validate_capture_status(
     let classification = value["classification"]
         .as_str()
         .unwrap_or("missing_classification");
+    let cause = if classification == NO_TARGET_WINDOW {
+        ": the target pid had no window to capture, but the call did not error"
+    } else {
+        ""
+    };
     errors.push(format!(
-        "required evidence capture failed for {cell_id}: {label} (classified {classification})"
+        "required evidence capture failed for {cell_id}: {label} (classified {classification}){cause}"
     ));
 }
 
@@ -2127,25 +2154,46 @@ mod tests {
             manifest["click"] = serde_json::json!({"status":"not_applicable","classification":"semantic_action_without_point"});
             std::fs::write(&manifest_path, manifest.to_string()).unwrap();
             assert!(
-                validate_catalog(&[case.clone()], &[result.clone()], Some(root.path()), true)
-                    .is_err(),
+                validate_catalog(
+                    std::slice::from_ref(&case),
+                    std::slice::from_ref(&result),
+                    Some(root.path()),
+                    true
+                )
+                .is_err(),
                 "a semantic action cannot retain a spatial marker"
             );
             std::fs::remove_file(turn.join("click.png")).unwrap();
-            validate_catalog(&[case.clone()], &[result.clone()], Some(root.path()), true).unwrap();
+            validate_catalog(
+                std::slice::from_ref(&case),
+                std::slice::from_ref(&result),
+                Some(root.path()),
+                true,
+            )
+            .unwrap();
             action["click_point"] = serde_json::json!({"x":10,"y":20});
             std::fs::write(turn.join("action.json"), action.to_string()).unwrap();
             assert!(
-                validate_catalog(&[case.clone()], &[result.clone()], Some(root.path()), true)
-                    .is_err(),
+                validate_catalog(
+                    std::slice::from_ref(&case),
+                    std::slice::from_ref(&result),
+                    Some(root.path()),
+                    true
+                )
+                .is_err(),
                 "resolved points still require markers"
             );
             manifest["click"]["status"] = serde_json::json!("captured");
             std::fs::write(&manifest_path, manifest.to_string()).unwrap();
             std::fs::write(turn.join("click.png"), b"png").unwrap();
             assert!(
-                validate_catalog(&[case.clone()], &[result.clone()], Some(root.path()), true)
-                    .is_err(),
+                validate_catalog(
+                    std::slice::from_ref(&case),
+                    std::slice::from_ref(&result),
+                    Some(root.path()),
+                    true
+                )
+                .is_err(),
                 "a captured marker cannot legitimize a false semantic classification"
             );
             std::fs::remove_file(turn.join("click.png")).unwrap();
@@ -2154,10 +2202,13 @@ mod tests {
             std::fs::write(turn.join("action.json"), action.to_string()).unwrap();
             manifest["click"]["classification"] = serde_json::json!("capture_failed");
             std::fs::write(&manifest_path, manifest.to_string()).unwrap();
-            assert!(
-                validate_catalog(&[case.clone()], &[result.clone()], Some(root.path()), true)
-                    .is_err()
-            );
+            assert!(validate_catalog(
+                std::slice::from_ref(&case),
+                std::slice::from_ref(&result),
+                Some(root.path()),
+                true
+            )
+            .is_err());
             manifest["click"]["classification"] =
                 serde_json::json!("semantic_action_without_point");
             std::fs::write(&manifest_path, manifest.to_string()).unwrap();
@@ -2300,6 +2351,61 @@ mod tests {
             Some(RefusalCode::BackgroundUnavailable)
         );
         assert_eq!(RefusalCode::from_driver_code("background_timeout"), None);
+    }
+
+    #[test]
+    fn desktop_refusal_is_limited_to_the_modified_pointer_limitation() {
+        assert_eq!(
+            RefusalCode::from_driver_code("modified_pointer_unavailable"),
+            Some(RefusalCode::ModifiedPointerUnavailable)
+        );
+        let desktop_drag = |code| {
+            CaseSpec::delivered(
+                "desktop-modified-drag",
+                "gtk3",
+                "gtk3",
+                "drag",
+                Targeting::Px,
+                Delivery::Foreground,
+                Scope::Desktop,
+                DriverRoute::LinuxWaylandVirtualPointer,
+                vec![OracleKind::FixtureState],
+            )
+            .expecting_refusal(vec![code])
+        };
+        let case = desktop_drag(RefusalCode::ModifiedPointerUnavailable);
+        case.validate()
+            .expect("a desktop modified-pointer limitation may be declared");
+        assert!(desktop_drag(RefusalCode::BackgroundUnavailable)
+            .validate()
+            .is_err());
+        let mut window_scoped = case.clone();
+        window_scoped.scope = Scope::Window;
+        assert!(window_scoped.validate().is_err());
+        let mut without_fixture = case.clone();
+        without_fixture.oracles = vec![OracleKind::Protocol];
+        assert!(without_fixture.validate().is_err());
+
+        let refused = CaseResult::evaluate(
+            case.clone(),
+            Observation::refused(
+                RefusalCode::ModifiedPointerUnavailable,
+                vec![OracleKind::FixtureState],
+                "",
+                Evidence::default(),
+            ),
+            Duration::from_millis(1),
+        );
+        assert_eq!(refused.test_status, TestStatus::Pass);
+        let delivered = CaseResult::evaluate(
+            case,
+            Observation::delivered_with_fixture_state(Vec::new()),
+            Duration::from_millis(1),
+        );
+        assert_eq!(delivered.test_status, TestStatus::Fail);
+        assert!(delivered
+            .message
+            .contains("unexpected delivery requires contract review"));
     }
 
     #[test]
@@ -2537,6 +2643,48 @@ mod tests {
     }
 
     #[test]
+    fn validator_accepts_state_skipped_only_for_a_refusal_before_dispatch() {
+        let refused_evidence = br#"{
+            "schema":"cua-turn-evidence/v1",
+            "before":{"state":{"status":"not_applicable","classification":"action_refused_before_dispatch"},"screenshot":{"status":"captured"}},
+            "after":{"state":{"status":"not_applicable","classification":"action_refused_before_dispatch"},"screenshot":{"status":"captured"}},
+            "click":{"status":"not_applicable","classification":"action_refused_before_dispatch"}
+        }"#;
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("action.json"),
+            br#"{
+                "tool":"click",
+                "arguments":{"pid":1,"window_id":2,"x":3,"y":4,"capture_id":"expired"},
+                "click_point":{"x":3,"y":4},
+                "result_error":true,
+                "action_truth":{"effect":"refused","refusal":{"code":"capture_expired"}}
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(turn.join("evidence.json"), refused_evidence).unwrap();
+        for file in [
+            "click.png",
+            "before_state.json",
+            "after_state.json",
+            "app_state.json",
+        ] {
+            std::fs::remove_file(turn.join(file)).unwrap();
+        }
+        validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect("a refusal before dispatch needs no application-state walk");
+
+        // A dispatched click must still carry captured state.
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(turn.join("evidence.json"), refused_evidence).unwrap();
+        let errors = validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect_err("a dispatched action cannot skip state as refused");
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("turn-00001/before state")));
+    }
+
+    #[test]
     fn validator_accepts_click_refused_before_target_resolution_without_marker() {
         let (root, case, result, turn) = complete_turn_fixture();
         std::fs::write(
@@ -2605,6 +2753,63 @@ mod tests {
         assert!(errors.iter().any(|error| {
             error.contains("turn-00001/after.png") && error.contains("classified capture_failed")
         }));
+    }
+
+    #[test]
+    fn validator_accepts_errored_no_window_turn() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("action.json"),
+            br#"{
+                "tool":"get_window_state",
+                "arguments":{"pid":1},
+                "result_error":true,
+                "result_summary":"No windows found for pid 1. Provide window_id."
+            }"#,
+        )
+        .expect("write no-window action");
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"not_applicable","classification":"target_unavailable"},"screenshot":{"status":"unavailable","classification":"target_unavailable"}},
+                "after":{"state":{"status":"not_applicable","classification":"target_unavailable"},"screenshot":{"status":"unavailable","classification":"target_unavailable"}},
+                "click":{"status":"not_applicable","classification":"no_target_pid"}
+            }"#,
+        )
+        .expect("write no-window evidence");
+        for file in [
+            "before.png",
+            "after.png",
+            "screenshot.png",
+            "before_state.json",
+            "after_state.json",
+            "app_state.json",
+        ] {
+            let _ = std::fs::remove_file(turn.join(file));
+        }
+        validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect("an errored call on a windowless pid needs no image or tree");
+    }
+
+    #[test]
+    fn validator_rejects_no_window_classification_on_a_successful_call() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"captured"},"screenshot":{"status":"unavailable","classification":"target_unavailable"}},
+                "after":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "click":{"status":"captured"}
+            }"#,
+        )
+        .expect("write evidence");
+        let errors = validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect_err("a successful call still needs its screenshot");
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("had no window to capture")));
     }
 
     #[test]
@@ -2839,7 +3044,12 @@ mod tests {
         .expect("valid catalog");
         assert_eq!(summary.delivered, 1);
         assert!(summary
-            .markdown_with_declarations(std::slice::from_ref(&case), std::slice::from_ref(&result),)
+            .markdown(
+                std::slice::from_ref(&case),
+                std::slice::from_ref(&result),
+                None,
+                None
+            )
             .contains("1 delivered"));
 
         let value = serde_json::to_value(result).expect("serialize result");
@@ -2921,7 +3131,7 @@ mod tests {
         let declarations = vec![delivered, refused, failed, grouped];
         let summary =
             validate_catalog(&declarations, &results, None, false).expect("valid catalog");
-        let markdown = summary.markdown_with_declarations(&declarations, &results);
+        let markdown = summary.markdown(&declarations, &results, None, None);
 
         assert!(markdown.contains("| electron | click | PASS | - | REFUSED | FAIL | - | - |"));
         assert!(markdown.contains("| tauri | type_text | PASS | - | - | - | - | - |"));
@@ -2943,10 +3153,11 @@ mod tests {
         )
         .expect("valid catalog");
         let sha = "0123456789abcdef0123456789abcdef01234567";
-        let markdown = summary.markdown_with_declarations_and_source(
+        let markdown = summary.markdown(
             std::slice::from_ref(&case),
             std::slice::from_ref(&result),
             Some(sha),
+            None,
         );
 
         assert!(markdown.contains(&format!("**Source SHA:** `{sha}`")));
@@ -2981,7 +3192,7 @@ mod tests {
         let declarations = vec![page, not_applicable];
         let summary =
             validate_catalog(&declarations, &results, None, false).expect("valid catalog");
-        let markdown = summary.markdown_with_declarations(&declarations, &results);
+        let markdown = summary.markdown(&declarations, &results, None, None);
 
         assert!(markdown.contains(
             "| web | evaluate | - | - | - | - | Background: PASS | NotApplicable/Background: PASS |"

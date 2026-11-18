@@ -140,8 +140,8 @@ command -v scp >/dev/null 2>&1 || {
   echo "scp is not on PATH" >&2
   exit 2
 }
-command -v python3 >/dev/null 2>&1 || {
-  echo "python3 is not on PATH" >&2
+command -v jq >/dev/null 2>&1 || {
+  echo "jq is not on PATH" >&2
   exit 2
 }
 if [[ "${SSH_TIMEOUT}" != 0 && ! -x /usr/bin/perl ]]; then
@@ -171,24 +171,20 @@ resolve_lume_ip() {
     args+=(--storage "${STORAGE}")
   fi
   info="$(lume "${args[@]}")"
-  python3 -c '
-import json
-import sys
-
-name = sys.argv[1]
-payload = json.load(sys.stdin)
-vm = payload[0] if isinstance(payload, list) and payload else payload
-status = vm.get("status")
-ip = vm.get("ipAddress")
-ssh_available = vm.get("sshAvailable")
-if status != "running" or not ip:
-    print(f"{name}: expected running VM with an IP, got status={status!r} ip={ip!r}", file=sys.stderr)
-    sys.exit(1)
-if ssh_available is False:
-    print(f"{name}: SSH is not available yet", file=sys.stderr)
-    sys.exit(1)
-print(ip)
-' "${vm}" <<< "${info}"
+  # jq (a documented host requirement) avoids host python3, which can be the
+  # Command Line Tools stub that opens an install prompt.
+  jq -r --arg name "${vm}" '
+    (if type == "array" then .[0] else . end) as $vm
+    | if ($vm | type) != "object" then
+        error("\($name): lume get returned no VM record")
+      elif $vm.status != "running" or (($vm.ipAddress // "") == "") then
+        error("\($name): expected running VM with an IP, got status=\($vm.status | tojson) ip=\($vm.ipAddress | tojson)")
+      elif $vm.sshAvailable == false then
+        error("\($name): SSH is not available yet")
+      else
+        $vm.ipAddress
+      end
+  ' <<< "${info}"
 }
 
 ssh_base_opts() {

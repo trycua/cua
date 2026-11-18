@@ -3,10 +3,13 @@ from __future__ import annotations
 import pytest
 
 from cua_s1.four_b import (
+    ASYNC_LOAD_ENV,
     Option,
     OptionProbability,
     assign_letters,
     build_prompt,
+    needs_sync_weight_loading,
+    sync_weight_loading,
 )
 
 
@@ -87,6 +90,49 @@ def test_build_prompt_rejects_unknown_modality():
     assignment = assign_letters(options)
     with pytest.raises(ValueError, match="unknown modality"):
         build_prompt(assignment, app="TestApp", task_family="forms", ax_tree="x", modality="bogus")
+
+
+@pytest.mark.parametrize(
+    ("device", "expected"),
+    [
+        ("mps", True),
+        ("mps:0", True),
+        (" MPS ", True),
+        ("cuda", False),
+        ("cuda:0", False),
+        ("cpu", False),
+        ("auto", False),
+    ],
+)
+def test_needs_sync_weight_loading_only_for_mps(device, expected):
+    assert needs_sync_weight_loading(device) is expected
+
+
+def test_sync_weight_loading_sets_and_restores_the_async_load_switch(monkeypatch):
+    import os
+
+    monkeypatch.delenv(ASYNC_LOAD_ENV, raising=False)
+
+    with sync_weight_loading(True):
+        assert os.environ[ASYNC_LOAD_ENV] == "1"
+    assert ASYNC_LOAD_ENV not in os.environ
+
+    with sync_weight_loading(False):
+        assert ASYNC_LOAD_ENV not in os.environ
+
+    with pytest.raises(RuntimeError), sync_weight_loading(True):
+        raise RuntimeError("load failed")
+    assert ASYNC_LOAD_ENV not in os.environ
+
+
+def test_sync_weight_loading_keeps_an_explicit_environment_choice(monkeypatch):
+    import os
+
+    monkeypatch.setenv(ASYNC_LOAD_ENV, "0")
+
+    with sync_weight_loading(True):
+        assert os.environ[ASYNC_LOAD_ENV] == "0"
+    assert os.environ[ASYNC_LOAD_ENV] == "0"
 
 
 torch = pytest.importorskip("torch")
@@ -197,3 +243,40 @@ def test_letter_token_ids_rejects_multi_token_letters():
 
     with pytest.raises(ValueError, match="single token"):
         model._letter_token_ids(assignment)
+
+
+@pytest.mark.parametrize(("device", "expected"), [("mps", "1"), ("cpu", None), ("cuda", None)])
+def test_load_disables_threaded_weight_loading_only_on_mps(monkeypatch, device, expected):
+    import os
+
+    import sys
+    import types
+
+    monkeypatch.delenv(ASYNC_LOAD_ENV, raising=False)
+    seen: dict[str, object] = {}
+
+    class _FakeAuto:
+        @staticmethod
+        def from_pretrained(name, **kwargs):
+            seen["async_env"] = os.environ.get(ASYNC_LOAD_ENV)
+            seen["device_map"] = kwargs.get("device_map")
+            return _FakeModel(favored_index=0, num_positions=1, vocab_size=1)
+
+    class _NoProcessor:
+        @staticmethod
+        def from_pretrained(name, **kwargs):
+            raise OSError("no processor")
+
+    # A stand-in `transformers` module keeps this test offline and independent
+    # of whether the `four-b` extra is installed.
+    fake_transformers = types.ModuleType("transformers")
+    fake_transformers.AutoTokenizer = _FakeAuto
+    fake_transformers.AutoProcessor = _NoProcessor
+    fake_transformers.AutoModelForCausalLM = _FakeAuto
+    fake_transformers.AutoModelForImageTextToText = _FakeAuto
+    monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
+
+    FourBModel(base_model="local-base", device=device, dtype="float16").load()
+
+    assert seen == {"async_env": expected, "device_map": device}
+    assert ASYNC_LOAD_ENV not in os.environ

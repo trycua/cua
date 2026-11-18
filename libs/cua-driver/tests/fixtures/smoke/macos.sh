@@ -168,7 +168,7 @@ else
     run_tool press_key        "{\"pid\":$HARNESS_PID,\"window_id\":$WIN_ID,\"key\":\"a\"}"
     run_tool hotkey           "{\"pid\":$HARNESS_PID,\"window_id\":$WIN_ID,\"keys\":[\"cmd\",\"a\"]}"
     run_tool bring_to_front   "{\"pid\":$HARNESS_PID,\"window_id\":$WIN_ID}"
-    # set_value needs element_index — we don't have one without a snapshot.
+    # set_value needs element_token — we don't have one without a snapshot.
     record set_value SKIP "exercised by harness_appkit_text_input integration test instead"
 fi
 

@@ -1916,6 +1916,7 @@ fn parse_modifier_flags(modifiers: &[&str]) -> CGEventFlags {
 mod post_sink {
     use super::PostRoute;
     use core_graphics::event::{CGEvent, EventField};
+    use foreign_types::ForeignType;
     use std::cell::RefCell;
 
     pub(super) const MODIFIER_MASK: u64 = 0x0002_0000 // shift
@@ -1949,7 +1950,9 @@ mod post_sink {
         warps: usize,
         /// Modifier flags carried by each posted event, parallel to `posted`.
         modifiers: Vec<u64>,
-        window_routing: Vec<[i64; 4]>,
+        window_routing: Vec<[i64; 3]>,
+        /// `CGEventGetTimestamp` of each posted event, parallel to `posted`.
+        timestamps: Vec<u64>,
         locations: Vec<(f64, f64)>,
     }
 
@@ -1970,6 +1973,7 @@ mod post_sink {
                     warps: 0,
                     modifiers: Vec::new(),
                     window_routing: Vec::new(),
+                    timestamps: Vec::new(),
                     locations: Vec::new(),
                 });
             });
@@ -1999,8 +2003,12 @@ mod post_sink {
             })
         }
 
-        pub(super) fn window_routing(&self) -> Vec<[i64; 4]> {
+        pub(super) fn window_routing(&self) -> Vec<[i64; 3]> {
             STATE.with(|state| state.borrow().as_ref().unwrap().window_routing.clone())
+        }
+
+        pub(super) fn timestamps(&self) -> Vec<u64> {
+            STATE.with(|state| state.borrow().as_ref().unwrap().timestamps.clone())
         }
 
         /// Each posted event's screen location.
@@ -2033,6 +2041,10 @@ mod post_sink {
         }
     }
 
+    extern "C" {
+        fn CGEventGetTimestamp(event: *mut std::ffi::c_void) -> u64;
+    }
+
     pub(super) fn skylight_override() -> Option<bool> {
         STATE.with(|state| {
             state
@@ -2059,7 +2071,10 @@ mod post_sink {
                 .push(event.get_flags().bits() & MODIFIER_MASK);
             state
                 .window_routing
-                .push([51, 91, 92, 58].map(|field| event.get_integer_value_field(field)));
+                .push([51, 91, 92].map(|field| event.get_integer_value_field(field)));
+            state
+                .timestamps
+                .push(unsafe { CGEventGetTimestamp(event.as_ptr().cast()) });
             let location = event.location();
             state.locations.push((location.x, location.y));
             true
@@ -2076,14 +2091,7 @@ mod tests {
     fn background_middle_click_preserves_exact_window_routing() {
         let capture = Capture::start(true);
         middle_click_at_xy_with_window_local(1, 100.0, 100.0, 10.0, 10.0, 7, &[]).unwrap();
-        let routing = capture.window_routing();
-        assert_eq!(routing.len(), 3);
-        for fields in &routing {
-            assert_eq!(&fields[..3], &[7, 7, 7]);
-            assert_ne!(fields[3], 0, "window stamps require a click-group ID");
-        }
-        assert_eq!(routing[0][3], routing[1][3]);
-        assert_eq!(routing[1][3], routing[2][3]);
+        assert_eq!(capture.window_routing(), [[7, 7, 7]; 3]);
         assert_eq!(
             capture.posted(),
             [
@@ -2091,6 +2099,51 @@ mod tests {
                 Posted::new("OtherMouseDown", PostRoute::SkyLight, 2),
                 Posted::new("OtherMouseUp", PostRoute::SkyLight, 2),
             ]
+        );
+    }
+
+    /// Integer field 58 is the event timestamp. A click-group ID written there
+    /// made Chromium read the click as older than the page and crash the
+    /// renderer on a same-document navigation (#7292). Every window-addressed
+    /// pointer path leaves the timestamp for the window server to fill at post.
+    #[test]
+    fn window_addressed_pointer_events_leave_the_timestamp_unset() {
+        let capture = Capture::start(true);
+        click_at_xy_chromium(1, 100.0, 100.0, 10.0, 10.0, 7, 2, &[]).unwrap();
+        click_at_xy_with_window_local(
+            1,
+            100.0,
+            100.0,
+            10.0,
+            10.0,
+            7,
+            1,
+            &[],
+            WindowClickDelivery::Foreground,
+        )
+        .unwrap();
+        right_click_at_xy_with_window_local(1, 100.0, 100.0, 10.0, 10.0, 7, &[]).unwrap();
+        middle_click_at_xy_with_window_local(1, 100.0, 100.0, 10.0, 10.0, 7, &[]).unwrap();
+        drag_at_xy_background(
+            1,
+            (100.0, 100.0),
+            (200.0, 100.0),
+            (0.0, 0.0),
+            7,
+            0,
+            2,
+            &[],
+            DragButton::Left,
+            |_, _| {},
+            || false,
+        )
+        .unwrap();
+        let timestamps = capture.timestamps();
+        assert_eq!(timestamps.len(), capture.posted().len());
+        assert!(timestamps.len() > 20, "every path posted: {timestamps:?}");
+        assert!(
+            timestamps.iter().all(|timestamp| *timestamp == 0),
+            "posted timestamps: {timestamps:?}"
         );
     }
 
@@ -2112,7 +2165,7 @@ mod tests {
     fn window_less_middle_click_keeps_window_routing_unset() {
         let capture = Capture::start(true);
         middle_click_at_xy(1, 100.0, 100.0, &[]).unwrap();
-        assert_eq!(capture.window_routing(), [[0; 4]; 3]);
+        assert_eq!(capture.window_routing(), [[0; 3]; 3]);
         assert_eq!(
             capture.posted(),
             [
@@ -2573,16 +2626,13 @@ mod tests {
                 .all(|posted| posted.route == PostRoute::SkyLight),
             "a background drag never reaches the HID tap or a second transport"
         );
-        let routing = capture.window_routing();
-        let gesture = routing[0][3];
-        for fields in routing {
-            assert_eq!(
-                &fields[..3],
-                &[7, 7, 7],
-                "every event names the exact window"
-            );
-            assert_eq!(fields[3], gesture, "every event carries one gesture ID");
-        }
+        assert!(
+            capture
+                .window_routing()
+                .iter()
+                .all(|fields| *fields == [7, 7, 7]),
+            "every event names the exact window"
+        );
         assert!(capture
             .modifiers()
             .iter()

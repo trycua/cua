@@ -2,6 +2,8 @@ from pathlib import Path
 import os
 import subprocess
 
+import pytest
+
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 SIGNING_HELPER = SCRIPTS_DIR / "_local-signing.sh"
@@ -72,7 +74,8 @@ def test_ad_hoc_fallback_is_prominent_and_reports_cdhash() -> None:
     assert "designated requirement uses cdhash" in result.stderr
 
 
-def test_certificate_requirement_is_classified_as_stable() -> None:
+@pytest.mark.parametrize("certificate", ["leaf", "root"])
+def test_certificate_requirement_is_classified_as_stable(certificate: str) -> None:
     result = run_signing_policy(
         r"""
         OS=Darwin
@@ -82,16 +85,59 @@ def test_certificate_requirement_is_classified_as_stable() -> None:
         codesign_bounded() { return 0; }
         codesign() {
             if [ "$1" = "-d" ]; then
-                echo 'designated => anchor trusted and certificate leaf[subject.CN] = "CuaDriver Local Signing (cua-driver-rs)"' >&2
+                echo 'designated => identifier "com.trycua.driver.local" and certificate CERTIFICATE = H"662061ed4588ed82dd4c0999adaf5e8014abd46f"' >&2
             fi
             return 0
         }
         sign_staged_local_app /staged.app /missing-live.app
-        """
+        """.replace("CERTIFICATE", certificate)
     )
 
     assert result.returncode == 0, result.stderr
     assert "stable local identity" in result.stdout
+
+
+@pytest.mark.parametrize("password", ["test-password", None])
+def test_generated_signing_key_authorization(tmp_path: Path, password: str | None) -> None:
+    keychain = tmp_path / "signing.keychain-db"
+    keychain.touch()
+    result = run_signing_policy(
+        rf"""
+        OS=Darwin
+        TMPDIR='{tmp_path}'
+        CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN='{keychain}'
+        unset CUA_DRIVER_LOCAL_SIGNING_IDENTITY CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN_PASSWORD
+        {('CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN_PASSWORD=' + password) if password else ':'}
+        codesign() {{ :; }}
+        openssl() {{ :; }}
+        security() {{
+            printf '%s\n' "$*" >> '{tmp_path}/security.log'
+            case "$1" in
+                find-identity)
+                    if [ -f '{tmp_path}/imported' ]; then
+                        echo '  1) 71B7D45889593C1B77459FCB981D9460CC929431 "CuaDriver Local Signing (cua-driver-rs)"'
+                    fi
+                    ;;
+                import) touch '{tmp_path}/imported' ;;
+            esac
+        }}
+        ensure_local_signing_identity
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "71B7D45889593C1B77459FCB981D9460CC929431"
+    calls = (tmp_path / "security.log").read_text()
+    if password:
+        assert (
+            "set-key-partition-list -S apple-tool:,apple:,codesign: "
+            "-t private -s -l CuaDriver Local Signing (cua-driver-rs) "
+            f"-k {password} {keychain}"
+        ) in calls
+    else:
+        assert "set-key-partition-list" not in calls
+        assert "set-key-partition-list" in result.stderr
+        assert "errSecInternalComponent" in result.stderr
 
 
 def test_changed_ad_hoc_requirement_resets_only_local_driver_services() -> None:

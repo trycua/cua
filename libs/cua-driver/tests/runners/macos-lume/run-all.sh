@@ -1077,7 +1077,7 @@ bash "${DRIVER_ROOT}/scripts/install-local.sh" \
 
 codesign -d -r- "${LOCAL_APP}" \
   > "${ARTIFACT_DIR}/codesign-requirement.txt" 2>&1
-if ! grep -Fq "certificate leaf" "${ARTIFACT_DIR}/codesign-requirement.txt"; then
+if ! grep -Eq "certificate (leaf|root)" "${ARTIFACT_DIR}/codesign-requirement.txt"; then
   echo "CuaDriverLocal.app is not signed with the golden image's stable certificate identity" >&2
   exit 1
 fi

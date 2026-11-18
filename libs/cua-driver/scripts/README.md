@@ -65,14 +65,17 @@ The installer fails closed when that exact usable code-signing identity is not
 present in `CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN`.
 
 The first install creates `CuaDriver Local Signing (cua-driver-rs)` in that
-keychain. If `codesign` cannot use its private key non-interactively, unlock
-the keychain, trust the certificate in Keychain Access, and authorize Apple
-code-signing tools:
+keychain. Export `CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN_PASSWORD` before that install
+to authorize the newly imported private key for code-signing tools automatically,
+then unset it. Both untrusted and trusted local certificates are accepted.
+If `codesign` cannot use an existing private key non-interactively, unlock
+the keychain and authorize the local signing key:
 
 ```bash
 read -r -s -p 'Keychain password: ' KEYCHAIN_PASSWORD; echo
 security set-key-partition-list \
-  -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" \
+  -S apple-tool:,apple:,codesign: -t private -s \
+  -l 'CuaDriver Local Signing (cua-driver-rs)' -k "$KEYCHAIN_PASSWORD" \
   "$SIGNING_KEYCHAIN"
 unset KEYCHAIN_PASSWORD
 ```

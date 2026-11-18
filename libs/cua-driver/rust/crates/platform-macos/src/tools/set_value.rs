@@ -1193,16 +1193,18 @@ fn is_chromium_popup_owner(pid: i32) -> bool {
 /// same role, but only a `<select>` lists its options as `AXMenuItem` children
 /// (or an `AXMenu`) and carries the selected option as its value. A menu
 /// button has neither: its menu is drawn in the page and opening it raises no
-/// window. Children that could not be read (`None`) count as a `<select>`, so
-/// a failed read refuses rather than sends.
-fn chromium_popup_is_select(child_roles: Option<&[String]>, value: &str) -> bool {
+/// window. Children that could not be read (`None`), including a child whose
+/// role could not be read, count as a `<select>`, so a failed read refuses
+/// rather than sends.
+fn chromium_popup_is_select(child_roles: Option<&[Option<String>]>, value: &str) -> bool {
     let Some(child_roles) = child_roles else {
         return true;
     };
     !value.is_empty()
-        || child_roles
-            .iter()
-            .any(|role| matches!(role.as_str(), "AXMenuItem" | "AXMenu"))
+        || child_roles.iter().any(|role| {
+            role.as_deref()
+                .is_none_or(|role| matches!(role, "AXMenuItem" | "AXMenu"))
+        })
 }
 
 /// Whether pressing `element` would open a Chromium or Electron `<select>`
@@ -1214,13 +1216,12 @@ pub(super) fn is_chromium_web_select(pid: i32, window_id: u32, element: AXUIElem
         && is_chromium_popup_owner(pid)
         && {
             let value = unsafe { copy_string_attr(element, "AXValue") }.unwrap_or_default();
-            let child_roles: Option<Vec<String>> =
+            let child_roles: Option<Vec<Option<String>>> =
                 unsafe { copy_children_checked(element) }.map(|children| {
                     children
                         .into_iter()
                         .map(|child| {
-                            let role =
-                                unsafe { copy_string_attr(child, "AXRole") }.unwrap_or_default();
+                            let role = unsafe { copy_string_attr(child, "AXRole") };
                             unsafe { CFRelease(child as _) };
                             role
                         })
@@ -1500,8 +1501,8 @@ fn select_popup_option(
 mod popup_option_tests {
     use super::{chromium_popup_is_select, matching_option};
 
-    fn roles(roles: &[&str]) -> Vec<String> {
-        roles.iter().map(|role| (*role).to_owned()).collect()
+    fn roles(roles: &[&str]) -> Vec<Option<String>> {
+        roles.iter().map(|role| Some((*role).to_owned())).collect()
     }
 
     #[test]
@@ -1516,8 +1517,12 @@ mod popup_option_tests {
             ""
         ));
         assert!(chromium_popup_is_select(Some(&[][..]), "One"));
-        // Children that could not be read refuse, whatever the value read.
+        // Children, or a child's role, that could not be read refuse.
         assert!(chromium_popup_is_select(None, ""));
+        assert!(chromium_popup_is_select(
+            Some(&[Some("AXStaticText".to_owned()), None][..]),
+            ""
+        ));
         // <button aria-haspopup="menu">: no children and no value (#7664).
         assert!(!chromium_popup_is_select(Some(&[][..]), ""));
         assert!(!chromium_popup_is_select(

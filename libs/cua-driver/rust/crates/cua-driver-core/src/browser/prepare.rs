@@ -706,7 +706,11 @@ fn driver_owned_browser_command(
              attach to the user's own browser with strategy=existing_profile instead",
         ));
     }
-    Ok(isolated_browser_command(executable, &profile.path, headless))
+    Ok(isolated_browser_command(
+        executable,
+        &profile.path,
+        headless,
+    ))
 }
 
 /// Consecutive failed isolated launches allowed before the driver backs off.
@@ -1341,19 +1345,18 @@ impl BrowserEngine {
             return Err(security_prompt_refusal(true));
         }
         let prepared_profile = prepare_profile(profile_request)?;
-        let command =
-            match driver_owned_browser_command(
-                &executable,
-                &profile_root()?,
-                &prepared_profile,
-                request.headless,
-            ) {
-                Ok(command) => command,
-                Err(error) => {
-                    cleanup_created_profile(&prepared_profile);
-                    return Err(error);
-                }
-            };
+        let command = match driver_owned_browser_command(
+            &executable,
+            &profile_root()?,
+            &prepared_profile,
+            request.headless,
+        ) {
+            Ok(command) => command,
+            Err(error) => {
+                cleanup_created_profile(&prepared_profile);
+                return Err(error);
+            }
+        };
         let mut child = match self
             .platform
             .spawn_isolated_browser(command, &prepared_profile.path)
@@ -2775,8 +2778,9 @@ mod tests {
             marker: marker.clone(),
         };
 
-        let command = driver_owned_browser_command("chromium-under-test", &root, &profile(&owned), false)
-            .expect("a marked profile under the root launches");
+        let command =
+            driver_owned_browser_command("chromium-under-test", &root, &profile(&owned), false)
+                .expect("a marked profile under the root launches");
         let args = command_args(&command);
         assert!(args.contains(&format!("--user-data-dir={}", owned.display())));
         assert_eq!(
@@ -2794,9 +2798,13 @@ mod tests {
         fs::create_dir(&outside).unwrap();
         write_profile_marker(&outside, &marker).unwrap();
         for refused in [&unmarked, &outside, &root.join("missing")] {
-            let error =
-                driver_owned_browser_command("chromium-under-test", &root, &profile(refused), false)
-                    .expect_err("not a driver-owned profile");
+            let error = driver_owned_browser_command(
+                "chromium-under-test",
+                &root,
+                &profile(refused),
+                false,
+            )
+            .expect_err("not a driver-owned profile");
             assert_eq!(error.code, BrowserRefusalCode::BrowserRouteUnavailable);
             assert!(
                 error.message.contains("existing_profile"),

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Driver-owned headless route: prepare → bind by opaque anchor → typed DOM
 //! work, against the mock CDP endpoint. The platform below fails every
 //! native-window, compositor, focus, and visual call, so these tests prove the
@@ -412,10 +415,9 @@ async fn headless_prepare_binds_by_anchor_and_does_typed_dom_work_without_native
         }))
         .await;
     assert_eq!(
-        structured(&clicked)["status"],
-        "ok",
-        "{}",
-        structured(&clicked)
+        clicked.action_record.as_ref().map(|record| record.effect),
+        Some(crate::action_record::ActionEffect::Confirmed),
+        "{clicked:?}"
     );
 
     let fresh = snapshot(&h, &session, &target, &tab, "dom_refs_v1").await;
@@ -498,10 +500,12 @@ async fn headless_mutation_refuses_after_identity_endpoint_or_session_drift() {
     let session = unique("headless-drift");
     let (_, target, tab, profile, pid) = bound(&h, &session).await;
 
+    // A replaced process is no longer the launch this session owns, so the
+    // driver-owned lifecycle check refuses before the headless record check.
     h.platform.start_time.store(2, Ordering::SeqCst);
     assert_eq!(
         refusal_code(&navigate(&h, &session, &target, &tab).await),
-        "browser_binding_stale"
+        "browser_consent_required"
     );
     h.platform.start_time.store(1, Ordering::SeqCst);
     let ok = navigate(&h, &session, &target, &tab).await;

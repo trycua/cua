@@ -1395,8 +1395,10 @@ impl ClickTool {
 
             // A background PX action can still use an accessibility delivery
             // backend after resolving the requested screen point. This keeps
-            // targeting (PX) orthogonal to delivery (AX) and avoids making a
-            // Chromium/AppKit window key merely to satisfy first-mouse rules.
+            // targeting (PX) orthogonal to delivery (AX) and avoids making an
+            // AppKit window key merely to satisfy first-mouse rules. Web
+            // content takes the routed pixel path instead (see
+            // `hit_test_leaves_press_to_pixels`).
             if let Some(hit_test_wid) = window_id.filter(|_| {
                 !delivery_mode.is_foreground()
                     && button_str == "left"
@@ -1404,10 +1406,9 @@ impl ClickTool {
                     && modifiers.is_empty()
             }) {
                 let focus_only = action == "focus";
-                let watch_page = watches_page_after_press();
                 let ax_result = tokio::task::spawn_blocking(move || unsafe {
                     let Some(element) = element_at_screen_position(pid, screen_x, screen_y) else {
-                        return Ok::<Option<bool>, anyhow::Error>(None);
+                        return Ok::<bool, anyhow::Error>(false);
                     };
                     // The pid-scoped hit-test can resolve an element from a
                     // same-process sibling overlapping the requested point.
@@ -1418,55 +1419,40 @@ impl ClickTool {
                         .is_some_and(|window| window.is(hit_test_wid))
                     {
                         CFRelease(element as _);
-                        return Ok(None);
+                        return Ok(false);
                     }
-                    // An element that does not advertise AXPress can still
-                    // accept it as a no-op. On a toolkit that drops routed
-                    // mouse events (LibreOffice's Calc cells) or only takes
-                    // them while active (GTK 3) that no-op used to come back
-                    // as a pressed click; fall through to the pixel route.
                     if !focus_only
-                        && !crate::ax::bindings::copy_action_names(element)
-                            .iter()
-                            .any(|action| action == "AXPress")
-                        && matches!(
-                            crate::input::pointer_toolkit::detect(pid),
-                            Some(
-                                crate::input::pointer_toolkit::PointerReadingToolkit::Vcl
-                                    | crate::input::pointer_toolkit::PointerReadingToolkit::GdkQuartz
-                            )
+                        && hit_test_leaves_press_to_pixels(
+                            || {
+                                copy_string_attr(element, "AXRole").as_deref() == Some("AXWebArea")
+                                    || ancestor_roles(element)
+                                        .iter()
+                                        .any(|role| role == "AXWebArea")
+                            },
+                            || {
+                                crate::ax::bindings::copy_action_names(element)
+                                    .iter()
+                                    .any(|action| action == "AXPress")
+                            },
+                            || crate::input::pointer_toolkit::detect(pid),
                         )
                     {
                         CFRelease(element as _);
-                        return Ok(None);
+                        return Ok(false);
                     }
-                    // `Some(unchanged)`: delivered, and whether the page of a
-                    // web press stayed the same.
                     let delivered = if focus_only {
-                        crate::input::ax_actions::focus_element(element as usize)
-                            .is_ok()
-                            .then_some(false)
+                        crate::input::ax_actions::focus_element(element as usize).is_ok()
                     } else {
-                        let page = watch_page
-                            .then(|| crate::ax::web_effect::PageProbe::before_press(pid, element))
-                            .flatten();
-                        let pressed_at = std::time::Instant::now();
                         let press = core_foundation::string::CFString::new("AXPress");
-                        (AXUIElementPerformAction(element, press.as_concrete_TypeRef())
-                            == kAXErrorSuccess)
-                            .then(|| {
-                                page.is_some_and(|page| {
-                                    page.settle(pressed_at)
-                                        == crate::ax::web_effect::PageChange::Unchanged
-                                })
-                            })
+                        AXUIElementPerformAction(element, press.as_concrete_TypeRef())
+                            == kAXErrorSuccess
                     };
                     CFRelease(element as _);
                     Ok(delivered)
                 })
                 .await;
                 match ax_result {
-                    Ok(Ok(Some(unchanged))) => {
+                    Ok(Ok(true)) => {
                         crate::cursor::overlay::send_command(
                             cursor_key.clone(),
                             cursor_overlay::OverlayCommand::ClickPulse {
@@ -1475,20 +1461,17 @@ impl ClickTool {
                             },
                         );
                         let label = if focus_only { "focused" } else { "pressed" };
-                        let suspicion = unchanged.then_some(NoopSuspicion::BackgroundWebUnchanged);
-                        let mut text =
-                            format!("✅ PX hit-test {label} the background element via AX.");
-                        if unchanged {
-                            text.push_str(BACKGROUND_WEB_NOOP_NOTE);
-                        }
-                        return ToolResult::text(text).with_structured(ax_click_structured(
+                        return ToolResult::text(format!(
+                            "✅ PX hit-test {label} the background element via AX."
+                        ))
+                        .with_structured(ax_click_structured(
                             "ax",
                             false,
-                            suspicion,
+                            None,
                             &crate::window_change_detector::Changes::no_change(),
                         ));
                     }
-                    Ok(Ok(None)) if focus_only => {
+                    Ok(Ok(false)) if focus_only => {
                         return ToolResult::error(
                             "Background PX focus is unavailable at the requested point.".to_owned(),
                         )
@@ -1986,6 +1969,30 @@ fn needs_web_focus_settle(
         && ancestor_roles().iter().any(|role| role == "AXWebArea")
 }
 
+/// Whether a background left click at a point skips the `AXPress` on the
+/// element there and takes the routed pixel path.
+///
+/// Web content (`in_web_content`: the element is or sits inside an
+/// `AXWebArea`) always does: an `AXPress` drops the coordinates, so a canvas,
+/// a caret placement or a pointer handler never sees the click. Elsewhere an
+/// element that does not advertise `AXPress` can still accept it as a no-op;
+/// on a toolkit that drops routed mouse events (LibreOffice's Calc cells) or
+/// only takes them while active (GTK 3) that no-op used to come back as a
+/// pressed click.
+fn hit_test_leaves_press_to_pixels(
+    in_web_content: impl FnOnce() -> bool,
+    advertises_press: impl FnOnce() -> bool,
+    toolkit: impl FnOnce() -> Option<crate::input::pointer_toolkit::PointerReadingToolkit>,
+) -> bool {
+    use crate::input::pointer_toolkit::PointerReadingToolkit;
+    in_web_content()
+        || (!advertises_press()
+            && matches!(
+                toolkit(),
+                Some(PointerReadingToolkit::Vcl | PointerReadingToolkit::GdkQuartz)
+            ))
+}
+
 /// Roles of `element`'s ancestors, nearest first, up to the window. Bounded so
 /// a cyclic or very deep tree cannot stall the click.
 ///
@@ -2393,6 +2400,42 @@ mod web_focus_settle_tests {
             assert!(!needs_web_focus_settle(action, role, || {
                 panic!("ancestors are not read for {action} on {role}")
             }));
+        }
+    }
+}
+
+#[cfg(test)]
+mod hit_test_press_tests {
+    use super::hit_test_leaves_press_to_pixels;
+    use crate::input::pointer_toolkit::PointerReadingToolkit;
+
+    #[test]
+    fn web_content_always_takes_the_pixel_path() {
+        assert!(hit_test_leaves_press_to_pixels(
+            || true,
+            || panic!("a web element's actions are not read"),
+            || panic!("a web element's toolkit is not read"),
+        ));
+    }
+
+    #[test]
+    fn a_native_element_is_pressed_unless_a_pointer_reading_toolkit_hides_a_noop() {
+        assert!(!hit_test_leaves_press_to_pixels(
+            || false,
+            || true,
+            || panic!("the toolkit is not read for an advertised press"),
+        ));
+        assert!(!hit_test_leaves_press_to_pixels(
+            || false,
+            || false,
+            || None
+        ));
+        for toolkit in [PointerReadingToolkit::Vcl, PointerReadingToolkit::GdkQuartz] {
+            assert!(hit_test_leaves_press_to_pixels(
+                || false,
+                || false,
+                || Some(toolkit)
+            ));
         }
     }
 }

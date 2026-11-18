@@ -608,23 +608,13 @@ fn spawn_completion<F>(
 where
     F: Future<Output = Result<String, AbiFailure>> + Send + 'static,
 {
-    spawn_cleanup_completion(
-        executor,
-        async move {
-            #[cfg(target_os = "windows")]
-            {
-                platform_windows::dpi::guard_future(future)
-                    .await
-                    .map_err(|error| AbiFailure::new(CuaDriverStatus::RuntimeUnavailable, error))?
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                future.await
-            }
-        },
-        callback,
-        context,
-    )
+    #[cfg(target_os = "windows")]
+    let future = async move {
+        platform_windows::dpi::guard_future(future)
+            .await
+            .map_err(|error| AbiFailure::new(CuaDriverStatus::RuntimeUnavailable, error))?
+    };
+    spawn_cleanup_completion(executor, future, callback, context)
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -88,12 +88,16 @@ browser_prepare({
 })
 ```
 
-Without a `pid`, the driver launches a vendor-signed system install it can
-verify, never one a standard user could modify: Chrome or Edge (system Chromium
-on Linux), or Brave from `/Applications` on macOS, from an all-users install
-under Program Files on Windows, or from Brave's own package under
-`/opt/brave.com` on Linux. Brave's default Windows installer installs per user,
-and Snap and Flatpak installs are not covered; the driver refuses those.
+Without a `pid`, the driver launches the first browser it finds, in the order
+Chrome, Edge, Brave (on Linux: Chrome, Chromium, Edge, Brave), from a system
+install a standard user cannot modify. You cannot choose the browser, so Brave
+starts only when neither Chrome nor Edge is installed. On macOS and Windows the
+install must carry its vendor's signature: Brave from `/Applications` on macOS,
+or from an all-users install under Program Files on Windows. On Linux the binary
+and its folders must be owned by root and writable by no one else: Brave from
+its own package under `/opt/brave.com`. Brave's default Windows installer
+installs per user, and Snap and Flatpak installs are not covered; the driver
+refuses those.
 
 Bind the window of the returned `prepared_pid`. An `isolated_new` profile is
 deleted when the session ends; use `{"mode": "isolated_named", "name": "research"}`
@@ -214,7 +218,7 @@ Wayland; Chrome, Edge, and Chromium on Sway; Brave on macOS, Windows, and
 Linux X11. On Linux, start the browser
 with `--force-renderer-accessibility`. On macOS, setup recognizes English UI labels only. On Windows, setup does not depend on the UI language. On Linux, setup accepts a localized browser, but the browser's internal setup page must show its English heading and checkbox.
 
-On macOS 27 and later, reading the Chrome and Edge profile folders needs Full
+On macOS 27 and later, reading the Chrome, Edge, and Brave profile folders needs Full
 Disk Access or a per-app grant, so attachment through the daemon refuses with
 `browser_route_unavailable` until CuaDriver.app has that access. Grant it Full
 Disk Access in System Settings, then restart the daemon. A runtime started with

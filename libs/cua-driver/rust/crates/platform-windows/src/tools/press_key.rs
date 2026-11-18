@@ -43,6 +43,26 @@ fn native_background_key_target(
     Ok(target)
 }
 
+/// A native control keeps the exact-HWND route even when its window also
+/// hosts a WebView. Only elements with no own HWND, or whose HWND sits inside
+/// a Chromium surface, are renderer elements for the focus-click route.
+fn is_native_control_element(element: &crate::uia::snapshot::RetainedElement, owner: u64) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GA_PARENT};
+
+    let Some(target) = element.native_window_handle() else {
+        return false;
+    };
+    let mut current = HWND(target as *mut _);
+    while !current.is_invalid() && current.0 as usize as u64 != owner {
+        if crate::input::is_chromium_target_window(current.0 as usize as u64) {
+            return false;
+        }
+        current = unsafe { GetAncestor(current, GA_PARENT) };
+    }
+    true
+}
+
 fn screen_to_bitmap(hwnd: u64, sx: i32, sy: i32) -> (i32, i32) {
     let (origin_x, origin_y) = bitmap_to_screen(hwnd, 0, 0);
     (sx - origin_x, sy - origin_y)
@@ -243,7 +263,17 @@ impl Tool for PressKeyTool {
         // cached center.
         let background_webview_focus = elem_idx.is_some()
             && delivery == DeliveryMode::Background
-            && crate::input::has_chromium_descendant(hwnd);
+            && crate::input::has_chromium_descendant(hwnd)
+            && !tokio::task::spawn_blocking({
+                let admitted = admitted.clone();
+                move || {
+                    admitted
+                        .as_ref()
+                        .is_some_and(|element| is_native_control_element(element, hwnd))
+                }
+            })
+            .await
+            .unwrap_or(false);
         // Native controls are addressed directly below; only the existing
         // WebView focus-click route needs an activation guard.
         let mut noact = if background_webview_focus {

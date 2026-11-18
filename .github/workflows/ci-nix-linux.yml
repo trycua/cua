@@ -1,9 +1,15 @@
 name: "CI: Nix Linux Rust source"
 
 # Nix owns reproducible Linux package and Rust-source builds. Interactive
-# desktop behavior is owned by the Rust E2E workflows.
+# desktop behavior is owned by the Rust E2E workflows. Pull requests run it
+# when Nix, flake or lockfile paths change; driver source changes run it on
+# main and nightly. A failed main or nightly run opens or updates one issue.
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    # Only what decides the Nix build. A change to the driver's Rust sources is
+    # built by the Rust CI on the pull request and by this workflow on main and
+    # nightly (14 minutes, p90 33, on every driver change before).
     paths:
       - "flake.nix"
       - "flake.lock"
@@ -11,18 +17,8 @@ on:
       - "libs/cua-driver/rust/.cargo/**"
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
-      - "libs/cua-driver/rust/crates/cua-driver/**"
-      - "libs/cua-driver/rust/crates/cua-driver-core/**"
-      - "libs/cua-driver/rust/crates/cua-driver-testkit/**"
-      - "libs/cua-driver/rust/crates/cua-driver-e2e/**"
-      - "libs/cua-driver/rust/crates/cua-cursor-motion/**"
-      - "libs/cua-driver/rust/crates/cursor-overlay/**"
-      - "!libs/cua-driver/rust/crates/cursor-overlay/examples/export_gallery_frames.rs"
-      - "libs/cua-driver/rust/crates/pip-preview/**"
-      - "libs/cua-driver/rust/crates/platform-linux/**"
-      - "libs/cua-driver/wayland-helper/**"
-      - "libs/cua-driver/tests/fixtures/shared/web/index.html"
       - ".github/workflows/ci-nix-linux.yml"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -39,11 +35,12 @@ on:
       - "libs/cua-driver/rust/crates/cua-cursor-motion/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
       - "!libs/cua-driver/rust/crates/cursor-overlay/examples/export_gallery_frames.rs"
-      - "libs/cua-driver/rust/crates/pip-preview/**"
       - "libs/cua-driver/rust/crates/platform-linux/**"
       - "libs/cua-driver/wayland-helper/**"
       - "libs/cua-driver/tests/fixtures/shared/web/index.html"
       - ".github/workflows/ci-nix-linux.yml"
+  schedule:
+    - cron: "47 3 * * *"
   workflow_dispatch:
 
 permissions:
@@ -59,10 +56,16 @@ env:
   DO_NOT_TRACK: "1"
 
 jobs:
+  quick:
+    name: quick
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    uses: ./.github/workflows/ci-quick.yml
+
   rust-source:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) && needs.quick.outputs.skip != 'true' }}
     name: Nix / ${{ matrix.name }}
-    runs-on: cua-linux-16core
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -82,19 +85,27 @@ jobs:
               cua-driver-policy-rego
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      # nix-quick-install-action leaves /nix owned by the runner user, which
+      # the store cache below needs in order to restore into it.
       - name: Install Nix
-        uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
         with:
-          extra_nix_config: |
+          nix_conf: |
             experimental-features = nix-command flakes
-      # Shares built store paths between workflow runs through the GitHub
-      # Actions cache. Pull requests read main's entries but write only to
-      # their own ref scope, so they cannot poison main.
-      - name: Cache Nix store paths
-        uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+      # Restores and saves the whole Nix store as ONE GitHub Actions cache
+      # entry per lane. The key covers only what decides the dependency build
+      # (flake, lockfiles, manifests, nix expressions), so source edits hit the
+      # exact key and rebuild only the workspace crates. A lockfile change
+      # falls back to the newest entry of the same lane and rebuilds the delta.
+      # magic-nix-cache pushed every derivation separately (about 970 for the
+      # vendored crates alone), tripped GitHub's cache rate limit (HTTP 418)
+      # and then served nothing. Pull requests read main's entries and write
+      # only to their own ref scope, so they cannot poison main.
+      - name: Cache Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         with:
-          use-flakehub: disabled
-          diagnostic-endpoint: ""
+          primary-key: nix-${{ runner.os }}-${{ matrix.name }}-${{ hashFiles('flake.nix', 'flake.lock', 'nix/**', 'libs/cua-driver/rust/Cargo.lock', 'libs/cua-driver/rust/**/Cargo.toml', 'libs/cua/Cargo.toml', 'libs/cua/crates/cua-telemetry/Cargo.toml', 'libs/cua/crates/cua-agent-setup/Cargo.toml', 'libs/cua/crates/cua-home/Cargo.toml') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-${{ matrix.name }}-
       - name: Build ${{ matrix.name }}
         env:
           ATTRIBUTES: ${{ matrix.attributes }}
@@ -104,3 +115,24 @@ jobs:
             targets+=(".#checks.x86_64-linux.${attribute}")
           done
           nix build "${targets[@]}" --no-link --print-build-logs --show-trace
+
+  report:
+    name: open or update the issue
+    needs: [quick, rust-source]
+    if: ${{ failure() && github.event_name != 'pull_request' && needs.quick.outputs.skip != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/nightly-issue
+      - uses: ./.github/actions/nightly-issue
+        with:
+          title: "Nix Linux Rust source build is failing on main"
+          detail: >-
+            A Nix build of the driver, the policy VMs or the compositor failed on a main push or the nightly run.
+            Pull requests only run it when Nix, flake or lockfile paths change, so a driver source change that
+            breaks the Nix build shows up here.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `run_script` against fake driver tools: results, errors, limits and
 //! sandbox-escape attempts.
 
@@ -472,7 +475,7 @@ fn the_tool_is_on_unless_the_operator_turns_it_off() {
     assert_eq!(off(None, None, Some(&config)), None, "no config file");
     std::fs::write(&config, "not json").unwrap();
     assert_eq!(off(None, None, Some(&config)), None, "unreadable config");
-    std::fs::write(&config, r#"{"experimental_pip": true}"#).unwrap();
+    std::fs::write(&config, r#"{"max_image_dimension": 800}"#).unwrap();
     assert_eq!(off(None, None, Some(&config)), None, "other keys");
 
     // The opt-outs.

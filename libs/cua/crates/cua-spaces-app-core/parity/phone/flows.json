@@ -1,0 +1,61 @@
+{
+  "about": "Scripted flows for the phone views. tests/phone_golden.rs replays them through the core's dispatcher and compares with golden.json; the mobile crate replays the same file through the phone's entry point (apps/cua-spaces-mobile/core/tests/phone_parity.rs). Chains thread the outbox state from one step to the next.",
+  "flows": [
+    {
+      "name": "outbox-offline-then-back",
+      "chain": "outbox",
+      "steps": [
+        { "step": "offline", "action": { "type": "online", "nowMs": 1000, "online": false } },
+        { "step": "two messages typed", "action": { "type": "send", "nowMs": 2000, "id": "m1", "space": "relay:checkout", "text": "Fix the flaky test" } },
+        { "step": "second message", "action": { "type": "send", "nowMs": 3000, "id": "m2", "space": "relay:checkout", "text": "Then open a PR" } },
+        { "step": "same id twice", "action": { "type": "send", "nowMs": 3100, "id": "m2", "space": "relay:checkout", "text": "Then open a PR" } },
+        { "step": "back online", "action": { "type": "online", "nowMs": 4000, "online": true } },
+        { "step": "first delivered", "action": { "type": "delivered", "nowMs": 4200, "id": "m1" } },
+        { "step": "second lost the connection", "action": { "type": "deliveryFailed", "nowMs": 4300, "id": "m2", "network": true } },
+        { "step": "retry time", "action": { "type": "tick", "nowMs": 6300 } },
+        { "step": "second delivered", "action": { "type": "delivered", "nowMs": 6400, "id": "m2" } }
+      ]
+    },
+    {
+      "name": "outbox-quit-while-posting",
+      "chain": "outbox",
+      "steps": [
+        { "step": "sent", "action": { "type": "send", "nowMs": 1000, "id": "a1", "space": "relay:checkout", "text": "Status?" } },
+        { "step": "the app started again", "action": { "type": "resume", "nowMs": 90000 } },
+        { "step": "the thread has it", "action": { "type": "threadHas", "nowMs": 90100, "id": "a1", "found": true } }
+      ]
+    },
+    {
+      "name": "outbox-gives-up-loudly",
+      "chain": "outbox",
+      "steps": [
+        { "step": "sent", "action": { "type": "send", "nowMs": 1000, "id": "f1", "space": "relay:x", "text": "Hello" } },
+        { "step": "queued behind it", "action": { "type": "send", "nowMs": 1001, "id": "f2", "space": "relay:x", "text": "Anyone there?" } },
+        { "step": "refused 1", "action": { "type": "deliveryFailed", "nowMs": 2000, "id": "f1", "error": "forbidden" } },
+        { "step": "again 1", "action": { "type": "tick", "nowMs": 4000 } },
+        { "step": "refused 2", "action": { "type": "deliveryFailed", "nowMs": 4100, "id": "f1", "error": "forbidden" } },
+        { "step": "again 2", "action": { "type": "tick", "nowMs": 8100 } },
+        { "step": "refused 3", "action": { "type": "deliveryFailed", "nowMs": 8200, "id": "f1", "error": "forbidden" } },
+        { "step": "again 3", "action": { "type": "tick", "nowMs": 16200 } },
+        { "step": "refused 4", "action": { "type": "deliveryFailed", "nowMs": 16300, "id": "f1", "error": "forbidden" } },
+        { "step": "again 4", "action": { "type": "tick", "nowMs": 32300 } },
+        { "step": "refused 5", "action": { "type": "deliveryFailed", "nowMs": 32400, "id": "f1", "error": "forbidden" } },
+        { "step": "person retries", "action": { "type": "retry", "nowMs": 40000, "id": "f1" } }
+      ]
+    }
+  ],
+  "calls": [
+    { "name": "start-task-view", "method": "startTask.view", "args": { "input": { "machines": [ { "id": "m1", "name": "Studio Mac", "online": true, "canCreate": true, "os": ["macos", "linux"] }, { "id": "m2", "name": "Desk PC", "online": false } ], "agents": [ { "harness": "claude-code", "label": "Claude Code", "ready": true }, { "harness": "openai-codex", "label": "Codex", "ready": false, "why": "Sign in to Codex in Settings" } ], "spaces": [ { "id": "relay:checkout", "name": "checkout-api", "machineId": "m1", "online": true, "agents": [ { "handle": "claude", "harness": "claude-code", "label": "Claude Code" } ] } ], "choice": { "repo": "acme/checkout-api" } } } },
+    { "name": "start-task-plan-new", "method": "startTask.plan", "args": { "input": { "machines": [ { "id": "m1", "name": "Studio Mac", "online": true, "canCreate": true, "os": ["linux"] } ], "choice": { "repo": "https://github.com/acme/checkout-api.git" } }, "prompt": "Fix the flaky websocket test", "clientId": "task-0001" } },
+    { "name": "start-task-plan-in-space", "method": "startTask.plan", "args": { "input": { "machines": [ { "id": "m1", "name": "Studio Mac", "online": true, "canCreate": true } ], "spaces": [ { "id": "relay:checkout", "name": "checkout-api", "machineId": "m1", "online": true, "agents": [ { "handle": "claude", "harness": "claude-code", "label": "Claude Code" } ] } ], "choice": { "where": { "kind": "space", "space": "relay:checkout" } } }, "prompt": "Status?", "clientId": "task-0002" } },
+    { "name": "tool-rows-group", "method": "toolRows.group", "args": { "calls": [ { "cat": "ran", "line": "Ran pytest test_cart.py", "detail": "pytest tests/test_cart.py -x", "state": "done" }, { "cat": "read", "line": "Read cart.py" }, { "cat": "edited", "line": "Edited cart.py", "state": "running" } ] } },
+    { "name": "approvals-three-waiting", "method": "approvals.view", "args": { "input": { "pending": [ { "seq": 12, "kind": "push", "action": "push fix/retry", "scopeChoices": ["once"] }, { "seq": 15, "kind": "request", "action": "install a package", "scopeChoices": ["once", "space"] }, { "seq": 19, "kind": "request", "action": "read a file outside the Space", "scopeChoices": ["once", "space"] } ], "current": 15 } } },
+    { "name": "send-mode-running", "method": "sendMode.view", "args": { "input": { "running": true, "hasText": true, "queued": 2, "canSteer": true } } },
+    { "name": "voice-denied", "method": "voice.view", "args": { "input": { "microphone": "denied", "speech": "granted", "recognizerAvailable": true } } },
+    { "name": "voice-insert", "method": "voice.insert", "args": { "text": "Please", "start": 6, "end": 6, "transcript": "fix the login test" } },
+    { "name": "diff-changes", "method": "diff.changes", "args": { "input": { "repo": "acme/checkout-api", "branch": "fix/retry-backoff", "base": "main", "files": [ { "path": "src/ws/client.ts", "status": "modified", "additions": 12, "deletions": 3 }, { "path": "tests/test_ws_reconnect.py", "status": "added", "additions": 40, "deletions": 0 }, { "path": "docs/diagram.png", "status": "modified", "binary": true, "size": 20480, "mime": "image/png" } ] } } },
+    { "name": "diff-file", "method": "diff.file", "args": { "input": { "path": "src/ws/client.ts", "patch": "diff --git a/src/ws/client.ts b/src/ws/client.ts\n--- a/src/ws/client.ts\n+++ b/src/ws/client.ts\n@@ -10,4 +10,5 @@ export class Client {\n   private retries = 0;\n-  const delay = base * attempt;\n+  const delay = Math.min(base * 2 ** attempt, cap);\n+  log(delay);\n   return this;\n" } } },
+    { "name": "push-route-approval", "method": "push.route", "args": { "data": { "v": 1, "kind": "approval", "space": "relay:checkout", "entry": 12, "approval": 12 } } },
+    { "name": "push-settings-closed", "method": "push.settings", "args": { "input": { "permission": "granted", "needsYou": true, "done": false, "registered": false, "pushAvailable": false } } }
+  ]
+}

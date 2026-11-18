@@ -12,4 +12,10 @@ fi
 # Recompile everything when the generated binding changed (see fresh-abi.sh).
 scripts/fresh-abi.sh . debug
 # ${extra[@]+...}: bash 3.2 (macOS) treats an empty array as unset under set -u.
+# `test.sh --build-only` compiles the tests without running them (CI times the
+# build and the run as separate steps; then `test.sh --skip-build --parallel`).
+if [[ ${1:-} == --build-only ]]; then
+  shift
+  exec swift build --build-tests ${extra[@]+"${extra[@]}"} "$@"
+fi
 exec swift test ${extra[@]+"${extra[@]}"} "$@"

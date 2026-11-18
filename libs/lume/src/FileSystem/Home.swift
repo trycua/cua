@@ -279,6 +279,10 @@ final class Home {
             if fileName.hasPrefix(sourceDir.statePath.name) {
                 guard includeSavedState, fileName == sourceDir.statePath.name else { continue }
             }
+            // The state's device marker goes with the state; a running VM's
+            // forwards never go to a clone.
+            if fileName == sourceDir.stateVsockPath.name && !includeSavedState { continue }
+            if fileName == sourceDir.vsockSessionPath.name { continue }
 
             if fileName == "disk.img" || fileName == sourceDir.statePath.name {
                 // Use clonefile(2) for disk.img (instant APFS copy-on-write)

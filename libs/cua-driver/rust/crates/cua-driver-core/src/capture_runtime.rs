@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Public runtime facade for capture publication and capture-bound actions.
 
 pub use crate::capture_registry::{

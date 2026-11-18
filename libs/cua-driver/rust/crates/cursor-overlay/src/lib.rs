@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! cursor-overlay — shared types and math for the cua-driver cursor overlay.
 //!
 //! Platform renderers (macOS, Windows, Linux) depend on this crate for:
@@ -13,8 +16,11 @@ pub mod badge_glyphs;
 pub mod badge_mode;
 pub mod capture_exclusion;
 pub mod capture_utils;
+pub mod cursor_options;
+pub mod cursor_pose;
 pub mod motion;
 pub mod motion_defaults;
+pub mod pose_stream;
 pub mod render_map;
 pub mod render_state;
 pub mod session_badge;
@@ -28,14 +34,15 @@ pub mod z_order;
 
 pub use badge_glyphs::{BadgeChip, BadgeGlyph};
 pub use badge_mode::BadgeMode;
+pub use cursor_options::{CursorOptions, RotateMode};
 pub use motion::{
     MotionConfig, MotionEffects, MotionStyle, MotionTiming, ResolvedEffects, Spring,
     DEFAULT_FIXED_MS,
 };
 pub use path_planner::{PathPlanner, PathState, PlannedPath};
 pub use render_map::{
-    keyed_config, seed_position, CursorMap, MsgOutcome, RenderEntry, RenderMap, ScreenFrame,
-    DEFAULT_CURSOR_KEY, SEED_OFFSET,
+    keyed_config, seed_position, CursorMap, CursorThemeState, MsgOutcome, RenderEntry, RenderMap,
+    ScreenFrame, DEFAULT_CURSOR_KEY, SEED_OFFSET,
 };
 pub use render_state::{
     paint_cursor, render_frame, FocusRect, RenderStateCore, SESSION_BADGE_FADE_SECS,
@@ -55,10 +62,10 @@ pub use theme::{
 };
 pub use theme_artifact::{
     decode_theme, embedded_default_theme, inspect_artifact, list_installed_themes,
-    load_installed_theme, paint_compiled_theme, paint_compiled_theme_with_tint,
-    resolve_theme_selection, theme_store_root, validate_compiled_theme, CompiledAnimation,
-    CompiledDrawCommand, CompiledFrame, CompiledGeometry, CompiledStroke, CompiledTheme,
-    CompiledTransform,
+    load_installed_theme, paint_compiled_theme, paint_compiled_theme_with_float,
+    paint_compiled_theme_with_tint, resolve_theme_selection, theme_store_root,
+    validate_compiled_theme, CompiledAnimation, CompiledDrawCommand, CompiledFrame,
+    CompiledGeometry, CompiledStroke, CompiledTheme, CompiledTransform,
 };
 #[cfg(feature = "theme-authoring")]
 pub use theme_artifact::{encode_theme, install_artifact, uninstall_theme};
@@ -115,6 +122,7 @@ impl CursorConfig {
         // them under each cursor it creates.
         motion_defaults::load_active();
         badge_mode::load_active();
+        cursor_options::load_active();
         Self::parse(&args[1..])
     }
 
@@ -403,9 +411,9 @@ pub enum OverlayCommand {
     /// Keys of a combo the agent is pressing (such as `["cmd", "c"]`). The
     /// minimal badge shows it briefly; other badge modes ignore it.
     ShowKeyCombo(Vec<String>),
-    /// Show a focus-highlight rectangle around an AX-targeted element.
-    /// `[x, y, width, height]` in screen coordinates (top-left origin).
-    /// `None` clears the highlight.
+    /// Retired: the cursor draws no action marks, so no platform paints a
+    /// focus highlight any more and this command is ignored. The variant stays
+    /// so existing senders and platform matches keep compiling.
     ShowFocusRect(Option<[f64; 4]>),
 }
 

@@ -37,6 +37,8 @@ CLAUDE_ARMS = (
     "cc-cua-driver-main-skill",
     "cc-cua-driver-script",  # Amendment 6
     "cc-claude-cu-helper",  # Amendment 11: Claude Desktop 2.31226.0 computer-use helper via a minimal adapter
+    "cc-agent-desktop",  # Vercel agent-desktop 1.2.0 behind tools/agent_desktop/ad_mcp.py
+    "cc-browser-use",  # Browser Use macOS harness 0.2.1 behind tools/browser_use_harness/bu_mcp.py
 )
 # cc-cua-driver-main: Amendment 3; cc-cua-driver-main-skill: Amendment 4. The default arm set of run_bench.py
 # stays the three arms of Amendment 3, so a run without --arms is unchanged.
@@ -51,7 +53,14 @@ NATIVE_CODEX_ARMS = (
     "cx-claude-cu-helper",
     "cx-browser-use-cli",
 )  # the last two: Amendment 23
-ALL_ARMS = CLAUDE_ARMS + CODEX_FALLBACK_ARMS + NATIVE_CODEX_ARMS
+# The Cua Driver arms with pi as the agent host (pi_arms.py)
+PI_ARMS = (
+    "pi-cua-driver",
+    "pi-cua-driver-main",
+    "pi-cua-driver-main-skill",
+    "pi-cua-driver-script",
+)
+ALL_ARMS = CLAUDE_ARMS + CODEX_FALLBACK_ARMS + NATIVE_CODEX_ARMS + PI_ARMS
 
 CODEX_APP_RESOURCES = Path("/Applications/ChatGPT.app/Contents/Resources")
 CODEX_CU_DIR = Path.home() / ".codex" / "computer-use"

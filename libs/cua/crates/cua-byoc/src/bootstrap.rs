@@ -55,6 +55,25 @@ pub struct VmBoot<'a> {
     pub ttl_secs: u64,
     /// Shared memory for the desktop's browsers, in MiB.
     pub shm_mb: u32,
+    /// The cloud (`aws`, `gcp`, `azure`, `hetzner`): the network guard
+    /// ([`crate::hostnet`]) reads its resolver and own network by it.
+    pub provider: &'a str,
+    /// Secure Spaces: the computer's own network guard keeps the sandbox to
+    /// the internet. Without it the old Docker drop-in only keeps it from
+    /// the metadata service.
+    pub net_guard: bool,
+    /// Public TCP shares: the container publishes the share slots.
+    pub share_slots: bool,
+}
+
+impl VmBoot<'_> {
+    /// The two switches as the experiments on this computer say.
+    pub fn switches() -> (bool, bool) {
+        (
+            cua_vmm::network::Mode::from_env() == cua_vmm::network::Mode::Secure,
+            cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::TcpShares),
+        )
+    }
 }
 
 fn b64(s: &str) -> String {
@@ -105,6 +124,13 @@ pub fn first_boot_script(boot: &VmBoot<'_>) -> String {
          fi\n\
          systemctl enable --now docker\n",
     );
+    // The guard is in place before the sandbox's container exists.
+    if boot.net_guard {
+        s.push_str(&crate::hostnet::install_snippet(&crate::hostnet::HostNet {
+            provider: boot.provider,
+            extra_cidrs: &[],
+        }));
+    }
     s.push_str(&format!(
         "chown -R {uid}:{uid} /etc/cua/relay && chmod 0700 /etc/cua/relay && chmod 0600 /etc/cua/relay/*\n\
          log 'pulling the image'\n\
@@ -113,6 +139,7 @@ pub fn first_boot_script(boot: &VmBoot<'_>) -> String {
          log 'starting the sandbox'\n\
          docker run -d --name {CONTAINER} --restart unless-stopped --shm-size {shm}m \\\n\
          \x20 --env-file /etc/cua/sandbox.env \\\n\
+         {slots_flag}\
          \x20 -v /etc/cua/relay:/run/cua-relay:ro \\\n\
          \x20 {image}\n\
          shred -u /etc/cua/sandbox.env 2>/dev/null || rm -f /etc/cua/sandbox.env\n\
@@ -122,6 +149,16 @@ pub fn first_boot_script(boot: &VmBoot<'_>) -> String {
          \x20 | grep -v -i -e token -e 'cmt_' || true\n\
          log 'done'\n",
         uid = GUEST_UID,
+        slots_flag = if boot.share_slots {
+            let slots = format!(
+                "{}-{}",
+                crate::share_net::HOST_SLOTS.0,
+                crate::share_net::HOST_SLOTS.1
+            );
+            format!("\x20 -p {slots}:{slots} \\\n")
+        } else {
+            String::new()
+        },
         image = sh_quote(boot.image),
         shm = boot.shm_mb.max(64),
     ));
@@ -148,6 +185,19 @@ pub fn container_env(boot: &VmBoot<'_>) -> String {
         "/run/cua-relay/machine-id".into(),
     );
     env.insert("CUA_RELAY_JWKS".into(), "/run/cua-relay/jwks.json".into());
+    // Public TCP shares straight from this computer: the slots the container
+    // publishes, which cua-spacesd serves only while a share holds one (and
+    // the cloud firewall opens only then).
+    if boot.share_slots {
+        env.insert(
+            "CUA_SHARE_SLOTS".into(),
+            format!(
+                "{}-{}",
+                crate::share_net::HOST_SLOTS.0,
+                crate::share_net::HOST_SLOTS.1
+            ),
+        );
+    }
     env.insert(
         "CUA_HOST_POLICY".into(),
         "/run/cua-relay/policy.json".into(),
@@ -222,12 +272,15 @@ pub fn cloud_init(boot: &VmBoot<'_>) -> String {
     y.push_str(&file("/etc/systemd/system/cua-expire.timer", "0644", timer));
     // After every Docker start (reboots, stop and start): the sandbox cannot
     // read the cloud's metadata service (the user data holds its tokens),
-    // except DNS, which Compute Engine serves at the same address.
-    y.push_str(&file(
-        "/etc/systemd/system/docker.service.d/cua-metadata.conf",
-        "0644",
-        METADATA_RULES,
-    ));
+    // except DNS, which Compute Engine serves at the same address. (Under
+    // Secure Spaces the computer's network guard does this, and more.)
+    if !boot.net_guard {
+        y.push_str(&file(
+            "/etc/systemd/system/docker.service.d/cua-metadata.conf",
+            "0644",
+            METADATA_RULES,
+        ));
+    }
     y.push_str(&file(
         "/usr/local/sbin/cua-first-boot",
         "0700",
@@ -281,6 +334,9 @@ mod tests {
             expires: 1_900_000_000,
             ttl_secs: 8 * 3600,
             shm_mb: 2048,
+            provider: "aws",
+            net_guard: true,
+            share_slots: true,
         });
         assert!(y.starts_with("#cloud-config\n"));
         // Secrets never appear in clear text.
@@ -299,23 +355,54 @@ mod tests {
         assert!(envf.contains("CUA_ENV_TOKEN=envtok\n"));
         assert!(envf.contains("CUA_RELAY_TOKEN_FILE=/run/cua-relay/machine-token\n"));
         assert!(envf.contains("CUA_ENV_RELAY_URL=https://relay.example\n"));
+        // Share slots: published by the container, served only while shared.
+        assert!(envf.contains("CUA_SHARE_SLOTS=26500-26515\n"));
         assert_eq!(decode(&y, "/etc/cua/expires").trim(), "1900000000");
         let script = decode(&y, "/usr/local/sbin/cua-first-boot");
+        assert!(script.contains("-p 26500-26515:26500-26515"));
         assert!(script.contains("shutdown -h +480"), "{script}");
         assert!(script.contains("docker run -d --name cua-sandbox --restart unless-stopped"));
         assert!(script.contains("'ghcr.io/trycua/linux@sha256:abc'"));
         assert!(script.contains("-v /etc/cua/relay:/run/cua-relay:ro"));
         assert!(script.contains("/etc/docker/daemon.json"), "{script}");
         // The user data (with the machine token) is not readable from the
-        // sandbox through the cloud's metadata service.
-        let rules = decode(&y, "/etc/systemd/system/docker.service.d/cua-metadata.conf");
-        let drop = rules.find("-j DROP").unwrap();
-        let dns = rules.find("--dport 53 -j RETURN").unwrap();
-        // DNS is inserted after the drop, so it sits above it in the chain.
-        assert!(dns > drop, "{rules}");
+        // sandbox: the network guard is installed before the container runs.
+        let guard = script.find("cat > /usr/local/sbin/cua-host-net").unwrap();
+        let run = script.find("docker run -d").unwrap();
+        assert!(guard < run, "{script}");
+        assert!(script.contains("systemctl enable --now cua-host-net.service"));
+        assert!(script.contains("PLATFORM_V4=\"169.254.169.254/32 169.254.170.2/32"));
+        assert!(!y.contains("docker.service.d/cua-metadata.conf"));
         assert!(script.contains("shred -u /etc/cua/sandbox.env"));
         assert!(y.contains("enable, --now, cua-expire.timer"));
         assert!(y.len() < 16 * 1024, "{}", y.len());
+    }
+
+    #[test]
+    fn without_the_experiments_the_machine_boots_as_it_always_did() {
+        let j = join();
+        let env = BTreeMap::from([("CUA_ENV_TOKEN".to_string(), "envtok".to_string())]);
+        let y = cloud_init(&VmBoot {
+            join: &j,
+            image: "ghcr.io/trycua/linux@sha256:abc",
+            env: &env,
+            expires: 1_900_000_000,
+            ttl_secs: 8 * 3600,
+            shm_mb: 2048,
+            provider: "aws",
+            net_guard: false,
+            share_slots: false,
+        });
+        // The old Docker drop-in keeps the sandbox from the metadata service,
+        // DNS excepted; there is no network guard and no published slots.
+        let rules = decode(&y, "/etc/systemd/system/docker.service.d/cua-metadata.conf");
+        let drop = rules.find("-j DROP").unwrap();
+        let dns = rules.find("--dport 53 -j RETURN").unwrap();
+        assert!(dns > drop, "{rules}");
+        let script = decode(&y, "/usr/local/sbin/cua-first-boot");
+        assert!(!script.contains("cua-host-net"), "{script}");
+        assert!(!script.contains("-p 26500-26515"), "{script}");
+        assert!(!decode(&y, "/etc/cua/sandbox.env").contains("CUA_SHARE_SLOTS"));
     }
 
     #[test]
@@ -329,6 +416,9 @@ mod tests {
             expires: 0,
             ttl_secs: 0,
             shm_mb: 0,
+            provider: "gcp",
+            net_guard: true,
+            share_slots: false,
         });
         let script = decode(&y, "/usr/local/sbin/cua-first-boot");
         assert!(!script.contains("shutdown -h +"));

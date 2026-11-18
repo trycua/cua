@@ -27,6 +27,8 @@ pub const DEFAULT_PORT: u16 = 3211;
 pub mod quic;
 #[cfg(not(cua_headless))]
 mod remote;
+#[cfg(target_os = "macos")]
+pub mod vsock_agent;
 
 #[cfg(not(cua_headless))]
 pub use remote::{serve_remote, serve_remote_listener, RemoteShareConfig};

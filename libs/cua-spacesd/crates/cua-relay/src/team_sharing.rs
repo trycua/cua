@@ -179,13 +179,7 @@ pub(crate) async fn check_added_shares(
         Ok(Err(crate::org_access::ShareRefusal::OutsideTeam(who))) => Err(error_code(
             StatusCode::FORBIDDEN,
             "share_outside_team",
-            format!(
-                "{} not in your team. Invite them to your team first.",
-                match who.as_slice() {
-                    [one] => format!("{one} isn't"),
-                    many => format!("{} aren't", many.join(", ")),
-                }
-            ),
+            outside_team_message(&who),
         )),
         Err(e) => {
             tracing::warn!(machine = %id, error = %e, "share refused: the Spaces API is unavailable");
@@ -199,6 +193,20 @@ pub(crate) async fn check_added_shares(
 }
 
 /// The newly shared names in `patch`: not in `before`, any case.
+/// What a share with people outside the team says (CUA-2836). Matches the
+/// apps' words: "alex@x.test isn't in your team. Invite them to your team
+/// first."
+fn outside_team_message(who: &[String]) -> String {
+    match who {
+        [one] => format!("{one} isn't in your team. Invite them to your team first."),
+        [] => "That person isn't in your team. Invite them to your team first.".into(),
+        many => format!(
+            "{} aren't in your team. Invite them to your team first.",
+            many.join(", ")
+        ),
+    }
+}
+
 fn added_shares(before: &MachineRecord, patch: &MachinePatch) -> Vec<String> {
     let known = |n: &String| {
         before
@@ -239,5 +247,23 @@ fn audit_sweep(relay: &Relay, record: &MachineRecord, removed: &[String]) {
                 .machine(&record.id)
                 .subject(who.clone()),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::outside_team_message;
+
+    #[test]
+    fn outside_team_message_has_no_double_negative() {
+        assert_eq!(
+            outside_team_message(&["alex@x.test".into()]),
+            "alex@x.test isn't in your team. Invite them to your team first."
+        );
+        assert_eq!(
+            outside_team_message(&["a@x.test".into(), "b@x.test".into()]),
+            "a@x.test, b@x.test aren't in your team. Invite them to your team first."
+        );
+        assert!(!outside_team_message(&[]).contains("not in"));
     }
 }

@@ -128,7 +128,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "My computers"
+            "value": "My machines"
           }
         }
       }
@@ -360,6 +360,83 @@
           "stringUnit": {
             "state": "translated",
             "value": "Turn on"
+          }
+        }
+      }
+    },
+    "menu.update.check": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check for Updates…"
+          }
+        }
+      }
+    },
+    "menu.update.checking": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Checking for Updates…"
+          }
+        }
+      }
+    },
+    "menu.update.available": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Version {version} available"
+          }
+        }
+      }
+    },
+    "menu.update.click_to_install": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Click to install"
+          }
+        }
+      }
+    },
+    "menu.update.downloading": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloading {percent}%"
+          }
+        }
+      }
+    },
+    "menu.update.restart": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restart to update"
+          }
+        }
+      }
+    },
+    "menu.update.failed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not check for updates"
           }
         }
       }

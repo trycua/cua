@@ -8,5 +8,8 @@ scripts/docs-generators/headers/** text eol=lf
 # The elastic solver's golden decisions are compared byte for byte with what
 # serde writes (LF); a CRLF checkout (Windows) would fail every scenario.
 libs/cua/crates/cua-cluster/testdata/elastic/** text eol=lf
+# The help snapshots and 0.7.0 upgrade fixtures are compared byte for byte with LF output; a CRLF checkout (Windows) would fail them.
+libs/cua/crates/cua-cli/tests/fixtures/** text eol=lf
+libs/cua/crates/cua-spaces-ext/tests/fixtures/** text eol=lf
 apps/cua-spaces-macos/Sources/CuaSpacesMacKit/Resources/azure-logo_azure.svg -text
 apps/cua-spaces-web/public/cloud-logos/azure-logo_azure.svg -text

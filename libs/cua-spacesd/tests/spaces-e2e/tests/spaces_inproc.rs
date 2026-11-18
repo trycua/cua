@@ -368,7 +368,7 @@ async fn teleport_moves_a_synthetic_firefox_profile() {
 
 #[tokio::test]
 async fn hotspot_egress_goes_through_this_host() {
-    use cua_spaces::hotspot::{Dialer, HotspotOptions};
+    use cua_spaces::hotspot::{Dialer, ExitStream, HotspotOptions};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let d = driver().await;
@@ -399,7 +399,8 @@ async fn hotspot_egress_goes_through_this_host() {
                     "test dialer refuses {host}:{port}"
                 )));
             }
-            tokio::net::TcpStream::connect(("127.0.0.1", port)).await
+            let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port)).await?;
+            Ok(Box::new(tcp) as ExitStream)
         })
     });
     let socks = {

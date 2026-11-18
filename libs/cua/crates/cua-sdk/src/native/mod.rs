@@ -1,5 +1,10 @@
 //! Native (non-wasm) implementation.
 
+// A build without the `spaces`, `host` and `media` features (a crate that
+// depends on cua-sdk for the sandbox API alone) does not reach the stream
+// telemetry, the Space routes or the tunnel forwards.
+#![cfg_attr(not(feature = "spaces"), allow(dead_code))]
+
 mod agent_setup;
 mod agents;
 mod auth;
@@ -53,6 +58,7 @@ pub use overlay::*;
 pub use persistent::*;
 pub use sandbox::*;
 pub use share::*;
+#[cfg(feature = "spaces")]
 pub use spaces::*;
 pub use spacesd::*;
 pub use telemetry::*;
@@ -106,9 +112,9 @@ pub(crate) fn not_found_message(message: String) -> String {
     }
 }
 
-impl From<cua_daemon::Error> for CuaError {
-    fn from(e: cua_daemon::Error) -> Self {
-        use cua_daemon::Error as E;
+impl From<cua_daemon_core::Error> for CuaError {
+    fn from(e: cua_daemon_core::Error) -> Self {
+        use cua_daemon_core::Error as E;
         let m = e.message().to_string();
         match e {
             E::InvalidArgument(_) => CuaError::InvalidArgument(m),
@@ -161,7 +167,7 @@ impl From<cua_spacesd_client::Error> for CuaError {
 
 impl From<cua_sandbox_core::Error> for CuaError {
     fn from(e: cua_sandbox_core::Error) -> Self {
-        cua_daemon::Error::from(e).into()
+        cua_daemon_core::Error::from(e).into()
     }
 }
 
@@ -260,7 +266,7 @@ mod not_found_tests {
         let what = "a computer matching \"dev_22\" among your computers (\"gamma-4 Mac Studio\" (host:96fe))";
         let embedded: CuaError = cua_spaces::Error::NotFound(what.into()).into();
         assert_eq!(embedded.to_string(), format!("not found: {what}"));
-        let daemon: CuaError = cua_daemon::Error::NotFound(format!("{what} not found")).into();
+        let daemon: CuaError = cua_daemon_core::Error::NotFound(format!("{what} not found")).into();
         assert_eq!(daemon.to_string(), format!("not found: {what}"));
         // A message that is only the word stays as it is.
         assert_eq!(not_found_message(" not found".into()), " not found");
@@ -268,62 +274,11 @@ mod not_found_tests {
     }
 }
 
-/// The open-file limit an SDK process (and the daemon) asks for: it holds a
-/// socket or pipe per Space, client, stream and engine connection, and
-/// macOS starts processes (launchd, a terminal) at a soft limit of 256.
-#[cfg(unix)]
-const WANTED_OPEN_FILES: u64 = 65_536;
-
 /// Raises this process's soft open-file limit toward 65,536, within the
-/// hard limit (and, on macOS, `kern.maxfilesperproc`). Returns the soft
-/// limit before and after, or `None` when nothing changed.
-#[cfg(unix)]
+/// hard limit ([`cua_daemon_core::fd_guard::raise_open_file_limit`]). Returns the
+/// soft limit before and after, or `None` when nothing changed.
 pub fn raise_open_file_limit() -> Option<(u64, u64)> {
-    let mut lim = libc::rlimit {
-        rlim_cur: 0,
-        rlim_max: 0,
-    };
-    // SAFETY: getrlimit fills the struct it is given.
-    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) } != 0 {
-        return None;
-    }
-    let before: u64 = lim.rlim_cur;
-    #[allow(unused_mut)]
-    let mut ceiling = lim.rlim_max.min(WANTED_OPEN_FILES);
-    #[cfg(target_os = "macos")]
-    {
-        // setrlimit refuses more than this on macOS, whatever the hard limit.
-        let mut per_proc: libc::c_int = 0;
-        let mut len = std::mem::size_of::<libc::c_int>();
-        // SAFETY: sysctlbyname writes at most `len` bytes into `per_proc`.
-        let rc = unsafe {
-            libc::sysctlbyname(
-                c"kern.maxfilesperproc".as_ptr(),
-                (&mut per_proc as *mut libc::c_int).cast(),
-                &mut len,
-                std::ptr::null_mut(),
-                0,
-            )
-        };
-        if rc == 0 && per_proc > 0 {
-            ceiling = ceiling.min(per_proc as u64);
-        }
-    }
-    if ceiling <= before {
-        return None;
-    }
-    lim.rlim_cur = ceiling;
-    // SAFETY: setrlimit reads the struct it is given.
-    if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &lim) } != 0 {
-        return None;
-    }
-    Some((before, ceiling))
-}
-
-/// Not applicable off Unix.
-#[cfg(not(unix))]
-pub fn raise_open_file_limit() -> Option<(u64, u64)> {
-    None
+    cua_daemon_core::fd_guard::raise_open_file_limit()
 }
 
 #[cfg(all(test, unix))]

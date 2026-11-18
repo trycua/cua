@@ -23,6 +23,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+import desktop_runtime as desktop
+from bench_core import write_atomic
 from desktop_runtime import stop_group, tool
 
 
@@ -46,6 +48,12 @@ class McpStdioClient:
             bufsize=1,
             start_new_session=True,
         )
+        try:
+            desktop.record_pid(self.proc.pid, "mcp-client")
+        except BaseException:
+            desktop.stop_group(self.proc.pid)
+            self.proc.wait()
+            raise
         self._next = 0
         self._responses: dict[int, dict[str, Any]] = {}
         self._cond = threading.Condition()
@@ -320,12 +328,20 @@ def compress_video(raw: Path, dest_dir: Path, ffmpeg: str | None = None) -> dict
         raw_duration_s=raw_s,
     )
     if full_s and raw_s and abs(full_s - raw_s) <= max(1.0, 0.1 * raw_s):
-        raw.unlink(missing_ok=True)
-        result["raw_deleted"] = True
+        result["raw_deleted"] = True  # by CompressQueue, once video.json is on disk
     else:
         result["raw_deleted"] = False
         result["error"] = "duration mismatch; raw kept"
     return result
+
+
+def compressed(dest_dir: Path) -> bool:
+    """True when ``dest_dir/video.json`` records a finished compression. A missing, torn or error record means the
+    raw video (kept in every such case) still has to be compressed."""
+    try:
+        return not json.loads((dest_dir / "video.json").read_text("utf-8")).get("error")
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 class CompressQueue:
@@ -345,10 +361,16 @@ class CompressQueue:
                 return
             raw, dest = item
             try:
-                self.results[str(dest)] = compress_video(raw, dest)
-                (dest / "video.json").write_text(
-                    json.dumps(self.results[str(dest)], indent=2) + "\n", "utf-8"
-                )
+                self.results[str(dest)] = result = compress_video(raw, dest)
+                # video.json is the record that compression finished: the videos reach the disk first, then the
+                # record is published whole, then the raw file goes. A runner or host lost at any point leaves
+                # either the raw file to redo or a complete record of videos that are on disk.
+                for name in ("video.mp4", "video-720p.mp4") if not result.get("error") else ():
+                    with (dest / name).open("rb") as video:
+                        os.fsync(video.fileno())
+                write_atomic(dest / "video.json", json.dumps(result, indent=2) + "\n")
+                if result.get("raw_deleted"):
+                    raw.unlink(missing_ok=True)
             except Exception as error:  # noqa: BLE001 - compression must never kill the run
                 self.results[str(dest)] = {"error": f"{type(error).__name__}: {error}"}
             finally:

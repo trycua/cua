@@ -209,7 +209,11 @@ impl Gateway {
             Route::Private { id, rest } => (self.store.by_key(id), rest.to_string(), false),
             Route::Public { token, rest } => (self.store.by_token(token), rest.to_string(), true),
         };
-        let Some(share) = share else {
+        // A share waiting for its owner serves nothing yet, and a TCP share
+        // on its Space's own cloud host never comes through here.
+        let Some(share) = share
+            .filter(|s| s.waiting.is_none() && !s.tcp.as_ref().is_some_and(|t| t.route == "host"))
+        else {
             return self.unknown();
         };
         debug_assert_eq!(share.is_public(), public);
@@ -271,6 +275,15 @@ impl Gateway {
 
     async fn serve(&self, share: &Share, req: Request<Incoming>, rest: &str) -> Response<GwBody> {
         match &share.target {
+            // A TCP share reaches a Space port only, never this computer.
+            Target::Port { .. } | Target::File { .. } | Target::Dir { .. }
+                if share.tcp.is_some() =>
+            {
+                text(
+                    StatusCode::FORBIDDEN,
+                    "a TCP share only reaches a port of its Space",
+                )
+            }
             Target::File { path } => {
                 crate::files::serve(&Root::File(path.clone()), req.method(), rest, req.headers())
                     .await
@@ -285,6 +298,7 @@ impl Gateway {
             }
             Target::SpacePort { space, port } => {
                 match self.resolver.resolve_space(space, *port).await {
+                    Ok(base) if share.tcp.is_some() => self.tcp(share, req, base).await,
                     Ok(base) => self.forward(share, req, rest, base).await,
                     Err(e) => text(
                         StatusCode::BAD_GATEWAY,
@@ -359,6 +373,84 @@ impl Gateway {
         )
     }
 
+    /// A public TCP share: the relay carries each client connection as a
+    /// WebSocket (binary messages); this splices it to the Space port, the
+    /// only place a TCP share reaches. Anything but a WebSocket is refused.
+    async fn tcp(&self, share: &Share, req: Request<Incoming>, base: String) -> Response<GwBody> {
+        let is_ws = req
+            .headers()
+            .get(header::UPGRADE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
+        let address = share
+            .tcp
+            .as_ref()
+            .map(|t| t.srv_name.clone().unwrap_or_else(|| t.address.clone()))
+            .unwrap_or_default();
+        if !is_ws {
+            return text(
+                StatusCode::BAD_REQUEST,
+                &format!("this is a TCP share: connect a game or TCP client to {address}"),
+            );
+        }
+        let Some(key) = req
+            .headers()
+            .get("sec-websocket-key")
+            .map(|k| k.as_bytes().to_vec())
+        else {
+            return text(StatusCode::BAD_REQUEST, "missing sec-websocket-key");
+        };
+        let accept = tokio_tungstenite::tungstenite::handshake::derive_accept_key(&key);
+        let target = base
+            .trim_start_matches("http://")
+            .trim_end_matches('/')
+            .to_string();
+        // The resolver's base is the daemon's loopback forward into the
+        // Space's port. Anything else (a LAN or metadata address, another
+        // host) is refused, whatever produced it.
+        if !is_loopback_authority(&target) {
+            return text(
+                StatusCode::FORBIDDEN,
+                "a TCP share only reaches a port of its Space",
+            );
+        }
+        // Connect before answering, so an unreachable port is a 502, not a
+        // WebSocket that closes at once.
+        let upstream = match tokio::net::TcpStream::connect(&target).await {
+            Ok(s) => s,
+            Err(e) => {
+                return text(
+                    StatusCode::BAD_GATEWAY,
+                    &format!("nothing answers on the shared port: {e}"),
+                );
+            }
+        };
+        let _ = upstream.set_nodelay(true);
+        let on_upgrade = hyper::upgrade::on(req);
+        tokio::spawn(async move {
+            let Ok(upgraded) = on_upgrade.await else {
+                return;
+            };
+            let ws = tokio_tungstenite::WebSocketStream::from_raw_socket(
+                hyper_util::rt::TokioIo::new(upgraded),
+                tokio_tungstenite::tungstenite::protocol::Role::Server,
+                None,
+            )
+            .await;
+            splice_tcp(ws, upstream).await;
+        });
+        let mut r = text(StatusCode::SWITCHING_PROTOCOLS, "");
+        let h = r.headers_mut();
+        h.remove(header::CONTENT_TYPE);
+        h.remove(header::CONTENT_LENGTH);
+        h.insert(header::UPGRADE, HeaderValue::from_static("websocket"));
+        h.insert(header::CONNECTION, HeaderValue::from_static("upgrade"));
+        if let Ok(v) = HeaderValue::from_str(&accept) {
+            h.insert("sec-websocket-accept", v);
+        }
+        r
+    }
+
     /// Serves on a Unix socket at `path` (mode 0600, directory 0700) until
     /// the handle is dropped. A live socket there means another daemon is
     /// serving: an error, never a takeover.
@@ -403,6 +495,65 @@ impl Gateway {
     }
 }
 
+/// Whether `authority` (`host:port`) is this computer's loopback, where the
+/// daemon's forwards into Spaces listen.
+fn is_loopback_authority(authority: &str) -> bool {
+    let host = match authority.rsplit_once(':') {
+        Some((h, p)) if p.parse::<u16>().is_ok() => h,
+        _ => return false,
+    };
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    host == "localhost"
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+}
+
+/// Copies between the relay's WebSocket and the Space port until either
+/// side closes.
+async fn splice_tcp<S>(ws: tokio_tungstenite::WebSocketStream<S>, upstream: tokio::net::TcpStream)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    use futures_util::{SinkExt as _, StreamExt as _};
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio_tungstenite::tungstenite::Message;
+
+    let (mut up_read, mut up_write) = upstream.into_split();
+    let (mut ws_write, mut ws_read) = ws.split();
+    let to_space = async move {
+        while let Some(Ok(msg)) = ws_read.next().await {
+            let data = match msg {
+                Message::Binary(d) => d,
+                Message::Close(_) => break,
+                _ => continue,
+            };
+            if up_write.write_all(&data).await.is_err() {
+                break;
+            }
+        }
+        let _ = up_write.shutdown().await;
+    };
+    let to_client = async move {
+        let mut buf = vec![0u8; 32 * 1024];
+        loop {
+            let n = match up_read.read(&mut buf).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => n,
+            };
+            if ws_write
+                .send(Message::Binary(buf[..n].to_vec().into()))
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+        let _ = ws_write.close().await;
+    };
+    tokio::join!(to_space, to_client);
+}
+
 /// A running gateway listener; dropping it stops it and removes the socket.
 pub struct GatewayHandle {
     path: PathBuf,
@@ -425,5 +576,7 @@ impl Drop for GatewayHandle {
     }
 }
 
+#[cfg(all(test, unix))]
+mod tcp_tests;
 #[cfg(all(test, unix))]
 mod tests;

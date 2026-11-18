@@ -19,7 +19,6 @@ import { sharesDesktop } from "./derive";
 import type { MachineAccessNotice } from "./contracts/devices";
 import type { SpaceAgentRun } from "./contracts/agents";
 import type { Space } from "./contracts/spaces";
-import type { Experiments } from "./contracts/volume";
 import type {
   DesktopCover,
   DesktopCoverInput,
@@ -40,7 +39,8 @@ export type * from "./ops/space-detail";
 export const THIS_MACHINE_ID = "this-mac";
 
 export const USAGE_REFRESH_MS = 10_000;
-export const WINDOWS_REFRESH_MS = 5_000;
+/** An app an agent opens (here, or in a Space under this one) joins the Stream list within this long. */
+export const WINDOWS_REFRESH_MS = 2_000;
 /** The host's raw `cua:event` when its picture-in-picture panels change by
  * themselves (`{ spaceId, open: rows }`; the SwiftUI app's `stream.pipChanged`). */
 export const PIP_CHANGED_EVENT = "stream.pipChanged";
@@ -57,13 +57,11 @@ export function spaceDetail(
   space: Space,
   usage?: SpaceUsage | null,
   hostArch?: string | null,
-  /** With these, the core leaves out what Settings, Experiments hides (Share). */
-  experiments?: Experiments,
   /** This device is signed in but not enrolled: a machine on the relay
    * shows why, with its connection actions off. */
   access?: MachineAccessNotice | null,
 ): SpaceDetailView {
-  return core.tryCall<SpaceDetailView>("sidebar.detail", { space, usage, hostArch, experiments, access: access ?? undefined }) ?? fallbackDetail(space);
+  return core.tryCall<SpaceDetailView>("sidebar.detail", { space, usage, hostArch, access: access ?? undefined }) ?? fallbackDetail(space);
 }
 
 /** What the preview shows over (or instead of) the live desktop
@@ -98,7 +96,13 @@ export function pipClick(core: CoreClient, open: string[], row: string): PipComm
 /* Stand-ins without the core: enough to draw the page, not the product. */
 
 function fallbackCover(input: DesktopCoverInput): DesktopCover {
-  const cover = (kind: DesktopCover["kind"], text: string | null, button: string | null = null): DesktopCover => ({ kind, text, button, openStream: false, retry: false });
+  const cover = (kind: DesktopCover["kind"], text: string | null, button: string | null = null): DesktopCover => ({
+    kind,
+    text,
+    button,
+    openStream: false,
+    retry: false,
+  });
   if (input.access) return { ...cover("connect", input.access.text, "Connect"), buttonDisabled: true, action: input.access.actionLabel };
   if (!input.canStream) return cover("status", input.previewText);
   if (input.stream === "streaming" || input.stream === "suspended") return cover("stream", null);
@@ -128,7 +132,13 @@ function fallbackDetail(space: Space): SpaceDetailView {
       { id: "teleport", label: "Teleport an app", help: "Teleport an app into this Space", enabled: running, destructive: false, primary: false },
       { id: "share", label: "Share", help: "Share this Space", enabled: running, destructive: false, primary: false },
     ],
-    confirm: { title: `Delete ${space.name}?`, message: "Everything inside it, including its files, is deleted and can't be recovered.", confirmLabel: "Delete Space", confirmEnabled: true, cancelLabel: "Keep" },
+    confirm: {
+      title: `Delete ${space.name}?`,
+      message: "Everything inside it, including its files, is deleted and can't be recovered.",
+      confirmLabel: "Delete Space",
+      confirmEnabled: true,
+      cancelLabel: "Keep",
+    },
     sections: running ? ["Stream"] : [],
   };
 }
@@ -144,11 +154,36 @@ function fallbackSection(input: StreamSectionInput): StreamSection {
   const desktopHelp = res ? `Desktop (${res})` : "Desktop";
   const windows = (input.windows ?? []).map((w) => {
     const label = w.title.trim() || w.appName.trim() || w.appId;
-    return { id: w.id, kind: "window" as const, label, help: label, icon: { kind: "app" as const, appName: w.appName, appId: w.appId, pid: w.pid ?? 0 }, actions: pip(w.id) };
+    return {
+      id: w.id,
+      kind: "window" as const,
+      label,
+      help: label,
+      icon: { kind: "app" as const, appName: w.appName, appId: w.appId, pid: w.pid ?? 0 },
+      actions: pip(w.id),
+    };
   });
   return {
-    rows: [{ id: "desktop", kind: "desktop", label: desktop, help: desktopHelp, resolution: res, icon: { kind: "os", id: `os-${input.os}` }, actions: pip("desktop") }, ...windows],
-    statusText: input.windows === null ? "Looking for this Space’s windows…" : windows.length ? null : input.failed ? "No windows: the Space’s window host is not up." : "No open windows in this Space yet.",
+    rows: [
+      {
+        id: "desktop",
+        kind: "desktop",
+        label: desktop,
+        help: desktopHelp,
+        resolution: res,
+        icon: { kind: "os", id: `os-${input.os}` },
+        actions: pip("desktop"),
+      },
+      ...windows,
+    ],
+    statusText:
+      input.windows === null
+        ? "Looking for this Space’s windows…"
+        : windows.length
+          ? null
+          : input.failed
+            ? "Can’t see this Space’s windows yet."
+            : "No open windows in this Space yet.",
   };
 }
 
@@ -344,6 +379,8 @@ export interface SpaceDetailHook {
   stream: StreamSection | null;
   /** The host can't list windows: the section has its Desktop row only, and no status line. */
   windowsUnsupported: boolean;
+  /** The first read of the Space's windows has come back (before it, the list is empty because nothing is known yet). */
+  windowsLoaded: boolean;
   /** The sections' words (loading, empty, failed). */
   copy: DetailCopy | null;
   /** A row's picture-in-picture button. */
@@ -382,9 +419,6 @@ export function agentRunLines(core: CoreClient, runs: SpaceAgentRun[]): AgentRun
 
 /** What the detail is drawn for, beyond the Space: this device's view of it. */
 export interface DetailFor {
-  /** Settings, Experiments (Share shows only with Sharing on); undefined
-   * where the host has none (every action shows). */
-  experiments?: Experiments;
   /** This machine's `accessNotice` (`useMachines`). */
   access?: MachineAccessNotice | null;
 }
@@ -423,6 +457,7 @@ export function useSpaceDetail(space: Space | undefined, hostArch: string | null
       detail: null,
       stream: null,
       windowsUnsupported: false,
+      windowsLoaded: false,
       copy: null,
       pip: async () => "done",
       query: "",
@@ -430,7 +465,7 @@ export function useSpaceDetail(space: Space | undefined, hostArch: string | null
       agents: { runs: null, failed: null, unsupported: false },
     };
   return {
-    detail: spaceDetail(core, space, readings.usage, readings.hostArch !== undefined ? readings.hostArch : hostArch, seen.experiments, seen.access),
+    detail: spaceDetail(core, space, readings.usage, readings.hostArch !== undefined ? readings.hostArch : hostArch, seen.access),
     stream: streamSection(core, {
       windows: readings.windows,
       failed: readings.failed,
@@ -443,6 +478,7 @@ export function useSpaceDetail(space: Space | undefined, hostArch: string | null
     query: readings.query,
     setQuery: (q) => (details && space ? details.setQuery(space.id, q) : undefined),
     windowsUnsupported: Boolean(readings.windowsUnsupported),
+    windowsLoaded: readings.windows !== null,
     copy: detailCopy(core),
     pip: (row) => (details ? details.pip(space.id, row) : Promise.resolve("open-window")),
     agents: {

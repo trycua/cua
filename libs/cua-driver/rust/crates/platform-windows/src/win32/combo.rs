@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `set_value` on a native Win32 combo box (the `COMBOBOX` class, which
 //! WinForms and MFC combo boxes subclass).
 //!

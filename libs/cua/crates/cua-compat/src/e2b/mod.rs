@@ -553,7 +553,12 @@ mod tests {
     fn reads_the_basic_auth_user() {
         let mut h = HeaderMap::new();
         assert_eq!(request_user(&h, "user"), "user");
-        h.insert(header::AUTHORIZATION, "Basic cm9vdDo=".parse().unwrap()); // "root:"
+        use base64::Engine;
+        let basic = base64::engine::general_purpose::STANDARD.encode("root:");
+        h.insert(
+            header::AUTHORIZATION,
+            format!("Basic {basic}").parse().unwrap(),
+        );
         assert_eq!(request_user(&h, "user"), "root");
     }
 }

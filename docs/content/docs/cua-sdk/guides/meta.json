@@ -6,6 +6,7 @@
     "build-an-image",
     "services",
     "egress",
+    "egress-exit",
     "lifecycle",
     "desktop",
     "spacesd",

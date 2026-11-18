@@ -14,6 +14,7 @@ use tonic::{Code, Status};
 use crate::error::{io_status, status, StatusBuilder};
 use crate::util::{hex_digest, random_id};
 
+use super::offworker::OffWorker;
 use super::paths::entry_info;
 use super::xattr::{self, Attributes};
 
@@ -54,7 +55,7 @@ impl WriteTarget {
 pub struct AtomicWriter {
     target: WriteTarget,
     tmp: Option<PathBuf>,
-    file: tokio::fs::File,
+    file: OffWorker<tokio::fs::File>,
     hasher: Sha256,
     written: u64,
 }
@@ -102,6 +103,42 @@ pub async fn prepare(target: &WriteTarget) -> Result<(), Status> {
     }
 }
 
+/// Looks-ups of a just-published file before giving up on them.
+const STAT_RETRIES: u32 = 5;
+const STAT_RETRY_WAIT: std::time::Duration = std::time::Duration::from_millis(40);
+
+/// The metadata of a file that was just renamed into place.
+///
+/// On a network mount (the Cua Volume's NFS mount on macOS) the client can
+/// answer "not found" for the new name for a moment after the rename, though
+/// the file is there. The write already succeeded, so a miss is retried a few
+/// times and then answered from the file's own metadata, rather than failing
+/// a write whose data is on disk.
+async fn stat_published<F, Fut>(
+    mut stat: F,
+    fallback: Option<std::fs::Metadata>,
+    retries: u32,
+    wait: std::time::Duration,
+) -> std::io::Result<std::fs::Metadata>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = std::io::Result<std::fs::Metadata>>,
+{
+    let mut attempt = 0;
+    loop {
+        match stat().await {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                if attempt >= retries {
+                    return fallback.ok_or(e);
+                }
+                attempt += 1;
+                tokio::time::sleep(wait).await;
+            }
+            other => return other,
+        }
+    }
+}
+
 impl AtomicWriter {
     /// Validates the target and opens the temporary file.
     pub async fn create(target: WriteTarget) -> Result<Self, Status> {
@@ -126,20 +163,25 @@ impl AtomicWriter {
         } else {
             target.permissions
         });
-        let file = options
-            .open(&path)
-            .await
-            .map_err(|e| io_status(&e, &path))?;
+        let file = OffWorker::new(
+            options
+                .open(&path)
+                .await
+                .map_err(|e| io_status(&e, &path))?,
+        );
         if !target.attributes.values.is_empty() {
             #[cfg(unix)]
             let stored = {
                 use std::os::fd::AsRawFd as _;
-                xattr::set_on_fd(file.as_raw_fd(), &target.attributes)
+                let (fd, attributes) = (file.as_raw_fd(), target.attributes.clone());
+                tokio::task::spawn_blocking(move || xattr::set_on_fd(fd, &attributes))
+                    .await
+                    .unwrap_or_else(|e| Err(crate::error::internal(e.to_string())))
             };
             #[cfg(not(unix))]
             let stored = xattr::set_on_fd(0, &target.attributes);
             if let Err(error) = stored {
-                drop(file);
+                file.close().await;
                 if let Some(tmp) = &tmp {
                     let _ = tokio::fs::remove_file(tmp).await;
                 }
@@ -212,8 +254,13 @@ impl AtomicWriter {
             .meta("path", dest.display())
             .build());
         }
+        // The open file's own metadata, taken before it is renamed: what the
+        // entry reports if the destination cannot be looked up right after.
+        let published_meta = self.file.metadata().await.ok();
+        // Closed on a blocking thread (the destination can be on the Cua
+        // Volume), before the rename.
+        self.file.close_in_place().await;
         if let Some(tmp) = self.tmp.take() {
-            drop(self.file);
             let published = match self.target.mode {
                 WriteMode::CreateNew => {
                     // link(2) fails if the destination appeared meanwhile.
@@ -238,17 +285,26 @@ impl AtomicWriter {
             };
             published.map_err(|e| io_status(&e, &dest))?;
         }
-        let meta = tokio::fs::metadata(&dest)
-            .await
-            .map_err(|e| io_status(&e, &dest))?;
+        let meta = stat_published(
+            || tokio::fs::metadata(&dest),
+            published_meta,
+            STAT_RETRIES,
+            STAT_RETRY_WAIT,
+        )
+        .await
+        .map_err(|e| io_status(&e, &dest))?;
         let mut entry = entry_info(&dest, &meta);
-        entry.metadata = xattr::read(&dest, &self.target.attributes.namespace, true);
+        let (read_path, namespace) = (dest.clone(), self.target.attributes.namespace.clone());
+        entry.metadata =
+            tokio::task::spawn_blocking(move || xattr::read(&read_path, &namespace, true))
+                .await
+                .unwrap_or_default();
         Ok((entry, digest))
     }
 
     /// Discards the temporary file.
-    pub async fn abort(self) {
-        drop(self.file);
+    pub async fn abort(mut self) {
+        self.file.close_in_place().await;
         if let Some(tmp) = self.tmp {
             let _ = tokio::fs::remove_file(tmp).await;
         }
@@ -261,6 +317,58 @@ mod tests {
 
     fn target(dest: PathBuf, mode: WriteMode) -> WriteTarget {
         WriteTarget::new(dest, mode, 0, true)
+    }
+
+    #[tokio::test]
+    async fn a_just_published_file_that_is_not_found_yet_is_retried_then_answered() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("f");
+        std::fs::write(&real, b"x").unwrap();
+        let meta = std::fs::metadata(&real).unwrap();
+        let wait = std::time::Duration::from_millis(1);
+        let missing = || std::io::Error::from(std::io::ErrorKind::NotFound);
+        // A miss that clears is retried.
+        let calls = std::cell::Cell::new(0);
+        let got = stat_published(
+            || {
+                calls.set(calls.get() + 1);
+                let r = if calls.get() < 3 {
+                    Err(missing())
+                } else {
+                    Ok(meta.clone())
+                };
+                async move { r }
+            },
+            None,
+            5,
+            wait,
+        )
+        .await;
+        assert!(got.is_ok());
+        assert_eq!(calls.get(), 3);
+        // A miss that stays is answered from the file's own metadata.
+        let got = stat_published(|| async { Err(missing()) }, Some(meta.clone()), 2, wait).await;
+        assert_eq!(got.unwrap().len(), 1);
+        // With nothing to fall back on, the error is still the error.
+        let got = stat_published(|| async { Err(missing()) }, None, 2, wait).await;
+        assert_eq!(got.unwrap_err().kind(), std::io::ErrorKind::NotFound);
+        // Other errors are not retried.
+        let calls = std::cell::Cell::new(0);
+        let got = stat_published(
+            || {
+                calls.set(calls.get() + 1);
+                async { Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied)) }
+            },
+            Some(meta),
+            5,
+            wait,
+        )
+        .await;
+        assert_eq!(
+            got.unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+        assert_eq!(calls.get(), 1);
     }
 
     #[tokio::test]

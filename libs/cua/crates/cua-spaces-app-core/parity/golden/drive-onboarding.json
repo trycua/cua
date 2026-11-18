@@ -172,12 +172,12 @@
         "canSkip": false,
         "choices": [
           "client: Just use this Mac to open my other computers (preselected)",
-          "host: Let my other devices reach this Mac"
+          "host: Let my other computers reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,*This computer,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
+        "lede": "Use it only to open your other computers, or let your other computers reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -223,7 +223,7 @@
         "title": "Almost done",
         "todos": [
           "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-          "[ ] Account ~Reach your computers from any device. -> Sign in",
+          "[ ] Account ~Reach your computers from any computer. -> Sign in",
           "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
           "[ ] Cua Volume ~Shared folder: files your agents can share across your computers. Waiting for approval. -> Turn on (optional)"
         ],
@@ -318,12 +318,12 @@
         "canSkip": false,
         "choices": [
           "client: Just use this Mac to open my other computers (preselected)",
-          "host: Let my other devices reach this Mac"
+          "host: Let my other computers reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,*This computer,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
+        "lede": "Use it only to open your other computers, or let your other computers reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -369,7 +369,7 @@
         "title": "Almost done",
         "todos": [
           "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-          "[ ] Account ~Reach your computers from any device. -> Sign in",
+          "[ ] Account ~Reach your computers from any computer. -> Sign in",
           "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent",
           "[x] Cua Volume ~Shared folder: files your agents can share across your computers. /home/maya/Cua Volume. (optional)"
         ],
@@ -438,12 +438,12 @@
         "canSkip": false,
         "choices": [
           "client: Just use this Mac to open my other computers (preselected)",
-          "host: Let my other devices reach this Mac"
+          "host: Let my other computers reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,*This computer,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
+        "lede": "Use it only to open your other computers, or let your other computers reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -496,12 +496,12 @@
         "canSkip": false,
         "choices": [
           "client: Just use this Mac to open my other computers (preselected)",
-          "host: Let my other devices reach this Mac"
+          "host: Let my other computers reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,*This computer,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
+        "lede": "Use it only to open your other computers, or let your other computers reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -576,7 +576,7 @@
         "title": "Almost done",
         "todos": [
           "[ ] Cua CLI ~Command-line tools for you and your agents. -> Install the Cua CLI",
-          "[ ] Account ~Reach your computers from any device. -> Sign in",
+          "[ ] Account ~Reach your computers from any computer. -> Sign in",
           "[ ] AI agents ~Let Claude Code, Codex and others use Cua. -> Connect an AI agent"
         ],
         "usage": null
@@ -623,12 +623,12 @@
         "canSkip": false,
         "choices": [
           "client: Just use this Mac to open my other computers (preselected)",
-          "host: Let my other devices reach this Mac"
+          "host: Let my other computers reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,*This computer,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
+        "lede": "Use it only to open your other computers, or let your other computers reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -979,12 +979,12 @@
         "canSkip": false,
         "choices": [
           "client: Just use this Mac to open my other computers (preselected)",
-          "host: Let my other devices reach this Mac"
+          "host: Let my other computers reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,*This computer,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
+        "lede": "Use it only to open your other computers, or let your other computers reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -1138,12 +1138,12 @@
         "canSkip": false,
         "choices": [
           "client: Just use this Mac to open my other computers (preselected)",
-          "host: Let my other devices reach this Mac"
+          "host: Let my other computers reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,*This computer,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
+        "lede": "Use it only to open your other computers, or let your other computers reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -1197,12 +1197,12 @@
         "canSkip": false,
         "choices": [
           "client: Just use this Mac to open my other computers (preselected)",
-          "host: Let my other devices reach this Mac"
+          "host: Let my other computers reach this Mac"
         ],
         "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,*This computer,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "Use it only to open your other computers, or let your other devices reach it too. You can change this later.",
+        "lede": "Use it only to open your other computers, or let your other computers reach it too. You can change this later.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],

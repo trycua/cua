@@ -184,6 +184,13 @@ fn is_passwords_app(name: &str) -> bool {
 pub fn tool_risk(tool: &str, arguments: &Value) -> Option<&'static str> {
     match tool {
         "space_bash" => command_risk(arguments["command"].as_str()?),
+        // A background job runs a command (or a condition's shell) like
+        // `space_bash` does; reading, cancelling and listing run nothing.
+        "space_job" if arguments["action"] == "start" => command_risk(
+            arguments["command"]
+                .as_str()
+                .or_else(|| arguments["until"]["command"].as_str())?,
+        ),
         "call_tool" => {
             let inner = arguments["tool"].as_str()?;
             let args = &arguments["arguments"];
@@ -416,6 +423,21 @@ mod tests {
                 &json!({"space": "this-mac", "command": "brew zap slack"})
             ),
             Some("uninstall an app")
+        );
+        // A background job is as risky as the command it runs.
+        assert_eq!(
+            tool_risk(
+                "space_job",
+                &json!({"space": "this-mac", "action": "start", "command": "brew zap slack"})
+            ),
+            Some("uninstall an app")
+        );
+        assert_eq!(
+            tool_risk(
+                "space_job",
+                &json!({"space": "this-mac", "action": "logs", "job": "j1"})
+            ),
+            None
         );
         assert_eq!(tool_risk("list_spaces", &json!({})), None);
     }

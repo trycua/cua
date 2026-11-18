@@ -455,6 +455,70 @@ async fn control_is_taking_control_and_holds_the_agent() {
     assert_eq!(p.get("ada").unwrap().held_by.unwrap().id, "acct_ad");
 }
 
+/// The agent's own owner changes its rights; another member can't, and the
+/// refusal says who can.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_agents_owner_sets_its_rights_and_another_member_cannot() {
+    let fx = setup().await;
+    let (_p, _proc) = members(&fx).await;
+    edit_record(&fx, "bo", |r| {
+        let mia = json!({"id": "acct_mia", "name": "Mia"});
+        r["added_by"] = json!({"kind": "person", "id": "acct_mia", "name": "Mia"});
+        r["identity"]["owner"] = mia.clone();
+        r["identity"]["joined"]["by"] = mia;
+    });
+    // Mia owns bo: she can change who may stop it, and the thread says so.
+    let out = call_as(
+        &fx,
+        &member(),
+        "agent_set_rights",
+        json!({"name": "bo", "control": "members"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(out["rights"]["control"], "members");
+    assert_eq!(out["you_can"]["control"], true);
+    let all = entries(&fx).await;
+    assert_eq!(
+        all.last().unwrap()["text"],
+        "Mia changed who can use bo. control: the owner and members"
+    );
+    // She does not own ada, and another member owns neither.
+    let msg = denied(
+        call_as(
+            &fx,
+            &member(),
+            "agent_set_rights",
+            json!({"name": "ada", "control": "members"}),
+        )
+        .await,
+    );
+    assert_eq!(
+        msg,
+        "only the owner, admins and ada's owner change who can task, stop and approve ada"
+    );
+    let other = relay("acct_zed", "Zed", "shared");
+    denied(
+        call_as(
+            &fx,
+            &other,
+            "agent_set_rights",
+            json!({"name": "bo", "task": "owner"}),
+        )
+        .await,
+    );
+    // Guests are refused at the door.
+    denied(
+        call_as(
+            &fx,
+            &guest(),
+            "agent_set_rights",
+            json!({"name": "bo", "task": "owner"}),
+        )
+        .await,
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rights_are_set_by_owners_and_admins_and_a_refused_mention_gives_no_task() {
     let fx = setup().await;

@@ -42,7 +42,7 @@ curl -fsSL https://cua.ai/uninstall.sh | sh -s -- --dry-run
   `cua connect remove` does. Entries from other tools stay, and so do Cua Driver's
   `cua-driver` skill and MCP server (see [Other Cua tools](#other-cua-tools)).
 - Launch at login.
-- Your sign-in and the device key: macOS Keychain items (including the old
+- Your sign-in and the computer key: macOS Keychain items (including the old
   `run.cua.ai` one), Windows Credential Manager entries.
 - Cua's settings, caches and logs.
 
@@ -53,7 +53,7 @@ Cua Volume files and the Keyvault. Running Spaces are listed and stopped first,
 and their disks stay.
 
 Pass `--keep-data` (`-KeepData`) to also keep `~/.cua` (settings, caches, the
-device key) and the app's settings, for a later reinstall. Programs, services,
+computer key) and the app's settings, for a later reinstall. Programs, services,
 agent entries and your sign-in are still removed.
 
 ## Delete Spaces and their data too

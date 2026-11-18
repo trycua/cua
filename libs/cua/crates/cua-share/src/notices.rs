@@ -41,6 +41,9 @@ mod tests {
             created_ms: 0,
             expires_ms: None,
             url: url.into(),
+            tcp: None,
+            origin: None,
+            waiting: None,
         }
     }
 

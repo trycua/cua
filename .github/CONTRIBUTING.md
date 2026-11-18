@@ -80,6 +80,8 @@ GitHub issue form. Longer proposals and diagrams remain in this repository under
 2. Keep changes scoped to the component that owns the behavior.
 3. Add or update tests that observe the public effect of the change.
 4. Run the applicable commands in [`TESTING.md`](../docs/contributing/TESTING.md).
+   Before you push, run `bin/ci`: it runs the CI checks your change affects and
+   prints the fix for each failure (see [`CI.md`](../docs/contributing/CI.md#run-the-checks-locally-first-binci)).
 5. Run the formatters and linters owned by the changed component.
 6. Open a focused pull request that explains behavior, validation, and known gaps.
 

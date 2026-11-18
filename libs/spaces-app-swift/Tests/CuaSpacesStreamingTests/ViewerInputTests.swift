@@ -252,8 +252,8 @@ private func pointerEvents(in text: String) -> [[String: Any]] {
         await session.stop()
     }
 
-    /// A window the Space can reach only by activating it (Hyprland outside
-    /// its qualified apps) refuses the background session as
+    /// A window the Space can reach only by activating it (an XWayland
+    /// window on Hyprland) refuses the background session as
     /// would-require-activation. The viewer reopens that window with
     /// `allow_activation` and resends the refused click, instead of showing
     /// "Input not delivered" for every click.

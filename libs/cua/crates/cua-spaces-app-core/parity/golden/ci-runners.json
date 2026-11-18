@@ -1,0 +1,986 @@
+{
+  "flow": "ci-runners",
+  "frames": [
+    {
+      "page": {
+        "button": null,
+        "connect": [],
+        "help": [
+          "> A job stays queued",
+          "> Public repositories",
+          "> A variable or secret is missing",
+          "> A job starts slowly",
+          "> A tool is missing",
+          "> A job fails and you want to see why"
+        ],
+        "jobs": [
+          "empty: Connect GitHub and run a workflow with runs-on: cua. Its jobs show here."
+        ],
+        "note": null,
+        "repositories": [],
+        "setup": [
+          "Set up 0 of 4",
+          "Connect GitHub [todo] Sign in to GitHub and choose where Cua may run jobs <Connect GitHub>",
+          "Give access to repositories [todo] ",
+          "Use the runner label in a workflow [todo] Add runs-on: cua to a job in a workflow",
+          "A job passed [todo] A job of yours has not passed on a Cua computer yet"
+        ],
+        "sizing": [
+          "Automatic sizing / none: Jobs run on your own computers, one fresh Space each."
+        ],
+        "stats": [
+          "Starts in 24 hours: 0",
+          "Jobs in 7 days: 0",
+          "Passed: -",
+          "Spent in 7 days: $0.00"
+        ],
+        "tabs": [
+          "*All 0",
+          "Running 0",
+          "Failed 0"
+        ]
+      },
+      "step": "nothing is connected: the checklist starts at Connect GitHub"
+    },
+    {
+      "page": {
+        "button": null,
+        "connect": [
+          "Connect GitHub [choose]: GitHub opens in your browser. Pick the organization and the repositories Cua may run jobs for. Nothing else is needed. <Continue on GitHub> <Use a token instead> <Cancel>"
+        ],
+        "help": [
+          "> A job stays queued",
+          "> Public repositories",
+          "> A variable or secret is missing",
+          "> A job starts slowly",
+          "> A tool is missing",
+          "> A job fails and you want to see why"
+        ],
+        "jobs": [
+          "empty: Connect GitHub and run a workflow with runs-on: cua. Its jobs show here."
+        ],
+        "note": null,
+        "repositories": [],
+        "setup": [
+          "Set up 0 of 4",
+          "Connect GitHub [todo] Sign in to GitHub and choose where Cua may run jobs <Connect GitHub>",
+          "Give access to repositories [todo] ",
+          "Use the runner label in a workflow [todo] Add runs-on: cua to a job in a workflow",
+          "A job passed [todo] A job of yours has not passed on a Cua computer yet"
+        ],
+        "sizing": [
+          "Automatic sizing / none: Jobs run on your own computers, one fresh Space each."
+        ],
+        "stats": [
+          "Starts in 24 hours: 0",
+          "Jobs in 7 days: 0",
+          "Passed: -",
+          "Spent in 7 days: $0.00"
+        ],
+        "tabs": [
+          "*All 0",
+          "Running 0",
+          "Failed 0"
+        ]
+      },
+      "step": "Connect GitHub opens the sheet"
+    },
+    {
+      "page": {
+        "button": null,
+        "connect": [
+          "Connect GitHub [choose]: GitHub opens in your browser. Pick the organization and the repositories Cua may run jobs for. Nothing else is needed. <Continue on GitHub busy> <Use a token instead> <Cancel>"
+        ],
+        "help": [
+          "> A job stays queued",
+          "> Public repositories",
+          "> A variable or secret is missing",
+          "> A job starts slowly",
+          "> A tool is missing",
+          "> A job fails and you want to see why"
+        ],
+        "jobs": [
+          "empty: Connect GitHub and run a workflow with runs-on: cua. Its jobs show here."
+        ],
+        "note": null,
+        "repositories": [],
+        "setup": [
+          "Set up 0 of 4",
+          "Connect GitHub [todo] Sign in to GitHub and choose where Cua may run jobs <Connect GitHub>",
+          "Give access to repositories [todo] ",
+          "Use the runner label in a workflow [todo] Add runs-on: cua to a job in a workflow",
+          "A job passed [todo] A job of yours has not passed on a Cua computer yet"
+        ],
+        "sizing": [
+          "Automatic sizing / none: Jobs run on your own computers, one fresh Space each."
+        ],
+        "stats": [
+          "Starts in 24 hours: 0",
+          "Jobs in 7 days: 0",
+          "Passed: -",
+          "Spent in 7 days: $0.00"
+        ],
+        "tabs": [
+          "*All 0",
+          "Running 0",
+          "Failed 0"
+        ]
+      },
+      "step": "Continue on GitHub"
+    },
+    {
+      "page": {
+        "button": null,
+        "connect": [
+          "Finish on GitHub [waiting]: Pick the organization and the repositories in the page that opened. This page carries on by itself when you are done. <Open GitHub again> <Cancel>",
+          "  page https://github.com/apps/cua-ci/installations/new?state=ins_1"
+        ],
+        "help": [
+          "> A job stays queued",
+          "> Public repositories",
+          "> A variable or secret is missing",
+          "> A job starts slowly",
+          "> A tool is missing",
+          "> A job fails and you want to see why"
+        ],
+        "jobs": [
+          "empty: Connect GitHub and run a workflow with runs-on: cua. Its jobs show here."
+        ],
+        "note": null,
+        "repositories": [],
+        "setup": [
+          "Set up 0 of 4",
+          "Connect GitHub [todo] Sign in to GitHub and choose where Cua may run jobs <Connect GitHub>",
+          "Give access to repositories [todo] ",
+          "Use the runner label in a workflow [todo] Add runs-on: cua to a job in a workflow",
+          "A job passed [todo] A job of yours has not passed on a Cua computer yet"
+        ],
+        "sizing": [
+          "Automatic sizing / none: Jobs run on your own computers, one fresh Space each."
+        ],
+        "stats": [
+          "Starts in 24 hours: 0",
+          "Jobs in 7 days: 0",
+          "Passed: -",
+          "Spent in 7 days: $0.00"
+        ],
+        "tabs": [
+          "*All 0",
+          "Running 0",
+          "Failed 0"
+        ]
+      },
+      "step": "GitHub's page is open and the page waits"
+    },
+    {
+      "page": {
+        "button": null,
+        "connect": [
+          "Connect GitHub [choose]: GitHub opens in your browser. Pick the organization and the repositories Cua may run jobs for. Nothing else is needed. <Continue on GitHub> <Use a token instead> <Cancel>",
+          "  error The GitHub link expired. Connect again."
+        ],
+        "help": [
+          "> A job stays queued",
+          "> Public repositories",
+          "> A variable or secret is missing",
+          "> A job starts slowly",
+          "> A tool is missing",
+          "> A job fails and you want to see why"
+        ],
+        "jobs": [
+          "empty: Connect GitHub and run a workflow with runs-on: cua. Its jobs show here."
+        ],
+        "note": null,
+        "repositories": [],
+        "setup": [
+          "Set up 0 of 4",
+          "Connect GitHub [todo] Sign in to GitHub and choose where Cua may run jobs <Connect GitHub>",
+          "Give access to repositories [todo] ",
+          "Use the runner label in a workflow [todo] Add runs-on: cua to a job in a workflow",
+          "A job passed [todo] A job of yours has not passed on a Cua computer yet"
+        ],
+        "sizing": [
+          "Automatic sizing / none: Jobs run on your own computers, one fresh Space each."
+        ],
+        "stats": [
+          "Starts in 24 hours: 0",
+          "Jobs in 7 days: 0",
+          "Passed: -",
+          "Spent in 7 days: $0.00"
+        ],
+        "tabs": [
+          "*All 0",
+          "Running 0",
+          "Failed 0"
+        ]
+      },
+      "step": "the install link expired"
+    },
+    {
+      "page": {
+        "button": null,
+        "connect": [
+          "Connect GitHub [choose]: GitHub opens in your browser. Pick the organization and the repositories Cua may run jobs for. Nothing else is needed. <Continue on GitHub> <Use a token instead> <Cancel>",
+          "  error Sign in to Cua first, then connect GitHub."
+        ],
+        "help": [
+          "> A job stays queued",
+          "> Public repositories",
+          "> A variable or secret is missing",
+          "> A job starts slowly",
+          "> A tool is missing",
+          "> A job fails and you want to see why"
+        ],
+        "jobs": [
+          "empty: Connect GitHub and run a workflow with runs-on: cua. Its jobs show here."
+        ],
+        "note": null,
+        "repositories": [],
+        "setup": [
+          "Set up 0 of 4",
+          "Connect GitHub [todo] Sign in to GitHub and choose where Cua may run jobs <Connect GitHub>",
+          "Give access to repositories [todo] ",
+          "Use the runner label in a workflow [todo] Add runs-on: cua to a job in a workflow",
+          "A job passed [todo] A job of yours has not passed on a Cua computer yet"
+        ],
+        "sizing": [
+          "Automatic sizing / none: Jobs run on your own computers, one fresh Space each."
+        ],
+        "stats": [
+          "Starts in 24 hours: 0",
+          "Jobs in 7 days: 0",
+          "Passed: -",
+          "Spent in 7 days: $0.00"
+        ],
+        "tabs": [
+          "*All 0",
+          "Running 0",
+          "Failed 0"
+        ]
+      },
+      "step": "not signed in to Cua yet"
+    },
+    {
+      "page": {
+        "button": null,
+        "connect": [
+          "Connect with a token [token]: Use this when you cannot install the Cua app on GitHub. The token stays on this computer and is never sent to Cua. <Connect> <Back>",
+          "  GitHub organization =  / Token / Needs the repo and admin:org scopes. If you saved a GitHub token in Settings, Connections, leave this empty and it is used. <Create a token on GitHub> https://github.com/settings/tokens/new?scopes=repo,admin:org&description=Cua%20CI (needs an organization)"
+        ],
+        "help": [
+          "> A job stays queued",
+          "> Public repositories",
+          "> A variable or secret is missing",
+          "> A job starts slowly",
+          "> A tool is missing",
+          "> A job fails and you want to see why"
+        ],
+        "jobs": [
+          "empty: Connect GitHub and run a workflow with runs-on: cua. Its jobs show here."
+        ],
+        "note": null,
+        "repositories": [],
+        "setup": [
+          "Set up 0 of 4",
+          "Connect GitHub [todo] Sign in to GitHub and choose where Cua may run jobs <Connect GitHub>",
+          "Give access to repositories [todo] ",
+          "Use the runner label in a workflow [todo] Add runs-on: cua to a job in a workflow",
+          "A job passed [todo] A job of yours has not passed on a Cua computer yet"
+        ],
+        "sizing": [
+          "Automatic sizing / none: Jobs run on your own computers, one fresh Space each."
+        ],
+        "stats": [
+          "Starts in 24 hours: 0",
+          "Jobs in 7 days: 0",
+          "Passed: -",
+          "Spent in 7 days: $0.00"
+        ],
+        "tabs": [
+          "*All 0",
+          "Running 0",
+          "Failed 0"
+        ]
+      },
+      "step": "use a token instead"
+    },
+    {
+      "page": {
+        "button": null,
+        "connect": [
+          "Connect with a token [token]: Use this when you cannot install the Cua app on GitHub. The token stays on this computer and is never sent to Cua. <Connect busy> <Back>",
+          "  GitHub organization = acme / Token / Needs the repo and admin:org scopes. If you saved a GitHub token in Settings, Connections, leave this empty and it is used. <Create a token on GitHub> https://github.com/settings/tokens/new?scopes=repo,admin:org&description=Cua%20CI (can connect)"
+        ],
+        "help": [
+          "> A job stays queued",
+          "> Public repositories",
+          "> A variable or secret is missing",
+          "> A job starts slowly",
+          "> A tool is missing",
+          "> A job fails and you want to see why"
+        ],
+        "jobs": [
+          "empty: Connect GitHub and run a workflow with runs-on: cua. Its jobs show here."
+        ],
+        "note": null,
+        "repositories": [],
+        "setup": [
+          "Set up 0 of 4",
+          "Connect GitHub [todo] Sign in to GitHub and choose where Cua may run jobs <Connect GitHub>",
+          "Give access to repositories [todo] ",
+          "Use the runner label in a workflow [todo] Add runs-on: cua to a job in a workflow",
+          "A job passed [todo] A job of yours has not passed on a Cua computer yet"
+        ],
+        "sizing": [
+          "Automatic sizing / none: Jobs run on your own computers, one fresh Space each."
+        ],
+        "stats": [
+          "Starts in 24 hours: 0",
+          "Jobs in 7 days: 0",
+          "Passed: -",
+          "Spent in 7 days: $0.00"
+        ],
+        "tabs": [
+          "*All 0",
+          "Running 0",
+          "Failed 0"
+        ]
+      },
+      "step": "an organization is typed and Connect is pressed"
+    },
+    {
+      "page": {
+        "button": null,
+        "connect": [
+          "Connect with a token [token]: Use this when you cannot install the Cua app on GitHub. The token stays on this computer and is never sent to Cua. <Connect> <Back>",
+          "  error GitHub refused the token (401)",
+          "  GitHub organization = acme / Token / Needs the repo and admin:org scopes. If you saved a GitHub token in Settings, Connections, leave this empty and it is used. <Create a token on GitHub> https://github.com/settings/tokens/new?scopes=repo,admin:org&description=Cua%20CI (can connect)"
+        ],
+        "help": [
+          "> A job stays queued",
+          "> Public repositories",
+          "> A variable or secret is missing",
+          "> A job starts slowly",
+          "> A tool is missing",
+          "> A job fails and you want to see why"
+        ],
+        "jobs": [
+          "empty: Connect GitHub and run a workflow with runs-on: cua. Its jobs show here."
+        ],
+        "note": null,
+        "repositories": [],
+        "setup": [
+          "Set up 0 of 4",
+          "Connect GitHub [todo] Sign in to GitHub and choose where Cua may run jobs <Connect GitHub>",
+          "Give access to repositories [todo] ",
+          "Use the runner label in a workflow [todo] Add runs-on: cua to a job in a workflow",
+          "A job passed [todo] A job of yours has not passed on a Cua computer yet"
+        ],
+        "sizing": [
+          "Automatic sizing / none: Jobs run on your own computers, one fresh Space each."
+        ],
+        "stats": [
+          "Starts in 24 hours: 0",
+          "Jobs in 7 days: 0",
+          "Passed: -",
+          "Spent in 7 days: $0.00"
+        ],
+        "tabs": [
+          "*All 0",
+          "Running 0",
+          "Failed 0"
+        ]
+      },
+      "step": "GitHub refused the token"
+    },
+    {
+      "page": {
+        "button": null,
+        "connect": [],
+        "help": [
+          "> A job stays queued",
+          "> Public repositories",
+          "> A variable or secret is missing",
+          "> A job starts slowly",
+          "> A tool is missing",
+          "> A job fails and you want to see why"
+        ],
+        "jobs": [
+          "empty: No jobs yet. Add runs-on: cua to a job in a workflow and push."
+        ],
+        "note": null,
+        "repositories": [],
+        "setup": [
+          "Set up 2 of 4",
+          "Connect GitHub [done] Connected to acme",
+          "Give access to repositories [done] 3 repositories can run jobs",
+          "Use the runner label in a workflow [todo] Add runs-on: cua to a job in a workflow <Copy the line>",
+          "A job passed [todo] A job of yours has not passed on a Cua computer yet"
+        ],
+        "sizing": [
+          "Automatic sizing / none: Jobs run on your own computers, one fresh Space each."
+        ],
+        "stats": [
+          "Starts in 24 hours: 0",
+          "Jobs in 7 days: 0",
+          "Passed: -",
+          "Spent in 7 days: $0.00"
+        ],
+        "tabs": [
+          "*All 0",
+          "Running 0",
+          "Failed 0"
+        ]
+      },
+      "step": "connected: three repositories can run jobs, no workflow yet"
+    },
+    {
+      "page": {
+        "button": null,
+        "connect": [],
+        "help": [
+          "> A job stays queued",
+          "> Public repositories",
+          "> A variable or secret is missing",
+          "> A job starts slowly",
+          "> A tool is missing",
+          "> A job fails and you want to see why"
+        ],
+        "jobs": [
+          "test / acme/app / Running / wait 4 s / run Running / cost - / 5 min ago",
+          "build / acme/app / Passed / wait 6 s / run 1 min 12 s / cost $0.04 / 16 min ago",
+          "lint / acme/api / Failed / wait 21 s / run 38 s / cost $0.03 / 2 hours ago",
+          "unit / acme/app / Passed / wait 1 s / run 3 min 10 s / cost Free / 6 days ago",
+          "Job 9700/110 / Repository not recorded / Queued / wait - / run - / cost - / Just now"
+        ],
+        "note": null,
+        "repositories": [],
+        "setup": [],
+        "sizing": [
+          "Automatic sizing / Cloud: AWS / Cheapest|*Balanced|Fastest / $12.40 of $50 used this month",
+          "  Keeps computers ready when they pay for themselves, so most jobs start at once.",
+          "  Linux: 1 computer kept ready now, idle computers kept 10 min, spot computers.",
+          "  macOS: Learning from your jobs, 6 of 20 seen. Nothing is kept ready yet.",
+          "  why: Jobs arrive on weekdays between 9 and 18, so one machine is kept ready in those hours.",
+          "  why: Spot machines were taken back 2 times in 212 jobs, so spot is still used."
+        ],
+        "stats": [
+          "Starts in 24 hours: 18",
+          "Jobs in 7 days: 40",
+          "Passed: 93%",
+          "Spent in 7 days: $3.19",
+          "Budget this month: $12.40 of $50"
+        ],
+        "tabs": [
+          "*All 5",
+          "Running 2",
+          "Failed 1"
+        ]
+      },
+      "step": "a week of jobs: the table, the overview line and automatic sizing"
+    },
+    {
+      "page": {
+        "button": null,
+        "connect": [],
+        "help": [
+          "> A job stays queued",
+          "> Public repositories",
+          "> A variable or secret is missing",
+          "> A job starts slowly",
+          "> A tool is missing",
+          "> A job fails and you want to see why"
+        ],
+        "jobs": [
+          "test / acme/app / Running / wait 4 s / run Running / cost - / 5 min ago",
+          "Job 9700/110 / Repository not recorded / Queued / wait - / run - / cost - / Just now"
+        ],
+        "note": null,
+        "repositories": [],
+        "setup": [],
+        "sizing": [
+          "Automatic sizing / Cloud: AWS / Cheapest|*Balanced|Fastest / $12.40 of $50 used this month",
+          "  Keeps computers ready when they pay for themselves, so most jobs start at once.",
+          "  Linux: 1 computer kept ready now, idle computers kept 10 min, spot computers.",
+          "  macOS: Learning from your jobs, 6 of 20 seen. Nothing is kept ready yet.",
+          "  why: Jobs arrive on weekdays between 9 and 18, so one machine is kept ready in those hours.",
+          "  why: Spot machines were taken back 2 times in 212 jobs, so spot is still used."
+        ],
+        "stats": [
+          "Starts in 24 hours: 18",
+          "Jobs in 7 days: 40",
+          "Passed: 93%",
+          "Spent in 7 days: $3.19",
+          "Budget this month: $12.40 of $50"
+        ],
+        "tabs": [
+          "All 5",
+          "*Running 2",
+          "Failed 1"
+        ]
+      },
+      "step": "Running tab"
+    },
+    {
+      "page": {
+        "button": null,
+        "connect": [],
+        "help": [
+          "> A job stays queued",
+          "> Public repositories",
+          "> A variable or secret is missing",
+          "> A job starts slowly",
+          "> A tool is missing",
+          "> A job fails and you want to see why"
+        ],
+        "jobs": [
+          "lint / acme/api / Failed / wait 21 s / run 38 s / cost $0.03 / 2 hours ago (open)",
+          "  timeline 36% Waited for a computer 21 s / 64% Ran 38 s",
+          "  Cost: $0.03",
+          "  Computer: cua-ci-4, c7i.large",
+          "  Cloud: AWS",
+          "  Started from: A new Space",
+          "  <Open on GitHub> https://github.com/acme/api/actions/runs/9910/job/295 <Show log> log 9910/295 hosted s4"
+        ],
+        "note": null,
+        "repositories": [],
+        "setup": [],
+        "sizing": [
+          "Automatic sizing / Cloud: AWS / Cheapest|*Balanced|Fastest / $12.40 of $50 used this month",
+          "  Keeps computers ready when they pay for themselves, so most jobs start at once.",
+          "  Linux: 1 computer kept ready now, idle computers kept 10 min, spot computers.",
+          "  macOS: Learning from your jobs, 6 of 20 seen. Nothing is kept ready yet.",
+          "  why: Jobs arrive on weekdays between 9 and 18, so one machine is kept ready in those hours.",
+          "  why: Spot machines were taken back 2 times in 212 jobs, so spot is still used."
+        ],
+        "stats": [
+          "Starts in 24 hours: 18",
+          "Jobs in 7 days: 40",
+          "Passed: 93%",
+          "Spent in 7 days: $3.19",
+          "Budget this month: $12.40 of $50"
+        ],
+        "tabs": [
+          "All 5",
+          "Running 2",
+          "*Failed 1"
+        ]
+      },
+      "step": "Failed tab, the failed job opened"
+    },
+    {
+      "page": {
+        "button": null,
+        "connect": [],
+        "help": [
+          "> A job stays queued",
+          "> Public repositories",
+          "> A variable or secret is missing",
+          "> A job starts slowly",
+          "> A tool is missing",
+          "> A job fails and you want to see why"
+        ],
+        "jobs": [
+          "test / acme/app / Running / wait 4 s / run Running / cost - / 5 min ago",
+          "build / acme/app / Passed / wait 6 s / run 1 min 12 s / cost $0.04 / 16 min ago (open)",
+          "  timeline 8% Waited for a computer 6 s / 92% Ran 1 min 12 s",
+          "  Cost: $0.04, $0.05 with idle time",
+          "  Computer: cua-ci-7, c7i.xlarge",
+          "  Cloud: AWS, spot",
+          "  Started from: A copy of a saved Space",
+          "  <Open on GitHub> https://github.com/acme/app/actions/runs/9911/job/298 <Show log> log 9911/298 hosted s7",
+          "lint / acme/api / Failed / wait 21 s / run 38 s / cost $0.03 / 2 hours ago",
+          "unit / acme/app / Passed / wait 1 s / run 3 min 10 s / cost Free / 6 days ago",
+          "Job 9700/110 / Repository not recorded / Queued / wait - / run - / cost - / Just now"
+        ],
+        "note": null,
+        "repositories": [],
+        "setup": [],
+        "sizing": [
+          "Automatic sizing / Cloud: AWS / Cheapest|*Balanced|Fastest / $12.40 of $50 used this month",
+          "  Keeps computers ready when they pay for themselves, so most jobs start at once.",
+          "  Linux: 1 computer kept ready now, idle computers kept 10 min, spot computers.",
+          "  macOS: Learning from your jobs, 6 of 20 seen. Nothing is kept ready yet.",
+          "  why: Jobs arrive on weekdays between 9 and 18, so one machine is kept ready in those hours.",
+          "  why: Spot machines were taken back 2 times in 212 jobs, so spot is still used."
+        ],
+        "stats": [
+          "Starts in 24 hours: 18",
+          "Jobs in 7 days: 40",
+          "Passed: 93%",
+          "Spent in 7 days: $3.19",
+          "Budget this month: $12.40 of $50"
+        ],
+        "tabs": [
+          "*All 5",
+          "Running 2",
+          "Failed 1"
+        ]
+      },
+      "step": "All tab, a passed job on a cloud machine opened"
+    },
+    {
+      "page": {
+        "button": null,
+        "connect": [],
+        "help": [
+          "> A job stays queued",
+          "> Public repositories",
+          "> A variable or secret is missing",
+          "> A job starts slowly",
+          "> A tool is missing",
+          "> A job fails and you want to see why"
+        ],
+        "jobs": [
+          "test / acme/app / Running / wait 4 s / run Running / cost - / 5 min ago",
+          "build / acme/app / Passed / wait 6 s / run 1 min 12 s / cost $0.04 / 16 min ago",
+          "lint / acme/api / Failed / wait 21 s / run 38 s / cost $0.03 / 2 hours ago",
+          "unit / acme/app / Passed / wait 1 s / run 3 min 10 s / cost Free / 6 days ago (open)",
+          "  timeline 1% Waited for a computer 1 s / 99% Ran 3 min 10 s",
+          "  Cost: Free, it ran on your own computer",
+          "  Computer: Your own computer",
+          "  Started from: A Space that was already running",
+          "  <Open on GitHub> https://github.com/acme/app/actions/runs/9800/job/210 <Show log> log 9800/210 hosted s1",
+          "Job 9700/110 / Repository not recorded / Queued / wait - / run - / cost - / Just now"
+        ],
+        "note": null,
+        "repositories": [],
+        "setup": [],
+        "sizing": [
+          "Automatic sizing / Cloud: AWS / Cheapest|*Balanced|Fastest / $12.40 of $50 used this month",
+          "  Keeps computers ready when they pay for themselves, so most jobs start at once.",
+          "  Linux: 1 computer kept ready now, idle computers kept 10 min, spot computers.",
+          "  macOS: Learning from your jobs, 6 of 20 seen. Nothing is kept ready yet.",
+          "  why: Jobs arrive on weekdays between 9 and 18, so one machine is kept ready in those hours.",
+          "  why: Spot machines were taken back 2 times in 212 jobs, so spot is still used."
+        ],
+        "stats": [
+          "Starts in 24 hours: 18",
+          "Jobs in 7 days: 40",
+          "Passed: 93%",
+          "Spent in 7 days: $3.19",
+          "Budget this month: $12.40 of $50"
+        ],
+        "tabs": [
+          "*All 5",
+          "Running 2",
+          "Failed 1"
+        ]
+      },
+      "step": "a job that ran on your own machine opened"
+    },
+    {
+      "page": {
+        "button": null,
+        "connect": [],
+        "help": [
+          "> A job stays queued",
+          "> Public repositories",
+          "> A variable or secret is missing",
+          "> A job starts slowly",
+          "> A tool is missing",
+          "> A job fails and you want to see why"
+        ],
+        "jobs": [
+          "test / acme/app / Running / wait 4 s / run Running / cost - / 5 min ago",
+          "build / acme/app / Passed / wait 6 s / run 1 min 12 s / cost $0.04 / 16 min ago",
+          "lint / acme/api / Failed / wait 21 s / run 38 s / cost $0.03 / 2 hours ago",
+          "unit / acme/app / Passed / wait 1 s / run 3 min 10 s / cost Free / 6 days ago (open)",
+          "  timeline 1% Waited for a computer 1 s / 99% Ran 3 min 10 s",
+          "  Cost: Free, it ran on your own computer",
+          "  Computer: Your own computer",
+          "  Started from: A Space that was already running",
+          "  <Open on GitHub> https://github.com/acme/app/actions/runs/9800/job/210 <Show log> log 9800/210 hosted s1",
+          "Job 9700/110 / Repository not recorded / Queued / wait - / run - / cost - / Just now"
+        ],
+        "note": null,
+        "repositories": [
+          "Repositories: 3 of 4 repositories can run jobs <Choose on GitHub> <Connect GitHub account>",
+          "acme/app / Ready / 31 jobs this week (switch)",
+          "acme/api / Ready / 9 jobs this week (switch)",
+          "acme/docs / Ready / No jobs this week (switch)",
+          "acme/website / Not allowed / No jobs this week (switch)"
+        ],
+        "setup": [],
+        "sizing": [
+          "Automatic sizing / Cloud: AWS / Cheapest|*Balanced|Fastest / $12.40 of $50 used this month",
+          "  Keeps computers ready when they pay for themselves, so most jobs start at once.",
+          "  Linux: 1 computer kept ready now, idle computers kept 10 min, spot computers.",
+          "  macOS: Learning from your jobs, 6 of 20 seen. Nothing is kept ready yet.",
+          "  why: Jobs arrive on weekdays between 9 and 18, so one machine is kept ready in those hours.",
+          "  why: Spot machines were taken back 2 times in 212 jobs, so spot is still used."
+        ],
+        "stats": [
+          "Starts in 24 hours: 18",
+          "Jobs in 7 days: 40",
+          "Passed: 93%",
+          "Spent in 7 days: $3.19",
+          "Budget this month: $12.40 of $50"
+        ],
+        "tabs": [
+          "*All 5",
+          "Running 2",
+          "Failed 1"
+        ]
+      },
+      "step": "the repository picker"
+    },
+    {
+      "page": {
+        "button": null,
+        "connect": [],
+        "help": [
+          "> A job stays queued",
+          "> Public repositories",
+          "> A variable or secret is missing",
+          "> A job starts slowly",
+          "> A tool is missing",
+          "> A job fails and you want to see why"
+        ],
+        "jobs": [
+          "test / acme/app / Running / wait 4 s / run Running / cost - / 5 min ago",
+          "build / acme/app / Passed / wait 6 s / run 1 min 12 s / cost $0.04 / 16 min ago",
+          "lint / acme/api / Failed / wait 21 s / run 38 s / cost $0.03 / 2 hours ago",
+          "unit / acme/app / Passed / wait 1 s / run 3 min 10 s / cost Free / 6 days ago (open)",
+          "  timeline 1% Waited for a computer 1 s / 99% Ran 3 min 10 s",
+          "  Cost: Free, it ran on your own computer",
+          "  Computer: Your own computer",
+          "  Started from: A Space that was already running",
+          "  <Open on GitHub> https://github.com/acme/app/actions/runs/9800/job/210 <Show log> log 9800/210 hosted s1",
+          "Job 9700/110 / Repository not recorded / Queued / wait - / run - / cost - / Just now"
+        ],
+        "note": null,
+        "repositories": [
+          "Repositories: 3 of 4 repositories can run jobs <Choose on GitHub> <Connect GitHub account>",
+          "acme/app / Ready / 31 jobs this week (switch)",
+          "acme/api / Ready / 9 jobs this week (switch)"
+        ],
+        "setup": [],
+        "sizing": [
+          "Automatic sizing / Cloud: AWS / Cheapest|*Balanced|Fastest / $12.40 of $50 used this month",
+          "  Keeps computers ready when they pay for themselves, so most jobs start at once.",
+          "  Linux: 1 computer kept ready now, idle computers kept 10 min, spot computers.",
+          "  macOS: Learning from your jobs, 6 of 20 seen. Nothing is kept ready yet.",
+          "  why: Jobs arrive on weekdays between 9 and 18, so one machine is kept ready in those hours.",
+          "  why: Spot machines were taken back 2 times in 212 jobs, so spot is still used."
+        ],
+        "stats": [
+          "Starts in 24 hours: 18",
+          "Jobs in 7 days: 40",
+          "Passed: 93%",
+          "Spent in 7 days: $3.19",
+          "Budget this month: $12.40 of $50"
+        ],
+        "tabs": [
+          "*All 5",
+          "Running 2",
+          "Failed 1"
+        ]
+      },
+      "step": "searching the picker"
+    },
+    {
+      "page": {
+        "button": null,
+        "connect": [],
+        "help": [
+          "> A job stays queued",
+          "> Public repositories",
+          "> A variable or secret is missing",
+          "> A job starts slowly",
+          "> A tool is missing",
+          "> A job fails and you want to see why"
+        ],
+        "jobs": [
+          "test / acme/app / Running / wait 4 s / run Running / cost - / 5 min ago",
+          "build / acme/app / Passed / wait 6 s / run 1 min 12 s / cost $0.04 / 16 min ago",
+          "lint / acme/api / Failed / wait 21 s / run 38 s / cost $0.03 / 2 hours ago",
+          "unit / acme/app / Passed / wait 1 s / run 3 min 10 s / cost Free / 6 days ago (open)",
+          "  timeline 1% Waited for a computer 1 s / 99% Ran 3 min 10 s",
+          "  Cost: Free, it ran on your own computer",
+          "  Computer: Your own computer",
+          "  Started from: A Space that was already running",
+          "  <Open on GitHub> https://github.com/acme/app/actions/runs/9800/job/210 <Show log> log 9800/210 hosted s1",
+          "Job 9700/110 / Repository not recorded / Queued / wait - / run - / cost - / Just now"
+        ],
+        "note": null,
+        "repositories": [
+          "Repositories: 3 of 4 repositories can run jobs <Choose on GitHub> <Connect GitHub account>",
+          "empty: No repository matches"
+        ],
+        "setup": [],
+        "sizing": [
+          "Automatic sizing / Cloud: AWS / Cheapest|*Balanced|Fastest / $12.40 of $50 used this month",
+          "  Keeps computers ready when they pay for themselves, so most jobs start at once.",
+          "  Linux: 1 computer kept ready now, idle computers kept 10 min, spot computers.",
+          "  macOS: Learning from your jobs, 6 of 20 seen. Nothing is kept ready yet.",
+          "  why: Jobs arrive on weekdays between 9 and 18, so one machine is kept ready in those hours.",
+          "  why: Spot machines were taken back 2 times in 212 jobs, so spot is still used."
+        ],
+        "stats": [
+          "Starts in 24 hours: 18",
+          "Jobs in 7 days: 40",
+          "Passed: 93%",
+          "Spent in 7 days: $3.19",
+          "Budget this month: $12.40 of $50"
+        ],
+        "tabs": [
+          "*All 5",
+          "Running 2",
+          "Failed 1"
+        ]
+      },
+      "step": "a search that matches nothing"
+    },
+    {
+      "page": {
+        "button": null,
+        "connect": [],
+        "help": [
+          "> A job stays queued",
+          "> Public repositories",
+          "> A variable or secret is missing",
+          "> A job starts slowly",
+          "> A tool is missing",
+          "> A job fails and you want to see why"
+        ],
+        "jobs": [
+          "test / acme/app / Running / wait 4 s / run Running / cost - / 5 min ago",
+          "build / acme/app / Passed / wait 6 s / run 1 min 12 s / cost $0.04 / 16 min ago",
+          "lint / acme/api / Failed / wait 21 s / run 38 s / cost $0.03 / 2 hours ago",
+          "unit / acme/app / Passed / wait 1 s / run 3 min 10 s / cost Free / 6 days ago (open)",
+          "  timeline 1% Waited for a computer 1 s / 99% Ran 3 min 10 s",
+          "  Cost: Free, it ran on your own computer",
+          "  Computer: Your own computer",
+          "  Started from: A Space that was already running",
+          "  <Open on GitHub> https://github.com/acme/app/actions/runs/9800/job/210 <Show log> log 9800/210 hosted s1",
+          "Job 9700/110 / Repository not recorded / Queued / wait - / run - / cost - / Just now"
+        ],
+        "note": null,
+        "repositories": [],
+        "setup": [],
+        "sizing": [
+          "Automatic sizing / Cloud: AWS / Cheapest|*Balanced|Fastest / $12.40 of $50 used this month",
+          "  Keeps computers ready when they pay for themselves, so most jobs start at once.",
+          "  Linux: 1 computer kept ready now, idle computers kept 10 min, spot computers.",
+          "  macOS: Learning from your jobs, 6 of 20 seen. Nothing is kept ready yet.",
+          "  why: Jobs arrive on weekdays between 9 and 18, so one machine is kept ready in those hours.",
+          "  why: Spot machines were taken back 2 times in 212 jobs, so spot is still used."
+        ],
+        "stats": [
+          "Starts in 24 hours: 18",
+          "Jobs in 7 days: 40",
+          "Passed: 93%",
+          "Spent in 7 days: $3.19",
+          "Budget this month: $12.40 of $50"
+        ],
+        "tabs": [
+          "*All 5",
+          "Running 2",
+          "Failed 1"
+        ]
+      },
+      "step": "the picker closed"
+    },
+    {
+      "page": {
+        "button": null,
+        "connect": [],
+        "help": [
+          "v A job stays queued: Check that the workflow says runs-on: cua, that its repository is ready here, and that a computer is online. A job waits at GitHub until a computer takes it, for up to 24 hours. A Mac runs at most two macOS jobs at a time, so a third waits for one to end.",
+          "> Public repositories",
+          "> A variable or secret is missing",
+          "> A job starts slowly",
+          "> A tool is missing",
+          "> A job fails and you want to see why"
+        ],
+        "jobs": [
+          "test / acme/app / Running / wait 4 s / run Running / cost - / 5 min ago",
+          "build / acme/app / Passed / wait 6 s / run 1 min 12 s / cost $0.04 / 16 min ago",
+          "lint / acme/api / Failed / wait 21 s / run 38 s / cost $0.03 / 2 hours ago",
+          "unit / acme/app / Passed / wait 1 s / run 3 min 10 s / cost Free / 6 days ago (open)",
+          "  timeline 1% Waited for a computer 1 s / 99% Ran 3 min 10 s",
+          "  Cost: Free, it ran on your own computer",
+          "  Computer: Your own computer",
+          "  Started from: A Space that was already running",
+          "  <Open on GitHub> https://github.com/acme/app/actions/runs/9800/job/210 <Show log> log 9800/210 hosted s1",
+          "Job 9700/110 / Repository not recorded / Queued / wait - / run - / cost - / Just now"
+        ],
+        "note": null,
+        "repositories": [],
+        "setup": [],
+        "sizing": [
+          "Automatic sizing / Cloud: AWS / Cheapest|*Balanced|Fastest / $12.40 of $50 used this month",
+          "  Keeps computers ready when they pay for themselves, so most jobs start at once.",
+          "  Linux: 1 computer kept ready now, idle computers kept 10 min, spot computers.",
+          "  macOS: Learning from your jobs, 6 of 20 seen. Nothing is kept ready yet.",
+          "  why: Jobs arrive on weekdays between 9 and 18, so one machine is kept ready in those hours.",
+          "  why: Spot machines were taken back 2 times in 212 jobs, so spot is still used."
+        ],
+        "stats": [
+          "Starts in 24 hours: 18",
+          "Jobs in 7 days: 40",
+          "Passed: 93%",
+          "Spent in 7 days: $3.19",
+          "Budget this month: $12.40 of $50"
+        ],
+        "tabs": [
+          "*All 5",
+          "Running 2",
+          "Failed 1"
+        ]
+      },
+      "step": "help: a job stays queued"
+    },
+    {
+      "page": {
+        "button": null,
+        "connect": [],
+        "help": [
+          "> A job stays queued",
+          "> Public repositories",
+          "> A variable or secret is missing",
+          "v A job starts slowly: A Space takes a few seconds to start on Linux and longer for a Mac, unless one is kept ready. The Wait column shows the time each job waited.",
+          "> A tool is missing",
+          "> A job fails and you want to see why"
+        ],
+        "jobs": [
+          "test / acme/app / Running / wait 4 s / run Running / cost - / 5 min ago",
+          "build / acme/app / Passed / wait 6 s / run 1 min 12 s / cost $0.04 / 16 min ago",
+          "lint / acme/api / Failed / wait 21 s / run 38 s / cost $0.03 / 2 hours ago",
+          "unit / acme/app / Passed / wait 1 s / run 3 min 10 s / cost Free / 6 days ago (open)",
+          "  timeline 1% Waited for a computer 1 s / 99% Ran 3 min 10 s",
+          "  Cost: Free, it ran on your own computer",
+          "  Computer: Your own computer",
+          "  Started from: A Space that was already running",
+          "  <Open on GitHub> https://github.com/acme/app/actions/runs/9800/job/210 <Show log> log 9800/210 hosted s1",
+          "Job 9700/110 / Repository not recorded / Queued / wait - / run - / cost - / Just now"
+        ],
+        "note": null,
+        "repositories": [],
+        "setup": [],
+        "sizing": [
+          "Automatic sizing / Cloud: AWS / Cheapest|*Balanced|Fastest / $12.40 of $50 used this month",
+          "  Keeps computers ready when they pay for themselves, so most jobs start at once.",
+          "  Linux: 1 computer kept ready now, idle computers kept 10 min, spot computers.",
+          "  macOS: Learning from your jobs, 6 of 20 seen. Nothing is kept ready yet.",
+          "  why: Jobs arrive on weekdays between 9 and 18, so one machine is kept ready in those hours.",
+          "  why: Spot machines were taken back 2 times in 212 jobs, so spot is still used."
+        ],
+        "stats": [
+          "Starts in 24 hours: 18",
+          "Jobs in 7 days: 40",
+          "Passed: 93%",
+          "Spent in 7 days: $3.19",
+          "Budget this month: $12.40 of $50"
+        ],
+        "tabs": [
+          "*All 5",
+          "Running 2",
+          "Failed 1"
+        ]
+      },
+      "step": "help: another topic replaces it"
+    }
+  ]
+}

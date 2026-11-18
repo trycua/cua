@@ -107,6 +107,9 @@ mod tests {
             created_ms: 0,
             expires_ms: None,
             url: String::new(),
+            tcp: None,
+            origin: None,
+            waiting: None,
         }
     }
 

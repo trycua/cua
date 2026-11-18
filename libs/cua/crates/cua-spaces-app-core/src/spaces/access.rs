@@ -129,7 +129,7 @@ fn own_place(row: &SpaceRow) -> String {
         SpaceProvider::Relay => text(&row.cloud_place)
             .or_else(|| text(&row.host_name))
             .or_else(|| text(&row.cloud))
-            .unwrap_or_else(|| "My computers".into()),
+            .unwrap_or_else(|| "My machines".into()),
     }
 }
 

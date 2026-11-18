@@ -184,7 +184,7 @@ pub struct ImportedSignIn {
     pub source: String,
     /// The variable a run in a Space gets it as.
     pub env: String,
-    /// "Codex · ChatGPT sign-in".
+    /// "ChatGPT sign-in for Codex".
     pub label: String,
     /// When it stops working (Unix ms), when known.
     pub expires_ms: Option<u64>,
@@ -199,6 +199,11 @@ pub struct SignInCopy {
     pub label: String,
     pub value: String,
     pub expires_ms: Option<u64>,
+    /// How it was made: `claude-login-keychain` or `claude-login-file` (read
+    /// from Claude Code's own sign-in), `device-code` (Codex), `token` (a
+    /// pasted `claude setup-token`). Fixed words; the telemetry and the
+    /// freshness check at run start read it.
+    pub origin: Option<String>,
 }
 
 impl std::fmt::Debug for SignInCopy {
@@ -209,6 +214,7 @@ impl std::fmt::Debug for SignInCopy {
             .field("label", &self.label)
             .field("value", &"<redacted>")
             .field("expires_ms", &self.expires_ms)
+            .field("origin", &self.origin)
             .finish()
     }
 }
@@ -319,6 +325,26 @@ pub(crate) fn run_with_timeout(
     }
 }
 
+/// Spawns, retrying briefly on ETXTBSY ("text file busy", Linux). A binary
+/// that was just written can still be held open for writing by a child that
+/// another thread forked at the same moment; the hold lasts until that child
+/// execs, so a short retry gets past it instead of reading "can't start".
+fn spawn_retrying_text_busy(
+    mut spawn: impl FnMut() -> std::io::Result<std::process::Child>,
+) -> Option<std::process::Child> {
+    const ETXTBSY: i32 = 26;
+    for attempt in 0..50 {
+        match spawn() {
+            Ok(child) => return Some(child),
+            Err(e) if e.raw_os_error() == Some(ETXTBSY) && attempt < 49 => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
 /// Runs `program args` with stdin closed; its exit code and stdout, or
 /// None when it can't start or outlives `timeout` (then it is killed and
 /// reaped).
@@ -328,13 +354,14 @@ pub(crate) fn run_capture(
     args: &[&str],
     timeout: Duration,
 ) -> Option<(Option<i32>, String)> {
-    let mut child = base_command(env, program)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
+    let mut child = spawn_retrying_text_busy(|| {
+        base_command(env, program)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+    })?;
     let mut stdout = child.stdout.take()?;
     let reader = std::thread::spawn(move || {
         let mut s = Vec::new();
@@ -794,7 +821,74 @@ pub struct ConnectResult {
     pub tools_line: Option<String>,
     /// The sign-in copy, when asked for.
     pub sign_in: Option<SignInResult>,
+    /// One result per part asked for, in the order they ran: what each
+    /// did, where, and why it didn't. Setup draws one row from each.
+    pub parts: Vec<PartResult>,
 }
+
+/// One part of Connect, as setup shows it: a row per part per agent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Part {
+    /// Cua's MCP entry (`cua mcp`) in the agent's own config.
+    Mcp,
+    /// Cua's bundled skills in the agent's skills folder.
+    Skills,
+    /// The `cua-driver` MCP entry (and its skill), pointing at the Cua
+    /// Driver the host app carries.
+    Driver,
+    /// The agent's sign-in, copied into Keyvault.
+    SignIn,
+}
+
+/// How one part ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PartStatus {
+    /// Written, or already as wanted.
+    Done,
+    /// Written, but it can't work until the person allows something
+    /// (Cua Driver without Screen Recording or Accessibility).
+    NeedsPermission,
+    /// Not for this agent (it has no skills folder, no MCP, no sign-in to
+    /// copy); nothing was touched.
+    Skipped,
+    /// Didn't work; `line` says why. Nothing was left half-written.
+    Failed,
+}
+
+/// What one part did for one agent.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PartResult {
+    pub part: Part,
+    pub status: PartStatus,
+    /// Where it was written, as the person reads it (`~/.claude.json`,
+    /// `~/.claude/skills`); `Keyvault` for the sign-in. None when nothing
+    /// was.
+    #[serde(rename = "where")]
+    pub place: Option<String>,
+    /// Why, when it failed, needs a permission or was skipped.
+    pub line: Option<String>,
+}
+
+/// The Cua Driver a host app carries, for Connect's [`Part::Driver`]: the
+/// `cua-driver` MCP entry it wants in each agent's config (the bundled
+/// binary, by absolute path, with its own arguments), and whether the
+/// permissions it uses are on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DriverTarget {
+    /// Named `cua-driver` (or a channel sibling, [`crate::is_cua_driver_name`]).
+    pub server: McpServer,
+    /// Screen Recording and Accessibility are both on for the app that runs
+    /// the driver: Some(false) makes the part [`PartStatus::NeedsPermission`]
+    /// (the entry is still written, so it works as soon as they are on);
+    /// None when the host can't tell.
+    pub permissions_granted: Option<bool>,
+}
+
+/// The line a driver part shows when its permissions are off.
+pub const DRIVER_NEEDS_PERMISSION: &str =
+    "Allow Screen Recording and Accessibility so agents can see and use apps.";
 
 /// What Connect does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -803,6 +897,8 @@ pub struct ConnectParts {
     pub mcp: bool,
     /// Copy the agent's sign-in into Keyvault.
     pub sign_in: bool,
+    /// Add the host's Cua Driver ([`DriverTarget`]); ignored without one.
+    pub driver: bool,
 }
 
 impl ConnectParts {
@@ -811,7 +907,26 @@ impl ConnectParts {
         skills: true,
         mcp: true,
         sign_in: true,
+        driver: false,
     };
+
+    /// Only the sign-in: Cua's skills and MCP entry are not added to the agent, and
+    /// nothing is written outside the Cua home (the copy goes to Keyvault, the note
+    /// of it to `<cua home>/agent-setup.json`). For a demo or a home Space that needs
+    /// the credential and must not touch the person's agent configuration. Claude
+    /// Code is never run to refresh its own sign-in either (an expired one is
+    /// refused), see [`Self::tools_free`].
+    pub const SIGN_IN_ONLY: ConnectParts = ConnectParts {
+        skills: false,
+        mcp: false,
+        sign_in: true,
+        driver: false,
+    };
+
+    /// Neither skills, MCP nor Cua Driver: the agent's own files and programs are left alone.
+    pub fn tools_free(self) -> bool {
+        !self.skills && !self.mcp && !self.driver
+    }
 }
 
 impl AgentSetup {
@@ -826,9 +941,9 @@ impl AgentSetup {
         r.connected_at = crate::state::now();
     }
 
-    /// Copies `agent`'s sign-in into `vault` (Claude Code waits up to
-    /// `wait` for its one browser approval). The agent's own sign-in is
-    /// never changed.
+    /// Copies `agent`'s sign-in into `vault` (Claude Code's is the sign-in it
+    /// already has; `wait` is how long Claude Code may take to refresh it).
+    /// The agent's own sign-in is never changed.
     pub fn import_sign_in(
         &self,
         agent: &str,
@@ -848,9 +963,9 @@ impl AgentSetup {
         copy: &SignInCopy,
         vault: &dyn SignInVault,
     ) -> std::result::Result<ImportedSignIn, signin::CopyRefusal> {
-        let saved = vault.save(copy).map_err(|e| {
-            signin::CopyRefusal::Failed(format!("Connected. Sign-in not copied: {e}"))
-        })?;
+        let saved = vault
+            .save(copy)
+            .map_err(|e| signin::CopyRefusal::Failed(format!("Couldn't save the sign-in: {e}")))?;
         if let Ok(mut state) = State::load(&self.state_path) {
             let r = state.connections.entry(agent.to_string()).or_default();
             r.sign_in = Some(crate::state::SignInRecord {
@@ -953,18 +1068,62 @@ impl AgentSetup {
         parts: ConnectParts,
         vault: Option<&dyn SignInVault>,
         wait: Duration,
+        show: Option<ShowDeviceSignIn<'_>>,
+    ) -> crate::Result<Vec<ConnectResult>> {
+        self.connect_full(agents, server, None, parts, vault, wait, show)
+    }
+
+    /// [`Self::connect_with`], and with `driver` and [`ConnectParts::driver`]
+    /// the host's Cua Driver too ([`Self::connect_driver`]). Every part asked
+    /// for gets a [`PartResult`]: one failing never stops the next, so a row
+    /// can be retried on its own by asking for that part only.
+    #[allow(clippy::too_many_arguments)]
+    pub fn connect_full(
+        &self,
+        agents: &[String],
+        server: &McpServer,
+        driver: Option<&DriverTarget>,
+        parts: ConnectParts,
+        vault: Option<&dyn SignInVault>,
+        wait: Duration,
         mut show: Option<ShowDeviceSignIn<'_>>,
     ) -> crate::Result<Vec<ConnectResult>> {
+        // A sign-in-only connect leaves the agent's own files and programs alone: Claude
+        // Code is not run to refresh its sign-in (a zero wait means never).
+        let wait = if parts.tools_free() {
+            Duration::ZERO
+        } else {
+            wait
+        };
         let mut out = Vec::new();
         for id in agents {
             let a = registry::find(id).ok_or_else(|| signin::unknown(id))?;
             let ids = vec![a.id.to_string()];
             let mut outcomes = Vec::new();
-            if parts.skills && a.skills.is_some() {
-                outcomes.extend(self.install_skills(&ids, &[], false)?);
+            let mut done = Vec::new();
+            if parts.skills {
+                if a.skills.is_some() {
+                    let o = self.install_skills(&ids, &[], false)?;
+                    done.push(self.skills_part(&o));
+                    outcomes.extend(o);
+                } else {
+                    done.push(skipped(
+                        Part::Skills,
+                        format!("{} doesn't use skills", display_name(a)),
+                    ));
+                }
             }
             if parts.mcp {
-                outcomes.extend(self.configure_mcp(&ids, server)?);
+                let o = self.configure_mcp(&ids, server)?;
+                done.push(self.mcp_part(a, Part::Mcp, &o, &server.name));
+                outcomes.extend(o);
+            }
+            if parts.driver
+                && let Some(d) = driver
+            {
+                let (part, o) = self.connect_driver(a, d)?;
+                done.push(part);
+                outcomes.extend(o);
             }
             let failed = outcomes
                 .iter()
@@ -976,9 +1135,7 @@ impl AgentSetup {
                 None => SignInResult {
                     imported: None,
                     refused: Some("failed".into()),
-                    line: Some(
-                        "Connected. Sign-in not copied: Keyvault isn't available here.".into(),
-                    ),
+                    line: Some("Couldn't save the sign-in: Keyvault isn't available here.".into()),
                 },
                 Some(v) => match match show.as_deref_mut() {
                     Some(show) if signin::signs_in_with_a_code(a.id) => {
@@ -998,16 +1155,169 @@ impl AgentSetup {
                     },
                 },
             });
+            if parts.sign_in {
+                done.push(match &sign_in {
+                    None => skipped(
+                        Part::SignIn,
+                        format!("{} has no sign-in to save", display_name(a)),
+                    ),
+                    Some(SignInResult {
+                        imported: Some(_), ..
+                    }) => PartResult {
+                        part: Part::SignIn,
+                        status: PartStatus::Done,
+                        place: Some("Keyvault".into()),
+                        line: None,
+                    },
+                    Some(r) => PartResult {
+                        part: Part::SignIn,
+                        status: PartStatus::Failed,
+                        place: None,
+                        line: r.line.clone(),
+                    },
+                });
+            }
             out.push(ConnectResult {
                 agent: a.id.into(),
                 outcomes,
                 tools_ok,
                 tools_line,
                 sign_in,
+                parts: done,
             });
         }
         invalidate();
         Ok(out)
+    }
+
+    /// Connect's [`Part::Driver`] for one agent: the `cua-driver` skill and
+    /// the host's `cua-driver` MCP entry, through the same backup-aware
+    /// editor and record as Cua's own entry (so Disconnect with Cua Driver
+    /// removes exactly it). Only a server named for Cua Driver and launching
+    /// an existing absolute binary is written: a missing one would leave the
+    /// agent with a server that fails to start.
+    pub fn connect_driver(
+        &self,
+        a: &registry::AgentSpec,
+        d: &DriverTarget,
+    ) -> crate::Result<(PartResult, Vec<crate::Outcome>)> {
+        let name = display_name(a);
+        if a.mcp.is_none() {
+            return Ok((
+                skipped(Part::Driver, format!("{name} can't use Cua Driver")),
+                Vec::new(),
+            ));
+        }
+        let cmd = Path::new(&d.server.command);
+        let refused = if !crate::is_cua_driver_name(&d.server.name) {
+            Some(format!(
+                "Cua Driver's entry must be named {:?}, not {:?}",
+                crate::DRIVER_MCP_SERVER_NAME,
+                d.server.name
+            ))
+        } else if !cmd.is_absolute() || !crate::is_executable(cmd) {
+            Some(format!(
+                "Cua Driver isn't in this app ({} is missing)",
+                tilde(&self.env, cmd)
+            ))
+        } else {
+            None
+        };
+        if let Some(line) = refused {
+            return Ok((
+                PartResult {
+                    part: Part::Driver,
+                    status: PartStatus::Failed,
+                    place: None,
+                    line: Some(line),
+                },
+                Vec::new(),
+            ));
+        }
+        let ids = vec![a.id.to_string()];
+        let mut outcomes = Vec::new();
+        if a.skills.is_some() {
+            outcomes.extend(self.install_skills(
+                &ids,
+                &[crate::DRIVER_SKILL.to_string()],
+                false,
+            )?);
+        }
+        let mcp = self.configure_mcp(&ids, &d.server)?;
+        let mut part = self.mcp_part(a, Part::Driver, &mcp, &d.server.name);
+        outcomes.extend(mcp);
+        if part.status == PartStatus::Done && d.permissions_granted == Some(false) {
+            part.status = PartStatus::NeedsPermission;
+            part.line = Some(DRIVER_NEEDS_PERMISSION.into());
+        }
+        Ok((part, outcomes))
+    }
+
+    /// An MCP part from `configure_mcp`'s outcomes for the entry `item`.
+    fn mcp_part(
+        &self,
+        a: &registry::AgentSpec,
+        part: Part,
+        outcomes: &[crate::Outcome],
+        item: &str,
+    ) -> PartResult {
+        let mine: Vec<&crate::Outcome> = outcomes
+            .iter()
+            .filter(|o| o.target == crate::Target::Mcp && o.item == item)
+            .collect();
+        let place = mine
+            .iter()
+            .find(|o| !o.path.as_os_str().is_empty())
+            .map(|o| tilde(&self.env, &o.path));
+        if let Some(f) = mine.iter().find(|o| o.failed()) {
+            let file = place.clone().unwrap_or_else(|| "its settings".into());
+            return PartResult {
+                part,
+                status: PartStatus::Failed,
+                place,
+                line: Some(format!("Couldn't write {file}: {}", short(&f.detail))),
+            };
+        }
+        if a.mcp.is_none() || mine.iter().all(|o| o.change == crate::Change::Skipped) {
+            return skipped(part, format!("{} doesn't use MCP servers", display_name(a)));
+        }
+        PartResult {
+            part,
+            status: PartStatus::Done,
+            place,
+            line: None,
+        }
+    }
+
+    /// The skills part from `install_skills`' outcomes: done unless one
+    /// failed. A folder the person edited is left as it is and counts.
+    fn skills_part(&self, outcomes: &[crate::Outcome]) -> PartResult {
+        let skills: Vec<&crate::Outcome> = outcomes
+            .iter()
+            .filter(|o| o.target == crate::Target::Skill && !o.item.is_empty())
+            .collect();
+        let place = skills
+            .first()
+            .and_then(|o| o.path.parent())
+            .map(|p| tilde(&self.env, p));
+        match skills.iter().find(|o| o.failed()) {
+            Some(f) => PartResult {
+                part: Part::Skills,
+                status: PartStatus::Failed,
+                place,
+                line: Some(format!(
+                    "Couldn't add the {} skill: {}",
+                    f.item,
+                    short(&f.detail)
+                )),
+            },
+            None => PartResult {
+                part: Part::Skills,
+                status: PartStatus::Done,
+                place,
+                line: None,
+            },
+        }
     }
 
     /// Disconnect: Cua's entry out of the agent's config (the entry that
@@ -1033,6 +1343,15 @@ impl AgentSetup {
         }
         invalidate();
         Ok((outcomes, removed))
+    }
+}
+
+fn skipped(part: Part, line: String) -> PartResult {
+    PartResult {
+        part,
+        status: PartStatus::Skipped,
+        place: None,
+        line: Some(line),
     }
 }
 

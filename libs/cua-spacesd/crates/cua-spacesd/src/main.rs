@@ -7,8 +7,14 @@
 
 #[cfg(not(cua_headless))]
 mod doctor;
+#[cfg(all(target_os = "macos", not(cua_headless)))]
+// The app reads the driver's status, settings and permissions from the
+// driver's own socket; only `spawn` and the supervisor run here.
+#[allow(dead_code)]
+mod embedded_driver;
 #[cfg(not(cua_headless))]
 mod legacy;
+mod phone;
 #[cfg(target_os = "linux")]
 mod volume_mount;
 
@@ -87,6 +93,9 @@ enum Command {
     /// (exit 0 pass, 1 fail, 2 the doctor itself failed).
     #[cfg(not(cua_headless))]
     Doctor(doctor::DoctorArgs),
+    /// The machine owner's side of phones: the kill switch (`off`, `on`) and
+    /// the log of what phones did.
+    Phone(phone::PhoneArgs),
     /// Print what this binary was built with (version, protocol revision,
     /// linked cua-driver, tool schema hash, compiled encoders) as JSON. Image
     /// builds record it in /etc/cua-image/manifest.json.
@@ -172,11 +181,13 @@ struct ServeArgs {
     #[arg(long, env = "CUA_SPACESD_NO_ACCESS_LOG")]
     no_access_log: bool,
     /// Do not link the cua-driver tool registry (Driver service and /mcp
-    /// report unsupported).
+    /// report unsupported). Remote callers only: the Cua Driver this Mac's
+    /// coding agents use (`embedded_driver`) runs either way.
     #[arg(long, env = "CUA_ENV_NO_DRIVER")]
     no_driver: bool,
     /// Do not serve the desktop services (Computer, Windows, Accessibility,
-    /// Stream, Presence, /media).
+    /// Stream, Presence, /media). The embedded Cua Driver for this Mac's
+    /// coding agents still runs.
     #[arg(long, env = "CUA_ENV_NO_DESKTOP")]
     no_desktop: bool,
     /// Teleport destination (default ~/Downloads).
@@ -428,6 +439,9 @@ fn main() {
     if let Command::Supervise(args) = command {
         std::process::exit(supervise(args));
     }
+    if let Command::Phone(args) = command {
+        std::process::exit(phone::run(args));
+    }
     if let Command::BuildInfo = command {
         println!(
             "{}",
@@ -469,7 +483,12 @@ fn main() {
 
 /// Runs a daemon command on a fresh multi-threaded runtime.
 fn run(command: Command) -> Result<Exit, BoxError> {
+    // At least two workers: a Space with one vCPU would otherwise run the
+    // whole server on one thread, and any blocking call that waits on this
+    // process itself (the Cua Volume is served from here) would stop it.
+    let workers = std::thread::available_parallelism().map_or(2, |n| n.get().max(2));
     let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(workers)
         .enable_all()
         .build()
         .expect("tokio runtime");
@@ -513,6 +532,7 @@ fn run(command: Command) -> Result<Exit, BoxError> {
             #[cfg(not(cua_headless))]
             Command::Legacy { .. } => unreachable!(),
             Command::BuildInfo => unreachable!(),
+            Command::Phone(_) => unreachable!(),
         }
     })
 }
@@ -937,6 +957,20 @@ async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError
     );
 
     let shutdown = ctx.shutdown_token();
+    // In a macOS VM, the host reaches this server over vsock as well as
+    // over the VM network (which macOS Local Network privacy and VPNs can
+    // block on the host).
+    #[cfg(target_os = "macos")]
+    cua_spacesd::vsock_agent::start();
+    // Cua Driver for the coding agents on this Mac, as this process's own
+    // child (on unless CUA_SPACESD_EMBEDDED_DRIVER=0; see embedded_driver).
+    // It follows only the person's "Let agents use apps on this Mac"
+    // switch, never `--no-desktop` or `--no-driver`: those are about
+    // remote callers (sharing this desktop, the Driver service and /mcp),
+    // and a Mac that keeps its screen private still lets its own coding
+    // agents use its apps.
+    #[cfg(all(target_os = "macos", not(cua_headless)))]
+    let _embedded_driver = embedded_driver::spawn(shutdown.clone());
     // A direct host starts its cua daemon, which reopens the ports it
     // forwards to the Spaces it provides.
     if let Some(policy) = direct_host_policy {
@@ -1012,6 +1046,27 @@ async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError
                 .pin_jwks_json(json)
                 .map_err(|e| format!("CUA_RELAY_JWKS_JSON: {e}"))?;
         }
+        // A host deletes the Spaces its owner deleted while it was removed
+        // from the account, each time it dials the relay
+        // (cua_spacesd_server::pending_deletions).
+        if let Some(policy) = host_policy.clone() {
+            let dialing = Arc::new(tokio::sync::Notify::new());
+            join_config.dialing = Some(dialing.clone());
+            let mut pending = cua_spacesd_server::pending_deletions::PendingDeletionsConfig::new(
+                join.relay.clone(),
+                machine_id.clone(),
+                join.relay_token.clone().unwrap_or_default(),
+                dialing,
+            );
+            pending.relay_token_file = join.relay_token_file.clone();
+            tokio::spawn(cua_spacesd_server::pending_deletions::run(
+                pending,
+                Arc::new(cua_spacesd_server::pending_deletions::DaemonDeleter::new(
+                    policy,
+                )),
+                shutdown.clone(),
+            ));
+        }
         // Account mode: relay-signed principal assertions authorize
         // callers (in addition to the local token).
         ctx.auth().set_external(Arc::new(
@@ -1019,7 +1074,14 @@ async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError
                 machine_id.clone(),
                 join_config.account.clone(),
                 host_policy,
-            ),
+            )
+            // Phones are answered only while the `mobile` experiment is on, and
+            // reach what a Space is, never this computer's own services.
+            .with_phone(Arc::new(
+                cua_spacesd_server::phone_control::PhoneControl::in_data_dir(
+                    &ctx.config().data_dir,
+                ),
+            )),
         ));
         ctx.mark_joined_at_start();
         tracing::info!(relay = %join.relay, machine = %machine_id, "joining relay; clients connect to <relay>/m/{machine_id}");
@@ -1211,6 +1273,64 @@ mod tests {
     }
 
     use super::*;
+
+    #[cfg(all(target_os = "linux", not(cua_headless)))]
+    #[tokio::test]
+    async fn fallback_platform_tools_install_recording_support() {
+        if std::env::var_os("CUA_TEST_RECORDING_WIRING").is_none() {
+            let home = tempfile::tempdir().unwrap();
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "tests::fallback_platform_tools_install_recording_support",
+                    "--nocapture",
+                ])
+                .env("CUA_TEST_RECORDING_WIRING", "1")
+                .env("HOME", home.path())
+                .env_remove("DISPLAY")
+                .env_remove("WAYLAND_DISPLAY")
+                .env_remove("CUA_WAYLAND_NEST")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+        let tools = platform_tools().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let video_error =
+            match cua_driver_core::video::start_video(&directory.path().join("probe.mp4")) {
+                Ok(video) => {
+                    let _ = video.stop();
+                    String::new()
+                }
+                Err(error) => error.to_string(),
+            };
+        for (name, args) in [
+            (
+                "start_recording",
+                serde_json::json!({"output_dir": directory.path()}),
+            ),
+            ("set_config", serde_json::json!({"max_image_dimension": 0})),
+            ("stop_recording", serde_json::json!({})),
+        ] {
+            let result = tools.invoke_tool(name, args).await.unwrap();
+            assert_ne!(result["isError"], true, "{result}");
+        }
+        let evidence: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(directory.path().join("turn-00001/evidence.json")).unwrap(),
+        )
+        .unwrap();
+        for phase in ["before", "after"] {
+            assert_ne!(
+                evidence[phase]["screenshot"]["classification"], "capture_hook_unavailable",
+                "{evidence}"
+            );
+        }
+        assert!(
+            !video_error.contains("no video backend registered"),
+            "{video_error}"
+        );
+    }
 
     /// The WireGuard library's retry/expiry messages stay out of the log
     /// (also when a service was installed with `CUA_ENV_LOG=info`), unless

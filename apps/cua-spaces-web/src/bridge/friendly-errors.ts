@@ -47,10 +47,10 @@ export function plainJoinError(e: unknown): string {
   const throttled = plainThrottleError(raw);
   if (throttled) return throttled;
   if (/pairing code|unauthenticated|not valid|expired|revoked|already used|invalid code/i.test(raw)) {
-    return "That code didn't work. It may be used, expired or mistyped. Make a new one in Add a computer.";
+    return "That code didn't work. It may be used, expired or mistyped. Make a new one in Add a machine.";
   }
   if (/timed out/i.test(raw)) return "This took too long. Check the internet connection and try again.";
-  if (/could not start|no bundled cua/i.test(raw)) return "Couldn't set this computer up. Update Cua Spaces and try again.";
+  if (/could not start|no bundled cua/i.test(raw)) return "Couldn't set this machine up. Update Cua Spaces and try again.";
   if (/network|connect|dns|unreachable|offline/i.test(raw)) return "Couldn't reach Cua. Check the internet connection and try again.";
   return stripInternalPrefixes(raw) || "Couldn't join with that code.";
 }
@@ -62,9 +62,9 @@ export function plainPairingError(e: unknown): string {
   const throttled = plainThrottleError(raw);
   if (throttled) return throttled;
   if (/no such device|not enrolled|not registered|unknown device/i.test(raw)) {
-    return "This computer isn't set up for access yet. Set it up first, then add computers.";
+    return "This machine isn't set up for access yet. Set it up first, then add machines.";
   }
-  if (/unauthenticated|unauthori[sz]ed|\b40[13]\b/i.test(raw)) return "Sign in again to add a computer.";
+  if (/unauthenticated|unauthori[sz]ed|\b40[13]\b/i.test(raw)) return "Sign in again to add a machine.";
   if (/network|connect|dns|unreachable|offline|timed out/i.test(raw)) return "Couldn't reach Cua. Check the internet connection.";
   const rest = stripInternalPrefixes(raw).replace(/\.$/, "");
   return rest ? `Couldn't make a link: ${rest}.` : "Couldn't make a link.";

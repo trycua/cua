@@ -19,7 +19,11 @@ declare const process: { cwd(): string };
 
 const root = `${process.cwd()}/src/i18n/locales`;
 /** Dotted-key entries of a (possibly nested) catalog. */
-const flatten = (obj: Record<string, unknown>, prefix = "", out: Record<string, string> = {}): Record<string, string> => {
+const flatten = (
+  obj: Record<string, unknown>,
+  prefix = "",
+  out: Record<string, string> = {},
+): Record<string, string> => {
   for (const [k, v] of Object.entries(obj)) {
     if (v && typeof v === "object") flatten(v as Record<string, unknown>, `${prefix}${k}.`, out);
     else out[`${prefix}${k}`] = v as string;

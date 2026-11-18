@@ -21,7 +21,7 @@ describe("plain host errors", () => {
   it("joins: a bad code is one plain line, and the raw text goes to the log", () => {
     const raw = "cua: unauthenticated: host setup failed at register: relay: pairing code is not valid";
     const text = plainJoinError(new Error(raw));
-    expect(text).toBe("That code didn't work. It may be used, expired or mistyped. Make a new one in Add a computer.");
+    expect(text).toBe("That code didn't work. It may be used, expired or mistyped. Make a new one in Add a machine.");
     expect(warn).toHaveBeenCalledWith(expect.any(String), raw);
   });
 
@@ -51,7 +51,7 @@ describe("plain host errors", () => {
 
   it("pairing: an unregistered computer is told to set up first", () => {
     const text = plainPairingError(new Error("not found: relay: no such device"));
-    expect(text).toBe("This computer isn't set up for access yet. Set it up first, then add computers.");
+    expect(text).toBe("This machine isn't set up for access yet. Set it up first, then add machines.");
   });
 
   it("pairing: other failures keep a plain reason", () => {

@@ -20,6 +20,7 @@
  *
  *   { type: "surfaces", update: SurfaceState[], remove: string[] }
  *   { type: "focus", surfaceId: string | null }    // give keys to a viewer, or take them back
+ *   { type: "prewarm", spaceId: string }           // intent to open a Space (stream-intent.ts)
  *
  * Host → page (`cua:event`):
  *
@@ -33,6 +34,11 @@
  * (`LiveStreamSession(provider: backend.streamProvider(id:))`); the page
  * never sees a ticket or a frame.
  */
+
+/** The page's panes moved (a split dragged, a dock changed): the reporter
+ * measures every slot at once, in the same frame, so the host's layer never
+ * trails the pane by a frame. Dispatched on `window` after the layout commits. */
+export const LAYOUT_CHANGE_EVENT = "cua:layout-change";
 
 export interface SurfaceRect {
   x: number;
@@ -50,12 +56,15 @@ export interface SurfaceState {
   tier: SurfaceTier;
   /** Pointer, scroll and keys go to the Space (the viewer); a tile passes them to the page. */
   interactive: boolean;
+  /** One window of the Space instead of its desktop: its handle from the Space's window list (a window another
+   * Space shows here is `xs:…`). Absent: the desktop. */
+  windowId?: string;
   /** Where the video goes, inside the slot's border. */
   rect: SurfaceRect;
   /** The part of `rect` its scroll containers and the viewport leave visible; null when none is. */
   clip: SurfaceRect | null;
   radius: number;
-  /** A dialog (or anything else on top, but floating UI) covers part of the slot: the host hides the video. */
+  /** A dialog (or anything else on top, but floating UI) covers part of the slot, or a modal dialog is open (any slot, the viewer too): the host hides the video. */
   occluded: boolean;
   /** Floating page UI over the slot (a menu, a popover, a tooltip, a toast, a tile's checkbox and power button while they show), in the same coordinates,
    * inside `clip`: the host cuts the video out there and keeps the rest playing. */
@@ -66,12 +75,15 @@ export interface SurfaceState {
 
 export type StreamSurfaceMessage =
   | { type: "surfaces"; update: SurfaceState[]; remove: string[] }
-  | { type: "focus"; surfaceId: string | null };
+  | { type: "focus"; surfaceId: string | null }
+  /** The pointer is heading for a Space (its tile, row or link): the host opens its viewer stream now. */
+  | { type: "prewarm"; spaceId: string };
 
 export type SurfacePhase = "connecting" | "live" | "failed";
 
 export interface VideoHandler {
-  postMessage(message: StreamSurfaceMessage): void;
+  /** WebKit returns a promise that rejects when the host removed the handler. */
+  postMessage(message: StreamSurfaceMessage): unknown;
 }
 
 interface VideoHostWindow {

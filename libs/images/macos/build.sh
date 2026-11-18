@@ -33,7 +33,7 @@
 #                  $CUA_MACOS_SPACESD_SOURCE. Recorded in the image manifest
 #                  and /etc/cua-image/spacesd-source. With --app the doctor
 #                  expects the bundle's own build-info git_sha.
-#   --push TAG     after the gate passes, `lume push` TAG to the macos repo.
+#   --push TAG     after the gate passes, `lume push` TAG to the macos repo
 #                  TAG must be a new immutable pin of this tier
 #                  (<version>[-slim|-xcode[-X.Y]]-<yyyymmdd>-<sha7>);
 #                  scripts/images/check-tag-safety.sh refuses anything else.
@@ -133,6 +133,8 @@ want = {  # claim -> versions.env key, per tier
     ("full", "tools", "pnpm"): "PNPM_VERSION", ("full", "tools", "go"): "GO_VERSION",
     ("full", "tools", "rustc"): "RUST_VERSION", ("full", "tools", "cargo"): "RUST_VERSION",
     ("xcode", "tools", "xcodebuild"): "XCODE_VERSION",
+    ("xcode", "tools", "sccache"): "SCCACHE_VERSION", ("xcode", "tools", "xcodegen"): "XCODEGEN_VERSION",
+    ("xcode", "tools", "pod"): "COCOAPODS_VERSION",
 }
 bad = []
 for (tier, kind, name), key in want.items():
@@ -168,17 +170,8 @@ cp "$HERE"/files/*.sh "$HERE"/files/*.plist "$HERE/image.json" "$HERE/versions.e
 # This tier's downloads: fetched once into the cache, checked, then linked
 # into the setup share (cache/).
 mkdir -p "$CACHE" "$SETUP/cache"
-fetch() {  # URL SHA256
-    local f; f="$CACHE/$(basename "$1")"
-    if [ ! -f "$f" ] || [ "$(shasum -a 256 "$f" | cut -d' ' -f1)" != "$2" ]; then
-        log "fetching $1"
-        curl -fsSL --retry 3 -o "$f.part" "$1"
-        [ "$(shasum -a 256 "$f.part" | cut -d' ' -f1)" = "$2" ] ||
-            { rm -f "$f.part"; echo "checksum mismatch: $1" >&2; exit 1; }
-        mv "$f.part" "$f"
-    fi
-    ln -f "$f" "$SETUP/cache/" 2>/dev/null || cp "$f" "$SETUP/cache/"
-}
+# shellcheck source=files/fetch.sh
+. "$HERE/files/fetch.sh"
 case "$TIER" in
     slim) fetch "$CHROME_URL" "$CHROME_SHA256" ;;
     full)
@@ -186,11 +179,30 @@ case "$TIER" in
         fetch "$UV_URL" "$UV_SHA256"; fetch "$NODE_URL" "$NODE_SHA256"; fetch "$PNPM_URL" "$PNPM_SHA256"
         fetch "$GO_URL" "$GO_SHA256"; fetch "$RUSTUP_URL" "$RUSTUP_SHA256" ;;
     xcode)
+        # Xcode comes from this Mac, never from a sign-in: the pinned .xip in
+        # the runner's cache if it has one, else the pinned Xcode.app installed
+        # on the runner (what a GitHub macOS image has preinstalled too).
+        # shellcheck source=files/xcode-source.sh
+        . "$HERE/files/xcode-source.sh"
+        mkdir -p "$SETUP/xcode"
         xip="$XCODE_CACHE/$XCODE_XIP"
-        [ -f "$xip" ] || { echo "$xip is missing: put the Xcode $XCODE_VERSION .xip in CUA_XCODE_CACHE" >&2; exit 2; }
-        [ "$(shasum -a 1 "$xip" | cut -d' ' -f1)" = "$XCODE_XIP_SHA1" ] ||
-            { echo "checksum mismatch: $xip" >&2; exit 1; }
-        ln -f "$xip" "$SETUP/cache/" 2>/dev/null || cp "$xip" "$SETUP/cache/" ;;
+        if [ -f "$xip" ]; then
+            [ "$(shasum -a 1 "$xip" | cut -d' ' -f1)" = "$XCODE_XIP_SHA1" ] ||
+                { echo "checksum mismatch: $xip" >&2; exit 1; }
+            ln -f "$xip" "$SETUP/cache/" 2>/dev/null || cp "$xip" "$SETUP/cache/"
+        else
+            app=""
+            for c in "${CUA_XCODE_APP:-}" "/Applications/Xcode_$XCODE_VERSION.app" "$(xcode-select -p 2>/dev/null | sed 's|/Contents/Developer$||')" /Applications/Xcode*.app; do
+                [ -n "$c" ] && [ -d "$c" ] && [ "$(plist "$c" CFBundleShortVersionString)" = "$XCODE_VERSION" ] && { app="$c"; break; }
+            done
+            [ -n "$app" ] || { echo "no Xcode $XCODE_VERSION on this runner: put $XCODE_XIP in $XCODE_CACHE, or install Xcode $XCODE_VERSION (/Applications/Xcode_$XCODE_VERSION.app)" >&2; exit 2; }
+            [ "$(/usr/libexec/PlistBuddy -c 'Print :ProductBuildVersion' "$app/Contents/version.plist")" = "$XCODE_BUILD" ] ||
+                { echo "$app is not build $XCODE_BUILD" >&2; exit 1; }
+            log "using the runner's $app (build $XCODE_BUILD)"
+            stage_xcode "$app" "$SETUP/xcode"
+            : >"$SETUP/xcode/pinned"
+        fi
+        fetch_xcode_tools ;;
 esac
 "$SETUP/Cua Spacesd.app/Contents/MacOS/cua-spacesd" build-info >"$OUT/build-info.json"
 # A prebuilt bundle: the doctor checks the guest runs exactly that build.

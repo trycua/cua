@@ -2,6 +2,8 @@
 # Run the canonical Rust desktop matrix on a Linux user session.
 # Scenario definitions and assertions live in the Rust integration test.
 set -euo pipefail
+# macOS shells default to 256 open files, too few for the cua-spaces test binaries (see scripts/ci/tests/test_nofile_limit.py).
+[ "$(ulimit -Sn)" = unlimited ] || [ "$(ulimit -Sn)" -ge 10240 ] || ulimit -Sn 10240 2>/dev/null || ulimit -Sn "$(ulimit -Hn)" 2>/dev/null || true # nofile-limit
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
@@ -397,6 +399,10 @@ if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
     run_test x11-unpublished-pid \
       cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
         --test x11_unpublished_pid_linux_test -- \
+        --ignored --nocapture --test-threads=1
+    run_test x11-foreground-restore \
+      cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+        --test x11_foreground_restore_linux_test -- \
         --ignored --nocapture --test-threads=1
   else
     limitation="The unpublished-_NET_WM_PID case maps a bare X11 client and runs in the canonical X11 lane."

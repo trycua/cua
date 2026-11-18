@@ -20,14 +20,15 @@ impl Drivers {
         }
         // An agent that switches users itself (`process.run_as` mode `root`
         // or `capabilities`, which also covers gVisor where `sudo` cannot
-        // work) is as good as root: no `sudo` anywhere.
+        // work) needs no `sudo`, but it may not be root itself: every
+        // switch, to root too, names the user (see [`as_user`]).
         if native_run_as(c).await {
             self.0.lock().await.insert(id.to_string(), "root".into());
             return "root".into();
         }
         let user = match c.run(Command::new("id").arg("-un")).await {
             Ok(o) if o.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
-            _ => "root".to_string(),
+            _ => UNNAMED.to_string(),
         };
         self.0.lock().await.insert(id.to_string(), user.clone());
         user
@@ -36,6 +37,16 @@ impl Drivers {
     pub async fn forget(&self, id: &str) {
         self.0.lock().await.remove(id);
     }
+}
+
+/// What [`Drivers::of`] reports for an agent that cannot say who it runs as
+/// (no `id`, as on Windows). It cannot switch users either: root work runs
+/// as the agent, unnamed, and nothing goes through `sudo`.
+pub const UNNAMED: &str = "";
+
+/// Whether a guest agent running as `driver` acts for users without `sudo`.
+pub fn without_sudo(driver: &str) -> bool {
+    driver == "root" || driver == UNNAMED
 }
 
 /// Whether the guest agent switches users itself (feature `process.run_as`,
@@ -67,11 +78,19 @@ pub fn as_user(
     command: String,
     args: Vec<String>,
 ) -> (String, Vec<String>, String) {
-    if user.is_empty() || user == driver {
+    if user.is_empty() || (driver == UNNAMED && user == "root") {
         return (command, args, String::new());
     }
+    if driver == UNNAMED {
+        return (command, args, user.to_string());
+    }
+    // "root" is an agent that switches users itself, which in the Linux
+    // images is `cua` holding CAP_SETUID: an unnamed user would be `cua`.
     if driver == "root" {
         return (command, args, user.to_string());
+    }
+    if user == driver {
+        return (command, args, String::new());
     }
     let mut a = vec![
         "-n".to_string(),
@@ -86,6 +105,29 @@ pub fn as_user(
     ("/usr/bin/sudo".to_string(), a, String::new())
 }
 
+/// The `run_as` of a cua-spacesd file call made as `user`. An agent that
+/// switches users itself (driver "root") may be `cua` holding CAP_SETUID,
+/// which an unnamed call runs as, so the user is named, root included.
+/// Any other agent runs the call as itself (callers switch through `sudo`
+/// where that is not enough).
+pub fn file_run_as(driver: &str, user: &str) -> String {
+    if driver == "root" {
+        user.to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// The script that creates guest user `user` with a home directory and
+/// passwordless `sudo`. Its stderr says why a creation failed.
+pub fn create_user_script(user: &str) -> String {
+    format!(
+        "id -u {user} >/dev/null 2>&1 && exit 0; \
+         (useradd -m -s /bin/bash {user} || adduser -D -s /bin/sh {user}) >/dev/null || exit 1; \
+         if [ -d /etc/sudoers.d ]; then echo '{user} ALL=(ALL:ALL) NOPASSWD: ALL' > /etc/sudoers.d/90-{user} && chmod 440 /etc/sudoers.d/90-{user}; fi"
+    )
+}
+
 /// [`as_user`] with a working directory: when the switch goes through
 /// `sudo`, the directory is entered after it (the driver may not be allowed
 /// into another user's home), so the cwd for cua-spacesd is empty.
@@ -96,7 +138,7 @@ pub fn as_user_in(
     args: Vec<String>,
     cwd: String,
 ) -> (String, Vec<String>, String, String) {
-    if user.is_empty() || user == driver || driver == "root" {
+    if user.is_empty() || user == driver || without_sudo(driver) {
         let (c, a, u) = as_user(driver, user, command, args);
         return (c, a, u, cwd);
     }
@@ -255,6 +297,15 @@ mod tests {
         assert_eq!(u, "");
         let (c, _, u) = as_user("root", "user", "/bin/bash".into(), vec![]);
         assert_eq!((c.as_str(), u.as_str()), ("/bin/bash", "user"));
+        // A driver that switches by capability is not root itself: root is
+        // named, or the command runs as the agent's own user.
+        let (c, _, u) = as_user("root", "root", "/bin/sh".into(), vec![]);
+        assert_eq!((c.as_str(), u.as_str()), ("/bin/sh", "root"));
+        // An agent that cannot say who it is cannot switch: root runs as it.
+        let (c, _, u) = as_user(UNNAMED, "root", "/bin/sh".into(), vec![]);
+        assert_eq!((c.as_str(), u.as_str()), ("/bin/sh", ""));
+        let (c, _, u) = as_user(UNNAMED, "user", "/bin/sh".into(), vec![]);
+        assert_eq!((c.as_str(), u.as_str()), ("/bin/sh", "user"));
         let (c, _, u) = as_user("cua", "cua", "/bin/bash".into(), vec![]);
         assert_eq!((c.as_str(), u.as_str()), ("/bin/bash", ""));
         // The directory is entered after the switch.
@@ -304,6 +355,37 @@ mod tests {
         );
         let (c, a, _) = as_user("cua", "root", "id".into(), vec![]);
         assert_eq!(unwrap_switch(&c, &a), ("id".to_string(), vec![], None));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod create_user_tests {
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn a_failed_useradd_says_why() {
+        let bin = tempfile::tempdir().unwrap();
+        for (name, body) in [
+            ("id", "exit 1"),
+            (
+                "useradd",
+                "echo 'useradd: cannot lock /etc/passwd' >&2; exit 1",
+            ),
+            ("adduser", "echo 'adduser: not found' >&2; exit 127"),
+        ] {
+            let p = bin.path().join(name);
+            std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let out = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(super::create_user_script("user"))
+            .env("PATH", bin.path())
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("useradd: cannot lock /etc/passwd"), "{err:?}");
     }
 }
 

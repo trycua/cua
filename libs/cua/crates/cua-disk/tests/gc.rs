@@ -80,13 +80,17 @@ fn qemu_sandbox(l: &Layout, name: &str, backing: &Path) {
         ports: Default::default(),
         vnc_display: None,
         qmp_port: None,
+        qmp_socket: None,
+        vnc_password: None,
         pid: None,
         accel: String::new(),
         ssh: None,
         restrict_network: false,
         egress: None,
+        network: None,
         netns: false,
         pasta_pid: None,
+        gateway_control: None,
         extra_args: vec![],
         snapshots: vec![],
         paused: false,
@@ -102,6 +106,7 @@ fn qemu_sandbox(l: &Layout, name: &str, backing: &Path) {
         shared_memory: false,
         pinned: false,
         bulk: false,
+        tpm: false,
     };
     std::fs::write(dir.join("state.json"), serde_json::to_vec(&st).unwrap()).unwrap();
 }

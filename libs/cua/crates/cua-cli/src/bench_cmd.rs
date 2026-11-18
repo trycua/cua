@@ -109,6 +109,8 @@ pub(crate) const FILES: &[(&str, &str)] = embed![
     "fork-batch/bench.py",
     "fork-batch/check.py",
     "fork-batch/baseline.json",
+    "repo-clone/bench.py",
+    "repo-clone/README.md",
     "channel/run.sh",
     "channel/check.py",
     "channel/baselines/macos-m2max-qemu.json",

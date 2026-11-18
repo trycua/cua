@@ -94,11 +94,15 @@ impl Persistent {
     }
 
     /// Sets who can task, control and approve `name` from `v` (an object
-    /// with any of `task`, `control`, `approve`); the owner and admins
-    /// only. A system note in the thread says who changed it.
+    /// with any of `task`, `control`, `approve`); the Space's owner and
+    /// admins, and the agent's own owner. A system note in the thread says
+    /// who changed it.
     pub fn set_rights(&self, caller: &Caller, name: &str, v: &Value) -> Result<AgentRecord> {
-        policy::may_set_rights(self.role_of(caller), name)?;
+        let role = self.role_of(caller);
         let rec = self.get(name)?;
+        let me = self.author_for(caller).id;
+        let owns = !me.is_empty() && super::identity::stored_of(&rec, &self.owner()).owner.id == me;
+        policy::may_set_rights(role, name, owns)?;
         let next = Self::rights_of(&rec).with(v)?;
         if Some(&next) == rec.policy.rights.as_ref()
             || (rec.policy.rights.is_none() && next == Rights::default())

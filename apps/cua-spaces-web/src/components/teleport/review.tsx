@@ -38,9 +38,7 @@ export function TeleportReview({
       {r.offersVault ? <Source review={r} teleport={teleport} /> : null}
 
       {fromVault ? (
-        <Group title="Saved in the Keyvault">
-          {vault ? <SavedItems view={vault.view} query={vault.query} teleport={teleport} /> : <Reading />}
-        </Group>
+        <Group title="Saved in the Keyvault">{vault ? <SavedItems view={vault.view} query={vault.query} teleport={teleport} /> : <Reading />}</Group>
       ) : null}
 
       {!fromVault && r.offersDomains ? (
@@ -86,9 +84,7 @@ export function TeleportReview({
             />
             <span className="min-w-0 flex-1">
               <span className="block text-[13px]">{r.passwordsLabel}</span>
-              <span className="block text-xs text-muted-foreground">
-                Off by default. Passwords are re-encrypted for the browser in the Space and need that browser to have been opened once.
-              </span>
+              <span className="block text-xs text-muted-foreground">The Space's browser must have been opened once.</span>
             </span>
             {r.includePasswords && r.passwordSummary ? (
               <span className="shrink-0 text-xs text-muted-foreground tabular-nums" data-review-passwords-summary>
@@ -150,7 +146,7 @@ export function TeleportReview({
               data="ack-relay"
               checked={r.acknowledgedRelayPlaintext}
               onChange={(value) => teleport.send({ type: "acknowledge-relay-plaintext", value })}
-              note="This Space predates end-to-end sealing. The relay could read these secrets in transit."
+              note="This Space is too old for end-to-end encryption. Cua's servers could read these while sending."
             >
               Send without end-to-end encryption
             </Gate>
@@ -221,7 +217,19 @@ function Group({ title, aside, children }: { title?: string; aside?: ReactNode; 
   );
 }
 
-function Gate({ data, checked, onChange, note, children }: { data: string; checked: boolean; onChange: (v: boolean) => void; note?: string; children: ReactNode }) {
+function Gate({
+  data,
+  checked,
+  onChange,
+  note,
+  children,
+}: {
+  data: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  note?: string;
+  children: ReactNode;
+}) {
   return (
     <label className="flex cursor-default items-start gap-2.5" data-gate={data} data-checked={checked || undefined}>
       <Checkbox className="mt-0.5" checked={checked} onCheckedChange={onChange} />

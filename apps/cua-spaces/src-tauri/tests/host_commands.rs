@@ -125,6 +125,31 @@ async fn onboarding_persists_and_reports_the_installer_mode() {
 }
 
 #[tokio::test]
+async fn reset_forgets_the_first_run_and_only_that() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = Arc::new(FakeHost::default());
+    let cmds = commands(dir.path(), fake.clone(), None);
+    // Nothing saved yet: a reset is no change.
+    cmds.reset_onboarding().unwrap();
+    cmds.complete_onboarding("host").unwrap();
+    let other = dir.path().join("config/settings.json");
+    std::fs::write(&other, "{}").unwrap();
+    assert!(cmds.onboarding_state().completed);
+
+    cmds.reset_onboarding().unwrap();
+    assert!(!cmds.onboarding_state().completed);
+    assert!(!dir.path().join("config/onboarding.json").exists());
+    assert!(other.is_file(), "nothing else is touched");
+    // Twice is the same as once.
+    cmds.reset_onboarding().unwrap();
+    assert!(
+        !commands(dir.path(), fake, None)
+            .onboarding_state()
+            .completed
+    );
+}
+
+#[tokio::test]
 async fn host_flow_setup_stop_resume_remove() {
     let dir = tempfile::tempdir().unwrap();
     let fake = Arc::new(FakeHost::default());
@@ -249,7 +274,8 @@ async fn cua_host_backend_runs_the_relay_flow_end_to_end() {
             relay_url: Some(relay.url.clone()),
             name: Some("Studio".into()),
             allow: Some(vec!["grace@example.com".into()]),
-            // Start with Spaces off to walk the off-to-on switch below.
+            // The screen is shared, with Spaces off to walk the off-to-on switch below.
+            profile: Some("desktop".into()),
             provide_spaces: Some(false),
             ..Default::default()
         })

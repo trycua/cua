@@ -123,6 +123,60 @@ impl Telemetry {
         ))
     }
 
+    /// An agent joining a Space reached `phase` (see
+    /// [`crate::schema::JOIN_PHASES`]), `ms_since_post` after the message
+    /// that woke it. One event per phase; the run is sent as a per-install
+    /// salted hash, never its id, and nothing about the Space or the message.
+    #[allow(clippy::too_many_arguments)]
+    pub fn agent_join_phase(
+        &self,
+        run_id: &str,
+        phase: &str,
+        harness: &str,
+        runtime: &str,
+        cold: bool,
+        ms_since_post: u64,
+        tool: &str,
+        failure: &str,
+    ) -> Captured {
+        if self.in_agent_run() || !self.is_enabled() {
+            return Captured::Disabled;
+        }
+        let run = self.identity().hash("agent_join_run", run_id);
+        match events::agent_join_phase(
+            phase,
+            harness,
+            runtime,
+            cold,
+            ms_since_post,
+            &run,
+            tool,
+            failure,
+        ) {
+            Some(ev) => self.capture(ev),
+            None => Captured::Invalid(format!("unknown join phase {phase}")),
+        }
+    }
+
+    /// What the repo cache did for one clone (`cua_repo_cache`): only fixed
+    /// words and numbers, never a URL, a repository name or a path.
+    pub fn repo_cache(
+        &self,
+        outcome: &str,
+        source: &str,
+        bytes_saved: u64,
+        seconds_saved: u64,
+        reason: &str,
+    ) -> Captured {
+        if !self.is_enabled() {
+            return Captured::Disabled;
+        }
+        match events::repo_cache(outcome, source, bytes_saved, seconds_saved, reason) {
+            Some(ev) => self.capture(ev),
+            None => Captured::Invalid(format!("unknown repo cache outcome {outcome}")),
+        }
+    }
+
     /// Whether this install started `run_id` and has not seen it end yet.
     pub fn agent_run_pending(&self, run_id: &str) -> bool {
         self.pending_path(run_id).is_some_and(|p| p.exists())

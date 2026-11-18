@@ -12,10 +12,7 @@ try {
   // path, so it would only ever miss there. Linux /tmp is shared between
   // users, so use the per-user cache dir instead.
   if (!process.env.APPIMAGE) {
-    const root =
-      process.platform === "linux"
-        ? process.env.XDG_CACHE_HOME || NodePath.join(NodeOS.homedir(), ".cache")
-        : NodeOS.tmpdir();
+    const root = process.platform === "linux" ? process.env.XDG_CACHE_HOME || NodePath.join(NodeOS.homedir(), ".cache") : NodeOS.tmpdir();
     NodeModule.enableCompileCache?.(NodePath.join(root, "cua-spaces", "compile-cache"));
   }
 } catch {

@@ -31,6 +31,20 @@ It exposes `org.cua.WinRects` on the session bus:
 - `SetCursorColor(fill_color)`: apply the stable per-session fill selected by
   cua-driver. The helper validates the `#RRGGBB` value, updates the matching
   glow, and keeps a white pointer outline.
+- `PlayCursorPath(track_json)` (API 11): play one planned move as poses
+  (`[t, x, y, float_dx, float_dy, rotation]` samples, the arrival time and
+  the float clock `[phase, hold, from]` at the last sample) from cua-driver's
+  shared motion planner, so the cursor follows the same path, float and
+  `cursor.rotate` turn as on every other desktop. The helper interpolates the
+  samples, then carries the float on at rest from that clock, so its phase
+  never restarts. It plans nothing itself. A single sample is a snap. A click
+  or an action cue at rest eases the float out and holds it at 0.
+- `SetCursorLook(look_json)` (API 11): the float (loop length, sway, bob,
+  lift, tilt and the rest envelope; `null` for `cursor.float off`) and the
+  `cursor.halo` glow (colour,
+  radius, peak opacity, gradient stops, body offset). Until a driver sends a
+  look, the helper keeps its older glow. Both methods validate every field
+  and ignore malformed input.
 - `CaptureWindow(id,pid) -> png_base64` (API 9): snapshot one window's own
   compositor actor (`paint_to_content`), not the stage, so a covering window
   never shows and the target is not activated. `pid` 0 skips the owner check.
@@ -58,7 +72,7 @@ Existing v8/v10 users on GNOME 50 must run
 `gnome-extensions disable winrects@cua` before further diagnostics and keep
 it disabled. Replacing files does not unload an already-active extension.
 
-API 10 is retained because the method set is unchanged. T3 Code's v10 does
+API 11 adds `PlayCursorPath` and `SetCursorLook` and keeps this guard. T3 Code's v10 does
 not have this safety guard. Both installers overwrite an installed helper
 of the same version, so whichever app installed last determines whether the
 guard is present. Keep `winrects@cua` disabled on GNOME 50 regardless.

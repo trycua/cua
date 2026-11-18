@@ -11,12 +11,17 @@ import { Segmented } from "@/components/ui/segmented";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 
+import { OtherMachineBlock, useThisAndOthers } from "./other-machine-block";
+
 /**
  * What the cua MCP server is and how an agent gets it: the agents on this
  * machine (`agents.setup`, the SDK's agent setup), one button that sets up
  * every installed one (`agents.configure`, the same as `cua agents setup`),
- * and, under a closed "Advanced", the config entry for doing it by hand. Rows
- * show the agent and its state only; file paths stay in Advanced.
+ * which machine that was and the others it did not touch, "On another
+ * machine" (the host to name, the exact commands, the permissions and the
+ * reload note for an agent that runs somewhere else), and, under a closed
+ * "Advanced", the config entry for doing it by hand. Rows show the agent and
+ * its state only; file paths stay in Advanced.
  */
 
 type Manual = "claude-code" | "codex" | "hermes" | "openclaw";
@@ -48,6 +53,9 @@ const MANUAL_OPTIONS = (Object.keys(MANUAL) as Manual[]).map((value) => ({ value
 
 export function ConnectAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const { agentSetup, configureAgents } = useAgents();
+  // Which machine this edits, and the others: Connect never reaches them.
+  const { here, hereName, others } = useThisAndOthers();
+  const [doneOn, setDoneOn] = useState<string | null>(null);
   const [rows, setRows] = useState<AgentSetupRow[] | null>(null);
   const [detectError, setDetectError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -57,6 +65,7 @@ export function ConnectAgentDialog({ open, onOpenChange }: { open: boolean; onOp
     if (!open) return;
     let live = true;
     setDetectError(null);
+    setDoneOn(null);
     agentSetup().then(
       (r) => live && setRows(r),
       (e: unknown) => {
@@ -78,7 +87,8 @@ export function ConnectAgentDialog({ open, onOpenChange }: { open: boolean; onOp
     configureAgents()
       .then((r) => {
         setRows(r);
-        toast("Agents set up", { description: "Restart an agent that is already open so it loads the server." });
+        setDoneOn(hereName);
+        toast(`Agents set up on ${hereName}`, { description: "Restart an agent that is already open so it loads the server." });
       })
       .catch((e: unknown) => toast("Couldn't set up agents", { description: e instanceof Error ? e.message : String(e) }))
       .finally(() => setBusy(false));
@@ -90,13 +100,16 @@ export function ConnectAgentDialog({ open, onOpenChange }: { open: boolean; onOp
         <div className="max-h-[84vh] overflow-y-auto px-6 pt-5 pb-6">
           <DialogTitle className="text-[15px] font-semibold">Connect an agent</DialogTitle>
           <DialogDescription className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
-            Coding agents reach Cua through the cua MCP server (<code className="font-mono text-xs">cua mcp</code>) and the cua skills.
-            Once an agent has them, it can create Spaces, work inside them and start persistent agents. Its runs then show up on this page.
+            Coding agents reach Cua through the cua MCP server (<code className="font-mono text-xs">cua mcp</code>) and the cua skills. Connected agents can
+            make and use Spaces. Their runs show up here.
           </DialogDescription>
 
           <section className="mt-5">
             <div className="mb-2 flex items-center justify-between gap-3">
-              <h3 className="text-xs font-semibold">On this computer</h3>
+              <h3 className="text-xs font-semibold" data-connect-here="">
+                On {hereName}
+                {here ? <span className="ml-1.5 font-normal text-muted-foreground">this computer</span> : null}
+              </h3>
               {rows && rows.length > 0 ? (
                 <Button size="sm" variant={pending.length ? "default" : "outline"} disabled={busy || pending.length === 0} onClick={setUpAll}>
                   {busy ? "Setting up…" : pending.length ? `Set up ${pending.length === 1 ? "1 agent" : `${pending.length} agents`}` : "All set up"}
@@ -118,10 +131,28 @@ export function ConnectAgentDialog({ open, onOpenChange }: { open: boolean; onOp
                 </ul>
               )}
             </div>
+            {doneOn ? (
+              <p className="mt-2 text-xs" data-connect-done="">
+                Set up on {doneOn}.{" "}
+                {others.length > 0 ? (
+                  <span className="text-muted-foreground" data-connect-others="">
+                    Not touched: {others.join(", ")}. An agent on {others.length === 1 ? "that computer" : "one of those computers"} needs its own setup (see On
+                    another computer below).
+                  </span>
+                ) : null}
+              </p>
+            ) : null}
             <p className="mt-2 text-xs text-muted-foreground">
-              Setting up edits each agent's own config and keeps everything else in it. <code className="font-mono">cua agents setup</code> in a terminal does the
-              same, and <code className="font-mono">cua agents remove</code> undoes it.
+              Setting up edits each agent's own config and keeps everything else in it. <code className="font-mono">cua agents setup</code> in a terminal does
+              the same, and <code className="font-mono">cua agents remove</code> undoes it.
             </p>
+          </section>
+
+          <section className="mt-6">
+            <h3 className="mb-1 text-xs font-semibold">On another computer</h3>
+            <div className="-mx-4">
+              <OtherMachineBlock />
+            </div>
           </section>
 
           <details className="group mt-6" data-connect-advanced="">

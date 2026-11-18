@@ -826,6 +826,11 @@ pub fn complete_onboarding(state: State<'_, HostState>, mode: String) -> CmdResu
     state.0.complete_onboarding(&mode)
 }
 
+#[tauri::command]
+pub fn reset_onboarding(state: State<'_, HostState>) -> CmdResult<()> {
+    state.0.reset_onboarding()
+}
+
 // ---------------------------------------------------------------- launch at login
 
 /// This platform's login item (`crate::login_item`).

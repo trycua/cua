@@ -45,6 +45,9 @@ pub struct FakeLume {
     pub pulling: BTreeMap<String, u64>,
     /// The server stopped (a killed `lume serve`): it accepts nothing more.
     pub dead: bool,
+    /// A Lume with vsock forwards: a run with `forwards` reports these host
+    /// ports (guest port as a string key) with the guest agent answering.
+    pub vsock_forwards: Option<Value>,
 }
 
 /// An async pull: it reports `step` more bytes of `total` on each
@@ -145,6 +148,7 @@ fn handle(st: &mut FakeLume, method: &str, path: &str, body: Value) -> (u16, Val
             st.vms.insert(new, vm);
             (200, json!({ "message": "cloned" }))
         }
+        ("GET", "/lume/vms") => (200, Value::Array(st.vms.values().cloned().collect())),
         ("GET", _) => match st.vms.get_mut(name) {
             Some(vm) => {
                 let seen = vm.clone();
@@ -186,6 +190,11 @@ fn handle(st: &mut FakeLume, method: &str, path: &str, body: Value) -> (u16, Val
                 vm["crashing"] = json!(true);
             } else {
                 vm["ipAddress"] = json!("192.0.2.10");
+            }
+            let wants_forwards = body["forwards"].as_array().is_some_and(|f| !f.is_empty());
+            if let (Some(forwards), true) = (&st.vsock_forwards, wants_forwards) {
+                vm["vsock"] = json!(true);
+                vm["forwards"] = forwards.clone();
             }
             (202, json!({ "message": "starting" }))
         }

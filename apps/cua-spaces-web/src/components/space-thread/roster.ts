@@ -8,7 +8,18 @@
  * names the composer's `@` picker offers.
  */
 
-import { DEFAULT_AGENT_RIGHTS, type AgentMember, type AgentRight, type AgentRights, type MemberIdentity, type ShareEntry, type ThreadAuthor, type ThreadEntry, type ThreadRole } from "@/bridge";
+import {
+  DEFAULT_AGENT_RIGHTS,
+  type ThreadFailure,
+  type AgentMember,
+  type AgentRight,
+  type AgentRights,
+  type MemberIdentity,
+  type ShareEntry,
+  type ThreadAuthor,
+  type ThreadEntry,
+  type ThreadRole,
+} from "@/bridge";
 import type { MentionCandidate } from "@/lib/mentions";
 
 export interface RosterAgent {
@@ -32,6 +43,10 @@ export interface RosterAgent {
   identity: MemberIdentity | null;
   /** Another agent here uses the same name: its owner shows after the AI tag. */
   collides: boolean;
+  /** What the Space calls it (`@claude`); `name` is its key on this machine (`claude-2` in a second Space). */
+  handle: string;
+  /** Why it failed, typed, with the complete text (the member list says one word; Show details has the rest). */
+  failure: ThreadFailure | null;
 }
 
 /** How an author shows in the thread. */
@@ -93,10 +108,27 @@ export function personLabel(who: string): string {
 
 const AGENT_CAPTION: Record<string, string> = { working: "Working", waiting: "Waiting", paused: "Paused", failed: "Failed" };
 
+/** What the chip says: what it is doing, but never "Starting" or "Installing" while a turn is under way (it reads as
+ * stuck; the thread's live row carries the steps). */
+export function agentCaption(status: string, activity: string | null | undefined): string | null {
+  if (status === "working" && activity && /^(starting|installing|connecting|preparing)\b/i.test(activity.trim())) return "Working";
+  return activity ?? AGENT_CAPTION[status] ?? null;
+}
+
 /** Where an agent posts from, under its name when it isn't busy: its computer, or the Space it runs in. */
 export function postsFrom(identity: MemberIdentity): string {
   if (identity.device) return identity.device.name;
   return identity.origin === "space" ? "Runs in this Space" : "Connected";
+}
+
+/** How long since a connected agent last asked its inbox before it reads as one that only runs when someone messages it. */
+const LOOP_QUIET_MS = 2 * 60_000;
+
+/** The line under an idle agent's name: a connected one that is not watching the thread (a CLI session that runs only when prompted) says it waits for you; others say where they post from. */
+export function idleCaption(identity: MemberIdentity, nowMs = Date.now()): string {
+  if (identity.origin === "external" && identity.state === "active" && (identity.lastSeenMs == null || nowMs - identity.lastSeenMs > LOOP_QUIET_MS))
+    return "Waits for you to message it";
+  return postsFrom(identity);
 }
 
 /** The agents whose name another agent here also uses (by handle). The daemon's `collides` counts too. */
@@ -117,22 +149,26 @@ export function buildRoster(input: {
   harnessName: (harness: string) => string;
   /** Your role in the Space (null: a daemon that doesn't say, the owner's). */
   role?: ThreadRole | null;
+  /** Whose Space it is, when it was shared with you: only the owner sees the share list, so a guest learns the owner from here. */
+  owner?: { name: string; email?: string | null } | null;
 }): Roster {
   const agents: RosterAgent[] = input.members.map((m) => ({
     kind: "agent",
     id: `agent:${m.name}`,
     name: m.name,
+    handle: m.handle || m.name,
     // The name the agent chose; without an identity, the harness's name when it is named after it.
     label: m.identity?.displayName || agentLabel(m.name, m.harness, input.harnessName),
     harness: m.identity?.harness.id || m.harness,
     status: m.status,
     // What it says it is doing (`task #12: …`, `2 open tasks`), else the state in a word, else where it posts from.
-    caption: m.activity ?? AGENT_CAPTION[m.status] ?? (m.identity ? postsFrom(m.identity) : null),
+    caption: agentCaption(m.status, m.activity) ?? (m.identity ? idleCaption(m.identity) : null),
     dim: m.status === "asleep" || m.status === "paused",
     sessions: m.sessions,
     rights: m.rights ?? DEFAULT_AGENT_RIGHTS,
     youCan: m.youCan ?? { task: true, control: true, approve: true },
     identity: m.identity,
+    failure: m.status === "failed" ? (m.failure ?? null) : null,
     collides: false,
   }));
   const colliding = collidingNames(agents);
@@ -153,6 +189,12 @@ export function buildRoster(input: {
   const mine = input.me ? posted.get(input.me) : undefined;
   const myLabel = mine?.name || (input.identity ? personLabel(input.identity) : "You");
   add({ kind: "person", id: input.me ?? "me", label: myLabel, me: true }, input.me ?? "me", myLabel.toLowerCase());
+  if (input.owner) {
+    const label = input.owner.name || personLabel(input.owner.email ?? "");
+    const key = `share:${input.owner.email ?? label}`;
+    const author = [...posted.values()].find((a) => a.name.toLowerCase() === label.toLowerCase());
+    add({ kind: "person", id: author?.id ?? key, label, me: false }, author?.id ?? key, label.toLowerCase());
+  }
   for (const s of input.shares) {
     const label = personLabel(s.who);
     const author = [...posted.values()].find((a) => a.name.toLowerCase() === label.toLowerCase());
@@ -161,7 +203,7 @@ export function buildRoster(input: {
   for (const a of posted.values()) add({ kind: "person", id: a.id, label: a.name, me: false }, a.id, a.name.toLowerCase());
 
   const candidates: MentionCandidate[] = [
-    ...agents.map((a) => ({ handle: a.name, label: a.label, kind: "agent" as const })),
+    ...agents.map((a) => ({ handle: a.handle, label: a.label, kind: "agent" as const })),
     ...people.filter((p) => !p.me).map((p) => ({ handle: p.label.toLowerCase().replace(/\s+/g, ""), label: p.label, kind: "person" as const })),
   ];
   const labels = new Set(agents.map((a) => a.label.trim().toLowerCase()));

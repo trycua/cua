@@ -61,6 +61,15 @@ struct TeleportBridgeTests {
         #expect(!off.saveToKeyvault && off.exclude.isEmpty && off.cookieDomains == nil)
     }
 
+    /// The profile chosen in the setup sheet reaches the SDK's consent; a
+    /// blank or absent one reads Default.
+    @Test func theChosenProfileReachesTheSdkConsent() {
+        let named = WebUIBridge.teleportConsent(["approved": true, "acknowledgeSensitive": true, "profile": "Profile 1"])
+        #expect(named.profile == "Profile 1")
+        #expect(WebUIBridge.teleportConsent(["approved": true, "profile": ""]).profile == nil)
+        #expect(WebUIBridge.teleportConsent(["approved": true]).profile == nil)
+    }
+
     // MARK: - Keyvault, as the SwiftUI list does it
 
     /// The vault with a live copy of two GitHub items in Aurora.

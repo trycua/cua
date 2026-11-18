@@ -3,17 +3,17 @@
   "frames": [
     {
       "on": "local",
-      "step": "this Mac and your machines, no cloud while Your cloud is off",
+      "step": "this Mac, your machines and your connected cloud",
       "wizard": {
         "canContinue": true,
-        "cloud": null,
+        "cloud": "aws",
         "fields": [
           "os",
           "image",
           "placement",
           "kind",
           "runtime",
-          "connect-by-address"
+          "connect-cloud"
         ],
         "kindsOff": [
           "microvm | MicroVM |  | off"
@@ -27,7 +27,9 @@
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "host:lab | lab | Over Tailscale or your network | on",
-          "host:m-studio | Studio (offline) | Studio is offline. | off"
+          "host:m-studio | Studio (offline) | Studio is offline. | off",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
         ],
         "price": null,
         "resourceFacts": [
@@ -44,13 +46,11 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9–6.9 GB initially; grows with use",
-          "Name: space-000000002a",
+          "Disk: About 3–7 GB",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
-        "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
-        ]
+        "systemsOff": []
       }
     },
     {
@@ -58,14 +58,14 @@
       "step": "an offline machine cannot be chosen",
       "wizard": {
         "canContinue": true,
-        "cloud": null,
+        "cloud": "aws",
         "fields": [
           "os",
           "image",
           "placement",
           "kind",
           "runtime",
-          "connect-by-address"
+          "connect-cloud"
         ],
         "kindsOff": [
           "microvm | MicroVM |  | off"
@@ -79,7 +79,9 @@
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on",
           "host:lab | lab | Over Tailscale or your network | on",
-          "host:m-studio | Studio (offline) | Studio is offline. | off"
+          "host:m-studio | Studio (offline) | Studio is offline. | off",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
         ],
         "price": null,
         "resourceFacts": [
@@ -96,65 +98,11 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9–6.9 GB initially; grows with use",
-          "Name: space-000000002a",
+          "Disk: About 3–7 GB",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
-        "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
-        ]
-      }
-    },
-    {
-      "on": "local",
-      "step": "a hidden cloud cannot be chosen",
-      "wizard": {
-        "canContinue": true,
-        "cloud": null,
-        "fields": [
-          "os",
-          "image",
-          "placement",
-          "kind",
-          "runtime",
-          "connect-by-address"
-        ],
-        "kindsOff": [
-          "microvm | MicroVM |  | off"
-        ],
-        "placement": "local",
-        "placementError": null,
-        "placements": [
-          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
-          "---",
-          "local | This Mac | Linux, on this Mac | on *",
-          "---",
-          "host:m-mini | Mac mini | Through the Cua relay | on",
-          "host:lab | lab | Over Tailscale or your network | on",
-          "host:m-studio | Studio (offline) | Studio is offline. | off"
-        ],
-        "price": null,
-        "resourceFacts": [
-          "Kind: Container",
-          "Architecture: ARM",
-          "Disk: 2.9–6.9 GB initially; grows with use"
-        ],
-        "step": 0,
-        "summary": [
-          "System: Ubuntu 24.04",
-          "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: Linux, on this Mac",
-          "Kind: Container",
-          "Architecture: ARM",
-          "Runtime: Container on this Mac (gVisor when installed)",
-          "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9–6.9 GB initially; grows with use",
-          "Name: space-000000002a",
-          "When ready: Open the desktop"
-        ],
-        "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
-        ]
+        "systemsOff": []
       }
     },
     {
@@ -162,14 +110,14 @@
       "step": "the Mac mini on the relay",
       "wizard": {
         "canContinue": true,
-        "cloud": null,
+        "cloud": "aws",
         "fields": [
           "os",
           "image",
           "placement",
           "kind",
           "runtime",
-          "connect-by-address"
+          "connect-cloud"
         ],
         "kindsOff": [
           "microvm | MicroVM |  | off"
@@ -183,7 +131,9 @@
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
-          "host:m-studio | Studio (offline) | Studio is offline. | off"
+          "host:m-studio | Studio (offline) | Studio is offline. | off",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
         ],
         "price": null,
         "resourceFacts": [
@@ -198,12 +148,10 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
-        "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
-        ]
+        "systemsOff": []
       }
     },
     {
@@ -211,14 +159,14 @@
       "step": "macOS: the Mac mini is at its limit, the Linux box is not a Mac",
       "wizard": {
         "canContinue": false,
-        "cloud": null,
+        "cloud": "aws",
         "fields": [
           "os",
           "image",
           "placement",
           "kind",
           "runtime",
-          "connect-by-address"
+          "connect-cloud"
         ],
         "kindsOff": [
           "container | Container |  | off",
@@ -233,7 +181,9 @@
           "---",
           "host:m-mini | Mac mini (at its limit) | Mac mini is at its limit: Apple's macOS license allows two macOS VMs per Mac. | off *",
           "host:lab | lab (not a Mac) | lab cannot run macOS: it is not a Mac. | off",
-          "host:m-studio | Studio (offline) | Studio is offline. | off"
+          "host:m-studio | Studio (offline) | Studio is offline. | off",
+          "---",
+          "aws | AWS · us-west-2 | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | on"
         ],
         "price": null,
         "resourceFacts": [
@@ -248,12 +198,10 @@
           "Kind: Virtual machine",
           "Runtime: Virtual machine on Mac mini",
           "Resources: 4 cores, 8 GB memory",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
-        "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
-        ]
+        "systemsOff": []
       }
     },
     {
@@ -261,14 +209,14 @@
       "step": "Linux again",
       "wizard": {
         "canContinue": true,
-        "cloud": null,
+        "cloud": "aws",
         "fields": [
           "os",
           "image",
           "placement",
           "kind",
           "runtime",
-          "connect-by-address"
+          "connect-cloud"
         ],
         "kindsOff": [
           "microvm | MicroVM |  | off"
@@ -282,7 +230,9 @@
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
-          "host:m-studio | Studio (offline) | Studio is offline. | off"
+          "host:m-studio | Studio (offline) | Studio is offline. | off",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
         ],
         "price": null,
         "resourceFacts": [
@@ -297,66 +247,15 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
-        "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
-        ]
+        "systemsOff": []
       }
     },
     {
       "on": "host:lab",
       "step": "the Linux box over Tailscale",
-      "wizard": {
-        "canContinue": true,
-        "cloud": null,
-        "fields": [
-          "os",
-          "image",
-          "placement",
-          "kind",
-          "runtime",
-          "connect-by-address"
-        ],
-        "kindsOff": [
-          "microvm | MicroVM |  | off"
-        ],
-        "placement": "host",
-        "placementError": null,
-        "placements": [
-          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
-          "---",
-          "local | This Mac | Linux, on this Mac | on",
-          "---",
-          "host:m-mini | Mac mini | Through the Cua relay | on",
-          "host:lab | lab | Over Tailscale or your network | on *",
-          "host:m-studio | Studio (offline) | Studio is offline. | off"
-        ],
-        "price": null,
-        "resourceFacts": [
-          "Kind: Container",
-          "Disk: 3.0–7.2 GB initially; grows with use"
-        ],
-        "step": 0,
-        "summary": [
-          "System: Ubuntu 24.04",
-          "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: lab",
-          "Kind: Container",
-          "Runtime: Container on lab",
-          "Resources: 2 cores, 4 GB memory",
-          "Name: space-000000002a",
-          "When ready: Open the desktop"
-        ],
-        "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
-        ]
-      }
-    },
-    {
-      "on": "host:lab",
-      "step": "Your cloud on, AWS after your machines",
       "wizard": {
         "canContinue": true,
         "cloud": "aws",
@@ -366,8 +265,7 @@
           "placement",
           "kind",
           "runtime",
-          "connect-cloud",
-          "connect-by-address"
+          "connect-cloud"
         ],
         "kindsOff": [
           "microvm | MicroVM |  | off"
@@ -398,12 +296,10 @@
           "Kind: Container",
           "Runtime: Container on lab",
           "Resources: 2 cores, 4 GB memory",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
-        "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
-        ]
+        "systemsOff": []
       }
     },
     {
@@ -418,8 +314,7 @@
           "placement",
           "kind",
           "runtime",
-          "connect-cloud",
-          "connect-by-address"
+          "connect-cloud"
         ],
         "kindsOff": [
           "vm | Virtual machine | AWS does not run this image. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off",
@@ -453,64 +348,12 @@
           "Runtime: Container on t4g.medium",
           "Cost: About $0.04/hour",
           "Deletes itself: After 2 hours",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off",
-          "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off"
-        ]
-      }
-    },
-    {
-      "on": "local",
-      "step": "Your cloud off: this Mac again, AWS still connected",
-      "wizard": {
-        "canContinue": true,
-        "cloud": null,
-        "fields": [
-          "os",
-          "image",
-          "placement",
-          "kind",
-          "runtime",
-          "connect-by-address"
-        ],
-        "kindsOff": [
-          "microvm | MicroVM |  | off"
-        ],
-        "placement": "local",
-        "placementError": null,
-        "placements": [
-          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
-          "---",
-          "local | This Mac | Linux, on this Mac | on *",
-          "---",
-          "host:m-mini | Mac mini | Through the Cua relay | on",
-          "host:lab | lab | Over Tailscale or your network | on",
-          "host:m-studio | Studio (offline) | Studio is offline. | off"
-        ],
-        "price": null,
-        "resourceFacts": [
-          "Kind: Container",
-          "Architecture: ARM",
-          "Disk: 2.9–6.9 GB initially; grows with use"
-        ],
-        "step": 0,
-        "summary": [
-          "System: Ubuntu 24.04",
-          "Image: ghcr.io/trycua/linux:24.04",
-          "Runs on: Linux, on this Mac",
-          "Kind: Container",
-          "Architecture: ARM",
-          "Runtime: Container on this Mac (gVisor when installed)",
-          "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9–6.9 GB initially; grows with use",
-          "Name: space-000000002a",
-          "When ready: Open the desktop"
-        ],
-        "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+          "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off",
+          "windows | Windows | AWS does not run this image. Ask your agent to deploy the Windows Server 2022 image on AWS and add it with cua spaces add. | off"
         ]
       }
     },
@@ -519,14 +362,14 @@
       "step": "the Mac mini again",
       "wizard": {
         "canContinue": true,
-        "cloud": null,
+        "cloud": "aws",
         "fields": [
           "os",
           "image",
           "placement",
           "kind",
           "runtime",
-          "connect-by-address"
+          "connect-cloud"
         ],
         "kindsOff": [
           "microvm | MicroVM |  | off"
@@ -540,7 +383,9 @@
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
-          "host:m-studio | Studio (offline) | Studio is offline. | off"
+          "host:m-studio | Studio (offline) | Studio is offline. | off",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
         ],
         "price": null,
         "resourceFacts": [
@@ -555,12 +400,10 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
-        "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
-        ]
+        "systemsOff": []
       }
     },
     {
@@ -568,7 +411,7 @@
       "step": "resources: its own size, no price",
       "wizard": {
         "canContinue": true,
-        "cloud": null,
+        "cloud": "aws",
         "fields": [
           "cpus",
           "memory"
@@ -585,7 +428,9 @@
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
-          "host:m-studio | Studio (offline) | Studio is offline. | off"
+          "host:m-studio | Studio (offline) | Studio is offline. | off",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
         ],
         "price": null,
         "resourceFacts": [
@@ -600,12 +445,10 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
-        "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
-        ]
+        "systemsOff": []
       }
     },
     {
@@ -613,7 +456,7 @@
       "step": "options",
       "wizard": {
         "canContinue": true,
-        "cloud": null,
+        "cloud": "aws",
         "fields": [
           "name",
           "open-when-ready"
@@ -630,7 +473,9 @@
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
-          "host:m-studio | Studio (offline) | Studio is offline. | off"
+          "host:m-studio | Studio (offline) | Studio is offline. | off",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
         ],
         "price": null,
         "resourceFacts": [
@@ -645,12 +490,10 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
-        "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
-        ]
+        "systemsOff": []
       }
     },
     {
@@ -658,7 +501,7 @@
       "step": "summary: runs on the Mac mini",
       "wizard": {
         "canContinue": true,
-        "cloud": null,
+        "cloud": "aws",
         "fields": [],
         "kindsOff": [
           "microvm | MicroVM |  | off"
@@ -672,7 +515,9 @@
           "---",
           "host:m-mini | Mac mini | Through the Cua relay | on *",
           "host:lab | lab | Over Tailscale or your network | on",
-          "host:m-studio | Studio (offline) | Studio is offline. | off"
+          "host:m-studio | Studio (offline) | Studio is offline. | off",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
         ],
         "price": null,
         "resourceFacts": [
@@ -687,12 +532,10 @@
           "Kind: Container",
           "Runtime: Container on Mac mini",
           "Resources: 2 cores, 4 GB memory",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
-        "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
-        ]
+        "systemsOff": []
       }
     },
     {
@@ -700,7 +543,7 @@
       "step": "the Mac mini leaves the list: this Mac again",
       "wizard": {
         "canContinue": true,
-        "cloud": null,
+        "cloud": "aws",
         "fields": [],
         "kindsOff": [
           "microvm | MicroVM |  | off"
@@ -708,7 +551,9 @@
         "placement": "local",
         "placementError": null,
         "placements": [
-          "local | This Mac | Linux, on this Mac | on *"
+          "local | This Mac | Linux, on this Mac | on *",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
         ],
         "price": null,
         "resourceFacts": [
@@ -725,13 +570,11 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9–6.9 GB initially; grows with use",
-          "Name: space-000000002a",
+          "Disk: About 3–7 GB",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
-        "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
-        ]
+        "systemsOff": []
       }
     },
     {
@@ -739,7 +582,7 @@
       "step": "this Mac",
       "wizard": {
         "canContinue": true,
-        "cloud": null,
+        "cloud": "aws",
         "fields": [],
         "kindsOff": [
           "microvm | MicroVM |  | off"
@@ -747,7 +590,9 @@
         "placement": "local",
         "placementError": null,
         "placements": [
-          "local | This Mac | Linux, on this Mac | on *"
+          "local | This Mac | Linux, on this Mac | on *",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
         ],
         "price": null,
         "resourceFacts": [
@@ -764,13 +609,11 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9–6.9 GB initially; grows with use",
-          "Name: space-000000002a",
+          "Disk: About 3–7 GB",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
-        "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
-        ]
+        "systemsOff": []
       }
     }
   ]

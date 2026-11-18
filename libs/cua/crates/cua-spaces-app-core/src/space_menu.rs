@@ -19,6 +19,11 @@
 //! Teleport an app… stays in the menu while the Space is off, greyed: it
 //! needs a running desktop.
 //!
+//! Pin to notch / Unpin from notch is in every menu that can pin (a Space,
+//! and the desktop of one of your other machines), whatever your role: it
+//! keeps a tile in the notch first in line and grants nothing. It comes
+//! after the Space's own actions, above the set-apart Delete or Leave.
+//!
 //! The input is its own plain record (the page builds it from the Space's
 //! sharing facts), so the rule does not depend on how a shell keeps them.
 
@@ -90,6 +95,10 @@ pub struct SpaceMenuInput {
     pub can_delete: bool,
     /// You may leave it.
     pub can_leave: bool,
+    /// It can be pinned to the notch (not This machine).
+    pub can_pin: bool,
+    /// It is pinned to the notch now (Unpin from notch).
+    pub pinned: bool,
 }
 
 /// What an item does.
@@ -112,6 +121,8 @@ pub enum SpaceMenuItemId {
     Delete,
     /// Leaves it (asks first: `spaces.bulkConfirm`).
     Leave,
+    /// Pins it to the notch, or unpins it (the label says which).
+    Pin,
 }
 
 /// One menu item.
@@ -173,6 +184,16 @@ pub fn menu(input: &SpaceMenuInput) -> Vec<SpaceMenuItem> {
     }
     if mine && input.can_rename && !viewer {
         items.push(item(Rename, "Rename"));
+    }
+    if input.can_pin {
+        items.push(item(
+            Pin,
+            if input.pinned {
+                "Unpin from notch"
+            } else {
+                "Pin to notch"
+            },
+        ));
     }
     let delete = match input.kind {
         SpaceMenuKind::Mine => input.can_delete,
@@ -374,6 +395,52 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(lines(&m), ["Open", "--- Leave"]);
+    }
+
+    #[test]
+    fn pin_to_notch_is_in_every_menu_that_can_pin_above_delete_and_leave() {
+        let pin = |input: SpaceMenuInput| lines(&menu(&input));
+        assert_eq!(
+            pin(SpaceMenuInput {
+                can_pin: true,
+                ..mine()
+            }),
+            [
+                "Open",
+                "Turn off",
+                "Share\u{2026}",
+                "Teleport an app\u{2026}",
+                "Rename",
+                "Pin to notch",
+                "--- Delete Space (red)"
+            ]
+        );
+        assert_eq!(
+            pin(SpaceMenuInput {
+                can_pin: true,
+                pinned: true,
+                ..mine()
+            })[5],
+            "Unpin from notch"
+        );
+        // Someone else's Space, even a watch-only one: it grants nothing.
+        let viewer = SpaceMenuInput {
+            kind: SpaceMenuKind::WithMe,
+            role: SpaceMenuRole::Viewer,
+            can_leave: true,
+            can_pin: true,
+            ..Default::default()
+        };
+        assert_eq!(pin(viewer), ["Open", "Pin to notch", "--- Leave"]);
+        // One of your other machines' desktops: not a Space to power, share
+        // or delete, so just Open and the pin.
+        let desktop = SpaceMenuInput {
+            can_pin: true,
+            ..Default::default()
+        };
+        assert_eq!(pin(desktop), ["Open", "Pin to notch"]);
+        // Nothing offers it where it cannot pin (This machine).
+        assert_eq!(pin(SpaceMenuInput::default()), ["Open"]);
     }
 
     #[test]

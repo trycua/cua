@@ -13,11 +13,19 @@
 
 pub mod durable;
 pub mod events;
+pub mod failure;
 pub mod harness;
 pub mod installables;
+pub mod remote_login;
 pub mod runs;
+pub mod subagents;
+pub mod tool_row;
 pub mod transcript;
 
+/// Where Claude Code keeps its sign-in (the freshness check at run start reads it).
+pub use cua_agent_setup::{HostEnv, claude_login, signin};
+/// The provider registry (what each saved connection is and which app receives it).
+pub use cua_connections as connections;
 pub use durable::{DriverSpec, DurableOptions, Policy, durable_driver_spec};
 pub use events::{AgentEvent, EventPage};
 pub use harness::{Endpoint, Harness, Wire};
@@ -44,6 +52,10 @@ pub enum Error {
     Timeout(String),
     #[error("guest: {0}")]
     Guest(String),
+    /// A step on the computer failed, said in plain words for the person
+    /// (see [`runs::guest_command_failed`]).
+    #[error("{0}")]
+    Step(String),
     #[error(transparent)]
     Client(#[from] cua_spacesd_client::Error),
     #[error(transparent)]

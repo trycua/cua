@@ -1,9 +1,13 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows identity and endpoint evidence for the first-class browser tools.
 
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::os::windows::process::CommandExt as _;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
@@ -22,9 +26,9 @@ use cua_driver_core::browser::types::{
     NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
 use cua_driver_core::browser::{
-    existing_profile_setup_descriptor, is_firefox, parse_devtools_active_port, BrowserCursorTracker,
+    existing_profile_setup_descriptor, fetch_json_version_ws_url, is_electron_app_layout,
+    is_firefox, parse_devtools_active_port, BrowserCursorTracker,
 };
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::browser_installation_path::{
     plain_windows_path, resolve_installation, InstallationEntry, InstallationFs,
@@ -61,8 +65,8 @@ use windows::Win32::Storage::FileSystem::{
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows::Win32::System::Threading::{
-    GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
-    PROCESS_QUERY_LIMITED_INFORMATION,
+    GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, CREATE_NO_WINDOW,
+    PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::Shell::{
@@ -387,6 +391,7 @@ fn authenticode_output(executable: &std::path::Path) -> std::io::Result<std::pro
     };
     let powershell = system32.join(r"WindowsPowerShell\v1.0\powershell.exe");
     std::process::Command::new(powershell)
+        .creation_flags(CREATE_NO_WINDOW.0)
         .args([
             "-NoLogo",
             "-NoProfile",
@@ -410,6 +415,7 @@ enum WriteProbe {
     Failed(String),
 }
 
+#[cfg(test)]
 fn current_token_write_denial_reason(path: &std::path::Path, directory: bool) -> Option<String> {
     match current_token_write_probe(path, directory, false) {
         WriteProbe::Denied => None,
@@ -759,6 +765,7 @@ async fn browser_command_line(pid: u32) -> Result<String, BrowserRefusal> {
         "$OutputEncoding=[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); (Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}' -ErrorAction Stop).CommandLine"
     );
     let output = tokio::process::Command::new(powershell)
+        .creation_flags(CREATE_NO_WINDOW.0)
         .args([
             "-NoLogo",
             "-NoProfile",
@@ -1581,47 +1588,8 @@ async fn unfiltered_loopback_ports_for_exact_pid(pid: u32) -> Result<Vec<u16>, B
 }
 
 async fn browser_websocket_url(port: u16) -> Option<String> {
-    tokio::time::timeout(Duration::from_secs(2), async move {
-        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
-            .await
-            .ok()?;
-        let request = format!(
-            "GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
-        );
-        stream.write_all(request.as_bytes()).await.ok()?;
-        let mut bytes = Vec::new();
-        let mut chunk = [0u8; 4096];
-        loop {
-            let read = stream.read(&mut chunk).await.ok()?;
-            if read == 0 {
-                break;
-            }
-            bytes.extend_from_slice(&chunk[..read]);
-            if bytes.len() > 256 * 1024 {
-                return None;
-            }
-            if let Some(header_end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
-                let headers = String::from_utf8_lossy(&bytes[..header_end]);
-                if let Some(length) = headers.lines().find_map(|line| {
-                    let (name, value) = line.split_once(':')?;
-                    name.eq_ignore_ascii_case("content-length")
-                        .then(|| value.trim().parse::<usize>().ok())
-                        .flatten()
-                }) {
-                    if bytes.len() >= header_end + 4 + length {
-                        break;
-                    }
-                }
-            }
-        }
-        let body_start = bytes.windows(4).position(|part| part == b"\r\n\r\n")? + 4;
-        let value: serde_json::Value = serde_json::from_slice(&bytes[body_start..]).ok()?;
-        let url = value.get("webSocketDebuggerUrl")?.as_str()?;
-        canonical_discovered_websocket_url(url, port)
-    })
-    .await
-    .ok()
-    .flatten()
+    let url = fetch_json_version_ws_url(port).await?;
+    canonical_discovered_websocket_url(&url, port)
 }
 
 fn select_provisional_setup_port(
@@ -2131,11 +2099,18 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 format!("pid {pid} is outside the Windows process-id range"),
             )
         })?;
-        let name = tokio::task::spawn_blocking(move || {
-            crate::win32::list_processes()
+        let (name, electron_app) = tokio::task::spawn_blocking(move || {
+            let name = crate::win32::list_processes()
                 .into_iter()
                 .find(|process| process.pid == pid_u32)
-                .map(|process| process.name)
+                .map(|process| process.name)?;
+            let electron_app = process_identity(pid_u32)
+                .ok()
+                .and_then(|(_, executable)| executable)
+                .is_some_and(|executable| {
+                    is_electron_app_layout(std::path::Path::new(&executable))
+                });
+            Some((name, electron_app))
         })
         .await
         .ok()
@@ -2146,9 +2121,13 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 format!("browser process {pid} is no longer available"),
             )
         })?;
-        let chromium = is_chromium(&name);
+        let chromium = electron_app || is_chromium(&name);
         let gecko = is_firefox(&name);
-        let product_kind = browser_product(&name);
+        let product_kind = if electron_app {
+            BrowserProduct::Electron
+        } else {
+            browser_product(&name)
+        };
         let command_line = if chromium {
             browser_command_line(pid_u32).await.ok()
         } else {
@@ -2613,6 +2592,24 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 format!("could not roll back exact browser setup: {join_error}"),
             )
         })
+    }
+
+    async fn dismiss_abandoned_existing_profile_consent(
+        &self,
+        pid: i64,
+        window_id: u64,
+    ) -> Result<bool, BrowserRefusal> {
+        let Ok(pid) = u32::try_from(pid) else {
+            return Ok(false);
+        };
+        tokio::task::spawn_blocking(move || crate::browser_consent_ui::dismiss(pid, window_id))
+            .await
+            .unwrap_or_else(|join_error| {
+                Err(BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not close the abandoned browser consent prompt: {join_error}"),
+                ))
+            })
     }
 
     async fn handle_existing_profile_consent(
@@ -3224,7 +3221,6 @@ mod tests {
             eprintln!(
                 "installed browser correctly refused for this write-capable runner token: {diagnostics:?}"
             );
-            return;
         }
     }
     use std::sync::atomic::{AtomicUsize, Ordering};

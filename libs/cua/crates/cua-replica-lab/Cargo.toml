@@ -1,0 +1,43 @@
+[package]
+name = "cua-replica-lab"
+description = "Test rig for the replicated Volume: a userspace network impairment proxy scoped to test ports, a replica node process with a durable-agent simulation, and the opt-in chaos matrix. Not shipped."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license = "FSL-1.1-MIT"
+repository.workspace = true
+publish = false
+
+[lib]
+name = "cua_replica_lab"
+path = "src/lib.rs"
+
+[[bin]]
+name = "replica-node"
+path = "src/bin/replica_node.rs"
+
+[[bin]]
+name = "netshape"
+path = "src/bin/netshape.rs"
+
+[[bin]]
+name = "replica-chaos"
+path = "src/bin/chaos.rs"
+
+[dependencies]
+cua-cluster.workspace = true
+cua-volume.workspace = true
+async-trait.workspace = true
+hex.workspace = true
+libc = "0.2"
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]

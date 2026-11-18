@@ -12,7 +12,15 @@
 // nothing restarts without that click.
 import type { Settings } from "./settings";
 
-export type UpdateChannel = "stable" | "beta";
+/** Stable releases, or a build of main every night. Beta is gone: a saved `beta` is Nightly. */
+export type UpdateChannel = "stable" | "nightly";
+
+/** A saved channel word (`beta` from before Nightly) as a channel; anything else: none. */
+export function readChannel(word: unknown): UpdateChannel | undefined {
+  if (word === "stable") return "stable";
+  if (word === "nightly" || word === "beta") return "nightly";
+  return undefined;
+}
 
 const movedFromSwift = (s: Settings) => s.swiftMigration?.found === true;
 
@@ -40,7 +48,7 @@ export function autoInstallPref(s: Settings): boolean {
  * updates at all, so the build's own channel is used instead.
  */
 export function channelPref(s: Settings, build: UpdateChannel, served: (channel: UpdateChannel) => boolean): UpdateChannel {
-  const saved = s.updateChannel;
+  const saved = readChannel(s.updateChannel);
   if (!saved) return build;
   if (s.updateChannelChosen || served(saved)) return saved;
   return build;

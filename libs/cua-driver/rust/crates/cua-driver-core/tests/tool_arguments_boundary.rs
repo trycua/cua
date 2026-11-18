@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Regression coverage for the canonical dispatch boundary's handling of
 //! malformed `arguments` values.
 //!

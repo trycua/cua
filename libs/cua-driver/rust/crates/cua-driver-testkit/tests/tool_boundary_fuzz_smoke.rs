@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Bounded, deterministic runs of the tool-call boundary fuzz targets.
 //!
 //! The target bodies live in `cua_driver_testkit::boundary_fuzz` and are the

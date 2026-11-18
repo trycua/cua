@@ -325,6 +325,26 @@
       window.__CUA_E2E_FIXTURE_JOURNAL_URL || '';
     if (!journalUrl) return;
 
+    const collapsedLayout = element => {
+      const style = getComputedStyle(element);
+      const root = document.documentElement.getBoundingClientRect();
+      return {
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+        devicePixelRatio: window.devicePixelRatio,
+        readyState: document.readyState,
+        rootRect: { x: root.x, y: root.y, width: root.width, height: root.height },
+        scrollStyle: {
+          display: style.display,
+          visibility: style.visibility,
+          position: style.position,
+          width: style.width,
+          height: style.height,
+          overflowY: style.overflowY,
+        },
+      };
+    };
+
     let queued = false;
     const publish = () => {
       queued = false;
@@ -337,6 +357,10 @@
           // Scroll-event mirrors can lag the actual DOM offset.
           entry.scrollTop = element.scrollTop;
           entry.clientHeight = element.clientHeight;
+          // A fixed-height scroller with no height means the page has no
+          // layout; record what the host renderer reports so the harness
+          // can explain the collapse.
+          if (element.clientHeight === 0) entry.layout = collapsedLayout(element);
         }
         state[element.dataset.cuaId] = entry;
       });

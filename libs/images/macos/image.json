@@ -64,6 +64,10 @@
     ],
     "features_optional": [
       "hotspot",
+      "spawn",
+      "exit",
+      "host_ports",
+      "process.services",
       "relay_attach",
       "h264_hw",
       "audio.desktop",
@@ -240,7 +244,7 @@
     },
     "xcode": {
       "from": "full",
-      "description": "Full plus Xcode 26.6 (selected), its iOS 26.5 simulator runtime and the Metal toolchain.",
+      "description": "Full plus Xcode 26.6 (selected), its iOS 26.5 simulator runtime, the Metal toolchain, Rust iOS targets, CocoaPods, XcodeGen, sccache and a warmed Simulator device: the macOS Space with developer tools. Xcode and the Simulator runtimes are Apple software under Apple's license, for use on Apple-branded hardware.",
       "claims": {
         "tools": {
           "xcodebuild": {
@@ -249,6 +253,27 @@
               "-version"
             ],
             "expect": "^Xcode 26\\.6$"
+          },
+          "sccache": {
+            "argv": [
+              "/usr/local/bin/sccache",
+              "--version"
+            ],
+            "expect": "^sccache 0\\.19\\.0$"
+          },
+          "xcodegen": {
+            "argv": [
+              "/usr/local/bin/xcodegen",
+              "--version"
+            ],
+            "expect": "Version: 2\\.46\\.0"
+          },
+          "pod": {
+            "argv": [
+              "/usr/local/bin/pod",
+              "--version"
+            ],
+            "expect": "^1\\.17\\.0$"
           }
         },
         "simulator_runtimes": [

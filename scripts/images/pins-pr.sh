@@ -25,6 +25,8 @@
 # Needs crane, oras, jq, cargo (with protoc), node (npx when docs/node_modules
 # is not installed) and gh.
 set -euo pipefail
+# macOS shells default to 256 open files, too few for the cua-spaces test binaries (see scripts/ci/tests/test_nofile_limit.py).
+[ "$(ulimit -Sn)" = unlimited ] || [ "$(ulimit -Sn)" -ge 10240 ] || ulimit -Sn 10240 2>/dev/null || ulimit -Sn "$(ulimit -Hn)" 2>/dev/null || true # nofile-limit
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BRANCH=images/pins
 VERSION="" RESULTS="" RUN_URL="" DRY=0

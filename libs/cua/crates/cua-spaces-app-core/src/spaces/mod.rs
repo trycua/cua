@@ -125,7 +125,7 @@ fn provider_label(p: SpaceProvider) -> &'static str {
     match p {
         SpaceProvider::Local => "This Mac",
         SpaceProvider::Direct => "Direct",
-        SpaceProvider::Relay => "My computers",
+        SpaceProvider::Relay => "My machines",
     }
 }
 
@@ -164,7 +164,7 @@ fn detail_for(row: &SpaceRow, status: SpaceStatus) -> String {
                     .filter(|n| !n.is_empty())
                     .unwrap_or(host)
             ),
-            None => "My computers \u{b7} via relay".into(),
+            None => "My machines".into(),
         },
         p => provider_label(p).into(),
     }
@@ -260,6 +260,8 @@ pub fn row_to_space(row: &SpaceRow, now: i64) -> Space {
         cloud_place: cloud_place_of(row).map(str::to_string),
         cloud_delete: text(&row.cloud).and(text(&row.cloud_delete)),
         access: Some(access),
+        hidden: row.hidden,
+        parent: row.parent.clone(),
     }
 }
 
@@ -400,15 +402,65 @@ pub fn is_machine_desktop(space: &Space) -> bool {
         .is_some_and(|own| !own.is_empty() && !own.contains('/') && !own.starts_with("space-"))
 }
 
-/// The Spaces the user can open, in `spaces`' order: every Space but the
-/// machines' own desktops ([`is_machine_desktop`]): not This machine, even
-/// while it provides Spaces, and not one of your machines on the relay. A
-/// Space a machine provides is listed. The notch's tiles list these; its
-/// tab and the menu bar item count the ones that are on ([`on_count`]).
+/// Whether `space` is the desktop of one of your other machines, reached
+/// through the relay (`relay:<machine>`, no host above it): a machine's
+/// own desktop that is not This machine's. A Space the machine provides is
+/// a Space, not this.
+pub fn is_remote_desktop(space: &Space) -> bool {
+    is_machine_desktop(space) && space.id.starts_with("relay:")
+}
+
+/// Whether a machine's desktop can be opened right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DesktopAvailability {
+    /// The machine answers and says it shares its desktop.
+    Available,
+    /// The machine does not answer, or has not said what it shares.
+    Offline,
+    /// The machine answers but does not share its desktop (it only
+    /// provides Spaces, or shares neither), or its owner stopped sharing
+    /// it with you.
+    NotShared,
+}
+
+/// Whether the other machine's desktop `space` can be opened: the machine
+/// answers and its features say it streams its desktop
+/// ([`feature::DESKTOP_STREAM`]). Without that evidence there is no
+/// desktop to list, so a machine that has not said what it shares stays
+/// out, as before (#5190).
+pub fn desktop_availability(space: &Space) -> DesktopAvailability {
+    if crate::machines::says_stopped_sharing(space) || sidebar::shares_desktop(space) == Some(false)
+    {
+        return DesktopAvailability::NotShared;
+    }
+    match &space.sdk {
+        Some(sdk) if sdk.reachable && has_feature(space, feature::DESKTOP_STREAM) => {
+            DesktopAvailability::Available
+        }
+        _ => DesktopAvailability::Offline,
+    }
+}
+
+/// The Spaces the user can open, in `spaces`' order: every Space, and the
+/// desktops of your other machines while they are there to open
+/// ([`desktop_availability`] is `Available`): a shared desktop is a Space.
+/// Not a hidden Space ([`Space::hidden`]: the home warming for Home's prompt
+/// box, until a person writes into it). Not This machine, even while it provides Spaces, and not a machine that
+/// has no desktop to open (it only provides Spaces, is off or has not
+/// answered): the notch listed those as if they were Spaces (#5190). A Space a machine
+/// provides is listed. The notch's tiles list these (and the desktops a
+/// person pinned, [`crate::notch::tiles_matching`]); its tab and the menu
+/// bar item count the ones that are on ([`on_count`]).
 pub fn openable_spaces(spaces: &[Space]) -> Vec<Space> {
     spaces
         .iter()
-        .filter(|s| !is_machine_desktop(s))
+        .filter(|s| !s.hidden)
+        .filter(|s| {
+            !is_machine_desktop(s)
+                || (is_remote_desktop(s)
+                    && desktop_availability(s) == DesktopAvailability::Available)
+        })
         .cloned()
         .collect()
 }
@@ -590,6 +642,8 @@ mod tests {
 
     fn row() -> SpaceRow {
         SpaceRow {
+            hidden: false,
+            parent: None,
             id: "space://direct/10.0.0.5:3211".into(),
             name: "brave-otter".into(),
             display_name: None,
@@ -616,6 +670,93 @@ mod tests {
             stop_reason: None,
             sharing: None,
         }
+    }
+
+    /// The home that warms for Home's prompt box (the daemon marks it
+    /// `hidden`) is in no top bar view: not the menu bar item's count, the
+    /// notch's tab or its tiles. The first message makes it appear (the
+    /// daemon clears the mark); a home the record did not prepare is never
+    /// hidden; the core's own listing keeps the row, marked.
+    #[test]
+    fn a_warming_home_is_in_no_top_bar_view_until_the_first_message() {
+        use crate::prepare;
+        let running = |id: &str, hidden: bool| SpaceRow {
+            id: id.into(),
+            name: id.trim_start_matches("local:").into(),
+            provider: "local".into(),
+            hidden,
+            ..row()
+        };
+        let counted = |rows: &[SpaceRow]| {
+            let spaces = rows_to_spaces(rows, 0);
+            let menu = crate::window::menu(&crate::window::MenuInput {
+                spaces: spaces.clone(),
+                ..Default::default()
+            });
+            (
+                on_count(&spaces),
+                menu[0].label.clone(),
+                crate::notch::tab(&spaces).count,
+                openable_spaces(&spaces).len(),
+                spaces.len(),
+            )
+        };
+
+        // The app prepares the home: the record names it, the daemon marks it.
+        let state = prepare::State {
+            wanted: true,
+            home_space_id: Some("local:home-claude-code".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            prepare::hidden_spaces(&state),
+            ["local:home-claude-code".to_string()]
+        );
+        let warming = [
+            running("local:home-claude-code", true),
+            running("local:other", false),
+        ];
+        let tile_ids = |rows: &[SpaceRow]| -> Vec<String> {
+            crate::notch::tiles(&rows_to_spaces(rows, 0), None)
+                .into_iter()
+                .map(|t| t.id)
+                .collect()
+        };
+        assert!(!tile_ids(&warming).contains(&"local:home-claude-code".to_string()));
+        let (on, line, tab, tiles, all) = counted(&warming);
+        assert_eq!(
+            (on, line.as_str(), tab.as_str(), tiles),
+            (1, "1 Space running", "1", 1)
+        );
+        assert_eq!(all, 2, "the core's listing keeps the hidden row");
+        assert!(rows_to_spaces(&warming, 0)[0].hidden);
+        assert!(
+            !openable_spaces(&rows_to_spaces(&warming, 0))
+                .iter()
+                .any(|s| s.id == "local:home-claude-code")
+        );
+
+        // The first message: the record says asked, the daemon clears the mark.
+        let asked = prepare::State {
+            asked_ms: Some(5),
+            ..state
+        };
+        assert!(prepare::hidden_spaces(&asked).is_empty());
+        let shown = [
+            running("local:home-claude-code", false),
+            running("local:other", false),
+        ];
+        assert!(tile_ids(&shown).contains(&"local:home-claude-code".to_string()));
+        let (on, line, tab, tiles, _) = counted(&shown);
+        assert_eq!(
+            (on, line.as_str(), tab.as_str(), tiles),
+            (2, "2 Spaces running", "2", 2)
+        );
+
+        // A home of the same name the record did not prepare is not hidden.
+        let (on, ..) = counted(&[running("local:home-claude-code", false)]);
+        assert_eq!(on, 1);
+        assert!(prepare::hidden_spaces(&prepare::State::default()).is_empty());
     }
 
     #[test]
@@ -771,6 +912,8 @@ mod tests {
     #[test]
     fn mru_puts_the_most_recent_first() {
         let mk = |id: &str, t: i64| Space {
+            hidden: false,
+            parent: None,
             id: id.into(),
             name: id.into(),
             os: SpaceOs::Linux,
@@ -858,6 +1001,65 @@ mod tests {
         let idle = this_machine_space(None, 0, SpaceOs::Macos);
         assert!(is_machine_desktop(&idle));
         assert_eq!(openable_count(&[idle]), 0);
+    }
+
+    /// The desktop of one of your other machines is a Space while it is
+    /// there to open: shown and counted when it runs. A machine with no
+    /// desktop to open (it only provides Spaces, is off, or has not
+    /// answered) and This machine are not.
+    #[test]
+    fn a_shared_desktop_is_a_space_and_a_machine_without_one_is_not() {
+        use crate::host::this_machine_space;
+        let machine = |id: &str, features: &[&str], reachable: bool| {
+            let mut r = row();
+            r.id = format!("relay:{id}");
+            r.provider = "relay".into();
+            r.features = features.iter().map(|f| f.to_string()).collect();
+            r.reachable = reachable;
+            row_to_space(&r, 0)
+        };
+        let shared = machine("wsl", &["desktop_stream", "host_spaces"], true);
+        let spaces_only = machine("studio", &["host_spaces", "files"], true);
+        let off = machine("old", &["desktop_stream"], false);
+        // Answers, but has not said what it shares: no desktop to list.
+        let silent = machine("mini", &[], true);
+        for (space, want) in [
+            (&shared, DesktopAvailability::Available),
+            (&spaces_only, DesktopAvailability::NotShared),
+            (&off, DesktopAvailability::Offline),
+            (&silent, DesktopAvailability::Offline),
+        ] {
+            assert!(is_machine_desktop(space) && is_remote_desktop(space));
+            assert_eq!(desktop_availability(space), want, "{}", space.id);
+        }
+        let this_mac = this_machine_space(None, 0, SpaceOs::Macos);
+        assert!(is_machine_desktop(&this_mac) && !is_remote_desktop(&this_mac));
+        let ids = |v: Vec<Space>| v.into_iter().map(|s| s.id).collect::<Vec<_>>();
+        let all = vec![
+            this_mac,
+            shared.clone(),
+            spaces_only.clone(),
+            off.clone(),
+            silent.clone(),
+        ];
+        assert_eq!(
+            ids(openable_spaces(&all)),
+            ["relay:wsl"],
+            "only the desktops there to open"
+        );
+        // A running one counts like a Space; the off one, the one that
+        // keeps its desktop to itself and the silent one do not.
+        assert_eq!(openable_count(&all), 1);
+        assert_eq!(on_count(&all), 1);
+        assert_eq!(on_count(&[off, spaces_only]), 0);
+        // A Space a machine provides is a Space either way.
+        let mut provided = row();
+        provided.id = "relay:wsl/dev".into();
+        provided.provider = "relay".into();
+        provided.host = Some("wsl".into());
+        let provided = row_to_space(&provided, 0);
+        assert!(!is_remote_desktop(&provided));
+        assert_eq!(ids(openable_spaces(&[provided])), ["relay:wsl/dev"]);
     }
 
     /// The notch and the menu bar count the Spaces on or starting, never a

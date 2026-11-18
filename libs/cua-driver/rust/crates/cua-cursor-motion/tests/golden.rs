@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `fixtures/golden.json` is the contract the TypeScript port is tested
 //! against. It must keep matching this crate; regenerate it with
 //! `examples/export_golden.rs` only for an intended motion change.

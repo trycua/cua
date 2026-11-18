@@ -24,7 +24,7 @@ pub enum BackendError {
     Unsupported(String),
     #[error("{0}")]
     Timeout(String),
-    /// The account is at its live-session (or remote-hours) limit: the
+    /// The account is at its computers-in-use (or remote-hours) limit: the
     /// message is the plan-limit sentence with its upgrade path, verbatim.
     /// Providers answer their rate-limit error (HTTP 429).
     #[error("{0}")]
@@ -36,7 +36,7 @@ pub enum BackendError {
 impl From<CuaError> for BackendError {
     fn from(e: CuaError) -> Self {
         let msg = e.to_string();
-        // The relay's plan limit ("You're using N of N live sessions on
+        // The relay's plan limit ("You're using N of N computers in use at once on
         // <plan>. ...") reaches us as text inside whatever error carried it.
         if cua_home::plan_limit::PlanLimit::parse(&msg).is_some() {
             return BackendError::RateLimited(plan_limit_sentence(&msg));
@@ -68,12 +68,21 @@ fn plan_limit_sentence(text: &str) -> String {
 pub type Result<T> = std::result::Result<T, BackendError>;
 
 /// Which Cua identity a call runs as (from the provider API key).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Default, PartialEq, Eq, Hash)]
 pub struct Identity {
     /// Cua daemon address; `None`: the ambient one.
     pub daemon: Option<String>,
     /// Cua daemon token.
     pub token: Option<String>,
+}
+
+impl std::fmt::Debug for Identity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Identity")
+            .field("daemon", &self.daemon)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 /// What a new sandbox starts from.
@@ -618,6 +627,10 @@ impl CuaBackend {
                         // the hundred: a forkable VM's checkpoint shares
                         // its RAM with every fork. Other kinds ignore it.
                         forkable: Some(true),
+                        // Every call goes to cua-spacesd: the create waits
+                        // for it, also on a VM disk image, whose path does
+                        // not say it runs one.
+                        spacesd: Some(true),
                         wait: Some(true),
                         ..Default::default()
                     };
@@ -1548,13 +1561,13 @@ mod default_tests {
     #[test]
     fn a_plan_limit_error_is_rate_limited_with_its_sentence_verbatim() {
         let wrapped = CuaError::Internal(
-            "rpc failed: You're using 2 of 2 live sessions on the free plan. Close one or upgrade to Pro. (resource exhausted)"
+            "rpc failed: You have 2 of 2 computers in use at once on the free plan. Close one or upgrade to Pro. (resource exhausted)"
                 .into(),
         );
         match BackendError::from(wrapped) {
             BackendError::RateLimited(m) => assert_eq!(
                 m,
-                "You're using 2 of 2 live sessions on the free plan. Close one or upgrade to Pro."
+                "You have 2 of 2 computers in use at once on the free plan. Close one or upgrade to Pro."
             ),
             other => panic!("{other:?}"),
         }

@@ -1007,9 +1007,25 @@ pub fn select(
                 );
                 Runtime::Vz
             }
-            (On::Local, Kind::MicroVm) if host.apple_containers => {
+            // Apple's Containerization can't protect a Space's network: it is
+            // never picked for you under the secure default, only chosen.
+            (On::Local, Kind::MicroVm)
+                if host.apple_containers
+                    && cua_vmm::network::Mode::from_env() == cua_vmm::network::Mode::Legacy =>
+            {
                 why.push("microVMs on a Mac run on Apple's Containerization".into());
                 Runtime::Containerization
+            }
+            (On::Local, Kind::MicroVm) if host.apple_containers => {
+                return Err(PlacementError::new(
+                    Axis::Runtime,
+                    "auto",
+                    "microVMs on this Mac need cua's own monitor (cua-vz), which is not set up. \
+                     Apple's Containerization can't protect your network yet: choose it with \
+                     --runtime containerization and No protection, or use a VM"
+                        .into(),
+                    vec!["vz".into(), "containerization".into()],
+                ));
             }
             _ => offered.first().cloned().unwrap_or(Runtime::Auto),
         }
@@ -1561,11 +1577,18 @@ mod tests {
             let s = select(&On::Local, Auto, &rt(w), &linux(), &MAC).unwrap();
             assert_eq!((s.kind, s.runtime), (MicroVm, Runtime::Vz));
         }
-        // Without cua-vz (an older install) on macOS 26: Apple's
-        // Containerization, as before.
-        let s = select(&On::Local, MicroVm, &Runtime::Auto, &linux(), &MAC_26_NO_VZ).unwrap();
-        assert_eq!((s.kind, s.runtime), (MicroVm, Runtime::Containerization));
-        assert!(s.reason.contains("Containerization"), "{}", s.reason);
+        // Without cua-vz (an older install) on macOS 26: never Apple's
+        // Containerization for you under the secure default (it can't
+        // protect the network); as before under the old one.
+        let picked = select(&On::Local, MicroVm, &Runtime::Auto, &linux(), &MAC_26_NO_VZ);
+        if cua_vmm::network::Mode::from_env() == cua_vmm::network::Mode::Secure {
+            let e = picked.unwrap_err().to_string();
+            assert!(e.contains("can't protect your network"), "{e}");
+        } else {
+            let s = picked.unwrap();
+            assert_eq!((s.kind, s.runtime), (MicroVm, Runtime::Containerization));
+            assert!(s.reason.contains("Containerization"), "{}", s.reason);
+        }
         // Containerization by name (or its short words) where it runs.
         for w in ["containerization", "apple", "apple-container"] {
             let s = select(&On::Local, Auto, &rt(w), &linux(), &MAC).unwrap();

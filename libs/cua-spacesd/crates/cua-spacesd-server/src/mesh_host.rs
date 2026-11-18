@@ -262,6 +262,12 @@ pub struct MeshHostConfig {
     pub gang_home: Option<PathBuf>,
     /// How long a gang port stream waits to be served ([`GANG_WAIT`]).
     pub gang_wait: Duration,
+    /// Whether the node may use paths on the local network. A Space on the
+    /// default network (internet only) turns it off: its mesh node then never
+    /// pings a computer's local address, which that network would refuse and
+    /// count as something the Space tried. The relay and internet paths carry
+    /// the traffic. `CUA_MESH_LAN=0` turns it off for any node.
+    pub lan: bool,
 }
 
 impl std::fmt::Debug for MeshHostConfig {
@@ -451,6 +457,7 @@ async fn start(cfg: &MeshHostConfig) -> cua_mesh::Result<Mesh> {
         auth,
     );
     mc.name = cfg.name.clone();
+    mc.lan = mc.lan && cfg.lan;
     mc.approved_path = Some(cfg.dir.join("approved.json"));
     let env = cfg.env_token.clone();
     let id = cfg.machine_id.clone();
@@ -677,6 +684,8 @@ fn mint(ctx: &Ctx, grant: &Grant) -> String {
         teams: Vec::new(),
         space: None,
         space_role: None,
+        dev: None,
+        dcls: None,
     })
 }
 

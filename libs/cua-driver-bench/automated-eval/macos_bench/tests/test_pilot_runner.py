@@ -8,7 +8,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import shutil
 import signal
+import stat
 import subprocess
 import tomllib
 import sys
@@ -976,6 +979,30 @@ class ScheduleTest(unittest.TestCase):
         self.assertNotEqual(
             run_pilot.probe_seed("PROBE-FORMS", 0), run_pilot.probe_seed("PROBE-FORMS", 1)
         )
+
+
+@unittest.skipUnless(sys.platform == "linux", "Linux desktop")
+class DoctorExistingSocketTest(unittest.TestCase):
+    def test_missing_display_and_socket_fails_without_starting_anything(self) -> None:
+        import desktop_runtime as desktop
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out"
+            with (
+                mock.patch.dict(os.environ, {"DISPLAY": ""}),
+                mock.patch.object(desktop, "start_driver", side_effect=AssertionError),
+                mock.patch.object(desktop, "start_app", side_effect=AssertionError),
+            ):
+                code = desktop.main(
+                    ["doctor", "--cua-bin", "/nonexistent/cua-driver",
+                     "--socket", str(Path(tmp) / "missing.sock"), "--out", str(out)]
+                )  # fmt: skip
+            report = json.loads((out / "doctor.json").read_text())
+            self.assertEqual(code, 1)
+            self.assertEqual(report["daemon"], "existing")
+            self.assertIsNone(report["daemon_pid"])
+            display = next(c for c in report["checks"] if c["name"] == "display")
+            self.assertEqual(display["status"], "fail")
 
 
 if __name__ == "__main__":

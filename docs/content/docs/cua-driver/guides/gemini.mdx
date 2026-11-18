@@ -105,7 +105,7 @@ agy -p "Use only the cua-driver tools. List the windows that are open right now.
 ## From your own agent loop
 
 To control the prompt, the tool set, and the loop, call the Gemini
-[Interactions API](https://ai.google.dev/gemini-api/docs/interactions) from your
+[Interactions API](https://aistudio.google.com/docs/interactions-overview) from your
 own process and run each tool call through Cua Driver. You need a Gemini API key
 from [Google AI Studio](https://aistudio.google.com/apikey) on a paid tier
 (Gemini 4 Argon is not on the free tier), and Python 3.10+ or Node.js 20+.
@@ -220,7 +220,7 @@ Open the apps the task needs before you run it. Keep working in another app
 while it runs.
 
 Settings that follow Google's
-[Gemini 4 Argon guidance](https://ai.google.dev/gemini-api/docs/latest-model):
+[Gemini 4 Argon guidance](https://aistudio.google.com/docs/latest-model):
 
 - **Use `thinking_level`, not `thinking_budget`.** Argon accepts `low`,
   `medium`, and `high`. Most UI steps are routine, so `low` keeps the loop
@@ -250,4 +250,4 @@ Tips for long tasks:
   deletions, and credentials out of unattended tasks.
 
 For Google's built-in computer use tool, see the
-[computer use reference](https://ai.google.dev/gemini-api/docs/computer-use).
+[computer use reference](https://aistudio.google.com/docs/computer-use).

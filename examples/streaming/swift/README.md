@@ -18,7 +18,7 @@ The package depends on `libs/cua/swift` by path and links the cua-sdk static
 library through an XCFramework (the package's `CUA_SWIFT_XCFRAMEWORK` mode):
 
 ```sh
-# 1. cargo build --release -p cua-sdk, then wrap target/release/libcua_sdk.a as
+# 1. cargo build --release -p cua-sdk-native, then wrap target/release/libcua_sdk.a as
 #    libs/cua/swift/build/CuaSDKFFI.xcframework (git-ignored there).
 examples/streaming/swift/scripts/build-ffi.sh
 

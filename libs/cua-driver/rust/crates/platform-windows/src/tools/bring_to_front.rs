@@ -56,7 +56,7 @@ impl Tool for BringToFrontTool {
             Some(h) => h,
             None => {
                 let windows =
-                    tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
+                    crate::dpi::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
                         .await
                         .unwrap_or_default();
                 match windows.first() {
@@ -75,7 +75,7 @@ impl Tool for BringToFrontTool {
         // and is validated by `flash-repro/16-edge-launch-fg.ps1` for the
         // Edge launch focus-steal recovery case.
         let outcome =
-            tokio::task::spawn_blocking(move || -> Result<(u64, u64, bool, bool), String> {
+            crate::dpi::spawn_blocking(move || -> Result<(u64, u64, bool, bool), String> {
                 use windows::Win32::Foundation::HWND;
                 use windows::Win32::Graphics::Dwm::DwmFlush;
                 use windows::Win32::UI::WindowsAndMessaging::{

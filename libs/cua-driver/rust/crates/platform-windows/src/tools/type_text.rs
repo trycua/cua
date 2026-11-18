@@ -114,7 +114,7 @@ impl Tool for TypeTextTool {
                     return result;
                 }
             }
-            return match tokio::task::spawn_blocking(move || {
+            return match crate::dpi::spawn_blocking(move || {
                 crate::input::send_text_synthesized(hwnd, &text)
             })
             .await
@@ -211,7 +211,7 @@ impl Tool for TypeTextTool {
         let hwnd = match hwnd_opt {
             Some(h) => h,
             None => {
-                let windows = tokio::task::spawn_blocking({
+                let windows = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -329,7 +329,7 @@ impl Tool for TypeTextTool {
             };
             let text_fg = text.clone();
             let fg_delay_ms = _delay_ms;
-            let r = tokio::task::spawn_blocking({
+            let r = crate::dpi::spawn_blocking({
                 let admitted = admitted.clone();
                 move || {
                     let _admission = &admitted;
@@ -412,7 +412,7 @@ impl Tool for TypeTextTool {
         //    (most legacy Win32 EDITs consume WM_CHAR fine without focus steal).
         if let Some(idx) = elem_idx {
             let text_for_uia = text.clone();
-            let set_result = tokio::task::spawn_blocking({
+            let set_result = crate::dpi::spawn_blocking({
                 let admitted = admitted.clone();
                 move || {
                     let _admission = &admitted;
@@ -463,7 +463,7 @@ impl Tool for TypeTextTool {
                 // (works regardless of which window is foreground), proving the
                 // a11y write actually took rather than trusting SetValue's
                 // return alone.
-                let verify = tokio::task::spawn_blocking({
+                let verify = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -563,7 +563,7 @@ impl Tool for TypeTextTool {
         let verify_pid = pid;
         let verify_idx = elem_idx;
         let delay_ms = _delay_ms;
-        let result = tokio::task::spawn_blocking({
+        let result = crate::dpi::spawn_blocking({
             let admitted = admitted.clone();
             move || {
                 let _admission = &admitted;
@@ -691,7 +691,7 @@ async fn try_focused_document_route(
         return None;
     }
     let text = text.to_owned();
-    let outcome = tokio::task::spawn_blocking(move || {
+    let outcome = crate::dpi::spawn_blocking(move || {
         crate::uia::focused_document::try_type_focused_document_append(hwnd, expected_pid, &text)
     })
     .await

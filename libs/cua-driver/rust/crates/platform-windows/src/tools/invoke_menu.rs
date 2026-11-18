@@ -101,7 +101,7 @@ impl Tool for InvokeMenuTool {
             return menu_refusal("invoke_menu: window_id does not belong to pid".into());
         }
 
-        let outcome = tokio::task::spawn_blocking(move || {
+        let outcome = crate::dpi::spawn_blocking(move || {
             // `HWND` wraps a raw pointer and is intentionally not `Send`.
             // Move the integer handle into the blocking worker and rebuild the
             // process-local wrapper there instead of carrying it across threads.

@@ -79,7 +79,7 @@ impl Tool for SetWindowFrameTool {
                 Ok(input) => input,
                 Err(result) => return result,
             };
-        let outcome = tokio::task::spawn_blocking(move || {
+        let outcome = crate::dpi::spawn_blocking(move || {
             use windows::Win32::{
                 Foundation::{HWND, RECT},
                 Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS},

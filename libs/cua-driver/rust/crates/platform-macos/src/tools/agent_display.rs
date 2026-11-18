@@ -94,19 +94,16 @@ impl Tool for AgentDisplayTool {
                     .unwrap_or("Agent Desktop")
                     .to_owned();
                 let session = args.opt_str("_session_id").unwrap_or_default();
-                match tokio::task::spawn_blocking(move || {
+                match session_resources::create_owned(session, move || {
                     virtual_display::create(width, height, &name)
                 })
                 .await
                 {
-                    Ok(Ok(info)) => {
-                        session_resources::own_display(&session, info.display_id);
-                        ToolResult::text(format!(
-                            "✅ Created display {} at ({}, {}) {}x{}.",
-                            info.display_id, info.x, info.y, info.width, info.height
-                        ))
-                        .with_structured(info_json(&info))
-                    }
+                    Ok(Ok(info)) => ToolResult::text(format!(
+                        "✅ Created display {} at ({}, {}) {}x{}.",
+                        info.display_id, info.x, info.y, info.width, info.height
+                    ))
+                    .with_structured(info_json(&info)),
                     Ok(Err(error)) => ToolResult::error(format!("agent_display: {error}")),
                     Err(error) => ToolResult::error(format!("agent_display: task failed: {error}")),
                 }

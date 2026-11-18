@@ -265,10 +265,17 @@ impl ShellOwnerProbe for SessionShellProbe {
             PATH,
             &format!("{IFACE}.GetVersion"),
             &[],
-            self.deadline,
+            version_call_deadline(Instant::now(), self.deadline),
         )?;
         parse_first_u32(&raw)
     }
+}
+
+/// `GetVersion` gets half the time left, so the owner recheck after it can
+/// still run when a helper never answers: a verified helper that times out
+/// reports no version rather than looking like no helper.
+fn version_call_deadline(now: Instant, deadline: Instant) -> Instant {
+    now + deadline.saturating_duration_since(now) / 2
 }
 
 fn parse_quoted_string(raw: &str) -> Option<String> {
@@ -1163,6 +1170,16 @@ mod tests {
             window_capture_owner(&moved_after_version),
             Err(WindowCapture::NoHelper)
         );
+    }
+
+    #[test]
+    fn version_call_leaves_time_for_the_owner_recheck() {
+        let now = Instant::now();
+        let deadline = now + CAPTURE_CAP;
+        let version_deadline = version_call_deadline(now, deadline);
+        assert_eq!(version_deadline, now + CAPTURE_CAP / 2);
+        assert!(version_deadline < deadline);
+        assert_eq!(version_call_deadline(deadline, now), deadline);
     }
 
     // Two windows of one PID: 363 at x=0 and 438 at x=600, plus another

@@ -321,7 +321,6 @@ fn exact_secondary_window_is_verified_and_prior_app_can_recover_focus() {
     );
     assert_eq!(repeated.structured()["path"], "already_front");
     assert_eq!(repeated.structured()["activated"], true);
-    assert_eq!(repeated.structured()["request_accepted"], false);
     assert_eq!(layer_zero_front().id, secondary);
 
     let recovered = driver.call(

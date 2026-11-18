@@ -522,7 +522,18 @@ impl BringToFrontTool {
 
             let observed = observe_exact_window(pid, window_id);
             if already_front(observed, pid, window_id) {
-                return exact_result(pid, window_id, "already_front", false, observed);
+                // AX focus can hold while AppKit has not made the NSWindow
+                // key, which leaves native menu commands disabled. Re-assert
+                // native key; nothing else needs activating or settling.
+                let native_key_requested =
+                    crate::input::skylight::make_exact_window_key(pid, window_id);
+                return exact_result(
+                    pid,
+                    window_id,
+                    "already_front",
+                    native_key_requested,
+                    observed,
+                );
             }
 
             // The persistent kCPSNoWindows request owns process activation

@@ -1984,6 +1984,10 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         }
     }
 
+    fn managed_extension_policy(&self, executable: &str) -> Option<String> {
+        crate::browser_managed_policy::managed_extension_policy(executable)
+    }
+
     fn spawn_isolated_browser(
         &self,
         mut command: std::process::Command,

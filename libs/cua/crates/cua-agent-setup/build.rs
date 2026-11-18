@@ -11,8 +11,15 @@ use std::{
 };
 
 /// (repository path relative to this crate, name in OUT_DIR and vendor/):
-/// a file or a directory.
-const FILES: &[(&str, &str)] = &[("../../skills", "skills")];
+/// a file or a directory. Later rows land inside earlier ones: the cua-driver
+/// skill is bundled from the folder its release versions.
+const FILES: &[(&str, &str)] = &[
+    ("../../skills", "skills"),
+    (
+        "../../../cua-driver/rust/Skills/cua-driver",
+        "skills/cua-driver",
+    ),
+];
 
 fn copy(from: &Path, to: &Path) -> io::Result<()> {
     if from.is_dir() {

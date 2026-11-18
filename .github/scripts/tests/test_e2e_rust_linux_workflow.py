@@ -74,6 +74,11 @@ class VerifySkillTests(unittest.TestCase):
         cell = "linux-electron-left-click-ax-background"
         fg_cell = "linux-electron-left-click-px-foreground"
         refused_cell = "linux-electron-type-text-ax-background"
+        # Native GTK3 cells as the nested-Sway capture lane declares them:
+        # their fixture state is read from the accessibility tree, so the
+        # recording has no fixture or sentinel journal.
+        native_readonly_cell = "linux-gtk3-tree-only-not-applicable-not-applicable"
+        native_fg_cell = "linux-gtk3-desktop-left-click-px-foreground"
         sleeper = subprocess.Popen(["sleep", "60"])
         dead = subprocess.Popen(["true"])
         dead.wait(timeout=5)
@@ -108,12 +113,20 @@ class VerifySkillTests(unittest.TestCase):
                 "cases.jsonl",
                 "empty-cases",
                 "malformed-cases",
+                "malformed-oracles",
                 "undeclared-recording-missing",
                 "foreground",
                 "foreground-wrong-marker",
                 "foreground-no-click",
                 "refused-background",
                 "refused-background-no-heartbeat",
+                "native-readonly",
+                "native-readonly-tool-calls.jsonl",
+                "native-readonly-status-failed",
+                "native-foreground",
+                "native-foreground-tool-calls.jsonl",
+                "native-foreground-no-click",
+                "native-foreground-incomplete-pair",
             ]
             for scenario in scenarios:
                 with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as tmp:
@@ -122,7 +135,14 @@ class VerifySkillTests(unittest.TestCase):
                     declarations = []
                     foreground = scenario.startswith("foreground")
                     refused = scenario.startswith("refused-background")
-                    if foreground:
+                    native_readonly = scenario.startswith("native-readonly")
+                    native_fg = scenario.startswith("native-foreground")
+                    native = native_readonly or native_fg
+                    if native_readonly:
+                        labels = (native_readonly_cell, "environment-preflight")
+                    elif native_fg:
+                        labels = (native_fg_cell, "environment-preflight")
+                    elif foreground:
                         labels = (fg_cell, "environment-preflight")
                     elif refused:
                         labels = (refused_cell, "environment-preflight")
@@ -147,12 +167,34 @@ class VerifySkillTests(unittest.TestCase):
                             ):
                                 (directory / name).write_text("{}")
                             continue
-                        action = "type_text" if refused else "left_click"
-                        delivery = "foreground" if foreground else "background"
+                        action = (
+                            "tree_only"
+                            if native_readonly
+                            else "type_text"
+                            if refused
+                            else "left_click"
+                        )
+                        delivery = (
+                            "not_applicable"
+                            if native_readonly
+                            else "foreground"
+                            if foreground or native_fg
+                            else "background"
+                        )
+                        harness = "gtk3" if native else "electron"
+                        oracles = (
+                            ["ax_state"]
+                            if native_readonly
+                            else ["fixture_state"]
+                            if foreground or native_fg
+                            else ["fixture_state", "focus", "z_order", "no_leaked_input"]
+                        )
                         declarations.append(
                             json.dumps(
                                 {
                                     "cell_id": label,
+                                    "harness": harness,
+                                    "oracles": oracles,
                                     "action": action,
                                     "delivery": delivery,
                                     "expected_behavior": (
@@ -173,7 +215,7 @@ class VerifySkillTests(unittest.TestCase):
                                 [
                                     label,
                                     "Linux/X11",
-                                    "electron",
+                                    harness,
                                     action,
                                     "Ax",
                                     delivery.title(),
@@ -207,18 +249,21 @@ class VerifySkillTests(unittest.TestCase):
                             )
                             + "\n"
                         )
-                        (directory / "fixture-state.json").write_text(
-                            json.dumps(
-                                {
-                                    "text": (
-                                        "journal mirror="
-                                        if refused
-                                        else "journal last_action=left_click"
-                                    ),
-                                }
+                        if native_readonly:
+                            continue
+                        if not native:
+                            (directory / "fixture-state.json").write_text(
+                                json.dumps(
+                                    {
+                                        "text": (
+                                            "journal mirror="
+                                            if refused
+                                            else "journal last_action=left_click"
+                                        ),
+                                    }
+                                )
                             )
-                        )
-                        if not foreground:
+                        if not foreground and not native:
                             (directory / "sentinel-events.jsonl").write_text(
                                 '{"kind":"heartbeat"}\n'
                             )
@@ -320,6 +365,12 @@ class VerifySkillTests(unittest.TestCase):
                         (root / "cases.jsonl").write_text("\n")
                     elif scenario == "malformed-cases":
                         (root / "cases.jsonl").write_text('{"cell_id":"' + cell + '"}\n')
+                    elif scenario == "malformed-oracles":
+                        (root / "cases.jsonl").write_text(
+                            declarations[0].replace('"oracles": [', '"oracles": "').replace(
+                                '"no_leaked_input"]', '"no_leaked_input"'
+                            )
+                        )
                     elif scenario == "undeclared-recording-missing":
                         with (root / "cases.jsonl").open("a") as stream:
                             stream.write(
@@ -329,6 +380,16 @@ class VerifySkillTests(unittest.TestCase):
                         (target / "fixture-state.json").write_text(
                             '{"text":"last_action=right_click"}'
                         )
+                    elif scenario == "native-readonly-status-failed":
+                        (root / "summary.md").write_text(
+                            "".join(rows).replace("Delivered | Pass", "Delivered | Fail")
+                        )
+                    elif scenario.startswith("native-") and scenario.endswith(".jsonl"):
+                        (target / scenario.split("-", 2)[2]).unlink()
+                    elif scenario == "native-foreground-no-click":
+                        (target / "turn-00001/action.json").write_text('{"tool":"press_key"}')
+                    elif scenario == "native-foreground-incomplete-pair":
+                        (target / "turn-00001/after.png").unlink()
                     elif scenario == "foreground-no-click":
                         (target / "turn-00001/action.json").write_text('{"tool":"press_key"}')
                     elif scenario == "refused-background-no-heartbeat":
@@ -359,6 +420,8 @@ class VerifySkillTests(unittest.TestCase):
                         "null-window-title",
                         "foreground",
                         "refused-background",
+                        "native-readonly",
+                        "native-foreground",
                     ):
                         self.assertEqual(result.returncode, 0, result.stderr)
                     else:

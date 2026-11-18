@@ -6,6 +6,7 @@
     "spaces",
     "cua-driver",
     "lume",
+    "hoy",
     "cua-sdk",
     "cua-cli",
     "cua-bench"

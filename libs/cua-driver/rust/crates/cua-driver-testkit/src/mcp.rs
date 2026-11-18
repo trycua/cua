@@ -33,8 +33,15 @@ pub struct McpDriver {
     rx: Receiver<String>,
     next_id: u32,
     recording_dir: Option<PathBuf>,
-    recording_started: bool,
-    recording_started_at: Option<Instant>,
+    behavior_video: BehaviorVideo,
+}
+
+/// Where the per-cell behavioral clip is in its lifecycle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BehaviorVideo {
+    NotStarted,
+    Recording(Instant),
+    Stopped,
 }
 
 static RECORDING_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -269,8 +276,7 @@ impl McpDriver {
             rx,
             next_id: 2,
             recording_dir: None,
-            recording_started: false,
-            recording_started_at: None,
+            behavior_video: BehaviorVideo::NotStarted,
         };
         d.initialize();
         if prepare_recording {
@@ -376,7 +382,7 @@ impl McpDriver {
         let Some(output_dir) = self.recording_dir.clone() else {
             return;
         };
-        if self.recording_started {
+        if self.behavior_video != BehaviorVideo::NotStarted {
             return;
         }
         let response = self.call(
@@ -397,8 +403,7 @@ impl McpDriver {
                 response.structured()
             );
         }
-        self.recording_started = true;
-        self.recording_started_at = Some(Instant::now());
+        self.behavior_video = BehaviorVideo::Recording(Instant::now());
         update_behavior_video_status(&output_dir, "started");
         std::thread::sleep(Duration::from_millis(300));
         mark_behavior_video_baseline_ready(&output_dir);
@@ -408,22 +413,30 @@ impl McpDriver {
         );
     }
 
-    fn stop_e2e_recording(&mut self) {
-        let Some(output_dir) = self.recording_dir.clone() else {
-            return;
-        };
-        if !self.recording_started {
-            let message = "E2E behavioral video boundary was never reached; fixture setup or posture failed before capture";
-            eprintln!("[testkit] {message}");
-            let _ = std::fs::write(output_dir.join("recording-error.txt"), message);
-            return;
-        }
-        if let Some(started_at) = self.recording_started_at.take() {
-            let remaining = remaining_behavior_recording_time(started_at.elapsed());
-            if !remaining.is_zero() {
-                std::thread::sleep(remaining);
+    /// End the behavioral clip now, so the test can inspect the video it
+    /// recorded. Returns the finalized `recording.mp4`, or `None` when no clip
+    /// was recorded or it failed to finalize (`recording-error.txt` says why).
+    pub fn finish_behavior_recording(&mut self) -> Option<PathBuf> {
+        self.stop_e2e_recording()
+    }
+
+    fn stop_e2e_recording(&mut self) -> Option<PathBuf> {
+        let output_dir = self.recording_dir.clone()?;
+        let started_at = match self.behavior_video {
+            BehaviorVideo::Stopped => return None,
+            BehaviorVideo::NotStarted => {
+                let message = "E2E behavioral video boundary was never reached; fixture setup or posture failed before capture";
+                eprintln!("[testkit] {message}");
+                let _ = std::fs::write(output_dir.join("recording-error.txt"), message);
+                return None;
             }
+            BehaviorVideo::Recording(started_at) => started_at,
+        };
+        let remaining = remaining_behavior_recording_time(started_at.elapsed());
+        if !remaining.is_zero() {
+            std::thread::sleep(remaining);
         }
+        self.behavior_video = BehaviorVideo::Stopped;
         let response = self.call("stop_recording", serde_json::json!({}));
         let video_path = output_dir.join("recording.mp4");
         let valid_video = !response.is_error()
@@ -434,7 +447,7 @@ impl McpDriver {
         if valid_video {
             update_behavior_video_status(&output_dir, "finalized");
             eprintln!("[testkit] finalized E2E video at {}", video_path.display());
-            return;
+            return Some(video_path);
         }
 
         let message = format!(
@@ -446,6 +459,7 @@ impl McpDriver {
         update_behavior_video_status(&output_dir, "error");
         let _ = std::fs::create_dir_all(&output_dir);
         let _ = std::fs::write(output_dir.join("recording-error.txt"), message);
+        None
     }
 
     /// Mutable access to the child reaper, e.g. to launch a target app whose
@@ -488,7 +502,8 @@ impl McpDriver {
     pub fn call_raw(&mut self, tool: &str, args: Value) -> Value {
         let id = self.next_id;
         self.next_id += 1;
-        let timeout = call_timeout(self.recording_started, tool, cfg!(target_os = "macos"));
+        let recording = matches!(self.behavior_video, BehaviorVideo::Recording(_));
+        let timeout = call_timeout(recording, tool, cfg!(target_os = "macos"));
         let args = crate::driver::with_full_window_state(tool, args);
         let request = serde_json::json!({
             "jsonrpc": "2.0", "id": id, "method": "tools/call",
@@ -563,7 +578,7 @@ fn daemon_socket_is_reachable(socket: &str) -> bool {
 
 impl Drop for McpDriver {
     fn drop(&mut self) {
-        self.stop_e2e_recording();
+        let _ = self.stop_e2e_recording();
     }
 }
 
@@ -679,8 +694,7 @@ mod tests {
             rx,
             next_id: 2,
             recording_dir: Some(dir.path().to_owned()),
-            recording_started: false,
-            recording_started_at: None,
+            behavior_video: BehaviorVideo::NotStarted,
         };
         tx.send(
             serde_json::json!({"result": {"content": [
@@ -828,9 +842,8 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_proxy_with_reachable_socket_probes_once() {
-        let dir = std::env::temp_dir().join(format!("cua-proxy-ok-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let socket = dir.join("d.sock");
+        let dir = crate::socket_tempdir().unwrap();
+        let socket = dir.path().join("d.sock");
         let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
         listener.set_nonblocking(true).unwrap();
         let stderr = run_proxy_child(&socket);
@@ -838,7 +851,6 @@ mod tests {
         while listener.accept().is_ok() {
             probes += 1;
         }
-        let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(probes, 1);
         assert!(!stderr.contains("not listening"));
     }

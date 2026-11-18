@@ -47,8 +47,10 @@ fn def() -> &'static ToolDef {
                key events never reach a native app's menus, so when the combo is a \
                menu item's key equivalent (cmd+s, cmd+w, ...) and the app is not in \
                front, that menu item runs through accessibility instead (a disabled \
-               Save is saved through the app's scripting interface and verified on \
-               disk); a menu item macOS keeps disabled in the background is refused \
+               Save is saved through the app's scripting interface using Apple Events \
+               and verified on disk; this requires per-app Automation consent and \
+               may show macOS’s first-use consent prompt; denied permission refuses the save); \
+               a menu item macOS keeps disabled in the background is refused \
                with `background_unavailable`. With serve --no-automation-prompts, \
                scripting without granted consent refuses with `automation_consent_required`, \
                without keyboard fallback.\n\
@@ -74,7 +76,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["keys"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "pid": { "type": "integer", "description": "Target process ID. Required with x, y; optional with element_token (the token carries the pid)." },
                 "keys": {
                     "type": "array",
@@ -658,6 +660,21 @@ fn delivered_structured(foreground: bool) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hotkey_discloses_background_save_automation_consent() {
+        let description = &def().description;
+        for phrase in [
+            "Apple Events",
+            "per-app Automation consent",
+            "may show macOS’s first-use consent prompt",
+            "denied permission refuses the save",
+            "a menu item macOS keeps disabled in the background",
+            "automation_consent_required",
+        ] {
+            assert!(description.contains(phrase), "missing disclosure: {phrase}");
+        }
+    }
 
     #[test]
     fn menu_safety_refusals_do_not_fall_back_to_keys() {

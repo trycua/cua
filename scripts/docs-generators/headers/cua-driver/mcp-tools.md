@@ -17,7 +17,7 @@ These parameters have the same shape on macOS, Windows and Linux (composed from 
 
 The `required` sets are the same on every platform: `click` requires nothing, `scroll` requires `direction`, and `zoom` requires `window_id` plus `x1`, `y1`, `x2`, `y2`. Legacy flat calls still check `pid`: a window action needs it, a desktop action omits it.
 
-The first stateful call on a connection creates its implicit lifecycle session; later unnamed calls on that connection share it. The session's idle TTL is five minutes. Closing the connection, `end_session` or the idle timeout run the same cleanup.
+The first stateful call on a connection creates its implicit lifecycle session; later unnamed calls on that connection share it. The session's idle TTL is five minutes. Closing the connection, `end_session` or the idle timeout run the same cleanup. After an idle end, that connection's next session-requiring call starts the session again, with the same `session` label or none (`get_session` only reads state and does not); snapshots and element tokens from before the idle end stay retired. A label ended with `end_session` is refused with `session_ended` until `start_session` starts it again.
 
 Each `get_window_state` read replaces the previous snapshot of that window and lists the replaced ids in `invalidated_snapshot_ids`; a token from a replaced snapshot is refused with `stale_element_token`, which names the current snapshots. Window-relative `x, y` and `zoom` need a screenshot read of that window in the same session first (`screenshot_context_missing` otherwise), so pass one `session` label to the read and the actions of a one-shot `cua-driver call` sequence.
 

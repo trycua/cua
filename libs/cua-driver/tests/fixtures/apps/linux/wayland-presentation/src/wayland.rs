@@ -112,29 +112,29 @@ fn now_ns() -> u64 {
 /// Press decoding that compiles whether the generated event exposes the enum
 /// directly or wrapped in [`WEnum`].
 trait Pressed {
-    fn is_pressed(self) -> bool;
+    fn pressed(self) -> bool;
 }
 
 impl Pressed for wl_pointer::ButtonState {
-    fn is_pressed(self) -> bool {
+    fn pressed(self) -> bool {
         matches!(self, wl_pointer::ButtonState::Pressed)
     }
 }
 
 impl Pressed for WEnum<wl_pointer::ButtonState> {
-    fn is_pressed(self) -> bool {
+    fn pressed(self) -> bool {
         matches!(self, WEnum::Value(wl_pointer::ButtonState::Pressed))
     }
 }
 
 impl Pressed for wl_keyboard::KeyState {
-    fn is_pressed(self) -> bool {
+    fn pressed(self) -> bool {
         matches!(self, wl_keyboard::KeyState::Pressed)
     }
 }
 
 impl Pressed for WEnum<wl_keyboard::KeyState> {
-    fn is_pressed(self) -> bool {
+    fn pressed(self) -> bool {
         matches!(self, WEnum::Value(wl_keyboard::KeyState::Pressed))
     }
 }
@@ -503,6 +503,7 @@ impl App {
 
     /// Mutate state and submit exactly one content update whose presentation
     /// feedback is accounted for on its own.
+    #[allow(clippy::too_many_arguments)]
     fn submit(
         &mut self,
         action: &str,
@@ -1202,18 +1203,16 @@ impl Dispatch<WlPointer, ()> for App {
                 button,
                 state: button_state,
                 ..
-            } => {
-                if button_state.is_pressed() {
-                    let (x, y) = state.pointer_position;
-                    let region = state.layout.region_at(x, y);
-                    state.on_input(
-                        "click",
-                        region,
-                        json!({"button": button}),
-                        connection,
-                        queue,
-                    );
-                }
+            } if button_state.pressed() => {
+                let (x, y) = state.pointer_position;
+                let region = state.layout.region_at(x, y);
+                state.on_input(
+                    "click",
+                    region,
+                    json!({"button": button}),
+                    connection,
+                    queue,
+                );
             }
             _ => {}
         }
@@ -1235,7 +1234,7 @@ impl Dispatch<WlKeyboard, ()> for App {
             ..
         } = event
         {
-            if key_state.is_pressed() {
+            if key_state.pressed() {
                 // A keyboard event carries no coordinates, so it is always
                 // attributed to the active region.
                 state.on_input(

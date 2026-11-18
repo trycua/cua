@@ -186,10 +186,13 @@ fn observed_elements(structured: &Value) -> Option<Vec<Value>> {
     Some(elements)
 }
 
-/// A read proves absence only when its walk was complete and its
-/// `observations` were not cut at their row cap.
+/// A read proves absence only when its walk was complete, it published
+/// `observations`, and they were not cut at their row cap. A read without
+/// `observations` (an older daemon, the X11 fallback) did not observe the
+/// display-only rows, so it cannot rule them out.
 fn observed_complete(structured: &Value) -> bool {
     structured.get("elements_complete").and_then(Value::as_bool) == Some(true)
+        && structured.get("observations").is_some_and(Value::is_array)
         && structured
             .get("observations_truncated")
             .and_then(Value::as_bool)
@@ -950,6 +953,33 @@ mod tests {
             .all(|e| e.get("display_only").is_none()));
         assert!(elements[2..].iter().all(|e| e["display_only"] == true));
         assert!(observed_elements(&json!({"observations": []})).is_none());
+    }
+
+    #[test]
+    fn missing_observations_keep_absence_unknown() {
+        let mut state = calculator_state();
+        state["elements_complete"] = json!(true);
+        state.as_object_mut().unwrap().remove("observations");
+        assert!(!observed_complete(&state));
+
+        let snapshot = ObservationSnapshot {
+            window: Some(window()),
+            elements: observed_elements(&state),
+            element_source_trusted: true,
+            elements_complete: observed_complete(&state),
+        };
+        let mut result = value_of("AXStaticText", "\u{200e}6");
+        result.element.as_mut().unwrap().value_equals = None;
+        result.element.as_mut().unwrap().exists = Some(true);
+        let outcomes = evaluate_predicates(&[result], &snapshot);
+        assert_eq!(outcomes[0].status, VerificationStatus::Unknown);
+        assert_eq!(
+            outcomes[0].unknown_reason,
+            Some(UnknownReason::ObservationUnavailable)
+        );
+
+        state["observations"] = json!([]);
+        assert!(observed_complete(&state));
     }
 
     #[test]

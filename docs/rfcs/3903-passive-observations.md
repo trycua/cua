@@ -136,8 +136,8 @@ A `query` keeps the observations whose role, label or value contains it
 addressable match wins over a display-only one, so a control's caption never
 turns a value read into `multi_match`. Two observations matching one selector
 remain `unknown / multi_match`. Web-content rows remain `untrusted_source`.
-`observations_truncated` keeps absence unknown even when the walk is
-complete.
+`observations_truncated`, or a read with no `observations` at all, keeps
+absence unknown even when the walk is complete.
 
 ## Alternatives considered
 

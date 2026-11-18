@@ -66,4 +66,6 @@ rows and then carries `observations_truncated: true`. A platform that cannot
 observe these rows leaves `observations` out, which means not observed, never
 empty. `verify_state` searches `elements` first and `observations` after, so
 a predicate on display text such as Calculator's result can be satisfied.
-Values are compared exactly, including bidi marks such as U+200E.
+It treats a missing element as absent only when the walk is complete and
+`observations` is present and not truncated; otherwise the result is
+`unknown`. Values are compared exactly, including bidi marks such as U+200E.

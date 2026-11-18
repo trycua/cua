@@ -122,7 +122,12 @@ public final class LiveStreamSession: ObservableObject {
     private var sentBatches: [(first: UInt64, events: [InteractiveInputEvent])] = []
     private static let resendableBatches = 32
     /// Input waiting for a paste's clipboard to reach the Space (`paste`).
-    private var heldInput: [[InteractiveInputEvent]]?
+    private var heldInput: [HeldInput]?
+    private enum HeldInput {
+        case input([InteractiveInputEvent])
+        case paste([InteractiveInputEvent], String?)
+    }
+    private var clipboardTransfer: Task<Void, Never>?
     private var pasteGeneration: UInt64 = 0
     /// How long a paste waits for the clipboard before its keys go anyway.
     var pasteWait: Duration = .seconds(2)
@@ -205,6 +210,7 @@ public final class LiveStreamSession: ObservableObject {
     public func select(_ newSource: StreamSource) async {
         guard newSource != source || status == .idle else { return }
         cancelReconnect()
+        dropHeldInput()
         await teardownTransport()
         if newSource != source { activatesOnInput = false }
         source = newSource
@@ -228,6 +234,7 @@ public final class LiveStreamSession: ObservableObject {
 
     public func stop() async {
         cancelReconnect()
+        dropHeldInput()
         await teardownTransport()
         activatesOnInput = false
         status = .idle
@@ -672,7 +679,7 @@ public final class LiveStreamSession: ObservableObject {
     /// (`SpaceStreamSourceProviding.commandAsControl`), whichever view sent them.
     public func send(_ events: [InteractiveInputEvent]) {
         if heldInput != nil {
-            heldInput?.append(events)
+            heldInput?.append(.input(events))
             return
         }
         let mapped = provider.commandAsControl ? InputEncoder.commandAsControl(events) : events
@@ -689,16 +696,33 @@ public final class LiveStreamSession: ObservableObject {
 
     /// Send a paste chord after putting this Mac's clipboard `text` on the
     /// Space: the Space's own clipboard is what its paste inserts.
-    /// Input sent meanwhile waits behind the chord, for at most `pasteWait`,
-    /// so a slow or failed transfer still delivers the keys, in order.
+    /// Input sent meanwhile, another paste too, waits behind the chord for
+    /// at most `pasteWait`, so a slow or failed transfer still delivers the
+    /// keys, in order.
     public func paste(_ events: [InteractiveInputEvent], text: String?) {
-        guard let text, !text.isEmpty, heldInput == nil else { return send(events) }
-        heldInput = [events]
+        if heldInput != nil {
+            heldInput?.append(.paste(events, text))
+            return
+        }
+        beginPaste(events, text: text)
+    }
+
+    private func beginPaste(_ events: [InteractiveInputEvent], text: String?) {
+        guard let text, !text.isEmpty else { return send(events) }
+        heldInput = [.input(events)]
         pasteGeneration &+= 1
         let generation = pasteGeneration
         let provider = provider
-        Task { @MainActor [weak self] in
+        // One transfer at a time, in paste order: one that outlived its
+        // wait must not land after the next paste's.
+        let previous = clipboardTransfer
+        let transfer = Task { @MainActor in
+            await previous?.value
             _ = try? await provider.sendClipboard(text)
+        }
+        clipboardTransfer = transfer
+        Task { @MainActor [weak self] in
+            await transfer.value
             self?.releaseHeldInput(generation)
         }
         Task { @MainActor [weak self, pasteWait] in
@@ -708,9 +732,26 @@ public final class LiveStreamSession: ObservableObject {
     }
 
     private func releaseHeldInput(_ generation: UInt64) {
-        guard generation == pasteGeneration, let held = heldInput else { return }
+        guard generation == pasteGeneration, var held = heldInput else { return }
         heldInput = nil
-        for events in held { send(events) }
+        while !held.isEmpty {
+            switch held.removeFirst() {
+            case let .input(events):
+                send(events)
+            case let .paste(events, text):
+                beginPaste(events, text: text)
+                if heldInput != nil {
+                    heldInput?.append(contentsOf: held)
+                    return
+                }
+            }
+        }
+    }
+
+    /// Input held for a paste was meant for the stream that is going away.
+    private func dropHeldInput() {
+        heldInput = nil
+        pasteGeneration &+= 1
     }
 
     /// The Space can reach the streamed window only by activating it: reopen

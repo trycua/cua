@@ -368,6 +368,36 @@ private func pointerEvents(in text: String) -> [[String: Any]] {
         await session.stop()
     }
 
+    /// A second paste while the first's clipboard is on its way pastes its
+    /// own text, not the first's; held input dies with the stream it was
+    /// typed into.
+    @Test func pastesQueueWithTheirOwnTextAndAStopDropsThem() async throws {
+        let v: [InteractiveInputEvent] = [.key(key: "v", down: true, modifiers: [.command], repeatKey: false)]
+        let provider = RecordingProvider()
+        provider.clipboardDelay = .milliseconds(30)
+        let session = LiveStreamSession(provider: provider)
+        await session.start()
+        session.paste(v, text: "first")
+        session.paste(v, text: "second")
+        await eventually("both pastes") { provider.media.sent.count == 2 }
+        #expect(provider.clipboards == ["first", "second"])
+        #expect(provider.framesAtClipboard == [0, 1], "each clipboard went just before its own chord")
+
+        let slow = RecordingProvider()
+        slow.clipboardDelay = .seconds(30)
+        let stopped = LiveStreamSession(provider: slow)
+        stopped.pasteWait = .milliseconds(50)
+        await stopped.start()
+        stopped.paste(v, text: "late")
+        stopped.send(v)
+        await stopped.stop()
+        await stopped.start()
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(slow.media.sent.isEmpty, "nothing held for the stopped stream reached the new one")
+        await stopped.stop()
+        await session.stop()
+    }
+
     /// Under `ask` or `off` (or with no clipboard behind the provider)
     /// nothing is sent, and a clipboard that never arrives does not keep
     /// the keys: the chord goes after `pasteWait`.

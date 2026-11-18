@@ -1995,13 +1995,15 @@ const DOM_EVENT_CLICK_SEQUENCE: &str = "async function() { \
           width: 1, height: 1, pressure: buttons ? 0.5 : 0, ...extra })); \
     const M = (type, buttons, extra) => target.dispatchEvent(new view.MouseEvent(type, \
         { ...base, buttons, detail: 0, ...extra })); \
-    const observer = new view.MutationObserver(() => {}); \
+    let records = []; \
+    const observer = new view.MutationObserver(batch => { records.push(...batch); }); \
     for (const scope of new Set([doc, root])) observer.observe(scope, \
         { subtree: true, childList: true, attributes: true, characterData: true }); \
     P('pointerover', 0); P('pointerenter', 0, { bubbles: false, cancelable: false }); \
     M('mouseover', 0); M('mouseenter', 0, { bubbles: false, cancelable: false }); \
     P('pointermove', 0); M('mousemove', 0); \
     observer.takeRecords(); \
+    records = []; \
     const compat = P('pointerdown', 1); \
     if (compat && M('mousedown', 1, { detail: 1 })) { \
         const focusable = target.closest('a[href],button,input,select,textarea,summary,[tabindex],[contenteditable=\"\"],[contenteditable=\"true\"]'); \
@@ -2011,7 +2013,7 @@ const DOM_EVENT_CLICK_SEQUENCE: &str = "async function() { \
     if (compat) M('mouseup', 0, { detail: 1 }); \
     M('click', 0, { detail: 1 }); \
     for (let turn = 0; turn < 8; turn++) await null; \
-    const records = observer.takeRecords(); \
+    records.push(...observer.takeRecords()); \
     observer.disconnect(); \
     const caused = records.filter(m => !el.contains(m.target) \
         && !(m.type === 'attributes' && m.target.contains(el))); \

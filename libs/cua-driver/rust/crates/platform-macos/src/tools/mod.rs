@@ -874,11 +874,12 @@ async fn pixel_focus_landed(pid: i32, window_id: Option<u32>, x: f64, y: f64) ->
     focused_element_holds_point(pid, window_id, x, y, false).await
 }
 
-/// Whether the application's focused element covers the window-local pixel
-/// `(x, y)` of `window_id`. With `require_window`, the focused element must
-/// also belong to that exact window, so focus held by a same-process sibling
-/// window that overlaps the point never counts as the requested target.
-/// Unprovable answers are `false`.
+/// Whether the application's focused element holds keyboard focus at the
+/// window-local pixel `(x, y)` of `window_id` (see [`focus_holds_pixel`]).
+/// With `require_window`, the focused and hit-tested elements must also belong
+/// to that exact window, so focus held by a same-process sibling window that
+/// overlaps the point never counts as the requested target. Unprovable answers
+/// are `false`.
 async fn focused_element_holds_point(
     pid: i32,
     window_id: Option<u32>,
@@ -886,6 +887,7 @@ async fn focused_element_holds_point(
     y: f64,
     require_window: bool,
 ) -> bool {
+    use core_foundation::base::{CFRelease, CFTypeRef};
     let Some(wid) = window_id else {
         return false;
     };
@@ -895,22 +897,61 @@ async fn focused_element_holds_point(
         };
         let (screen_x, screen_y, _, _) = frame.to_screen(x, y);
         unsafe {
+            let in_window = |element| {
+                !require_window
+                    || crate::ax::exact_target::element_window_id(element)
+                        .is_some_and(|window| window.is(wid))
+            };
             let Some(focused) = crate::ax::bindings::focused_element_of_pid(pid) else {
                 return false;
             };
-            let rect = crate::ax::bindings::element_screen_rect(focused);
-            let in_window = !require_window
-                || crate::ax::exact_target::element_window_id(focused)
-                    .is_some_and(|window| window.is(wid));
-            core_foundation::base::CFRelease(focused as core_foundation::base::CFTypeRef);
-            let Some(rect) = rect else {
+            if !in_window(focused) {
+                CFRelease(focused as CFTypeRef);
                 return false;
+            }
+            let hit = crate::ax::bindings::element_at_screen_position(pid, screen_x, screen_y);
+            let hit_in_window = hit.is_some_and(|hit| in_window(hit));
+            let evidence = PixelFocusEvidence {
+                focused_covers_point: crate::ax::bindings::element_screen_rect(focused)
+                    .is_some_and(|rect| point_within_rect(rect, screen_x, screen_y)),
+                focused_within_hit: hit_in_window
+                    && hit.is_some_and(|hit| {
+                        crate::fast_path_guard::is_self_or_ancestor(focused, hit)
+                    }),
+                focused_is_text_input: crate::ax::bindings::copy_string_attr(focused, "AXRole")
+                    .is_some_and(|role| type_text::is_text_input_role(&role)),
+                hit_reports_focus: hit_in_window
+                    && hit.is_some_and(|hit| {
+                        crate::ax::bindings::copy_bool_attr(hit, "AXFocused") == Some(true)
+                    }),
             };
-            in_window && point_within_rect(rect, screen_x, screen_y)
+            if let Some(hit) = hit {
+                CFRelease(hit as CFTypeRef);
+            }
+            CFRelease(focused as CFTypeRef);
+            focus_holds_pixel(evidence)
         }
     })
     .await
     .unwrap_or(false)
+}
+
+/// What the accessibility tree says about keyboard focus at a pixel.
+#[derive(Clone, Copy, Debug)]
+struct PixelFocusEvidence {
+    /// The application's focused element's rect contains the point.
+    focused_covers_point: bool,
+    /// The focused element is the element hit-tested at the point, or inside
+    /// it (Chromium's omnibox hit-tests to an enclosing `AXGroup`).
+    focused_within_hit: bool,
+    /// The focused element has a text input role.
+    focused_is_text_input: bool,
+    /// The element hit-tested at the point reports `AXFocused` itself.
+    hit_reports_focus: bool,
+}
+
+fn focus_holds_pixel(evidence: PixelFocusEvidence) -> bool {
+    evidence.focused_covers_point
 }
 
 /// Whether `[x, y, width, height]` (screen coordinates, top-left origin)
@@ -1760,7 +1801,60 @@ mod cursor_overlay_facility_tests {
 // binary has no CoreGraphics linkage.
 #[cfg(test)]
 mod pixel_focus_readback_tests {
-    use super::point_within_rect;
+    use super::{focus_holds_pixel, point_within_rect, PixelFocusEvidence};
+
+    #[test]
+    fn a_focused_container_around_the_point_does_not_hold_it() {
+        // Firefox (#5384): the page document has focus and its rect encloses
+        // the input at the point, but the input itself is not focused. Typing
+        // there would reach the document, not the field.
+        assert!(!focus_holds_pixel(PixelFocusEvidence {
+            focused_covers_point: true,
+            focused_within_hit: false,
+            focused_is_text_input: false,
+            hit_reports_focus: false,
+        }));
+    }
+
+    #[test]
+    fn the_field_at_the_point_holds_it() {
+        let field = PixelFocusEvidence {
+            focused_covers_point: true,
+            focused_within_hit: true,
+            focused_is_text_input: true,
+            hit_reports_focus: false,
+        };
+        assert!(focus_holds_pixel(field));
+        // Chromium's omnibox: the hit-test returns an enclosing group.
+        assert!(focus_holds_pixel(PixelFocusEvidence {
+            focused_is_text_input: false,
+            ..field
+        }));
+        // A text field whose hit-test returns one of its own text runs.
+        assert!(focus_holds_pixel(PixelFocusEvidence {
+            focused_within_hit: false,
+            ..field
+        }));
+        // Background web content (Tauri): AXFocusedUIElement does not name
+        // the DOM control, but the control reports AXFocused.
+        assert!(focus_holds_pixel(PixelFocusEvidence {
+            focused_covers_point: false,
+            focused_within_hit: false,
+            focused_is_text_input: false,
+            hit_reports_focus: true,
+        }));
+    }
+
+    #[test]
+    fn focus_elsewhere_does_not_hold_the_point() {
+        // WhatsApp: focus stayed on the transcript above the clicked composer.
+        assert!(!focus_holds_pixel(PixelFocusEvidence {
+            focused_covers_point: false,
+            focused_within_hit: false,
+            focused_is_text_input: true,
+            hit_reports_focus: false,
+        }));
+    }
 
     #[test]
     fn confirms_a_point_inside_the_focused_element() {

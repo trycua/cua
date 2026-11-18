@@ -1,0 +1,8 @@
+{
+  "agents.routine.title": "제목",
+  "agents.routine.prompt": "프롬프트",
+  "agents.routine.schedule": "일정",
+  "agents.routine.minutes": "분",
+  "agents.routine.time": "시간",
+  "agents.routine.day": "요일"
+}

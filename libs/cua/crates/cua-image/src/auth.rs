@@ -11,8 +11,8 @@
 //!   then [`resolve_helper`]): Docker Desktop's helper makes macOS ask whether
 //!   the app may use "data from other apps", which nobody wants for a public
 //!   image.
-//! * Private ECR (`<account>.dkr.ecr.<region>.amazonaws.com`, as Fleet's
-//!   private images): `aws ecr get-login-password --region <region>` with
+//! * Private ECR (`<account>.dkr.ecr.<region>.amazonaws.com`, for private
+//!   images): `aws ecr get-login-password --region <region>` with
 //!   the caller's AWS CLI credentials, when `aws` is installed (disable with
 //!   `CUA_REGISTRY_AWS_CLI=0`). Read-only; nothing is written to the docker
 //!   config.

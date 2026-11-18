@@ -1,0 +1,23 @@
+id = "actual"
+name = "Actual Computer"
+icon = "actual"
+tier = "more"
+rank = 320
+kind = "hosted"
+hidden = true
+hidden_reason = "Unverified: Cua has not run this provider end to end yet."
+aliases = ["aci"]
+wire = "openai-chat"
+base_url = "https://api.actual.inc/v1"
+base_url_env = "ACTUAL_BASE_URL"
+default_model = ""
+hermes_id = "actual"
+key_help = "Create a key at actual.inc."
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "ACTUAL_API_KEY"
+
+[delivery]
+hermes = ["ACTUAL_API_KEY"]

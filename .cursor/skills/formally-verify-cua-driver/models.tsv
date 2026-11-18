@@ -1,0 +1,28 @@
+# Every TLA+ check, one row each. check-models.sh runs them all and compares.
+# expect: "pass", or the one invariant that must fail first. A row that names
+# an invariant is either a finding on main or an able-to-fail variant (the
+# code with one guard removed); the SKILL.md table says which.
+# spec	config (both in models/ beside this file)	expect
+token.tla	token.cfg	pass
+token.tla	token_agedout.cfg	R4
+token.tla	token_rowrepoint.cfg	R3
+session.tla	session.cfg	SE5
+session.tla	session_fixed.cfg	pass
+session.tla	session_pre6773.cfg	SE2
+recording.tla	recording.cfg	pass
+recording.tla	recording_restart.cfg	RC3
+recording.tla	recording_dirfail.cfg	RC4
+recording.tla	recording_idle.cfg	RC5
+admission.tla	admission.cfg	pass
+admission.tla	admission_pre6739.cfg	PG2
+admission.tla	admission_pre6802.cfg	PG1
+admission.tla	admission_regate.cfg	PG1
+serve_drain.tla	serve_drain.cfg	pass
+serve_drain.tla	serve_drain_windows.cfg	SD1
+foreground_restore.tla	foreground_restore.cfg	FR1
+foreground_restore.tla	foreground_restore_fixed.cfg	pass
+invoke_menu_cancel.tla	invoke_menu_cancel.cfg	MC2
+invoke_menu_cancel.tla	invoke_menu_cancel_fixed.cfg	pass
+invoke_menu_cancel.tla	invoke_menu_cancel_pre6953.cfg	MC1
+windows_typing.tla	windows_typing.cfg	pass
+windows_typing.tla	windows_typing_always.cfg	NoLateKeystroke

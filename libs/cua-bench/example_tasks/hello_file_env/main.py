@@ -3,7 +3,7 @@
 Runs on any Linux image with cua-spacesd (shell and files), for example:
 
     cb run example_tasks/hello_file_env                    # local gVisor container
-    cb run example_tasks/hello_file_env --on cloud --image <registry ref>
+    cb run example_tasks/hello_file_env --image <registry ref>
 """
 
 import cua_bench as cb

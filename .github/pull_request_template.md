@@ -41,3 +41,4 @@ or cross-component contract change):
 - [ ] The PR title is a Conventional Commit describing the production change.
 - [ ] External contributor authorship is preserved, or no external contribution is included.
 - [ ] If release-tracked files changed but this is intentionally non-releasing, the `no-release` label is applied.
+- [ ] `bin/ci` is green and signed off (`bin/ci --signoff`)

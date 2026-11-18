@@ -4,6 +4,7 @@
 import type { SpaceDetailView } from "../model/window";
 import { CopyButton, type WriteText } from "./CopyButton";
 import { Sym } from "./desktop/Sym";
+import { useT } from "../i18n";
 
 /**
  * A Space's facts (the core's `detail_live`): one line each, the full value
@@ -12,8 +13,9 @@ import { Sym } from "./desktop/Sym";
  * (an emulated local Space's Architecture).
  */
 export function FactList({ facts, copyText }: { facts: SpaceDetailView["facts"]; copyText?: WriteText }) {
+  const t = useT("spaces");
   return (
-    <dl className="dw-list" aria-label="Details">
+    <dl className="dw-list" aria-label={t("spaces.facts.label")}>
       {facts.map((fact) => (
         <div key={fact.label}>
           <dt>{fact.label}</dt>

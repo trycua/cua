@@ -92,6 +92,7 @@ async fn viewer_page_and_ticket_scope() {
                 path: format!("{real_root}/sub"),
                 parents: true,
                 mode: 0,
+                ..Default::default()
             })
             .await
             .unwrap_or_else(|e| panic!("{transport:?} mkdir in root: {e}"));
@@ -115,6 +116,7 @@ async fn viewer_page_and_ticket_scope() {
                 .stat(StatRequest {
                     path: path.clone(),
                     no_follow_symlinks: false,
+                    ..Default::default()
                 })
                 .await
                 .expect_err("outside the root");
@@ -158,6 +160,7 @@ async fn viewer_page_and_ticket_scope() {
             .stat(StatRequest {
                 path: format!("{real_root}/etc-link/hostname"),
                 no_follow_symlinks: false,
+                ..Default::default()
             })
             .await
             .expect_err("symlink escape");
@@ -203,6 +206,7 @@ async fn viewer_without_files_grant_has_no_filesystem() {
         .stat(StatRequest {
             path: t.scratch.clone(),
             no_follow_symlinks: false,
+            ..Default::default()
         })
         .await
         .expect_err("no files grant");

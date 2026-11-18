@@ -3,11 +3,12 @@
 
 import { Radio } from "@base-ui/react/radio";
 import { RadioGroup } from "@base-ui/react/radio-group";
-import { GlobeIcon, LoaderCircleIcon, SearchIcon } from "lucide-react";
+import { GlobeIcon, KeyRoundIcon, LoaderCircleIcon, SearchIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import type { ReviewView, TeleportSession, TeleportStore } from "@/bridge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { GroupedSection, SectionHeading } from "@/components/ui/grouped";
 import { cn } from "@/lib/utils";
 import { SavedItems } from "./saved-items";
 
@@ -37,9 +38,7 @@ export function TeleportReview({
       {r.offersVault ? <Source review={r} teleport={teleport} /> : null}
 
       {fromVault ? (
-        <Group title="Saved in the Keyvault">
-          {vault ? <SavedItems view={vault.view} query={vault.query} teleport={teleport} /> : <Reading />}
-        </Group>
+        <Group title="Saved in the Keyvault">{vault ? <SavedItems view={vault.view} query={vault.query} teleport={teleport} /> : <Reading />}</Group>
       ) : null}
 
       {!fromVault && r.offersDomains ? (
@@ -50,9 +49,9 @@ export function TeleportReview({
 
       {!fromVault && r.toggles.length ? (
         <Group title="Also sent">
-          <ul className="divide-y">
+          <>
             {r.toggles.map((t) => (
-              <li key={t.key} data-review-item={t.key} data-kind={t.sensitive ? "secret" : "state"} data-sent={t.selected || undefined}>
+              <div key={t.key} data-review-item={t.key} data-kind={t.sensitive ? "secret" : "state"} data-sent={t.selected || undefined}>
                 <label className="flex cursor-default items-start gap-3 px-4 py-2.5">
                   <Checkbox
                     className="mt-0.5"
@@ -68,43 +67,65 @@ export function TeleportReview({
                   </span>
                   <span className="shrink-0 text-xs text-muted-foreground">{t.sensitive ? "Secret" : t.bytes > 0 ? teleport.bytes(t.bytes) : null}</span>
                 </label>
-              </li>
+              </div>
             ))}
-          </ul>
+          </>
         </Group>
       ) : null}
 
       {r.offersPasswords ? (
         <Group>
           <label className="flex cursor-default items-start gap-3 px-4 py-2.5">
-            <Checkbox className="mt-0.5" checked={r.includePasswords} onCheckedChange={(value) => teleport.send({ type: "toggle-passwords", value })} />
-            <span>
+            <Checkbox
+              className="mt-0.5"
+              data-review-passwords=""
+              checked={r.includePasswords}
+              onCheckedChange={(value) => teleport.send({ type: "toggle-passwords", value })}
+            />
+            <span className="min-w-0 flex-1">
               <span className="block text-[13px]">{r.passwordsLabel}</span>
-              <span className="block text-xs text-muted-foreground">
-                Off by default. Passwords are re-encrypted for the browser in the Space and need that browser to have been opened once.
-              </span>
+              <span className="block text-xs text-muted-foreground">The Space's browser must have been opened once.</span>
             </span>
+            {r.includePasswords && r.passwordSummary ? (
+              <span className="shrink-0 text-xs text-muted-foreground tabular-nums" data-review-passwords-summary>
+                {r.passwordSummary}
+              </span>
+            ) : null}
           </label>
+          {/* The picker only where the Keyvault keeps the choice (the core lists rows then). */}
+          {r.includePasswords && r.passwordSummary ? <Passwords review={r} teleport={teleport} /> : null}
+        </Group>
+      ) : null}
+
+      {r.steps.length ? (
+        <Group title="What happens">
+          <>
+            {r.steps.map((s, i) => (
+              <div key={i} className="px-4 py-2.5 text-[13px]" data-review-step={s.kind}>
+                {s.summary}
+              </div>
+            ))}
+          </>
         </Group>
       ) : null}
 
       {installs.length || r.warnings.length ? (
         <Group>
-          <ul className="divide-y">
+          <>
             {installs.map((i) => (
-              <li key={i.key} className="flex items-baseline justify-between gap-4 px-4 py-2.5" data-review-item={i.key} data-kind="install">
+              <div key={i.key} className="flex items-baseline justify-between gap-4 px-4 py-2.5" data-review-item={i.key} data-kind="install">
                 <span className="text-[13px]" data-review-label>
                   {i.label}
                 </span>
                 <span className="text-xs text-muted-foreground">{i.detail}</span>
-              </li>
+              </div>
             ))}
             {r.warnings.map((w) => (
-              <li key={w} className="px-4 py-2.5 text-xs text-muted-foreground" data-review-warning>
+              <div key={w} className="px-4 py-2.5 text-xs text-muted-foreground" data-review-warning>
                 {w}
-              </li>
+              </div>
             ))}
-          </ul>
+          </>
         </Group>
       ) : null}
 
@@ -125,7 +146,7 @@ export function TeleportReview({
               data="ack-relay"
               checked={r.acknowledgedRelayPlaintext}
               onChange={(value) => teleport.send({ type: "acknowledge-relay-plaintext", value })}
-              note="This Space predates end-to-end sealing. The relay could read these secrets in transit."
+              note="This Space is too old for end-to-end encryption. Cua's servers could read these while sending."
             >
               Send without end-to-end encryption
             </Gate>
@@ -144,12 +165,12 @@ function Source({ review: r, teleport }: { review: ReviewView; teleport: Telepor
   ] as const;
   return (
     <Group>
-      <RadioGroup value={r.source} onValueChange={(v) => void teleport.sendFrom(v as "live" | "vault")} className="divide-y" aria-label="Send from" data-review-source>
+      <RadioGroup value={r.source} onValueChange={(v) => void teleport.sendFrom(v as "live" | "vault")} aria-label="Send from" data-review-source>
         {options.map((o) => (
           <label key={o.value} className="flex cursor-default items-center gap-3 px-4 py-2.5 text-[13px]" data-source={o.value}>
             <Radio.Root
               value={o.value}
-              className="flex size-4 shrink-0 items-center justify-center rounded-full border border-input bg-card shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/60 data-checked:border-brand data-checked:bg-brand dark:bg-input/30"
+              className="flex size-4 shrink-0 items-center justify-center rounded-full border border-input bg-card shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/60 data-checked:border-brand data-checked:bg-brand dark:bg-input/30" // design-ok: radio control ring, not a content box
             >
               <Radio.Indicator className="size-1.5 rounded-full bg-white" />
             </Radio.Root>
@@ -158,7 +179,7 @@ function Source({ review: r, teleport }: { review: ReviewView; teleport: Telepor
         ))}
       </RadioGroup>
       {r.sourceNote ? (
-        <p className="border-t px-4 py-2 text-xs text-muted-foreground" data-review-source-note>
+        <p className="px-4 py-2 text-xs text-muted-foreground" data-review-source-note>
           {r.sourceNote}
         </p>
       ) : null}
@@ -176,23 +197,39 @@ function Reading() {
 
 function Group({ title, aside, children }: { title?: string; aside?: ReactNode; children: ReactNode }) {
   return (
-    <section className="overflow-hidden rounded-lg border bg-card">
+    <section>
       {title ? (
-        <header className="flex items-center justify-between border-b px-4 py-2 text-xs">
-          <h3 className="font-medium text-muted-foreground">{title}</h3>
-          {aside ? (
-            <span className="text-muted-foreground tabular-nums" data-review-sites-summary>
-              {aside}
-            </span>
-          ) : null}
-        </header>
+        <SectionHeading
+          className="mt-0"
+          action={
+            aside ? (
+              <span className="text-muted-foreground tabular-nums" data-review-sites-summary>
+                {aside}
+              </span>
+            ) : null
+          }
+        >
+          {title}
+        </SectionHeading>
       ) : null}
-      {children}
+      <GroupedSection>{children}</GroupedSection>
     </section>
   );
 }
 
-function Gate({ data, checked, onChange, note, children }: { data: string; checked: boolean; onChange: (v: boolean) => void; note?: string; children: ReactNode }) {
+function Gate({
+  data,
+  checked,
+  onChange,
+  note,
+  children,
+}: {
+  data: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  note?: string;
+  children: ReactNode;
+}) {
   return (
     <label className="flex cursor-default items-start gap-2.5" data-gate={data} data-checked={checked || undefined}>
       <Checkbox className="mt-0.5" checked={checked} onCheckedChange={onChange} />
@@ -201,6 +238,55 @@ function Gate({ data, checked, onChange, note, children }: { data: string; check
         {note ? <span className="block text-xs text-muted-foreground">{note}</span> : null}
       </span>
     </label>
+  );
+}
+
+/** The saved passwords to pick, as the sites are: a site with how many it
+ * holds (reading the app), or each saved password's site and username (from
+ * the Keyvault). Never a value. */
+function Passwords({ review: r, teleport }: { review: ReviewView; teleport: TeleportStore }) {
+  const rows = r.passwords ?? [];
+  return (
+    <>
+      <div className="flex items-center gap-2 px-4 py-1.5">
+        <SearchIcon className="size-3.5 shrink-0 text-muted-foreground" />
+        <input
+          aria-label="Search saved passwords"
+          placeholder="Search saved passwords"
+          value={r.passwordQuery ?? ""}
+          onChange={(e) => teleport.send({ type: "password-query", text: e.target.value })}
+          className="h-7 min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-muted-foreground"
+        />
+        <button type="button" className="text-xs text-brand hover:underline" onClick={() => teleport.send({ type: "select-shown-passwords", value: true })}>
+          All
+        </button>
+        <button type="button" className="text-xs text-brand hover:underline" onClick={() => teleport.send({ type: "select-shown-passwords", value: false })}>
+          None
+        </button>
+      </div>
+      {rows.length ? (
+        <div className="max-h-52 overflow-y-auto">
+          {rows.map((p) => (
+            <div key={p.key} data-review-password={p.key} data-selected={p.selected || undefined}>
+              <label className="flex cursor-default items-center gap-2.5 px-4 py-2">
+                <Checkbox
+                  aria-label={`Send ${[p.site, p.username].filter(Boolean).join(" ")}`}
+                  checked={p.selected}
+                  onCheckedChange={() => teleport.send({ type: "toggle-password", key: p.key })}
+                />
+                <KeyRoundIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="truncate text-[13px]">{p.site}</span>
+                {p.username ? <span className="truncate text-xs text-muted-foreground">{p.username}</span> : null}
+                <span className="flex-1" />
+                {p.counts ? <span className="shrink-0 text-xs text-muted-foreground">{p.counts}</span> : null}
+              </label>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="px-4 py-3 text-[13px] text-muted-foreground">No saved passwords match.</p>
+      )}
+    </>
   );
 }
 
@@ -218,7 +304,7 @@ function Sites({ review: r, reading, teleport }: { review: ReviewView; reading: 
   }
   return (
     <>
-      <div className="flex items-center gap-2 border-b px-4 py-1.5">
+      <div className="flex items-center gap-2 px-4 py-1.5">
         <SearchIcon className="size-3.5 shrink-0 text-muted-foreground" />
         <input
           aria-label="Search sites"
@@ -234,9 +320,9 @@ function Sites({ review: r, reading, teleport }: { review: ReviewView; reading: 
           None
         </button>
       </div>
-      <ul className="max-h-52 divide-y overflow-y-auto">
+      <div className="max-h-52 overflow-y-auto">
         {r.domains.map((d) => (
-          <li key={d.domain} data-review-site={d.domain} data-selected={d.selected || undefined} className={cn(!d.selectable && "opacity-55")}>
+          <div key={d.domain} data-review-site={d.domain} data-selected={d.selected || undefined} className={cn(!d.selectable && "opacity-55")}>
             <label className="flex cursor-default items-center gap-2.5 px-4 py-2">
               <Checkbox
                 aria-label={`Send ${d.domain}`}
@@ -257,9 +343,9 @@ function Sites({ review: r, reading, teleport }: { review: ReviewView; reading: 
               ) : null}
             </label>
             {d.unavailable > 0 ? <p className="-mt-1 pr-4 pb-2 pl-[66px] text-xs text-muted-foreground/70">{d.unavailableNote}</p> : null}
-          </li>
+          </div>
         ))}
-      </ul>
+      </div>
     </>
   );
 }

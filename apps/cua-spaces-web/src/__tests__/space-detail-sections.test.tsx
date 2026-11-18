@@ -16,7 +16,8 @@ stubBrowserApis();
 const SPACE = "local:design-review";
 
 function host(answers: Record<string, (out: unknown, args?: unknown) => unknown> = {}): TestHost {
-  return { failsCreates: false, listsGhost: false, answer: (op, out) => (answers[op] ? answers[op]!(out) : out) };
+  // The classic page's sections: a daemon without the thread (with it they open from Details, More).
+  return { failsCreates: false, listsGhost: false, noThread: true, answer: (op, out) => (answers[op] ? answers[op]!(out) : out) };
 }
 
 /** A drop of files with these names on the well. */
@@ -33,7 +34,7 @@ describe.skipIf(!wasmBuilt)("a Space's Agents and Teleport sections (real routes
     await router.load();
     const section = await waitFor(() => {
       const s = document.querySelector('[data-section="agents"]');
-      expect(s?.querySelector("[data-agent-run]")).not.toBeNull();
+      expect(s?.querySelector("[data-agent-run]") ?? null).not.toBeNull();
       return s!;
     });
     expect(section.querySelector("h2")?.textContent).toBe("Agents");
@@ -68,5 +69,26 @@ describe.skipIf(!wasmBuilt)("a Space's Agents and Teleport sections (real routes
     });
     act(() => dropOn(well, ["Google Chrome.app"]));
     await waitFor(() => expect(document.querySelector("[data-teleport]")).not.toBeNull());
+  });
+
+  it("titles the picker for the Space again after Back from an app's options", async () => {
+    const { router } = await mountApp(`/spaces/${SPACE}`, host());
+    await router.load();
+    const open = await screen.findByRole("button", { name: "Teleport an app…" });
+    fireEvent.click(open);
+    const title = () => document.querySelector("[data-teleport-title]")?.textContent;
+    const tile = await waitFor(() => {
+      const t = document.querySelector<HTMLElement>("[data-teleport][data-step=pick] [data-tile]:not([data-disabled])");
+      expect(t).not.toBeNull();
+      return t!;
+    });
+    const gridTitle = title();
+    expect(gridTitle).toMatch(/^Teleport an app to /);
+    fireEvent.doubleClick(tile);
+    await waitFor(() => expect(document.querySelector("[data-teleport][data-step=options]")).not.toBeNull());
+    expect(title()).not.toBe(gridTitle);
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await waitFor(() => expect(document.querySelector("[data-teleport][data-step=pick]")).not.toBeNull());
+    expect(title()).toBe(gridTitle);
   });
 });

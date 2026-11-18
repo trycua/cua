@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Opt-in downsizing of `get_desktop_state` screenshots, made transparent to
 //! desktop-scope actions on every platform.
 //!

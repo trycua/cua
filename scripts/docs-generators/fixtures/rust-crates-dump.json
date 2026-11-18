@@ -82,22 +82,6 @@
       ]
     },
     {
-      "name": "cua-fleet",
-      "lib": "cua_fleet",
-      "docs": "",
-      "items": [
-        {
-          "path": "cua_fleet::Fleet",
-          "module": "cua_fleet",
-          "docs": "",
-          "signature": "pub struct Fleet",
-          "kind": "struct",
-          "name": "Fleet",
-          "source": "src/lib.rs"
-        }
-      ]
-    },
-    {
       "name": "cua-sandbox-core",
       "lib": "cua_sandbox_core",
       "docs": "",

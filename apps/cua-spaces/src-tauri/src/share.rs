@@ -29,6 +29,15 @@ impl ShareConsent for AppShareConsent {
     }
 }
 
+/// Someone who lost access to a computer because sharing is for teams now
+/// (the Share note's input; `share.removalNote` words it).
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareRemovalView {
+    pub who: String,
+    pub machine_name: String,
+}
+
 fn msg(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
@@ -46,6 +55,27 @@ impl AppCore {
             .share_space(space, who, role)
             .await
             .map_err(msg)
+    }
+
+    /// Who lost access to the account's shared computers since the owner
+    /// last acknowledged (none on a server that predates team-only sharing).
+    pub async fn share_removals(&self) -> CmdResult<Vec<ShareRemovalView>> {
+        Ok(self
+            .spaces()
+            .share_removals()
+            .await
+            .map_err(msg)?
+            .into_iter()
+            .map(|r| ShareRemovalView {
+                who: r.who,
+                machine_name: r.machine_name,
+            })
+            .collect())
+    }
+
+    /// The owner has seen the note.
+    pub async fn ack_share_removals(&self) -> CmdResult<()> {
+        self.spaces().ack_share_removals().await.map_err(msg)
     }
 
     /// Stops sharing `space` with `who`.

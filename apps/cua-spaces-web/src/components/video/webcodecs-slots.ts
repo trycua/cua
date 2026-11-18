@@ -37,6 +37,18 @@
  * instead of the desktop (`windowId`, picture in picture): its input goes
  * in the background, and the session opens again with activation when the
  * Space says that window needs it (`would_require_activation`).
+ *
+ * Leaving a Space and coming back reuses the live session: a viewer slot
+ * (the desktop, not a window) whose picture is live is parked for
+ * `PARK_MS` instead of closed, with its canvas and decoder still running, and
+ * the next viewer slot for that Space adopts it and is live on the spot. A
+ * parked session is released when its stream ends (the Space stopped, the
+ * machine went away), when the page is hidden, past `MAX_PARKED` Spaces
+ * (the oldest first), and after `PARK_MS`.
+ *
+ * The viewer slots (`full`: the Space page's desktop, a PiP window) draw
+ * presence over the picture (`presence.ts`): the other participants'
+ * cursors and yours, shown only while the slot is live.
  */
 
 import { MediaSession, type MediaSessionOptions, type MediaTicket } from "../../../../../libs/cua/crates/cua-spacesd-html5/web/src/core/mediaSession";
@@ -44,9 +56,10 @@ import type { CuaDesktopBridge } from "@/bridge/detect";
 import { ELECTRON_BRIDGE_CHANNEL } from "@/bridge/electron-channels";
 import { isWebkitResponse } from "@/bridge/webkit-protocol";
 import type { StreamTarget, StreamTicket } from "@/bridge/ops/stream";
-import type { SlotOptions, SlotStatus } from "@/lib/video-slots";
+import { modalOpen, type SlotOptions, type SlotStatus } from "@/lib/video-slots";
 
 import { KeyCapture } from "./key-capture";
+import { attachPresence, type PresenceAttachment } from "./presence";
 import { VideoStats } from "./video-stats";
 import { NO_VIDEO_HERE, webCodecsHost } from "./webcodecs-host";
 
@@ -91,6 +104,14 @@ export function needsActivation(ack: Record<string, unknown>): boolean {
 }
 export type SessionFactory = (options: MediaSessionOptions) => SessionLike;
 
+/** Draws presence over a viewer slot's canvas (`attachPresence`; tests replace it). */
+export type PresenceFactory = (
+  desktop: CuaDesktopBridge,
+  canvas: HTMLCanvasElement,
+  host: HTMLElement,
+  options: { spaceId: string; windowId?: string; interactive: boolean },
+) => PresenceAttachment;
+
 interface Slot {
   id: string;
   el: HTMLElement;
@@ -103,7 +124,19 @@ interface Slot {
   generation: number;
   /** A window's session that opens with activation (the Space asked for it). */
   activate: boolean;
+  /** Presence over a viewer slot (none on tiles). */
+  presence: PresenceAttachment | null;
   detach: (() => void)[];
+}
+
+/** How long a viewer's live session outlives its slot (the Mac app's `slotGrace`). */
+export const PARK_MS = 45_000;
+/** The most Spaces kept parked at once. */
+export const MAX_PARKED = 3;
+
+/** What a parked session is found by: only the desktop viewer parks. */
+function parkKey(options: Pick<SlotOptions, "spaceId" | "tier" | "windowId">): string | null {
+  return options.tier === "full" && !options.windowId ? options.spaceId : null;
 }
 
 /** Tells one ticket request from the next (the bridge envelope's id). */
@@ -121,6 +154,12 @@ class TicketError extends Error {
 export class WebCodecsSlots {
   private readonly slots = new Map<string, Slot>();
   private next = 0;
+  /** Watches for a modal dialog opening or closing (while any slot is mounted). */
+  private modalWatch: MutationObserver | null = null;
+  private modal = false;
+  /** Live viewer sessions of Spaces the page left, by Space id, oldest first. */
+  private readonly parked = new Map<string, { slot: Slot; timer: ReturnType<typeof setTimeout> }>();
+  private watchingVisibility = false;
 
   /** The video bench's counters, while the shell asks for them. */
   readonly stats: VideoStats | null;
@@ -130,12 +169,16 @@ export class WebCodecsSlots {
     private readonly doc: Document = document,
     private readonly createSession: SessionFactory = (o) => new MediaSession(o),
     stats?: VideoStats | null,
+    private readonly createPresence: PresenceFactory = attachPresence,
   ) {
     this.stats = stats !== undefined ? stats : desktop.videoStats ? new VideoStats() : null;
   }
 
   /** Starts `el`'s video; the returned function stops it and removes the canvas. */
   register(el: HTMLElement, options: SlotOptions, listener: (status: SlotStatus) => void): () => void {
+    const key = parkKey(options);
+    const parked = key ? this.takeParked(key) : null;
+    if (parked) return this.adopt(parked, el, options, listener);
     const id = `${options.spaceId}#${options.tier}#${++this.next}`;
     const canvas = this.doc.createElement("canvas");
     canvas.dataset.webcodecs = options.tier;
@@ -150,20 +193,173 @@ export class WebCodecsSlots {
       outline: "none",
     });
     el.append(canvas);
-    const slot: Slot = { id, el, options, listener, canvas, session: null, status: { phase: "connecting", focused: false }, generation: 0, activate: false, detach: [] };
-    this.stats?.open(id, options.spaceId, options.tier);
-    this.slots.set(id, slot);
-    if (this.slots.size === 1) this.doc.addEventListener("visibilitychange", this.onVisibility);
-    if (options.interactive) this.wireFocus(slot);
-    this.open(slot);
-    return () => {
-      if (!this.slots.delete(id)) return;
-      this.close(slot);
-      for (const off of slot.detach.splice(0)) off();
-      canvas.remove();
-      this.stats?.close(id);
-      if (this.slots.size === 0) this.doc.removeEventListener("visibilitychange", this.onVisibility);
+    const slot: Slot = {
+      id,
+      el,
+      options,
+      listener,
+      canvas,
+      session: null,
+      status: { phase: "connecting", focused: false },
+      generation: 0,
+      activate: false,
+      presence: null,
+      detach: [],
     };
+    if (options.tier === "full") {
+      slot.presence = this.createPresence(this.desktop, canvas, el, {
+        spaceId: options.spaceId,
+        ...(options.windowId ? { windowId: options.windowId } : {}),
+        interactive: options.interactive,
+      });
+    }
+    this.stats?.open(id, options.spaceId, options.tier);
+    this.track(slot);
+    this.open(slot);
+    return this.unregister(slot);
+  }
+
+  /** Starts watching for a slot: the page's visibility, and modal dialogs. */
+  private track(slot: Slot): void {
+    this.slots.set(slot.id, slot);
+    if (!this.watchingVisibility) {
+      this.watchingVisibility = true;
+      this.doc.addEventListener("visibilitychange", this.onVisibility);
+    }
+    if (this.slots.size === 1) this.watchModal();
+    if (this.modal) this.stepBack(slot, true);
+    if (slot.options.interactive) this.wireFocus(slot);
+  }
+
+  /** Stops the watching nothing needs any more. */
+  private untrack(): void {
+    if (this.slots.size === 0) {
+      this.modalWatch?.disconnect();
+      this.modalWatch = null;
+      this.modal = false;
+      if (this.parked.size === 0 && this.watchingVisibility) {
+        this.watchingVisibility = false;
+        this.doc.removeEventListener("visibilitychange", this.onVisibility);
+      }
+    }
+  }
+
+  private unregister(slot: Slot): () => void {
+    return () => {
+      if (!this.slots.delete(slot.id)) return;
+      if (this.canPark(slot)) this.park(slot);
+      else this.teardown(slot);
+      this.untrack();
+    };
+  }
+
+  private teardown(slot: Slot): void {
+    this.close(slot);
+    for (const off of slot.detach.splice(0)) off();
+    slot.presence?.detach();
+    slot.presence = null;
+    slot.canvas.remove();
+    this.stats?.close(slot.id);
+  }
+
+  /** A live desktop viewer, on a visible page, outlives its slot for `PARK_MS`. */
+  private canPark(slot: Slot): boolean {
+    return parkKey(slot.options) !== null && PARK_MS > 0 && slot.session !== null && slot.status.phase === "live" && this.doc.visibilityState !== "hidden";
+  }
+
+  private park(slot: Slot): void {
+    const key = parkKey(slot.options)!;
+    this.discardParked(key);
+    // No slot to show or take input: its keys, presence and canvas leave the page, the session goes on.
+    for (const off of slot.detach.splice(0)) off();
+    if (this.doc.activeElement === slot.canvas) slot.canvas.blur();
+    slot.presence?.detach();
+    slot.presence = null;
+    slot.canvas.remove();
+    slot.listener = () => {};
+    const timer = setTimeout(() => this.discardParked(key), PARK_MS);
+    this.parked.set(key, { slot, timer });
+    while (this.parked.size > MAX_PARKED) this.discardParked(this.parked.keys().next().value!);
+  }
+
+  /** Takes the Space's parked session out of the parking (the caller shows it). */
+  private takeParked(key: string): Slot | null {
+    const entry = this.parked.get(key);
+    if (!entry) return null;
+    clearTimeout(entry.timer);
+    this.parked.delete(key);
+    return entry.slot;
+  }
+
+  /** Closes the Space's parked session, if any. */
+  private discardParked(key: string): void {
+    const slot = this.takeParked(key);
+    if (!slot) return;
+    this.teardown(slot);
+    this.untrack();
+  }
+
+  private isParked(slot: Slot): boolean {
+    const key = parkKey(slot.options);
+    return key !== null && this.parked.get(key)?.slot === slot;
+  }
+
+  /** A new slot for a Space with a parked session: it shows that session, live at once. */
+  private adopt(slot: Slot, el: HTMLElement, options: SlotOptions, listener: (status: SlotStatus) => void): () => void {
+    slot.el = el;
+    slot.options = options;
+    slot.listener = listener;
+    const inset = options.inset ?? 0;
+    Object.assign(slot.canvas.style, {
+      inset: `${inset}px`,
+      width: `calc(100% - ${2 * inset}px)`,
+      height: `calc(100% - ${2 * inset}px)`,
+      borderRadius: `${options.radius}px`,
+    });
+    el.append(slot.canvas);
+    if (options.tier === "full") {
+      slot.presence = this.createPresence(this.desktop, slot.canvas, el, {
+        spaceId: options.spaceId,
+        ...(options.windowId ? { windowId: options.windowId } : {}),
+        interactive: options.interactive,
+      });
+      slot.presence.setLive(slot.status.phase === "live");
+    }
+    slot.status = { ...slot.status, focused: false };
+    this.track(slot);
+    listener(slot.status);
+    return this.unregister(slot);
+  }
+
+  /**
+   * While a modal dialog is open no slot takes the pointer or the keys: the
+   * canvas stops catching pointer events and gives the keyboard back to the
+   * page (the dialog's own backdrop, Escape and focus work), and it takes
+   * both again when the dialog closes. The canvas is inside the page here, so
+   * the dialog already paints over it (nothing sits above the page's overlay).
+   */
+  private watchModal(): void {
+    const View = this.doc.defaultView;
+    if (!View || typeof View.MutationObserver !== "function") return;
+    const check = () => {
+      const now = modalOpen(this.doc);
+      if (now === this.modal) return;
+      this.modal = now;
+      for (const slot of this.slots.values()) this.stepBack(slot, now);
+    };
+    this.modalWatch = new View.MutationObserver(check);
+    this.modalWatch.observe(this.doc.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-closed", "data-ending-style", "data-open", "data-starting-style"],
+    });
+    check();
+  }
+
+  private stepBack(slot: Slot, away: boolean): void {
+    slot.canvas.style.pointerEvents = away ? "none" : "";
+    if (away && this.doc.activeElement === slot.canvas) slot.canvas.blur();
   }
 
   /** Gives keys to a slot's Space (null: back to the page). */
@@ -185,8 +381,10 @@ export class WebCodecsSlots {
       delete next.reason;
       delete next.opening;
     }
-    if (next.phase === slot.status.phase && next.focused === slot.status.focused && next.reason === slot.status.reason && next.opening === slot.status.opening) return;
+    if (next.phase === slot.status.phase && next.focused === slot.status.focused && next.reason === slot.status.reason && next.opening === slot.status.opening)
+      return;
     slot.status = next;
+    slot.presence?.setLive(next.phase === "live");
     slot.listener(next);
   }
 
@@ -202,7 +400,7 @@ export class WebCodecsSlots {
   private open(slot: Slot): void {
     if (this.doc.visibilityState === "hidden") return;
     const gen = ++slot.generation;
-    const current = () => gen === slot.generation && this.slots.get(slot.id) === slot;
+    const current = () => gen === slot.generation && (this.slots.get(slot.id) === slot || this.isParked(slot));
     this.set(slot, { phase: "connecting" });
     const { interactive } = slot.options;
     const target = streamTarget(slot.options, slot.activate);
@@ -218,7 +416,8 @@ export class WebCodecsSlots {
           audio: false,
           ...sessionConfig(slot.options, this.desktop.platform),
           onFrame: (width, height) => {
-            if (stats && current()) stats.counts(slot.id, { received: session.stats?.framesReceived ?? 0, decoded: session.stats?.framesDecoded ?? 0, width, height });
+            if (stats && current())
+              stats.counts(slot.id, { received: session.stats?.framesReceived ?? 0, decoded: session.stats?.framesDecoded ?? 0, width, height });
             if (!current() || slot.status.phase === "live") return;
             slot.canvas.style.opacity = "1";
             this.set(slot, { phase: "live" });
@@ -247,6 +446,13 @@ export class WebCodecsSlots {
 
   /** `opening`: no ticket came, so no stream ever existed. */
   private fail(slot: Slot, reason: string, opening = false): void {
+    // A parked session that ended (the Space stopped, the machine went
+    // away) is let go; nothing is shown for it.
+    if (this.isParked(slot)) {
+      this.stats?.failed(slot.id, reason);
+      this.discardParked(parkKey(slot.options)!);
+      return;
+    }
     this.close(slot);
     this.stats?.failed(slot.id, reason);
     this.set(slot, { phase: "failed", reason, ...(opening ? { opening } : {}) });
@@ -262,6 +468,7 @@ export class WebCodecsSlots {
 
   private onVisibility = (): void => {
     const hidden = this.doc.visibilityState === "hidden";
+    if (hidden) for (const key of [...this.parked.keys()]) this.discardParked(key);
     for (const slot of this.slots.values()) {
       if (hidden) {
         if (slot.session || slot.status.phase === "connecting") {

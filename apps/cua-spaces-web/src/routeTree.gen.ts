@@ -15,18 +15,34 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsRouteRouteImport } from './routes/settings/route'
 import { Route as AgentsIndexRouteImport } from './routes/agents/index'
+import { Route as AgentsAllRouteImport } from './routes/agents/all'
+import { Route as CiIndexRouteImport } from './routes/ci/index'
+import { Route as DriverIndexRouteImport } from './routes/driver/index'
+import { Route as HomeIndexRouteImport } from './routes/home/index'
+import { Route as HomeTaskIdRouteImport } from './routes/home/$taskId'
+import { Route as HomeAskRouteImport } from './routes/home/ask'
 import { Route as KeyvaultIndexRouteImport } from './routes/keyvault/index'
 import { Route as MachinesIndexRouteImport } from './routes/machines/index'
 import { Route as NotificationsIndexRouteImport } from './routes/notifications/index'
 import { Route as OnboardingIndexRouteImport } from './routes/onboarding/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as SettingsAboutRouteImport } from './routes/settings/about'
+import { Route as SettingsAdvancedRouteImport } from './routes/settings/advanced'
 import { Route as SettingsAgentsRouteImport } from './routes/settings/agents'
+import { Route as SettingsConnectedAppsRouteImport } from './routes/settings/connected-apps'
+import { Route as SettingsConnectionsRouteImport } from './routes/settings/connections'
+import { Route as SettingsConnectorsRouteImport } from './routes/settings/connectors'
 import { Route as SettingsDevicesRouteImport } from './routes/settings/devices'
 import { Route as SettingsExperimentsRouteImport } from './routes/settings/experiments'
+import { Route as SettingsGeneralRouteImport } from './routes/settings/general'
 import { Route as SpacesIndexRouteImport } from './routes/spaces/index'
 import { Route as SpacesSpaceIdRouteImport } from './routes/spaces/$spaceId'
 import { Route as VolumeIndexRouteImport } from './routes/volume/index'
+import { Route as SettingsConnectionsAppRouteImport } from './routes/settings/connections.$app'
+import { Route as SettingsConnectorsAppRouteImport } from './routes/settings/connectors.$app'
+import { Route as SpacesCloudCloudIdRouteImport } from './routes/spaces/cloud/$cloudId'
+import { Route as SpacesComputerComputerIdIndexRouteImport } from './routes/spaces/computer/$computerId/index'
+import { Route as SpacesComputerComputerIdDriverRouteImport } from './routes/spaces/computer/$computerId/driver'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -41,6 +57,36 @@ const SettingsRouteRoute = SettingsRouteRouteImport.update({
 const AgentsIndexRoute = AgentsIndexRouteImport.update({
   id: '/agents/',
   path: '/agents/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AgentsAllRoute = AgentsAllRouteImport.update({
+  id: '/agents/all',
+  path: '/agents/all',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CiIndexRoute = CiIndexRouteImport.update({
+  id: '/ci/',
+  path: '/ci/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DriverIndexRoute = DriverIndexRouteImport.update({
+  id: '/driver/',
+  path: '/driver/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HomeIndexRoute = HomeIndexRouteImport.update({
+  id: '/home/',
+  path: '/home/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HomeTaskIdRoute = HomeTaskIdRouteImport.update({
+  id: '/home/$taskId',
+  path: '/home/$taskId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HomeAskRoute = HomeAskRouteImport.update({
+  id: '/home/ask',
+  path: '/home/ask',
   getParentRoute: () => rootRouteImport,
 } as any)
 const KeyvaultIndexRoute = KeyvaultIndexRouteImport.update({
@@ -73,9 +119,29 @@ const SettingsAboutRoute = SettingsAboutRouteImport.update({
   path: '/about',
   getParentRoute: () => SettingsRouteRoute,
 } as any)
+const SettingsAdvancedRoute = SettingsAdvancedRouteImport.update({
+  id: '/advanced',
+  path: '/advanced',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
 const SettingsAgentsRoute = SettingsAgentsRouteImport.update({
   id: '/agents',
   path: '/agents',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsConnectedAppsRoute = SettingsConnectedAppsRouteImport.update({
+  id: '/connected-apps',
+  path: '/connected-apps',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsConnectionsRoute = SettingsConnectionsRouteImport.update({
+  id: '/connections',
+  path: '/connections',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsConnectorsRoute = SettingsConnectorsRouteImport.update({
+  id: '/connectors',
+  path: '/connectors',
   getParentRoute: () => SettingsRouteRoute,
 } as any)
 const SettingsDevicesRoute = SettingsDevicesRouteImport.update({
@@ -86,6 +152,11 @@ const SettingsDevicesRoute = SettingsDevicesRouteImport.update({
 const SettingsExperimentsRoute = SettingsExperimentsRouteImport.update({
   id: '/experiments',
   path: '/experiments',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
+  id: '/general',
+  path: '/general',
   getParentRoute: () => SettingsRouteRoute,
 } as any)
 const SpacesIndexRoute = SpacesIndexRouteImport.update({
@@ -103,16 +174,54 @@ const VolumeIndexRoute = VolumeIndexRouteImport.update({
   path: '/volume/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsConnectionsAppRoute = SettingsConnectionsAppRouteImport.update({
+  id: '/$app',
+  path: '/$app',
+  getParentRoute: () => SettingsConnectionsRoute,
+} as any)
+const SettingsConnectorsAppRoute = SettingsConnectorsAppRouteImport.update({
+  id: '/$app',
+  path: '/$app',
+  getParentRoute: () => SettingsConnectorsRoute,
+} as any)
+const SpacesCloudCloudIdRoute = SpacesCloudCloudIdRouteImport.update({
+  id: '/spaces/cloud/$cloudId',
+  path: '/spaces/cloud/$cloudId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SpacesComputerComputerIdIndexRoute =
+  SpacesComputerComputerIdIndexRouteImport.update({
+    id: '/spaces/computer/$computerId/',
+    path: '/spaces/computer/$computerId/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const SpacesComputerComputerIdDriverRoute =
+  SpacesComputerComputerIdDriverRouteImport.update({
+    id: '/spaces/computer/$computerId/driver',
+    path: '/spaces/computer/$computerId/driver',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/settings': typeof SettingsRouteRouteWithChildren
+  '/agents/all': typeof AgentsAllRoute
+  '/home/$taskId': typeof HomeTaskIdRoute
+  '/home/ask': typeof HomeAskRoute
   '/settings/about': typeof SettingsAboutRoute
+  '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/agents': typeof SettingsAgentsRoute
+  '/settings/connected-apps': typeof SettingsConnectedAppsRoute
+  '/settings/connections': typeof SettingsConnectionsRouteWithChildren
+  '/settings/connectors': typeof SettingsConnectorsRouteWithChildren
   '/settings/devices': typeof SettingsDevicesRoute
   '/settings/experiments': typeof SettingsExperimentsRoute
+  '/settings/general': typeof SettingsGeneralRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRoute
   '/agents/': typeof AgentsIndexRoute
+  '/ci/': typeof CiIndexRoute
+  '/driver/': typeof DriverIndexRoute
+  '/home/': typeof HomeIndexRoute
   '/keyvault/': typeof KeyvaultIndexRoute
   '/machines/': typeof MachinesIndexRoute
   '/notifications/': typeof NotificationsIndexRoute
@@ -120,15 +229,31 @@ export interface FileRoutesByFullPath {
   '/settings/': typeof SettingsIndexRoute
   '/spaces/': typeof SpacesIndexRoute
   '/volume/': typeof VolumeIndexRoute
+  '/settings/connections/$app': typeof SettingsConnectionsAppRoute
+  '/settings/connectors/$app': typeof SettingsConnectorsAppRoute
+  '/spaces/cloud/$cloudId': typeof SpacesCloudCloudIdRoute
+  '/spaces/computer/$computerId/driver': typeof SpacesComputerComputerIdDriverRoute
+  '/spaces/computer/$computerId/': typeof SpacesComputerComputerIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/agents/all': typeof AgentsAllRoute
+  '/home/$taskId': typeof HomeTaskIdRoute
+  '/home/ask': typeof HomeAskRoute
   '/settings/about': typeof SettingsAboutRoute
+  '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/agents': typeof SettingsAgentsRoute
+  '/settings/connected-apps': typeof SettingsConnectedAppsRoute
+  '/settings/connections': typeof SettingsConnectionsRouteWithChildren
+  '/settings/connectors': typeof SettingsConnectorsRouteWithChildren
   '/settings/devices': typeof SettingsDevicesRoute
   '/settings/experiments': typeof SettingsExperimentsRoute
+  '/settings/general': typeof SettingsGeneralRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRoute
   '/agents': typeof AgentsIndexRoute
+  '/ci': typeof CiIndexRoute
+  '/driver': typeof DriverIndexRoute
+  '/home': typeof HomeIndexRoute
   '/keyvault': typeof KeyvaultIndexRoute
   '/machines': typeof MachinesIndexRoute
   '/notifications': typeof NotificationsIndexRoute
@@ -136,17 +261,33 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsIndexRoute
   '/spaces': typeof SpacesIndexRoute
   '/volume': typeof VolumeIndexRoute
+  '/settings/connections/$app': typeof SettingsConnectionsAppRoute
+  '/settings/connectors/$app': typeof SettingsConnectorsAppRoute
+  '/spaces/cloud/$cloudId': typeof SpacesCloudCloudIdRoute
+  '/spaces/computer/$computerId/driver': typeof SpacesComputerComputerIdDriverRoute
+  '/spaces/computer/$computerId': typeof SpacesComputerComputerIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/settings': typeof SettingsRouteRouteWithChildren
+  '/agents/all': typeof AgentsAllRoute
+  '/home/$taskId': typeof HomeTaskIdRoute
+  '/home/ask': typeof HomeAskRoute
   '/settings/about': typeof SettingsAboutRoute
+  '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/agents': typeof SettingsAgentsRoute
+  '/settings/connected-apps': typeof SettingsConnectedAppsRoute
+  '/settings/connections': typeof SettingsConnectionsRouteWithChildren
+  '/settings/connectors': typeof SettingsConnectorsRouteWithChildren
   '/settings/devices': typeof SettingsDevicesRoute
   '/settings/experiments': typeof SettingsExperimentsRoute
+  '/settings/general': typeof SettingsGeneralRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRoute
   '/agents/': typeof AgentsIndexRoute
+  '/ci/': typeof CiIndexRoute
+  '/driver/': typeof DriverIndexRoute
+  '/home/': typeof HomeIndexRoute
   '/keyvault/': typeof KeyvaultIndexRoute
   '/machines/': typeof MachinesIndexRoute
   '/notifications/': typeof NotificationsIndexRoute
@@ -154,18 +295,34 @@ export interface FileRoutesById {
   '/settings/': typeof SettingsIndexRoute
   '/spaces/': typeof SpacesIndexRoute
   '/volume/': typeof VolumeIndexRoute
+  '/settings/connections/$app': typeof SettingsConnectionsAppRoute
+  '/settings/connectors/$app': typeof SettingsConnectorsAppRoute
+  '/spaces/cloud/$cloudId': typeof SpacesCloudCloudIdRoute
+  '/spaces/computer/$computerId/driver': typeof SpacesComputerComputerIdDriverRoute
+  '/spaces/computer/$computerId/': typeof SpacesComputerComputerIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
     | '/settings'
+    | '/agents/all'
+    | '/home/$taskId'
+    | '/home/ask'
     | '/settings/about'
+    | '/settings/advanced'
     | '/settings/agents'
+    | '/settings/connected-apps'
+    | '/settings/connections'
+    | '/settings/connectors'
     | '/settings/devices'
     | '/settings/experiments'
+    | '/settings/general'
     | '/spaces/$spaceId'
     | '/agents/'
+    | '/ci/'
+    | '/driver/'
+    | '/home/'
     | '/keyvault/'
     | '/machines/'
     | '/notifications/'
@@ -173,15 +330,31 @@ export interface FileRouteTypes {
     | '/settings/'
     | '/spaces/'
     | '/volume/'
+    | '/settings/connections/$app'
+    | '/settings/connectors/$app'
+    | '/spaces/cloud/$cloudId'
+    | '/spaces/computer/$computerId/driver'
+    | '/spaces/computer/$computerId/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/agents/all'
+    | '/home/$taskId'
+    | '/home/ask'
     | '/settings/about'
+    | '/settings/advanced'
     | '/settings/agents'
+    | '/settings/connected-apps'
+    | '/settings/connections'
+    | '/settings/connectors'
     | '/settings/devices'
     | '/settings/experiments'
+    | '/settings/general'
     | '/spaces/$spaceId'
     | '/agents'
+    | '/ci'
+    | '/driver'
+    | '/home'
     | '/keyvault'
     | '/machines'
     | '/notifications'
@@ -189,16 +362,32 @@ export interface FileRouteTypes {
     | '/settings'
     | '/spaces'
     | '/volume'
+    | '/settings/connections/$app'
+    | '/settings/connectors/$app'
+    | '/spaces/cloud/$cloudId'
+    | '/spaces/computer/$computerId/driver'
+    | '/spaces/computer/$computerId'
   id:
     | '__root__'
     | '/'
     | '/settings'
+    | '/agents/all'
+    | '/home/$taskId'
+    | '/home/ask'
     | '/settings/about'
+    | '/settings/advanced'
     | '/settings/agents'
+    | '/settings/connected-apps'
+    | '/settings/connections'
+    | '/settings/connectors'
     | '/settings/devices'
     | '/settings/experiments'
+    | '/settings/general'
     | '/spaces/$spaceId'
     | '/agents/'
+    | '/ci/'
+    | '/driver/'
+    | '/home/'
     | '/keyvault/'
     | '/machines/'
     | '/notifications/'
@@ -206,19 +395,33 @@ export interface FileRouteTypes {
     | '/settings/'
     | '/spaces/'
     | '/volume/'
+    | '/settings/connections/$app'
+    | '/settings/connectors/$app'
+    | '/spaces/cloud/$cloudId'
+    | '/spaces/computer/$computerId/driver'
+    | '/spaces/computer/$computerId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   SettingsRouteRoute: typeof SettingsRouteRouteWithChildren
+  AgentsAllRoute: typeof AgentsAllRoute
+  HomeTaskIdRoute: typeof HomeTaskIdRoute
+  HomeAskRoute: typeof HomeAskRoute
   SpacesSpaceIdRoute: typeof SpacesSpaceIdRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
+  CiIndexRoute: typeof CiIndexRoute
+  DriverIndexRoute: typeof DriverIndexRoute
+  HomeIndexRoute: typeof HomeIndexRoute
   KeyvaultIndexRoute: typeof KeyvaultIndexRoute
   MachinesIndexRoute: typeof MachinesIndexRoute
   NotificationsIndexRoute: typeof NotificationsIndexRoute
   OnboardingIndexRoute: typeof OnboardingIndexRoute
   SpacesIndexRoute: typeof SpacesIndexRoute
   VolumeIndexRoute: typeof VolumeIndexRoute
+  SpacesCloudCloudIdRoute: typeof SpacesCloudCloudIdRoute
+  SpacesComputerComputerIdDriverRoute: typeof SpacesComputerComputerIdDriverRoute
+  SpacesComputerComputerIdIndexRoute: typeof SpacesComputerComputerIdIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -242,6 +445,48 @@ declare module '@tanstack/react-router' {
       path: '/agents'
       fullPath: '/agents/'
       preLoaderRoute: typeof AgentsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/agents/all': {
+      id: '/agents/all'
+      path: '/agents/all'
+      fullPath: '/agents/all'
+      preLoaderRoute: typeof AgentsAllRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ci/': {
+      id: '/ci/'
+      path: '/ci'
+      fullPath: '/ci/'
+      preLoaderRoute: typeof CiIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/driver/': {
+      id: '/driver/'
+      path: '/driver'
+      fullPath: '/driver/'
+      preLoaderRoute: typeof DriverIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/home/': {
+      id: '/home/'
+      path: '/home'
+      fullPath: '/home/'
+      preLoaderRoute: typeof HomeIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/home/$taskId': {
+      id: '/home/$taskId'
+      path: '/home/$taskId'
+      fullPath: '/home/$taskId'
+      preLoaderRoute: typeof HomeTaskIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/home/ask': {
+      id: '/home/ask'
+      path: '/home/ask'
+      fullPath: '/home/ask'
+      preLoaderRoute: typeof HomeAskRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/keyvault/': {
@@ -286,11 +531,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsAboutRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
+    '/settings/advanced': {
+      id: '/settings/advanced'
+      path: '/advanced'
+      fullPath: '/settings/advanced'
+      preLoaderRoute: typeof SettingsAdvancedRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
     '/settings/agents': {
       id: '/settings/agents'
       path: '/agents'
       fullPath: '/settings/agents'
       preLoaderRoute: typeof SettingsAgentsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/connected-apps': {
+      id: '/settings/connected-apps'
+      path: '/connected-apps'
+      fullPath: '/settings/connected-apps'
+      preLoaderRoute: typeof SettingsConnectedAppsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/connections': {
+      id: '/settings/connections'
+      path: '/connections'
+      fullPath: '/settings/connections'
+      preLoaderRoute: typeof SettingsConnectionsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/connectors': {
+      id: '/settings/connectors'
+      path: '/connectors'
+      fullPath: '/settings/connectors'
+      preLoaderRoute: typeof SettingsConnectorsRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
     '/settings/devices': {
@@ -305,6 +578,13 @@ declare module '@tanstack/react-router' {
       path: '/experiments'
       fullPath: '/settings/experiments'
       preLoaderRoute: typeof SettingsExperimentsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/general': {
+      id: '/settings/general'
+      path: '/general'
+      fullPath: '/settings/general'
+      preLoaderRoute: typeof SettingsGeneralRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
     '/spaces/': {
@@ -328,22 +608,89 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof VolumeIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings/connections/$app': {
+      id: '/settings/connections/$app'
+      path: '/$app'
+      fullPath: '/settings/connections/$app'
+      preLoaderRoute: typeof SettingsConnectionsAppRouteImport
+      parentRoute: typeof SettingsConnectionsRoute
+    }
+    '/settings/connectors/$app': {
+      id: '/settings/connectors/$app'
+      path: '/$app'
+      fullPath: '/settings/connectors/$app'
+      preLoaderRoute: typeof SettingsConnectorsAppRouteImport
+      parentRoute: typeof SettingsConnectorsRoute
+    }
+    '/spaces/cloud/$cloudId': {
+      id: '/spaces/cloud/$cloudId'
+      path: '/spaces/cloud/$cloudId'
+      fullPath: '/spaces/cloud/$cloudId'
+      preLoaderRoute: typeof SpacesCloudCloudIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/spaces/computer/$computerId/': {
+      id: '/spaces/computer/$computerId/'
+      path: '/spaces/computer/$computerId'
+      fullPath: '/spaces/computer/$computerId/'
+      preLoaderRoute: typeof SpacesComputerComputerIdIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/spaces/computer/$computerId/driver': {
+      id: '/spaces/computer/$computerId/driver'
+      path: '/spaces/computer/$computerId/driver'
+      fullPath: '/spaces/computer/$computerId/driver'
+      preLoaderRoute: typeof SpacesComputerComputerIdDriverRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
+interface SettingsConnectionsRouteChildren {
+  SettingsConnectionsAppRoute: typeof SettingsConnectionsAppRoute
+}
+
+const SettingsConnectionsRouteChildren: SettingsConnectionsRouteChildren = {
+  SettingsConnectionsAppRoute: SettingsConnectionsAppRoute,
+}
+
+const SettingsConnectionsRouteWithChildren =
+  SettingsConnectionsRoute._addFileChildren(SettingsConnectionsRouteChildren)
+
+interface SettingsConnectorsRouteChildren {
+  SettingsConnectorsAppRoute: typeof SettingsConnectorsAppRoute
+}
+
+const SettingsConnectorsRouteChildren: SettingsConnectorsRouteChildren = {
+  SettingsConnectorsAppRoute: SettingsConnectorsAppRoute,
+}
+
+const SettingsConnectorsRouteWithChildren =
+  SettingsConnectorsRoute._addFileChildren(SettingsConnectorsRouteChildren)
+
 interface SettingsRouteRouteChildren {
   SettingsAboutRoute: typeof SettingsAboutRoute
+  SettingsAdvancedRoute: typeof SettingsAdvancedRoute
   SettingsAgentsRoute: typeof SettingsAgentsRoute
+  SettingsConnectedAppsRoute: typeof SettingsConnectedAppsRoute
+  SettingsConnectionsRoute: typeof SettingsConnectionsRouteWithChildren
+  SettingsConnectorsRoute: typeof SettingsConnectorsRouteWithChildren
   SettingsDevicesRoute: typeof SettingsDevicesRoute
   SettingsExperimentsRoute: typeof SettingsExperimentsRoute
+  SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
 }
 
 const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
   SettingsAboutRoute: SettingsAboutRoute,
+  SettingsAdvancedRoute: SettingsAdvancedRoute,
   SettingsAgentsRoute: SettingsAgentsRoute,
+  SettingsConnectedAppsRoute: SettingsConnectedAppsRoute,
+  SettingsConnectionsRoute: SettingsConnectionsRouteWithChildren,
+  SettingsConnectorsRoute: SettingsConnectorsRouteWithChildren,
   SettingsDevicesRoute: SettingsDevicesRoute,
   SettingsExperimentsRoute: SettingsExperimentsRoute,
+  SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsIndexRoute: SettingsIndexRoute,
 }
 
@@ -354,14 +701,23 @@ const SettingsRouteRouteWithChildren = SettingsRouteRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SettingsRouteRoute: SettingsRouteRouteWithChildren,
+  AgentsAllRoute: AgentsAllRoute,
+  HomeTaskIdRoute: HomeTaskIdRoute,
+  HomeAskRoute: HomeAskRoute,
   SpacesSpaceIdRoute: SpacesSpaceIdRoute,
   AgentsIndexRoute: AgentsIndexRoute,
+  CiIndexRoute: CiIndexRoute,
+  DriverIndexRoute: DriverIndexRoute,
+  HomeIndexRoute: HomeIndexRoute,
   KeyvaultIndexRoute: KeyvaultIndexRoute,
   MachinesIndexRoute: MachinesIndexRoute,
   NotificationsIndexRoute: NotificationsIndexRoute,
   OnboardingIndexRoute: OnboardingIndexRoute,
   SpacesIndexRoute: SpacesIndexRoute,
   VolumeIndexRoute: VolumeIndexRoute,
+  SpacesCloudCloudIdRoute: SpacesCloudCloudIdRoute,
+  SpacesComputerComputerIdDriverRoute: SpacesComputerComputerIdDriverRoute,
+  SpacesComputerComputerIdIndexRoute: SpacesComputerComputerIdIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

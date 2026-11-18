@@ -33,7 +33,7 @@ python3 apps/cua-spaces-macos/scripts/reliability/suite.py --cua "$cua" \
 - `teleport`
 
 Results are written to `<work>/results/<stamp>.json` and `.md`. The default
-work directory is `~/projects/.cua-work/reliability`.
+work directory is `~/.cache/cua-reliability/reliability`.
 
 Host safety:
 
@@ -50,15 +50,15 @@ The latest results are in the branch's report (PR notes).
 
 ## Cloud conformance (`cloud_suite.py`)
 
-Spaces and sandboxes in your own cloud account (`--on aws|gcp|modal`), end to
+Spaces and sandboxes in your own cloud account (`--on aws|gcp|hetzner|modal`), end to
 end against the real cloud and relay.cua.ai. It is a sibling of `suite.py`
 (and imports its helpers) because it needs the opposite home: one signed-in
 test home that it never deletes (the relay account and device enrollment
 live there), plus the cloud's own inventory before and after every run.
 
 ```bash
-cloud_suite.py --cua ./target/debug/cua --on aws,gcp,modal --runs 3 \
-    --home ~/projects/.cua-work/cloud-providers/home
+cloud_suite.py --cua ./target/debug/cua --on aws,gcp,hetzner,modal --runs 3 \
+    --home ~/.cache/cua-reliability/cloud-providers/home
 ```
 
 - `space` scenario:
@@ -66,7 +66,7 @@ cloud_suite.py --cua ./target/debug/cua --on aws,gcp,modal --runs 3 \
   - screenshot, exec, a file round trip;
   - a desktop stream and a window stream over the relay, and presence;
   - Cua Volume (with the Cua Spaces `cua` only);
-  - stop and start (not on Modal);
+  - stop and start (not on Modal; a stopped Hetzner server is still billed);
   - delete, and an orphan check: nothing Cua tagged for the run is left, and
     every resource the account had before is unchanged.
 - `bench` scenario: one `cua-bench-basic` task through Python cua-sandbox

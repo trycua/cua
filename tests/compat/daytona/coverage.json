@@ -1,0 +1,892 @@
+{
+ "sdk": "0.225.0",
+ "rows": [
+  {
+   "area": "Client: create, get, list (labels, states, filters, sort, pages), delete, start, stop, fork",
+   "py": [
+    "Daytona.create",
+    "Daytona.get",
+    "Daytona.list",
+    "Daytona.delete",
+    "Daytona.start",
+    "Daytona.stop"
+   ],
+   "ts": [
+    "Daytona.create",
+    "Daytona.get",
+    "Daytona.list",
+    "Daytona.delete",
+    "Daytona.start",
+    "Daytona.stop",
+    "Daytona.fork"
+   ],
+   "status": "implemented",
+   "cases": [
+    "api.create_params",
+    "api.create_defaults",
+    "api.create_from_image_resources",
+    "api.create_from_image_disk",
+    "api.create_name_conflict",
+    "api.get_missing",
+    "api.auth_bad_key",
+    "api.list_labels_and_pages",
+    "api.list_filters",
+    "api.list_rejects_bad_limit",
+    "api.delete",
+    "api.fork",
+    "api.create_validation_is_client_side",
+    "rust:daytona_api::list_filters_sort_and_cursor",
+    "rust:daytona_api::create_validation_is_enforced_server_side",
+    "rust:daytona_api::create_parameters_reach_the_record_and_the_backend"
+   ],
+   "source": "daytona/_sync/daytona.py create/get/list; common/daytona.py CreateSandboxBaseParams; SandboxApi.list_sandboxes",
+   "note": "resources, env_vars, labels, public, auto_*_interval, ttl, volumes, network_block_all/allow_list, secrets, kvm, spot, gpu, ephemeral, user, language, name, linked_sandbox, queue_timeout, target are all read. `cua.on`, `cua.kind` labels place the Space on any machine, kind or OS (Cua extras); labels `cua.secrets=plaintext` opts into secret injection."
+  },
+  {
+   "area": "Client helpers (TypeScript only: HTTP client factory, sub-services)",
+   "py": [],
+   "ts": [
+    "Daytona.createAxiosInstance",
+    "Daytona.secret",
+    "Daytona.snapshot",
+    "Daytona.volume",
+    "Daytona.warmPool"
+   ],
+   "status": "implemented",
+   "cases": [
+    "api.create_params"
+   ],
+   "source": "Daytona.d.ts",
+   "note": "Client-side only; no wire call of its own."
+  },
+  {
+   "area": "Sandbox: lifecycle (start, stop, pause, archive, recover), waits, refresh",
+   "py": [
+    "Sandbox.start",
+    "Sandbox.stop",
+    "Sandbox.pause",
+    "Sandbox.archive",
+    "Sandbox.recover",
+    "Sandbox.wait_for_sandbox_start",
+    "Sandbox.wait_for_sandbox_stop",
+    "Sandbox.refresh_data",
+    "Sandbox.refresh_activity",
+    "Sandbox.delete",
+    "Sandbox.fork"
+   ],
+   "ts": [
+    "Sandbox.start",
+    "Sandbox.stop",
+    "Sandbox.pause",
+    "Sandbox.archive",
+    "Sandbox.recover",
+    "Sandbox.waitUntilStarted",
+    "Sandbox.waitUntilStopped",
+    "Sandbox.refreshData",
+    "Sandbox.refreshActivity",
+    "Sandbox.delete",
+    "Sandbox.fork"
+   ],
+   "status": "implemented",
+   "cases": [
+    "api.lifecycle_stop_start",
+    "api.lifecycle_archive_rules",
+    "api.lifecycle_pause",
+    "api.lifecycle_recover_only_in_error",
+    "api.delete_wait",
+    "api.refresh",
+    "api.ephemeral",
+    "rust:daytona_api::lifecycle_follows_the_documented_rules"
+   ],
+   "source": "daytona/_sync/sandbox.py, SandboxApi (api client); Socket.IO sandbox.state.updated events",
+   "note": "Start/stop map to resume/suspend of the Space (memory kept). Archive keeps the disk on the host (no object-storage tier). States and rules follow the SDK docs; busy states refuse further operations."
+  },
+  {
+   "area": "Sandbox: labels, public flag, auto-stop/pause/archive/delete intervals, ttl",
+   "py": [
+    "Sandbox.set_labels",
+    "Sandbox.set_public",
+    "Sandbox.set_autostop_interval",
+    "Sandbox.set_auto_pause_interval",
+    "Sandbox.set_auto_archive_interval",
+    "Sandbox.set_auto_delete_interval",
+    "Sandbox.set_ttl"
+   ],
+   "ts": [
+    "Sandbox.setLabels",
+    "Sandbox.setPublic",
+    "Sandbox.setAutostopInterval",
+    "Sandbox.setAutoPauseInterval",
+    "Sandbox.setAutoArchiveInterval",
+    "Sandbox.setAutoDeleteInterval",
+    "Sandbox.setTtl"
+   ],
+   "status": "implemented",
+   "cases": [
+    "api.labels_set",
+    "api.intervals",
+    "api.public_flag"
+   ],
+   "source": "daytona/_sync/sandbox.py, SandboxApi (api client)"
+  },
+  {
+   "area": "Sandbox: metrics, home/work dirs, env update",
+   "py": [
+    "Sandbox.get_metrics",
+    "Sandbox.get_metrics_latest",
+    "Sandbox.get_user_home_dir",
+    "Sandbox.get_user_root_dir",
+    "Sandbox.get_work_dir",
+    "Sandbox.update_env"
+   ],
+   "ts": [
+    "Sandbox.getMetrics",
+    "Sandbox.getMetricsLatest",
+    "Sandbox.getUserHomeDir",
+    "Sandbox.getUserRootDir",
+    "Sandbox.getWorkDir",
+    "Sandbox.updateEnv"
+   ],
+   "status": "implemented",
+   "cases": [
+    "sandbox.metrics",
+    "sandbox.home_and_work_dirs"
+   ],
+   "source": "SandboxApi telemetry; InfoApi; ServerApi.update_env",
+   "note": "INTERIM: moves to observability (metrics); not extended here."
+  },
+  {
+   "area": "Sandbox: preview links, signed preview URLs",
+   "py": [
+    "Sandbox.get_preview_link",
+    "Sandbox.create_signed_preview_url",
+    "Sandbox.expire_signed_preview_url"
+   ],
+   "ts": [
+    "Sandbox.getPreviewLink",
+    "Sandbox.getSignedPreviewUrl",
+    "Sandbox.expireSignedPreviewUrl"
+   ],
+   "status": "implemented",
+   "cases": [
+    "preview.private_link_needs_its_token",
+    "preview.public_link_needs_nothing",
+    "preview.signed_url",
+    "preview.port_not_open"
+   ],
+   "source": "_sync/sandbox.py get_preview_link/create_signed_preview_url",
+   "note": "URLs are https://<port>-<id>.<domain> on the gateway's TLS host router (a Cua tunnel to the guest port, any machine). Private links accept X-Daytona-Preview-Token or the API key; a signed URL carries its token in the host name."
+  },
+  {
+   "area": "Sandbox: signed file URLs",
+   "py": [
+    "Sandbox.download_url",
+    "Sandbox.upload_url",
+    "Sandbox.rotate_signing_key"
+   ],
+   "ts": [
+    "Sandbox.downloadUrl",
+    "Sandbox.uploadUrl",
+    "Sandbox.rotateSigningKey"
+   ],
+   "status": "implemented",
+   "cases": [
+    "fs.signed_urls"
+   ],
+   "source": "_utils/file_url_signing.py (HMAC-SHA256 over v1:files:<method>:<path>:<expires>)"
+  },
+  {
+   "area": "Sandbox: network policy and secrets",
+   "py": [
+    "Sandbox.update_network_settings",
+    "Sandbox.update_secrets"
+   ],
+   "ts": [
+    "Sandbox.updateNetworkSettings",
+    "Sandbox.updateSecrets"
+   ],
+   "status": "implemented",
+   "cases": [
+    "secret.mount_is_opt_in",
+    "rust:daytona_api::network_settings_validate_before_touching_the_guest",
+    "rust:daytona_api::volumes_and_secrets_manage_their_objects"
+   ],
+   "source": "SandboxApi.update_network_settings/update_sandbox_secrets",
+   "note": "Egress is an nftables policy in the guest (cua_spacesd_client::EgressPolicy); secrets are injected as plaintext env values only with label cua.secrets=plaintext (Daytona substitutes at an egress proxy Cua does not have). INTERIM: moves to network policy: Space Policy + host-enforced egress; secrets: egress gateway + secrets broker; not extended here."
+  },
+  {
+   "area": "Sandbox: create snapshot",
+   "py": [
+    "Sandbox.create_snapshot"
+   ],
+   "ts": [
+    "Sandbox.createSnapshot"
+   ],
+   "status": "implemented",
+   "cases": [
+    "snapshot.from_sandbox"
+   ],
+   "source": "SandboxApi.create_sandbox_snapshot",
+   "note": "A Cua checkpoint registered under the snapshot name; sandboxes created from it are copy-on-write forks. INTERIM: moves to power states + snapshot store; not extended here."
+  },
+  {
+   "area": "Sandbox: resize",
+   "py": [
+    "Sandbox.resize",
+    "Sandbox.wait_for_resize_complete"
+   ],
+   "ts": [
+    "Sandbox.resize",
+    "Sandbox.waitForResizeComplete"
+   ],
+   "status": "implemented",
+   "cases": [
+    "api.resize_rules",
+    "api.resize_applies_on_a_real_guest",
+    "rust:daytona_api::unbuildable_requests_are_refused_with_their_reason_not_accepted"
+   ],
+   "source": "SandboxApi.resize_sandbox; _sync/sandbox.py resize",
+   "note": "The SDK's rules (hot resize only grows cpu/memory, disk grows only while stopped, no gpu) are enforced and the sandbox goes through the `resizing` state with events. The new shape is applied by the core's `Sandbox.resize` (a local VM stops and boots again from its own disk with the new vCPUs, memory and a larger disk; files are kept, running processes are not); a sandbox that was stopped stays stopped. Placements that cannot be resized (containers, clouds) answer Daytona's 400 with the core's reason."
+  },
+  {
+   "area": "Sandbox: SSH access",
+   "py": [
+    "Sandbox.create_ssh_access",
+    "Sandbox.validate_ssh_access",
+    "Sandbox.revoke_ssh_access"
+   ],
+   "ts": [
+    "Sandbox.createSshAccess",
+    "Sandbox.validateSshAccess",
+    "Sandbox.revokeSshAccess"
+   ],
+   "status": "implemented",
+   "cases": [
+    "ssh.access_token_lifecycle",
+    "ssh.login_through_the_endpoint"
+   ],
+   "source": "SandboxApi.create_ssh_access/validate_ssh_access/revoke_ssh_access",
+   "note": "A time-limited loopback endpoint on the gateway host piped to the guest's sshd through the Space's tunnel forward, with a one-time key authorized for the sandbox user and removed on revoke or expiry. `sshCommand` names the port and key file, so it works on the gateway's machine. Images without sshd get a 400 naming that."
+  },
+  {
+   "area": "Sandbox: members",
+   "py": [
+    "Sandbox.code_interpreter",
+    "Sandbox.computer_use",
+    "Sandbox.create_lsp_server",
+    "Sandbox.fs",
+    "Sandbox.git",
+    "Sandbox.process",
+    "Sandbox.model_post_init"
+   ],
+   "ts": [
+    "Sandbox.codeInterpreter",
+    "Sandbox.computerUse",
+    "Sandbox.createLspServer",
+    "Sandbox.fs",
+    "Sandbox.git",
+    "Sandbox.process",
+    "Sandbox.cpu",
+    "Sandbox.disk",
+    "Sandbox.gpu",
+    "Sandbox.id",
+    "Sandbox.labels",
+    "Sandbox.memory",
+    "Sandbox.name",
+    "Sandbox.organizationId",
+    "Sandbox.public",
+    "Sandbox.target",
+    "Sandbox.toolboxProxyUrl",
+    "Sandbox.user"
+   ],
+   "status": "implemented",
+   "cases": [
+    "api.create_params"
+   ],
+   "source": "Sandbox.d.ts / sandbox.py",
+   "note": "Accessors and DTO fields; covered through the rows of the services they return and by the DTO checks of api.create_params."
+  },
+  {
+   "area": "Process: exec, code_run (python/javascript/typescript, argv, env, timeout), exit codes, timeout error",
+   "py": [
+    "Process.exec",
+    "Process.code_run"
+   ],
+   "ts": [
+    "Process.executeCommand",
+    "Process.codeRun"
+   ],
+   "status": "implemented",
+   "cases": [
+    "process.exec_result_and_exit_code",
+    "process.exec_timeout_error",
+    "process.exec_cwd_env_user",
+    "process.exec_shell_semantics",
+    "process.exec_large_output",
+    "process.code_run_python",
+    "process.code_run_timeout",
+    "process.code_run_charts",
+    "rust:daytona_toolbox::a_command_past_its_timeout_is_a_408_with_the_daemon_code"
+   ],
+   "source": "_sync/process.py exec/code_run; common/errors.py PROCESS_EXECUTION_TIMEOUT"
+  },
+  {
+   "area": "Process: sessions (create, execute, async, logs incl. follow, input, ordering, delete)",
+   "py": [
+    "Process.create_session",
+    "Process.get_session",
+    "Process.get_session_command",
+    "Process.execute_session_command",
+    "Process.get_session_command_logs",
+    "Process.get_session_command_logs_async",
+    "Process.send_session_command_input",
+    "Process.list_sessions",
+    "Process.delete_session",
+    "Process.get_entrypoint_session",
+    "Process.get_entrypoint_logs",
+    "Process.get_entrypoint_logs_async"
+   ],
+   "ts": [
+    "Process.createSession",
+    "Process.getSession",
+    "Process.getSessionCommand",
+    "Process.executeSessionCommand",
+    "Process.getSessionCommandLogs",
+    "Process.sendSessionCommandInput",
+    "Process.listSessions",
+    "Process.deleteSession",
+    "Process.getEntrypointSession",
+    "Process.getEntrypointLogs"
+   ],
+   "status": "implemented",
+   "cases": [
+    "process.session_state_carries_over",
+    "process.session_async_command_and_logs",
+    "process.session_follow_logs",
+    "process.session_input_to_running_command",
+    "process.session_command_ordering",
+    "process.session_errors",
+    "rust:daytona_toolbox::statuses_follow_the_generated_clients"
+   ],
+   "source": "_sync/process.py",
+   "note": "cwd and exports carry over between commands of a session; commands run in order; the entrypoint session is empty (Cua images have no Daytona entrypoint)."
+  },
+  {
+   "area": "Process: PTY (create, connect, resize, list, info, kill)",
+   "py": [
+    "Process.create_pty_session",
+    "Process.connect_pty_session",
+    "Process.list_pty_sessions",
+    "Process.get_pty_session_info",
+    "Process.resize_pty_session",
+    "Process.kill_pty_session"
+   ],
+   "ts": [
+    "Process.createPty",
+    "Process.connectPty",
+    "Process.listPtySessions",
+    "Process.getPtySessionInfo",
+    "Process.resizePtySession",
+    "Process.killPtySession"
+   ],
+   "status": "implemented",
+   "cases": [
+    "process.pty_roundtrip",
+    "process.pty_resize_list_kill"
+   ],
+   "source": "_sync/process.py; handle/pty_handle.py (WebSocket)"
+  },
+  {
+   "area": "FileSystem: single and bulk transfer, streaming, metadata, search/replace, permissions",
+   "py": [
+    "FileSystem.create_folder",
+    "FileSystem.delete_file",
+    "FileSystem.download_file",
+    "FileSystem.download_file_stream",
+    "FileSystem.download_files",
+    "FileSystem.find_files",
+    "FileSystem.get_file_info",
+    "FileSystem.list_files",
+    "FileSystem.move_files",
+    "FileSystem.replace_in_files",
+    "FileSystem.search_files",
+    "FileSystem.set_file_permissions",
+    "FileSystem.upload_file",
+    "FileSystem.upload_file_stream",
+    "FileSystem.upload_files"
+   ],
+   "ts": [
+    "FileSystem.createFolder",
+    "FileSystem.deleteFile",
+    "FileSystem.downloadFile",
+    "FileSystem.downloadFileStream",
+    "FileSystem.downloadFiles",
+    "FileSystem.findFiles",
+    "FileSystem.getFileDetails",
+    "FileSystem.listFiles",
+    "FileSystem.moveFiles",
+    "FileSystem.replaceInFiles",
+    "FileSystem.searchFiles",
+    "FileSystem.setFilePermissions",
+    "FileSystem.uploadFile",
+    "FileSystem.uploadFileStream",
+    "FileSystem.uploadFiles"
+   ],
+   "status": "implemented",
+   "cases": [
+    "fs.roundtrip_binary_and_empty",
+    "fs.unicode_and_space_names",
+    "fs.upload_creates_parents_and_overwrites",
+    "fs.list_info_folder_move_delete",
+    "fs.errors_carry_file_codes",
+    "fs.bulk_upload_download",
+    "fs.download_to_local_path_and_stream",
+    "fs.upload_stream",
+    "fs.concurrent_transfers",
+    "fs.large_file_integrity",
+    "fs.permissions_and_owner",
+    "fs.find_search_replace",
+    "rust:daytona_toolbox::files_report_their_own_codes_and_bulk_parts_are_matched_by_filename_star",
+    "rust:daytona_toolbox::a_move_does_not_replace_its_destination"
+   ],
+   "source": "_sync/filesystem.py; common/file_transfer.py"
+  },
+  {
+   "area": "Code interpreter (contexts, streaming, errors, timeout)",
+   "py": [
+    "CodeInterpreter.create_context",
+    "CodeInterpreter.delete_context",
+    "CodeInterpreter.list_contexts",
+    "CodeInterpreter.run_code"
+   ],
+   "ts": [
+    "CodeInterpreter.createContext",
+    "CodeInterpreter.deleteContext",
+    "CodeInterpreter.listContexts",
+    "CodeInterpreter.runCode"
+   ],
+   "status": "implemented",
+   "cases": [
+    "interpreter.default_context_keeps_state",
+    "interpreter.contexts_are_isolated",
+    "interpreter.streams_stdout_stderr_and_errors",
+    "interpreter.envs_and_exit",
+    "interpreter.timeout"
+   ],
+   "source": "_sync/code_interpreter.py (WebSocket protocol); Python only (the interpreter is Python, other languages use process.code_run)",
+   "note": "INTERIM: moves to the platform code interpreter; not extended here."
+  },
+  {
+   "area": "LSP servers (python, typescript, javascript)",
+   "py": [
+    "LspServer.completions",
+    "LspServer.did_close",
+    "LspServer.did_open",
+    "LspServer.document_symbols",
+    "LspServer.sandbox_symbols",
+    "LspServer.start",
+    "LspServer.stop",
+    "LspServer.workspace_symbols"
+   ],
+   "ts": [
+    "LspServer.completions",
+    "LspServer.didClose",
+    "LspServer.didOpen",
+    "LspServer.documentSymbols",
+    "LspServer.sandboxSymbols",
+    "LspServer.start",
+    "LspServer.stop",
+    "LspServer.workspaceSymbols"
+   ],
+   "status": "implemented",
+   "cases": [
+    "lsp.python_session",
+    "lsp.errors"
+   ],
+   "source": "_sync/lsp_server.py; LspApi",
+   "note": "pylsp and typescript-language-server run in the guest, installed on first start when the guest has network; otherwise Daytona's LSP_SERVER_NOT_INITIALIZED error names what is missing."
+  },
+  {
+   "area": "Computer use: processes",
+   "py": [
+    "ComputerUse.get_process_errors",
+    "ComputerUse.get_process_logs",
+    "ComputerUse.get_process_status",
+    "ComputerUse.get_status",
+    "ComputerUse.restart_process",
+    "ComputerUse.start",
+    "ComputerUse.stop"
+   ],
+   "ts": [
+    "ComputerUse.accessibility",
+    "ComputerUse.display",
+    "ComputerUse.getProcessErrors",
+    "ComputerUse.getProcessLogs",
+    "ComputerUse.getProcessStatus",
+    "ComputerUse.getStatus",
+    "ComputerUse.keyboard",
+    "ComputerUse.mouse",
+    "ComputerUse.recording",
+    "ComputerUse.restartProcess",
+    "ComputerUse.screenshot",
+    "ComputerUse.start",
+    "ComputerUse.stop"
+   ],
+   "status": "implemented",
+   "cases": [
+    "computer.start_status_and_processes",
+    "rust:daytona_computer::displays_windows_and_the_desktop_processes"
+   ],
+   "source": "_sync/computer_use.py ComputerUse",
+   "note": "Linux Spaces report xvfb/xfce4/x11vnc/novnc as running when the Cua desktop session is up; macOS and Windows Spaces report `desktop`. `stop` answers that the desktop is the Space's own and keeps running."
+  },
+  {
+   "area": "Computer use: mouse, keyboard, screenshot, display, windows",
+   "py": [
+    "Mouse.click",
+    "Mouse.down",
+    "Mouse.drag",
+    "Mouse.get_position",
+    "Mouse.move",
+    "Mouse.scroll",
+    "Mouse.up",
+    "Keyboard.down",
+    "Keyboard.hotkey",
+    "Keyboard.press",
+    "Keyboard.type",
+    "Keyboard.up",
+    "Screenshot.take_compressed",
+    "Screenshot.take_compressed_region",
+    "Screenshot.take_full_screen",
+    "Screenshot.take_region",
+    "Display.get_info",
+    "Display.get_windows"
+   ],
+   "ts": [
+    "Mouse.click",
+    "Mouse.down",
+    "Mouse.drag",
+    "Mouse.getPosition",
+    "Mouse.move",
+    "Mouse.scroll",
+    "Mouse.up",
+    "Keyboard.down",
+    "Keyboard.hotkey",
+    "Keyboard.press",
+    "Keyboard.type",
+    "Keyboard.up",
+    "Screenshot.takeCompressed",
+    "Screenshot.takeCompressedRegion",
+    "Screenshot.takeFullScreen",
+    "Screenshot.takeRegion",
+    "Display.getInfo",
+    "Display.getWindows"
+   ],
+   "status": "implemented",
+   "cases": [
+    "computer.mouse",
+    "computer.keyboard",
+    "computer.screenshots",
+    "computer.display_and_windows",
+    "computer.real_desktop",
+    "rust:daytona_computer::pointer_and_keyboard_requests_become_computer_service_actions",
+    "rust:daytona_computer::screenshots_ask_for_the_requested_region_format_and_scale"
+   ],
+   "source": "_sync/computer_use.py; computer_use_api.py",
+   "note": "Runs on Linux, macOS and Windows Spaces through cua-spacesd's computer service (Cua extra)."
+  },
+  {
+   "area": "Computer use: recordings",
+   "py": [
+    "RecordingService.delete",
+    "RecordingService.download",
+    "RecordingService.get",
+    "RecordingService.list",
+    "RecordingService.start",
+    "RecordingService.stop"
+   ],
+   "ts": [
+    "RecordingService.delete",
+    "RecordingService.download",
+    "RecordingService.get",
+    "RecordingService.list",
+    "RecordingService.start",
+    "RecordingService.stop"
+   ],
+   "status": "implemented",
+   "cases": [
+    "computer.recording"
+   ],
+   "source": "_sync/computer_use.py RecordingService",
+   "note": "MP4 from the desktop's frames (cua_spacesd_client::record_screen, ffmpeg on the gateway host); RECORDING_FFMPEG_NOT_FOUND (503) without ffmpeg."
+  },
+  {
+   "area": "Computer use: accessibility",
+   "py": [
+    "Accessibility.find_nodes",
+    "Accessibility.focus_node",
+    "Accessibility.get_tree",
+    "Accessibility.invoke_node",
+    "Accessibility.set_node_value"
+   ],
+   "ts": [
+    "Accessibility.findNodes",
+    "Accessibility.focusNode",
+    "Accessibility.getTree",
+    "Accessibility.invokeNode",
+    "Accessibility.setNodeValue"
+   ],
+   "status": "implemented",
+   "cases": [
+    "computer.accessibility",
+    "rust:daytona_computer::accessibility_nodes_are_addressed_by_snapshot_and_element"
+   ],
+   "source": "_sync/computer_use.py Accessibility",
+   "note": "Cua's accessibility service (AX on macOS, UIA on Windows, AT-SPI on Linux)."
+  },
+  {
+   "area": "Snapshots",
+   "py": [
+    "SnapshotService.activate",
+    "SnapshotService.create",
+    "SnapshotService.delete",
+    "SnapshotService.get",
+    "SnapshotService.list",
+    "SnapshotService.process_image_context"
+   ],
+   "ts": [
+    "SnapshotService.activate",
+    "SnapshotService.create",
+    "SnapshotService.delete",
+    "SnapshotService.get",
+    "SnapshotService.list",
+    "SnapshotService.processImageContext"
+   ],
+   "status": "implemented",
+   "cases": [
+    "snapshot.create_list_get_delete",
+    "snapshot.pagination",
+    "snapshot.duplicate_and_missing",
+    "snapshot.activate_deactivate",
+    "snapshot.from_sandbox",
+    "snapshot.build_from_image_object",
+    "snapshot.build_failure_is_reported",
+    "rust:daytona_api::snapshots_pull_build_and_report_failures"
+   ],
+   "source": "_sync/snapshot.py; SnapshotsApi",
+   "note": "From an image reference (pulled/validated), a Dockerfile (built into Cua image layers, build log streamed), or a sandbox (checkpoint). INTERIM: moves to the image build service (Spaces.build) and the snapshot store; not extended here."
+  },
+  {
+   "area": "Volumes",
+   "py": [
+    "VolumeService.create",
+    "VolumeService.delete",
+    "VolumeService.get",
+    "VolumeService.list"
+   ],
+   "ts": [
+    "VolumeService.create",
+    "VolumeService.delete",
+    "VolumeService.get",
+    "VolumeService.list"
+   ],
+   "status": "implemented",
+   "cases": [
+    "volume.crud",
+    "volume.mount_needs_cua_volume",
+    "volume.mount_without_a_grant_is_explained",
+    "volume.shared_between_sandboxes",
+    "rust:daytona_api::volumes_and_secrets_manage_their_objects"
+   ],
+   "source": "_sync/volume.py; VolumesApi",
+   "note": "A volume is a folder of Cua Volume bound at the mount path (subpath supported); needs Cua Volume mounted in the Space. INTERIM: moves to platform volumes (named volumes); not extended here."
+  },
+  {
+   "area": "Secrets",
+   "py": [
+    "SecretService.create",
+    "SecretService.delete",
+    "SecretService.get",
+    "SecretService.list",
+    "SecretService.update"
+   ],
+   "ts": [
+    "SecretService.create",
+    "SecretService.delete",
+    "SecretService.get",
+    "SecretService.list",
+    "SecretService.update"
+   ],
+   "status": "implemented",
+   "cases": [
+    "secret.crud",
+    "secret.mount_is_opt_in"
+   ],
+   "source": "_sync/secret.py; SecretApi",
+   "note": "INTERIM: moves to the egress gateway + secrets broker; not extended here."
+  },
+  {
+   "area": "Warm pools",
+   "py": [
+    "WarmPoolService.create",
+    "WarmPoolService.delete",
+    "WarmPoolService.list",
+    "WarmPoolService.update"
+   ],
+   "ts": [
+    "WarmPoolService.create",
+    "WarmPoolService.delete",
+    "WarmPoolService.list",
+    "WarmPoolService.update"
+   ],
+   "status": "implemented",
+   "cases": [
+    "warm_pool.crud",
+    "rust:daytona_api::warm_pools_map_to_cua_pools"
+   ],
+   "source": "_sync/warm_pool.py; WarmPoolsApi",
+   "note": "Cua pools (Sandboxes.create_pool): image snapshots only, on this machine. INTERIM: moves to the elastic pool's prewarm (daytona/prewarm.rs resolves the Daytona side); not extended here."
+  },
+  {
+   "area": "Image builder (Dockerfile subset, local file/dir contexts)",
+   "py": [
+    "Image.add_local_dir",
+    "Image.add_local_file",
+    "Image.base",
+    "Image.cmd",
+    "Image.debian_slim",
+    "Image.dockerfile",
+    "Image.dockerfile_commands",
+    "Image.entrypoint",
+    "Image.env",
+    "Image.from_dockerfile",
+    "Image.model_post_init",
+    "Image.pip_install",
+    "Image.pip_install_from_pyproject",
+    "Image.pip_install_from_requirements",
+    "Image.run_commands",
+    "Image.workdir"
+   ],
+   "ts": [
+    "Image.addLocalDir",
+    "Image.addLocalFile",
+    "Image.base",
+    "Image.cmd",
+    "Image.contextList",
+    "Image.debianSlim",
+    "Image.dockerfile",
+    "Image.dockerfileCommands",
+    "Image.entrypoint",
+    "Image.env",
+    "Image.fromDockerfile",
+    "Image.pipInstall",
+    "Image.pipInstallFromPyproject",
+    "Image.pipInstallFromRequirements",
+    "Image.runCommands",
+    "Image.workdir"
+   ],
+   "status": "implemented",
+   "cases": [
+    "image.create_with_layers",
+    "image.context_upload",
+    "image.unbuildable_dockerfile_is_refused",
+    "rust:daytona_api::build_info_becomes_an_image_or_layers",
+    "rust:daytona_api::the_object_store_takes_the_uploads_both_sdks_make"
+   ],
+   "source": "common/image.py; _sync/object_storage.py",
+   "note": "FROM/RUN/ENV/WORKDIR/USER/COPY/ADD/EXPOSE/ENTRYPOINT/CMD/ARG; multi-stage, ONBUILD, --mount and here-documents are refused naming the instruction. The context upload goes to an S3-compatible endpoint on the gateway. INTERIM: moves to the image build service (Spaces.build); not extended here."
+  },
+  {
+   "area": "Git (init, clone, add, commit, push, pull, status, branches, checkout, reset, restore, remotes, config, credentials)",
+   "py": [
+    "Git.add",
+    "Git.branches",
+    "Git.checkout_branch",
+    "Git.clone",
+    "Git.commit",
+    "Git.configure_user",
+    "Git.create_branch",
+    "Git.dangerously_authenticate",
+    "Git.delete_branch",
+    "Git.get_config",
+    "Git.init",
+    "Git.pull",
+    "Git.push",
+    "Git.remote_add",
+    "Git.remote_get",
+    "Git.remotes",
+    "Git.reset",
+    "Git.restore",
+    "Git.set_config",
+    "Git.status"
+   ],
+   "ts": [
+    "Git.add",
+    "Git.branches",
+    "Git.checkoutBranch",
+    "Git.clone",
+    "Git.commit",
+    "Git.configureUser",
+    "Git.createBranch",
+    "Git.dangerouslyAuthenticate",
+    "Git.deleteBranch",
+    "Git.getConfig",
+    "Git.init",
+    "Git.pull",
+    "Git.push",
+    "Git.remoteAdd",
+    "Git.remoteGet",
+    "Git.remotes",
+    "Git.reset",
+    "Git.restore",
+    "Git.setConfig",
+    "Git.status"
+   ],
+   "status": "implemented",
+   "cases": [
+    "git.init_branches",
+    "git.repo_errors",
+    "git.clone_depth_commit",
+    "git.http_auth",
+    "git.commit_status_flow",
+    "git.push_pull_roundtrip",
+    "git.push_rejected_and_conflict",
+    "git.branch_lifecycle",
+    "git.dirty_checkout",
+    "git.reset_restore",
+    "git.remotes",
+    "git.config",
+    "git.history_route",
+    "rust:daytona_git"
+   ],
+   "source": "_sync/git.py; GitApi",
+   "note": "Over the guest git CLI; credentials are passed by a one-shot askpass helper and never reach argv or .git/config. Errors map to the daemon's GIT_* codes (see differences-daytona.md)."
+  },
+  {
+   "area": "Image processing helper",
+   "py": [
+    "SnapshotService.process_image_context"
+   ],
+   "ts": [
+    "SnapshotService.processImageContext"
+   ],
+   "status": "implemented",
+   "cases": [
+    "image.context_upload"
+   ],
+   "source": "_sync/snapshot.py process_image_context"
+  },
+  {
+   "area": "Image: git-like members of the TypeScript image",
+   "py": [],
+   "ts": [
+    "Image.contextList"
+   ],
+   "status": "implemented",
+   "cases": [
+    "image.create_with_layers"
+   ],
+   "source": "Image.d.ts"
+  }
+ ]
+}

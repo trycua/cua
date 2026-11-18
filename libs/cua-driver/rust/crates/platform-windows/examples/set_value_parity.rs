@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Parity check for `set_value`.
 //!
 //! Tests the Swift-shaped error wording and text format.  We don't issue a

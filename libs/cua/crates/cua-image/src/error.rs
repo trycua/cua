@@ -2,6 +2,19 @@
 
 pub type Result<T, E = ImageError> = std::result::Result<T, E>;
 
+/// A value the caller passed that the build or sidecar rules refuse (a bad
+/// base image, environment variable, copy destination, sidecar name or port).
+/// The message names the value and what to change.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{0}")]
+pub struct InvalidArgument(pub String);
+
+impl From<InvalidArgument> for ImageError {
+    fn from(e: InvalidArgument) -> Self {
+        ImageError::Spec(e.0)
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ImageError {
     #[error("invalid image reference '{0}': {1}")]

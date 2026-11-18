@@ -181,7 +181,12 @@ test("custom specs match the golden trajectories", { skip }, async () => {
 
 test("the arc styles are specs", { skip }, async () => {
   const { m, request } = await load()
-  const params = { ...m.defaultCursorMotionParams(), style: m.CursorMotionStyle.CometSwoop }
+  // A raw spec matches the planned move under native timing; the default (steady) adds a floor.
+  const params = {
+    ...m.defaultCursorMotionParams(),
+    style: m.CursorMotionStyle.CometSwoop,
+    timing: m.CursorMotionTiming.Native,
+  }
   const req = request(golden.cases[0].request)
   const spec = m.cursorMotionSpecForStyle(m.CursorMotionStyle.CometSwoop, params)
   assert.ok(spec)

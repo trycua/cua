@@ -1,0 +1,143 @@
+---
+title: A Space's network
+description: What a Space can reach, enforced by the host outside the guest. By default, the internet and its own tree, never this computer, your local network or cloud metadata.
+---
+
+Secure Spaces is always on and has no switch. It decides the network of new Spaces only: Spaces made before keep the network they have until their next start. An operator can force a process back to the old open network with the emergency override `CUA_SECURE_DEFAULT=0`; that is not a setting, and only the older allow and deny lists (see the last heading) apply while it is set.
+
+Every Space starts on **Internet only**. It reaches the public internet and the other Spaces of its own tree. It can't reach this computer, your local network, cloud metadata endpoints, Spaces of other trees or the Cua daemon. The computer the Space runs on enforces this outside the guest, from its first instruction. Nothing in the guest, root included, can change it: there are no rules inside the guest to flush.
+
+```python skip="local-vm"
+import cua
+
+spaces = cua.embedded().spaces()
+created = await spaces.create(cua.SpaceCreateOptions(on="local"))
+space = created.space
+print(space.network.preset)  # "internet"
+
+# Only GitHub's addresses, nothing else.
+await spaces.set_network(
+    space.id,
+    cua.NetworkSettings(preset="custom", custom_base="none", allow=["140.82.112.0/20"]),
+    widen=False,
+    tree=False,
+)
+
+# What it can reach now, in plain words.
+info = await spaces.network(space.id)
+print(info.summary, info.enforcement, info.always_blocked)
+```
+
+From the command line, `cua spaces create --network lan` picks a preset, and `cua network show` and `cua network set` read and change it later.
+
+## Presets
+
+| Preset | Reaches |
+| --- | --- |
+| `internet` (default) | The public internet and its own tree. |
+| `none` | Nothing. Cua still reaches the Space to run commands and show its screen. |
+| `localhost:5432,3000` | `internet`, plus this computer's localhost on the ports you list. `localhost:all` opens every port, which also opens the Docker API, databases and local AI servers, so name the ports when you can. |
+| `lan` | `internet`, plus your local network. This computer itself stays closed. |
+| `custom` | `internet` plus your own `allow` and `deny` lists. `custom:none` starts from no network instead. |
+| `unprotected` | Everything but the always-blocked list. Use it only where a runtime can't protect the Space and you need the network anyway. |
+
+`allow` and `deny` take IPv4 and IPv6 addresses and CIDRs (`deny` also takes `all`). A deny blocks; an allow is an exception to a deny and to the default blocks. A hostname is refused, because the rules are by address. A name that resolves to a blocked address, such as one that points at `127.0.0.1` or `10.0.0.1`, stays blocked: the rules judge the address the guest connects to.
+
+## Always blocked
+
+No preset or list opens these:
+
+- cloud metadata (`169.254.169.254`, `169.254.170.2`, `fd00:ec2::254`, `168.63.129.16`, `100.100.100.200`);
+- Spaces in other trees;
+- the Cua daemon on this computer;
+- this computer's own addresses, except the localhost ports the `localhost` preset lists.
+
+## Blocked unless a preset opens them
+
+Private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), link-local, unique-local IPv6, loopback, CGNAT (`100.64.0.0/10`, which covers Tailscale), multicast and other reserved ranges. `lan` opens the private, link-local and unique-local ranges. A custom `allow` can open one of them too, and `cua network show` then names what it opens ("Allows your local network (192.168.1.0/24)").
+
+## Names
+
+Every Space asks the same few name servers, and the rules open exactly those on port 53 and nothing else. A container Space is given its own `/etc/resolv.conf` naming them, because a Docker network's built-in resolver (`127.0.0.11`) is out of reach under gVisor. The servers are, in order of preference:
+
+1. the ones in `CUA_GUEST_DNS` (a comma list), when you set it for the daemon;
+2. the ones the container engine's computer uses (a corporate resolver stays the one that answers your internal names), at most three;
+3. Cloudflare and Google (`1.1.1.1`, `8.8.8.8`) when the engine's computer has none a Space can reach. A resolver that is a loopback address (a local stub such as `127.0.0.53`) or a link-local address is never given to a Space, because only the engine's computer reaches it. A resolver on the engine's own computer (Colima's virtual machine is its own resolver) is opened on port 53 only.
+
+A Space on the `none` preset gets a `resolv.conf` without a name server, so a lookup fails at once instead of hanging, and no DNS leaves it. Changing the preset applies to a running Space at once. Because the rules are by address, a Space can ask only its own servers, so a name server of your own is reached by putting it in `CUA_GUEST_DNS`, not by an `allow` entry. IPv6 name servers are used only on a network that has IPv6, which Space networks do not yet.
+
+A Space made before this change has no mounted file: Cua writes its `/etc/resolv.conf` once it runs, which can be after the first programs in it have started. The Apple Containerization runtime and the virtual machines have their own resolvers, as before.
+
+## Rules by name
+
+`allow` and `deny` also take names: `pypi.org`, or `*.github.com` for every
+subdomain of github.com (not github.com itself). A name rule needs a resolver
+Cua controls, so it is kept where the Space's network goes through the Cua
+network gateway: `vz` microVMs and macOS VMs on a Mac, and QEMU VMs on macOS
+and Windows. There:
+
+- the gateway is the Space's DNS: a denied name gets no answer, and with
+  `custom:none` or `none` only allowed names are answered at all, so a Space
+  can't carry data out in its DNS questions;
+- an allowed name's answers stay reachable for as long as they live (60 s to
+  5 min), even under `custom:none`; the always-blocked list and your own
+  denies still win, and an answer in a blocked range (a name pointing at
+  `127.0.0.1` or `10.0.0.1`) is removed before the Space sees it.
+
+On containers, Firecracker and QEMU on Linux, the host's firewall judges
+addresses only: a Space with a name rule is refused there, never started
+with the name ignored. Use addresses or CIDRs on those runtimes.
+
+## Trees
+
+A Space created with a parent (`cua spaces create --parent studio`, or `parent=` in the SDK) joins its parent's tree. Spaces of one tree reach each other; other trees are blocked. An explicit deny wins over that: `cua network set worker-1 --deny 172.30.0.3` blocks that member of its own tree (a deny of the tree's whole range blocks them all), and a child keeps its parent's denies. `custom:none` keeps the Space's own tree and nothing else; `none` cuts the tree too. A child's network is never more open than its parent's: its settings are cut down to what both allow. `--widen` lets it reach more, and the Space records who widened it and when. Tightening a parent tightens its children.
+
+How the members of a tree reach each other depends on what they are:
+
+- **Containers** share a Docker network of their own tree. They reach each other by address or by name, over any protocol.
+- **VMs** (Firecracker and QEMU on Linux, `vz` microVMs, QEMU on macOS and Windows, macOS VMs) each run on a network of their own, so every VM gets a tree address in `198.19.0.0/16` that it keeps across restarts. `cua network show` prints it, and `cua spaces ls` inside a Space lists its children's. The other VMs of its tree connect to that address over TCP; on Linux this goes through the tree relay in `cua-netgw`, which ships next to `cua`. The connection arrives at the guest from its own gateway, not from the other member's tree address. UDP and ICMP between VMs of a tree are refused, and so is every address in the range that is not a running member of the same tree.
+- **A VM and a container** of one tree: the container gets a tree address too, and VMs reach it there or by name over TCP. The Cua daemon carries each connection into the container, after the VM's rules allowed it and only for a running member of the same tree. A container has no route to a tree address, and can't be given one without opening its network, so a plain connect from a container to a VM's address fails, as it always did: it never goes around the rules. A container reaches the members that aren't containers through its **tree proxy** instead (see below).
+- **Members on different computers** reach each other the same way, whichever computer runs each of them: a VM on your laptop connects to a tree address or a name of a Space on your Mac Studio, and the address and name are the ones it would use on one computer. The traffic rides the Cua mesh between the computers (see [Paths to your other computers](/cua-sdk/guides/egress-exit#paths-to-your-other-computers)), end to end encrypted on every path. Everything above still applies first: the Space's own rules judge the connection, then the other computer checks that the target runs there, is in that tree and takes tree connections, and that the source is a member of that tree there too. Both ends have to agree, so a tree never reaches another tree, and nothing else on either computer is reachable through it, neither the host, the local network nor the metadata address. It carries TCP to the ports a member listens on, as on one computer.
+
+Every member of a tree also has a name: `<space>.<tree>`, its own name and the tree's top-level Space's name (lowercase, with `-` for anything but letters and digits). `worker-1.research-swarm` reaches a worker from anywhere in its tree. Containers answer to it on their tree's network, and the Cua network gateway answers it for the VMs behind it (`vz` microVMs, QEMU on macOS and Windows, macOS VMs). A Linux VM has no gateway to answer for it, so Cua writes the members' names into the VM's own `/etc/hosts` (a block between `# cua-tree begin` and `# cua-tree end`) and keeps it current as members come and go. The name `host` is the computer that runs the Space, on every runtime; only the ports its rules open answer there.
+
+The rules apply first in every case: a Space under `none` neither reaches its tree nor takes connections from it, and an explicit deny of a member's address (a container's, or a VM's tree address) blocks it. A VM on Linux whose tree has running members won't start without `cua-netgw`: it would be cut off from its tree, and the start error says how to install it.
+
+### The tree proxy for containers
+
+A container whose tree has VMs, or members on other computers, gets a SOCKS5 proxy on its own loopback, `127.0.0.1:41920`. It takes a member's tree address or its name, and carries the connection to that member's port:
+
+```bash skip="local-vm"
+curl --proxy socks5h://127.0.0.1:41920 http://db.research-swarm:5432/
+```
+
+It is not a general proxy. It connects only to running members of the container's own tree, never to the internet, this computer or the local network, and each connection is judged first by the container's own rules (a Space under `none` has no proxy, and an explicit deny of a member blocks it). `cua network show` and the topology file say when the proxy is there. It needs a Space image with `host_ports` in its features (the Cua images), and a program has to use it: tools that read `ALL_PROXY` can be pointed at it, but a program that connects straight to a tree address from a container still fails.
+
+### Where it stops
+
+- A tree whose top-level Space runs on another computer than the one that coordinates it is linked through its children: the ones made here and the ones made on that computer reach each other. The top-level Space itself keeps the tree its own computer gave it, so it isn't reachable by tree address from the shared tree.
+- Two computers can in rare cases give two members the same tree address. A computer hands out addresses from a block of its own to make that unlikely. When it happens, the member that comes second stays unreachable and `cua network show` says so.
+- The overlay port is a loopback port on each computer, like the ports job gangs use between computers. Every connection to it is checked for who opened it, and only processes of the user that runs the Cua daemon are served; a connection from another user of the computer is closed before anything is read. A loopback socket carries no credential of its own, so the owner is read from the system's socket table (`/proc/net/tcp` on Linux, `lsof` on macOS); when that can't be established the connection is refused. `CUA_TREE_OVERLAY=0` turns the overlay off, and trees then stay on one computer.
+- A Linux VM that started alone, on a computer without `cua-netgw`, has no tree relay, so it can't reach members that start after it, and they can't reach it. Names are kept current in its hosts file, but the connection needs the relay. `cua network show` says so on that VM ("Can't reach members that started later", with the fix): install `cua-netgw` and restart the VM. With `cua-netgw` installed the relay always runs, and later members, on this computer or another, appear without a restart. A Linux VM that starts after other members on a computer without `cua-netgw` is refused with the same advice.
+- No mesh on a computer (signed out, or the mesh is off) means members on other computers are not reachable from it. They are not recorded, so a connection to one is refused like any address that isn't a member.
+
+`cua network log` shows what each Space's rules refused: the rule that refused it (`user:deny`, `platform:metadata`, `default:lan`), the address or network it names, how many times, and when. Every runtime logs, but they see different things:
+
+- A VM behind the Cua network gateway (macOS microVMs and VMs, QEMU on macOS and Windows) is logged by the gateway, one entry per refused connection with its exact address, protocol and time. The gateway also logs a refused address outside the tree as "a Space in another tree".
+- A container (runc or gVisor, in the built-in Linux runtime or on a Linux engine) is logged from the drop counters of its rules in the engine host's firewall, which count packets and do not see addresses. An entry names the rule's network (for a deny of `1.1.1.1`, `1.1.1.1/32`), not each address under a broad rule, and its time is when Cua last saw the count grow, so it is as fine as how often the log is read (the app reads while the Network sheet is open). A destination the rules allow never appears.
+
+## Exit, ports and paths
+
+Choosing where a Space's internet leaves, the host's ports inside the Space, what a Space knows about its network and the paths between your computers have their own page, with where each setting is enforced and what it needs: [A Space's exit and paths](/cua-sdk/guides/egress-exit).
+
+## Lifetime
+
+- The rules are in place before the guest's first instruction.
+- They survive stop and start, suspend and resume, a restart of the daemon, forks and checkpoints. A fork keeps its source's network and tree.
+- `set_network` applies at once where the runtime can change a running guest's network (containers, Linux VMs), and otherwise at the Space's next start. The result says which (`applied`).
+- An agent working through Cua's MCP tools can only tighten a Space's network. Opening more is yours to do, with `cua network set` or in the app.
+- Behind the gateway (`vz` microVMs, QEMU on macOS or Windows) a change also closes the open connections the new rules refuse.
+
+## Spaces from before network settings
+
+A Space created before network settings moves to them at its next start: one with no egress policy gets `internet`, one with a policy gets `custom` with its lists kept, and one created with `network="none"` gets `none`. `cua network show` says so once.

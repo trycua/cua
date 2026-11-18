@@ -3,13 +3,7 @@
 
 import { useState } from "react";
 
-import {
-  hostFormInitial,
-  hostFormView,
-  reduceHostForm,
-  type HostFormAction,
-  type HostFormState,
-} from "../model/host";
+import { hostFormInitial, hostFormView, reduceHostForm, type HostFormAction, type HostFormState } from "../model/host";
 import type { HostSetupRequest, HostStatus } from "../native/host";
 
 interface HostSetupFormProps {
@@ -80,17 +74,17 @@ export function HostSetupForm({ onSetup, onBack, onDone, identity, showTitle = f
                   </div>
                 </div>
               ) : (
-              <label className="create-cloud-field" key={f.id}>
-                <span>{f.label}</span>
-                <input
-                  type="text"
-                  value={f.value}
-                  placeholder={f.placeholder ?? undefined}
-                  spellCheck={false}
-                  aria-invalid={f.invalid || undefined}
-                  onChange={(event) => onText(f.id, event.target.value)}
-                />
-              </label>
+                <label className="create-cloud-field" key={f.id}>
+                  <span>{f.label}</span>
+                  <input
+                    type="text"
+                    value={f.value}
+                    placeholder={f.placeholder ?? undefined}
+                    spellCheck={false}
+                    aria-invalid={f.invalid || undefined}
+                    onChange={(event) => onText(f.id, event.target.value)}
+                  />
+                </label>
               ),
             )}
           <button

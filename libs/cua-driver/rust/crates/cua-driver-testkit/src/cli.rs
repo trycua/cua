@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! CLI transport: one `cua-driver call <tool>` process per action, all backed
 //! by a shared test-owned daemon.
 //!

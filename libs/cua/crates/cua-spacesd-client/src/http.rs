@@ -5,8 +5,8 @@
 //! registry, including the typed-envelope extension). [`SpacesdClient::http`]
 //! sends one request there through the same endpoint, path prefix and
 //! authentication the gRPC channel uses: the env token as `authorization`
-//! (or, through the Fleet gateway, the Fleet bearer plus `X-Cua-Fleet-Claim`
-//! with the env token moved to `x-cua-env-authorization`). Callers cannot
+//! (or, through a gateway, the gateway bearer with the env token moved to
+//! `x-cua-env-authorization`). Callers cannot
 //! set or override those headers.
 
 use std::time::Duration;
@@ -20,7 +20,7 @@ use crate::{
     SpacesdClient,
     connector::ProxyConnector,
     error::{Error, Result},
-    transport::{ENV_TOKEN_HEADER, FLEET_CLAIM_HEADER, HeaderInjector, ensure_crypto_provider},
+    transport::{ENV_TOKEN_HEADER, HeaderInjector, ensure_crypto_provider},
 };
 
 /// Default cap on a response body.
@@ -38,7 +38,6 @@ const RESERVED: &[&str] = &[
     "transfer-encoding",
     "connection",
     ENV_TOKEN_HEADER,
-    FLEET_CLAIM_HEADER,
     cua_proto::metadata::PRINCIPAL_BIN,
 ];
 
@@ -216,7 +215,6 @@ mod tests {
         for name in [
             "Authorization",
             "x-cua-env-authorization",
-            "X-Cua-Fleet-Claim",
             "x-cua-principal-bin",
             "host",
         ] {

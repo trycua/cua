@@ -18,10 +18,29 @@ export function notificationsMethods(ctx: BridgeContext): Handlers {
     "notifications.list": async () => {
       const n = feed();
       await n.poll();
-      return encode(n.feed);
+      // The core's entries, each with the Space it is about (Open Space).
+      return n.feed.map((e) => ({ ...(encode(e) as Record<string, unknown>), space: n.spaceOf(e.id) }));
     },
     "notifications.markAllRead": async () => {
       await feed().markAllRead();
+      return null;
+    },
+    "notifications.markRead": async (args) => {
+      const n = feed();
+      const ids = args.ids;
+      if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) throw Failure.badArgs("ids: array of strings");
+      await n.markRead(ids);
+      return null;
+    },
+    "notifications.delete": async (args) => {
+      const n = feed();
+      const ids = args.ids;
+      if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) throw Failure.badArgs("ids: array of strings");
+      await n.deleteEntries(ids);
+      return null;
+    },
+    "notifications.deleteAll": async () => {
+      await feed().deleteAll();
       return null;
     },
   };

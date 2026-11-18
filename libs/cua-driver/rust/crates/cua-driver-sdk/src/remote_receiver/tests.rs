@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use super::*;
 use serde_json::json;
 use std::future::{poll_fn, Future};
@@ -271,7 +274,6 @@ async fn invalid_envelopes_never_reach_executor() {
         "read_file",
         "write_file",
         "start_session",
-        "escalate_session",
         "end_session",
         "session_end",
         "unknown_tool",

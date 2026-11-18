@@ -3,6 +3,8 @@
 # macOS harness tests use the installed, TCC-authorized cua-driver daemon path.
 # The install must embed CUA_DRIVER_SOURCE_SHA; the Lume wrapper owns that step.
 set -euo pipefail
+# macOS shells default to 256 open files, too few for the cua-spaces test binaries (see scripts/ci/tests/test_nofile_limit.py).
+[ "$(ulimit -Sn)" = unlimited ] || [ "$(ulimit -Sn)" -ge 10240 ] || ulimit -Sn 10240 2>/dev/null || ulimit -Sn "$(ulimit -Hn)" 2>/dev/null || true # nofile-limit
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
@@ -121,14 +123,16 @@ write_failure_record() {
     > "${failures_file}"
 }
 
+# shellcheck source=../lib/e2e-retry-once.sh
+source "${REPO_ROOT}/scripts/ci/lib/e2e-retry-once.sh"
+export CUA_E2E_PLATFORM=macos
+
 run_test() {
   local name="$1"; shift
   local log_name="${name//[^a-zA-Z0-9._-]/_}"
   echo "[RUN] ${name}"
-  set +e
-  (cd "${RUST_ROOT}" && "$@") 2>&1 | tee "${ARTIFACT_DIR}/${log_name}.log"
-  local exit_code=${PIPESTATUS[0]}
-  set -e
+  local exit_code=0
+  cua_e2e_run_case "${name}" "${ARTIFACT_DIR}/${log_name}.log" "${RUST_ROOT}" "$@" || exit_code=$?
   if [[ "${exit_code}" != 0 ]]; then
     note_lane_failure "${name}"
   fi
@@ -149,6 +153,20 @@ filter_contains_exact() {
 
 native_retry_filter_active() {
   [[ -n "${CUA_E2E_CELL_FILTER:-}" || -n "${CUA_E2E_HARNESS_FILTER:-}" ]]
+}
+
+# scripts/ci/macos/appkit-cells.tsv maps each AppKit cell id to the exact Rust
+# test that owns it. The full native lane and a single-cell selection both read it.
+run_appkit_cells() {
+  local cell test_name
+  while IFS=$'\t' read -r cell test_name; do
+    if filter_contains_exact "${CUA_E2E_HARNESS_FILTER:-}" appkit \
+        && filter_contains_exact "${CUA_E2E_CELL_FILTER:-}" "${cell}"; then
+      NATIVE_FILTER_MATCHES=$((NATIVE_FILTER_MATCHES + 1))
+      run_test "appkit-${test_name}" cargo test -p cua-driver-e2e --test harness_appkit_test -- \
+        --ignored --exact "${test_name}" --nocapture --test-threads=1
+    fi
+  done < "${SCRIPT_DIR}/appkit-cells.tsv"
 }
 
 native_swiftui_test_selected() {
@@ -342,6 +360,9 @@ if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
   run_test embedded-browser-routes cargo test -p cua-driver-e2e --test cross_platform_behavior_test -- \
     --ignored --exact embedded_browser_routes_are_exact_or_refused \
     --nocapture --test-threads=1
+  run_test webkit-background-paste cargo test -p cua-driver-e2e --test cross_platform_behavior_test -- \
+    --ignored --exact webkit_background_paste_runs_the_edit_menu_item \
+    --nocapture --test-threads=1
 fi
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
   NATIVE_FILTER_MATCHES=0
@@ -349,41 +370,8 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     run_test agent-cursor-showcase cargo test -p cua-driver-e2e \
       --test agent_cursor_showcase_test -- \
       --ignored --nocapture --test-threads=1
-    for appkit_test in \
-    harness_appkit_smoke \
-    harness_appkit_first_snapshot_waits_for_a_launching_app \
-    harness_appkit_query_projects_structured_elements \
-    harness_appkit_stale_element_token_fails_closed \
-    snapshot_publication::harness_appkit_pending_snapshot_cannot_retarget_token \
-    harness_appkit_invoke_menu_live_path \
-    harness_appkit_invoke_menu_failed_path_leaves_no_menu_open \
-    harness_appkit_text_input \
-    harness_appkit_element_foreground_press_key_commits_edit \
-    harness_appkit_foreground_press_key_chord_carries_its_modifiers \
-    harness_appkit_modified_click_preserves_selection \
-    harness_appkit_type_text_background \
-    harness_appkit_scroll_foreground \
-    harness_appkit_scroll_background \
-    harness_appkit_counter \
-    harness_appkit_counter_px_background \
-    harness_appkit_erroring_toggle_press_counts_only_when_its_value_moved \
-    harness_appkit_px_background_press_key_reports_honest_delivery_truth \
-    harness_appkit_exact_activation_with_agent_cursor \
-    harness_appkit_exact_activation_ignores_competing_application_window \
-    harness_appkit_foreground_single_click_has_one_ordered_native_pair \
-    harness_appkit_right_click_px_foreground \
-    harness_appkit_right_click_px_background \
-    harness_appkit_double_click_px_foreground \
-    harness_appkit_double_click_px_background \
-    harness_appkit_popup_click_keeps_front_key_focus_background \
-    harness_appkit_popup_set_value_keeps_front_key_focus_background \
-    harness_appkit_context_menu_keeps_front_key_focus_background \
-    harness_appkit_slider_drag_px_foreground \
-      harness_appkit_slider_drag_px_background; do
-      run_test "appkit-${appkit_test}" cargo test -p cua-driver-e2e --test harness_appkit_test -- \
-        --ignored --exact "${appkit_test}" --nocapture --test-threads=1
-    done
   fi
+  run_appkit_cells
 
   while IFS='|' read -r swiftui_cell swiftui_test; do
     if native_swiftui_test_selected "${swiftui_cell}"; then
@@ -410,10 +398,25 @@ EOF
     run_test installed-app-textedit cargo test -p cua-driver-e2e --test installed_app_textedit_macos_test -- \
       --ignored --exact background_type_on_native_cocoa_is_ax_verified \
       --nocapture --test-threads=1
+    run_test installed-app-textedit-hotkey cargo test -p cua-driver-e2e --test installed_app_textedit_macos_test -- \
+      --ignored --exact foreground_window_hotkey_selects_all_behind_another_app \
+      --nocapture --test-threads=1
+    run_test installed-app-textedit-hotkey-sibling cargo test -p cua-driver-e2e --test installed_app_textedit_macos_test -- \
+      --ignored --exact foreground_window_hotkey_reaches_an_unfocused_sibling_of_the_frontmost_app \
+      --nocapture --test-threads=1
+    run_test installed-app-calculator env -u CUA_E2E_RECORDINGS_ROOT \
+      cargo test -p cua-driver-e2e --test installed_app_calculator_macos_test -- \
+      --ignored --nocapture --test-threads=1
+    run_test installed-app-screen-sharing cargo test -p cua-driver-e2e --test screen_sharing_macos_test -- \
+      --ignored --exact foreground_type_text_reaches_a_minimized_screen_sharing_window \
+      --nocapture --test-threads=1
     # These rows assert through System Events and CoreGraphics oracles rather
     # than typed matrix results, so they must not leave unowned trajectories.
     run_test bring-to-front env -u CUA_E2E_RECORDINGS_ROOT \
       cargo test -p cua-driver-e2e --test bring_to_front_macos_test -- \
+      --ignored --nocapture --test-threads=1
+    run_test frontmost-app env -u CUA_E2E_RECORDINGS_ROOT \
+      cargo test -p cua-driver-e2e --test frontmost_app_macos_test -- \
       --ignored --nocapture --test-threads=1
     # Tk derives click locations from the hardware pointer. The rows skip with
     # an explicit reason when python3 lacks tkinter (hosted images may not ship

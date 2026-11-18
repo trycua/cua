@@ -62,6 +62,11 @@ concurrency:
   group: cd-image-macos
   cancel-in-progress: false
 
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
 jobs:
   plan:
     runs-on: ubuntu-latest

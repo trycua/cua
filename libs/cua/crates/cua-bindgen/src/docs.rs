@@ -24,7 +24,7 @@ use uniffi_bindgen::{EmptyCrateConfigSupplier, library_mode, macro_metadata};
 use uniffi_meta::{LiteralMetadata, Metadata};
 
 /// The default UniFFI namespace: the cua SDK. A cdylib also links other
-/// namespaces (cyclops-sdk; `libcua_spaces_ffi` links `cua_sdk` as well)
+/// namespaces (`libcua_spaces_ffi` links `cua_sdk` as well)
 /// that a dump of one namespace leaves out.
 pub const NAMESPACE: &str = "cua_sdk";
 

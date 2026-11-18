@@ -1,0 +1,169 @@
+{
+  "flow": "bulk-confirm",
+  "frames": [
+    {
+      "confirm": {
+        "body": "cua-builder is running and will be turned off first. Sam loses access. Their files and apps are gone for good.",
+        "buttons": "Cancel / Delete 3 Spaces (red)",
+        "frees": "Frees 29 GB",
+        "ids": "delete local:cua-builder,local:agent-sandbox,local:onb-new / leave ",
+        "rows": [
+          "cua-builder (linux) [Running] <Sam> = 14 GB",
+          "agent-sandbox (linux) = 6 GB",
+          "onb-new (linux) = 9 GB"
+        ],
+        "title": "Delete 3 Spaces?"
+      },
+      "done": "Deleted 3 Spaces. 29 GB freed. (ok)",
+      "progress": [
+        "Deleting 1 of 3…",
+        "Deleting 2 of 3…",
+        "Deleting 3 of 3…",
+        null
+      ],
+      "step": "three of yours, one running and shared with Sam"
+    },
+    {
+      "confirm": {
+        "body": "ci-runner is running and will be turned off first. Its files and apps are gone for good.",
+        "buttons": "Cancel / Delete (red)",
+        "frees": "Frees 22 GB",
+        "ids": "delete relay:hetzner/ci-runner / leave ",
+        "rows": [
+          "ci-runner (linux) [Running] = 22 GB"
+        ],
+        "title": "Delete ci-runner?"
+      },
+      "done": "Deleted ci-runner. 22 GB freed. (ok)",
+      "progress": [
+        "Deleting 1 of 1…",
+        null
+      ],
+      "step": "one running Space from its menu"
+    },
+    {
+      "confirm": {
+        "body": "design-review is running and will be turned off first. Sam, Priya and 3 others lose access. Its files and apps are gone for good.",
+        "buttons": "Cancel / Delete (red)",
+        "frees": "Frees 34 GB",
+        "ids": "delete local:design-review / leave ",
+        "rows": [
+          "design-review (macos) [Running] <Sam, Priya, lee, Ana, Bo> = 34 GB"
+        ],
+        "title": "Delete design-review?"
+      },
+      "done": "Deleted design-review. 34 GB freed. (ok)",
+      "progress": [
+        "Deleting 1 of 1…",
+        null
+      ],
+      "step": "a Space you shared with five people"
+    },
+    {
+      "confirm": {
+        "body": "Their files and apps are gone for good.",
+        "buttons": "Cancel / Delete 4 Spaces (red)",
+        "frees": "Frees 80 GB",
+        "ids": "delete local:tahoe-old,local:release-checks,relay:hetzner/scrape-worker,relay:hetzner/old-runner / leave ",
+        "rows": [
+          "# This Mac",
+          "tahoe-old (macos) = 41 GB",
+          "release-checks (macos) = 28 GB",
+          "# Hetzner server",
+          "scrape-worker (linux) = 11 GB",
+          "old-runner (linux) = -"
+        ],
+        "title": "Delete 4 Spaces?"
+      },
+      "done": "Deleted 3 of 4 Spaces. 69 GB freed. Couldn't delete scrape-worker: the Hetzner server didn't answer. (partial)",
+      "progress": [
+        "Deleting 1 of 4…",
+        "Deleting 2 of 4…",
+        "Deleting 3 of 4…",
+        "Deleting 4 of 4…",
+        null
+      ],
+      "step": "four on two computers, one size unknown, one fails"
+    },
+    {
+      "confirm": {
+        "body": "cua-builder is running and will be turned off first. Sam loses access. Their files and apps are gone for good. qa-shared stays on Sam's Mac mini.",
+        "buttons": "Cancel / Delete and leave (red)",
+        "frees": "Frees 23 GB",
+        "ids": "delete local:cua-builder,local:onb-new / leave relay:sam-mini/qa-shared",
+        "rows": [
+          "# Delete",
+          "cua-builder (linux) [Running] <Sam> = 14 GB",
+          "onb-new (linux) = 9 GB",
+          "# Leave",
+          "qa-shared (linux) = Sam's Mac mini"
+        ],
+        "title": "Delete 2 Spaces and leave 1?"
+      },
+      "done": "Deleted 2 Spaces and left 1. 23 GB freed. (ok)",
+      "progress": [
+        "Deleting 1 of 2…",
+        "Deleting 2 of 2…",
+        "Leaving 1 of 1…",
+        null
+      ],
+      "step": "delete two and leave one"
+    },
+    {
+      "confirm": {
+        "body": "The ones you leave stay with their owners.",
+        "buttons": "Cancel / Leave",
+        "frees": null,
+        "ids": "delete  / leave relay:priya-pc/label-studio,relay:sam-mini/qa-shared",
+        "rows": [
+          "label-studio (linux) = Priya's PC",
+          "qa-shared (linux) = Sam's Mac mini"
+        ],
+        "title": "Leave 2 Spaces?"
+      },
+      "done": "Left 1 of 2 Spaces. Couldn't leave qa-shared: the Cua relay needs an update. (partial)",
+      "progress": [
+        "Leaving 1 of 2…",
+        "Leaving 2 of 2…",
+        null
+      ],
+      "step": "leave two, an older relay refuses one"
+    },
+    {
+      "confirm": {
+        "body": "nightly-e2e stays with QA team.",
+        "buttons": "Cancel / Leave",
+        "frees": null,
+        "ids": "delete  / leave relay:qa/nightly-e2e",
+        "rows": [
+          "nightly-e2e (linux) = QA team"
+        ],
+        "title": "Leave nightly-e2e?"
+      },
+      "done": "Left nightly-e2e. (ok)",
+      "progress": [
+        "Leaving 1 of 1…",
+        null
+      ],
+      "step": "leave a team's Space"
+    },
+    {
+      "confirm": {
+        "body": "Their files and apps are gone for good.",
+        "buttons": "Cancel / Delete 2 Spaces (red)",
+        "frees": "Frees 3 GB",
+        "ids": "delete local:a,local:b / leave ",
+        "rows": [
+          "a (linux) = 1 GB",
+          "b (linux) = 2 GB"
+        ],
+        "title": "Delete 2 Spaces?"
+      },
+      "done": "Couldn't delete a and b. (failed)",
+      "progress": [
+        "Deleting 1 of 2…"
+      ],
+      "step": "nothing deleted"
+    }
+  ]
+}

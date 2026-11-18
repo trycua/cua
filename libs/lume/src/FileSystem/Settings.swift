@@ -15,19 +15,25 @@ struct LumeSettings: Codable, Sendable {
 
     // For backward compatibility
     var homeDirectory: String {
-        defaultLocation?.path ?? "~/.lume"
+        defaultLocation?.path ?? LumeLayout.current.homeSetting
     }
 
-    static let defaultSettings = LumeSettings(
-        vmLocations: [
-            VMLocation(name: "home", path: "~/.lume")
-        ],
-        defaultLocationName: "home",
-        cacheDirectory: "~/.lume/cache",
-        cachingEnabled: false,
-        registry: .defaultConfig,
-        telemetryEnabled: true
-    )
+    /// The settings of a Lume that has no settings file yet: VMs and cache in
+    /// the layout's home (`~/.lume`, or `~/.lume-local` / `LUME_HOME` for `lume-local`).
+    static func defaults(layout: LumeLayout = .current) -> LumeSettings {
+        LumeSettings(
+            vmLocations: [
+                VMLocation(name: "home", path: layout.homeSetting)
+            ],
+            defaultLocationName: "home",
+            cacheDirectory: layout.cacheSetting,
+            cachingEnabled: false,
+            registry: .defaultConfig,
+            telemetryEnabled: true
+        )
+    }
+
+    static var defaultSettings: LumeSettings { defaults() }
 
     /// Gets all locations sorted by name
     var sortedLocations: [VMLocation] {
@@ -39,8 +45,6 @@ final class SettingsManager: @unchecked Sendable {
     // MARK: - Constants
 
     private enum Constants {
-        // Default path for config
-        static let fallbackConfigDir = "~/.config/lume"
         static let configFileName = "config.yaml"
     }
 
@@ -48,15 +52,15 @@ final class SettingsManager: @unchecked Sendable {
 
     static let shared = SettingsManager()
     private let fileManager: FileManager
+    private let layoutProvider: @Sendable () -> LumeLayout
 
-    // Get the config directory following XDG spec
+    private var layout: LumeLayout { layoutProvider() }
+
+    // The config directory. lume-local keeps its settings in its own home;
+    // the released Lume follows the XDG spec, as it always has (`LumeLayout`
+    // decides).
     private var configDir: String {
-        // Check XDG_CONFIG_HOME environment variable first
-        if let xdgConfigHome = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"] {
-            return "\(xdgConfigHome)/lume"
-        }
-        // Fall back to default
-        return (Constants.fallbackConfigDir as NSString).expandingTildeInPath
+        layout.configDir.path
     }
 
     // Path to config file
@@ -66,8 +70,12 @@ final class SettingsManager: @unchecked Sendable {
 
     // MARK: - Initialization
 
-    init(fileManager: FileManager = .default) {
+    init(
+        fileManager: FileManager = .default,
+        layout: (@Sendable () -> LumeLayout)? = nil
+    ) {
         self.fileManager = fileManager
+        self.layoutProvider = layout ?? { LumeLayout.current }
         ensureConfigDirectoryExists()
     }
 
@@ -79,16 +87,7 @@ final class SettingsManager: @unchecked Sendable {
         }
 
         // No settings file found, use defaults
-        let defaultSettings = LumeSettings(
-            vmLocations: [
-                VMLocation(name: "home", path: "~/.lume")
-            ],
-            defaultLocationName: "home",
-            cacheDirectory: "~/.lume/cache",
-            cachingEnabled: false,
-            registry: .defaultConfig,
-            telemetryEnabled: true
-        )
+        let defaultSettings = LumeSettings.defaults(layout: layout)
 
         // Try to save default settings
         try? saveSettings(defaultSettings)
@@ -314,7 +313,7 @@ final class SettingsManager: @unchecked Sendable {
         // A real implementation would use a proper YAML library
 
         var defaultLocationName = "home"
-        var cacheDirectory = "~/.lume/cache"
+        var cacheDirectory = layout.cacheSetting
         var cachingEnabled = false  // default to false to save disk space
         var telemetryEnabled = true  // default to true for anonymous usage tracking
         var vmLocations: [VMLocation] = []
@@ -482,7 +481,7 @@ final class SettingsManager: @unchecked Sendable {
 
         // Ensure at least one location exists
         if vmLocations.isEmpty {
-            vmLocations.append(VMLocation(name: "home", path: "~/.lume"))
+            vmLocations.append(VMLocation(name: "home", path: layout.homeSetting))
         }
 
         // Build registry config

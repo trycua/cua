@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Copy install.sh / install.ps1 with the release repository as their default.
+The uninstallers (uninstall.sh / uninstall.ps1) download nothing from a release,
+so they are copied as they are, to publish next to the installers.
 
 The installers default to trycua/cua: their download base and the Sigstore
 identity they verify (the release workflow at its tag) both derive from it.
@@ -9,7 +11,8 @@ then installs, and verifies, its own releases):
 
     python3 scripts/install/stamp_installers.py --repo "$GITHUB_REPOSITORY" --out stamped
 
-writes stamped/install.sh and stamped/install.ps1. CUA_INSTALL_REPO still
+writes stamped/install.sh, stamped/install.ps1, stamped/uninstall.sh and
+stamped/uninstall.ps1. CUA_INSTALL_REPO still
 overrides the default at install time. Fails if a default is not found, so a
 changed installer cannot silently keep pointing somewhere else.
 """
@@ -18,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -33,6 +37,9 @@ DEFAULTS = {
     ),
 }
 
+# Published unchanged next to the installers (cua.ai/uninstall.sh and .ps1).
+UNCHANGED = ("uninstall.sh", "uninstall.ps1")
+
 
 def stamp(text: str, name: str, repo: str) -> str:
     old, template = DEFAULTS[name]
@@ -45,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--repo", required=True, help="owner/name, e.g. $GITHUB_REPOSITORY")
     parser.add_argument("--out", required=True, type=Path, help="directory for the stamped copies")
-    parser.add_argument("--src", type=Path, default=HERE, help="directory holding install.sh / install.ps1")
+    parser.add_argument("--src", type=Path, default=HERE, help="directory holding the installer and uninstaller scripts")
     args = parser.parse_args(argv)
     if not REPO_RE.match(args.repo):
         print(f"invalid repository {args.repo!r} (want owner/name)", file=sys.stderr)
@@ -64,6 +71,11 @@ def main(argv: list[str] | None = None) -> int:
             fh.write(stamped)
         dest.chmod((args.src / name).stat().st_mode)
         print(f"{dest}: default repository {args.repo}")
+    for name in UNCHANGED:
+        dest = args.out / name
+        shutil.copyfile(args.src / name, dest)
+        dest.chmod((args.src / name).stat().st_mode)
+        print(f"{dest}: copied as is")
     return 0
 
 

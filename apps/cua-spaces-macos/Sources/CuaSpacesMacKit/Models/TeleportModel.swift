@@ -53,13 +53,8 @@ public struct TeleportPickerSources: Sendable {
                 }
             },
             remoteWindows: {
-                ((try? await space?.windows(app: nil)) ?? []).map {
-                    AppRemoteWindow(id: $0.windowId, appName: $0.appName, title: $0.title, visible: $0.onScreen,
-                                    appId: $0.appId, targetEpoch: $0.epoch,
-                                    widthPx: $0.bounds.count == 4 ? UInt32(max(0, $0.bounds[2])) : nil,
-                                    heightPx: $0.bounds.count == 4 ? UInt32(max(0, $0.bounds[3])) : nil,
-                                    pid: $0.pid > 0 ? $0.pid : nil)
-                }
+                let windows: [CuaSDK.SpaceWindow] = (try? await space?.windows(app: nil)) ?? []
+                return windows.map(Self.remote)
             },
             hostIcon: { path in teleport?.appIconPng(path: path, size: 64) },
             guestIcons: { requests in
@@ -69,6 +64,22 @@ public struct TeleportPickerSources: Sendable {
             hostThumbnail: { id in (try? teleport?.captureWindowThumbnail(windowId: id, maxWidth: 480)) ?? nil },
             guestThumbnail: { id, epoch in (try? await space?.windowThumbnail(windowId: id, epoch: epoch, maxDimension: 480)) ?? nil },
             entryForPath: { path in try? teleport?.catalogEntryForPath(path: path, options: nil) })
+    }
+
+    /// A window of the Space as the core's picker row. Typed step by step: one
+    /// big literal here exceeded the compiler's type-check budget.
+    static func remote(_ w: CuaSDK.SpaceWindow) -> AppRemoteWindow {
+        let sized = w.bounds.count == 4
+        let width: UInt32? = sized ? UInt32(max(0, w.bounds[2])) : nil
+        let height: UInt32? = sized ? UInt32(max(0, w.bounds[3])) : nil
+        let pid: UInt32? = w.pid > 0 ? w.pid : nil
+        var origin: AppRemoteWindowOrigin?
+        if let o = w.origin {
+            origin = AppRemoteWindowOrigin(spaceId: o.spaceId, name: o.name, os: o.os)
+        }
+        return AppRemoteWindow(id: w.windowId, appName: w.appName, title: w.title, visible: w.onScreen,
+                               appId: w.appId, targetEpoch: w.epoch, widthPx: width, heightPx: height,
+                               pid: pid, origin: origin)
     }
 }
 
@@ -84,6 +95,8 @@ public final class TeleportModel {
     private var sdkEntries: [String: TeleportCatalogEntry] = [:]
     private var sdkPlan: TeleportPlan?
     /// A run started (true) or ended (false): the notch shows a transfer.
+    /// An app was teleported (the getting-started checklist).
+    public var onTeleported: (() -> Void)?
     public var onTransfer: ((Bool) -> Void)?
     /// Streams one of the Space's windows here (From <Space>).
     public var onStreamWindow: ((String) -> Void)?
@@ -394,7 +407,8 @@ public final class TeleportModel {
             reviewVault = KvVaultState(query: "", selected: source.ids, expanded: [provider], app: provider)
             send(.vaultItems(count: source.count, newestMs: source.newestMs,
                              nowMs: Int64(keyvault.clock().timeIntervalSince1970 * 1000), selected: source.ids,
-                             passwordIds: source.passwordIds))
+                             passwordIds: source.passwordIds, passwords: source.passwords,
+                             passwordPicks: source.passwordPicks))
         }
         guard review.needsDomains else { return }
         guard let client = keyvault?.client else { send(.domainsFailed); return }
@@ -494,9 +508,9 @@ extension AppTeleportMove {
 
     public var label: String {
         switch self {
-        case .appOnly: return "Just the app"
-        case .appWithFiles: return "The app with files or folders"
-        case .appWithState: return "The app with its signed-in state"
+        case .appOnly: return CoreMessages.text(code: "teleport.move.app_only")
+        case .appWithFiles: return CoreMessages.text(code: "teleport.move.app_with_files")
+        case .appWithState: return CoreMessages.text(code: "teleport.move.app_with_state")
         }
     }
 }
@@ -512,5 +526,6 @@ func sdkConsent(_ consent: AppTeleportConsent) -> TeleportConsent {
                     cookieDomains: consent.cookieDomains,
                     exclude: consent.exclude,
                     fromVault: consent.fromVault,
-                    includePasswords: consent.includePasswords)
+                    includePasswords: consent.includePasswords,
+                    passwordDomains: consent.passwordDomains)
 }

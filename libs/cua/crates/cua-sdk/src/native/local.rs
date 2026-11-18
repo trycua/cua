@@ -6,6 +6,7 @@
 
 use super::{Backend, run};
 use crate::{CuaError, Result};
+use cua_sandbox_core::runtime_kinds as kinds;
 
 /// Status of one local runtime component.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -118,11 +119,12 @@ pub struct LocalStorage {
     pub container: Option<StorageVolume>,
     /// Catalog image refs already pulled here at their published digest.
     pub pulled: Vec<String>,
+    pub linux_runtime_download_bytes: u64,
 }
 
-impl From<cua_daemon::storage::StorageReport> for LocalStorage {
-    fn from(r: cua_daemon::storage::StorageReport) -> Self {
-        let vol = |v: Option<cua_daemon::storage::Volume>| {
+impl From<cua_daemon_core::storage::StorageReport> for LocalStorage {
+    fn from(r: cua_daemon_core::storage::StorageReport) -> Self {
+        let vol = |v: Option<cua_daemon_core::storage::Volume>| {
             v.map(|v| StorageVolume {
                 available_bytes: v.available,
                 total_bytes: v.total,
@@ -136,6 +138,96 @@ impl From<cua_daemon::storage::StorageReport> for LocalStorage {
             qemu: vol(r.qemu),
             container: vol(r.container),
             pulled: r.pulled,
+            linux_runtime_download_bytes: r.linux_runtime_download_bytes,
+        }
+    }
+}
+
+/// A runtime installed on this machine for one kind of Space.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RuntimeDetected {
+    /// `docker`, `podman`, `lume`, `qemu`, `container`, `firecracker`.
+    pub tool: String,
+    /// As people know it (`Docker`, `Apple container`).
+    pub name: String,
+    pub path: String,
+    /// As `--version` says it (`27.3.1`).
+    pub version: Option<String>,
+    /// The guest system it runs, when only one (`macOS`, `Linux`).
+    pub guests: Option<String>,
+}
+
+/// What a binary is, for one kind of Space (`runtime_check_path`).
+#[derive(Debug, Clone, PartialEq, Eq, Default, uniffi::Record)]
+pub struct RuntimePathProbe {
+    pub path: String,
+    /// A file is there.
+    pub exists: bool,
+    /// It can be run.
+    pub executable: bool,
+    /// The tool it is, when it is one the kind takes.
+    pub tool: Option<String>,
+    pub name: Option<String>,
+    pub version: Option<String>,
+    /// The oldest version cua runs on.
+    pub min_version: Option<String>,
+    /// The names of the tools the kind takes here (`Docker`, `Podman`).
+    pub expected: Vec<String>,
+    pub guests: Option<String>,
+}
+
+/// One kind of Space's runtime, as Settings shows it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RuntimeKindState {
+    /// `container`, `vm` or `microvm`.
+    pub kind: String,
+    /// `runtime.<kind>`: `auto`, `builtin` or `system`.
+    pub source: String,
+    /// `runtime.<kind>_path`, when set.
+    pub path: Option<String>,
+    /// What is installed here for the kind, the one used first.
+    pub detected: Vec<RuntimeDetected>,
+    /// The path in use (the custom one, else the first detected), probed.
+    pub check: Option<RuntimePathProbe>,
+    /// The names of the tools the kind takes here (`Docker`, `Podman`).
+    pub expected: Vec<String>,
+}
+
+impl From<kinds::PathProbe> for RuntimePathProbe {
+    fn from(p: kinds::PathProbe) -> Self {
+        Self {
+            path: p.path.display().to_string(),
+            exists: p.exists,
+            executable: p.executable,
+            tool: p.tool,
+            name: p.name,
+            version: p.version,
+            min_version: p.min_version,
+            expected: p.expected,
+            guests: p.guests,
+        }
+    }
+}
+
+impl From<kinds::KindReport> for RuntimeKindState {
+    fn from(r: kinds::KindReport) -> Self {
+        Self {
+            kind: r.kind.as_str().into(),
+            source: r.source.as_str().into(),
+            path: r.path.map(|p| p.display().to_string()),
+            detected: r
+                .detected
+                .into_iter()
+                .map(|d| RuntimeDetected {
+                    tool: d.tool,
+                    name: d.name,
+                    path: d.path.display().to_string(),
+                    version: d.version,
+                    guests: d.guests,
+                })
+                .collect(),
+            check: r.check.map(Into::into),
+            expected: r.expected,
         }
     }
 }
@@ -148,19 +240,40 @@ pub struct Local {
 
 #[uniffi::export]
 impl Local {
+    /// Each kind of Space (`container`, `vm`, `microvm`) with its runtime
+    /// setting (`runtime.<kind>`), the runtimes installed on this machine
+    /// for it and what the path in use is. Read-only: runs each runtime's
+    /// `--version`, nothing else; probed in this process (the daemon runs
+    /// on the same host).
+    pub async fn runtime_kinds(&self) -> Result<Vec<RuntimeKindState>> {
+        run(async { Ok(kinds::report().await.into_iter().map(Into::into).collect()) }).await
+    }
+
+    /// What `path` is for `kind` (`container`, `vm`, `microvm`): there,
+    /// runnable, which runtime and its version. Settings checks a typed path
+    /// with it before it is saved (`runtime.<kind>_path`).
+    pub async fn runtime_check_path(&self, kind: String, path: String) -> Result<RuntimePathProbe> {
+        let k = kinds::RuntimeKind::parse(&kind).ok_or_else(|| {
+            CuaError::InvalidArgument(format!(
+                "kind: expected container, vm or microvm, got {kind:?}"
+            ))
+        })?;
+        let p = match path.trim().strip_prefix("~/") {
+            Some(rest) => {
+                std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(rest)
+            }
+            None => std::path::PathBuf::from(path.trim()),
+        };
+        run(async move { Ok(kinds::probe(k, &p).await.into()) }).await
+    }
+
     /// Inspects local runtimes (read-only: never installs or starts
     /// anything).
     pub async fn doctor(&self) -> Result<DoctorReport> {
         let backend = self.backend.clone();
         run(async move {
             let r = match &backend {
-                Backend::Embedded(_) => {
-                    let report = cua_daemon::local::doctor_report().await;
-                    cua_proto::daemon::v1::DoctorResponse {
-                        checks: cua_daemon::local::doctor_checks(&report),
-                        report_json: serde_json::to_string(&report)?,
-                    }
-                }
+                Backend::Embedded(_) => cua_daemon_core::local::doctor_response().await,
                 Backend::Daemon(d) => d.doctor().await?,
             };
             Ok(DoctorReport {
@@ -176,7 +289,7 @@ impl Local {
     /// catalog images are already pulled. Read-only and bounded; probed in
     /// this process (the daemon runs on the same host).
     pub async fn storage(&self) -> Result<LocalStorage> {
-        run(async move { Ok(cua_daemon::storage::storage_report().await.into()) }).await
+        run(async move { Ok(cua_daemon_core::storage::storage_report().await.into()) }).await
     }
 
     /// Provisions `components` (`qemu`, `lume`; `runsc` reports its plan).
@@ -185,7 +298,7 @@ impl Local {
         let backend = self.backend.clone();
         run(async move {
             let steps = match &backend {
-                Backend::Embedded(_) => cua_daemon::local::setup(&components, dry_run).await?,
+                Backend::Embedded(_) => cua_daemon_core::local::setup(&components, dry_run).await?,
                 Backend::Daemon(d) => d.setup(components, dry_run).await?,
             };
             Ok(steps
@@ -207,7 +320,7 @@ impl Local {
         run(async move {
             Ok(match &backend {
                 Backend::Embedded(rt) => {
-                    let i = cua_daemon::local::pull_image(rt.vmm()?, &reference).await?;
+                    let i = cua_daemon_core::local::pull_image(rt.vmm()?, &reference).await?;
                     LocalImage {
                         reference: i.reference,
                         kind: i.kind,
@@ -242,13 +355,17 @@ impl Local {
         run(async move {
             match &backend {
                 Backend::Embedded(rt) => {
-                    let out = cua_daemon::cua_home()
+                    let out = cua_daemon_core::cua_home()
                         .join("build")
                         .join(format!("out-{}", std::process::id()));
-                    Ok(
-                        cua_daemon::local::build_image(rt.vmm()?, &spec_json, &base, &out, push)
-                            .await?,
+                    Ok(cua_daemon_core::local::build_image(
+                        rt.vmm()?,
+                        &spec_json,
+                        &base,
+                        &out,
+                        push,
                     )
+                    .await?)
                 }
                 Backend::Daemon(d) => Ok(d.build_image(&spec_json, &base, push).await?),
             }
@@ -263,7 +380,7 @@ impl Local {
         run(async move {
             match &backend {
                 Backend::Embedded(_) => {
-                    Ok(cua_daemon::local::push_image(&reference, &destination).await?)
+                    Ok(cua_daemon_core::local::push_image(&reference, &destination).await?)
                 }
                 Backend::Daemon(d) => Ok(d.push_image(&reference, &destination).await?),
             }
@@ -272,8 +389,8 @@ impl Local {
     }
 }
 
-impl From<CuaError> for cua_daemon::Error {
+impl From<CuaError> for cua_daemon_core::Error {
     fn from(e: CuaError) -> Self {
-        cua_daemon::Error::Internal(e.to_string())
+        cua_daemon_core::Error::Internal(e.to_string())
     }
 }

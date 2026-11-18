@@ -1,7 +1,7 @@
 """Image builder — pure-data immutable chained builder for sandbox images.
 
 Supports Linux, macOS, and Windows constructors. Serializes to a spec dict
-for cloud API or cloud-init consumption.
+or a cloud-init script.
 
 Usage::
 
@@ -24,10 +24,9 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from cua_sandbox._paths import cua_home, patched_or
-from cua_sandbox.generated.image_models import ImageFileReference, ImageResource
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +208,6 @@ class Image:
     _registry: Optional[str] = None  # OCI registry reference
     _disk_path: Optional[str] = None  # local disk file path (qcow2, vhdx, raw)
     _agent_type: Optional[str] = None  # e.g. "osworld" for OSWorld Flask server
-    _snapshot_source: Optional[Dict[str, Any]] = None  # set by Sandbox.snapshot()
     # Private-registry credentials (RegistrySecret); never serialized.
     _secret: Optional[Any] = field(default=None, compare=False, repr=False)
     # What the native resolver pinned (resolve_image_kind); never serialized.
@@ -237,8 +235,7 @@ class Image:
         """Linux: the canonical ``ghcr.io/trycua/linux:<version>`` image.
 
         ``kind=None`` (or ``"auto"``) runs what the image is (the rootfs: a
-        gVisor container locally and in the cloud); ``kind="vm"`` its
-        ``-disk`` containerDisk (QEMU locally, KubeVirt in the cloud);
+        gVisor container); ``kind="vm"`` its ``-disk`` containerDisk (QEMU);
         ``kind="container"`` the rootfs. ``Sandbox.create(kind=...)``
         overrides it.
 
@@ -269,9 +266,9 @@ class Image:
     def windows(cls, version: str = "2022", kind: str = "vm", tier: Optional[str] = None) -> Image:
         """Windows: the canonical ``ghcr.io/trycua/windows:2022`` containerDisk.
 
-        Other versions, including ``"11"``, have no canonical image: on Fleet
-        they are unsupported, and locally they are installed from a downloaded
-        evaluation ISO. ``tier="slim"`` names ``2022-slim`` once published.
+        Other versions, including ``"11"``, have no canonical image: they are
+        installed from a downloaded evaluation ISO. ``tier="slim"`` names
+        ``2022-slim`` once published.
         """
         ref = _tier_ref("windows", version, tier)
         return cls(os_type="windows", distro="windows", version=version, kind=kind, _registry=ref)
@@ -281,8 +278,8 @@ class Image:
         """Omarchy (Arch Linux, Hyprland) with cua-spacesd:
         ``ghcr.io/trycua/omarchy:edge`` (or ``"rc"``/``"stable"``).
 
-        An amd64 VM: QEMU locally (emulated on arm64 hosts, so slow there),
-        KubeVirt in the cloud. Until CI publishes it this raises
+        An amd64 VM: QEMU (emulated on arm64 hosts, so slow there). Until CI
+        publishes it this raises
         ``CuaError.ImageNotPublished``; use
         ``Image.from_registry("ghcr.io/trycua/omarchy:edge", kind="vm")`` to
         run it anyway.
@@ -312,16 +309,15 @@ class Image:
         """Create an image from a registry reference.
 
         ``secret`` (a :class:`~cua_sandbox.RegistrySecret`) pulls a private
-        image, the same way locally (the pull) and in the cloud (a registry
-        pull secret for the sandbox). It is never logged or saved.
+        image. It is never logged or saved.
 
         os_type selects the firmware: Windows guest disks are built UEFI-only,
         so a Windows containerDisk pulled from a registry must say so or it is
         handed BIOS and will not boot. kind is resolved after pull when omitted.
         agent_type names the guest control server the disk already runs, the
         same hint as ``from_file``: ``"osworld"`` selects the OSWorld Flask
-        server on port 5000 instead of the computer-server on 8000, both for
-        local QEMU and for Fleet pools.
+        server on port 5000 instead of the computer-server on 8000, for local
+        QEMU.
         """
         return cls(
             os_type=os_type,
@@ -416,7 +412,6 @@ class Image:
             "_registry": self._registry,
             "_disk_path": self._disk_path,
             "_agent_type": self._agent_type,
-            "_snapshot_source": self._snapshot_source,
             "_secret": self._secret,
             "_resolved": self._resolved,
         }
@@ -539,89 +534,8 @@ class Image:
 
     # ── Serialization ────────────────────────────────────────────────────
 
-    def to_build_recipe(
-        self,
-        *,
-        name: str,
-        namespace: str,
-        tags: Mapping[str, str] | None = None,
-        timeout_seconds: int | None = None,
-        disk_size: str | None = None,
-        file_references: Mapping[str, ImageFileReference] | None = None,
-    ) -> Dict[str, Any]:
-        """Return a CRD-validated Image custom-resource manifest."""
-        if self._registry is not None:
-            raise ValueError("remote builds do not accept registry-only images")
-        if self._disk_path is not None:
-            raise ValueError("remote builds do not accept local disk images")
-        if self._snapshot_source is not None:
-            raise ValueError("remote builds do not accept snapshot source images")
-        if self.os_type != "linux" or self.kind not in ("vm", None):
-            raise ValueError("remote builds currently support only Linux VM recipes")
-
-        references = dict(file_references or {})
-        required_sources = {source for source, _ in self._files}
-        missing_sources = sorted(required_sources - references.keys())
-        if missing_sources:
-            raise ValueError(f"missing file reference for {missing_sources[0]}")
-        unused_sources = sorted(references.keys() - required_sources)
-        if unused_sources:
-            raise ValueError(f"unused file references: {', '.join(unused_sources)}")
-
-        layers = []
-        for layer in self._layers:
-            if layer["type"] == "app_install":
-                layers.append({"type": "app_install", "appId": layer["app_id"]})
-            else:
-                layers.append(layer)
-
-        recipe: Dict[str, Any] = {
-            "osType": self.os_type,
-            "distro": self.distro,
-            "version": self.version,
-            "kind": self.kind or "vm",
-            "layers": layers,
-        }
-        if self._env:
-            recipe["env"] = dict(self._env)
-        if self._ports:
-            recipe["ports"] = list(self._ports)
-        if self._files:
-            recipe["files"] = [
-                {
-                    "source": references[source].model_dump(
-                        by_alias=True,
-                        exclude_none=True,
-                        mode="json",
-                    ),
-                    "destination": destination,
-                }
-                for source, destination in self._files
-            ]
-
-        spec: Dict[str, Any] = {"recipe": recipe}
-        if tags:
-            spec["metadata"] = {"tags": dict(tags)}
-        build: Dict[str, Any] = {}
-        if timeout_seconds is not None:
-            build["timeoutSeconds"] = timeout_seconds
-        if disk_size is not None:
-            build["diskSize"] = disk_size
-        if build:
-            spec["build"] = build
-
-        validated = ImageResource.model_validate(
-            {
-                "apiVersion": "images.cua.ai/v1alpha1",
-                "kind": "Image",
-                "metadata": {"name": name, "namespace": namespace},
-                "spec": spec,
-            }
-        )
-        return validated.model_dump(by_alias=True, exclude_none=True, mode="json")
-
     def to_dict(self) -> Dict[str, Any]:
-        """Serialize to a plain dict suitable for JSON or cloud API."""
+        """Serialize to a plain dict suitable for JSON."""
         d: Dict[str, Any] = {
             "os_type": self.os_type,
             "distro": self.distro,
@@ -728,8 +642,8 @@ class Image:
         )
 
 
-def cloud_registry_image(image: Image) -> Optional[str]:
-    """The registry reference an image runs from, local or on Fleet.
+def registry_image(image: Image) -> Optional[str]:
+    """The registry reference an image runs from.
 
     An explicit ``Image.from_registry(...)`` reference always wins; the
     built-in descriptors (``Image.linux()``, ``Image.windows()`` for 2022,
@@ -762,7 +676,7 @@ def resolve_image_kind(image: Image) -> Image:
     """
     if image.kind is not None:
         return image
-    ref = cloud_registry_image(image)
+    ref = registry_image(image)
     if ref is None:
         return image
     from cua_sandbox._sdk import native

@@ -8,8 +8,8 @@
 //! subscribers are intentionally invisible to the tool result.
 
 use cua_driver_contract::{
-    classify_cursor_semantics, CursorAction, CursorMotionSelection, CursorSemantics,
-    CursorThemeSelection,
+    classify_cursor_semantics, CursorAction, CursorDelivery, CursorMotionSelection,
+    CursorSemantics, CursorThemeSelection,
 };
 use serde_json::Value;
 use std::sync::{Arc, OnceLock, RwLock};
@@ -40,6 +40,12 @@ pub enum CursorEvent {
     SelectMotion {
         session: String,
         motion: Value,
+    },
+    /// Keys a key action presses together, such as `["cmd", "c"]`. Emitted
+    /// after the action's `Begin` so the badge can show the combo briefly.
+    KeyCombo {
+        session: String,
+        keys: Vec<String>,
     },
 }
 
@@ -117,13 +123,58 @@ pub fn begin_tool(name: &str, args: &Value) -> Option<(String, CursorAction)> {
             }
         }
     }
-    let semantics = classify_cursor_semantics(name, args)?;
+    let mut semantics = classify_cursor_semantics(name, args)?;
+    if semantics.delivery.is_none() && brings_app_to_front(name) {
+        semantics.delivery = Some(CursorDelivery::Foreground);
+    }
     emit(CursorEvent::Action {
         session: session.clone(),
         phase: CursorEventPhase::Begin,
         semantics,
     });
+    if semantics.action == CursorAction::Key {
+        let keys = pressed_keys(args);
+        if keys.len() > 1 {
+            emit(CursorEvent::KeyCombo {
+                session: session.clone(),
+                keys,
+            });
+        }
+    }
     Some((session, semantics.action))
+}
+
+/// Tools whose whole job is to bring an app or window to the foreground.
+fn brings_app_to_front(name: &str) -> bool {
+    matches!(name, "bring_to_front" | "activate_app" | "browser_activate")
+}
+
+/// The keys a key tool presses together: `hotkey`'s `keys` (an array, or a
+/// `cmd+c` string), or `press_key`'s `modifiers` plus `key`.
+fn pressed_keys(args: &Value) -> Vec<String> {
+    let strings = |value: Option<&Value>| -> Vec<String> {
+        match value {
+            Some(Value::Array(items)) => items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
+            Some(Value::String(text)) => text
+                .split('+')
+                .map(str::trim)
+                .filter(|part| !part.is_empty())
+                .map(str::to_owned)
+                .collect(),
+            _ => Vec::new(),
+        }
+    };
+    let keys = strings(args.get("keys"));
+    if !keys.is_empty() {
+        return keys;
+    }
+    let mut keys = strings(args.get("modifiers"));
+    keys.extend(strings(args.get("key")));
+    keys
 }
 
 pub fn end_tool(active: Option<(String, CursorAction)>) {
@@ -199,6 +250,76 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    fn capture(run: impl FnOnce()) -> Vec<CursorEvent> {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&events);
+        install_cursor_event_sink(Arc::new(move |event| {
+            captured
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(event);
+        }));
+        run();
+        clear_cursor_event_sink();
+        let events = events
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        events.clone()
+    }
+
+    #[test]
+    fn key_combos_follow_their_action_and_bare_keys_emit_none() {
+        let _guard = test_sink_guard();
+        let events = capture(|| {
+            begin_tool("hotkey", &json!({"session":"run","keys":["cmd","c"]}));
+            begin_tool(
+                "press_key",
+                &json!({"session":"run","key":"v","modifiers":["cmd"]}),
+            );
+            begin_tool("press_key", &json!({"session":"run","key":"return"}));
+            begin_tool("type_text", &json!({"session":"run","text":"cmd+c"}));
+        });
+        let combos: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                CursorEvent::KeyCombo { keys, .. } => Some(keys.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            combos,
+            vec![
+                vec!["cmd".to_owned(), "c".to_owned()],
+                vec!["cmd".to_owned(), "v".to_owned()],
+            ]
+        );
+        assert!(matches!(
+            events[0],
+            CursorEvent::Action {
+                phase: CursorEventPhase::Begin,
+                ..
+            }
+        ));
+        assert!(matches!(events[1], CursorEvent::KeyCombo { .. }));
+    }
+
+    #[test]
+    fn bringing_an_app_forward_is_a_foreground_moment() {
+        let _guard = test_sink_guard();
+        let events = capture(|| {
+            begin_tool("bring_to_front", &json!({"session":"run","pid":1}));
+            begin_tool("launch_app", &json!({"session":"run","bundle_id":"x"}));
+        });
+        let deliveries: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                CursorEvent::Action { semantics, .. } => Some(semantics.delivery),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(deliveries, vec![Some(CursorDelivery::Foreground), None]);
     }
 
     #[test]

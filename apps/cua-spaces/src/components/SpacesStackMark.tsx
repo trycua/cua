@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import cuaMark from "../assets/brand/cua-mark-white.svg";
+import { useT } from "../i18n";
 
 /** Back to front: offset, fill token, shadow strength. */
 const LAYERS = [
@@ -25,6 +26,7 @@ const LOGO = 50;
  * (scripts/icons/gen-icon-svgs.py).
  */
 export function SpacesStackMark({ size = 120 }: { size?: number }) {
+  const t = useT("spaces");
   const view = SIDE + LAYERS[LAYERS.length - 1]!.offset + 8;
   return (
     <svg
@@ -33,7 +35,7 @@ export function SpacesStackMark({ size = 120 }: { size?: number }) {
       height={size}
       viewBox={`-4 -2 ${view} ${view}`}
       role="img"
-      aria-label="Cua Spaces"
+      aria-label={t("spaces.brand.cua_spaces")}
     >
       <defs>
         {LAYERS.map((l, i) => (

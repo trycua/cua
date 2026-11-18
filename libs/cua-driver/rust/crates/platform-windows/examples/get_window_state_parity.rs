@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Parity check for `get_window_state` error wording + validation guards.
 
 #[cfg(target_os = "windows")]

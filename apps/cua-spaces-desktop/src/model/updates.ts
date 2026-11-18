@@ -9,6 +9,7 @@
 import * as os from "node:os";
 import type { AppAboutInput, AppTelemetrySignal, AppUpdateChannel } from "../native/generated/index";
 import type { Native } from "../native/load";
+import { initialUpdateState, reduceUpdate, type UpdateEvent, type UpdateStateValue } from "../update-state";
 
 /** What About drives: electron-updater in a packaged app, an in-memory one in tests. */
 export interface UpdaterDriving {
@@ -20,14 +21,18 @@ export interface UpdaterDriving {
   readonly lastCheck: number | null;
   /** Check Now can run (false while a check runs). */
   readonly canCheck: boolean;
-  /** The channel it installs from (`stable` or `beta`). */
-  channel: "stable" | "beta";
+  /** The channel it installs from (`stable` or `nightly`). */
+  channel: "stable" | "nightly";
   /** Called after any of the above changes. */
   onChange: (() => void) | null;
-  /** Told each step: `found`, `not_found`, `installed` or `failed` (fixed words). */
+  /** Told each step: `found`, `not_found`, `downloaded`, `installed` or `failed` (fixed words). */
   onUpdateEvent: ((event: string) => void) | null;
-  /** Checks now, with its own windows for what it found. */
+  /** Checks now; what it finds shows in the in-app indicator (a failure of this check, in a window). */
   checkNow(): void;
+  /** Where the update is (found, downloading, ready): the in-app indicator. */
+  readonly state: UpdateStateValue;
+  /** "Restart to update": installs the downloaded update and relaunches. Only a click calls it. */
+  installNow(): void;
 }
 
 /** An in-memory updater (tests): nothing is checked or stored. */
@@ -36,12 +41,15 @@ export class FixtureUpdater implements UpdaterDriving {
   automaticallyInstalls = false;
   lastCheck: number | null;
   canCheck = true;
-  channel: "stable" | "beta" = "stable";
+  channel: "stable" | "nightly" = "stable";
   onChange: (() => void) | null = null;
   onUpdateEvent: ((event: string) => void) | null = null;
   checks = 0;
   /** What the next check finds. */
   nextResult = "not_found";
+  state: UpdateStateValue = initialUpdateState("0.0.0");
+  /** How many times "Restart to update" ran. */
+  installs = 0;
   constructor(lastCheck: number | null = null) {
     this.lastCheck = lastCheck;
   }
@@ -50,6 +58,17 @@ export class FixtureUpdater implements UpdaterDriving {
     this.lastCheck = Date.now();
     this.onUpdateEvent?.(this.nextResult);
     this.onChange?.();
+  }
+  /** Feeds what electron-updater would report (tests). */
+  report(event: UpdateEvent, word?: string) {
+    this.state = reduceUpdate(this.state, event);
+    if (word) this.onUpdateEvent?.(word);
+    this.onChange?.();
+  }
+  installNow() {
+    if (this.state.status !== "downloaded") return;
+    this.installs += 1;
+    this.onUpdateEvent?.("installed");
   }
 }
 
@@ -119,8 +138,18 @@ export class UpdatesModel {
     for (const l of [...this.listeners]) l();
   }
 
-  get channelWord(): "stable" | "beta" {
-    return this.channel === this.native.AppUpdateChannel.Beta ? "beta" : "stable";
+  /** The in-app indicator's state; idle with no updater (a development run). */
+  get updateState(): UpdateStateValue {
+    return this.updater?.state ?? initialUpdateState(this.info.version);
+  }
+
+  /** "Restart to update". */
+  installUpdate(): void {
+    this.updater?.installNow();
+  }
+
+  get channelWord(): "stable" | "nightly" {
+    return this.channel === this.native.AppUpdateChannel.Nightly ? "nightly" : "stable";
   }
 
   private record(action: string): void {
@@ -162,10 +191,15 @@ export class UpdatesModel {
   }
 
   choose(id: string): void {
-    this.channel = id === "beta" ? this.native.AppUpdateChannel.Beta : this.native.AppUpdateChannel.Stable;
+    // `beta`, from a page before Nightly, is Nightly now.
+    const next = id === "nightly" || id === "beta" ? this.native.AppUpdateChannel.Nightly : this.native.AppUpdateChannel.Stable;
+    const switched = next !== this.channel;
+    this.channel = next;
     if (this.updater) this.updater.channel = this.channelWord;
     this.saveChannel(this.channel);
     this.changed();
+    // A new channel is checked at once; what it finds downloads and is offered as "Restart to update".
+    if (switched && this.updater) this.checkNow();
   }
 
   checkNow(): void {

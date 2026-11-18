@@ -17,6 +17,7 @@ COMPONENT_PATHS = {
     "cua-spacesd": "libs/cua-spacesd",
     "cua-sdk": "libs/cua",
     "cua-spaces": "apps/cua-spaces-macos",
+    "bench": "libs/cua-bench",
 }
 
 

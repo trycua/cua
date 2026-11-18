@@ -1,0 +1,9 @@
+{
+  "errors.viewer.stream_unreachable": "デスクトップのストリームに接続できませんでした。",
+  "errors.viewer.agent_open_failed": "{agent}を開けませんでした: {reason}",
+  "errors.viewer.stop_hotspot_failed": "共有を停止できませんでした",
+  "errors.spaces.create_failed": "Space を作成できませんでした",
+  "errors.spaces.refresh_failed": "Spaces を更新できませんでした。以前に読み込んだ行は古い可能性があります。",
+  "errors.spaces.load_failed": "Spaces を読み込めませんでした。もう一度更新してください。",
+  "errors.settings.sign_in_start_failed": "サインインを開始できませんでした"
+}

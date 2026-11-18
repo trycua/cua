@@ -31,10 +31,6 @@ IS_WINDOWS = platform.system() == "Windows"
 IS_MACOS = platform.system() == "Darwin"
 
 
-def _has_cua_api_key() -> bool:
-    return bool(os.environ.get("CUA_API_KEY"))
-
-
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -550,36 +546,6 @@ async def test_auto_runtime_windows():
         assert screenshot[:4] == b"\x89PNG"
 
 
-# ── 11. Cloud sandboxes (local=False) ────────────────────────────────────────
-
-
-@pytest.mark.skipif(not _has_cua_api_key(), reason="CUA_API_KEY not set")
-async def test_cloud_linux_ephemeral():
-    """Cloud sandbox: Sandbox.ephemeral with linux image (local=False)."""
-    async with Sandbox.ephemeral(
-        Image.linux("ubuntu", "24.04"),
-        local=False,
-    ) as sb:
-        result = await sb.shell.run("uname -s")
-        assert result.success
-        assert "Linux" in result.stdout
-
-        screenshot = await sb.screenshot()
-        assert screenshot[:4] == b"\x89PNG"
-
-
-@pytest.mark.skipif(not _has_cua_api_key(), reason="CUA_API_KEY not set")
-async def test_cloud_android_ephemeral():
-    """Cloud sandbox: Sandbox.ephemeral with android image (local=False)."""
-    async with Sandbox.ephemeral(
-        Image.android("14"),
-        local=False,
-    ) as sb:
-        screenshot = await sb.screenshot()
-        assert screenshot[:4] == b"\x89PNG"
-        assert len(screenshot) > 1000
-
-
 # ── 12. Sandbox.create (persistent) ─────────────────────────────────────────
 
 
@@ -601,21 +567,5 @@ async def test_create_persistent_linux():
 
         screenshot = await sb.screenshot()
         assert screenshot[:4] == b"\x89PNG"
-    finally:
-        await sb.disconnect()
-
-
-@pytest.mark.skipif(not _has_cua_api_key(), reason="CUA_API_KEY not set")
-async def test_create_persistent_cloud_linux():
-    """Sandbox.create provisions a persistent cloud sandbox."""
-    sb = await Sandbox.create(
-        Image.linux("ubuntu", "24.04"),
-        name="cua-test-create-cloud-linux",
-        local=False,
-    )
-    try:
-        result = await sb.shell.run("echo persistent")
-        assert result.success
-        assert "persistent" in result.stdout
     finally:
         await sb.disconnect()

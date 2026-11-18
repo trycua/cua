@@ -44,7 +44,11 @@ class ReleaseInstall:
             "os.execv('/bin/rm', ['/bin/rm', *sys.argv[1:]])\n"
         )
         self.executable(self.bin / "rm", f"exec {shlex.quote(sys.executable)} {shlex.quote(str(guard))} \"$@\"")
-        self.env = {k: v for k, v in os.environ.items() if not k.startswith("CUA_DRIVER_")}
+        self.env = {
+            k: v
+            for k, v in os.environ.items()
+            if not k.startswith("CUA_DRIVER_") and k != "XDG_DATA_HOME"
+        }
         self.env.update(HOME=str(self.home), PATH=f"{self.bin}:/usr/bin:/bin")
 
     @staticmethod

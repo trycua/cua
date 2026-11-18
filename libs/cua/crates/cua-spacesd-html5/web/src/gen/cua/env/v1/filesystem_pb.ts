@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file cua/env/v1/filesystem.proto.
  */
 export const file_cua_env_v1_filesystem: GenFile = /*@__PURE__*/
-  fileDesc("ChtjdWEvZW52L3YxL2ZpbGVzeXN0ZW0ucHJvdG8SCmN1YS5lbnYudjEizgEKCUVudHJ5SW5mbxIMCgRuYW1lGAEgASgJEgwKBHBhdGgYAiABKAkSIgoEdHlwZRgDIAEoDjIULmN1YS5lbnYudjEuRmlsZVR5cGUSDAoEc2l6ZRgEIAEoBBIMCgRtb2RlGAUgASgNEg0KBW93bmVyGAYgASgJEg0KBWdyb3VwGAcgASgJEi8KC21vZGlmaWVkX2F0GAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIWCg5zeW1saW5rX3RhcmdldBgJIAEoCSI3CgtTdGF0UmVxdWVzdBIMCgRwYXRoGAEgASgJEhoKEm5vX2ZvbGxvd19zeW1saW5rcxgCIAEoCCI0CgxTdGF0UmVzcG9uc2USJAoFZW50cnkYASABKAsyFS5jdWEuZW52LnYxLkVudHJ5SW5mbyJsCg5MaXN0RGlyUmVxdWVzdBIMCgRwYXRoGAEgASgJEg0KBWRlcHRoGAIgASgNEhYKDmluY2x1ZGVfaGlkZGVuGAMgASgIEhEKCXBhZ2Vfc2l6ZRgEIAEoDRISCgpwYWdlX3Rva2VuGAUgASgJIlIKD0xpc3REaXJSZXNwb25zZRImCgdlbnRyaWVzGAEgAygLMhUuY3VhLmVudi52MS5FbnRyeUluZm8SFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJIj0KDk1ha2VEaXJSZXF1ZXN0EgwKBHBhdGgYASABKAkSDwoHcGFyZW50cxgCIAEoCBIMCgRtb2RlGAMgASgNIkgKD01ha2VEaXJSZXNwb25zZRIkCgVlbnRyeRgBIAEoCzIVLmN1YS5lbnYudjEuRW50cnlJbmZvEg8KB2NyZWF0ZWQYAiABKAgiXQoLTW92ZVJlcXVlc3QSDgoGc291cmNlGAEgASgJEhMKC2Rlc3RpbmF0aW9uGAIgASgJEhEKCW92ZXJ3cml0ZRgDIAEoCBIWCg5jcmVhdGVfcGFyZW50cxgEIAEoCCI0CgxNb3ZlUmVzcG9uc2USJAoFZW50cnkYASABKAsyFS5jdWEuZW52LnYxLkVudHJ5SW5mbyJECg1SZW1vdmVSZXF1ZXN0EgwKBHBhdGgYASABKAkSEQoJcmVjdXJzaXZlGAIgASgIEhIKCm1pc3Npbmdfb2sYAyABKAgiEAoOUmVtb3ZlUmVzcG9uc2UigQEKB0ZzRXZlbnQSDAoEcGF0aBgBIAEoCRIlCgR0eXBlGAIgASgOMhcuY3VhLmVudi52MS5Gc0V2ZW50VHlwZRIQCghvbGRfcGF0aBgDIAEoCRIvCgtvYnNlcnZlZF9hdBgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiaQoPV2F0Y2hEaXJSZXF1ZXN0EgwKBHBhdGgYASABKAkSEQoJcmVjdXJzaXZlGAIgASgIEjUKEmtlZXBhbGl2ZV9pbnRlcnZhbBgDIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbiIOCgxXYXRjaFN0YXJ0ZWQiDwoNV2F0Y2hPdmVyZmxvdyLLAQoQV2F0Y2hEaXJSZXNwb25zZRIrCgdzdGFydGVkGAEgASgLMhguY3VhLmVudi52MS5XYXRjaFN0YXJ0ZWRIABIkCgVldmVudBgCIAEoCzITLmN1YS5lbnYudjEuRnNFdmVudEgAEi0KCG92ZXJmbG93GAMgASgLMhkuY3VhLmVudi52MS5XYXRjaE92ZXJmbG93SAASKgoJa2VlcGFsaXZlGAQgASgLMhUuY3VhLmVudi52MS5LZWVwQWxpdmVIAEIJCgdtZXNzYWdlIjcKFENyZWF0ZVdhdGNoZXJSZXF1ZXN0EgwKBHBhdGgYASABKAkSEQoJcmVjdXJzaXZlGAIgASgIIisKFUNyZWF0ZVdhdGNoZXJSZXNwb25zZRISCgp3YXRjaGVyX2lkGAEgASgJIkEKF0dldFdhdGNoZXJFdmVudHNSZXF1ZXN0EhIKCndhdGNoZXJfaWQYASABKAkSEgoKbWF4X2V2ZW50cxgCIAEoDSJTChhHZXRXYXRjaGVyRXZlbnRzUmVzcG9uc2USIwoGZXZlbnRzGAEgAygLMhMuY3VhLmVudi52MS5Gc0V2ZW50EhIKCm92ZXJmbG93ZWQYAiABKAgiKgoUUmVtb3ZlV2F0Y2hlclJlcXVlc3QSEgoKd2F0Y2hlcl9pZBgBIAEoCSIXChVSZW1vdmVXYXRjaGVyUmVzcG9uc2UiawoPUmVhZEZpbGVSZXF1ZXN0EgwKBHBhdGgYASABKAkSDgoGb2Zmc2V0GAIgASgEEg4KBmxlbmd0aBgDIAEoBBISCgpjaHVua19zaXplGAQgASgNEhYKDmNvbXB1dGVfc2hhMjU2GAUgASgIIpUBChBSZWFkRmlsZVJlc3BvbnNlEiYKBWVudHJ5GAEgASgLMhUuY3VhLmVudi52MS5FbnRyeUluZm9IABImCgVjaHVuaxgCIAEoCzIVLmN1YS5lbnYudjEuRmlsZUNodW5rSAASJgoDZW5kGAMgASgLMhcuY3VhLmVudi52MS5SZWFkRmlsZUVuZEgAQgkKB21lc3NhZ2UiKQoJRmlsZUNodW5rEg4KBm9mZnNldBgBIAEoBBIMCgRkYXRhGAIgASgMIjEKC1JlYWRGaWxlRW5kEhIKCmJ5dGVzX3JlYWQYASABKAQSDgoGc2hhMjU2GAIgASgJIqEBCg9Xcml0ZUZpbGVIZWFkZXISDAoEcGF0aBgBIAEoCRIjCgRtb2RlGAIgASgOMhUuY3VhLmVudi52MS5Xcml0ZU1vZGUSEwoLcGVybWlzc2lvbnMYAyABKA0SFgoOY3JlYXRlX3BhcmVudHMYBCABKAgSFQoNZXhwZWN0ZWRfc2l6ZRgFIAEoBBIXCg9leHBlY3RlZF9zaGEyNTYYBiABKAkiXAoQV3JpdGVGaWxlUmVxdWVzdBItCgZoZWFkZXIYASABKAsyGy5jdWEuZW52LnYxLldyaXRlRmlsZUhlYWRlckgAEg4KBGRhdGEYAiABKAxIAEIJCgdtZXNzYWdlIkkKEVdyaXRlRmlsZVJlc3BvbnNlEiQKBWVudHJ5GAEgASgLMhUuY3VhLmVudi52MS5FbnRyeUluZm8SDgoGc2hhMjU2GAIgASgJInwKEkJlZ2luVXBsb2FkUmVxdWVzdBIrCgZoZWFkZXIYASABKAsyGy5jdWEuZW52LnYxLldyaXRlRmlsZUhlYWRlchIRCgl1cGxvYWRfaWQYAiABKAkSJgoDdHRsGAMgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uIokBChNCZWdpblVwbG9hZFJlc3BvbnNlEhEKCXVwbG9hZF9pZBgBIAEoCRIWCg5yZWNlaXZlZF9ieXRlcxgCIAEoBBIXCg9tYXhfY2h1bmtfYnl0ZXMYAyABKA0SLgoKZXhwaXJlc19hdBgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiRQoSVXBsb2FkQ2h1bmtSZXF1ZXN0EhEKCXVwbG9hZF9pZBgBIAEoCRIOCgZvZmZzZXQYAiABKAQSDAoEZGF0YRgDIAEoDCJwChNVcGxvYWRDaHVua1Jlc3BvbnNlEhYKDnJlY2VpdmVkX2J5dGVzGAEgASgEEhEKCWR1cGxpY2F0ZRgCIAEoCBIuCgpleHBpcmVzX2F0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCI4ChNDb21taXRVcGxvYWRSZXF1ZXN0EhEKCXVwbG9hZF9pZBgBIAEoCRIOCgZzaGEyNTYYAiABKAkiTAoUQ29tbWl0VXBsb2FkUmVzcG9uc2USJAoFZW50cnkYASABKAsyFS5jdWEuZW52LnYxLkVudHJ5SW5mbxIOCgZzaGEyNTYYAiABKAkiJwoSQWJvcnRVcGxvYWRSZXF1ZXN0EhEKCXVwbG9hZF9pZBgBIAEoCSIVChNBYm9ydFVwbG9hZFJlc3BvbnNlIqgBChZDcmVhdGVTaWduZWRVcmxSZXF1ZXN0EgwKBHBhdGgYASABKAkSKwoGbWV0aG9kGAIgASgOMhsuY3VhLmVudi52MS5TaWduZWRVcmxNZXRob2QSJgoDdHRsGAMgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEhQKDGNvbnRlbnRfdHlwZRgEIAEoCRIVCg1kb3dubG9hZF9uYW1lGAUgASgJIlsKF0NyZWF0ZVNpZ25lZFVybFJlc3BvbnNlEhAKCHVybF9wYXRoGAEgASgJEi4KCmV4cGlyZXNfYXQYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wKn4KCEZpbGVUeXBlEhkKFUZJTEVfVFlQRV9VTlNQRUNJRklFRBAAEhIKDkZJTEVfVFlQRV9GSUxFEAESFwoTRklMRV9UWVBFX0RJUkVDVE9SWRACEhUKEUZJTEVfVFlQRV9TWU1MSU5LEAMSEwoPRklMRV9UWVBFX09USEVSEAQqrAEKC0ZzRXZlbnRUeXBlEh0KGUZTX0VWRU5UX1RZUEVfVU5TUEVDSUZJRUQQABIYChRGU19FVkVOVF9UWVBFX0NSRUFURRABEhcKE0ZTX0VWRU5UX1RZUEVfV1JJVEUQAhIYChRGU19FVkVOVF9UWVBFX1JFTU9WRRADEhgKFEZTX0VWRU5UX1RZUEVfUkVOQU1FEAQSFwoTRlNfRVZFTlRfVFlQRV9DSE1PRBAFKnMKCVdyaXRlTW9kZRIaChZXUklURV9NT0RFX1VOU1BFQ0lGSUVEEAASGAoUV1JJVEVfTU9ERV9PVkVSV1JJVEUQARIZChVXUklURV9NT0RFX0NSRUFURV9ORVcQAhIVChFXUklURV9NT0RFX0FQUEVORBADKmoKD1NpZ25lZFVybE1ldGhvZBIhCh1TSUdORURfVVJMX01FVEhPRF9VTlNQRUNJRklFRBAAEhkKFVNJR05FRF9VUkxfTUVUSE9EX0dFVBABEhkKFVNJR05FRF9VUkxfTUVUSE9EX1BVVBACMtoJChFGaWxlc3lzdGVtU2VydmljZRI5CgRTdGF0EhcuY3VhLmVudi52MS5TdGF0UmVxdWVzdBoYLmN1YS5lbnYudjEuU3RhdFJlc3BvbnNlEkIKB0xpc3REaXISGi5jdWEuZW52LnYxLkxpc3REaXJSZXF1ZXN0GhsuY3VhLmVudi52MS5MaXN0RGlyUmVzcG9uc2USQgoHTWFrZURpchIaLmN1YS5lbnYudjEuTWFrZURpclJlcXVlc3QaGy5jdWEuZW52LnYxLk1ha2VEaXJSZXNwb25zZRI5CgRNb3ZlEhcuY3VhLmVudi52MS5Nb3ZlUmVxdWVzdBoYLmN1YS5lbnYudjEuTW92ZVJlc3BvbnNlEj8KBlJlbW92ZRIZLmN1YS5lbnYudjEuUmVtb3ZlUmVxdWVzdBoaLmN1YS5lbnYudjEuUmVtb3ZlUmVzcG9uc2USRwoIV2F0Y2hEaXISGy5jdWEuZW52LnYxLldhdGNoRGlyUmVxdWVzdBocLmN1YS5lbnYudjEuV2F0Y2hEaXJSZXNwb25zZTABElQKDUNyZWF0ZVdhdGNoZXISIC5jdWEuZW52LnYxLkNyZWF0ZVdhdGNoZXJSZXF1ZXN0GiEuY3VhLmVudi52MS5DcmVhdGVXYXRjaGVyUmVzcG9uc2USXQoQR2V0V2F0Y2hlckV2ZW50cxIjLmN1YS5lbnYudjEuR2V0V2F0Y2hlckV2ZW50c1JlcXVlc3QaJC5jdWEuZW52LnYxLkdldFdhdGNoZXJFdmVudHNSZXNwb25zZRJUCg1SZW1vdmVXYXRjaGVyEiAuY3VhLmVudi52MS5SZW1vdmVXYXRjaGVyUmVxdWVzdBohLmN1YS5lbnYudjEuUmVtb3ZlV2F0Y2hlclJlc3BvbnNlEkcKCFJlYWRGaWxlEhsuY3VhLmVudi52MS5SZWFkRmlsZVJlcXVlc3QaHC5jdWEuZW52LnYxLlJlYWRGaWxlUmVzcG9uc2UwARJKCglXcml0ZUZpbGUSHC5jdWEuZW52LnYxLldyaXRlRmlsZVJlcXVlc3QaHS5jdWEuZW52LnYxLldyaXRlRmlsZVJlc3BvbnNlKAESTgoLQmVnaW5VcGxvYWQSHi5jdWEuZW52LnYxLkJlZ2luVXBsb2FkUmVxdWVzdBofLmN1YS5lbnYudjEuQmVnaW5VcGxvYWRSZXNwb25zZRJOCgtVcGxvYWRDaHVuaxIeLmN1YS5lbnYudjEuVXBsb2FkQ2h1bmtSZXF1ZXN0Gh8uY3VhLmVudi52MS5VcGxvYWRDaHVua1Jlc3BvbnNlElEKDENvbW1pdFVwbG9hZBIfLmN1YS5lbnYudjEuQ29tbWl0VXBsb2FkUmVxdWVzdBogLmN1YS5lbnYudjEuQ29tbWl0VXBsb2FkUmVzcG9uc2USTgoLQWJvcnRVcGxvYWQSHi5jdWEuZW52LnYxLkFib3J0VXBsb2FkUmVxdWVzdBofLmN1YS5lbnYudjEuQWJvcnRVcGxvYWRSZXNwb25zZRJaCg9DcmVhdGVTaWduZWRVcmwSIi5jdWEuZW52LnYxLkNyZWF0ZVNpZ25lZFVybFJlcXVlc3QaIy5jdWEuZW52LnYxLkNyZWF0ZVNpZ25lZFVybFJlc3BvbnNlYgZwcm90bzM", [file_cua_env_v1_common, file_google_protobuf_duration, file_google_protobuf_timestamp]);
+  fileDesc("ChtjdWEvZW52L3YxL2ZpbGVzeXN0ZW0ucHJvdG8SCmN1YS5lbnYudjEitgIKCUVudHJ5SW5mbxIMCgRuYW1lGAEgASgJEgwKBHBhdGgYAiABKAkSIgoEdHlwZRgDIAEoDjIULmN1YS5lbnYudjEuRmlsZVR5cGUSDAoEc2l6ZRgEIAEoBBIMCgRtb2RlGAUgASgNEg0KBW93bmVyGAYgASgJEg0KBWdyb3VwGAcgASgJEi8KC21vZGlmaWVkX2F0GAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIWCg5zeW1saW5rX3RhcmdldBgJIAEoCRI1CghtZXRhZGF0YRgKIAMoCzIjLmN1YS5lbnYudjEuRW50cnlJbmZvLk1ldGFkYXRhRW50cnkaLwoNTWV0YWRhdGFFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBImAKC1N0YXRSZXF1ZXN0EgwKBHBhdGgYASABKAkSGgoSbm9fZm9sbG93X3N5bWxpbmtzGAIgASgIEhcKD3hhdHRyX25hbWVzcGFjZRgDIAEoCRIOCgZydW5fYXMYBCABKAkiNAoMU3RhdFJlc3BvbnNlEiQKBWVudHJ5GAEgASgLMhUuY3VhLmVudi52MS5FbnRyeUluZm8ilQEKDkxpc3REaXJSZXF1ZXN0EgwKBHBhdGgYASABKAkSDQoFZGVwdGgYAiABKA0SFgoOaW5jbHVkZV9oaWRkZW4YAyABKAgSEQoJcGFnZV9zaXplGAQgASgNEhIKCnBhZ2VfdG9rZW4YBSABKAkSFwoPeGF0dHJfbmFtZXNwYWNlGAYgASgJEg4KBnJ1bl9hcxgHIAEoCSJSCg9MaXN0RGlyUmVzcG9uc2USJgoHZW50cmllcxgBIAMoCzIVLmN1YS5lbnYudjEuRW50cnlJbmZvEhcKD25leHRfcGFnZV90b2tlbhgCIAEoCSJNCg5NYWtlRGlyUmVxdWVzdBIMCgRwYXRoGAEgASgJEg8KB3BhcmVudHMYAiABKAgSDAoEbW9kZRgDIAEoDRIOCgZydW5fYXMYBCABKAkiSAoPTWFrZURpclJlc3BvbnNlEiQKBWVudHJ5GAEgASgLMhUuY3VhLmVudi52MS5FbnRyeUluZm8SDwoHY3JlYXRlZBgCIAEoCCJtCgtNb3ZlUmVxdWVzdBIOCgZzb3VyY2UYASABKAkSEwoLZGVzdGluYXRpb24YAiABKAkSEQoJb3ZlcndyaXRlGAMgASgIEhYKDmNyZWF0ZV9wYXJlbnRzGAQgASgIEg4KBnJ1bl9hcxgFIAEoCSI0CgxNb3ZlUmVzcG9uc2USJAoFZW50cnkYASABKAsyFS5jdWEuZW52LnYxLkVudHJ5SW5mbyJUCg1SZW1vdmVSZXF1ZXN0EgwKBHBhdGgYASABKAkSEQoJcmVjdXJzaXZlGAIgASgIEhIKCm1pc3Npbmdfb2sYAyABKAgSDgoGcnVuX2FzGAQgASgJIhAKDlJlbW92ZVJlc3BvbnNlIucBCgdGc0V2ZW50EgwKBHBhdGgYASABKAkSJQoEdHlwZRgCIAEoDjIXLmN1YS5lbnYudjEuRnNFdmVudFR5cGUSEAoIb2xkX3BhdGgYAyABKAkSLwoLb2JzZXJ2ZWRfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEjMKCG1ldGFkYXRhGAUgAygLMiEuY3VhLmVudi52MS5Gc0V2ZW50Lk1ldGFkYXRhRW50cnkaLwoNTWV0YWRhdGFFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIpIBCg9XYXRjaERpclJlcXVlc3QSDAoEcGF0aBgBIAEoCRIRCglyZWN1cnNpdmUYAiABKAgSNQoSa2VlcGFsaXZlX2ludGVydmFsGAMgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEhcKD3hhdHRyX25hbWVzcGFjZRgEIAEoCRIOCgZydW5fYXMYBSABKAkiDgoMV2F0Y2hTdGFydGVkIg8KDVdhdGNoT3ZlcmZsb3ciywEKEFdhdGNoRGlyUmVzcG9uc2USKwoHc3RhcnRlZBgBIAEoCzIYLmN1YS5lbnYudjEuV2F0Y2hTdGFydGVkSAASJAoFZXZlbnQYAiABKAsyEy5jdWEuZW52LnYxLkZzRXZlbnRIABItCghvdmVyZmxvdxgDIAEoCzIZLmN1YS5lbnYudjEuV2F0Y2hPdmVyZmxvd0gAEioKCWtlZXBhbGl2ZRgEIAEoCzIVLmN1YS5lbnYudjEuS2VlcEFsaXZlSABCCQoHbWVzc2FnZSJgChRDcmVhdGVXYXRjaGVyUmVxdWVzdBIMCgRwYXRoGAEgASgJEhEKCXJlY3Vyc2l2ZRgCIAEoCBIXCg94YXR0cl9uYW1lc3BhY2UYAyABKAkSDgoGcnVuX2FzGAQgASgJIisKFUNyZWF0ZVdhdGNoZXJSZXNwb25zZRISCgp3YXRjaGVyX2lkGAEgASgJIkEKF0dldFdhdGNoZXJFdmVudHNSZXF1ZXN0EhIKCndhdGNoZXJfaWQYASABKAkSEgoKbWF4X2V2ZW50cxgCIAEoDSJTChhHZXRXYXRjaGVyRXZlbnRzUmVzcG9uc2USIwoGZXZlbnRzGAEgAygLMhMuY3VhLmVudi52MS5Gc0V2ZW50EhIKCm92ZXJmbG93ZWQYAiABKAgiKgoUUmVtb3ZlV2F0Y2hlclJlcXVlc3QSEgoKd2F0Y2hlcl9pZBgBIAEoCSIXChVSZW1vdmVXYXRjaGVyUmVzcG9uc2UipwEKD1JlYWRGaWxlUmVxdWVzdBIMCgRwYXRoGAEgASgJEg4KBm9mZnNldBgCIAEoBBIOCgZsZW5ndGgYAyABKAQSEgoKY2h1bmtfc2l6ZRgEIAEoDRIWCg5jb21wdXRlX3NoYTI1NhgFIAEoCBIRCglidWxrX3Nsb3QYCCABKA0SFwoPeGF0dHJfbmFtZXNwYWNlGAYgASgJEg4KBnJ1bl9hcxgHIAEoCSKVAQoQUmVhZEZpbGVSZXNwb25zZRImCgVlbnRyeRgBIAEoCzIVLmN1YS5lbnYudjEuRW50cnlJbmZvSAASJgoFY2h1bmsYAiABKAsyFS5jdWEuZW52LnYxLkZpbGVDaHVua0gAEiYKA2VuZBgDIAEoCzIXLmN1YS5lbnYudjEuUmVhZEZpbGVFbmRIAEIJCgdtZXNzYWdlIikKCUZpbGVDaHVuaxIOCgZvZmZzZXQYASABKAQSDAoEZGF0YRgCIAEoDCIxCgtSZWFkRmlsZUVuZBISCgpieXRlc19yZWFkGAEgASgEEg4KBnNoYTI1NhgCIAEoCSK4AgoPV3JpdGVGaWxlSGVhZGVyEgwKBHBhdGgYASABKAkSIwoEbW9kZRgCIAEoDjIVLmN1YS5lbnYudjEuV3JpdGVNb2RlEhMKC3Blcm1pc3Npb25zGAMgASgNEhYKDmNyZWF0ZV9wYXJlbnRzGAQgASgIEhUKDWV4cGVjdGVkX3NpemUYBSABKAQSFwoPZXhwZWN0ZWRfc2hhMjU2GAYgASgJEg4KBnJ1bl9hcxgHIAEoCRI7CghtZXRhZGF0YRgIIAMoCzIpLmN1YS5lbnYudjEuV3JpdGVGaWxlSGVhZGVyLk1ldGFkYXRhRW50cnkSFwoPeGF0dHJfbmFtZXNwYWNlGAkgASgJGi8KDU1ldGFkYXRhRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASJcChBXcml0ZUZpbGVSZXF1ZXN0Ei0KBmhlYWRlchgBIAEoCzIbLmN1YS5lbnYudjEuV3JpdGVGaWxlSGVhZGVySAASDgoEZGF0YRgCIAEoDEgAQgkKB21lc3NhZ2UiSQoRV3JpdGVGaWxlUmVzcG9uc2USJAoFZW50cnkYASABKAsyFS5jdWEuZW52LnYxLkVudHJ5SW5mbxIOCgZzaGEyNTYYAiABKAkifAoSQmVnaW5VcGxvYWRSZXF1ZXN0EisKBmhlYWRlchgBIAEoCzIbLmN1YS5lbnYudjEuV3JpdGVGaWxlSGVhZGVyEhEKCXVwbG9hZF9pZBgCIAEoCRImCgN0dGwYAyABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24iiQEKE0JlZ2luVXBsb2FkUmVzcG9uc2USEQoJdXBsb2FkX2lkGAEgASgJEhYKDnJlY2VpdmVkX2J5dGVzGAIgASgEEhcKD21heF9jaHVua19ieXRlcxgDIAEoDRIuCgpleHBpcmVzX2F0GAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCJqChJVcGxvYWRDaHVua1JlcXVlc3QSEQoJdXBsb2FkX2lkGAEgASgJEg4KBm9mZnNldBgCIAEoBBIMCgRkYXRhGAMgASgMEhEKCWJ1bGtfc2xvdBgEIAEoDRIQCghidWxrX2xlbhgFIAEoBCJwChNVcGxvYWRDaHVua1Jlc3BvbnNlEhYKDnJlY2VpdmVkX2J5dGVzGAEgASgEEhEKCWR1cGxpY2F0ZRgCIAEoCBIuCgpleHBpcmVzX2F0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCI4ChNDb21taXRVcGxvYWRSZXF1ZXN0EhEKCXVwbG9hZF9pZBgBIAEoCRIOCgZzaGEyNTYYAiABKAkiTAoUQ29tbWl0VXBsb2FkUmVzcG9uc2USJAoFZW50cnkYASABKAsyFS5jdWEuZW52LnYxLkVudHJ5SW5mbxIOCgZzaGEyNTYYAiABKAkiJwoSQWJvcnRVcGxvYWRSZXF1ZXN0EhEKCXVwbG9hZF9pZBgBIAEoCSIVChNBYm9ydFVwbG9hZFJlc3BvbnNlItABChZDcmVhdGVTaWduZWRVcmxSZXF1ZXN0EgwKBHBhdGgYASABKAkSKwoGbWV0aG9kGAIgASgOMhsuY3VhLmVudi52MS5TaWduZWRVcmxNZXRob2QSJgoDdHRsGAMgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEhQKDGNvbnRlbnRfdHlwZRgEIAEoCRIVCg1kb3dubG9hZF9uYW1lGAUgASgJEg4KBnJ1bl9hcxgGIAEoCRIWCg5jcmVhdGVfcGFyZW50cxgHIAEoCCJbChdDcmVhdGVTaWduZWRVcmxSZXNwb25zZRIQCgh1cmxfcGF0aBgBIAEoCRIuCgpleHBpcmVzX2F0GAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCp+CghGaWxlVHlwZRIZChVGSUxFX1RZUEVfVU5TUEVDSUZJRUQQABISCg5GSUxFX1RZUEVfRklMRRABEhcKE0ZJTEVfVFlQRV9ESVJFQ1RPUlkQAhIVChFGSUxFX1RZUEVfU1lNTElOSxADEhMKD0ZJTEVfVFlQRV9PVEhFUhAEKqwBCgtGc0V2ZW50VHlwZRIdChlGU19FVkVOVF9UWVBFX1VOU1BFQ0lGSUVEEAASGAoURlNfRVZFTlRfVFlQRV9DUkVBVEUQARIXChNGU19FVkVOVF9UWVBFX1dSSVRFEAISGAoURlNfRVZFTlRfVFlQRV9SRU1PVkUQAxIYChRGU19FVkVOVF9UWVBFX1JFTkFNRRAEEhcKE0ZTX0VWRU5UX1RZUEVfQ0hNT0QQBSpzCglXcml0ZU1vZGUSGgoWV1JJVEVfTU9ERV9VTlNQRUNJRklFRBAAEhgKFFdSSVRFX01PREVfT1ZFUldSSVRFEAESGQoVV1JJVEVfTU9ERV9DUkVBVEVfTkVXEAISFQoRV1JJVEVfTU9ERV9BUFBFTkQQAypqCg9TaWduZWRVcmxNZXRob2QSIQodU0lHTkVEX1VSTF9NRVRIT0RfVU5TUEVDSUZJRUQQABIZChVTSUdORURfVVJMX01FVEhPRF9HRVQQARIZChVTSUdORURfVVJMX01FVEhPRF9QVVQQAjLaCQoRRmlsZXN5c3RlbVNlcnZpY2USOQoEU3RhdBIXLmN1YS5lbnYudjEuU3RhdFJlcXVlc3QaGC5jdWEuZW52LnYxLlN0YXRSZXNwb25zZRJCCgdMaXN0RGlyEhouY3VhLmVudi52MS5MaXN0RGlyUmVxdWVzdBobLmN1YS5lbnYudjEuTGlzdERpclJlc3BvbnNlEkIKB01ha2VEaXISGi5jdWEuZW52LnYxLk1ha2VEaXJSZXF1ZXN0GhsuY3VhLmVudi52MS5NYWtlRGlyUmVzcG9uc2USOQoETW92ZRIXLmN1YS5lbnYudjEuTW92ZVJlcXVlc3QaGC5jdWEuZW52LnYxLk1vdmVSZXNwb25zZRI/CgZSZW1vdmUSGS5jdWEuZW52LnYxLlJlbW92ZVJlcXVlc3QaGi5jdWEuZW52LnYxLlJlbW92ZVJlc3BvbnNlEkcKCFdhdGNoRGlyEhsuY3VhLmVudi52MS5XYXRjaERpclJlcXVlc3QaHC5jdWEuZW52LnYxLldhdGNoRGlyUmVzcG9uc2UwARJUCg1DcmVhdGVXYXRjaGVyEiAuY3VhLmVudi52MS5DcmVhdGVXYXRjaGVyUmVxdWVzdBohLmN1YS5lbnYudjEuQ3JlYXRlV2F0Y2hlclJlc3BvbnNlEl0KEEdldFdhdGNoZXJFdmVudHMSIy5jdWEuZW52LnYxLkdldFdhdGNoZXJFdmVudHNSZXF1ZXN0GiQuY3VhLmVudi52MS5HZXRXYXRjaGVyRXZlbnRzUmVzcG9uc2USVAoNUmVtb3ZlV2F0Y2hlchIgLmN1YS5lbnYudjEuUmVtb3ZlV2F0Y2hlclJlcXVlc3QaIS5jdWEuZW52LnYxLlJlbW92ZVdhdGNoZXJSZXNwb25zZRJHCghSZWFkRmlsZRIbLmN1YS5lbnYudjEuUmVhZEZpbGVSZXF1ZXN0GhwuY3VhLmVudi52MS5SZWFkRmlsZVJlc3BvbnNlMAESSgoJV3JpdGVGaWxlEhwuY3VhLmVudi52MS5Xcml0ZUZpbGVSZXF1ZXN0Gh0uY3VhLmVudi52MS5Xcml0ZUZpbGVSZXNwb25zZSgBEk4KC0JlZ2luVXBsb2FkEh4uY3VhLmVudi52MS5CZWdpblVwbG9hZFJlcXVlc3QaHy5jdWEuZW52LnYxLkJlZ2luVXBsb2FkUmVzcG9uc2USTgoLVXBsb2FkQ2h1bmsSHi5jdWEuZW52LnYxLlVwbG9hZENodW5rUmVxdWVzdBofLmN1YS5lbnYudjEuVXBsb2FkQ2h1bmtSZXNwb25zZRJRCgxDb21taXRVcGxvYWQSHy5jdWEuZW52LnYxLkNvbW1pdFVwbG9hZFJlcXVlc3QaIC5jdWEuZW52LnYxLkNvbW1pdFVwbG9hZFJlc3BvbnNlEk4KC0Fib3J0VXBsb2FkEh4uY3VhLmVudi52MS5BYm9ydFVwbG9hZFJlcXVlc3QaHy5jdWEuZW52LnYxLkFib3J0VXBsb2FkUmVzcG9uc2USWgoPQ3JlYXRlU2lnbmVkVXJsEiIuY3VhLmVudi52MS5DcmVhdGVTaWduZWRVcmxSZXF1ZXN0GiMuY3VhLmVudi52MS5DcmVhdGVTaWduZWRVcmxSZXNwb25zZWIGcHJvdG8z", [file_cua_env_v1_common, file_google_protobuf_duration, file_google_protobuf_timestamp]);
 
 /**
  * Metadata for one filesystem entry.
@@ -84,6 +84,15 @@ export type EntryInfo = Message<"cua.env.v1.EntryInfo"> & {
    * @generated from field: string symlink_target = 9;
    */
   symlinkTarget: string;
+
+  /**
+   * Extended attributes under the request's `xattr_namespace` (default
+   * `user.cua.meta.`), with the prefix removed. Empty when the entry has
+   * none or the file system has no extended attributes.
+   *
+   * @generated from field: map<string, string> metadata = 10;
+   */
+  metadata: { [key: string]: string };
 };
 
 /**
@@ -112,6 +121,21 @@ export type StatRequest = Message<"cua.env.v1.StatRequest"> & {
    * @generated from field: bool no_follow_symlinks = 2;
    */
   noFollowSymlinks: boolean;
+
+  /**
+   * Extended-attribute key prefix to report in `EntryInfo.metadata`. Empty
+   * means `user.cua.meta.`.
+   *
+   * @generated from field: string xattr_namespace = 3;
+   */
+  xattrNamespace: string;
+
+  /**
+   * Guest user to act as. Empty means the service's own user.
+   *
+   * @generated from field: string run_as = 4;
+   */
+  runAs: string;
 };
 
 /**
@@ -185,6 +209,21 @@ export type ListDirRequest = Message<"cua.env.v1.ListDirRequest"> & {
    * @generated from field: string page_token = 5;
    */
   pageToken: string;
+
+  /**
+   * Extended-attribute key prefix for `EntryInfo.metadata`. Empty means
+   * `user.cua.meta.`.
+   *
+   * @generated from field: string xattr_namespace = 6;
+   */
+  xattrNamespace: string;
+
+  /**
+   * Guest user to act as. Empty means the service's own user.
+   *
+   * @generated from field: string run_as = 7;
+   */
+  runAs: string;
 };
 
 /**
@@ -248,6 +287,13 @@ export type MakeDirRequest = Message<"cua.env.v1.MakeDirRequest"> & {
    * @generated from field: uint32 mode = 3;
    */
   mode: number;
+
+  /**
+   * Guest user to act as; created directories are owned by that user.
+   *
+   * @generated from field: string run_as = 4;
+   */
+  runAs: string;
 };
 
 /**
@@ -319,6 +365,13 @@ export type MoveRequest = Message<"cua.env.v1.MoveRequest"> & {
    * @generated from field: bool create_parents = 4;
    */
   createParents: boolean;
+
+  /**
+   * Guest user to act as.
+   *
+   * @generated from field: string run_as = 5;
+   */
+  runAs: string;
 };
 
 /**
@@ -375,6 +428,13 @@ export type RemoveRequest = Message<"cua.env.v1.RemoveRequest"> & {
    * @generated from field: bool missing_ok = 3;
    */
   missingOk: boolean;
+
+  /**
+   * Guest user to act as.
+   *
+   * @generated from field: string run_as = 4;
+   */
+  runAs: string;
 };
 
 /**
@@ -432,6 +492,14 @@ export type FsEvent = Message<"cua.env.v1.FsEvent"> & {
    * @generated from field: google.protobuf.Timestamp observed_at = 4;
    */
   observedAt?: Timestamp | undefined;
+
+  /**
+   * Extended attributes of the entry (see `EntryInfo.metadata`), read when
+   * the event is delivered; empty for removals and when the entry is gone.
+   *
+   * @generated from field: map<string, string> metadata = 5;
+   */
+  metadata: { [key: string]: string };
 };
 
 /**
@@ -467,6 +535,21 @@ export type WatchDirRequest = Message<"cua.env.v1.WatchDirRequest"> & {
    * @generated from field: google.protobuf.Duration keepalive_interval = 3;
    */
   keepaliveInterval?: Duration | undefined;
+
+  /**
+   * Extended-attribute key prefix for `FsEvent.metadata`. Empty means
+   * `user.cua.meta.`.
+   *
+   * @generated from field: string xattr_namespace = 4;
+   */
+  xattrNamespace: string;
+
+  /**
+   * Guest user to watch as.
+   *
+   * @generated from field: string run_as = 5;
+   */
+  runAs: string;
 };
 
 /**
@@ -579,6 +662,21 @@ export type CreateWatcherRequest = Message<"cua.env.v1.CreateWatcherRequest"> & 
    * @generated from field: bool recursive = 2;
    */
   recursive: boolean;
+
+  /**
+   * Extended-attribute key prefix for `FsEvent.metadata`. Empty means
+   * `user.cua.meta.`.
+   *
+   * @generated from field: string xattr_namespace = 3;
+   */
+  xattrNamespace: string;
+
+  /**
+   * Guest user to watch as.
+   *
+   * @generated from field: string run_as = 4;
+   */
+  runAs: string;
 };
 
 /**
@@ -745,6 +843,32 @@ export type ReadFileRequest = Message<"cua.env.v1.ReadFileRequest"> & {
    * @generated from field: bool compute_sha256 = 5;
    */
   computeSha256: boolean;
+
+  /**
+   * Deliver through the bulk lane instead of the stream: `n` stages the
+   * bytes (at most `BulkLane.slot_bytes`, so `length` must be set) in slot
+   * `n - 1` of the bulk disk, and the stream carries `entry` and `end`
+   * (`bytes_read`, `sha256`) but no chunks. 0 streams. Fails with
+   * `ERROR_REASON_FEATURE_UNSUPPORTED` when the guest has no bulk lane.
+   *
+   * @generated from field: uint32 bulk_slot = 8;
+   */
+  bulkSlot: number;
+
+  /**
+   * Extended-attribute key prefix for the first message's
+   * `EntryInfo.metadata`. Empty means `user.cua.meta.`.
+   *
+   * @generated from field: string xattr_namespace = 6;
+   */
+  xattrNamespace: string;
+
+  /**
+   * Guest user to read as.
+   *
+   * @generated from field: string run_as = 7;
+   */
+  runAs: string;
 };
 
 /**
@@ -906,6 +1030,31 @@ export type WriteFileHeader = Message<"cua.env.v1.WriteFileHeader"> & {
    * @generated from field: string expected_sha256 = 6;
    */
   expectedSha256: string;
+
+  /**
+   * Guest user to write as. The file (and any parents created with
+   * `create_parents`) is owned by that user. Uploads keep the user they
+   * began with.
+   *
+   * @generated from field: string run_as = 7;
+   */
+  runAs: string;
+
+  /**
+   * Extended attributes to store on the new file, published atomically
+   * with the content. Keys are stored under `xattr_namespace`.
+   *
+   * @generated from field: map<string, string> metadata = 8;
+   */
+  metadata: { [key: string]: string };
+
+  /**
+   * Key prefix for `metadata` and for the reported `EntryInfo.metadata`.
+   * Empty means `user.cua.meta.`.
+   *
+   * @generated from field: string xattr_namespace = 9;
+   */
+  xattrNamespace: string;
 };
 
 /**
@@ -1085,11 +1234,26 @@ export type UploadChunkRequest = Message<"cua.env.v1.UploadChunkRequest"> & {
   offset: bigint;
 
   /**
-   * The bytes. At most `max_chunk_bytes`.
+   * The bytes. At most `max_chunk_bytes`. Empty with `bulk_slot`.
    *
    * @generated from field: bytes data = 3;
    */
   data: Uint8Array;
+
+  /**
+   * The bytes are in slot `n - 1` of the bulk disk (`bulk_len` of them,
+   * at most `BulkLane.slot_bytes`) instead of `data`. 0 uses `data`.
+   *
+   * @generated from field: uint32 bulk_slot = 4;
+   */
+  bulkSlot: number;
+
+  /**
+   * Length of the bulk slot's bytes.
+   *
+   * @generated from field: uint64 bulk_len = 5;
+   */
+  bulkLen: bigint;
 };
 
 /**
@@ -1267,6 +1431,23 @@ export type CreateSignedUrlRequest = Message<"cua.env.v1.CreateSignedUrlRequest"
    * @generated from field: string download_name = 5;
    */
   downloadName: string;
+
+  /**
+   * Guest user the URL acts as. Part of the signature, so it cannot be
+   * changed or added by the holder of the URL. A `PUT` URL may also be used
+   * with `POST multipart/form-data` (first file part).
+   *
+   * @generated from field: string run_as = 6;
+   */
+  runAs: string;
+
+  /**
+   * For PUT: create missing parent directories of the file (owned by
+   * `run_as` when set). Part of the signature.
+   *
+   * @generated from field: bool create_parents = 7;
+   */
+  createParents: boolean;
 };
 
 /**
@@ -1285,7 +1466,7 @@ export type CreateSignedUrlResponse = Message<"cua.env.v1.CreateSignedUrlRespons
   /**
    * Path and query to append to the spacesd's base URL, for example
    * "/files?path=%2Fhome%2Fu%2Fa.png&method=GET&exp=1767225600&sig=…". The
-   * server does not know how it is addressed (direct, Fleet gateway, relay),
+   * server does not know how it is addressed (direct, gateway, relay),
    * so it never returns an absolute URL. The signature is HMAC-SHA256 over
    * method, path and expiry with a key derived from the access token;
    * rotating the token revokes every outstanding URL.
@@ -1474,7 +1655,10 @@ export enum SignedUrlMethod {
   GET = 1,
 
   /**
-   * Upload with `PUT` (the body replaces the file atomically).
+   * Upload with `PUT` (the body replaces the file atomically). The same URL
+   * also accepts `POST multipart/form-data`: the first file part replaces
+   * the file atomically and the response is the JSON list
+   * `[{"name","path","type"}]`.
    *
    * @generated from enum value: SIGNED_URL_METHOD_PUT = 2;
    */
@@ -1492,7 +1676,27 @@ export const SignedUrlMethodSchema: GenEnum<SignedUrlMethod> = /*@__PURE__*/
  *
  * Paths are absolute, or relative to the default working directory set by
  * `SystemService.Init`. A leading "~" expands to the acting user's home.
- * Operations run as the `Init` default user.
+ * Operations run as the user the service runs as, unless a request names
+ * another user in `run_as` (see "Acting as another user" below).
+ *
+ * Acting as another user: `run_as` on a request makes the operation run
+ * with that guest user's identity (uid, gid and supplementary groups), so
+ * permission checks apply to that user and created files are owned by
+ * that user. It needs privilege: the service must run as root, or as a
+ * user that may run `sudo -n` without a password (the Linux images' `cua`
+ * user). Otherwise the call fails with PERMISSION_DENIED and a message
+ * naming the missing privilege. `~` expands to that user's home. A viewer
+ * ticket may not use `run_as`. Unix guests only.
+ *
+ * Extended attributes: a write can attach string `metadata` that is stored
+ * as extended attributes under a key prefix (`xattr_namespace`, default
+ * `user.cua.meta.`), and `Stat`, `ListDir`, `ReadFile` and watch events
+ * report them in `metadata`. Limits: at most 32 keys, a key is 1 to 128
+ * bytes of ASCII letters, digits and `._:/@+-`, a value is at most 1024
+ * bytes, and keys plus values total at most 3072 bytes. The namespace must
+ * start with `user.`, end with `.`, be at most 64 bytes of letters, digits
+ * and `._-`. A file system without extended attribute support fails a
+ * write that carries metadata with FAILED_PRECONDITION and reports none.
  *
  * Large payloads: there is no total size cap. Reads stream in chunks
  * (`ReadFile`). Writes use either the native-gRPC client stream

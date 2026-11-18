@@ -18,7 +18,8 @@
     "noEmit": true,
     "types": ["vite/client", "node"],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@trycua/cua/spaces/presence": ["../../libs/cua/typescript/src/spaces/presence.ts"]
     }
   },
   "include": ["src", "e2e", "vite.config.ts", "scripts"]

@@ -6,7 +6,7 @@ Two trees carry headers:
 
   libs/cua-driver (MIT, .rs and .swift), the default root;
   every FSL-1.1-MIT package (`--fsl`): each source file whose nearest LICENSE
-  file is the Functional Source License (see LICENSING.md).
+  file is the Functional Source License (see legal/LICENSING.md).
 
 Modes:
   --apply (default): insert the header on files that lack it
@@ -72,6 +72,10 @@ GENERATED_ELSEWHERE = re.compile(r"_pb2(_grpc)?\.py$|_pb\.ts$")
 # them, so a header added by hand would be overwritten): the HTML5 viewer's
 # embedded bundle.
 GENERATED_DIRS = ("libs/cua/crates/cua-spacesd-html5/assets/",)
+# FSL directories whose files are pinned by content digest: a header would
+# change the digests the benchmark checks, so the folder-level LICENSE covers
+# them instead (see libs/cua-driver-bench/LICENSE).
+HEADER_EXEMPT_DIRS = ("libs/cua-driver-bench/taskpack/tasks/",)
 
 
 def spdx_header(license_id: str, suffix: str) -> list[str]:
@@ -95,10 +99,16 @@ def declared_id(head: str) -> str | None:
     return match.group(1) if match else None
 
 
+# The word "copyright" anywhere, except where it is plainly an identifier
+# (`COPYRIGHT: &str = ...`, `copyright + 1`). Anything else counts as a notice,
+# so a doubtful file is left alone and listed, never stamped.
+NOTICE = re.compile(r"\bcopyright\b(?!\s*(?:[=+;]|:\s*&))", re.I)
+
+
 def foreign_notice(head: str) -> bool:
     """Another party's copyright or license notice (adapted or vendored code)."""
     for line in head.splitlines()[:40]:
-        if re.search(r"\bcopyright\b", line, re.I) and COPYRIGHT_HOLDER not in line:
+        if NOTICE.search(line) and COPYRIGHT_HOLDER not in line:
             return True
         if re.search(r"licensed under", line, re.I):
             return True
@@ -186,6 +196,7 @@ def main() -> int:
             for root in fsl_roots()
             for path in iter_source_files(root, extensions)
             if nearest_license_is_fsl(path, cache)
+            and not path.relative_to(REPO).as_posix().startswith(HEADER_EXEMPT_DIRS)
         ]
         label = "FSL packages"
     else:
@@ -215,8 +226,8 @@ def main() -> int:
             continue
         if (
             GENERATED_ELSEWHERE.search(path.name)
-            or str(rel).startswith(GENERATED_DIRS)
-            or (args.fsl and foreign_notice(head))
+            or rel.as_posix().startswith(GENERATED_DIRS)
+            or foreign_notice(head)
         ):
             foreign.append(rel)
             continue

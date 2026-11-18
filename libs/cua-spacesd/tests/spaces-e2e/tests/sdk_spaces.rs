@@ -376,9 +376,14 @@ async fn suite_body(t: Topology, w: &World, cua: &Arc<Cua>) {
     // --- the contract, verbatim
     let tools: serde_json::Value =
         serde_json::from_str(&spaces.list_tools_json().await.unwrap()).unwrap();
+    // Every tool but the person-only ones (`cloud_approve`), which no MCP
+    // listing offers.
     assert_eq!(
         tools["tools"].as_array().unwrap().len(),
-        cua_spaces::contract::tools().len()
+        cua_spaces::contract::tools()
+            .iter()
+            .filter(|t| !cua_spaces::contract::person_only(t.name))
+            .count()
     );
     let r = spaces
         .call_tool_json("list_spaces".into(), None)

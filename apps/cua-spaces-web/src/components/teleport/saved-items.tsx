@@ -24,7 +24,7 @@ export function SavedItems({ view, query, teleport }: { view: VaultView; query: 
       <div className="flex items-center gap-3 px-4 py-3" data-saved-hidden>
         <EyeOffIcon className="size-4 shrink-0 text-muted-foreground" />
         <p className="min-w-0 flex-1 text-[13px] text-muted-foreground">{view.hiddenNote}</p>
-        <Button size="sm" variant="outline" onClick={() => void teleport.showNames()}>
+        <Button size="sm" variant="secondary" onClick={() => void teleport.showNames()}>
           {view.showNamesLabel}
         </Button>
       </div>
@@ -34,7 +34,7 @@ export function SavedItems({ view, query, teleport }: { view: VaultView; query: 
   const lines = vaultLines(view).filter((l) => l.type !== "app");
   return (
     <>
-      <div className="flex items-center gap-2 border-b px-4 py-1.5">
+      <div className="flex items-center gap-2 px-4 py-1.5">
         <SearchIcon className="size-3.5 shrink-0 text-muted-foreground" />
         <input
           aria-label="Search saved items"
@@ -54,13 +54,13 @@ export function SavedItems({ view, query, teleport }: { view: VaultView; query: 
         </button>
       </div>
       {view.emptyText ? <p className="px-4 py-3 text-[13px] text-muted-foreground">{view.emptyText}</p> : null}
-      <ul className="max-h-52 divide-y overflow-y-auto" data-saved-list>
+      <div className="max-h-52 overflow-y-auto" data-saved-list>
         {lines.map((line) => (
-          <li key={line.key}>
+          <div key={line.key}>
             <SavedLine line={line} send={send} />
-          </li>
+          </div>
         ))}
-      </ul>
+      </div>
     </>
   );
 }

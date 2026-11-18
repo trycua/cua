@@ -55,6 +55,35 @@ export interface DevicesInput {
   deviceName?: string | null;
 }
 
+/** A one-time code that adds another computer to the account ("Add a
+ * machine" by link or QR code; the cua SDK's `PairingCode`, camelCase).
+ * `code`, `url` and the install commands are only there when just made. */
+export interface PairingCode {
+  /** `pc_…` (to revoke it). */
+  id: string;
+  /** `XXXX-XXXX-XXXX`. */
+  code: string | null;
+  /** `https://cua.ai/add/<code>`: the link and the QR code. */
+  url: string | null;
+  /** The macOS and Linux one-liner. */
+  installSh: string | null;
+  /** The Windows (PowerShell) one-liner. */
+  installPowershell: string | null;
+  state: PairingCodeState;
+  /** Team the machine is added for; null for the personal account. */
+  team: string | null;
+  /** Unix seconds. */
+  createdAt: number;
+  /** Unix seconds. */
+  expiresAt: number;
+  /** Unix seconds, once a machine used it. */
+  usedAt: number | null;
+  /** The relay machine id it added. */
+  machine: string | null;
+}
+
+export type PairingCodeState = "active" | "used" | "revoked" | "expired";
+
 export type BannerTone = "info" | "warning" | "critical";
 export type DeviceAction = "enroll" | "approve" | "rename" | "revoke";
 export type EnrollmentKind = "enrolled" | "grace" | "needs-enrollment" | "waiting" | "due" | "revoked";
@@ -240,4 +269,85 @@ export interface ApproveSheetView {
   busy: boolean;
   error: string | null;
   request: ApproveRequest | null;
+}
+
+/** One of the account's Teams (an organization of `GET /v1/me`). */
+export interface TeamChoice {
+  /** The organization id (`team:<id>` shares with it). */
+  id: string;
+  /** Its slug. */
+  alias: string;
+  /** Its display name (empty: use the alias). */
+  name: string;
+  /** `owner`, `admin` or `member`. */
+  role: string;
+  /** `free`, `teams`, ...: team machines need `teams`. */
+  plan: string;
+}
+
+/** `teams.list`: the account's Teams and the one it works in. */
+export interface TeamsList {
+  teams: TeamChoice[];
+  /** The saved current team (Settings, Teams), or null. */
+  currentTeamId: string | null;
+}
+
+/* ---- The account's part of the Machines page (`machines_account.rs`) --------- */
+
+/** `machines_account::PendingKind`. */
+export type PendingKind = "machine" | "sign-in";
+
+/** A machine waiting to be added (`machines_account::PendingMachine`). */
+export interface PendingMachine {
+  id: string;
+  kind: PendingKind;
+  name: string;
+  /** `macOS`, `Windows`, `Linux`, or empty. */
+  os: string;
+  line: string;
+  /** When it last reached the relay (Unix seconds). */
+  since: number | null;
+  /** The question the "Add this machine?" page asks. */
+  text: string;
+  machine: string | null;
+  device: string | null;
+  expired: boolean;
+  requiresPresence: boolean;
+  notifyTitle: string;
+  notifyBody: string;
+  addLabel: string;
+  notMeLabel: string;
+}
+
+/** This machine's own trust, in plain words (`machines_account::ThisMachineTrust`). */
+export interface ThisMachineTrust {
+  kind: EnrollmentKind;
+  /** "Trusted until", "Not trusted yet", ... */
+  status: string;
+  /** Unix seconds; the page formats it. */
+  at: number | null;
+  text: string | null;
+  tone: "warning" | "critical" | null;
+  actionLabel: string | null;
+}
+
+/** Who reached a machine (`machines_account::AccessLine`). */
+export interface AccessLine {
+  ts: number;
+  text: string;
+  notable: boolean;
+  machine: string | null;
+  device: string | null;
+}
+
+/** `machines_account::MachinesAccountView`. */
+export interface MachinesAccountView {
+  pending: PendingMachine[];
+  pendingCount: number;
+  pendingTitle: string;
+  thisMachine: ThisMachineTrust | null;
+  access: AccessLine[];
+  recentTitle: string;
+  recentEmpty: string;
+  readError: string | null;
 }

@@ -1470,15 +1470,14 @@ async fn native_loopback_listeners(
 async fn raw_loopback_listeners_for_process_tree(
     root_pid: u32,
 ) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
-    let allowed_pids =
-        crate::dpi::spawn_blocking(move || crate::win32::list_descendants(root_pid))
-            .await
-            .map_err(|error| {
-                BrowserRefusal::new(
-                    BrowserRefusalCode::BrowserRouteUnavailable,
-                    format!("could not inspect browser process tree: {error}"),
-                )
-            })?;
+    let allowed_pids = crate::dpi::spawn_blocking(move || crate::win32::list_descendants(root_pid))
+        .await
+        .map_err(|error| {
+            BrowserRefusal::new(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not inspect browser process tree: {error}"),
+            )
+        })?;
     let observed = native_loopback_listeners(&allowed_pids).await?;
     crate::dpi::spawn_blocking(move || {
         observed

@@ -481,6 +481,15 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
                 // Settings → About's channel (saved in `AppSettings`).
                 guard model.updates.updater != nil else { throw Failure.unsupported("Updates are off in this build") }
                 model.updates.choose(channel: option)
+            } else if row == "global-shortcut" {
+                // General's "Open Cua Spaces from any app": `off`, or the keys
+                // the page recorded (saved as the settings file's `hotkey`).
+                guard let shortcut = GlobalShortcut.installed else { throw Failure.unsupported("This Mac has no shortcut to change") }
+                do {
+                    try shortcut.change(option)
+                } catch let refusal as GlobalShortcut.Refusal {
+                    throw Failure(code: "failed", message: refusal.description)
+                }
             } else if row.hasPrefix("experiment:") {
                 model.chooseExperiment(row: row, option: option)
             } else if row == "welcome" || row.hasPrefix("agent:") {

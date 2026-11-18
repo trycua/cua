@@ -30,7 +30,7 @@
         "pins": {
           "hyprland": "0.57.2-2"
         },
-        "version": "0.47.8-4"
+        "version": "0.47.8-5"
       },
       "packages": {
         "aquamarine": "0.16.0-1",
@@ -8021,9 +8021,9 @@
       }
     }
   ],
-  "generated_at": "2026-11-18T10:49:28Z",
+  "generated_at": "2026-11-18T14:46:07Z",
   "note": "CI requalification of the Cua Hyprland plugin per Hyprland build. Not native certification and not a package: the reviewed kit/profile process stays the release gate.",
-  "run_url": "https://github.com/trycua/cua/actions/runs/44288424756",
+  "run_url": "https://github.com/trycua/cua/actions/runs/44327718690",
   "schema": 1,
   "tracked_packages": [
     "hyprland",

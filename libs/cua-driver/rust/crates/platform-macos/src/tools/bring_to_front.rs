@@ -123,7 +123,10 @@ fn def() -> &'static ToolDef {
              in the global WindowServer layer-0 order; another application (an always-raised \
              utility window, another display's front window) can hold that spot without the \
              requested window losing keyboard focus, so it is reported and not required. \
-             Request acceptance alone is reported as a partial \
+             `exact_window_effect.unobstructed` is false when another window lies over part of \
+             the target, and `observed.occluding_window` names the frontmost one: desktop \
+             pointer input at a covered point reaches that window, not the target, even after \
+             a verified activation. Request acceptance alone is reported as a partial \
              result, never as activation. This DOES steal foreground and does NOT restore the \
              previously frontmost application."
             .into(),
@@ -143,6 +146,13 @@ fn def() -> &'static ToolDef {
     })
 }
 
+/// The frontmost window that lies over part of the target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Occluder {
+    pid: i32,
+    window_id: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ExactWindowObservation {
     workspace_frontmost_pid: Option<i32>,
@@ -151,6 +161,7 @@ struct ExactWindowObservation {
     frontmost_ordinary_window_id: Option<u32>,
     process_front_window_on_display: Option<u32>,
     target_visible_ordinary: bool,
+    occluder: Option<Occluder>,
 }
 
 impl ExactWindowObservation {
@@ -176,6 +187,10 @@ impl ExactWindowObservation {
 
     fn exact_window_frontmost_ordinary(self, window_id: u32) -> bool {
         self.target_visible_ordinary && self.frontmost_ordinary_window_id == Some(window_id)
+    }
+
+    fn exact_window_unobstructed(self) -> bool {
+        self.target_visible_ordinary && self.occluder.is_none()
     }
 
     fn exact_postcondition(self, pid: i32, window_id: u32) -> bool {
@@ -266,6 +281,25 @@ fn front_window_of_process_on_target_display(
         .map(|window| window.window_id)
 }
 
+/// The frontmost window above `window_id` that overlaps it. A desktop pointer
+/// event at an overlapped point lands on that window, so the desktop pointer
+/// guard judges it by that window's owner, not the target's.
+fn occluding_window(windows: &[WindowInfo], window_id: u32) -> Option<Occluder> {
+    let target = windows.iter().find(|w| w.window_id == window_id)?;
+    windows
+        .iter()
+        .filter(|w| {
+            w.window_id != window_id
+                && w.z_index > target.z_index
+                && overlap_area(&w.bounds, &target.bounds) > 0.0
+        })
+        .max_by_key(|w| w.z_index)
+        .map(|w| Occluder {
+            pid: w.pid,
+            window_id: w.window_id,
+        })
+}
+
 fn observe_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
     let mut windows = crate::windows::visible_windows();
     windows.retain(|window| !crate::cursor::overlay::is_overlay_window(window.window_id));
@@ -290,6 +324,7 @@ fn observe_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
         frontmost_ordinary_window_id,
         process_front_window_on_display,
         target_visible_ordinary,
+        occluder: occluding_window(&windows, window_id),
     }
 }
 
@@ -361,6 +396,7 @@ fn exact_result(
     let exact_window_front_on_display =
         observation.exact_window_front_in_process_on_display(window_id);
     let exact_window_frontmost_ordinary = observation.exact_window_frontmost_ordinary(window_id);
+    let unobstructed = observation.exact_window_unobstructed();
     let status = match outcome {
         ExactOutcome::Activated => "activated",
         ExactOutcome::Partial => "partial",
@@ -381,6 +417,7 @@ fn exact_result(
             "front_in_process_on_display": exact_window_front_on_display,
             "frontmost_ordinary": exact_window_frontmost_ordinary,
             "target_visible_ordinary": observation.target_visible_ordinary,
+            "unobstructed": unobstructed,
         },
         "observed": {
             "frontmost_pid": frontmost_pid,
@@ -389,13 +426,22 @@ fn exact_result(
             "focused_window_id": observation.focused_window_id,
             "frontmost_ordinary_window_id": observation.frontmost_ordinary_window_id,
             "process_front_window_on_display": observation.process_front_window_on_display,
+            "occluding_window": observation.occluder.map(|occluder| json!({
+                "pid": occluder.pid,
+                "window_id": occluder.window_id,
+            })),
         }
     });
     if activated {
-        ToolResult::text(format!(
-            "Brought exact window {window_id} for pid {pid} to the foreground."
-        ))
-        .with_structured(structured)
+        let mut text = format!("Brought exact window {window_id} for pid {pid} to the foreground.");
+        if let Some(occluder) = observation.occluder {
+            text.push_str(&format!(
+                " Window {} of pid {} lies over part of it: desktop pointer input at a covered \
+                 point reaches that window, not this one.",
+                occluder.window_id, occluder.pid
+            ));
+        }
+        ToolResult::text(text).with_structured(structured)
     } else {
         ToolResult::error(format!(
             "bring_to_front: exact window {window_id} for pid {pid} was not verified \
@@ -676,6 +722,7 @@ mod tests {
             frontmost_ordinary_window_id,
             process_front_window_on_display: frontmost_ordinary_window_id,
             target_visible_ordinary,
+            occluder: None,
         }
     }
 
@@ -691,6 +738,7 @@ mod tests {
             frontmost_ordinary_window_id: global_front_window_id,
             process_front_window_on_display,
             target_visible_ordinary: true,
+            occluder: None,
         }
     }
 
@@ -848,6 +896,76 @@ mod tests {
         );
         assert_eq!(structured["observed"]["process_front_window_on_display"], 7);
         assert_eq!(structured["observed"]["frontmost_ordinary_window_id"], 900);
+    }
+
+    #[test]
+    fn a_verified_target_under_another_applications_window_reports_the_occluder() {
+        // #5385: the target process is front and its dialog is key and front
+        // in that process, while another application's window covers it.
+        let covered = ExactWindowObservation {
+            occluder: Some(Occluder {
+                pid: 200,
+                window_id: 400,
+            }),
+            ..contested_observation(Some(7), Some(400), Some(7))
+        };
+        let result = exact_result(42, 7, "skylight_process_exact_cocoa_ax", true, covered);
+        assert_eq!(result.is_error, None);
+        let text = format!("{:?}", result.content);
+        assert!(
+            text.contains("Window 400 of pid 200 lies over part of it"),
+            "{text}"
+        );
+        let structured = result.structured_content.expect("structured result");
+        assert_eq!(structured["activated"], true);
+        assert_eq!(structured["exact_window_effect"]["unobstructed"], false);
+        assert_eq!(structured["observed"]["occluding_window"]["pid"], 200);
+        assert_eq!(structured["observed"]["occluding_window"]["window_id"], 400);
+
+        let clear = exact_result(
+            42,
+            7,
+            "skylight_process_exact_cocoa_ax",
+            true,
+            contested_observation(Some(7), Some(7), Some(7)),
+        )
+        .structured_content
+        .expect("structured result");
+        assert_eq!(clear["exact_window_effect"]["unobstructed"], true);
+        assert_eq!(clear["observed"]["occluding_window"], Value::Null);
+    }
+
+    #[test]
+    fn only_an_overlapping_window_above_the_target_occludes_it() {
+        let target = window(7, 42, 10, 100.0);
+        let covering = |z_index| window(400, 200, z_index, 300.0);
+        assert_eq!(
+            occluding_window(&[target.clone(), covering(20)], 7),
+            Some(Occluder {
+                pid: 200,
+                window_id: 400
+            })
+        );
+        // Below the target.
+        assert_eq!(occluding_window(&[target.clone(), covering(5)], 7), None);
+        // Front, but on the other display.
+        assert_eq!(
+            occluding_window(&[target.clone(), window(400, 200, 20, 2000.0)], 7),
+            None
+        );
+        // The frontmost of several wins.
+        assert_eq!(
+            occluding_window(
+                &[target.clone(), covering(20), window(500, 300, 30, 500.0)],
+                7
+            ),
+            Some(Occluder {
+                pid: 300,
+                window_id: 500
+            })
+        );
+        // A target that is not on screen has no occluder to report.
+        assert_eq!(occluding_window(&[covering(20)], 7), None);
     }
 
     #[test]

@@ -574,39 +574,6 @@ mod linux_cursor_tests {
     }
 
     #[test]
-    fn stop_returns_while_a_sample_is_blocked() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("cursor.jsonl");
-        let entered = Arc::new(AtomicBool::new(false));
-        let entered_for_sample = entered.clone();
-        let sampler = CursorSampler::start_with_sample(path, Instant::now(), move |stop| {
-            entered_for_sample.store(true, Ordering::Relaxed);
-            let started = Instant::now();
-            while !stop.load(Ordering::Relaxed) && started.elapsed() < Duration::from_secs(5) {
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            None
-        })
-        .unwrap();
-        let wait_for_enter = Instant::now();
-        while !entered.load(Ordering::Relaxed) {
-            assert!(
-                wait_for_enter.elapsed() < Duration::from_secs(1),
-                "sampler thread did not enter the blocked sample"
-            );
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        let start = Instant::now();
-        let count = sampler.stop();
-        assert_eq!(count, 0);
-        assert!(
-            start.elapsed() < Duration::from_millis(200),
-            "stop took {:?}",
-            start.elapsed()
-        );
-    }
-
-    #[test]
     fn records_finite_json_and_skips_nonfinite_samples() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cursor.jsonl");

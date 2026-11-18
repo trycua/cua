@@ -41,20 +41,28 @@ impl EncoderProbe {
         }
     }
 
-    /// Runs `probe` on its own thread, unless a probe already started.
+    /// Runs `probe` on its own thread, unless a probe already started. A
+    /// probe that panics or cannot start lands as no encoders, so waiters
+    /// never wait forever.
     pub fn start(&'static self, probe: impl FnOnce() -> Vec<EncoderInfo> + Send + 'static) {
         self.started.call_once(|| {
             let spawned = std::thread::Builder::new()
                 .name("encoder-probe".into())
                 .spawn(move || {
+                    let landing = Landing(self);
                     let encoders = probe();
-                    *self.lock() = Some(encoders);
-                    self.landed.notify_all();
+                    landing.publish(encoders);
                 });
             if let Err(error) = spawned {
-                tracing::warn!(%error, "could not start the encoder probe; h264_hw stays unsupported");
+                tracing::warn!(%error, "could not start the encoder probe; no encoder is available");
+                self.publish(Vec::new());
             }
         });
+    }
+
+    fn publish(&self, encoders: Vec<EncoderInfo>) {
+        *self.lock() = Some(encoders);
+        self.landed.notify_all();
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Option<Vec<EncoderInfo>>> {
@@ -98,6 +106,22 @@ impl EncoderProbe {
             },
             None => FeatureStatus::no("h264_hw", missing),
         }
+    }
+}
+
+/// Publishes the probe's result, or no encoders if the probe panicked.
+struct Landing(&'static EncoderProbe);
+
+impl Landing {
+    fn publish(self, encoders: Vec<EncoderInfo>) {
+        self.0.publish(encoders);
+        std::mem::forget(self);
+    }
+}
+
+impl Drop for Landing {
+    fn drop(&mut self) {
+        self.0.publish(Vec::new());
     }
 }
 
@@ -186,5 +210,15 @@ mod tests {
         let feature = probe.h264_hw("no hardware H.264 encoder was found");
         assert!(!feature.supported);
         assert_eq!(feature.limitation, "no hardware H.264 encoder was found");
+    }
+
+    #[test]
+    fn a_panicking_probe_lands_as_no_encoders() {
+        let probe: &'static EncoderProbe = Box::leak(Box::new(EncoderProbe::new()));
+        probe.start(|| panic!("driver probe panicked"));
+        assert!(probe.encoders().is_empty());
+        let feature = probe.h264_hw("none found");
+        assert!(!feature.supported);
+        assert_eq!(feature.limitation, "none found");
     }
 }

@@ -21,7 +21,12 @@ path = "src/main.rs"
 embed-resource = "2"
 
 [features]
-default = []
+default = ["compat"]
+# `cua compat` and `cua run --compat` served by this crate: the cua-compat gateway
+# is built before the CLI. The Cua Spaces `cua` builds without it (`default-features
+# = false`) and registers the same code through `CliExtension`, so the gateway
+# builds beside the CLI.
+compat = ["dep:cua-compat"]
 byoc = ["cua-sdk/byoc", "cua-daemon/byoc", "dep:cua-byoc"]
 # `cua cloud add aws` and the AWS providers (the AWS SDK).
 aws = ["byoc", "cua-sdk/aws", "cua-daemon/aws", "cua-byoc/aws"]
@@ -39,8 +44,9 @@ cua-sdk = { workspace = true, features = ["local", "spaces", "media"] }
 # `cua auth provider ...`: the contrib catalog and credential store (no
 # provider is compiled in unless a `contrib` feature is on).
 cua-contrib.workspace = true
-# `cua compat`: other providers' SDKs, unchanged, on Cua Spaces.
-cua-compat.workspace = true
+# `cua compat`: the command line (the gateway itself is the optional `compat` feature).
+cua-compat-cmd.workspace = true
+cua-compat = { workspace = true, optional = true }
 cua-daemon = { workspace = true, features = ["server", "client"] }
 cua-spacesd-client.workspace = true
 # `cua doctor`: resolve the image under test (registry facts).

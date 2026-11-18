@@ -26,6 +26,15 @@ final class SyntheticStreamProvider: SpaceStreamSourceProviding, @unchecked Send
     let startOffset: Int
     /// The fixture Space's OS (`linux`, `macos`): a Linux one takes ⌘ as Control.
     let guestOS: String
+    /// The windows `availableWindows` lists (none by default): tests give it the ones a Space shows.
+    var windows: [StreamWindow] = []
+    private let openedLock = NSLock()
+    private var opened: [StreamSource] = []
+    /// The sources sessions were opened on, oldest first (tests read which one a slot asked for).
+    var openedSources: [StreamSource] {
+        openedLock.lock(); defer { openedLock.unlock() }
+        return opened
+    }
 
     init(units: [AccessUnit], size: CGSize, fps: Double, startOffset: Int = 0, guestOS: String = "") {
         self.units = units
@@ -67,12 +76,13 @@ final class SyntheticStreamProvider: SpaceStreamSourceProviding, @unchecked Send
         return units
     }
 
-    func availableWindows() async throws -> [StreamWindow] { [] }
+    func availableWindows() async throws -> [StreamWindow] { windows }
 
     /// The last session opened (tests read what it was sent).
     private(set) weak var lastMedia: SyntheticMedia?
 
     func openSession(_ source: StreamSource, frames: FrameSink, audio: AudioSink?) async throws -> SpaceStreamSession {
+        openedLock.lock(); opened.append(source); openedLock.unlock()
         let media = SyntheticMedia(provider: self, sink: frames)
         lastMedia = media
         return media
@@ -251,14 +261,14 @@ extension FixtureSpacesBackend {
                 features: ["desktop_stream", "window_stream", "host_spaces"], addedAt: nil,
                 os: .linux, osName: "Ubuntu", osPrettyName: "Ubuntu 24.04.3 LTS", image: nil, imageDigest: nil,
                 kind: nil, arch: nil, hidden: false, reachable: true, error: nil, host: nil, hostName: nil,
-                power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil))
+                power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil, parent: nil))
             // A Space it provides, for comparison with its desktop row.
             base.append(AppSpaceRow(
                 id: "relay:m1/xm1", name: "0123456789ab", displayName: nil, provider: "relay", spacesdVersion: "0.7.0",
                 features: ["desktop_stream"], addedAt: nil,
                 os: .linux, osName: "Ubuntu", osPrettyName: "Ubuntu 24.04.3 LTS", image: nil, imageDigest: nil,
                 kind: nil, arch: nil, hidden: false, reachable: true, error: nil, host: "m1", hostName: "ellieln",
-                power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil))
+                power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil, parent: nil))
         }
         // `CUA_SPACES_FIXTURE_WARMING_HOME=hidden|visible`: the home that warms for Home's prompt box,
         // running: `hidden` before a person writes into it (in no top bar view), `visible` after.
@@ -269,7 +279,7 @@ extension FixtureSpacesBackend {
                 os: .linux, osName: "Ubuntu", osPrettyName: "Ubuntu 24.04.3 LTS", image: nil, imageDigest: nil,
                 kind: .container, arch: nil, hidden: state == "hidden", reachable: true, error: nil, host: nil,
                 hostName: nil, power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil,
-                stopReason: nil, sharing: nil))
+                stopReason: nil, sharing: nil, parent: nil))
         }
         // `CUA_SPACES_FIXTURE_STOPPED=<n>`: `n` suspended or stopped Spaces that
         // one of your machines provides, with no recorded add date (so they read
@@ -284,7 +294,7 @@ extension FixtureSpacesBackend {
                     os: .unknown, osName: nil, osPrettyName: nil, image: nil, imageDigest: nil,
                     kind: nil, arch: nil, hidden: false, reachable: false, error: nil, host: "ip-172-31-46-222",
                     hostName: "ip-172-31-46-222", power: i % 2 == 0 ? "suspend" : "stop", powerState: state,
-                    cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil))
+                    cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil, parent: nil))
             }
         }
         guard let n = environment["CUA_SPACES_FIXTURE_SPACES"].flatMap(Int.init), n > 0,

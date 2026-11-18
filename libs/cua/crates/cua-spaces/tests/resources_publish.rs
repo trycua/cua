@@ -68,7 +68,10 @@ async fn a_host_publishes_numbers_into_its_machine_record() {
     let meta = relay.machine(MACHINE).unwrap().meta;
     // What registration set stays; the summary joins it. Nothing is being
     // created: no creates key.
-    assert_eq!(meta["cua.host.os"], "macos");
+    assert_eq!(
+        meta["cua.host.os"],
+        cua_host::host_meta(false)["cua.host.os"]
+    );
     assert!(!meta.contains_key(cua_spaces::resources::creates::META_KEY));
     let value = &meta[summary::META_KEY];
     assert!(value.len() <= summary::MAX_LEN, "{value}");
@@ -83,6 +86,54 @@ async fn a_host_publishes_numbers_into_its_machine_record() {
         "{value}"
     );
     assert!(!value.contains("Studio"));
+}
+
+/// The relay row follows this computer's real Provide Spaces setting: a row
+/// registered as off (an earlier version's default, or a setting changed
+/// since) says on once the setting is on, and off again when it goes off.
+/// The phone reads this key and the phone key.
+#[tokio::test]
+async fn the_relay_row_follows_the_provide_spaces_setting() {
+    let relay = FakeRelay::start().await;
+    let home = tempfile::tempdir().unwrap();
+    let spaces = host(&relay, home.path()).await;
+    let set = |on: bool| {
+        let path = home.path().join("host/config.json");
+        let mut c: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        c["provide_spaces"] = on.into();
+        std::fs::write(path, c.to_string()).unwrap();
+    };
+    // Registered before: no provides key at all, and a phone key missing.
+    assert!(
+        !relay
+            .machine(MACHINE)
+            .unwrap()
+            .meta
+            .contains_key("cua.host.spaces")
+    );
+    set(true);
+    spaces.publish_resources().await.unwrap();
+    let meta = relay.machine(MACHINE).unwrap().meta;
+    assert_eq!(meta["cua.host.spaces"], "on");
+    assert_eq!(meta["cua.host.phone"], "1");
+    set(false);
+    spaces.publish_resources().await.unwrap();
+    assert_eq!(
+        relay.machine(MACHINE).unwrap().meta["cua.host.spaces"],
+        "off"
+    );
+    // Paused (signed out): the row is left as it is.
+    set(true);
+    let path = home.path().join("host/config.json");
+    let mut c: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    c["paused_signed_out"] = true.into();
+    std::fs::write(&path, c.to_string()).unwrap();
+    spaces.publish_resources().await.unwrap();
+    assert_eq!(
+        relay.machine(MACHINE).unwrap().meta["cua.host.spaces"],
+        "off"
+    );
 }
 
 #[tokio::test]

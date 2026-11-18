@@ -699,6 +699,7 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
     }
     public func primaryDisplay(id: String) async -> AppStreamDisplay? { await b().primaryDisplay(id: id) }
     public func usage(id: String) async -> AppSpaceUsage? { await b().usage(id: id) }
+    public func reach(id: String) async throws -> [String: Any] { try await b().reach(id: id) }
     /// Never waits for the SDK: until it is in, the page shows This Mac's
     /// own numbers.
     public func resources(visible: Bool) async -> CuaSDK.ResourcesSnapshot? {
@@ -778,8 +779,8 @@ public final class PendingAgentSetup: AgentSetupRunning, @unchecked Sendable {
     public func connectionStatusJson(refresh: Bool) async -> String {
         await gate.wait().agentSetup?.connectionStatusJson(refresh: refresh) ?? #"{"agents":[],"checked_at_ms":0}"#
     }
-    public func connectJson(agents: [String], signIn: Bool, skills: Bool, mcp: Bool) async throws -> String {
-        try await s().connectJson(agents: agents, signIn: signIn, skills: skills, mcp: mcp)
+    public func connectJson(agents: [String], signIn: Bool, skills: Bool, mcp: Bool, driver: DriverConnect?) async throws -> String {
+        try await s().connectJson(agents: agents, signIn: signIn, skills: skills, mcp: mcp, driver: driver)
     }
     public func disconnectJson(agents: [String], signIn: Bool) async throws -> String {
         try await s().disconnectJson(agents: agents, signIn: signIn)

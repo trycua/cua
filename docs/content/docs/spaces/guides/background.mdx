@@ -1,0 +1,43 @@
+---
+title: Keep Cua Spaces running in the background
+description: 'What closing the Cua Spaces window and quitting do on a Mac: the window closes and agents keep working, Quit stops the app and the background service.'
+---
+
+On a Mac, Cua Spaces runs a background service next to the app, so your agents
+can create and manage Spaces whether or not the window is open. The service is
+a login item named **Cua Spaces** (System Settings, General, Login Items &
+Extensions, Allow in the Background).
+
+## Close the window
+
+Closing the window does not stop anything. The app stays in the menu bar, and
+the service and the Spaces keep running. The first time you close the window,
+and each time after until you turn it off, Cua Spaces shows a small note under
+its menu bar icon: it is still running in the background so your agents can
+create and manage their Spaces.
+
+Choose what the close button does in Settings, General, **When I close the
+window**:
+
+- **Keep running in the background** is the default.
+- **Quit Cua Spaces** makes the close button quit, the same as Quit below.
+
+**Tell me when Cua Spaces keeps running** turns the note on or off. The note's
+own **Don't Show Again** button does the same.
+
+## Quit
+
+To stop Cua Spaces, choose **Quit Cua Spaces** from the menu bar icon, or press
+Cmd-Q. Both stop the app, the background service, Cua Driver's login item and
+the Cua daemon, so no agent can reach this Mac's Spaces until you open Cua
+Spaces again. The close-window setting only changes the close button, never
+Cmd-Q.
+
+Opening Cua Spaces again starts the service and attaches to it. There is never
+a second copy.
+
+## Updates
+
+Updating Cua Spaces does not stop the background service for long. The service
+notices that the app was replaced and restarts itself onto the new version
+within a few seconds. Your Spaces, settings and data stay where they are.

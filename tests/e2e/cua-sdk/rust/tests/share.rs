@@ -49,15 +49,28 @@ async fn files_and_ports_become_links_a_daemon_owns() {
             let d = ShareDaemon::start()?;
             let c = d.client();
 
-            let f = c.share(report.display().to_string(), None, None, None).await?;
+            let f = c
+                .share(report.display().to_string(), None, None, None)
+                .await?;
             assert_eq!(f.access, ShareAccess::Private);
             assert_eq!(f.kind, "file");
-            assert!(f.url.starts_with(&format!("{}/m/{}/share/", d.relay_url, SHARE_MACHINE)), "{}", f.url);
-            assert_eq!(d.get(&f.url, Some("owner"))?, (200, "<h1>report</h1>".to_string()));
+            assert!(
+                f.url
+                    .starts_with(&format!("{}/m/{}/share/", d.relay_url, SHARE_MACHINE)),
+                "{}",
+                f.url
+            );
+            assert_eq!(
+                d.get(&f.url, Some("owner"))?,
+                (200, "<h1>report</h1>".to_string())
+            );
             assert_eq!(d.get(&f.url, None)?.0, 401);
             assert_eq!(d.get(&f.url, Some("other"))?.0, 403);
             let check = c.check_share(f.id.clone(), None).await?;
-            assert!(check.ok && check.status == 200 && check.via == "link", "{check:?}");
+            assert!(
+                check.ok && check.status == 200 && check.via == "link",
+                "{check:?}"
+            );
 
             let p = c
                 .share(format!("localhost:{port}"), None, None, Some("dash".into()))
@@ -71,7 +84,12 @@ async fn files_and_ports_become_links_a_daemon_owns() {
             assert_eq!(d.get(&p.url, Some("owner"))?.0, 404);
 
             let public = c
-                .share(dir.display().to_string(), Some(ShareAccess::Public), Some(60), None)
+                .share(
+                    dir.display().to_string(),
+                    Some(ShareAccess::Public),
+                    Some(60),
+                    None,
+                )
                 .await?;
             assert!(public.url.contains("/share/pub/") && public.expires_at_unix.is_some());
             let (code, body) = d.get(&public.url, None)?;
@@ -82,13 +100,23 @@ async fn files_and_ports_become_links_a_daemon_owns() {
             assert!(c.shares().await?.is_empty());
 
             for bad in [
-                c.share(dir.join("missing").display().to_string(), None, None, None).await,
+                c.share(dir.join("missing").display().to_string(), None, None, None)
+                    .await,
                 c.share("0".into(), None, None, None).await,
-                c.share(report.display().to_string(), Some(ShareAccess::Public), Some(5), None).await,
+                c.share(
+                    report.display().to_string(),
+                    Some(ShareAccess::Public),
+                    Some(5),
+                    None,
+                )
+                .await,
             ] {
                 assert!(matches!(bad, Err(CuaError::InvalidArgument(_))), "{bad:?}");
             }
-            assert!(matches!(c.stop_share("share-nope".into()).await, Err(CuaError::NotFound(_))));
+            assert!(matches!(
+                c.stop_share("share-nope".into()).await,
+                Err(CuaError::NotFound(_))
+            ));
 
             let dead = c.share("1".into(), None, None, None).await?;
             let bad = c.check_share(dead.id, None).await?;

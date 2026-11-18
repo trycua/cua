@@ -55,19 +55,33 @@ impl RetainedElement {
         result.map_err(|e| anyhow::anyhow!("UIA SetFocus failed: {e}"))
     }
 
+    /// The element's live `IsEnabled`. `None` for an MSAA element or when UIA
+    /// cannot read it.
+    pub fn element_is_enabled(&self) -> Option<bool> {
+        if !self.is_uia() || self.ptr == 0 {
+            return None;
+        }
+        let element = std::mem::ManuallyDrop::new(unsafe {
+            IUIAutomationElement::from_raw(self.ptr as *mut _)
+        });
+        unsafe { element.CurrentIsEnabled() }
+            .ok()
+            .map(|value| value.as_bool())
+    }
+
     /// Read the admitted element's own HWND without asking its provider to focus.
     /// Windowless UIA elements have no native keyboard message target.
     pub fn native_window_handle(&self) -> Option<u64> {
         if !self.is_uia() || self.ptr == 0 {
             return None;
         }
-        let element = unsafe { IUIAutomationElement::from_raw(self.ptr as *mut _) };
-        let hwnd = unsafe { element.CurrentNativeWindowHandle() }
+        let element = std::mem::ManuallyDrop::new(unsafe {
+            IUIAutomationElement::from_raw(self.ptr as *mut _)
+        });
+        unsafe { element.CurrentNativeWindowHandle() }
             .ok()
             .map(|handle| handle.0 as usize as u64)
-            .filter(|handle| *handle != 0);
-        std::mem::forget(element);
-        hwnd
+            .filter(|handle| *handle != 0)
     }
 
     pub fn element_has_keyboard_focus(&self) -> Option<bool> {

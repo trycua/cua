@@ -1,0 +1,90 @@
+[package]
+name = "cua-daemon-core"
+description = "The cua SDK runtime (sandboxes, local runtimes, pools, shares) and the typed daemon client: everything of cua-daemon except the daemon server."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["client", "spaces"]
+# The Spaces runtime (`cua_spaces::Spaces`): `SpaceService`, the per-Space
+# env passthrough and the Spaces MCP server (`/mcp`, `cua daemon mcp`).
+spaces = ["dep:cua-spaces", "dep:cua-host", "dep:cua-cluster", "dep:cua-snapshot-sync"]
+# `DaemonClient` over the Unix socket or loopback.
+client = []
+# Contrib sandbox providers (`--on e2b`, ...), off by default: `contrib`
+# for every one, `contrib-<name>` for one.
+contrib = ["dep:cua-contrib", "cua-contrib/all"]
+contrib-e2b = ["dep:cua-contrib", "cua-contrib/e2b"]
+contrib-daytona = ["dep:cua-contrib", "cua-contrib/daytona"]
+contrib-modal = ["dep:cua-contrib", "cua-contrib/modal"]
+# Your own cloud account as a location (`--on aws|gcp|hetzner|modal`): the cua-byoc
+# providers and `cua cloud`.
+byoc = ["dep:cua-byoc", "cua-byoc/azure", "cua-byoc/gcp", "cua-byoc/hetzner", "cua-byoc/modal"]
+# AWS (EC2 for `--on aws`, S3 for the checkpoint fallback): the AWS SDK
+# crates are the slowest part of a cold build, so local development builds
+# leave this off. Without it `--on aws` and an S3 fallback fail with "this
+# build doesn't include AWS support".
+aws = ["byoc", "cua-byoc/aws", "cua-snapshot-sync?/s3"]
+
+[dependencies]
+cua-home.workspace = true
+cua-byoc = { workspace = true, optional = true }
+cua-proto = { workspace = true, features = ["client", "server", "serde"] }
+cua-spacesd-client.workspace = true
+cua-sandbox-core.workspace = true
+# Share a link to anything you run: records and the gateway.
+cua-share = { workspace = true }
+cua-contrib = { workspace = true, optional = true }
+cua-create-failure.workspace = true
+cua-vmm = { workspace = true, default-features = true }
+cua-image.workspace = true
+# The coding apps a warm-pool member gets before it is claimed (`warm-pools`).
+cua-agents.workspace = true
+# Disk accounting, cache GC and orphan reaping.
+cua-disk.workspace = true
+cua-spaces = { workspace = true, optional = true }
+cua-snapshot-sync = { workspace = true, optional = true }
+# Ready warm-pool members, reported to `on="auto"` placement.
+cua-cluster = { workspace = true, optional = true }
+# The fixtures' `/media` socket frames video like the real driver.
+# Relay account machines (space://relay/<id>) in SpaceService / `cua daemon mcp`.
+cua-host = { workspace = true, optional = true }
+async-trait.workspace = true
+tonic = { workspace = true, default-features = false, features = ["codegen", "channel"] }
+prost.workspace = true
+pbjson-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+http.workspace = true
+hyper-util = { workspace = true, features = ["server", "server-auto", "service", "client-legacy", "http1"] }
+tower.workspace = true
+tokio = { workspace = true }
+futures-util.workspace = true
+base64.workspace = true
+# The spawn capability's MAC (child Spaces).
+rand.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+humantime.workspace = true
+url.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+# Host memory for the warm pool's sizing (sysctl) and process checks.
+libc = "0.2"
+
+[dev-dependencies]
+cua-host = { workspace = true, features = ["testing"] }
+# tests/job_spaces_live.rs: a member's bundle (a gzip tar).
+flate2 = "1"
+tar = "0.4"
+cua-spaces = { workspace = true, features = ["mcp-client"] }
+cua-spacesd-client = { workspace = true, features = ["testing"] }
+# Keyvault delivery test: a deterministic in-memory export provider and the
+# broker types, exercised against the mock spacesd.
+tempfile.workspace = true
+tracing-subscriber.workspace = true

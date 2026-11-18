@@ -24,8 +24,8 @@ const pythonRoot = join(driverRoot, "python")
 const typescriptRoot = join(driverRoot, "typescript")
 const check = process.argv.includes("--check")
 
-function run(command, args, cwd) {
-  const result = spawnSync(command, args, { cwd, stdio: "inherit" })
+function run(command, args, cwd, env = {}) {
+  const result = spawnSync(command, args, { cwd, stdio: "inherit", env: { ...process.env, ...env } })
   if (result.error) throw result.error
   if (result.status !== 0) {
     throw new Error(`${command} exited with status ${result.status}`)
@@ -277,7 +277,15 @@ function applyGroup(root, inventoryName, files) {
 
 const temporaryRoot = mkdtempSync(join(tmpdir(), "cua-driver-uniffi-"))
 try {
-  run("cargo", ["build", "--locked", "--release", "-p", "cua-driver-sdk"], rustRoot)
+  // uniffi-bindgen reads the interface from the library's symbol table, so this build
+  // must not strip it. The release profile strips symbols and uses fat LTO to shrink
+  // the shipped wheels; neither changes the generated bindings, so override both here
+  // (strip off, no LTO, parallel codegen) to keep the check fast and readable.
+  run("cargo", ["build", "--locked", "--release", "-p", "cua-driver-sdk"], rustRoot, {
+    CARGO_PROFILE_RELEASE_STRIP: "none",
+    CARGO_PROFILE_RELEASE_LTO: "off",
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16",
+  })
   const library = nativeLibraryPath()
   if (!existsSync(library)) throw new Error(`missing built SDK library ${library}`)
 

@@ -18,7 +18,7 @@ $H --source /abs/clean/checkout full --standalone-browser
 
 `--source` defaults to this checkout. The source must be a clean git root, and its `HEAD` is the SHA under test. Use a detached worktree at the PR head, not a working branch with edits. The helper runs `lume-e2e --doctor` first. The wrapper prints `evidence=<run dir>` before it clones and `result.json` at the end. Exit 0 means the runner passed and the wrapper verified the evidence and the standard-daemon restore. Exit 1 means a test or infrastructure failure. Exit 2 means it was blocked before execution.
 
-Main has no `scripts/ci/macos/appkit-cells.tsv` yet, so on main an AppKit change runs `full`. The cells you can focus on main are `macos-textedit-type-text-ax-background`, `macos-{electron,tauri,wkwebview}-scroll-ax-{foreground,background}` and `macos-{electron,tauri,wkwebview}-left-click-ax-background-typed-sdk`. Pick the one whose route the diff changes. On a branch that carries the manifest, its AppKit names can be focused too. A focused pass is `mode: focused`, `focused_passing_cells: 1`. It is evidence for that cell only, never full-matrix certification.
+The cells you can focus are the AppKit cell IDs in `scripts/ci/macos/appkit-cells.tsv`, `macos-textedit-type-text-ax-background`, `macos-{electron,tauri,wkwebview}-scroll-ax-{foreground,background}` and `macos-{electron,tauri,wkwebview}-left-click-ax-background-typed-sdk`. Pick the one whose route the diff changes. A SHA older than the manifest has no focusable AppKit cell, so an AppKit change there runs `full`. A focused pass is `mode: focused`, `focused_passing_cells: 1`. It is evidence for that cell only, never full-matrix certification.
 
 A Mac without the wrapper has to follow the runner README by hand: clone a worker, run `sync-vm-worktree.sh push`, run `run-all.sh` in the guest Terminal, run `pull-artifacts`, then stop the worker.
 
@@ -28,13 +28,13 @@ Read `<run dir>/result.json` first: `sha`, `mode`, `status`, `runner_exit`, `clo
 
 ## Seed
 
-The wrapper clones `seed` from `config.json` and records `seed_note` in every result. On the relay Mac mini the seed is `cua-driver-browser-baseline-20261104-tk86-ax`: Tk 9.1, Chrome, and the Terminal Accessibility grant below. `cua-driver-browser-baseline-20261104-tk86` is its parent and has no Terminal grant. The seed must be stopped; never boot or edit it for a run. To change it, clone it to a new name, make the one change in the clone, stop the clone, and point `config.json` at it with an updated `seed_note`.
+The wrapper clones `seed` from `config.json` and records `seed_note` in every result. On the relay Mac mini the seed is `cua-driver-browser-baseline-20261104-tk86-ax`: Tk 9.1, Chrome, and the Terminal Accessibility grant below. Its parent, `cua-driver-browser-baseline-20261104-tk86`, was deleted on 2026-11-10, and the seed still clones, and its clones boot, without it. The seed must be stopped; never boot or edit it for a run. To change it, clone it to a new name, make the one change in the clone, stop the clone, and point `config.json` at it with an updated `seed_note`.
 
 The runner stops at exit 2 when the seed lacks one of these. The seed steps are in the [runner README](../../../libs/cua-driver/tests/runners/macos-lume/README.md#create-the-private-seed):
 
 - **Tk 8.6 or later** (`require_modern_tk`). Apple's `/usr/bin/python3` has Tk 8.5.9. `brew install python-tk` puts Homebrew's `python3` first; the current seed has Tk 9.1.
 - **Terminal → System Events Automation** ("Terminal cannot control System Events").
-- **Terminal Accessibility** ("grant Terminal Accessibility in the seed"). The switch in System Settings looks on before it is saved. It persists only after the admin-password dialog accepts the guest password; then the runner's `AXRole` probe returns `AXApplication`. With no human at the display, the guest's own `cua-driver-local` can do the clicks and typing over SSH.
+- **Terminal Accessibility** ("grant Terminal Accessibility in the seed"). The switch in System Settings looks on before it is saved. It persists only after the admin-password dialog accepts the guest password; then the runner's `AXRole` probe returns `AXApplication`. With no human at the display, the guest's own `cua-driver-local` can do the clicks and typing over SSH, but only from an unrestricted daemon (`open -n -g /Applications/CuaDriverLocal.app --args serve --permission-mode unrestricted --dangerously-bypass-approvals`): every other mode refuses input to the password dialog with `security_prompt_protected`.
 - **CuaDriverLocal** Accessibility, Screen Recording, direct capture and a stable signing identity.
 
 ## Host notes

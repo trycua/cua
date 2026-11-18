@@ -32,5 +32,16 @@ export function notificationsMethods(ctx: BridgeContext): Handlers {
       await n.markRead(ids);
       return null;
     },
+    "notifications.delete": async (args) => {
+      const n = feed();
+      const ids = args.ids;
+      if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) throw Failure.badArgs("ids: array of strings");
+      await n.deleteEntries(ids);
+      return null;
+    },
+    "notifications.deleteAll": async () => {
+      await feed().deleteAll();
+      return null;
+    },
   };
 }

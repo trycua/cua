@@ -48,9 +48,9 @@ async function useClaude() {
 
 describe.skipIf(!wasmBuilt)("the box with an agent home", () => {
   it("shows no where row until a place is named with @", async () => {
-    await mountApp("/home", HOME);
+    await mountApp("/home/ask", HOME);
     const box = (await screen.findByLabelText("What should it do?")) as HTMLTextAreaElement;
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("Codex"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("GPT-5.5"));
     expect(q('[data-picker="where"]')).toBeNull();
     expect(q("[data-ask-where]")).toBeNull();
     fireEvent.change(box, { target: { value: "run the tests on @" } });
@@ -59,9 +59,12 @@ describe.skipIf(!wasmBuilt)("the box with an agent home", () => {
 
   it("sends the job to the agent's Home Space on the slim image, with the spawn capability and a briefing", async () => {
     const calls: { op: string; args: Record<string, unknown> }[] = [];
-    const { router } = await mountApp("/home", { ...HOME, intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined) });
+    const { router } = await mountApp("/home/ask", {
+      ...HOME,
+      intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined),
+    });
     const box = (await screen.findByLabelText("What should it do?")) as HTMLTextAreaElement;
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("Codex"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("GPT-5.5"));
     fireEvent.change(box, { target: { value: "test my project on a Mac and a Windows computer" } });
     await act(async () => {
       fireEvent.keyDown(box, { key: "Enter" });
@@ -101,12 +104,15 @@ describe.skipIf(!wasmBuilt)("the box with an agent home", () => {
 
   it("starts a new Home for a Home message, and continues the existing one only when it is picked", async () => {
     const calls: { op: string; args: Record<string, unknown> }[] = [];
-    const { router } = await mountApp("/home", { ...HOME, intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined) });
+    const { router } = await mountApp("/home/ask", {
+      ...HOME,
+      intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined),
+    });
     const box = (await screen.findByLabelText("What should it do?")) as HTMLTextAreaElement;
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("Codex"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("GPT-5.5"));
     // The demo's Home was made for Claude Code (its label says so): the next request goes there.
     await useClaude();
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("Claude Code"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("Sonnet 5.5High"));
     // The tree is read from the host and the Home is found by its label.
     await new Promise((r) => setTimeout(r, 300));
     // A plain Home message makes a new Home, even though the agent already has one.
@@ -118,7 +124,7 @@ describe.skipIf(!wasmBuilt)("the box with an agent home", () => {
     await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/spaces\/(?!local%3Aagent-home-demo)/));
     // Picking "in your existing Home" continues it: no second create, the job goes to the existing Home.
     await act(async () => {
-      await router.navigate({ to: "/home" });
+      await router.navigate({ to: "/home/ask" });
     });
     calls.length = 0;
     const box2 = (await screen.findByLabelText("What should it do?")) as HTMLTextAreaElement;
@@ -142,7 +148,7 @@ describe.skipIf(!wasmBuilt)("the box with an agent home", () => {
     // `cua agent ls` says claude-8 (the host made it unique: other Spaces have a claude); the Space calls it @claude.
     const calls: { op: string; args: Record<string, unknown> }[] = [];
     const member = { name: "claude-8", handle: "claude", harness: "claude-code", status: "idle", activity: null, sessions: 1 };
-    const { router } = await mountApp("/home", {
+    const { router } = await mountApp("/home/ask", {
       ...HOME,
       intercept: (op, args) => {
         calls.push({ op, args: args as Record<string, unknown> });
@@ -150,9 +156,9 @@ describe.skipIf(!wasmBuilt)("the box with an agent home", () => {
       },
     });
     const box = (await screen.findByLabelText("What should it do?")) as HTMLTextAreaElement;
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("Codex"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("GPT-5.5"));
     await useClaude();
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("Claude Code"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("Sonnet 5.5High"));
     await new Promise((r) => setTimeout(r, 300));
     fireEvent.change(box, { target: { value: "hi" } });
     await act(async () => {

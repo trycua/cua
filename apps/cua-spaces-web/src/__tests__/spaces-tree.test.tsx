@@ -120,32 +120,66 @@ describe.skipIf(!wasmBuilt)("your computers as a tree", () => {
     await waitFor(() => expect(within(sidebar).getByRole("link", { name: /^Computers/ }).textContent).toContain(String(rows.length)));
     // The first computer that isn't this Mac is the default until one is set.
     expect(q('[data-tree-status="relay:mac-mini"]')?.textContent).toMatch(/, Default$/);
+    // The fold caret sits inside the row, in a slot of its own: no negative margin pushes it out of the row's padding.
+    for (const caret of qa("[data-tree-fold]")) {
+      expect(caret.className).not.toMatch(/(^|\s)-m[lrxtb]?-\d/);
+      expect(caret.parentElement?.className).toContain("size-5");
+      expect(caret.closest('[role="cell"]')?.contains(caret)).toBe(true);
+    }
     // Folding a computer hides its Spaces.
     fireEvent.click(q('[data-tree-fold="relay:linux-box"]')!);
     expect(q('[data-tree-row="relay:linux-box/ubuntu-build"]')).toBeNull();
-    // A computer opens its own page.
+    // A computer that shares its desktop opens that desktop's Space page.
+    fireEvent.click(q('[data-tree-name="relay:linux-box"]')!, { detail: 0 });
+    await waitFor(() => expect(router.state.location.pathname).toBe("/spaces/relay%3Alinux-box"));
+  });
+
+  it("opens the computer's own page for a computer that cannot be opened as a desktop (offline)", { timeout: 30000 }, async () => {
+    const { router } = await mountApp("/spaces", host([], { offline: ["linux-box"] }));
+    await router.load();
+    await waitFor(() => expect(q('[data-tree-name="relay:linux-box"]')).not.toBeNull());
     fireEvent.click(q('[data-tree-name="relay:linux-box"]')!, { detail: 0 });
     await waitFor(() => expect(router.state.location.pathname).toBe("/spaces/computer/linux-box"));
   });
 
-  it("greys out the Spaces of an offline computer: they wait for it", { timeout: 30000 }, async () => {
+  it("greys out the Spaces of an offline computer: each reads Offline, with no sentence about it", { timeout: 30000 }, async () => {
     await mountApp("/spaces", host([], { offline: ["linux-box"] }));
-    await waitFor(() => expect(q('[data-tree-status="relay:linux-box/ubuntu-build"]')?.textContent).toBe("Waits for Linux box"));
+    await waitFor(() => expect(q('[data-tree-status="relay:linux-box/ubuntu-build"]')?.textContent).toBe("Offline"));
     expect(q('[data-tree-row="relay:linux-box/ubuntu-build"]')?.hasAttribute("data-dim")).toBe(true);
-    expect(document.body.textContent).toContain("Linux box is offline, so the 2 Spaces on it are too. They come back when it does.");
+    expect(document.body.textContent).not.toMatch(/Waits for|so the \d+ Spaces? on it/);
+    // The tasks cell of a row with none is empty.
+    expect(q('[data-tree-tasks="relay:linux-box/ubuntu-build"]')?.textContent).toBe("");
+    expect(document.body.textContent).not.toMatch(/\bNone\b/);
   });
 
   it('folds offline computers with no Spaces on them into one "N offline" row that opens', { timeout: 30000 }, async () => {
-    const old = (n: number): MachineRow => ({ id: `old-${n}`, name: `Old box ${n}`, via: "relay", online: false, os: "linux", limits: [] });
+    const old = (n: number): MachineRow => ({
+      id: `old-${n}`,
+      name: `Old box ${n}`,
+      via: "relay",
+      online: false,
+      os: "linux",
+      limits: [],
+      lastSeen: Math.floor(Date.now() / 1000) - 40 * 24 * 3600,
+    });
     await mountApp("/spaces", host([], { extra: [old(1), old(2), old(3)] }));
     const fold = await found("[data-tree-offline-fold]");
-    expect(fold.textContent).toMatch(/^\d+ offline/);
-    expect(fold.textContent).toContain("Old box 1, Old box 2, Old box 3");
+    expect(fold.textContent).toMatch(/^4 offline computers hidden\s*Show$/);
+    expect(fold.textContent).not.toContain("Old box 1");
+    expect(fold.querySelector("[data-tree-fold], svg")).toBeNull();
+    // Hidden, there is nothing to remove from here.
+    expect(q("[data-machines-remove-old]")).toBeNull();
     expect(qa("[data-tree-name]").map((e) => e.textContent)).not.toContain("Old box 1");
     // The computers with Spaces stay in the list above it.
     expect(q('[data-tree-row="relay:linux-box"]')).not.toBeNull();
     fireEvent.click(q("[data-tree-offline-toggle]")!);
     await waitFor(() => expect(qa("[data-tree-name]").map((e) => e.textContent)).toContain("Old box 1"));
+    expect(q("[data-tree-offline-toggle]")?.textContent).toBe("Hide");
+    expect(q("[data-tree-offline-fold]")?.textContent).toMatch(/^4 offline computers\s*Hide/);
+    // Shown, "Remove old computers" sits with them; hidden again, it goes.
+    await waitFor(() => expect(q("[data-tree-offline-fold] [data-machines-remove-old]")?.textContent).toBe("Remove old computers"));
+    fireEvent.click(q("[data-tree-offline-toggle]")!);
+    await waitFor(() => expect(q("[data-machines-remove-old]")).toBeNull());
     // Each one keeps its row menu once shown.
     expect(qa("[data-tree-menu]").length).toBe(qa("[data-tree-row]").length);
   });
@@ -190,7 +224,7 @@ describe.skipIf(!wasmBuilt)("your computers as a tree", () => {
       ],
     };
     await mountApp("/spaces", host([], { resolved }));
-    await waitFor(() => expect(q('[data-tree-status="relay:linux-box/ubuntu-build"]')?.textContent).toBe("Waits for Linux box"));
+    await waitFor(() => expect(q('[data-tree-status="relay:linux-box/ubuntu-build"]')?.textContent).toBe("Offline"));
     fireEvent.click(await found('[data-tree-menu="relay:linux-box"]'));
     const remove = await screen.findByRole("menuitem", { name: "Remove Linux box" });
     expect(remove.getAttribute("aria-disabled")).not.toBe("true");

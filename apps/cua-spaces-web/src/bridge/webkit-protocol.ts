@@ -167,17 +167,21 @@ export const WEBKIT_METHODS = [
   "notifications.list",
   "notifications.markAllRead",
   "notifications.markRead",
+  "notifications.delete",
+  "notifications.deleteAll",
   "telemetry.track",
   "telemetry.linkNotice",
   "telemetry.acknowledgeLinkNotice",
   "crashReporting.config",
   "spaces.usage",
+  "spaces.reach",
   "spaces.windows",
   "stream.pip",
   "spaces.thumbnail",
   "spaces.chooseFiles",
   "spaces.droppedFiles",
   "spaces.sendFiles",
+  "windows.chooseIso",
   "host.setUp",
   "host.joinWithCode",
   "host.action",
@@ -317,6 +321,8 @@ export interface WkSpace {
   arch?: string | null;
   host?: string | null;
   hostName?: string | null;
+  /** The Space it is a child of (its id), from the daemon's tree. */
+  parent?: string | null;
   power?: { control: "suspend" | "stop" | (string & {}); off: boolean; turningOn?: boolean | null; error?: string | null; stopReason?: string | null } | null;
   cloud?: string | null;
   cloudPlace?: string | null;

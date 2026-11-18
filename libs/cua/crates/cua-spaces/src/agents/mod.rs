@@ -601,6 +601,7 @@ pub fn start_options_with(
             .collect(),
         endpoint,
         model: a.model.clone(),
+        effort: a.effort.clone(),
         hermes_config: plan.hermes_config,
         files: attachments(&a.files)?,
         sandbox_mcp: a.sandbox_mcp,

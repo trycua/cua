@@ -184,6 +184,42 @@ struct WebUIVideoSurfacesTests {
         #expect(host.opened.count == 1)
     }
 
+    /// Regression: a window another Space shows here (`xs:…`) was selected in the Stream list while the
+    /// slot streamed the Space's desktop, because the host keyed a stream by Space and tier alone.
+    @Test func aSlotForOneWindowStreamsThatWindowAndNotTheDesktop() async {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let provider = SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30)
+        let shown = StreamWindow(id: "xs:1a2b", app: "Safari", title: "Start Page")
+        provider.windows = [shown]
+        let s = surfaces(host) { _, _ in provider }
+        var window = entry("w", space: "home")
+        window["windowId"] = "xs:1a2b"
+        s.handle(message([window]))
+        await settle { host.phases("w").contains("live") }
+        #expect(provider.openedSources == [.window(shown)])
+        // The desktop slot of the same Space is its own stream: one session each.
+        s.handle(message([entry("d", space: "home")]))
+        await settle { provider.openedSources.count == 2 }
+        #expect(provider.openedSources == [.window(shown), .desktop])
+        #expect(s.stats().count == 2)
+        s.removeAll()
+    }
+
+    @Test func aSlotForAWindowThatIsGoneSaysSoInsteadOfShowingTheDesktop() async {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let provider = SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30)
+        let s = surfaces(host) { _, _ in provider }
+        var window = entry("w", space: "home")
+        window["windowId"] = "xs:gone"
+        s.handle(message([window]))
+        await settle { host.phases("w").contains("failed") }
+        #expect(host.phases("w") == ["failed"])
+        #expect(provider.openedSources.isEmpty)
+        s.removeAll()
+    }
+
     @Test func slotsShareAStreamPerSpaceAndTierAndStopItWhenTheLastGoes() async {
         let host = Host()
         let s = surfaces(host) { _, _ in OfflineStreamSourceProvider() }
@@ -194,7 +230,7 @@ struct WebUIVideoSurfacesTests {
         #expect(host.opened.map(\.1).sorted { $0.rawValue < $1.rawValue } == [.full, .tile])
         #expect(Set(s.stats().map { $0["users"] as? Int }) == [1, 2])
         // Placed over the web view, and hidden until a frame draws.
-        let tile = try? #require(s.surfaces["t1"])
+        let tile = s.surfaces["t1"]
         #expect(tile?.view.superview === host.webView)
         #expect(tile?.view.frame == CGRect(x: 20, y: 30, width: 400, height: 250))
         #expect(tile?.view.isHidden == true)
@@ -766,6 +802,10 @@ struct WebUIVideoSurfacesTests {
         let parsed = VideoSurfaceUpdate(json: ["surfaceId": "s", "spaceId": "a", "rect": ["x": 0, "y": 0, "width": 10, "height": 10],
                                                "holes": [["x": 1, "y": 2, "width": 3, "height": 4], "bad"]])
         #expect(parsed?.holes == [CGRect(x: 1, y: 2, width: 3, height: 4)])
+        #expect(parsed?.windowId == nil)
+        let forWindow = VideoSurfaceUpdate(json: ["surfaceId": "s", "spaceId": "a", "windowId": "xs:1",
+                                                  "rect": ["x": 0, "y": 0, "width": 10, "height": 10]])
+        #expect(forWindow?.windowId == "xs:1")
     }
 
     /// Regression: the header's "⋯" menu turned the desktop black. A menu
@@ -863,11 +903,18 @@ struct WebUIVideoSurfacesTests {
 
     @Test func anUnclaimedPrewarmedStreamIsLetGoAfterItsGrace() async {
         let host = Host()
-        let s = surfaces(host) { _, _ in OfflineStreamSourceProvider() }
+        // A stream that really streams. The offline provider refuses to open
+        // a session, and a warm stream whose session failed is let go at
+        // once, so the stream could vanish before the first expectation
+        // below (the flake this replaces).
+        let units = AccessUnit.split(Self.tinyH264)
+        let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
         s.prewarmGrace = .milliseconds(800)
         s.handle(["type": "prewarm", "spaceId": "a"])
-        await settle { host.opened.count == 1 }
+        // The stream is registered by `handle` itself, before any suspension,
+        // so this holds however slow the runner is.
         #expect(s.stats().count == 1)
+        await settle { host.opened.count == 1 }
         await settle { s.stats().isEmpty }
         #expect(s.stats().isEmpty)
         s.removeAll()
@@ -925,6 +972,8 @@ struct WebUIVideoSurfacesTests {
         await settle { s.stats().isEmpty }
         #expect(s.poster(for: .init(spaceId: "a", tier: .full)) != nil)
         #expect(s.poster(for: .init(spaceId: "b", tier: .full)) == nil)
+        // A window of that Space is another picture: it does not borrow the desktop's.
+        #expect(s.poster(for: .init(spaceId: "a", tier: .full, windowId: "xs:1")) == nil)
 
         slow = true
         s.handle(message([entry("v2", space: "a")]))

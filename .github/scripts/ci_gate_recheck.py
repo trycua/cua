@@ -101,7 +101,7 @@ def main() -> int:
     event = json.loads(open(args.event).read())
     if args.event_name == 'workflow_run':
         run = event['workflow_run']
-        if run.get('event') not in ('pull_request', 'pull_request_target'):
+        if run.get('event') != 'pull_request':
             print(f'{run.get("name")} ran for {run.get("event")}; the gate only reads pull request runs')
             return 0
         sha = run['head_sha']

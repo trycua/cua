@@ -129,7 +129,7 @@ def choose(model: DecisionModel, request: DecisionRequest) -> DecisionResult:
         winners = [candidate_id for candidate_id in allowed if probabilities[candidate_id] == top]
         if len(winners) != 1:
             raise ValueError("a tied top score is not actionable")
-        selected = scores.selected_id or winners[0]
+        selected = winners[0] if scores.selected_id is None else scores.selected_id
         if selected != winners[0]:
             raise ValueError("selection must be an allowed argmax")
         confidence = scores.confidence if scores.confidence is not None else probabilities[selected]

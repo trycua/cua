@@ -41,7 +41,7 @@ describe.skipIf(!wasmBuilt)("dropping files on a Space's tile", () => {
   it("says where the files go while over the tile, sends the dropped files into that Space, and reports it", async () => {
     const calls: [string, unknown][] = [];
     await mountApp(
-      "/home",
+      "/home/ask",
       host(calls, {
         "spaces.droppedFiles": () => ["/Users/ada/notes.txt", "/Users/ada/plan.pdf"],
         "spaces.sendFiles": () => [
@@ -71,7 +71,7 @@ describe.skipIf(!wasmBuilt)("dropping files on a Space's tile", () => {
   it("says why when the send fails", async () => {
     const calls: [string, unknown][] = [];
     await mountApp(
-      "/home",
+      "/home/ask",
       host(calls, {
         "spaces.droppedFiles": () => ["/Users/ada/notes.txt"],
         "spaces.sendFiles": () => {
@@ -91,7 +91,7 @@ describe.skipIf(!wasmBuilt)("dropping files on a Space's tile", () => {
 
   it("opens Teleport at an app dropped on a tile", async () => {
     const calls: [string, unknown][] = [];
-    await mountApp("/home", host(calls, { "spaces.droppedFiles": () => ["/Applications/Google Chrome.app"] }));
+    await mountApp("/home/ask", host(calls, { "spaces.droppedFiles": () => ["/Applications/Google Chrome.app"] }));
     const tile = await tileOf(RUNNING);
     await waitFor(() => expect(tile.querySelector("[data-space-id]")?.getAttribute("data-state")).toBe("running"));
     const dt = transfer(["Google Chrome.app"]);

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-use crate::{schema_settings, CaptureScope, EscalationReason, Platform};
+use crate::{schema_settings, CaptureScope, Platform};
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -179,7 +179,7 @@ impl EffectiveScope {
     }
 }
 
-/// Successful structured result shared by session state and escalation tools.
+/// Capture-scope state carried by the `start_session` result.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
 pub struct SessionStateOutput {
     pub session: String,
@@ -191,10 +191,6 @@ pub struct SessionStateOutput {
     /// Compatibility field: this reports whether this session has unlocked
     /// desktop capture scope. It is not an operating-system lock-screen probe.
     pub desktop_unlocked: bool,
-    #[schemars(required, schema_with = "nullable_escalation_reason_schema")]
-    pub escalation_reason: Option<EscalationReason>,
-    #[schemars(required, schema_with = "nullable_string_schema")]
-    pub escalation_detail: Option<String>,
 }
 
 impl ToolOutput for SessionStateOutput {}
@@ -887,24 +883,6 @@ fn nullable_string_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema
 fn nullable_cursor_point_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
     let point = generator.subschema_for::<CursorPointOutput>();
     schemars::json_schema!({ "anyOf": [point, { "type": "null" }] })
-}
-
-fn nullable_escalation_reason_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    schemars::json_schema!({
-        "anyOf": [
-            {
-                "type": "string",
-                "enum": [
-                    "ax_tree_pixel_mismatch",
-                    "background_delivery_failed",
-                    "foreground_ineffective",
-                    "no_window_target",
-                    "other"
-                ]
-            },
-            { "type": "null" }
-        ]
-    })
 }
 
 #[cfg(test)]

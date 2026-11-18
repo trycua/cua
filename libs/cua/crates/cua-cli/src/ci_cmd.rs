@@ -1314,7 +1314,7 @@ async fn serve(
     let gh = Arc::new(github(&cfg, paths)?);
     let tarballs = Arc::new(cua_ci::cache::TarballCache::new(paths.cache(), gh.clone()));
     let deps = PoolDeps {
-        spaces: Arc::new(cua_ci::sdk::SdkSpaces::new(cua)),
+        spaces: Arc::new(crate::ci_sdk::SdkSpaces::new(cua)),
         github: gh,
         tarballs,
         clock: Arc::new(SystemClock),
@@ -1768,7 +1768,7 @@ async fn remove(
         }
     };
     let deps = PoolDeps {
-        spaces: Arc::new(cua_ci::sdk::SdkSpaces::new(cua)),
+        spaces: Arc::new(crate::ci_sdk::SdkSpaces::new(cua)),
         github: gh,
         tarballs: Arc::new(cua_ci::cache::TarballCache::new(
             paths.cache(),

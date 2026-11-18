@@ -241,7 +241,7 @@ if (Test-Path -LiteralPath $ClaudeJson) {
 # recursively delete the arbitrary override root or unrelated files within it.
 $LocalHomeMarker = Join-Path $HomeDir "packages\current\cua-driver-local.exe"
 if (Test-Path -LiteralPath $LocalHomeMarker) {
-    foreach ($child in @("packages", "skills")) {
+    foreach ($child in @("packages", "skills", ".release_installed")) {
         $path = Join-Path $HomeDir $child
         if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force -Recurse }
     }

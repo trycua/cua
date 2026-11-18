@@ -25,7 +25,7 @@ struct FirstRunTests {
                              onboarding: OnboardingModel(statePath: state.path),
                              settingsPath: dir.appendingPathComponent("settings.json").path, telemetry: telemetry,
                              loginItem: loginItem)
-        model.settings.experiments = AppExperiments(cuaVolume: false, childSpaces: false, ciRunners: false, tcpShares: false, mobile: false, warmPools: false)
+        model.settings.experiments = AppExperiments(cuaVolume: false, ciRunners: false, tcpShares: false, mobile: false)
         let bridge = WebUIBridge(model: model, allowedOrigins: [])
         bridge.notifySpaceReady = { _ in }
         return (bridge, model, telemetry, state)

@@ -26,8 +26,6 @@ struct World {
 /// other ── o1
 /// owner-dup ("dup", a Space of the owner's own)
 fn world() -> World {
-    // Child Spaces are an experiment; these tests run with it on.
-    cua_vmm::experiments::set_enabled(cua_vmm::experiments::Gate::ChildSpaces, Some(true));
     let home = tempfile::tempdir().unwrap();
     let runtime = Runtime::new(RuntimeConfig {
         state_dir: Some(home.path().join("sandboxes")),

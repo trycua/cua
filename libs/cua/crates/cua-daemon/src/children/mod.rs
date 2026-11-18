@@ -72,6 +72,11 @@ pub struct Children {
 impl Children {
     /// Opens the state in `home`.
     pub fn open(home: &Path) -> std::io::Result<Self> {
+        // A create the last daemon was making when it stopped will never finish: its row says so.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as u64);
+        cua_spaces::child_creates::fail_orphans(home, now);
         Ok(Self {
             authority: capability::Authority::open(home)?,
             budget: budget::Ledger::open(home),
@@ -278,13 +283,6 @@ pub(crate) fn channel_app(shared: Arc<Shared>, space: String) -> axum::Router {
             let Some(authority) = shared.spawn_authority() else {
                 return unauthenticated(grpc, "child Spaces are off on this computer");
             };
-            // An experiment: while it is off, no capability does anything.
-            if !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::ChildSpaces) {
-                return unauthenticated(
-                    grpc,
-                    &cua_vmm::experiments::Gate::ChildSpaces.off_message(),
-                );
-            }
             let Some(token) = bearer(&req) else {
                 return unauthenticated(grpc, capability::Refusal::Malformed.message());
             };

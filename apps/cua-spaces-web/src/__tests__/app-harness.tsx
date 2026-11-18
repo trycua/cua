@@ -18,6 +18,7 @@ import { BridgeProvider, useBridge, useMachines, useSpaces, type SpacesHook } fr
 import { testCore } from "@/bridge/__tests__/testCore";
 import { ToastProvider } from "@/components/ui/toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { holdWarmStart } from "@/lib/prepare/store";
 import { routeTree } from "../routeTree.gen";
 
 export const LOCAL_NETWORK = "Local Network access is not available: cua cannot reach the VM at 192.168.64.45:3211 (No route to host (os error 65))";
@@ -88,6 +89,10 @@ beforeAll(async () => {
  * loading when the test ends, and a router that settles after jsdom is gone
  * throws `window is not defined`. Each test waits for them to go idle first. */
 const mounted: Array<{ state: { isLoading: boolean } }> = [];
+
+/** The warm home (Warm start) makes a Space of its own once the first run is over; a test that does not look at it holds it
+ * back (its own `beforeEach`, which runs after this one, lets it go). */
+beforeEach(() => holdWarmStart(true));
 
 afterEach(async () => {
   const routers = mounted.splice(0);

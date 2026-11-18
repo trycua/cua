@@ -360,6 +360,8 @@ fn row(s: dpb::Space) -> Value {
         } else {
             s.parent.clone()
         },
+        // The state (`running`, `stopped`, `suspended`); `power` is how it turns off.
+        "state": s.power_state,
         "power": s.power,
         "image": s.image,
         "os": s.os,

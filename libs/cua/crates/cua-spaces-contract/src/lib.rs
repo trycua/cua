@@ -17,6 +17,7 @@
 
 pub mod inputs;
 pub mod names;
+pub mod presence;
 
 use serde::Serialize;
 
@@ -1007,7 +1008,7 @@ pub fn tools() -> Vec<Tool> {
         Spec {
             category: Category::StreamsAndDisplay,
             result: "JSON: an array of windows (`window_id`, `epoch`, `title`, `app_name`, `app_id`, `pid`, `bounds`, `on_screen`, `focused`, `available`, `limitation`).",
-            instructions: "The windows a viewer can stream now, from StreamService.ListTargets: on screen, sized, normal app windows (no hidden, minimized or system-UI windows), each with its handle, title, app and bounds.",
+            instructions: "The windows a viewer can stream now, from StreamService.ListTargets: on screen, sized, normal app windows (no hidden, minimized or system-UI windows), each with its handle, title, app and bounds. Windows another Space shows here (stream_space_window) are listed too, with an `origin` (space_id, name, os, window_id); their handle opens with stream_endpoint like any other.",
             capabilities: &["space.windows.list"],
             requires: &["windows"],
             sdk_symbol: "Space.windows()",
@@ -1017,9 +1018,9 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::ListSpaceWindows>(),
         Spec {
             category: Category::StreamsAndDisplay,
-            result: "Text: `Streaming <window> of <space> to your desktop (bidirectional).`",
+            result: "Text: `Showing <window> of <space> in <parent>'s Stream section.` (into a Space) or `Streaming <window> of <space> to your desktop (bidirectional).` (into=desktop).",
             errors: &["stream"],
-            instructions: "FOR THE HUMAN. Opens a bidirectional window on the operator's desktop showing one Space window (the Cua Spaces app draws it from a media ticket). Pass app_name to auto-pick that app's largest visible window, or an exact window_id.",
+            instructions: "FOR THE HUMAN. Shows one window of a Space where the person watches. The usual use: you made a child Space, drive it with the same tools by passing space=<child> (space_bash, space_write, and the computer-use tools through call_tool(space=<child>, tool=\"computer_launch\" or \"computer_click\" or \"computer_screenshot\"; list_tools(space=<child>) lists them)), then call stream_space_window(space=<child>, app_name=\"Safari\") and the window appears in your own Space's Stream section, which the person clicks to watch. Anyone who may use the child streams it straight from the child; others get it relayed. Pass app_name to auto-pick that app's largest visible window, or an exact window_id; the entry ends when the window closes or either Space stops. into=desktop opens a bidirectional window on the operator's desktop instead (the Cua Spaces app draws it from a media ticket).",
             platforms: &OPERATOR_PLATFORMS,
             capabilities: &["operator.display", "operator.display.window"],
             requires: &["window_stream"],
@@ -1028,7 +1029,7 @@ pub fn tools() -> Vec<Tool> {
             sdk_symbol: "space.operatorDisplay.streamWindowToOperatorDesktop(_:)",
             rust_symbol: "OperatorDisplay::stream_window",
             notes: &["Operator-side: the pixels land on the human's computer, so the platform axis is the operator's OS and not the Space's."],
-            ..Spec::new("stream_space_window", "Draw one Space window on the operator's desktop.")
+            ..Spec::new("stream_space_window", "Show one Space window in another Space's Stream section (into=<your Space>; default the parent of space) or on the operator's desktop (into=desktop).")
         }
         .with::<i::StreamSpaceWindow>(),
         Spec {
@@ -1390,6 +1391,17 @@ pub fn tools() -> Vec<Tool> {
             ..Spec::new("notifications_ack", "Mark notifications read.")
         }
         .with::<i::NotificationsAck>(),
+        Spec {
+            category: Category::PersistentAgents,
+            result: "JSON: `deleted` (how many were removed).",
+            instructions: "Removes notifications for good, in every app that reads the feed. Pass `ids`, or `all: true` for the whole feed; an empty `ids` deletes nothing.",
+            capabilities: &["notifications.read"],
+            annotations: Annotations::mutating_idempotent(),
+            sdk_symbol: "spaces.notifications.delete(_:all:)",
+            rust_symbol: "notify::Feed::delete",
+            ..Spec::new("notifications_delete", "Delete notifications.")
+        }
+        .with::<i::NotificationsDelete>(),
         Spec {
             category: Category::PersistentAgents,
             result: "JSON: the grant: `id`, `agent`, `machine`, `created_ms`, `expires_ms`.",
@@ -2342,6 +2354,52 @@ mod tests {
     use super::*;
 
     #[test]
+    fn create_space_exposes_optional_resource_sizes() {
+        let create = tool("create_space").unwrap();
+        let resize = tool("resize_space").unwrap();
+        for field in ["cpus", "memory_mb"] {
+            let mut actual = create.input_schema["properties"][field].clone();
+            let mut expected = resize.input_schema["properties"][field].clone();
+            assert!(actual.is_object(), "create_space is missing {field}");
+            actual.as_object_mut().unwrap().remove("description");
+            expected.as_object_mut().unwrap().remove("description");
+            assert_eq!(actual, expected, "{field} uses the existing resource type");
+            assert!(
+                !create.input_schema["required"]
+                    .as_array()
+                    .is_some_and(|required| required.contains(&serde_json::json!(field))),
+                "{field} must remain optional"
+            );
+        }
+    }
+
+    #[test]
+    fn create_space_resource_sizes_parse_like_resize() {
+        let sizes: inputs::CreateSpace = serde_json::from_value(serde_json::json!({
+            "cpus": 1, "memory_mb": 1536
+        }))
+        .unwrap();
+        assert_eq!(sizes.cpus, Some(1));
+        assert_eq!(sizes.memory_mb, Some(1536));
+        let defaults: inputs::CreateSpace = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(defaults.cpus, None);
+        assert_eq!(defaults.memory_mb, None);
+        for field in ["cpus", "memory_mb"] {
+            for invalid in [
+                serde_json::json!(-1),
+                serde_json::json!(1.5),
+                serde_json::json!("1"),
+            ] {
+                let value = serde_json::json!({field: invalid});
+                assert!(
+                    serde_json::from_value::<inputs::CreateSpace>(value.clone()).is_err(),
+                    "{value}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn persistent_agent_create_carries_brief_and_standby() {
         let m: crate::inputs::PersistentAgentCreate = serde_json::from_value(serde_json::json!({
             "agent": "claude-code", "name": "ada", "space": "s",
@@ -2405,7 +2463,7 @@ mod tests {
 
     #[test]
     fn advertises_every_tool() {
-        assert_eq!(tools().len(), 122);
+        assert_eq!(tools().len(), 123);
     }
 
     #[test]

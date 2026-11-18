@@ -157,6 +157,12 @@ jobs:
       publish: ${{ steps.meta.outputs.publish }}
       spacesd_source: ${{ steps.meta.outputs.spacesd_source }}
       spacesd_version: ${{ steps.meta.outputs.spacesd_version }}
+      full: ${{ steps.meta.outputs.full }}
+      arch_matrix: ${{ steps.meta.outputs.arch_matrix }}
+      release_matrix: ${{ steps.meta.outputs.release_matrix }}
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - id: meta
         env:
@@ -168,8 +174,34 @@ jobs:
           INPUT_PUBLISH: ${{ inputs.publish }}
           INPUT_SOURCE: ${{ inputs.spacesd_source }}
           VAR_SOURCE: ${{ vars.CUA_LINUX_SPACESD_SOURCE || vars.CUA_DESKTOP_LINUX_SPACESD_SOURCE }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
+          # Scope of the build. Every event but a pull request builds the full
+          # matrix (both arches, every tier, the plain images). A pull request
+          # builds only the amd64 slim image, unless it changes the image
+          # definitions or build scripts (the image paths below): then it
+          # builds the full matrix too, so an image regression is caught
+          # before merge. Any doubt (the file list cannot be read) means full.
+          full=true
+          if [ "$EVENT" = pull_request ]; then
+            if files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
+                --jq '.[] | .filename, (.previous_filename // empty)')"; then
+              if grep -Eq '^(libs/images/|scripts/images/|libs/cua/crates/cua-cli/src/(image_build|image_release)\.rs$|libs/cua/crates/cua-cli/src/sandbox/bake\.rs$|libs/cua/crates/cua-image/src/(canonical|publish)\.rs$|libs/cua/crates/cua-vmm/src/(density\.rs$|qemu/)|\.github/workflows/(cd-image-linux|image-doctor)\.yml$)' <<<"$files"; then
+                full=true
+              else
+                full=false
+                echo "::notice::pull request does not touch the image definitions or build scripts: building only the amd64 slim image"
+              fi
+            fi
+          fi
+          if [ "$full" = true ]; then
+            arch_matrix='[{"arch":"amd64","runner":"ubuntu-24.04"},{"arch":"arm64","runner":"ubuntu-24.04-arm"}]'
+            release_matrix='{"arch":["amd64","arm64"],"tier":["slim","full","docker"]}'
+          else
+            arch_matrix='[{"arch":"amd64","runner":"ubuntu-24.04"}]'
+            release_matrix='{"arch":["amd64"],"tier":["slim"]}'
+          fi
           publish=false
           case "$EVENT" in
             push) [[ "$REF" == refs/tags/linux-image-v* ]] && publish=true ;;
@@ -215,6 +247,9 @@ jobs:
             echo "publish=$publish"
             echo "spacesd_source=$source"
             echo "spacesd_version=$version"
+            echo "full=$full"
+            echo "arch_matrix=$arch_matrix"
+            echo "release_matrix=$release_matrix"
           } | tee -a "$GITHUB_OUTPUT"
 
   spacesd:
@@ -223,11 +258,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            runner: ubuntu-24.04-arm
+        include: ${{ fromJSON(needs.meta.outputs.arch_matrix) }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -241,15 +272,12 @@ jobs:
           retention-days: 7
 
   cli:
+    needs: meta
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (inputs.promote_run == '' && inputs.doctor_children == '') }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            runner: ubuntu-24.04-arm
+        include: ${{ fromJSON(needs.meta.outputs.arch_matrix) }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -284,9 +312,7 @@ jobs:
     if: ${{ !cancelled() && needs.meta.result == 'success' && needs.cli.result == 'success' && needs.spacesd.result != 'failure' }}
     strategy:
       fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
-        tier: [slim, full, docker]
+      matrix: ${{ fromJSON(needs.meta.outputs.release_matrix) }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     # arm64 runs its VM doctor under TCG (hosted arm64 runners have no KVM).
     timeout-minutes: 360
@@ -300,11 +326,11 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Fetch cua-spacesd
         if: env.SPACESD_SOURCE == 'local'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: ./.github/actions/download-fresh-artifact
         with:
           name: cua-spacesd-linux-${{ matrix.arch }}
           path: libs/images/linux/dist/${{ matrix.arch }}
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           name: cua-cli-linux-${{ matrix.arch }}
           path: ${{ runner.temp }}/bin
@@ -356,7 +382,8 @@ jobs:
   # answering the official MCP client through a port forward.
   docker-bake:
     needs: [meta, cli, release]
-    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    # The docker tier is built only on the full matrix.
+    if: ${{ !cancelled() && needs.release.result == 'success' && needs.meta.outputs.full == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -364,15 +391,15 @@ jobs:
       EVIDENCE: ${{ github.workspace }}/.bake-evidence
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           name: cua-cli-linux-amd64
           path: ${{ runner.temp }}/bin
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           name: artifacts-linux-docker-amd64
           path: ${{ runner.temp }}/docker-tier
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
       - name: Set up pasta (secure network)
         uses: ./.github/actions/setup-pasta
       - name: Host tools (QEMU, firmware, KVM)
@@ -382,7 +409,7 @@ jobs:
           echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 ovmf genisoimage netcat-openbsd
-          sudo chmod 666 /dev/kvm
+          "$GITHUB_WORKSPACE/scripts/images/enable-kvm.sh" --require
       - name: Free runner disk (golden snapshots and the checkpoint need room)
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
       - name: Bake, fork and check (tests/bake-world.sh)
@@ -407,7 +434,9 @@ jobs:
           retention-days: 14
 
   plain:
-    needs: cli
+    needs: [meta, cli]
+    # Not built on a pull request that leaves the image definitions alone.
+    if: ${{ !cancelled() && needs.cli.result == 'success' && needs.meta.outputs.full == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -422,7 +451,7 @@ jobs:
       SMOKE_EVIDENCE: ${{ github.workspace }}/.images-evidence
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           name: cua-cli-linux-${{ matrix.arch }}
           path: ${{ runner.temp }}/bin
@@ -436,7 +465,7 @@ jobs:
           sudo apt-get update -qq
           fw=ovmf; [ "$ARCH" = arm64 ] && fw=qemu-efi-aarch64
           sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 qemu-system-arm "$fw" genisoimage
-          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+          "$GITHUB_WORKSPACE/scripts/images/enable-kvm.sh"
           scripts/images/install-gvisor.sh
       - name: Build rootfs + disk (cua images build)
         run: cua images build "libs/images/$IMAGE" --platform "linux/$ARCH" --tag ci --outputs rootfs,disk
@@ -485,7 +514,7 @@ jobs:
       tiers: ${{ steps.changes.outputs.tiers }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           pattern: "evidence-linux-*"
           path: evidence
@@ -541,17 +570,17 @@ jobs:
       STAMP: ${{ needs.meta.outputs.stamp }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           name: cua-cli-linux-amd64
           path: ${{ runner.temp }}/bin
       # Both arches' gate results: push refuses unless every required gate passed.
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           pattern: "evidence-linux-${{ matrix.tier }}-*"
           path: release/evidence
           merge-multiple: true
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           name: artifacts-linux-${{ matrix.tier }}-${{ matrix.arch }}
           path: release/artifacts/${{ matrix.arch }}
@@ -601,11 +630,11 @@ jobs:
       STAMP: ${{ needs.meta.outputs.stamp }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           name: cua-cli-linux-amd64
           path: ${{ runner.temp }}/bin
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           pattern: "{evidence,pushed}-linux-${{ matrix.tier }}-*"
           path: release/evidence
@@ -801,6 +830,14 @@ jobs:
         run: |
           python3 -m unittest discover -s libs/images/common/tools/tests
           python3 -m unittest discover -s scripts/images/tests
+      # oras needs a newer Go than the runner image ships. Left to the go
+      # command, that downloads a toolchain through proxy.golang.org, which
+      # 404s for a few hours after each new patch release (go1.26.11, 10 Nov).
+      # setup-go gets the toolchain from go.dev directly.
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version: stable
+          cache: false
       - name: Report publishing against a throwaway registry
         run: |
           go install github.com/google/go-containerregistry/cmd/crane@v0.20.6

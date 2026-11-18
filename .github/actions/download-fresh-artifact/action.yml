@@ -1,0 +1,48 @@
+name: "Download a fresh artifact (retrying)"
+description: >-
+  actions/download-artifact for an artifact another job of this run uploaded
+  moments ago, tried a second time after 30 seconds. On 10 Nov 2026 the shards
+  of E2E: cua SDK and the image jobs of CD: Image linux started right after
+  their build job's upload finished; the artifact was listed with its ID and
+  the download then answered "No artifacts found for ID" or "Artifact not
+  found for name". Each of those failures cost a rerun of the whole workflow.
+  The second attempt runs only when the first one failed.
+inputs:
+  name:
+    description: "Artifact name (as for actions/download-artifact)."
+    default: ""
+  pattern:
+    description: "Artifact name glob (as for actions/download-artifact)."
+    default: ""
+  path:
+    description: "Destination directory."
+    default: ""
+  merge-multiple:
+    description: "Merge the matched artifacts into one directory."
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Download the artifact
+      id: first
+      continue-on-error: true
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      with:
+        name: ${{ inputs.name }}
+        pattern: ${{ inputs.pattern }}
+        path: ${{ inputs.path }}
+        merge-multiple: ${{ inputs.merge-multiple }}
+    - name: Wait before the second attempt
+      if: steps.first.outcome == 'failure'
+      shell: bash
+      run: |
+        echo "::warning::artifact download failed; trying again in 30 s (an artifact uploaded seconds ago can be listed before it is served)"
+        sleep 30
+    - name: Download the artifact (second attempt)
+      if: steps.first.outcome == 'failure'
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      with:
+        name: ${{ inputs.name }}
+        pattern: ${{ inputs.pattern }}
+        path: ${{ inputs.path }}
+        merge-multiple: ${{ inputs.merge-multiple }}

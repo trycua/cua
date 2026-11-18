@@ -345,13 +345,7 @@ impl Tool for ClickTool {
                         3 => "triple-click",
                         _ => "click",
                     };
-                    let target = windows::Win32::Foundation::HWND(hwnd_u as usize as *mut _);
-                    let gone = unsafe {
-                        !windows::Win32::UI::WindowsAndMessaging::IsWindow(target).as_bool()
-                            || !windows::Win32::UI::WindowsAndMessaging::IsWindowVisible(target)
-                                .as_bool()
-                    };
-                    let note = if gone {
+                    let note = if crate::win32::window_closed_or_hidden(hwnd_u) {
                         " The window closed or hid."
                     } else {
                         ""

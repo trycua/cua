@@ -551,7 +551,7 @@ fn fixture_handler(state: SharedState) -> MockHandler {
         match call.method.as_str() {
             "Target.getTargets" => {
                 if st.silent_get_targets {
-                    return MockReply::silent();
+                    return MockReply::hang();
                 }
                 if st.fail_get_targets {
                     let reply = MockReply::method_not_found("Target.getTargets");

@@ -75,14 +75,6 @@ impl MockReply {
         }
     }
 
-    /// Keep the socket open without answering this command.
-    pub fn silent() -> Self {
-        Self {
-            suppress_response: true,
-            ..Self::ok(serde_json::json!({}))
-        }
-    }
-
     pub fn after_notification(mut self, ready: Arc<tokio::sync::Notify>) -> Self {
         self.response_ready = Some(ready);
         self

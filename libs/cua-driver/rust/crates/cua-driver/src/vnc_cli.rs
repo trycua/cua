@@ -162,9 +162,16 @@ fn execute(invocation: Invocation) -> Result<(), String> {
 fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
+    open_private(&options, path)?.write_all(bytes)
+}
+
+/// Open with `options`, then make the file owner-only. The mode given at
+/// creation does not apply to a file that already exists.
+fn open_private(options: &std::fs::OpenOptions, path: &Path) -> std::io::Result<std::fs::File> {
+    let file = options.open(path)?;
     #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    options.open(path)?.write_all(bytes)
+    file.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+    Ok(file)
 }
 
 /// Append one line to the approval log. A log that cannot be written is
@@ -191,9 +198,7 @@ fn record(entry: &str) {
         .and_then(|()| {
             let mut options = std::fs::OpenOptions::new();
             options.append(true).create(true);
-            #[cfg(unix)]
-            std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-            options.open(&path)?.write_all(line.as_bytes())
+            open_private(&options, &path)?.write_all(line.as_bytes())
         });
     if let Err(error) = written {
         eprintln!(
@@ -209,6 +214,20 @@ mod tests {
 
     fn args(words: &[&str]) -> Vec<String> {
         words.iter().map(|word| (*word).to_owned()).collect()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_overwritten_screenshot_becomes_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::temp_dir().join(format!("cua-vnc-shot-{}.png", std::process::id()));
+        std::fs::write(&path, b"old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_private(&path, b"new").unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        let content = std::fs::read(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!((mode, content.as_slice()), (0o600, &b"new"[..]));
     }
 
     #[test]

@@ -49,10 +49,10 @@ reported as a presented mutation. `supersede` exercises the compositor's
 
 Two channels, deliberately separate:
 
-- `--journal <path>` — JSONL. `startup`, `mapped`, `layout`, `input`, `state`,
+- `--journal <path>`: JSONL. `startup`, `mapped`, `layout`, `input`, `state`,
   `sample`, and `shutdown` records. The `sample` records are the causal timing
   rows.
-- `--state <path>` — application-owned state (counter, `last_update_id`, colour,
+- `--state <path>`: application-owned state (counter, `last_update_id`, colour,
   last action), replaced atomically. The window title mirrors both the counter
   and update ID as `CuaTestHarness Presentation [n=<counter>] [u=<update_id>]`,
   which the Driver can read back through `list_windows`.
@@ -100,7 +100,7 @@ time. The runner requires one such row from the `supersede` control.
 `cargo` alone is enough: `wayland-client`'s default backend is the pure-Rust
 protocol implementation, so no system Wayland library is needed to build. The
 Wayland dependencies are declared for `cfg(target_os = "linux")` only, which
-keeps the accounting, layout, and journal modules — and their unit tests —
+keeps the accounting, layout, and journal modules (and their unit tests)
 building on every host.
 
 ## Usage
@@ -144,7 +144,7 @@ directly comparable with the fixture's own stamps. A different clock produces
 a typed `clock_mismatch` lane limitation without an invalid subtraction.
 
 Exit codes: `0` normal, `2` bad arguments or non-Linux host, `3` this
-compositor cannot attribute a presentation — either `wp_presentation` is
+compositor cannot attribute a presentation: either `wp_presentation` is
 unavailable or it completed no feedback (a typed environment limitation, not a
 measurement), `1` any other failure.
 

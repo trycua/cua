@@ -120,6 +120,12 @@ mod get_window_state_actions_tests {
             format_node_line(&n),
             "- [1] Edit \"Password\" [actions=[set_value]]"
         );
+
+        n.element_index = None;
+        n.is_password = Some(true);
+        assert_eq!(format_node_line(&n), "- Edit \"Password\" [password]");
+        n.is_password = Some(false);
+        assert_eq!(format_node_line(&n), "- Edit \"Password\"");
     }
 
     #[test]

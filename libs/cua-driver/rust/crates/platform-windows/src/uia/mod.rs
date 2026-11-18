@@ -1216,6 +1216,9 @@ pub(crate) fn format_node_line(node: &UiaNode) -> String {
         if let Some(v) = &node.value {
             s.push_str(&format!(" = \"{}\"", v));
         }
+        if node.is_password == Some(true) {
+            s.push_str(" [password]");
+        }
     }
     s
 }

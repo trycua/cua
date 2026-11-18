@@ -1977,7 +1977,8 @@ fn dialog_block(dialog: &super::cdp_ws::CdpDialogState) -> Value {
 /// until the microtasks queued by the handlers ran. No other task can run in
 /// that span, so those mutations are the handlers' own, for example a button
 /// that reveals fields elsewhere without changing its own state. Mutations
-/// from hover and move are left out, so a hover tooltip does not count.
+/// from hover and move, and from the microtasks their handlers queue, are
+/// left out, so a hover tooltip does not count.
 const DOM_EVENT_CLICK_SEQUENCE: &str = "async function() { \
     const el = this; \
     const doc = el.ownerDocument; \
@@ -2002,6 +2003,8 @@ const DOM_EVENT_CLICK_SEQUENCE: &str = "async function() { \
     P('pointerover', 0); P('pointerenter', 0, { bubbles: false, cancelable: false }); \
     M('mouseover', 0); M('mouseenter', 0, { bubbles: false, cancelable: false }); \
     P('pointermove', 0); M('mousemove', 0); \
+    const settle = async () => { for (let turn = 0; turn < 8; turn++) await null; }; \
+    await settle(); \
     observer.takeRecords(); \
     records = []; \
     const compat = P('pointerdown', 1); \
@@ -2012,7 +2015,7 @@ const DOM_EVENT_CLICK_SEQUENCE: &str = "async function() { \
     P('pointerup', 0); \
     if (compat) M('mouseup', 0, { detail: 1 }); \
     M('click', 0, { detail: 1 }); \
-    for (let turn = 0; turn < 8; turn++) await null; \
+    await settle(); \
     records.push(...observer.takeRecords()); \
     observer.disconnect(); \
     const caused = records.filter(m => !el.contains(m.target) \

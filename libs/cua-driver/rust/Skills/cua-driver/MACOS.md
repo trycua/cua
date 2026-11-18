@@ -648,8 +648,11 @@ moment, and no client can stop that. So in the background, a `click` on a
 web `<select>` in Chrome or an Electron app is refused before anything is
 sent (`select_menu_would_raise_window`): choose the option with
 `set_value` on the same element, which types the option's text into the
-closed control and never opens the menu. Native popups and context menus
-still open and flash the window briefly.
+closed control and never opens the menu. A web menu button
+(`<button aria-haspopup="menu">`) has the same role but draws its menu in
+the page, so it is pressed in the background and its items are then chosen
+with `click`. Native popups and context menus still open and flash the
+window briefly.
 
 ### Apps that activate themselves
 

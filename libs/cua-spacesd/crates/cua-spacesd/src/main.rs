@@ -406,6 +406,10 @@ fn promote_spacesd_env_vars() {
 }
 
 fn main() {
+    // A hardware encoder probe child (see `cua_spacesd_desktop::encoder_probe`)
+    // probes one backend, prints the result and exits.
+    #[cfg(not(cua_headless))]
+    cua_media_codec::probe::maybe_run_probe_child();
     // Before any thread or child: only this process keeps the capabilities
     // it was started with (see `cua_spacesd_server::privilege`).
     #[cfg(unix)]
@@ -891,6 +895,11 @@ async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError
         let desktop = if no_desktop {
             None
         } else {
+            // Probe the hardware encoders now, each in a child that is killed
+            // if its GPU driver hangs, so `GetCapabilities` never waits on one.
+            if let Some(isolation) = cua_spacesd_desktop::encoder_probe::subprocess_isolation() {
+                cua_spacesd_desktop::encoder_probe::start_host_probe(isolation);
+            }
             match cua_spacesd_desktop::grpc::DesktopServiceProvider::for_host(ctx.clone()) {
                 Ok(provider) => Some(provider),
                 Err(error) => {

@@ -95,6 +95,8 @@ export function GeneralTab() {
   const { core } = useBridge();
   const tips = useTips();
   // Show tips and Reset tips: what the core makes of the row (`settings.choose`), saved with the settings.
+  // "When I close the window" and its notice: the Mac app's background service (the host lays the rows out).
+  const closeRows = (general?.rows ?? []).filter((r) => r.id === "close-window" || r.id === "close-notice");
   const tipRows = (general?.rows ?? []).filter((r) => r.id === "tips" || r.id === "reset-tips");
   const chooseTips = (row: string, option: string) => tips.save(chooseSettings(core, { tips: tips.state }, row, option).tips);
 
@@ -137,6 +139,14 @@ export function GeneralTab() {
             }
           />
         ) : null}
+        {closeRows.map((row) => (
+          <CoreSettingsRow
+            key={row.id}
+            row={row}
+            asSelect
+            onChoose={(_, option) => void chooseSetting(row.id, option).catch(fail(t("settings.general.close_failed")))}
+          />
+        ))}
         {tipRows.map((row) => (
           <CoreSettingsRow
             key={row.id}

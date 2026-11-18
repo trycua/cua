@@ -193,7 +193,7 @@ impl LoginAttempt {
 /// [`LoginAttempt::wait`]).
 #[cfg(feature = "host")]
 async fn enroll_after_sign_in(session: &Arc<cua_auth::Session>) {
-    let home = cua_daemon::cua_home();
+    let home = cua_daemon_core::cua_home();
     let Ok(auth) = cua_host::DeviceAuth::new(
         &cua_host::relay_url_for(None, &home),
         Arc::new(super::host::SessionTokens(session.clone())),
@@ -371,7 +371,7 @@ pub(crate) async fn revoke_connected_agents(devices: Vec<String>) {
     if devices.is_empty() {
         return;
     }
-    let Ok(d) = cua_daemon::client::existing_daemon().await else {
+    let Ok(d) = cua_daemon_core::client::existing_daemon().await else {
         return;
     };
     for device in devices {

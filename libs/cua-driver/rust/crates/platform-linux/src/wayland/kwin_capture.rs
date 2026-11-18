@@ -635,7 +635,7 @@ async fn read_image(
 }
 
 /// The whole desktop, every output included, in logical pixels: KWin's layout
-/// bounding box, the frame `kwin_layout` reads. KWin answers directly, with no
+/// bounding box, the frame `logical_layout` reads. KWin answers directly, with no
 /// portal request or prompt, and never consults a Deny saved in the portal, so
 /// the caller checks the operator's switch first. KWin 6.7 and older refuse an
 /// executable without the ScreenShot2 grant; KWin 6.8 has no such check.

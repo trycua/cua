@@ -24,18 +24,24 @@ import { ProfileTrigger } from "./profile-card";
 import { RIGHT_ROWS } from "./rights";
 import type { Roster, RosterAgent, RosterAuthor } from "./roster";
 
+/** The look of the quiet tags after a name (AI, JOB): a 15 px fill, no outline, the one 4 px radius. */
+const QUIET_TAG =
+  "inline-flex h-[15px] shrink-0 items-center rounded-[4px] bg-foreground/[0.08] px-1 text-[9.5px] font-bold tracking-[0.04em] text-foreground/60";
+
 /** After an agent's name: says it is an AI. Quiet: a 15 px fill, no outline, the one 4 px radius. */
 export function AiTag({ className }: { className?: string }) {
   return (
-    <span
-      data-ai-tag=""
-      aria-label="AI agent"
-      className={cn(
-        "inline-flex h-[15px] shrink-0 items-center rounded-[4px] bg-foreground/[0.08] px-1 text-[9.5px] font-bold tracking-[0.04em] text-foreground/60",
-        className,
-      )}
-    >
+    <span data-ai-tag="" aria-label="AI agent" className={cn(QUIET_TAG, className)}>
       AI
+    </span>
+  );
+}
+
+/** After a job's name in the child Spaces list: says it is a job. Exactly the AI tag's look. */
+export function JobTag({ className }: { className?: string }) {
+  return (
+    <span data-job-tag="" aria-label="Job" className={cn(QUIET_TAG, className)}>
+      JOB
     </span>
   );
 }

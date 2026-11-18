@@ -59,6 +59,18 @@ fn deny<T>() -> R<T> {
     Err(refused("create, list and manage its own children"))
 }
 
+/// `(power, power_state)` as an agent in a Space sees them. `power` is how the Space turns off (`stop` or `suspend`);
+/// the guest tools and the `cua spaces ls` an image shipped before 0.14 print it as the Space's state, so a running
+/// child read "stop" and agents said "the Space shows as stopped" about a Space they were using. On this channel
+/// `power` therefore carries the state itself (`running`, `stopped`, `suspended`); `power_state` is unchanged.
+pub(crate) fn state_for_agents((power, state): (String, String)) -> (String, String) {
+    if state.is_empty() {
+        (power, state)
+    } else {
+        (state.clone(), state)
+    }
+}
+
 /// The scoped services of one Space's channel.
 #[derive(Clone)]
 pub struct Scoped {
@@ -120,7 +132,7 @@ impl Scoped {
     /// Power, stop reason and the rest of a record's live fields.
     fn fill(&self, records: &mut [pb::Space]) {
         for r in records.iter_mut() {
-            (r.power, r.power_state) = self.spaces().power_of(&r.id);
+            (r.power, r.power_state) = state_for_agents(self.spaces().power_of(&r.id));
             r.stop_reason = self.spaces().stop_reason_of(&r.id);
         }
         self.spaces().fill_records(records);
@@ -609,7 +621,18 @@ impl Scoped {
         }
         let child = self.resolve(&q)?;
         args[key] = Value::String(child.id);
+        // A window it shows goes into the Stream section of the Space that
+        // asks, never another Space's or the person's desktop.
+        pin_stream_target(name, args, &self.space);
         Ok(())
+    }
+}
+
+/// A Space shows a child's window only in its own Stream section: whatever
+/// `into` the agent passed (another Space, `desktop`) is replaced.
+fn pin_stream_target(name: &str, args: &mut Value, caller: &str) {
+    if name == "stream_space_window" {
+        args["into"] = Value::String(caller.to_string());
     }
 }
 
@@ -957,13 +980,17 @@ impl SpaceService for Scoped {
             self.audit("refuse", &name, e.message());
         })?;
         let tracked = Tracked::start(self.spaces().home_dir(), &self.space, &child);
-        let resp = match self.owner().create_space(Request::new(child)).await {
+        let mut resp = match self.owner().create_space(Request::new(child)).await {
             Ok(r) => r,
             Err(e) => {
                 tracked.failed(e.message());
                 return Err(for_the_agent(e));
             }
         };
+        if let Some(s) = resp.get_mut().space.as_mut() {
+            // The result says how the Space is now (running or not), read now, not left to the registry's last word.
+            (s.power, s.power_state) = state_for_agents(self.spaces().power_of(&s.id));
+        }
         if let Some(s) = &resp.get_ref().space {
             tracked.ready(&s.id);
             self.audit("spawn", &s.id, &name);
@@ -1006,7 +1033,6 @@ impl SpaceService for Scoped {
         let me = self.clone();
         // The reservation lasts as long as the create's stream.
         let adopted = stream.map(move |item| {
-            let item = item.map_err(for_the_agent);
             let _ = &held;
             match &item {
                 Ok(pb::CreateSpaceStreamResponse {
@@ -1015,7 +1041,15 @@ impl SpaceService for Scoped {
                 Err(e) => tracked.failed(e.message()),
                 _ => {}
             }
-            let item = item.map_err(for_the_agent);
+            let mut item = item.map_err(for_the_agent);
+            if let Ok(pb::CreateSpaceStreamResponse {
+                event: Some(pb::create_space_stream_response::Event::Result(r)),
+            }) = &mut item
+                && let Some(s) = r.space.as_mut()
+            {
+                // The result says how the Space is now, read now.
+                (s.power, s.power_state) = state_for_agents(me.spaces().power_of(&s.id));
+            }
             if let Ok(pb::CreateSpaceStreamResponse {
                 event: Some(pb::create_space_stream_response::Event::Result(r)),
             }) = &item
@@ -1225,6 +1259,21 @@ impl SpaceService for Scoped {
     }
 
     async fn list_orphans(&self, _: Request<pb::ListOrphansRequest>) -> R<pb::ListOrphansResponse> {
+        deny()
+    }
+
+    async fn list_stream_windows(
+        &self,
+        _: Request<pb::ListStreamWindowsRequest>,
+    ) -> R<pb::ListStreamWindowsResponse> {
+        // Watching is the person's; an agent shows a window with `stream_space_window`.
+        deny()
+    }
+
+    async fn open_stream_entry(
+        &self,
+        _: Request<pb::OpenStreamEntryRequest>,
+    ) -> R<pb::OpenStreamEntryResponse> {
         deny()
     }
 
@@ -1609,6 +1658,39 @@ mod agent_words_tests {
             for_the_agent(Status::resource_exhausted("the budget is spent")).message(),
             "the budget is spent"
         );
+    }
+}
+
+#[cfg(test)]
+mod stream_scope_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_child_window_can_only_be_shown_in_the_callers_own_space() {
+        for asked in [json!("desktop"), json!("local:other"), Value::Null] {
+            let mut args = json!({"space": "local:kid", "app_name": "Safari", "into": asked});
+            pin_stream_target("stream_space_window", &mut args, "local:me");
+            assert_eq!(args["into"], "local:me");
+        }
+        // Other tools are left alone.
+        let mut args = json!({"space": "local:kid"});
+        pin_stream_target("space_bash", &mut args, "local:me");
+        assert!(args.get("into").is_none());
+    }
+
+    #[test]
+    fn the_tools_for_driving_and_showing_a_child_are_all_scoped() {
+        for tool in [
+            "call_tool",
+            "list_tools",
+            "space_bash",
+            "list_space_windows",
+            "stream_space_window",
+        ] {
+            assert_eq!(Scoped::tool_target(tool), Some("space"), "{tool}");
+        }
+        assert_eq!(Scoped::tool_target("stream_endpoint"), None);
     }
 }
 

@@ -66,8 +66,21 @@ const at = (now: number, minutesAgo: number) => new Date(now - minutesAgo * 60_0
 /** The Mac mini and the Linux box sharing their own desktops over the relay (`?demo=desktops`): rows of their own, no
  * host above them. Without these the demo's computers have nowhere to run a task, so Home can't start on one made the
  * default. */
-export function demoDesktopRows(now: number): SpaceRow[] {
+export function demoDesktopRows(now: number, thisMacShares = true): SpaceRow[] {
   return [
+    // This Mac's own desktop (`this-mac`): reachable while it is shared, listed off (suspended) while it is not.
+    {
+      id: "this-mac",
+      name: "This Mac",
+      provider: "local",
+      spacesdVersion: "0.6.0",
+      features: [...STREAMS],
+      addedAt: at(now, 1200),
+      os: "macos",
+      osName: "macOS",
+      arch: "arm64",
+      reachable: thisMacShares,
+    },
     {
       id: "relay:mac-mini",
       name: "Mac mini",

@@ -24,9 +24,10 @@ The typed slice covers the cross-platform session lifecycle tools:
 
 Ordinary calls do not need `start_session`. The runtime creates one implicit
 session for the authenticated transport lease and reuses it until transport
-close, explicit end, or five minutes of inactivity. `escalate_session` and
-`get_session_state` remain deprecated compatibility tools for legacy
-capture-scope sessions. There is no `deescalate_session` tool.
+close, explicit end, or five minutes of inactivity. The deprecated
+`escalate_session` and `get_session_state` tools were removed in 0.48.0; select
+window or desktop modality on each action and use `get_session` for session
+state.
 
 It also covers the portable whole-desktop loop:
 
@@ -109,7 +110,7 @@ Compatibility is tracked separately at each boundary:
 
 | Field | Current | Meaning |
 | --- | --- | --- |
-| `contract_version` | `0.8.0` | Generated manifest and typed SDK shape |
+| `contract_version` | `0.9.0` | Generated manifest and typed SDK shape |
 | `tools_list_schema_version` | `1` | cua-driver `tools/list` extension shape |
 | `capability_version` | `1` | Additive capability-token vocabulary |
 | `mcp_protocol_version` | `2025-06-18` | Legacy `initialize.params.protocolVersion` and loopback HTTP compatibility version; modern stdio negotiation is endpoint-owned |

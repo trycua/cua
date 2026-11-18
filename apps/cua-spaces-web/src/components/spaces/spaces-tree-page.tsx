@@ -185,11 +185,13 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
 
   // A computer opens its own page (its switches, Spaces, details and Remove), a Space its own.
   const open = (n: TreeNode) =>
-    n.kind === "computer" && n.machine
-      ? void navigate({ to: "/spaces/computer/$computerId", params: { computerId: computerParam(n.machine) } })
-      : n.space
-        ? void navigate({ to: "/spaces/$spaceId", params: { spaceId: n.space.id } })
-        : undefined;
+    n.kind === "computer" && n.opens
+      ? void navigate({ to: "/spaces/$spaceId", params: { spaceId: n.opens } })
+      : n.kind === "computer" && n.machine
+        ? void navigate({ to: "/spaces/computer/$computerId", params: { computerId: computerParam(n.machine) } })
+        : n.space
+          ? void navigate({ to: "/spaces/$spaceId", params: { spaceId: n.space.id } })
+          : undefined;
   // A click on a name opens it, a double-click renames it. A real double-click starts with a click, so a click waits out
   // the double-click time before opening, and a double-click cancels it. A keyboard press (detail 0) opens at once.
   const clickName = (n: TreeNode, detail: number) => {
@@ -214,6 +216,12 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
   const viewRemove = (n: TreeNode) => machines.view?.machines.find((m) => m.id === n.machine?.id)?.remove ?? null;
   const menu = (n: TreeNode): MenuItem[] => {
     const items: MenuItem[] = [{ label: t("computers.page.open"), onSelect: () => open(n) }];
+    // A computer whose row opens its desktop keeps its own page (switches, details, Remove) one step away.
+    if (n.kind === "computer" && n.opens && n.machine)
+      items.push({
+        label: t("computers.page.computer_settings"),
+        onSelect: () => void navigate({ to: "/spaces/computer/$computerId", params: { computerId: computerParam(n.machine!) } }),
+      });
     if (canRename(n)) items.push({ label: t("computers.page.rename"), onSelect: () => setEditing({ key: n.key, name: n.name }) });
     if (n.settingsId && !n.isDefault && !defaults.unsupported)
       items.push({
@@ -527,7 +535,7 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
         </p>
       ) : null}
       {single ? (
-        // f7: only This Mac. Offer to add another computer they own.
+        // f7: only This Mac. A hint, not a second button: the header's Add a computer is the one way in.
         <GroupedSection className="mt-8" data-tree-single="">
           <div className="flex items-center gap-4 px-5 py-4">
             <HardDriveIcon className="size-6 shrink-0 text-muted-foreground" strokeWidth={1.5} />
@@ -535,9 +543,6 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
               <div className="text-[15px] font-medium">{t("computers.page.single_title")}</div>
               <div className="text-[13px] text-muted-foreground">{t("computers.page.single_body")}</div>
             </div>
-            <Button variant="outline" onClick={() => setAdding(true)}>
-              {t("computers.page.add_computer")}
-            </Button>
           </div>
         </GroupedSection>
       ) : null}

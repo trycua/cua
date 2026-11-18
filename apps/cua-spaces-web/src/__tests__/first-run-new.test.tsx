@@ -436,7 +436,7 @@ describe("after the first job, on Home: the rest of setup", () => {
     expect(NEW_RUN_SCREENS).not.toContain("next");
   });
 
-  it("offers to invite a teammate, add another computer and let agents use apps on this Mac, and Not now", () => {
+  it("offers to invite a teammate and add another computer, and Not now", () => {
     const onRow = vi.fn();
     const onDismiss = vi.fn();
     render(<BringTheRestCard view={bringRestView({ os: "macos" })} onRow={onRow} onDismiss={onDismiss} />);
@@ -445,20 +445,20 @@ describe("after the first job, on Home: the rest of setup", () => {
     const rows = [...document.querySelectorAll<HTMLElement>("[data-bring-rest-row]")].map((r) => r.textContent);
     expect(rows[0]).toContain("Invite a teammate");
     expect(rows[1]).toContain("Add another computer");
-    expect(rows[2]).toContain("Let agents use apps on this Mac");
-    fireEvent.click(document.querySelector("[data-bring-rest-row=apps]")!);
-    expect(onRow).toHaveBeenCalledWith("apps");
+    fireEvent.click(document.querySelector("[data-bring-rest-row=invite]")!);
+    expect(onRow).toHaveBeenCalledWith("invite");
     fireEvent.click(screen.getByRole("button", { name: "Not now" }));
     expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 
-  it("has no apps row away from a Mac, or on a Mac with no permissions to give", () => {
+  it("no longer asks to let agents use apps on this Mac: setup's agents step connects Cua Driver (CUA-4067)", () => {
+    expect(bringRestView({ os: "macos" }).rows.map((r) => r.id)).toEqual(["invite", "add-computer"]);
     expect(bringRestView({ os: "windows" }).rows.map((r) => r.id)).toEqual(["invite", "add-computer"]);
-    expect(bringRestView({ os: "macos", apps: false }).rows.map((r) => r.id)).toEqual(["invite", "add-computer"]);
+    expect(text()).not.toContain("Let agents use apps");
   });
 
   it("adds Use Cua from Terminal as the last row, only where this app can install the command", () => {
-    expect(bringRestView({ os: "macos", cli: true }).rows.map((r) => r.id)).toEqual(["invite", "add-computer", "apps", "cli"]);
+    expect(bringRestView({ os: "macos", cli: true }).rows.map((r) => r.id)).toEqual(["invite", "add-computer", "cli"]);
     expect(bringRestView({ os: "linux", cli: true }).rows.map((r) => r.id)).toEqual(["invite", "add-computer", "cli"]);
     expect(bringRestView({ os: "windows", cli: false }).rows.map((r) => r.id)).toEqual(["invite", "add-computer"]);
     const row = bringRestView({ os: "windows", cli: true }).rows.at(-1)!;
@@ -781,6 +781,13 @@ afterEach(() => {
 const heading = () => document.querySelector("[data-onboarding-heading]")?.textContent ?? "";
 const click = (sel: string) => fireEvent.click(document.querySelector<HTMLElement>(sel)!);
 const onlyCodex = (rows: AgentSetupRow[]) => rows.map((r) => ({ ...r, installed: r.agent === "codex" }));
+/** Continue on the agents step, then Continue again once its checklist has run (CUA-4067). */
+async function connectAndContinue() {
+  click("[data-onboarding-primary]");
+  await waitFor(() => expect(document.querySelector("[data-new-run-checklist]")).not.toBeNull(), { timeout: 15_000 });
+  await waitFor(() => expect(document.querySelector<HTMLButtonElement>("[data-onboarding-primary]")!.disabled).toBe(false), { timeout: 20_000 });
+  click("[data-onboarding-primary]");
+}
 type Calls = { op: string; args: unknown }[];
 
 describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
@@ -805,12 +812,31 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     await waitFor(() => expect(heading()).toBe("Which agents do you use?"), { timeout: 15_000 });
     expect(document.querySelector("[data-new-run-agent=codex] [data-new-run-agent-where]")!.textContent).toBe("On this Mac");
     click("[data-onboarding-primary]");
-    await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });
-    // Only Cua's tools were waited for; the sign-in is kept after Ready shows, and the chats listed are Codex's,
-    // asked for while Codex was being connected.
+    // Continue shows each step as it happens (CUA-4067): Cua's tools, its skills, Cua Driver, then the sign-in.
+    // Signed out, so there is no row for this Mac. The permissions were skipped, so Cua Driver's row asks for them.
+    await waitFor(() => expect(document.querySelector("[data-new-run-checklist]")).not.toBeNull(), { timeout: 15_000 });
+    await waitFor(() => expect(document.querySelector("[data-checklist-row='codex:sign_in']")?.getAttribute("data-status")).toBe("needs_code"), {
+      timeout: 15_000,
+    });
+    const rowText = (key: string) => document.querySelector(`[data-checklist-row='${key}'] [data-checklist-text]`)?.textContent;
+    expect(document.querySelector("[data-checklist-row='this-computer']")).toBeNull();
+    expect(rowText("codex:mcp")).toBe("Added Cua's tools to Codex (~/.codex/config.toml)");
+    expect(rowText("codex:skills")).toMatch(/^Installed Cua's skills for Codex/);
+    expect(document.querySelector("[data-checklist-row='codex:driver']")!.getAttribute("data-status")).toBe("needs_permission");
+    expect(rowText("codex:driver")).toBe("Codex needs your permission to use apps on this Mac");
+    expect(document.querySelector("[data-checklist-row='codex:driver'] [data-checklist-action]")!.textContent).toBe("Allow");
+    expect(rowText("codex:sign_in")).toBe("Sign Codex in for your other computers");
+    expect(heading()).toBe("Almost there");
     const connects = () => calls.filter((c) => c.op === "agents.connect").map((c) => c.args);
-    expect(connects()[0]).toEqual({ agents: ["codex"], signIn: false });
-    await waitFor(() => expect(connects()).toContainEqual({ agents: ["codex"], signIn: true }));
+    expect(connects()).toEqual([
+      { agents: ["codex"], signIn: false, skills: false, mcp: true },
+      { agents: ["codex"], signIn: false, skills: true, mcp: false },
+      { agents: ["codex"], signIn: false, skills: false, mcp: false, driver: true },
+      { agents: ["codex"], signIn: true, skills: false, mcp: true },
+    ]);
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });
+    // The chats listed are Codex's, asked for while Codex was being connected.
     const listed = calls.findIndex((c) => c.op === "agents.recentThreads");
     expect(calls[listed]!.args).toEqual({ limit: 4, agents: ["openai-codex"] });
     expect(listed).toBeLessThan(calls.findIndex((c) => c.op === "agents.connect"));
@@ -841,13 +867,28 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     writeFirstRunForTest({ newRun: { screen: "agent", reachedStep: "agents" } });
     await waitFor(() => expect(heading()).toBe("Which agents do you use?"), { timeout: 15_000 });
     click("[data-onboarding-primary]");
+    // Every ticked agent gets its rows, one agent after the other; Continue once nothing runs.
+    await waitFor(() => expect(document.querySelector("[data-checklist-row='claude-code:sign_in']")?.getAttribute("data-status")).toBe("done"), {
+      timeout: 15_000,
+    });
+    expect(document.querySelector("[data-checklist-row='claude-code:sign_in'] [data-checklist-text]")!.textContent).toBe(
+      "Saved your Claude Code sign-in to Keyvault so jobs on your other computers can use it",
+    );
+    const order = [...document.querySelectorAll<HTMLElement>("[data-checklist-row]")].map((r) => r.dataset.checklistRow);
+    expect(order).toEqual([
+      "claude-code:mcp",
+      "claude-code:skills",
+      "claude-code:driver",
+      "claude-code:sign_in",
+      "codex:mcp",
+      "codex:skills",
+      "codex:driver",
+      "codex:sign_in",
+    ]);
+    await waitFor(() => expect(document.querySelector<HTMLButtonElement>("[data-onboarding-primary]")!.disabled).toBe(false), { timeout: 15_000 });
+    click("[data-onboarding-primary]");
     await waitFor(() => expect(heading()).toBe("Claude Code and Codex can now use this Mac"), { timeout: 15_000 });
-    const connect = calls.find((c) => c.op === "agents.connect" || c.op === "agents.configure");
-    expect((connect!.args as { agents: string[] }).agents).toEqual(["claude-code", "codex"]);
-    // Both agents' chats are read while connecting; the sign-ins are kept after Ready shows.
-    const connects = () => calls.filter((c) => c.op === "agents.connect").map((c) => c.args);
-    expect(connects()[0]).toEqual({ agents: ["claude-code", "codex"], signIn: false });
-    await waitFor(() => expect(connects()).toContainEqual({ agents: ["claude-code", "codex"], signIn: true }));
+    expect(calls.filter((c) => c.op === "agents.connect").every((c) => (c.args as { agents: string[] }).agents.length === 1)).toBe(true);
     expect(calls.find((c) => c.op === "agents.recentThreads")!.args).toEqual({ limit: 4, agents: ["claude-code", "openai-codex"] });
   });
 
@@ -898,7 +939,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
 
   it("Home asks for the rest only once the first job is done, and Not now puts it away for good", { timeout: 60_000 }, async () => {
     writeFirstRunForTest({ restOffer: "waiting", restSinceMs: Date.now() });
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true } });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true } });
     await waitFor(() => expect(document.querySelector("[data-ask-first-home]:not([aria-busy])")).not.toBeNull(), { timeout: 15_000 });
     await new Promise((r) => setTimeout(r, 300));
     // The demo's agent runs all started before setup ended: no job yet.
@@ -915,7 +956,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
 
   it("Home has no Terminal row when the command is already on this computer", { timeout: 60_000 }, async () => {
     writeFirstRunForTest({ restOffer: "shown" });
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true } });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true } });
     await waitFor(() => expect(document.querySelector("[data-bring-rest]")).not.toBeNull(), { timeout: 15_000 });
     await new Promise((r) => setTimeout(r, 300));
     expect(document.querySelector("[data-bring-rest-row=cli]")).toBeNull();
@@ -924,7 +965,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
   it("Home offers Use Cua from Terminal where the app carries the command, and Install installs it", { timeout: 60_000 }, async () => {
     const calls: Calls = [];
     writeFirstRunForTest({ restOffer: "shown" });
-    await mountApp("/home", {
+    await mountApp("/home/ask", {
       failsCreates: false,
       listsGhost: false,
       demo: { signedIn: true, onboarded: true, cli: "missing" },
@@ -971,7 +1012,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     it(`Home shows the apps row at launch while a permission is missing, each switch live (offer ${offer ?? "none"})`, { timeout: 60_000 }, async () => {
       let on = false;
       writeFirstRunForTest({ restOffer: offer, restSinceMs: Date.now() });
-      await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true }, intercept: axOff(() => on) });
+      await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true }, intercept: axOff(() => on) });
       await waitFor(() => expect(document.querySelector("[data-home-apps]")).not.toBeNull(), { timeout: 15_000 });
       expect(document.querySelector("#home-apps-heading")!.textContent).toBe("Let agents use apps on this Mac");
       expect(document.querySelector("[data-home-apps]")!.textContent).toContain("One switch in System Settings is still off.");
@@ -988,22 +1029,22 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
 
   it("Home's apps row stays away while both permissions are on", { timeout: 60_000 }, async () => {
     writeFirstRunForTest({ restOffer: "waiting", restSinceMs: Date.now() });
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true }, intercept: axOff(() => true) });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true }, intercept: axOff(() => true) });
     await waitFor(() => expect(document.querySelector("[data-ask-first-home]:not([aria-busy])")).not.toBeNull(), { timeout: 15_000 });
     await new Promise((r) => setTimeout(r, 300));
     expect(document.querySelector("[data-home-apps]")).toBeNull();
   });
 
-  it("with 'Now bring the rest in' showing, its apps row opens by itself while a permission is missing", { timeout: 60_000 }, async () => {
+  it("with 'Now bring the rest in' showing, a missing permission shows in the apps card beside it, not as a second ask", { timeout: 60_000 }, async () => {
     writeFirstRunForTest({ restOffer: "shown" });
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true }, intercept: axOff(() => false) });
-    await waitFor(() => expect(document.querySelector("[data-bring-rest-apps]")).not.toBeNull(), { timeout: 15_000 });
-    expect(document.querySelector("[data-bring-rest-row=apps]")!.getAttribute("aria-expanded")).toBe("true");
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true }, intercept: axOff(() => false) });
+    await waitFor(() => expect(document.querySelector("[data-home-apps]")).not.toBeNull(), { timeout: 15_000 });
+    expect(document.querySelector("[data-bring-rest]")).not.toBeNull();
+    // Setup connects Cua Driver now (CUA-4067): the card has no row for it.
+    expect(document.querySelector("[data-bring-rest-row=apps]")).toBeNull();
     expect(
-      document.querySelector("[data-bring-rest-apps] [data-app-permission=accessibility] [data-permission-status]")!.getAttribute("data-permission-status"),
+      document.querySelector("[data-home-apps] [data-app-permission=accessibility] [data-permission-status]")!.getAttribute("data-permission-status"),
     ).toBe("off");
-    // One card, not two.
-    expect(document.querySelector("[data-home-apps]")).toBeNull();
   });
 
   it(
@@ -1027,7 +1068,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
       expect(document.body.textContent).not.toContain("Pick where your agents work");
       click("[data-onboarding-primary]");
       await waitFor(() => expect(heading()).toBe("Which agents do you use?"), { timeout: 15_000 });
-      click("[data-onboarding-primary]");
+      await connectAndContinue();
       await waitFor(() => expect(document.querySelector("[data-new-run=ready]")).not.toBeNull(), { timeout: 15_000 });
       // The demo account's ready computers are all named (or counted), not only this Mac.
       await waitFor(() => expect(heading()).not.toBe("Codex can now use this Mac"), { timeout: 15_000 });
@@ -1127,10 +1168,11 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     click("[data-onboarding-later]");
     await waitFor(() => expect(heading()).toBe("Let Cua Spaces see and use apps"), { timeout: 15_000 });
     check();
-    click("[data-new-run-permissions-next=Later]");
+    // The button names what is still off ("Continue without it", "Still off: ..."), so it is found by its mark.
+    click("[data-new-run-permissions-next]");
     await waitFor(() => expect(heading()).toBe("Which agents do you use?"), { timeout: 15_000 });
     check();
-    click("[data-onboarding-primary]");
+    await connectAndContinue();
     await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });
     check();
     // Every dot was a step the page showed.
@@ -1156,7 +1198,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     await waitFor(() => expect(heading()).toBe("Which agents do you use?"), { timeout: 15_000 });
     expect(dotsNow()).toEqual({ count: 3, current: 1 });
     expect(readFirstRun().newRun?.permissions).toBe("skip");
-    click("[data-onboarding-primary]");
+    await connectAndContinue();
     await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });
     expect(dotsNow()).toEqual({ count: 3, current: 2 });
   });

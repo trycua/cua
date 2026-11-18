@@ -803,8 +803,11 @@ fn arch() -> &'static str {
     }
 }
 
-/// The meta a host registers with.
-fn host_meta(provide_spaces: bool) -> std::collections::BTreeMap<String, String> {
+/// The meta a host registers with, and keeps current on its relay row
+/// (the daemon re-sends it whenever the setting changes and on every start,
+/// so a row registered by an earlier version or before a setting changed
+/// never goes stale: the phone and your other computers read it).
+pub fn host_meta(provide_spaces: bool) -> std::collections::BTreeMap<String, String> {
     let mut meta = std::collections::BTreeMap::from([(
         META_PROVIDES_SPACES.to_string(),
         if provide_spaces { "on" } else { "off" }.to_string(),
@@ -843,6 +846,11 @@ pub struct HostStatus {
     pub sharing: bool,
     /// The service.
     pub service: ServiceState,
+    /// How the runner keeps the service alive is not right yet, and the
+    /// one command that fixes it (systemd: linger is off, so the service
+    /// stops with the last login session). `None` when fine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_warning: Option<String>,
     /// Connected to the relay (relay mode, when the relay answered).
     pub online: Option<bool>,
     /// Who is connected (relay mode).
@@ -2290,6 +2298,7 @@ impl Host {
                 .map(crate::provided::ProvidedSpace::public)
                 .collect(),
             service: manager.state(),
+            service_warning: manager.warning(),
             allow: policy.as_ref().map(|p| p.allow.clone()).unwrap_or_default(),
             permissions: self.missing_permissions(&config),
             ..Default::default()

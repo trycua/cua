@@ -10,24 +10,11 @@
  */
 
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ArrowUpRightIcon, EyeIcon, InfoIcon, LinkIcon, LockIcon, MonitorPlayIcon, PlayIcon, PlusIcon } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ArrowUpRightIcon, EyeIcon, InfoIcon, LockIcon, MonitorPlayIcon, PlusIcon, XIcon } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 
-import {
-  useAgentDm,
-  useAgents,
-  useBridge,
-  type AgentChat,
-  type AgentChatSpace,
-  type AgentSetupRow,
-  type ChatNeed,
-  type DmItem,
-  type Space,
-  type ThreadAttachment,
-  type ThreadEntry,
-} from "@/bridge";
-import { AddAgentSheet, type AddAgentStage } from "@/components/add-agent/add-agent-sheet";
-import { HarnessMark as AppMark } from "@/components/agents/harness-mark";
+import { useAgentDm, useBridge, type AgentChat, type AgentChatSpace, type ChatNeed, type DmItem, type ThreadAttachment, type ThreadEntry } from "@/bridge";
+import { AskComposer } from "@/components/ask-first/use-ask-composer";
 import { OsIcon } from "@/components/os-icon";
 import { AgentTile } from "@/components/space-thread/avatar";
 import { Composer } from "@/components/space-thread/composer";
@@ -37,12 +24,8 @@ import { buildRoster, type Roster } from "@/components/space-thread/roster";
 import { ThreadItemView } from "@/components/space-thread/thread-view";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
-import { Segmented } from "@/components/ui/segmented";
-import { Select } from "@/components/ui/select";
 import { toast } from "@/components/ui/toast";
-import { orderSpaces } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
-import { thisComputerLabel } from "@/lib/host-labels";
 
 const TONE: Record<AgentChat["tone"], string> = {
   you: "bg-warning",
@@ -85,6 +68,8 @@ export function AgentList({
   onSelect,
   onOpenRun,
   onAction,
+  onRemove,
+  onClearRuns,
   onNew,
   now,
   loading = 0,
@@ -93,11 +78,15 @@ export function AgentList({
   chats: AgentChat[] | null;
   me: string | null;
   selected: string | null;
-  onSelect: (key: string, space?: string) => void;
+  onSelect: (key: string) => void;
   /** A run that hasn't started: its Space's thread. */
   onOpenRun?: (chat: AgentChat) => void;
   /** Its Connect or Try again. */
   onAction?: (chat: AgentChat) => void;
+  /** Takes a run that hasn't started out of the list (only its record; no agent or thread is touched). */
+  onRemove?: (chat: AgentChat) => void;
+  /** Takes all of them out. */
+  onClearRuns?: () => void;
   onNew: () => void;
   now: number;
   /** Spaces still answering: the list draws what is known and says so quietly. */
@@ -127,7 +116,7 @@ export function AgentList({
                 key={`${n.spaceId}#${n.seq}`}
                 type="button"
                 data-needs-you={n.kind}
-                onClick={() => onSelect(c.key, c.spaces.length > 1 ? n.spaceId : undefined)}
+                onClick={() => onSelect(c.key)}
                 className="flex w-full cursor-default items-center gap-2.5 rounded-lg px-2 py-1.5 text-left outline-none hover:bg-accent focus-visible:bg-accent"
               >
                 <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-warning" />
@@ -141,7 +130,23 @@ export function AgentList({
           </Section>
         ) : null}
         {runs.length ? (
-          <Section title="Not started" count={runs.length}>
+          <Section
+            title="Not started"
+            count={runs.length}
+            action={
+              onClearRuns ? (
+                <button
+                  type="button"
+                  data-runs-clear=""
+                  aria-label="Clear all not started"
+                  onClick={onClearRuns}
+                  className="ml-auto cursor-default rounded-lg px-1 text-xs font-normal text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+                >
+                  Clear all
+                </button>
+              ) : null
+            }
+          >
             {runs.map((c) => (
               <AgentRow
                 key={c.key}
@@ -150,6 +155,7 @@ export function AgentList({
                 selected={false}
                 onSelect={() => onOpenRun?.(c)}
                 onAction={onAction ? () => onAction(c) : undefined}
+                onRemove={onRemove ? () => onRemove(c) : undefined}
                 now={now}
               />
             ))}
@@ -200,11 +206,12 @@ export function AgentList({
   );
 }
 
-function Section({ title, count, children }: { title: string; count: number; children: ReactNode }) {
+function Section({ title, count, action, children }: { title: string; count: number; action?: ReactNode; children: ReactNode }) {
   return (
     <section className="mt-2 first:mt-0" data-agent-section={title}>
       <h2 className="flex items-center gap-2 px-2 pt-2 pb-1 text-xs font-medium text-muted-foreground">
         {title} <span className="tabular-nums">{count}</span>
+        {action}
       </h2>
       {children}
     </section>
@@ -217,6 +224,7 @@ function AgentRow({
   selected,
   onSelect,
   onAction,
+  onRemove,
   now,
 }: {
   chat: AgentChat;
@@ -224,13 +232,14 @@ function AgentRow({
   selected: boolean;
   onSelect: () => void;
   onAction?: () => void;
+  onRemove?: () => void;
   now: number;
 }) {
   const owner = ownerWord(c, me);
   if (c.kind === "attempt") {
     // A run that hasn't started: its job and why, the step that moves it on, and its Space's thread on click.
     return (
-      <div data-chat={c.key} data-chat-tone={c.tone} data-chat-run="" className="flex w-full items-center gap-2 rounded-lg px-2 py-2 hover:bg-accent">
+      <div data-chat={c.key} data-chat-tone={c.tone} data-chat-run="" className="group flex w-full items-center gap-2 rounded-lg px-2 py-2 hover:bg-accent">
         <button
           type="button"
           onClick={onSelect}
@@ -254,6 +263,18 @@ function AgentRow({
           <Button size="sm" variant="outline" className="h-7 shrink-0 px-2 text-xs" data-chat-action={c.action.id} onClick={onAction}>
             {c.action.id === "connect" ? "Connect" : c.action.label}
           </Button>
+        ) : null}
+        {onRemove ? (
+          <button
+            type="button"
+            data-chat-remove=""
+            aria-label={`Remove ${c.job ?? c.label} from the list`}
+            title="Remove from list"
+            onClick={onRemove}
+            className="inline-flex size-6 shrink-0 cursor-default items-center justify-center rounded-lg text-muted-foreground opacity-0 outline-none group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-foreground/[0.08] hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/60"
+          >
+            <XIcon className="size-3.5" />
+          </button>
         ) : null}
       </div>
     );
@@ -317,35 +338,14 @@ function useRosters(chat: AgentChat, entries: Record<string, ThreadEntry[]>, me:
   }, [chat, entries, me, identity]);
 }
 
-export function AgentDmView({
-  chat,
-  space,
-  onSpace,
-  identity,
-  onInfo,
-  me,
-}: {
-  chat: AgentChat;
-  space: string | null;
-  onSpace: (space: string | null) => void;
-  identity: string | null;
-  onInfo: () => void;
-  me: string | null;
-}) {
+export function AgentDmView({ chat, identity, onInfo, me }: { chat: AgentChat; identity: string | null; onInfo: () => void; me: string | null }) {
   const { data } = useBridge();
   const navigate = useNavigate();
-  const dm = useAgentDm(chat, space);
+  const dm = useAgentDm(chat, null);
   const rosters = useRosters(chat, dm.entries, dm.me ?? me, identity);
-  const shown = space ? chat.spaces.filter((s) => s.spaceId === space) : chat.spaces;
-  // Where a message goes: the Space shown, or where it waits for you, or where it works, or its first.
-  const [target, setTarget] = useState<string>(
-    () => space ?? chat.needsYou[0]?.spaceId ?? chat.spaces.find((s) => s.member.status === "working")?.spaceId ?? chat.spaces[0]!.spaceId,
-  );
-  useEffect(() => {
-    if (space) setTarget(space);
-    else if (!chat.spaces.some((s) => s.spaceId === target)) setTarget(chat.spaces[0]!.spaceId);
-  }, [space, chat, target]);
-  const to = chat.spaces.find((s) => s.spaceId === target) ?? chat.spaces[0]!;
+  // Each agent in each Space is its own entry: it has one place, and a message goes there.
+  const shown = chat.spaces;
+  const to = chat.spaces[0]!;
   const working = shown.find((s) => s.member.status === "working" || s.member.status === "claimed");
   const owner = ownerWord(chat, dm.me ?? me);
   const openSpace = (id: string) => void navigate({ to: "/spaces/$spaceId", params: { spaceId: id } });
@@ -353,13 +353,12 @@ export function AgentDmView({
     void data
       ?.call("volume.reveal", { path: a.path })
       .catch((e: unknown) => toast(`Couldn't show ${a.name}`, { description: e instanceof Error ? e.message : String(e), type: "error" }));
-  const multi = chat.spaces.length > 1;
   const ref = useRef<HTMLDivElement | null>(null);
   const lastKey = dm.items.length ? `${dm.items[dm.items.length - 1]!.spaceId}${dm.items[dm.items.length - 1]!.item.key}` : "";
   useEffect(() => {
     const el = ref.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [lastKey, chat.key, space]);
+  }, [lastKey, chat.key]);
   // Earlier messages come in above: the log keeps what was in view where it was.
   const keep = useRef<number | null>(null);
   const older = async () => {
@@ -373,9 +372,9 @@ export function AgentDmView({
       keep.current = null;
     }
   }, [dm.items.length]);
-  const asleepHere = space && shown[0]?.member.status === "asleep";
+  const asleepHere = shown[0]?.member.status === "asleep";
   return (
-    <section data-dm={chat.key} data-dm-space={space ?? "all"} className="flex min-w-0 flex-1 flex-col">
+    <section data-dm={chat.key} data-dm-space={to.spaceId} className="flex min-w-0 flex-1 flex-col">
       <header className="flex h-16 shrink-0 items-center gap-3 px-6">
         <AgentTile harness={chat.harness} icon={chat.identity?.icon} owner={chat.identity?.owner} name={chat.label} px={32} />
         <div className="min-w-0 flex-1">
@@ -389,19 +388,10 @@ export function AgentDmView({
             <span className="truncate">{chat.line}</span>
           </div>
         </div>
-        {multi ? (
-          <Segmented<string>
-            aria-label="Space"
-            value={space ?? "all"}
-            options={[{ value: "all", label: "All" }, ...chat.spaces.map((s) => ({ value: s.spaceId, label: s.spaceName }))]}
-            onValueChange={(v) => onSpace(v === "all" ? null : v)}
-          />
-        ) : (
-          <Button size="sm" variant="outline" data-dm-open-space="" onClick={() => openSpace(chat.spaces[0]!.spaceId)}>
-            {chat.spaces[0]!.spaceName}
-            <ArrowUpRightIcon className="size-3.5" />
-          </Button>
-        )}
+        <Button size="sm" variant="outline" data-dm-open-space="" onClick={() => openSpace(to.spaceId)}>
+          {to.spaceName}
+          <ArrowUpRightIcon className="size-3.5" />
+        </Button>
         <button
           type="button"
           aria-label={`About ${chat.label}`}
@@ -437,8 +427,6 @@ export function AgentDmView({
                   d={d}
                   above={dmAbove(dm.items, i)}
                   roster={rosters[d.spaceId]!}
-                  spaces={chat.spaces}
-                  multi={multi && !space}
                   onAnswer={(seq, ok) => dm.answer(d.spaceId, seq, ok)}
                   onOpenAttachment={openAttachment}
                   onRetry={(text) => dm.send(d.spaceId, text)}
@@ -462,15 +450,7 @@ export function AgentDmView({
             </Button>
           </div>
         ) : null}
-        <DmComposer
-          chat={chat}
-          to={to}
-          onTarget={setTarget}
-          onSend={(text) => dm.send(to.spaceId, text)}
-          onOpenSpace={() => openSpace(to.spaceId)}
-          rosters={rosters}
-          spaces={space ? shown : chat.spaces}
-        />
+        <DmComposer chat={chat} to={to} onSend={(text) => dm.send(to.spaceId, text)} onOpenSpace={() => openSpace(to.spaceId)} rosters={rosters} />
       </div>
     </section>
   );
@@ -492,8 +472,6 @@ function DmRow({
   d,
   above,
   roster,
-  spaces,
-  multi,
   onAnswer,
   onOpenAttachment,
   onRetry,
@@ -501,16 +479,11 @@ function DmRow({
   d: DmItem;
   above: number | null;
   roster: Roster;
-  spaces: AgentChatSpace[];
-  multi: boolean;
   onAnswer: (seq: number, ok: boolean) => Promise<void>;
   onOpenAttachment: (a: ThreadAttachment) => void;
   onRetry: (text: string) => Promise<void>;
 }) {
-  const s = spaces.find((x) => x.spaceId === d.spaceId);
-  // Every message says its Space when the DM shows several.
-  const label = multi && s ? <SpaceLabel name={s.spaceName} os={s.os} /> : undefined;
-  return <ThreadItemView item={d.item} above={above} roster={roster} onAnswer={onAnswer} onOpenAttachment={onOpenAttachment} onRetry={onRetry} label={label} />;
+  return <ThreadItemView item={d.item} above={above} roster={roster} onAnswer={onAnswer} onOpenAttachment={onOpenAttachment} onRetry={onRetry} />;
 }
 
 function SpaceLabel({ name, os }: { name: string; os: AgentChatSpace["os"] }) {
@@ -526,16 +499,12 @@ function SpaceLabel({ name, os }: { name: string; os: AgentChatSpace["os"] }) {
 function DmComposer({
   chat,
   to,
-  spaces,
-  onTarget,
   onSend,
   onOpenSpace,
   rosters,
 }: {
   chat: AgentChat;
   to: AgentChatSpace;
-  spaces: AgentChatSpace[];
-  onTarget: (space: string) => void;
   onSend: (text: string) => Promise<void>;
   onOpenSpace: () => void;
   rosters: Record<string, Roster>;
@@ -558,7 +527,7 @@ function DmComposer({
   }
   return (
     <Composer
-      placeholder={spaces.length > 1 ? `Message ${chat.label}` : `Message ${chat.label} in ${to.spaceName}`}
+      placeholder={`Message ${chat.label} in ${to.spaceName}`}
       candidates={[]}
       handles={new Set([to.handle])}
       agentHarness={() => chat.harness}
@@ -567,23 +536,13 @@ function DmComposer({
         <span className="flex items-center gap-2 text-xs text-muted-foreground">
           <span className="inline-flex items-center gap-1.5">
             In
-            {spaces.length > 1 ? (
-              <Select<string>
-                aria-label="Send in"
-                value={to.spaceId}
-                options={spaces.map((s) => ({ value: s.spaceId, label: s.spaceName }))}
-                onValueChange={onTarget}
-                className="h-6 min-w-0 border-0 bg-background/60 px-2 text-xs shadow-none dark:bg-background/40"
-              />
-            ) : (
-              <span
-                data-dm-target={to.spaceId}
-                className="inline-flex h-6 items-center gap-1 rounded-lg bg-background/60 px-2 text-foreground dark:bg-background/40"
-              >
-                <OsIcon os={to.os} className="size-3" />
-                {to.spaceName}
-              </span>
-            )}
+            <span
+              data-dm-target={to.spaceId}
+              className="inline-flex h-6 items-center gap-1 rounded-lg bg-background/60 px-2 text-foreground dark:bg-background/40"
+            >
+              <OsIcon os={to.os} className="size-3" />
+              {to.spaceName}
+            </span>
           </span>
           <span className="inline-flex items-center gap-1" data-dm-members-see="">
             <EyeIcon className="size-3.5" />
@@ -595,62 +554,17 @@ function DmComposer({
   );
 }
 
-/* --------------------------------------------------------------- empty */
+/* --------------------------------------------------------------- unset */
 
-/** No agents yet: one question, three ways in (p. 23). */
-export function AgentsEmpty({ onStart, onConnect }: { onStart: () => void; onConnect: () => void }) {
-  const { agentSetup } = useAgents();
-  const navigate = useNavigate();
-  const [found, setFound] = useState<AgentSetupRow[] | null>(null);
-  useEffect(() => {
-    let live = true;
-    agentSetup().then(
-      (r) => live && setFound(r.filter((x) => x.installed && !x.configured)),
-      () => live && setFound([]),
-    );
-    return () => {
-      live = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  // Connecting an app is its switch in Settings, Connections: this opens it at that app.
-  const connect = (agent: string) => void navigate({ to: "/settings/connections", search: { app: agent } });
+/** No agent picked: the same box as Home's, at the bottom of the pane, to start one. */
+export function AgentsUnset() {
   return (
-    <div data-agents-empty="" className="flex min-w-0 flex-1 items-center justify-center">
-      <div className="w-[min(520px,100%)] px-6">
-        <h2 className="text-center text-[17px] font-semibold">Who should work for you?</h2>
-        <p className="mt-1 text-center text-[13px] text-muted-foreground">Add an agent, then message it here.</p>
-        <div className="mt-5">
-          {(found ?? []).slice(0, 3).map((f) => (
-            <EmptyRow
-              key={f.agent}
-              data={`connect-mac-${f.agent}`}
-              icon={<AppMark agent={f.agent} name={f.name} />}
-              title={`Connect ${f.name}`}
-              detail={`On ${thisComputerLabel()}`}
-              onClick={() => connect(f.agent)}
-            />
-          ))}
-          <EmptyRow data="start" icon={<PlayIcon className="size-3.5" />} title="Start one in a Space" detail="Runs inside the Space" onClick={onStart} />
-          <EmptyRow data="connect" icon={<LinkIcon className="size-3.5" />} title="Connect your own agent" detail="With a prompt" onClick={onConnect} />
-        </div>
+    <section data-agents-unset="" className="flex min-w-0 flex-1 flex-col">
+      <div className="flex-1" />
+      <div className="shrink-0 px-6 pb-4">
+        <AskComposer />
       </div>
-    </div>
-  );
-}
-
-function EmptyRow({ icon, title, detail, onClick, data }: { icon: ReactNode; title: string; detail: string; onClick: () => void; data: string }) {
-  return (
-    <button
-      type="button"
-      data-agents-empty-row={data}
-      onClick={onClick}
-      className="flex h-11 w-full cursor-default items-center gap-3 rounded-lg px-3 text-left outline-none hover:bg-accent focus-visible:bg-accent"
-    >
-      <span className="flex w-14 shrink-0 items-center justify-end text-muted-foreground">{icon}</span>
-      <span className="w-52 shrink-0 text-[13px]">{title}</span>
-      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{detail}</span>
-    </button>
+    </section>
   );
 }
 
@@ -714,47 +628,6 @@ export function AgentPage({
         </div>
       </DialogPopup>
     </Dialog>
-  );
-}
-
-/** What New agent orders its Spaces by (`orderSpaces`). */
-type SheetSpace = Pick<Space, "id" | "name" | "status" | "power" | "lastUsedAt" | "provider" | "host" | "progress">;
-
-/** New agent / the empty state's rows: the approved sheet, with the Space picked in its title. */
-export function NewAgentSheet({
-  open,
-  onOpenChange,
-  stage,
-  spaces,
-  taken,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  stage?: AddAgentStage;
-  spaces: SheetSpace[];
-  taken: (spaceId: string) => string[];
-}) {
-  const [space, setSpace] = useState<string | null>(null);
-  // Running Spaces first, then the latest used, machines' desktops after them: the first is the default.
-  const ordered = useMemo(() => orderSpaces(spaces).map((s) => ({ id: s.id, name: s.name })), [spaces]);
-  // The default is taken once per opening, so a Space that starts meanwhile doesn't move the agent.
-  const first = ordered[0]?.id ?? null;
-  useEffect(() => {
-    if (!open) setSpace(null);
-    else if (space === null && first) setSpace(first);
-  }, [open, first, space]);
-  const picked = ordered.find((s) => s.id === space) ?? ordered[0] ?? null;
-  return (
-    <AddAgentSheet
-      open={open}
-      onOpenChange={onOpenChange}
-      space={picked}
-      spaces={ordered}
-      onSpaceChange={setSpace}
-      role={null}
-      taken={picked ? taken(picked.id) : []}
-      initialStage={stage}
-    />
   );
 }
 

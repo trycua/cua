@@ -105,6 +105,13 @@ pub struct AppSettings {
     /// one is a connect, which shows its app again
     /// ([`crate::agent_menu::sync`]).
     pub agent_menu_seen: Vec<String>,
+    /// Settings, General, "When I close the window": closing the main
+    /// window leaves Cua Spaces and its background service running (on, the
+    /// default); off, it quits Cua Spaces, as Quit does.
+    pub close_window_keeps_running: bool,
+    /// "Don't show this again" on the notice that Cua Spaces keeps running
+    /// when the window closes, or the Settings switch turned off.
+    pub close_notice_off: bool,
 }
 
 impl Default for AppSettings {
@@ -130,6 +137,8 @@ impl Default for AppSettings {
             agent_menu_shown: vec![],
             agent_menu_hidden: vec![],
             agent_menu_seen: vec![],
+            close_window_keeps_running: true,
+            close_notice_off: false,
         }
     }
 }
@@ -396,6 +405,15 @@ pub struct SettingsInput {
     /// (`!AppSettings.tips.off`). A shell that does not say reads as on.
     #[serde(default = "default_true")]
     pub show_tips: bool,
+    /// Settings, General's "When I close the window": the window's close
+    /// button keeps Cua Spaces running in the background (none: no rows; a
+    /// shell without a background service leaves them out).
+    #[serde(default)]
+    pub close_window_keeps_running: Option<bool>,
+    /// The notice that Cua Spaces keeps running is on (shown with the row
+    /// above).
+    #[serde(default = "default_true")]
+    pub close_notice: bool,
 }
 
 impl Default for SettingsInput {
@@ -421,6 +439,8 @@ impl Default for SettingsInput {
             overflow: None,
             runtimes: None,
             show_tips: true,
+            close_window_keeps_running: None,
+            close_notice: true,
         }
     }
 }
@@ -462,6 +482,36 @@ pub fn tips_rows(on: bool) -> Vec<SettingsRow> {
     vec![show, reset]
 }
 
+/// The close-window row's label.
+pub const CLOSE_WINDOW_LABEL: &str = "When I close the window";
+
+/// The close-notice switch's label.
+pub const CLOSE_NOTICE_LABEL: &str = "Tell me when Cua Spaces keeps running";
+
+/// Settings, General: what the window's close button does. Row
+/// `close-window`, options `keep` (default) and `quit`.
+pub fn close_window_row(keeps_running: bool) -> SettingsRow {
+    let mut r = row("close-window", SettingsRowKind::Choice, CLOSE_WINDOW_LABEL);
+    r.options = vec![
+        opt("keep", "Keep running in the background", keeps_running),
+        opt("quit", "Quit Cua Spaces", !keeps_running),
+    ];
+    r.help = Some(if keeps_running {
+        "Your agents can still create and manage Spaces. Quit Cua Spaces in the menu bar, or press \u{2318}Q, to stop it.".into()
+    } else {
+        "Closing the window quits Cua Spaces and stops the background service.".into()
+    });
+    r
+}
+
+/// Settings, General: the notice shown when the window closes and Cua
+/// Spaces keeps running. Row `close-notice`, options `on` and `off`.
+pub fn close_notice_row(on: bool) -> SettingsRow {
+    let mut r = row("close-notice", SettingsRowKind::Toggle, CLOSE_NOTICE_LABEL);
+    r.options = vec![opt("on", "On", on), opt("off", "Off", !on)];
+    r
+}
+
 /// The settings after a Settings row's choice or button that the core
 /// owns: `tips` (`on`/`off`: Show tips; on brings back the tips not done)
 /// and `reset-tips` (any option: every tip starts over, and tips are on).
@@ -474,6 +524,8 @@ pub fn choose(settings: &AppSettings, row: &str, option: &str) -> AppSettings {
             s.tips = reduce(&s.tips, &TipsEvent::ShowTips { on: option == "on" });
         }
         ("reset-tips", _) => s.tips = reduce(&s.tips, &TipsEvent::Reset),
+        ("close-window", "keep" | "quit") => s.close_window_keeps_running = option == "keep",
+        ("close-notice", "on" | "off") => s.close_notice_off = option == "off",
         _ => {}
     }
     s
@@ -764,6 +816,10 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
         .map(|l| crate::login_item::rows_with(l, input.experiments.cua_volume))
         .unwrap_or_default();
     general.push(notch);
+    if let Some(keeps) = input.close_window_keeps_running {
+        general.push(close_window_row(keeps));
+        general.push(close_notice_row(input.close_notice));
+    }
     if let Some(on) = input.auto_connect {
         general.push(auto_connect_row(on));
     }
@@ -1307,6 +1363,70 @@ mod tests {
         assert!(on(r));
         assert!(!on(&auto_connect_row(false)));
         assert!(!AUTO_CONNECT_LABEL.contains('\u{2014}'));
+    }
+
+    #[test]
+    fn closing_the_window_keeps_running_by_default_and_the_rows_follow_choose() {
+        let d = AppSettings::default();
+        assert!(d.close_window_keeps_running && !d.close_notice_off);
+        // A file from before the setting reads as today's behavior.
+        let old: AppSettings = serde_json::from_str(r#"{"menuBar":true}"#).unwrap();
+        assert!(old.close_window_keeps_running && !old.close_notice_off);
+        let quit = choose(&d, "close-window", "quit");
+        assert!(!quit.close_window_keeps_running);
+        assert!(choose(&quit, "close-window", "keep").close_window_keeps_running);
+        assert!(choose(&d, "close-notice", "off").close_notice_off);
+        assert!(!choose(&choose(&d, "close-notice", "off"), "close-notice", "on").close_notice_off);
+        // An unknown option changes nothing.
+        assert_eq!(choose(&d, "close-window", "bogus"), d);
+        let general = |input: &SettingsInput| {
+            page(input)
+                .sections
+                .into_iter()
+                .find(|s| s.id == "general")
+                .unwrap()
+                .rows
+        };
+        // Not passed (Windows, Linux): no rows.
+        assert!(
+            !general(&SettingsInput::default())
+                .iter()
+                .any(|r| r.id.starts_with("close-"))
+        );
+        let rows = general(&SettingsInput {
+            close_window_keeps_running: Some(true),
+            ..Default::default()
+        });
+        let i = rows.iter().position(|r| r.id == "close-window").unwrap();
+        assert_eq!(rows[i - 1].id, "notch");
+        assert_eq!(rows[i + 1].id, "close-notice");
+        assert_eq!(rows[i].label, "When I close the window");
+        assert!(rows[i].options.iter().any(|o| o.id == "keep" && o.active));
+        assert!(rows[i + 1].options.iter().any(|o| o.id == "on" && o.active));
+        for r in &rows[i..=i + 1] {
+            assert!(!r.label.contains('\u{00b7}') && !r.label.to_lowercase().contains("pool"));
+        }
+        let rows = general(&SettingsInput {
+            close_window_keeps_running: Some(false),
+            close_notice: false,
+            ..Default::default()
+        });
+        assert!(
+            rows.iter()
+                .find(|r| r.id == "close-window")
+                .unwrap()
+                .options
+                .iter()
+                .any(|o| o.id == "quit" && o.active)
+        );
+        assert!(
+            rows.iter()
+                .find(|r| r.id == "close-notice")
+                .unwrap()
+                .options
+                .iter()
+                .any(|o| o.id == "off" && o.active)
+        );
     }
 
     /// Cua Volume off: no Storage section, and the launch-at-login line

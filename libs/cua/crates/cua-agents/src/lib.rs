@@ -52,6 +52,10 @@ pub enum Error {
     Timeout(String),
     #[error("guest: {0}")]
     Guest(String),
+    /// A step on the computer failed, said in plain words for the person
+    /// (see [`runs::guest_command_failed`]).
+    #[error("{0}")]
+    Step(String),
     #[error(transparent)]
     Client(#[from] cua_spacesd_client::Error),
     #[error(transparent)]

@@ -299,13 +299,8 @@ pub struct ToolCompletionObservation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolOperation {
     NotApplicable,
-    ExecuteJavascript,
     GetText,
     QueryDom,
-    ClickElement,
-    InsertText,
-    TypeKeystrokes,
-    EnableJavascriptAppleEvents,
     BrowserBind,
     BrowserSnapshotDomRefsV1,
     BrowserSnapshotSemanticV2,
@@ -337,13 +332,8 @@ impl ToolOperation {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::NotApplicable => "not_applicable",
-            Self::ExecuteJavascript => "execute_javascript",
             Self::GetText => "get_text",
             Self::QueryDom => "query_dom",
-            Self::ClickElement => "click_element",
-            Self::InsertText => "insert_text",
-            Self::TypeKeystrokes => "type_keystrokes",
-            Self::EnableJavascriptAppleEvents => "enable_javascript_apple_events",
             Self::BrowserBind => "browser_bind",
             Self::BrowserSnapshotDomRefsV1 => "browser_snapshot_dom_refs_v1",
             Self::BrowserSnapshotSemanticV2 => "browser_snapshot_semantic_v2",
@@ -380,13 +370,8 @@ pub fn tool_operation(tool_name: &str, args: Option<&serde_json::Value>) -> Tool
     };
     match crate::tool::renamed_tool(tool_name).unwrap_or(tool_name) {
         "page" => match string_arg("action") {
-            Some("execute_javascript") => ToolOperation::ExecuteJavascript,
             Some("get_text") => ToolOperation::GetText,
             Some("query_dom") => ToolOperation::QueryDom,
-            Some("click_element") => ToolOperation::ClickElement,
-            Some("insert_text") => ToolOperation::InsertText,
-            Some("type_keystrokes") => ToolOperation::TypeKeystrokes,
-            Some("enable_javascript_apple_events") => ToolOperation::EnableJavascriptAppleEvents,
             _ => ToolOperation::Other,
         },
         "get_browser_state" => {
@@ -469,13 +454,8 @@ pub fn tool_operation(tool_name: &str, args: Option<&serde_json::Value>) -> Tool
 /// or any other tool argument.
 pub fn is_computer_action(tool_name: &str, operation: ToolOperation) -> bool {
     if tool_name == "page" {
-        return matches!(
-            operation,
-            ToolOperation::ClickElement
-                | ToolOperation::InsertText
-                | ToolOperation::TypeKeystrokes
-                | ToolOperation::EnableJavascriptAppleEvents
-        );
+        // `page` only reads, so it is never a computer action.
+        return false;
     }
     if tool_name == "browser_dialog" {
         return matches!(
@@ -501,6 +481,7 @@ pub fn is_computer_action(tool_name: &str, operation: ToolOperation) -> bool {
                         | "window.activate"
                         | "window.frame.set"
                         | "browser.navigate"
+                        | "browser.motion.policy"
                         | "browser.input.click"
                         | "browser.input.type"
                 )
@@ -710,6 +691,7 @@ fn structured_refusal_code(tool_name: &str, result: Option<&serde_json::Value>) 
         "get_browser_state"
             | "browser_prepare"
             | "browser_navigate"
+            | "browser_motion_policy"
             | "browser_click"
             | "browser_type"
             | "browser_dialog"
@@ -1306,20 +1288,17 @@ mod observation_tests {
     #[test]
     fn page_operation_is_closed_and_retains_no_argument_content() {
         for (action, expected, computer_action) in [
-            (
-                "execute_javascript",
-                ToolOperation::ExecuteJavascript,
-                false,
-            ),
             ("get_text", ToolOperation::GetText, false),
             ("query_dom", ToolOperation::QueryDom, false),
-            ("click_element", ToolOperation::ClickElement, true),
-            ("insert_text", ToolOperation::InsertText, true),
-            ("type_keystrokes", ToolOperation::TypeKeystrokes, true),
+            // Removed page actions classify as `Other`, never as a computer action.
+            ("execute_javascript", ToolOperation::Other, false),
+            ("click_element", ToolOperation::Other, false),
+            ("insert_text", ToolOperation::Other, false),
+            ("type_keystrokes", ToolOperation::Other, false),
             (
                 "enable_javascript_apple_events",
-                ToolOperation::EnableJavascriptAppleEvents,
-                true,
+                ToolOperation::Other,
+                false,
             ),
             ("private-custom-action", ToolOperation::Other, false),
         ] {
@@ -1457,6 +1436,28 @@ mod observation_tests {
                 Some(&serde_json::json!({"url": "https://private.example"})),
             ),
             ToolOperation::NotApplicable
+        );
+    }
+
+    #[test]
+    fn motion_policy_wrong_target_refusal_has_closed_telemetry_without_private_details() {
+        let response = serde_json::json!({
+            "structuredContent": {
+                "status": "refused",
+                "refusal": {
+                    "code": "browser_wrong_target_refused",
+                    "message": "private target description",
+                    "detail": {"target": "private target id"}
+                }
+            }
+        });
+        assert_eq!(
+            structured_refusal_code("browser_motion_policy", Some(&response)),
+            ToolRefusalCode::BrowserWrongTargetRefused
+        );
+        assert_eq!(
+            structured_refusal_code("unknown_motion_policy", Some(&response)),
+            ToolRefusalCode::None
         );
     }
 

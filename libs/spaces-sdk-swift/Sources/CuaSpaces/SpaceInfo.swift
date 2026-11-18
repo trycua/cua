@@ -230,10 +230,14 @@ public struct SpaceWindow: Sendable, Hashable, Identifiable {
     /// empty. With `app` and `processID` it finds the app's icon
     /// (`Space.appIcon`).
     public let appID: String
+    /// The Space the picture comes from when another Space shows this window
+    /// here (`stream_space_window`); `nil` for the Space's own windows.
+    public let origin: SpaceWindowOrigin?
 
     public init(id: WindowID, app: String, title: String,
                 pixelSize: CGSize = .zero, scaleFactor: CGFloat = 1,
-                visible: Bool = true, processID: Int? = nil, appID: String = "") {
+                visible: Bool = true, processID: Int? = nil, appID: String = "",
+                origin: SpaceWindowOrigin? = nil) {
         self.id = id
         self.app = app
         self.title = title
@@ -242,6 +246,7 @@ public struct SpaceWindow: Sendable, Hashable, Identifiable {
         self.visible = visible
         self.processID = processID
         self.appID = appID
+        self.origin = origin
     }
 
     public var displayName: String { title.isEmpty ? app : "\(app) — \(title)" }
@@ -268,7 +273,26 @@ public struct SpaceWindow: Sendable, Hashable, Identifiable {
                   scaleFactor: CGFloat(g["scale_factor"]?.doubleValue ?? 1),
                   visible: row["visible"]?.boolValue ?? row["on_screen"]?.boolValue ?? true,
                   processID: row["pid"]?.intValue ?? row["owner_pid"]?.intValue,
-                  appID: row["app_id"]?.stringValue ?? "")
+                  appID: row["app_id"]?.stringValue ?? "",
+                  origin: row["origin"]?.objectValue.map {
+                      SpaceWindowOrigin(spaceID: $0["space_id"]?.stringValue ?? "",
+                                        name: $0["name"]?.stringValue ?? "",
+                                        os: $0["os"]?.stringValue ?? "")
+                  })
+    }
+}
+
+/// Where a window shown by another Space lives.
+public struct SpaceWindowOrigin: Sendable, Hashable {
+    public let spaceID: String
+    public let name: String
+    /// `macos`, `linux`, `windows`, or empty.
+    public let os: String
+
+    public init(spaceID: String, name: String, os: String = "") {
+        self.spaceID = spaceID
+        self.name = name
+        self.os = os
     }
 }
 

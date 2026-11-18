@@ -266,6 +266,7 @@ impl World {
             skills: true,
             mcp: !(id == "claude-code" && sign_in),
             sign_in,
+            driver: false,
         };
         if !parts.mcp {
             self.setup()
@@ -473,6 +474,7 @@ fn a_cut_off_login_is_refused_with_a_plain_line_and_a_whole_one_is_saved() {
                 skills: false,
                 mcp: false,
                 sign_in: true,
+                driver: false,
             },
             Some(&w.vault),
             Duration::from_secs(10),
@@ -645,6 +647,7 @@ fn a_refused_sign_in_copy_leaves_the_tools_connected_with_one_line() {
                 mcp: false,
                 skills: false,
                 sign_in: true,
+                driver: false,
             },
             Some(&w.vault),
             Duration::from_secs(10),
@@ -673,6 +676,7 @@ fn a_refused_sign_in_copy_leaves_the_tools_connected_with_one_line() {
                 mcp: false,
                 skills: false,
                 sign_in: true,
+                driver: false,
             },
             Some(&w.vault),
             Duration::from_secs(10),

@@ -15,9 +15,7 @@ import { createDemoAdapter } from "@/bridge/adapters/demo";
 import { DEMO_THREAD_SPACE, JOIN_LINE_STEPS } from "@/bridge/adapters/demo/thread";
 import { testCore } from "@/bridge/__tests__/testCore";
 import { threadOpAvailable } from "@/bridge/ops/thread";
-import type { Space } from "@/bridge";
 import { AddAgentSheet, freeHandle } from "@/components/add-agent/add-agent-sheet";
-import { NewAgentSheet } from "@/components/agents/agent-chat";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
 afterEach(cleanup);
@@ -247,45 +245,5 @@ describe("the sheet, reused with a Space picker", () => {
     );
     await found("[data-add-agent='pick']");
     expect(q("[data-add-agent='pick'] [aria-label='Space']")?.textContent).toContain("ubuntu-build");
-  });
-
-  // Regression (first run): the account listed an offline machine, then This Mac, then the one new
-  // Space. New agent took the first row, so the agent went to This Mac. It picks the running Space.
-  it("New agent picks the running Space over machines' desktops and offline ones", async () => {
-    const demo = createDemoAdapter({ latencyMs: 0, stepMs: 0 });
-    const row = (id: string, name: string, status: Space["status"], lastUsedAt: number, over: Partial<Space> = {}) => ({
-      id,
-      name,
-      status,
-      lastUsedAt,
-      provider: "relay" as const,
-      ...over,
-    });
-    const spaces = [
-      row("relay:old-vm", "lume's Virtual Machine", "suspended", 9_000),
-      row("this-mac", "This Mac", "local", 8_000, { provider: "local" }),
-      row("local:linux-1", "linux-1", "running", 1_000, { provider: "local" }),
-    ];
-    const core = await testCore();
-    const { rerender } = render(
-      <BridgeProvider adapter={demo} core={core}>
-        <NewAgentSheet open onOpenChange={() => {}} spaces={spaces} taken={() => []} />
-      </BridgeProvider>,
-    );
-    await found("[data-add-agent='pick']");
-    expect(q("[data-add-agent='pick'] [aria-label='Space']")?.textContent).toContain("linux-1");
-    // Another Space starts while the sheet is open: the agent still goes where the sheet said.
-    rerender(
-      <BridgeProvider adapter={demo} core={core}>
-        <NewAgentSheet
-          open
-          onOpenChange={() => {}}
-          spaces={[...spaces, row("local:linux-2", "linux-2", "running", 5_000, { provider: "local" })]}
-          taken={() => []}
-        />
-      </BridgeProvider>,
-    );
-    await new Promise((r) => setTimeout(r, 50));
-    expect(q("[data-add-agent='pick'] [aria-label='Space']")?.textContent).toContain("linux-1");
   });
 });

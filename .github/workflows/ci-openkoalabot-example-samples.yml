@@ -100,7 +100,7 @@ jobs:
           node-version: "22"
       - name: Build the cua SDK (native and wasm) and @trycua/cua
         run: |
-          (cd libs/cua && cargo build --locked --release -p cua-sdk)
+          (cd libs/cua && cargo build --locked --release -p cua-sdk-native)
           cd libs/cua/typescript
           npm ci
           node ../scripts/stage-uniffi-library.mjs --only=node
@@ -177,7 +177,7 @@ jobs:
           key: openkoalabot-example-swift
       - name: Build and stage the cua SDK for Swift
         run: |
-          (cd libs/cua && cargo build --locked --release -p cua-sdk)
+          (cd libs/cua && cargo build --locked --release -p cua-sdk-native)
           node libs/cua/scripts/stage-uniffi-library.mjs --only=swift
       - name: Test the sample
         run: examples/openkoalabot-example-swift/scripts/test.sh

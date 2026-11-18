@@ -7502,6 +7502,9 @@ fn screen_extent_rebase(
     // origin. A legitimate screen provider may differ from the X11 client
     // origin by title-bar/CSD extents; rebasing that small decoration delta
     // would move otherwise-correct GTK coordinates off their controls.
+    // A frame whose size differs from the target X11 window belongs to
+    // another window (or is in DIPs under a device scale), so it is not
+    // this window's renderer origin.
     if top_level == Some(accessible_frame_extents)
         || (accessible_frame_extents.2, accessible_frame_extents.3) != (x11_window.2, x11_window.3)
     {

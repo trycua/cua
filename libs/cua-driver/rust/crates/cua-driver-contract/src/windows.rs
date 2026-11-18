@@ -278,7 +278,7 @@ pub struct WindowElement {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected: Option<bool>,
     /// Whether the element is a password field. Windows reports it from UIA
-    /// `IsPassword` on text-entry elements; absent means unknown.
+    /// `IsPassword`: `false` only on `Edit` controls, absent when unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_password: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

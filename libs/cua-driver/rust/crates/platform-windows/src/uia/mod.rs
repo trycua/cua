@@ -64,7 +64,7 @@ pub struct UiaNode {
     /// Toggle/selection state when the element exposes one of those patterns.
     pub selected: Option<bool>,
     /// UIA `IsPassword`: `Some(true)` for a password field, `Some(false)` for
-    /// an element that accepts text and is not one, `None` when unknown or
+    /// an `Edit` control that is not one, `None` when unknown or
     /// not applicable (non-text elements, MSAA fallback).
     pub is_password: Option<bool>,
     /// Raw COM pointer (IUIAutomationElement for UIA path, IAccessible for
@@ -860,7 +860,7 @@ fn emit_cached_node(
     // macOS: enablement is state the caller needs to read, not a reason to hide
     // the row. The token writers refuse it (`tools::impl_::refuse_if_disabled`).
     let actions = detect_cached_actions(element, &control_type);
-    let is_password = text_entry_is_password(read_cached_is_password(element), &actions);
+    let is_password = text_entry_is_password(read_cached_is_password(element), &control_type);
     // Providers are expected to blank Value on password fields, but that is a
     // convention, not something UIA enforces. Never echo it once the element
     // says it is a password field.
@@ -936,16 +936,17 @@ fn emit_cached_node(
 }
 
 /// Keep `IsPassword` where it carries information: always when it is true,
-/// and as an explicit `false` only on elements that accept text input, so a
-/// consumer can tell "not a password field" from "unknown" without every
-/// button in the tree carrying the field.
+/// and as an explicit `false` only on `Edit` controls, the control type UIA
+/// gives a password field. Action names are no guide here: a slider's
+/// RangeValuePattern also maps to `set_value`, and a read-only text surface's
+/// TextPattern to `text`.
 pub(crate) fn text_entry_is_password(
     is_password: Option<bool>,
-    actions: &[String],
+    control_type: &str,
 ) -> Option<bool> {
     match is_password {
         Some(true) => Some(true),
-        Some(false) if actions.iter().any(|a| a == "set_value" || a == "text") => Some(false),
+        Some(false) if control_type == "Edit" => Some(false),
         _ => None,
     }
 }

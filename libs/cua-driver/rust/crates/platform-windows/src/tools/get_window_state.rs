@@ -93,17 +93,15 @@ mod get_window_state_actions_tests {
     }
 
     #[test]
-    fn is_password_is_kept_for_text_entry_and_true_values_only() {
+    fn is_password_false_is_kept_only_for_edit_controls() {
         use crate::uia::text_entry_is_password;
-        let text = vec!["set_value".to_owned()];
-        let typed = vec!["text".to_owned()];
-        let button = vec!["invoke".to_owned()];
-        assert_eq!(text_entry_is_password(Some(true), &button), Some(true));
-        assert_eq!(text_entry_is_password(Some(true), &text), Some(true));
-        assert_eq!(text_entry_is_password(Some(false), &text), Some(false));
-        assert_eq!(text_entry_is_password(Some(false), &typed), Some(false));
-        assert_eq!(text_entry_is_password(Some(false), &button), None);
-        assert_eq!(text_entry_is_password(None, &text), None);
+        assert_eq!(text_entry_is_password(Some(true), "Button"), Some(true));
+        assert_eq!(text_entry_is_password(Some(true), "Edit"), Some(true));
+        assert_eq!(text_entry_is_password(Some(false), "Edit"), Some(false));
+        assert_eq!(text_entry_is_password(Some(false), "Slider"), None);
+        assert_eq!(text_entry_is_password(Some(false), "Document"), None);
+        assert_eq!(text_entry_is_password(Some(false), "Button"), None);
+        assert_eq!(text_entry_is_password(None, "Edit"), None);
     }
 
     #[test]
@@ -261,7 +259,7 @@ impl Tool for GetWindowStateTool {
                 `snapshot_id` is printed in the response header and returned in structuredContent. \
                 Pass `tree_format:\"elements\"` for the structured `elements` array instead \
                 (explicit `element_token`, `frame`, `parent_index`, `value`, `actions` per row), \
-                or `\"both\"` for both (about twice the size). Text-entry elements carry \
+                or `\"both\"` for both (about twice the size). `Edit` elements carry \
                 `is_password` (`true` for a password field), and the Markdown row marks a \
                 password field with `password`.\n\n\
                 Size: a read is bounded by default (`max_elements` 250). When the walk stops at \

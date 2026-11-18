@@ -1533,6 +1533,30 @@ unsafe fn security_attrs_from_sddl(
 /// Everyone DACL.
 #[cfg(target_os = "windows")]
 unsafe fn current_user_sid_string() -> Option<String> {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentProcess() -> *mut std::ffi::c_void;
+    }
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn OpenProcessToken(
+            process: *mut std::ffi::c_void,
+            desired_access: u32,
+            token: *mut *mut std::ffi::c_void,
+        ) -> i32;
+    }
+
+    const TOKEN_QUERY: u32 = 0x0008;
+    let mut token = std::ptr::null_mut();
+    if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 || token.is_null() {
+        return None;
+    }
+    token_user_sid(token)
+}
+
+/// Read a token's user SID as an SDDL string, then close the token.
+#[cfg(target_os = "windows")]
+unsafe fn token_user_sid(token: *mut std::ffi::c_void) -> Option<String> {
     #[repr(C)]
     struct SidAndAttributes {
         sid: *mut std::ffi::c_void,
@@ -1544,17 +1568,11 @@ unsafe fn current_user_sid_string() -> Option<String> {
     }
     #[link(name = "kernel32")]
     extern "system" {
-        fn GetCurrentProcess() -> *mut std::ffi::c_void;
         fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
         fn LocalFree(memory: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
     }
     #[link(name = "advapi32")]
     extern "system" {
-        fn OpenProcessToken(
-            process: *mut std::ffi::c_void,
-            desired_access: u32,
-            token: *mut *mut std::ffi::c_void,
-        ) -> i32;
         fn GetTokenInformation(
             token: *mut std::ffi::c_void,
             information_class: u32,
@@ -1565,12 +1583,7 @@ unsafe fn current_user_sid_string() -> Option<String> {
         fn ConvertSidToStringSidW(sid: *mut std::ffi::c_void, string_sid: *mut *mut u16) -> i32;
     }
 
-    const TOKEN_QUERY: u32 = 0x0008;
     const TOKEN_USER_CLASS: u32 = 1;
-    let mut token = std::ptr::null_mut();
-    if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 || token.is_null() {
-        return None;
-    }
     let mut required = 0_u32;
     let _ = GetTokenInformation(
         token,
@@ -1625,17 +1638,59 @@ unsafe fn named_pipe_client_process_id(pipe: *mut std::ffi::c_void) -> Option<u3
         .then_some(client_process_id)
 }
 
+/// Return the connected client's user SID.
+///
+/// The token the pipe captured when the client connected is the primary
+/// source. Opening the client's process instead fails when its DACL names
+/// only a logon SID the daemon lacks, such as an elevated shell in another
+/// logon session (an SSH login while the daemon runs unelevated on the
+/// desktop). The client process token remains the fallback.
 #[cfg(target_os = "windows")]
 unsafe fn named_pipe_client_sid(pipe: *mut std::ffi::c_void) -> Option<String> {
-    #[repr(C)]
-    struct SidAndAttributes {
-        sid: *mut std::ffi::c_void,
-        attributes: u32,
+    named_pipe_connection_sid(pipe).or_else(|| named_pipe_client_process_sid(pipe))
+}
+
+/// Read the user SID from the token the pipe captured at connect time.
+///
+/// Clients open the pipe at identification level or higher; at
+/// identification level the token can be queried but not used for access.
+/// The impersonation is reverted before this returns.
+#[cfg(target_os = "windows")]
+unsafe fn named_pipe_connection_sid(pipe: *mut std::ffi::c_void) -> Option<String> {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentThread() -> *mut std::ffi::c_void;
     }
-    #[repr(C)]
-    struct TokenUserRaw {
-        user: SidAndAttributes,
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn ImpersonateNamedPipeClient(pipe: *mut std::ffi::c_void) -> i32;
+        fn OpenThreadToken(
+            thread: *mut std::ffi::c_void,
+            desired_access: u32,
+            open_as_self: i32,
+            token: *mut *mut std::ffi::c_void,
+        ) -> i32;
+        fn RevertToSelf() -> i32;
     }
+
+    const TOKEN_QUERY: u32 = 0x0008;
+    if ImpersonateNamedPipeClient(pipe) == 0 {
+        return None;
+    }
+    let mut token = std::ptr::null_mut();
+    let opened = OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 1, &mut token);
+    if RevertToSelf() == 0 {
+        // This runtime thread would otherwise keep the client's identity.
+        std::process::abort();
+    }
+    if opened == 0 || token.is_null() {
+        return None;
+    }
+    token_user_sid(token)
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn named_pipe_client_process_sid(pipe: *mut std::ffi::c_void) -> Option<String> {
     #[link(name = "kernel32")]
     extern "system" {
         fn OpenProcess(
@@ -1644,7 +1699,6 @@ unsafe fn named_pipe_client_sid(pipe: *mut std::ffi::c_void) -> Option<String> {
             process_id: u32,
         ) -> *mut std::ffi::c_void;
         fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
-        fn LocalFree(memory: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
     }
     #[link(name = "advapi32")]
     extern "system" {
@@ -1653,19 +1707,10 @@ unsafe fn named_pipe_client_sid(pipe: *mut std::ffi::c_void) -> Option<String> {
             desired_access: u32,
             token: *mut *mut std::ffi::c_void,
         ) -> i32;
-        fn GetTokenInformation(
-            token: *mut std::ffi::c_void,
-            information_class: u32,
-            information: *mut std::ffi::c_void,
-            information_length: u32,
-            return_length: *mut u32,
-        ) -> i32;
-        fn ConvertSidToStringSidW(sid: *mut std::ffi::c_void, string_sid: *mut *mut u16) -> i32;
     }
 
     const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
     const TOKEN_QUERY: u32 = 0x0008;
-    const TOKEN_USER_CLASS: u32 = 1;
     let client_process_id = named_pipe_client_process_id(pipe)?;
     let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, client_process_id);
     if process.is_null() {
@@ -1677,41 +1722,7 @@ unsafe fn named_pipe_client_sid(pipe: *mut std::ffi::c_void) -> Option<String> {
     if opened == 0 || token.is_null() {
         return None;
     }
-    let mut required = 0_u32;
-    let _ = GetTokenInformation(
-        token,
-        TOKEN_USER_CLASS,
-        std::ptr::null_mut(),
-        0,
-        &mut required,
-    );
-    if required == 0 {
-        let _ = CloseHandle(token);
-        return None;
-    }
-    let mut buffer = vec![0_u8; required as usize];
-    let ok = GetTokenInformation(
-        token,
-        TOKEN_USER_CLASS,
-        buffer.as_mut_ptr().cast(),
-        required,
-        &mut required,
-    );
-    let _ = CloseHandle(token);
-    if ok == 0 {
-        return None;
-    }
-    let token_user = std::ptr::read_unaligned(buffer.as_ptr().cast::<TokenUserRaw>());
-    let mut string_sid = std::ptr::null_mut();
-    if ConvertSidToStringSidW(token_user.user.sid, &mut string_sid) == 0 || string_sid.is_null() {
-        return None;
-    }
-    let length = (0..)
-        .find(|&index| *string_sid.add(index) == 0)
-        .unwrap_or(0);
-    let sid = String::from_utf16_lossy(std::slice::from_raw_parts(string_sid, length));
-    let _ = LocalFree(string_sid.cast());
-    (!sid.is_empty()).then_some(sid)
+    token_user_sid(token)
 }
 
 #[cfg(target_os = "windows")]
@@ -1729,7 +1740,7 @@ fn named_pipe_host_pid_is_authorized(expected: Option<u32>, actual: Option<u32>)
 /// Both service and embedded modes are private to the current user while
 /// retaining the low mandatory label needed when host and runtime integrity
 /// levels differ. Every accepted instance is additionally checked against the
-/// connected client's process token before request parsing.
+/// connected client's token before request parsing.
 #[cfg(target_os = "windows")]
 unsafe fn build_pipe_security_attrs(
     _embedded: bool,
@@ -2316,7 +2327,39 @@ const PIPE_INSTANCE_FAILURE_LIMIT: u32 = 120;
 
 #[cfg(all(test, target_os = "windows"))]
 mod named_pipe_authentication_tests {
-    use super::{named_pipe_host_pid_is_authorized, named_pipe_sid_is_authorized};
+    use super::{
+        current_user_sid_string, named_pipe_connection_sid, named_pipe_host_pid_is_authorized,
+        named_pipe_sid_is_authorized,
+    };
+    use std::os::windows::io::AsRawHandle as _;
+    use tokio::net::windows::named_pipe::{ClientOptions, ServerOptions};
+
+    /// The daemon identifies a client from the token its pipe captured at
+    /// connect time, before any request is read, without opening the client's
+    /// process (#4957). The client here opens at tokio's default
+    /// identification level, as the daemon's own clients do.
+    #[tokio::test]
+    async fn connected_client_is_identified_from_the_pipe_token() {
+        let name = format!(
+            r"\\.\pipe\cua-driver-identity-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let server = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&name)
+            .expect("create pipe");
+        let _client = ClientOptions::new().open(&name).expect("open pipe");
+        server.connect().await.expect("connect pipe");
+
+        let client_sid = unsafe { named_pipe_connection_sid(server.as_raw_handle().cast()) };
+        let expected_sid = unsafe { current_user_sid_string() };
+        assert!(expected_sid.is_some());
+        assert_eq!(client_sid, expected_sid);
+    }
 
     #[test]
     fn missing_or_foreign_sid_is_rejected_before_request_parsing() {

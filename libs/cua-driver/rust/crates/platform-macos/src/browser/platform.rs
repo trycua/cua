@@ -484,39 +484,112 @@ fn codesign_verification_args(requirement: &str) -> [&str; 4] {
     ]
 }
 
-fn has_trusted_codesign_identity(
+/// Only fixed diagnostic categories cross the tool boundary. Raw codesign output
+/// can contain paths and certificate data and must never be returned to callers.
+#[derive(Debug, Serialize)]
+struct CodesignFailure {
+    stage: &'static str,
+    reason: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exit_code: Option<i32>,
+}
+
+fn checked_codesign_output(
+    result: std::io::Result<std::process::Output>,
+    stage: &'static str,
+) -> Result<std::process::Output, CodesignFailure> {
+    let output = result.map_err(|_| CodesignFailure {
+        stage,
+        reason: "codesign_execution_failed",
+        exit_code: None,
+    })?;
+    if output.status.success() {
+        return Ok(output);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let reason = if stderr.contains("code object is not signed at all") {
+        "unsigned_code"
+    } else if stderr.contains("code failed to satisfy specified code requirement") {
+        "vendor_requirement_not_satisfied"
+    } else if stderr.contains("a sealed resource is missing or invalid")
+        || stderr.contains("invalid signature")
+    {
+        "invalid_signature"
+    } else {
+        "codesign_check_failed"
+    };
+    Err(CodesignFailure {
+        stage,
+        reason,
+        exit_code: output.status.code(),
+    })
+}
+
+fn verify_codesign_identity(
     executable: &std::path::Path,
     identifier: &str,
     team_identifier: &str,
-) -> bool {
+) -> Result<(), CodesignFailure> {
     let requirement = format!(
         "=anchor apple generic and certificate leaf[subject.OU] = \"{team_identifier}\" and identifier \"{identifier}\""
     );
-    let verified = std::process::Command::new("/usr/bin/codesign")
-        .args(codesign_verification_args(&requirement))
-        .arg(executable)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success());
-    if !verified {
-        return false;
+    checked_codesign_output(
+        std::process::Command::new("/usr/bin/codesign")
+            .args(codesign_verification_args(&requirement))
+            .arg(executable)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .output(),
+        "signature_verification",
+    )?;
+    let details = checked_codesign_output(
+        std::process::Command::new("/usr/bin/codesign")
+            .args(["-dv", "--verbose=4"])
+            .arg(executable)
+            .stdin(Stdio::null())
+            .output(),
+        "identity_inspection",
+    )?;
+    if codesign_identity_matches(
+        &String::from_utf8_lossy(&details.stderr),
+        identifier,
+        team_identifier,
+    ) {
+        Ok(())
+    } else {
+        Err(CodesignFailure {
+            stage: "identity_inspection",
+            reason: "vendor_identity_mismatch",
+            exit_code: None,
+        })
     }
-    let Ok(details) = std::process::Command::new("/usr/bin/codesign")
-        .args(["-dv", "--verbose=4"])
-        .arg(executable)
-        .stdin(Stdio::null())
-        .output()
-    else {
-        return false;
-    };
-    details.status.success()
-        && codesign_identity_matches(
-            &String::from_utf8_lossy(&details.stderr),
-            identifier,
-            team_identifier,
-        )
+}
+
+fn select_verified_browser<'a>(
+    candidates: impl IntoIterator<Item = (&'a str, Result<Option<String>, CodesignFailure>)>,
+) -> Result<String, BrowserRefusal> {
+    let mut failures = Vec::new();
+    for (identifier, result) in candidates {
+        match result {
+            Ok(Some(executable)) => return Ok(executable),
+            Ok(None) => {}
+            Err(failure) => failures.push(serde_json::json!({
+                "candidate": identifier,
+                "verification": failure,
+            })),
+        }
+    }
+    let refusal = BrowserRefusal::new(
+        BrowserRefusalCode::BrowserRouteUnavailable,
+        "no vendor-signed system Chromium executable is available for isolated launch",
+    );
+    if failures.is_empty() {
+        return Err(refusal);
+    }
+    Err(refusal.with_detail(serde_json::json!({
+        "candidate_verification_failures": failures,
+        "hint": "Check the listed browser installations and codesign availability; repair or reinstall affected browsers from their official vendor. Signature verification is required.",
+    })))
 }
 
 fn stable_hash(value: &str) -> u64 {
@@ -848,21 +921,21 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
 #[async_trait]
 impl BrowserPlatform for MacOsBrowserPlatform {
     fn isolated_browser_executable(&self) -> Result<String, BrowserRefusal> {
-        for (candidate, identifier, team_identifier) in isolated_browser_candidates() {
-            let Ok(executable) = select_isolated_browser_executable([candidate]) else {
-                continue;
-            };
-            if has_trusted_codesign_identity(
-                std::path::Path::new(&executable),
-                identifier,
-                team_identifier,
-            ) {
-                return Ok(executable);
-            }
-        }
-        Err(BrowserRefusal::new(
-            BrowserRefusalCode::BrowserRouteUnavailable,
-            "no vendor-signed system Chromium executable is available for isolated launch",
+        select_verified_browser(isolated_browser_candidates().into_iter().map(
+            |(candidate, identifier, team_identifier)| {
+                let result = select_isolated_browser_executable([candidate])
+                    .ok()
+                    .map(|executable| {
+                        verify_codesign_identity(
+                            std::path::Path::new(&executable),
+                            identifier,
+                            team_identifier,
+                        )
+                        .map(|()| executable)
+                    })
+                    .transpose();
+                (identifier, result)
+            },
         ))
     }
 
@@ -1769,6 +1842,157 @@ mod tests {
         assert!(candidates
             .iter()
             .all(|(candidate, _, _)| candidate.is_absolute()));
+    }
+
+    fn codesign_output(code: i32, stderr: &[u8]) -> std::process::Output {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::Output {
+            status: std::process::ExitStatus::from_raw(code << 8),
+            stdout: Vec::new(),
+            stderr: stderr.to_vec(),
+        }
+    }
+
+    #[test]
+    fn codesign_failures_report_safe_categories_and_stages() {
+        for (text, reason) in [
+            ("code object is not signed at all", "unsigned_code"),
+            (
+                "test-requirement: code failed to satisfy specified code requirement(s)",
+                "vendor_requirement_not_satisfied",
+            ),
+            (
+                "a sealed resource is missing or invalid",
+                "invalid_signature",
+            ),
+            ("invalid signature", "invalid_signature"),
+            ("unrecognized or localized error", "codesign_check_failed"),
+        ] {
+            let failure = checked_codesign_output(
+                Ok(codesign_output(3, text.as_bytes())),
+                "signature_verification",
+            )
+            .unwrap_err();
+            assert_eq!(failure.reason, reason);
+            assert_eq!(failure.stage, "signature_verification");
+            assert_eq!(failure.exit_code, Some(3));
+        }
+        let failure = checked_codesign_output(
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "private execution detail",
+            )),
+            "identity_inspection",
+        )
+        .unwrap_err();
+        assert_eq!(failure.reason, "codesign_execution_failed");
+        assert_eq!(failure.stage, "identity_inspection");
+        assert_eq!(failure.exit_code, None);
+        let failure = checked_codesign_output(
+            Ok(codesign_output(1, b"private inspection error")),
+            "identity_inspection",
+        )
+        .unwrap_err();
+        assert_eq!(failure.stage, "identity_inspection");
+        assert_eq!(failure.reason, "codesign_check_failed");
+        assert!(checked_codesign_output(
+            Ok(codesign_output(
+                0,
+                b"diagnostic text on successful verification"
+            )),
+            "signature_verification",
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn isolated_browser_failure_details_never_expose_command_output() {
+        let private = "/Users/private/secret-profile token=secret certificate=private";
+        let stderr = format!("{private}\ninvalid signature\n{}", private.repeat(1000));
+        let failure = checked_codesign_output(
+            Ok(codesign_output(1, stderr.as_bytes())),
+            "signature_verification",
+        )
+        .unwrap_err();
+        let error = select_verified_browser([("com.google.Chrome", Err(failure))]).unwrap_err();
+        assert_eq!(error.code, BrowserRefusalCode::BrowserRouteUnavailable);
+        let detail = error.detail.as_ref().unwrap();
+        assert_eq!(
+            detail["candidate_verification_failures"][0]["verification"]["reason"],
+            "invalid_signature"
+        );
+        assert_eq!(
+            detail["candidate_verification_failures"][0]["candidate"],
+            "com.google.Chrome"
+        );
+        let serialized = serde_json::to_string(&error).unwrap();
+        assert!(!serialized.contains("secret"));
+        assert!(!serialized.contains("/Users/"));
+        assert!(!serialized.contains("certificate="));
+        assert!(serialized.len() < 1000);
+    }
+
+    #[test]
+    fn isolated_browser_discovery_preserves_fallback_and_stops_after_success() {
+        let candidates = [
+            (
+                "com.google.Chrome",
+                Err(CodesignFailure {
+                    stage: "signature_verification",
+                    reason: "invalid_signature",
+                    exit_code: Some(1),
+                }),
+            ),
+            ("com.microsoft.edgemac", Ok(Some("trusted-edge".to_owned()))),
+        ];
+        let never = std::iter::once_with(|| panic!("must not inspect candidates after success"));
+        assert_eq!(
+            select_verified_browser(candidates.into_iter().chain(never)).unwrap(),
+            "trusted-edge"
+        );
+        assert_eq!(
+            select_verified_browser([
+                ("com.google.Chrome", Ok(None)),
+                ("com.microsoft.edgemac", Ok(Some("trusted-edge".to_owned()))),
+            ])
+            .unwrap(),
+            "trusted-edge"
+        );
+    }
+
+    #[test]
+    fn isolated_browser_discovery_reports_all_failed_candidates_only_on_refusal() {
+        let candidates = ["com.google.Chrome", "com.microsoft.edgemac"].map(|identifier| {
+            (
+                identifier,
+                Err(CodesignFailure {
+                    stage: "identity_inspection",
+                    reason: "vendor_identity_mismatch",
+                    exit_code: None,
+                }),
+            )
+        });
+        let error = select_verified_browser(candidates).unwrap_err();
+        assert_eq!(error.code, BrowserRefusalCode::BrowserRouteUnavailable);
+        let detail = error.detail.unwrap();
+        assert_eq!(
+            detail["candidate_verification_failures"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            detail["candidate_verification_failures"][1]["candidate"],
+            "com.microsoft.edgemac"
+        );
+        assert!(detail["hint"]
+            .as_str()
+            .unwrap()
+            .contains("Signature verification is required"));
+        let missing = select_verified_browser([("com.google.Chrome", Ok(None))]).unwrap_err();
+        assert_eq!(missing.code, BrowserRefusalCode::BrowserRouteUnavailable);
+        assert!(missing.detail.is_none());
     }
 
     #[test]

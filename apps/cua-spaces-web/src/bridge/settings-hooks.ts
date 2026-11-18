@@ -175,13 +175,23 @@ export interface NotificationsHook extends Hook<NotificationsData> {
   markAllRead(): Promise<void>;
   /** Marks one entry read (it was opened). */
   markRead(id: string): Promise<void>;
+  /** Deletes one entry for good. */
+  deleteOne(id: string): Promise<void>;
+  /** Deletes every entry for good. */
+  deleteAll(): Promise<void>;
 }
 
 /** The daemon's notifications feed, polled every 5 s while the app is open. */
 export function useNotifications(): NotificationsHook {
   const r = useFeature<NotificationsData>("notifications");
   const run = useRun();
-  return { ...r, markAllRead: () => run((f) => f.markAllRead()), markRead: (id) => run((f) => f.markRead(id)) };
+  return {
+    ...r,
+    markAllRead: () => run((f) => f.markAllRead()),
+    markRead: (id) => run((f) => f.markRead(id)),
+    deleteOne: (id) => run((f) => f.deleteNotifications([id])),
+    deleteAll: () => run((f) => f.deleteAllNotifications()),
+  };
 }
 
 /** Calls `listener` for each entry the core says to announce. */

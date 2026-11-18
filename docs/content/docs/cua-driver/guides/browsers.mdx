@@ -204,7 +204,13 @@ off Chrome's remote-debugging setting; do that in Chrome.
 
 Supported: Chrome and Edge on macOS, Windows, and Linux X11; Chrome on GNOME
 Wayland; Chrome, Edge, and Chromium on Sway. On Linux, start the browser
-with `--force-renderer-accessibility`. Setup recognizes English UI labels only.
+with `--force-renderer-accessibility`. On macOS, setup recognizes English UI labels only. On Windows, setup does not depend on the UI language. On Linux, setup accepts a localized browser, but the browser's internal setup page must show its English heading and checkbox.
+
+On macOS 27 and later, reading the Chrome and Edge profile folders needs Full
+Disk Access or a per-app grant, so attachment through the daemon refuses with
+`browser_route_unavailable` until CuaDriver.app has that access. Grant it Full
+Disk Access in System Settings, then restart the daemon. A runtime started with
+`cua-driver mcp --direct` reads the folder with its host app's access instead.
 
 ## Refusals
 
@@ -215,7 +221,7 @@ with `--force-renderer-accessibility`. Setup recognizes English UI labels only.
 | `browser_consent_revoked` | The host denied, or the browser's prompt was dismissed. |
 | `browser_ref_stale`, `browser_binding_stale` | Snapshot or bind again. |
 | `browser_wrong_target_refused`, `browser_endpoint_owner_mismatch` | Window, prompt, or endpoint identity is not exact. |
-| `browser_input_trust_unavailable` | Trusted input would activate the browser; use `input_route: "dom_event"` if acceptable. |
+| `browser_input_trust_unavailable` | Trusted input would activate the browser, or (with `detail.hit_test`) a ref's click point is covered or off screen; use `input_route: "dom_event"` if acceptable. |
 | `browser_route_unavailable` | No typed route for this engine or platform. |
 | `browser_origin_outside_scope` | The tab left the manifest's origins; mutation pauses. |
 | `browser_action_unavailable` | The ref does not declare the needed action. |

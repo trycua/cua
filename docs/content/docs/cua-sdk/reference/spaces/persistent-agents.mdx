@@ -724,6 +724,57 @@ pub async fn notifications_ack(&self, ids: Vec<String>) -> Result<u64, CuaError>
 
 **Returns** `u64` · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
+### `Spaces.notifications_delete`
+
+Deletes notifications: these ids, or every one when `all` (an empty
+`ids` without `all` deletes nothing). Returns how many were deleted.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def notifications_delete(self, ids: List[str], all: bool) -> int
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+notificationsDelete(ids: Array<string>, all: boolean, asyncOpts_?: { signal: AbortSignal }): Promise<bigint>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func notificationsDelete(ids: [String], all: Bool) async throws -> UInt64
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun notificationsDelete(ids: List<String>, all: Boolean): ULong
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn notifications_delete(&self, ids: Vec<String>, all: bool) -> Result<u64, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `ids` | `Vec<String>` | required |
+| `all` | `bool` | required |
+
+**Returns** `u64` · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
 ## Access to your computers
 
 Methods of [`Spaces`](/cua-sdk/reference/spaces#spaces).

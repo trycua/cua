@@ -45,6 +45,14 @@
 #   $env:CUA_DRIVER_RS_HOME          override the package home
 #                                    (default %USERPROFILE%\.cua-driver)
 #   $env:CUA_DRIVER_RS_REQUIRE_SIGNATURE=1  same as -RequireSignature
+#   $env:CUA_DRIVER_RS_DOWNLOAD_BASE_URL download release assets from
+#                                    <url>/<tag>/<asset> instead of
+#                                    https://github.com/trycua/cua/releases/download,
+#                                    for a mirror closer to you when GitHub
+#                                    is slow or unreachable. The mirror must
+#                                    serve SHA256SUMS and the Sigstore bundles
+#                                    too; the usual checksum, Sigstore and
+#                                    Authenticode checks still apply.
 #   $env:CUA_DRIVER_RS_KEEP_VERSIONS keep the N most recent per-version
 #                                    release dirs after install; older ones
 #                                    are deleted (default 5; set 0 to
@@ -147,6 +155,11 @@ if ($PSVersionTable.PSEdition -eq 'Desktop') {
 }
 
 $Repo       = "trycua/cua"
+$ReleaseDownloadBase = if ($env:CUA_DRIVER_RS_DOWNLOAD_BASE_URL) {
+    $env:CUA_DRIVER_RS_DOWNLOAD_BASE_URL.TrimEnd('/')
+} else {
+    "https://github.com/$Repo/releases/download"
+}
 $TagPrefix  = "cua-driver-rs-v"
 $NightlyTagPrefix = "nightly-cua-driver-rs-v"
 $BinaryName = "cua-driver.exe"
@@ -1288,7 +1301,7 @@ function Get-ReleaseZip([string]$version, [string]$archLabel, [string]$destDir) 
     # never confused with a transient network, server, or authentication
     # failure. Only the former may activate baked-version fallback.
     $zipName = "cua-driver-rs-$version-$archLabel.zip"
-    $url     = "https://github.com/$Repo/releases/download/$Script:CuaDriverRsReleaseTag/$zipName"
+    $url     = "$ReleaseDownloadBase/$Script:CuaDriverRsReleaseTag/$zipName"
     $zipPath = Join-Path $destDir $zipName
     $maxAttempts = $Script:ReleaseRetryDelays.Count + 1
 
@@ -1341,7 +1354,7 @@ function Get-BaseVersion([string]$version) {
 
 function Get-ReleaseFile([string]$name, [string]$destPath) {
     # Returns $true when fetched, $false on HTTP 404; exits on anything else.
-    $url = "https://github.com/$Repo/releases/download/$Script:CuaDriverRsReleaseTag/$name"
+    $url = "$ReleaseDownloadBase/$Script:CuaDriverRsReleaseTag/$name"
     $maxAttempts = $Script:ReleaseRetryDelays.Count + 1
     for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
         try {

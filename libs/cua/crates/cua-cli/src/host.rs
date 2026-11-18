@@ -950,9 +950,7 @@ impl SpacesCmd {
     /// a new command has to pick a route here.
     pub(crate) fn runs_through_sdk(&self) -> bool {
         match self {
-            Self::Ls { .. } | Self::Default { .. } | Self::Rename { .. } | Self::Set { .. } => {
-                false
-            }
+            Self::Ls { .. } | Self::Default { .. } => false,
             Self::Add { .. }
             | Self::Create { .. }
             | Self::Prewarm { .. }
@@ -973,7 +971,9 @@ impl SpacesCmd {
             | Self::Unshare { .. }
             | Self::Shares { .. }
             | Self::RelayRegister { .. }
-            | Self::RelayUnregister { .. } => true,
+            | Self::RelayUnregister { .. }
+            | Self::Rename { .. }
+            | Self::Set { .. } => true,
         }
     }
 }

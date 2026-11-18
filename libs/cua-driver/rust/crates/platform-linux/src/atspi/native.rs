@@ -3071,7 +3071,11 @@ async fn write_into_editable_acc(
         .proxies()
         .await
         .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
-    let Some(len) = editable_insert_length_for(text, toolkit_of(acc)).await else {
+    let toolkit = before_write_reserve(toolkit_of(acc)).await.flatten();
+    if toolkit.as_deref().is_some_and(is_qt) && !is_multi_line(acc).await {
+        return Err(QtLineEditSetsText.into());
+    }
+    let Some(len) = editable_insert_length(toolkit.as_deref(), text) else {
         dlog!("toolkit unknown, no safe InsertText length for non-ASCII text");
         return Ok(false);
     };
@@ -3190,11 +3194,19 @@ async fn walk_before_write<T>(walk: impl std::future::Future<Output = T>) -> T {
 fn editable_insert_length(toolkit: Option<&str>, text: &str) -> Option<i32> {
     let length = match toolkit {
         _ if text.is_ascii() => text.len(),
-        Some(name) if name.trim().eq_ignore_ascii_case("qt") => text.encode_utf16().count(),
+        Some(name) if is_qt(name) => text.encode_utf16().count(),
         Some(_) => text.len(),
         None => return None,
     };
     i32::try_from(length).ok()
+}
+
+fn is_qt(toolkit: &str) -> bool {
+    toolkit.trim().eq_ignore_ascii_case("qt")
+}
+
+async fn is_multi_line(acc: &AccessibleProxy<'_>) -> bool {
+    matches!(call(acc.get_state()).await, Some(Ok(states)) if states.contains(State::MultiLine))
 }
 
 /// The toolkit behind an element, from its application's root object.
@@ -4219,6 +4231,21 @@ impl std::fmt::Display for InputMayHaveLanded {
 }
 impl std::error::Error for InputMayHaveLanded {}
 
+/// Qt applies an `EditableText` write to a single-line field (a line edit,
+/// spin box or date edit) as `QLineEdit::setText`, which skips the field's
+/// validator and input mask and is not a user edit. Nothing was sent.
+#[derive(Debug)]
+pub struct QtLineEditSetsText;
+impl std::fmt::Display for QtLineEditSetsText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "Qt applies an accessibility write to a single-line field as setText, which skips \
+             the field's validator and input mask",
+        )
+    }
+}
+impl std::error::Error for QtLineEditSetsText {}
+
 /// Send one AT-SPI request that changes the application, bounded by the
 /// operation deadline. Once the request is polled it may have reached the
 /// application, so an error reply or a missing answer is
@@ -4894,7 +4921,9 @@ async fn write_into_focused_editable(
     }
     match write_into_editable_acc(&acc, ifaces.contains(Interface::Component), text).await {
         Ok(written) => Ok(Some(written)),
-        Err(error) if error.is::<InputMayHaveLanded>() => Err(error),
+        Err(error) if error.is::<InputMayHaveLanded>() || error.is::<QtLineEditSetsText>() => {
+            Err(error)
+        }
         Err(error) => {
             dlog!("focused editable write failed: {error:#}");
             Ok(Some(false))

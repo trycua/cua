@@ -948,11 +948,18 @@ fn effective_enabled(
 
 /// The live counterpart of [`effective_enabled`]: `false` when the element or
 /// any control-view ancestor up to the nearest `Window` reports
-/// `IsEnabled=false`. `None` when the element's own state cannot be read; an
+/// `IsEnabled=false`. A `Window` element starts its own scope, so only its own
+/// state counts. `None` when the element's own state cannot be read; an
 /// unreadable ancestor ends the climb.
 pub(crate) unsafe fn live_effective_enabled(element: &IUIAutomationElement) -> Option<bool> {
     if !element.CurrentIsEnabled().ok()?.as_bool() {
         return Some(false);
+    }
+    if element
+        .CurrentControlType()
+        .is_ok_and(|id| id == UIA_WindowControlTypeId)
+    {
+        return Some(true);
     }
     let walker = ensure_com()
         .ok()

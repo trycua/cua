@@ -1640,7 +1640,7 @@ unsafe fn named_pipe_client_process_id(pipe: *mut std::ffi::c_void) -> Option<u3
 
 /// Return the connected client's user SID.
 ///
-/// The token the pipe captured when the client connected is the primary
+/// The token the pipe captured for the client is the primary
 /// source. Opening the client's process instead fails when its DACL names
 /// only a logon SID the daemon lacks, such as an elevated shell in another
 /// logon session (an SSH login while the daemon runs unelevated on the
@@ -1650,8 +1650,10 @@ unsafe fn named_pipe_client_sid(pipe: *mut std::ffi::c_void) -> Option<String> {
     named_pipe_connection_sid(pipe).or_else(|| named_pipe_client_process_sid(pipe))
 }
 
-/// Read the user SID from the token the pipe captured at connect time.
+/// Read the user SID from the token the pipe captured for its client.
 ///
+/// Call this after the first read: a client that opened the pipe with
+/// dynamic context tracking hands over its token only when it writes.
 /// Clients open the pipe at identification level or higher; at
 /// identification level the token can be queried but not used for access.
 /// The impersonation is reverted before this returns.
@@ -1904,22 +1906,9 @@ pub async fn run_serve(
                     continue;
                 }
                 consecutive_failures = 0;
-                let expected_sid = unsafe { current_user_sid_string() };
+                let pipe_handle = server.as_raw_handle() as usize;
                 let client_process_id =
                     unsafe { named_pipe_client_process_id(server.as_raw_handle().cast()) };
-                let client_sid = unsafe {
-                    named_pipe_client_sid(server.as_raw_handle().cast())
-                };
-                if !named_pipe_sid_is_authorized(
-                    expected_sid.as_deref(),
-                    client_sid.as_deref(),
-                ) {
-                    tracing::warn!(
-                        "service named-pipe connection rejected before request parsing"
-                    );
-                    let _ = server.disconnect();
-                    continue;
-                }
                 let expected_host_process_id = std::env::var("CUA_DRIVER_EMBEDDED_HOST_PID")
                     .ok()
                     .and_then(|value| value.parse::<u32>().ok());
@@ -1947,7 +1936,31 @@ pub async fn run_serve(
                     let mut control_session_id: Option<String> = None;
                     let mut trusted_session: Option<TrustedConnectionSession> = None;
 
-                    while let Ok(Some(line)) = lines.next_line().await {
+                    // A client that opened the pipe with dynamic context
+                    // tracking (the CreateFileW default) hands the pipe its
+                    // token only when it writes, so authenticate after the
+                    // first read and before parsing it.
+                    let mut first_line = match lines.next_line().await {
+                        Ok(Some(line)) => Some(line),
+                        _ => return,
+                    };
+                    let expected_sid = unsafe { current_user_sid_string() };
+                    let client_sid =
+                        unsafe { named_pipe_client_sid(pipe_handle as *mut std::ffi::c_void) };
+                    if !named_pipe_sid_is_authorized(
+                        expected_sid.as_deref(),
+                        client_sid.as_deref(),
+                    ) {
+                        tracing::warn!(
+                            "service named-pipe connection rejected before request parsing"
+                        );
+                        return;
+                    }
+
+                    while let Some(line) = match first_line.take() {
+                        Some(line) => Some(line),
+                        None => lines.next_line().await.ok().flatten(),
+                    } {
                         let req: DaemonRequest = match serde_json::from_str(&line) {
                             Ok(r) => r,
                             Err(e) => {
@@ -2332,33 +2345,44 @@ mod named_pipe_authentication_tests {
         named_pipe_sid_is_authorized,
     };
     use std::os::windows::io::AsRawHandle as _;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use tokio::net::windows::named_pipe::{ClientOptions, ServerOptions};
 
-    /// The daemon identifies a client from the token its pipe captured at
-    /// connect time, before any request is read, without opening the client's
-    /// process (#4957). The client here opens at tokio's default
-    /// identification level, as the daemon's own clients do.
+    /// The daemon identifies a client from the token its pipe captured,
+    /// without opening the client's process (#4957). It authenticates after
+    /// reading the first request, which is when a client that opened with
+    /// dynamic context tracking hands the pipe its token.
     #[tokio::test]
     async fn connected_client_is_identified_from_the_pipe_token() {
-        let name = format!(
-            r"\\.\pipe\cua-driver-identity-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
-        let server = ServerOptions::new()
-            .first_pipe_instance(true)
-            .create(&name)
-            .expect("create pipe");
-        let _client = ClientOptions::new().open(&name).expect("open pipe");
-        server.connect().await.expect("connect pipe");
-
-        let client_sid = unsafe { named_pipe_connection_sid(server.as_raw_handle().cast()) };
+        const SECURITY_IDENTIFICATION: u32 = 0x0001_0000;
+        const SECURITY_CONTEXT_TRACKING: u32 = 0x0004_0000;
         let expected_sid = unsafe { current_user_sid_string() };
         assert!(expected_sid.is_some());
-        assert_eq!(client_sid, expected_sid);
+
+        for qos in [
+            SECURITY_IDENTIFICATION,
+            SECURITY_IDENTIFICATION | SECURITY_CONTEXT_TRACKING,
+        ] {
+            let name = format!(
+                r"\\.\pipe\cua-driver-identity-test-{}-{qos:x}",
+                std::process::id()
+            );
+            let mut server = ServerOptions::new()
+                .first_pipe_instance(true)
+                .create(&name)
+                .expect("create pipe");
+            let mut client = ClientOptions::new()
+                .security_qos_flags(qos)
+                .open(&name)
+                .expect("open pipe");
+            server.connect().await.expect("connect pipe");
+            client.write_all(b"{}\n").await.expect("write request");
+            let mut request = [0_u8; 3];
+            server.read_exact(&mut request).await.expect("read request");
+
+            let client_sid = unsafe { named_pipe_connection_sid(server.as_raw_handle().cast()) };
+            assert_eq!(client_sid, expected_sid, "security_qos_flags {qos:#x}");
+        }
     }
 
     #[test]

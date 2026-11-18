@@ -182,15 +182,19 @@ fn quic_incoming(item: std::result::Result<QuicItem, String>) -> Incoming {
 }
 
 /// Attaches to `quic` with `ticket`, keeping the connection only once the
-/// server has answered (a greeting or media), within [`QUIC_ATTACH`].
-async fn attach_quic(quic: &QuicTarget, ticket: &str) -> std::result::Result<Link, String> {
-    let deadline = tokio::time::Instant::now() + QUIC_ATTACH;
+/// server has answered (a greeting or media): all of it within `within`.
+async fn attach_quic(
+    quic: &QuicTarget,
+    ticket: &str,
+    within: Duration,
+) -> std::result::Result<Link, String> {
+    let deadline = tokio::time::Instant::now() + within;
     let mut link = MediaQuic::connect(
         &quic.host,
         quic.port,
         &quic.certificate_sha256,
         ticket,
-        QUIC_ATTACH,
+        within,
     )
     .await?;
     let first = tokio::time::timeout_at(deadline, link.next())
@@ -253,7 +257,7 @@ impl MediaStream {
     ) -> Result<MediaStream> {
         let timing = Instant::now();
         let quic = match &ticket.quic {
-            Some(quic) => attach_quic(quic, &ticket.ticket)
+            Some(quic) => attach_quic(quic, &ticket.ticket, QUIC_ATTACH)
                 .await
                 .inspect_err(|error| {
                     tracing::debug!(
@@ -756,6 +760,35 @@ mod tests {
         assert!(started.elapsed() >= QUIC_ATTACH, "{:?}", started.elapsed());
         assert!(stream.is_open());
         stream.close(Duration::from_secs(1)).await;
+    }
+
+    #[tokio::test]
+    async fn a_quic_listener_that_grants_no_stream_gives_up_within_the_deadline() {
+        let identity = QuicIdentity::generate().unwrap();
+        let mut config = identity.server_config().unwrap();
+        let mut transport = quinn::TransportConfig::default();
+        transport.max_concurrent_bidi_streams(0_u8.into());
+        config.transport_config(Arc::new(transport));
+        let endpoint = quinn::Endpoint::server(config, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let quic = QuicTarget {
+            host: "127.0.0.1".into(),
+            port: endpoint.local_addr().unwrap().port(),
+            certificate_sha256: identity.certificate_sha256(),
+        };
+        // The handshake completes; the client's stream never opens.
+        let accepted = tokio::spawn(async move {
+            let connection = endpoint.accept().await.unwrap().await.unwrap();
+            connection.closed().await
+        });
+        let within = Duration::from_millis(500);
+        let started = Instant::now();
+        let attached =
+            tokio::time::timeout(Duration::from_secs(5), attach_quic(&quic, TICKET, within))
+                .await
+                .expect("attach_quic returns within its deadline");
+        assert!(attached.is_err());
+        assert!(started.elapsed() >= within, "{:?}", started.elapsed());
+        accepted.abort();
     }
 
     #[tokio::test]

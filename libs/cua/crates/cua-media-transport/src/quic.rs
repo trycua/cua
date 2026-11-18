@@ -209,8 +209,8 @@ pub struct MediaQuic {
 
 impl MediaQuic {
     /// Connects to `host:port`, pinning the certificate to `pin` (the
-    /// `QuicEndpoint.certificate_sha256` hex), and sends `ticket`. The
-    /// handshake must finish within `timeout`.
+    /// `QuicEndpoint.certificate_sha256` hex), and sends `ticket`, all
+    /// within `timeout` (resolving the host through writing the ticket).
     pub async fn connect(
         host: &str,
         port: u16,
@@ -218,6 +218,12 @@ impl MediaQuic {
         ticket: &str,
         timeout: Duration,
     ) -> Result<Self, String> {
+        tokio::time::timeout(timeout, Self::attach(host, port, pin, ticket))
+            .await
+            .map_err(|_| "QUIC connect timed out".to_string())?
+    }
+
+    async fn attach(host: &str, port: u16, pin: &str, ticket: &str) -> Result<Self, String> {
         let pin = parse_sha256(pin).ok_or("QuicEndpoint has no valid certificate_sha256")?;
         let server: SocketAddr = tokio::net::lookup_host((host, port))
             .await
@@ -234,10 +240,7 @@ impl MediaQuic {
         let connecting = endpoint
             .connect(server, "cua-spacesd.local")
             .map_err(|error| error.to_string())?;
-        let connection = tokio::time::timeout(timeout, connecting)
-            .await
-            .map_err(|_| "QUIC connect timed out")?
-            .map_err(|error| error.to_string())?;
+        let connection = connecting.await.map_err(|error| error.to_string())?;
         let (mut send, mut receive) = connection
             .open_bi()
             .await

@@ -664,9 +664,7 @@ fn after_unlanded_ax_write(
     unchanged_web_readback: bool,
 ) -> UnlandedAxWrite {
     match progress {
-        Some(TypedProgress::Unchanged) if unchanged_web_readback => {
-            UnlandedAxWrite::TypeKeys(AxAttempt::Unverifiable)
-        }
+        Some(TypedProgress::Unchanged) if unchanged_web_readback => UnlandedAxWrite::MayHaveLanded,
         Some(TypedProgress::Unchanged) => UnlandedAxWrite::TypeKeys(AxAttempt::Unchanged),
         Some(TypedProgress::Unverifiable) => UnlandedAxWrite::TypeKeys(AxAttempt::Unverifiable),
         None => UnlandedAxWrite::TypeKeys(AxAttempt::Rejected),

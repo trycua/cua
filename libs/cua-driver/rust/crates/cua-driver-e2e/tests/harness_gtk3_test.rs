@@ -776,7 +776,7 @@ fn assert_waits_for_desktop_lane(
                     "pid": pid as i64, "window_id": window_id,
                     "from_x": x + width * 0.05, "from_y": y + height / 2.0,
                     "to_x": x + width * 0.90, "to_y": y + height / 2.0,
-                    "duration_ms": 3000, "steps": 60, "delivery_mode": "foreground"
+                    "duration_ms": 6000, "steps": 120, "delivery_mode": "foreground"
                 }),
             )
         });
@@ -795,7 +795,7 @@ fn assert_waits_for_desktop_lane(
             );
             std::thread::sleep(Duration::from_millis(50));
         };
-        // Over half of the drag (1.5 s) is left, so the call reaches the
+        // Over half of the drag (3 s) is left, so the call reaches the
         // daemon while the drag holds the lane unless this thread stalls.
         assert!(
             slider < 45 && !drag.is_finished(),
@@ -1027,6 +1027,12 @@ fn invoke_operation(
                     .expect("native screenshot width")
                     > small_width
             );
+            // Snapshots belong to the session that read them, so the driver's own
+            // frame and zoom stay valid after another client reads the window. A
+            // third client that never read it holds no frame and must be refused.
+            let mut stranger = driver
+                .spawn_peer_unrecorded()
+                .expect("start a client that has not read the window");
             for (tool, args) in [
                 (
                     "double_click",
@@ -1049,7 +1055,7 @@ fn invoke_operation(
                     serde_json::json!({"pid":pid as i64,"window_id":window_id,"x":x,"y":y}),
                 ),
             ] {
-                let stale = driver.call(tool, args);
+                let stale = stranger.call(tool, args);
                 assert_eq!(
                     stale.structured()["code"],
                     "screenshot_context_missing",
@@ -1070,14 +1076,14 @@ fn invoke_operation(
                     serde_json::json!({"pid":pid as i64,"window_id":window_id,"x":1.0,"y":1.0,"from_zoom":true}),
                 ),
             ] {
-                let stale = driver.call(tool, args);
+                let stale = stranger.call(tool, args);
                 assert_eq!(
                     stale.structured()["code"],
                     "zoom_context_missing",
                     "{tool} must refuse a zoom bound to the replaced snapshot"
                 );
             }
-            let stale = driver.call(
+            let stale = stranger.call(
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": window_id,

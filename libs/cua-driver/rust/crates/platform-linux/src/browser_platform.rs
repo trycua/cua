@@ -214,15 +214,19 @@ fn trusted_root_owned_installation(executable: &std::path::Path) -> bool {
 }
 
 /// The mandatory policy directories Chromium reads for `executable`'s
-/// product on Linux. Chromium builds read `/etc/chromium`, except Debian and
-/// Ubuntu's `chromium-browser` packaging, which reads its own directory.
+/// product on Linux. Chromium builds read `/etc/chromium`, except Ubuntu's
+/// `chromium-browser` packaging, which reads only its own directory.
 fn managed_policy_dirs(executable: &std::path::Path) -> &'static [&'static str] {
     match browser_product(&executable.to_string_lossy()) {
         BrowserProduct::GoogleChrome => &["/etc/opt/chrome/policies/managed"],
-        BrowserProduct::Chromium => &[
-            "/etc/chromium/policies/managed",
-            "/etc/chromium-browser/policies/managed",
-        ],
+        BrowserProduct::Chromium
+            if executable
+                .file_name()
+                .is_some_and(|name| name == "chromium-browser") =>
+        {
+            &["/etc/chromium-browser/policies/managed"]
+        }
+        BrowserProduct::Chromium => &["/etc/chromium/policies/managed"],
         BrowserProduct::MicrosoftEdge => &["/etc/opt/edge/policies/managed"],
         BrowserProduct::Brave => &["/etc/brave/policies/managed"],
         _ => &[],
@@ -1584,17 +1588,11 @@ mod tests {
             ),
             (
                 "/usr/lib/chromium/chromium",
-                &[
-                    "/etc/chromium/policies/managed",
-                    "/etc/chromium-browser/policies/managed",
-                ][..],
+                &["/etc/chromium/policies/managed"][..],
             ),
             (
                 "/usr/lib/chromium-browser/chromium-browser",
-                &[
-                    "/etc/chromium/policies/managed",
-                    "/etc/chromium-browser/policies/managed",
-                ][..],
+                &["/etc/chromium-browser/policies/managed"][..],
             ),
             (
                 "/opt/microsoft/msedge/msedge",

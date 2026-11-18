@@ -436,6 +436,8 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
     Some(outcome)
 }
 
+/// The guide's origin in `visible`: top left, clear of the app list and
+/// switches in the right half of System Settings, which opens centred.
 fn guide_origin(visible: NSRect) -> NSPoint {
     NSPoint {
         x: visible.origin.x + 24.0,

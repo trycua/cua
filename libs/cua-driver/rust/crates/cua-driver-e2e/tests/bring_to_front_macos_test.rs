@@ -309,6 +309,21 @@ fn exact_secondary_window_is_verified_and_prior_app_can_recover_focus() {
 
     assert_ne!(focused_window_title(target.pid), MAIN_TITLE);
 
+    let repeated = driver.call(
+        "bring_to_front",
+        serde_json::json!({"pid": target.pid, "window_id": secondary}),
+    );
+    assert!(
+        !repeated.is_error(),
+        "repeated exact bring_to_front failed: {}; raw={}",
+        repeated.text(),
+        repeated.raw
+    );
+    assert_eq!(repeated.structured()["path"], "already_front");
+    assert_eq!(repeated.structured()["activated"], true);
+    assert_eq!(repeated.structured()["request_accepted"], false);
+    assert_eq!(layer_zero_front().id, secondary);
+
     let recovered = driver.call(
         "bring_to_front",
         serde_json::json!({"pid": occluder.pid, "window_id": occluder_main}),

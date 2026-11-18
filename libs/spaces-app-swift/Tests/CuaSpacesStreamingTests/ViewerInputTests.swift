@@ -65,8 +65,11 @@ private final class RecordingProvider: SpaceStreamSourceProviding, @unchecked Se
     /// How many input frames the Space had when each clipboard arrived.
     var framesAtClipboard: [Int] { lock.lock(); defer { lock.unlock() }; return framesBefore }
 
+    /// A longer delay for one text: a transfer that stalls.
+    var clipboardDelays: [String: Duration] = [:]
+
     func sendClipboard(_ text: String) async throws -> Bool {
-        try? await Task.sleep(for: clipboardDelay)
+        try? await Task.sleep(for: clipboardDelays[text] ?? clipboardDelay)
         guard sendsClipboard else { return false }
         lock.lock(); clipboardTexts.append(text); framesBefore.append(media.sent.count); lock.unlock()
         return true
@@ -382,6 +385,24 @@ private func pointerEvents(in text: String) -> [[String: Any]] {
         await eventually("both pastes") { provider.media.sent.count == 2 }
         #expect(provider.clipboards == ["first", "second"])
         #expect(provider.framesAtClipboard == [0, 1], "each clipboard went just before its own chord")
+
+        // The first transfer stalls past its wait: its chord goes without
+        // it, the second paste's chord still waits for its own text, and
+        // the late first text is put right after it lands.
+        let stalls = RecordingProvider()
+        stalls.clipboardDelays = ["stalled": .milliseconds(300)]
+        let late = LiveStreamSession(provider: stalls)
+        late.pasteWait = .milliseconds(20)
+        await late.start()
+        late.paste(v, text: "stalled")
+        await eventually("the first chord, after its wait") { stalls.media.sent.count == 1 }
+        late.paste(v, text: "next")
+        await eventually("the second chord") { stalls.media.sent.count == 2 }
+        #expect(stalls.clipboards == ["next"])
+        #expect(stalls.framesAtClipboard == [1], "the second clipboard went before its chord")
+        await eventually("the late text and the newest again") { stalls.clipboards.count == 3 }
+        #expect(stalls.clipboards == ["next", "stalled", "next"])
+        await late.stop()
 
         let slow = RecordingProvider()
         slow.clipboardDelay = .seconds(30)

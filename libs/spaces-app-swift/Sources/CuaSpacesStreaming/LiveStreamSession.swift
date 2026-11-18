@@ -127,7 +127,11 @@ public final class LiveStreamSession: ObservableObject {
         case input([InteractiveInputEvent])
         case paste([InteractiveInputEvent], String?)
     }
-    private var clipboardTransfer: Task<Void, Never>?
+    /// Clipboard transfers started and the newest one that landed, and its
+    /// text while the stream lasts.
+    private var clipboardStarted: UInt64 = 0
+    private var newestLanded: UInt64 = 0
+    private var newestClipboard: String?
     private var pasteGeneration: UInt64 = 0
     /// How long a paste waits for the clipboard before its keys go anyway.
     var pasteWait: Duration = .seconds(2)
@@ -712,17 +716,12 @@ public final class LiveStreamSession: ObservableObject {
         heldInput = [.input(events)]
         pasteGeneration &+= 1
         let generation = pasteGeneration
-        let provider = provider
-        // One transfer at a time, in paste order: one that outlived its
-        // wait must not land after the next paste's.
-        let previous = clipboardTransfer
-        let transfer = Task { @MainActor in
-            await previous?.value
+        clipboardStarted &+= 1
+        let transfer = clipboardStarted
+        newestClipboard = text
+        Task { @MainActor [weak self, provider] in
             _ = try? await provider.sendClipboard(text)
-        }
-        clipboardTransfer = transfer
-        Task { @MainActor [weak self] in
-            await transfer.value
+            self?.clipboardLanded(transfer)
             self?.releaseHeldInput(generation)
         }
         Task { @MainActor [weak self, pasteWait] in
@@ -748,10 +747,22 @@ public final class LiveStreamSession: ObservableObject {
         }
     }
 
+    /// A transfer that outlived its wait can land after a newer paste's
+    /// (the call cannot be recalled): the newest text goes again, so the
+    /// Space keeps the last paste's clipboard.
+    private func clipboardLanded(_ transfer: UInt64) {
+        guard transfer < newestLanded, let text = newestClipboard else {
+            newestLanded = max(newestLanded, transfer)
+            return
+        }
+        Task { [provider] in _ = try? await provider.sendClipboard(text) }
+    }
+
     /// Input held for a paste was meant for the stream that is going away.
     private func dropHeldInput() {
         heldInput = nil
         pasteGeneration &+= 1
+        newestClipboard = nil
     }
 
     /// The Space can reach the streamed window only by activating it: reopen

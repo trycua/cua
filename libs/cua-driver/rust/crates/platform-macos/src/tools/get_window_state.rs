@@ -748,6 +748,7 @@ impl Tool for GetWindowStateTool {
         if let Some(capture_id) = capture_id {
             structured["capture_id"] = serde_json::json!(capture_id);
         }
+        // Set only when the window scope is unresolved (issue #4039).
         if let Some(summary) = tree_result
             .as_ref()
             .and_then(|result| result.ax_enumeration.as_ref())

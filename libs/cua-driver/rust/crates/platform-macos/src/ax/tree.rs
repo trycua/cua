@@ -195,18 +195,36 @@ pub struct TreeWalkResult {
     /// [`WindowScope::Matched`] comes with an EMPTY walk, so `nodes` never
     /// describes a window other than the requested one.
     pub window_scope: Option<WindowScope>,
-    /// Counts observed at the application AX boundary. These are diagnostic
-    /// only; an unresolved scope still produces no walkable elements.
+    /// What the application AX element enumerated, set only when
+    /// `window_scope` is [`WindowScope::AxUnresolved`] after a read of the
+    /// application's top level (issue #4039). Diagnostic only: the walk
+    /// stays empty.
     pub ax_enumeration: Option<AXEnumerationSummary>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Counts read at the application AX element by a window-scoped walk.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AXEnumerationSummary {
+    /// Elements in the application's `AXChildren`.
     pub children_count: usize,
+    /// Elements in its `AXWindows`, plus a requested window recovered from
+    /// another Space.
     pub windows_count: usize,
+    /// Top-level elements after the two lists are merged by AX identity.
     pub union_count: usize,
+    /// Top-level elements whose role is `AXWindow`.
     pub ax_window_count: usize,
+    /// `AXWindow` elements that `_AXUIElementGetWindow` mapped to any
+    /// CGWindowID.
     pub mapped_window_count: usize,
+}
+
+impl AXEnumerationSummary {
+    fn count_windows(&mut self, candidates: &[TopLevelCandidate]) {
+        let windows = candidates.iter().filter(|c| c.role == "AXWindow");
+        self.ax_window_count = windows.clone().count();
+        self.mapped_window_count = windows.filter(|c| c.ax_window_id.is_some()).count();
+    }
 }
 
 /// Walk the AX tree of `pid`, optionally filtered to a specific window.
@@ -339,7 +357,8 @@ fn walk_tree_with_web_content(
             let attempt_started = Instant::now();
             super::enablement::ensure_chromium_ax_enabled(pid, app_elem);
 
-            let (mut top_level, ax_windows_error) = copy_top_level(app_elem, pid, window_id);
+            let (mut top_level, ax_windows_error, mut enumeration) =
+                copy_top_level(app_elem, pid, window_id);
 
             // Scope: keep non-window children (menu bar) + the target window —
             // but ONLY once the target window has actually been identified. When
@@ -350,7 +369,8 @@ fn walk_tree_with_web_content(
                 let walk = top_level.clone();
                 break (top_level, walk);
             };
-            let decision = scope_top_level(&mut top_level, pid, wid, ax_windows_error);
+            let decision =
+                scope_top_level(&mut top_level, pid, wid, ax_windows_error, &mut enumeration);
             if matches!(decision.scope, WindowScope::AxUnresolved { .. }) {
                 match launch_wait.step(attempt_started, Instant::now(), || is_still_launching(pid))
                 {
@@ -370,6 +390,8 @@ fn walk_tree_with_web_content(
                 .iter()
                 .map(|&index| top_level[index])
                 .collect();
+            ax_enumeration =
+                matches!(decision.scope, WindowScope::AxUnresolved { .. }).then_some(enumeration);
             window_scope = Some(decision.scope);
             break (top_level, walk);
         };
@@ -441,19 +463,22 @@ fn walk_tree_with_web_content(
 /// `AXChildren` omits windows when the app isn't frontmost (AppKit
 /// limitation); `AXWindows` returns the window list regardless of activation
 /// state, so the union is the only way to see background windows. Every
-/// returned element is retained; release them with [`release_all`].
+/// returned element is retained; release them with [`release_all`]. The
+/// summary holds the list sizes; [`scope_top_level`] adds the window counts.
 unsafe fn copy_top_level(
     app_elem: AXUIElementRef,
     pid: i32,
     window_id: Option<u32>,
-) -> (Vec<AXUIElementRef>, Option<AXError>) {
+) -> (Vec<AXUIElementRef>, Option<AXError>, AXEnumerationSummary) {
     let mut top_level = copy_children(app_elem);
+    let children_count = top_level.len();
     // A requested window on another Space is absent from AXWindows; the
     // `_including` variant recovers it by exact CGWindowID.
     let (from_windows, ax_windows_error) = match window_id {
         Some(wid) => copy_ax_windows_including_or_error(app_elem, pid, wid),
         None => (copy_ax_windows(app_elem), None),
     };
+    let windows_count = from_windows.len();
     for w in from_windows {
         // AXChildren and AXWindows can return different proxy pointers for
         // the same native window. CFEqual compares their AX identity;
@@ -469,7 +494,13 @@ unsafe fn copy_top_level(
             CFRelease(w as CFTypeRef);
         }
     }
-    (top_level, ax_windows_error)
+    let enumeration = AXEnumerationSummary {
+        children_count,
+        windows_count,
+        union_count: top_level.len(),
+        ..AXEnumerationSummary::default()
+    };
+    (top_level, ax_windows_error, enumeration)
 }
 
 /// Decide which of `top_level` a walk scoped to `wid` covers.
@@ -483,11 +514,13 @@ unsafe fn scope_top_level(
     pid: i32,
     wid: u32,
     ax_windows_error: Option<AXError>,
+    enumeration: &mut AXEnumerationSummary,
 ) -> ScopeDecision {
     let mut candidates: Vec<TopLevelCandidate> = top_level
         .iter()
         .map(|&child| top_level_candidate(child))
         .collect();
+    enumeration.count_windows(&candidates);
     if !candidates
         .iter()
         .any(|candidate| candidate.ax_window_id == Some(wid))
@@ -1141,6 +1174,34 @@ fn render_lines(lines: &[(usize, String)]) -> String {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    /// Issue #4039: an unresolved scope reports how many top-level AXWindows
+    /// the SPI mapped to any CGWindowID, apart from how many there were.
+    #[test]
+    fn enumeration_counts_windows_and_mapped_windows_only() {
+        let mut enumeration = AXEnumerationSummary {
+            children_count: 3,
+            windows_count: 2,
+            union_count: 4,
+            ..AXEnumerationSummary::default()
+        };
+        enumeration.count_windows(&[
+            TopLevelCandidate::new("AXMenuBar", None),
+            TopLevelCandidate::new("AXWindow", Some(11)),
+            TopLevelCandidate::new("AXWindow", None),
+            TopLevelCandidate::new("AXSheet", Some(12)),
+        ]);
+        assert_eq!(
+            enumeration,
+            AXEnumerationSummary {
+                children_count: 3,
+                windows_count: 2,
+                union_count: 4,
+                ax_window_count: 2,
+                mapped_window_count: 1,
+            }
+        );
+    }
 
     #[test]
     fn named_layout_groups_keep_their_row_and_unnamed_wrappers_collapse() {

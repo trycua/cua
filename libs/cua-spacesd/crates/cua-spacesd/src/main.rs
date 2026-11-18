@@ -897,7 +897,9 @@ async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError
         } else {
             // Probe the hardware encoders now, each in a child that is killed
             // if its GPU driver hangs, so `GetCapabilities` never waits on one.
-            if let Some(isolation) = cua_spacesd_desktop::encoder_probe::subprocess_isolation() {
+            if let Ok(isolation) = cua_media_codec::probe::Isolation::current_exe(
+                cua_spacesd_desktop::encoder_probe::PROBE_CHILD_TIMEOUT,
+            ) {
                 cua_spacesd_desktop::encoder_probe::start_host_probe(isolation);
             }
             match cua_spacesd_desktop::grpc::DesktopServiceProvider::for_host(ctx.clone()) {

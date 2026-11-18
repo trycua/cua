@@ -8,9 +8,10 @@
 //! whose compositor holds the DRM modeset lock, a probe can block in the
 //! kernel indefinitely. `GetCapabilities` runs on an async worker, so it
 //! never waits for the probe: until the probe finishes, `h264_hw` reports
-//! that it is still running.
+//! that it is still running. Stream encoders wait for the same probe rather
+//! than starting their own.
 
-use std::sync::{Once, OnceLock};
+use std::sync::{Condvar, Mutex, Once};
 use std::time::Duration;
 
 use cua_media_codec::probe::{EncoderInfo, Isolation};
@@ -27,14 +28,16 @@ pub const PROBE_PENDING: &str = "the hardware encoder probe has not finished";
 /// One encoder probe, started at most once and read without blocking.
 pub struct EncoderProbe {
     started: Once,
-    result: OnceLock<Vec<EncoderInfo>>,
+    result: Mutex<Option<Vec<EncoderInfo>>>,
+    landed: Condvar,
 }
 
 impl EncoderProbe {
     pub const fn new() -> Self {
         Self {
             started: Once::new(),
-            result: OnceLock::new(),
+            result: Mutex::new(None),
+            landed: Condvar::new(),
         }
     }
 
@@ -44,7 +47,9 @@ impl EncoderProbe {
             let spawned = std::thread::Builder::new()
                 .name("encoder-probe".into())
                 .spawn(move || {
-                    let _ = self.result.set(probe());
+                    let encoders = probe();
+                    *self.lock() = Some(encoders);
+                    self.landed.notify_all();
                 });
             if let Err(error) = spawned {
                 tracing::warn!(%error, "could not start the encoder probe; h264_hw stays unsupported");
@@ -52,10 +57,32 @@ impl EncoderProbe {
         });
     }
 
-    /// The `h264_hw` feature; `missing` is the limitation when the probe
-    /// found no hardware encoder.
+    fn lock(&self) -> std::sync::MutexGuard<'_, Option<Vec<EncoderInfo>>> {
+        self.result
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The probe's result, waiting for it to land. Never call this from an
+    /// async worker.
+    pub fn encoders(&self) -> Vec<EncoderInfo> {
+        let mut result = self.lock();
+        loop {
+            if let Some(encoders) = result.as_ref() {
+                return encoders.clone();
+            }
+            result = self
+                .landed
+                .wait(result)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    }
+
+    /// The `h264_hw` feature, without waiting; `missing` is the limitation
+    /// when the probe found no hardware encoder.
     pub fn h264_hw(&self, missing: &str) -> FeatureStatus {
-        let Some(encoders) = self.result.get() else {
+        let result = self.lock();
+        let Some(encoders) = result.as_ref() else {
             return FeatureStatus::no("h264_hw", PROBE_PENDING);
         };
         let hardware = encoders
@@ -82,21 +109,12 @@ impl Default for EncoderProbe {
 
 static HOST: EncoderProbe = EncoderProbe::new();
 
-/// Starts this process's probe with `isolation`, filling the
-/// `cua-media-codec` cache the stream encoders read. The daemon passes
-/// [`Isolation::Subprocess`] so a hung driver stays in a child it kills.
+/// Starts this process's probe with `isolation`, unless one started. The
+/// daemon passes [`Isolation::Subprocess`] over its own executable (which
+/// calls `cua_media_codec::probe::maybe_run_probe_child` first in `main`),
+/// so a hung driver stays in a child it kills.
 pub fn start_host_probe(isolation: Isolation) {
-    HOST.start(move || cua_media_codec::probe::probe_cached(&isolation));
-}
-
-/// The child-process isolation over this executable, which must call
-/// `cua_media_codec::probe::maybe_run_probe_child` first in `main`.
-pub fn subprocess_isolation() -> Option<Isolation> {
-    Some(Isolation::Subprocess {
-        program: std::env::current_exe().ok()?,
-        args: Vec::new(),
-        timeout: PROBE_CHILD_TIMEOUT,
-    })
+    HOST.start(move || cua_media_codec::probe::probe_with(&isolation));
 }
 
 /// This process's `h264_hw` feature. Starts an in-process probe on a
@@ -104,6 +122,13 @@ pub fn subprocess_isolation() -> Option<Isolation> {
 pub fn host_h264_hw(missing: &str) -> FeatureStatus {
     start_host_probe(Isolation::InProcess);
     HOST.h264_hw(missing)
+}
+
+/// This process's probe result for a stream encoder, waiting for it to
+/// land. Starts an in-process probe when the binary started none.
+pub fn host_encoders() -> Vec<EncoderInfo> {
+    start_host_probe(Isolation::InProcess);
+    HOST.encoders()
 }
 
 #[cfg(test)]
@@ -127,10 +152,8 @@ mod tests {
     fn a_blocked_probe_never_blocks_the_feature() {
         let probe: &'static EncoderProbe = Box::leak(Box::new(EncoderProbe::new()));
         let (release, wait) = mpsc::channel::<()>();
-        let (done, finished) = mpsc::channel::<()>();
         probe.start(move || {
             let _ = wait.recv();
-            let _ = done.send(());
             vec![found(Backend::Vaapi)]
         });
 
@@ -141,12 +164,7 @@ mod tests {
         assert_eq!(pending.limitation, PROBE_PENDING);
 
         release.send(()).unwrap();
-        finished.recv().unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while probe.result.get().is_none() {
-            assert!(Instant::now() < deadline, "the probe result never landed");
-            std::thread::yield_now();
-        }
+        assert_eq!(probe.encoders().len(), 1);
         let ready = probe.h264_hw("none");
         assert!(ready.supported);
         assert_eq!(
@@ -158,18 +176,13 @@ mod tests {
     #[test]
     fn a_probe_without_hardware_reports_the_missing_reason() {
         let probe: &'static EncoderProbe = Box::leak(Box::new(EncoderProbe::new()));
-        let (done, finished) = mpsc::channel::<()>();
         probe.start(move || {
-            let _ = done.send(());
             vec![
                 found(Backend::OpenH264),
                 EncoderInfo::unavailable(Backend::Nvenc, "timed out", Instant::now()),
             ]
         });
-        finished.recv().unwrap();
-        while probe.result.get().is_none() {
-            std::thread::yield_now();
-        }
+        probe.encoders();
         let feature = probe.h264_hw("no hardware H.264 encoder was found");
         assert!(!feature.supported);
         assert_eq!(feature.limitation, "no hardware H.264 encoder was found");

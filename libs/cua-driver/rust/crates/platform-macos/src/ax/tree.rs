@@ -1265,6 +1265,44 @@ mod tests {
         );
     }
 
+    /// Issue #7666: PowerPoint's Copilot button has a custom action whose
+    /// name holds newlines. Control characters in actions, help and id are
+    /// escaped so the element stays on one row.
+    #[test]
+    fn control_characters_in_row_metadata_stay_on_one_row() {
+        let node = AXNode {
+            element_index: Some(1),
+            role: "AXButton".into(),
+            title: None,
+            value: None,
+            description: Some("Copilot Chat".into()),
+            placeholder: None,
+            subrole: None,
+            identifier: Some("copilot\tchat".into()),
+            help: Some("Copilot Chat\r\n(⌃⌘I)".into()),
+            actions: vec![
+                "AXPress".into(),
+                "Name:expand\ntarget:0x0\nselector:(null)\u{1}".into(),
+            ],
+            element_ptr: 0,
+            depth: 1,
+            parent_element_index: None,
+            frame: None,
+            value_state: None,
+            value_description: None,
+            min_value: None,
+            max_value: None,
+            enabled: None,
+            selected: None,
+            in_web_content: false,
+        };
+        assert_eq!(
+            format_node_line(&node),
+            "- [1] AXButton (Copilot Chat) [id=copilot\\tchat help=\"Copilot Chat\\r\\n(⌃⌘I)\" \
+             actions=[press,name:expand\\ntarget:0x0\\nselector:(null)\\u{1}]]"
+        );
+    }
+
     #[test]
     fn writable_value_controls_are_addressable_without_actions() {
         assert!(is_addressable(false, true));

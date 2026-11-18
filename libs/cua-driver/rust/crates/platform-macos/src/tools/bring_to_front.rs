@@ -125,8 +125,8 @@ fn def() -> &'static ToolDef {
              requested window losing keyboard focus, so it is reported and not required. \
              `exact_window_effect.unobstructed` is false when another ordinary (layer-0) window \
              lies over part of the target, and `observed.occluding_window` names the frontmost \
-             one: desktop pointer input at a covered point does not reach the target, even \
-             after a verified activation. Request acceptance alone is reported as a partial \
+             one. It may intercept desktop pointer input at a covered point, even after a \
+             verified activation. Request acceptance alone is reported as a partial \
              result, never as activation. This DOES steal foreground and does NOT restore the \
              previously frontmost application."
             .into(),
@@ -282,9 +282,9 @@ fn front_window_of_process_on_target_display(
 }
 
 /// The frontmost layer-0 window above `window_id` that overlaps it, from the
-/// same window list the desktop pointer guard reads. A desktop pointer event
-/// at an overlapped point does not reach the target, and the guard judges it
-/// by the covering window's owner.
+/// same window list the desktop pointer guard reads. Bounds alone cannot tell
+/// whether it takes pointer events, so it is reported as a possible
+/// obstruction.
 fn occluding_window(windows: &[WindowInfo], window_id: u32) -> Option<Occluder> {
     let target = windows.iter().find(|w| w.window_id == window_id)?;
     windows
@@ -437,8 +437,8 @@ fn exact_result(
         let mut text = format!("Brought exact window {window_id} for pid {pid} to the foreground.");
         if let Some(occluder) = observation.occluder {
             text.push_str(&format!(
-                " Window {} of pid {} lies over part of it: desktop pointer input at a covered \
-                 point does not reach this one.",
+                " Window {} of pid {} lies over part of it and may intercept desktop \
+                 pointer input at a covered point.",
                 occluder.window_id, occluder.pid
             ));
         }

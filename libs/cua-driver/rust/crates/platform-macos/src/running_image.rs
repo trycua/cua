@@ -89,7 +89,7 @@ fn judge(image: ImageFile, at_launch_path: std::io::Result<std::fs::Metadata>) -
 
 fn running_image() -> Option<ImageFile> {
     // Any address inside this crate's code: it is linked into the executable.
-    let address = was_replaced as usize as u64;
+    let address = was_replaced as *const () as usize as u64;
     let mut info = std::mem::MaybeUninit::<ProcRegionWithPathInfo>::zeroed();
     let size = std::mem::size_of::<ProcRegionWithPathInfo>() as libc::c_int;
     // SAFETY: `info` is a writable buffer of exactly `size` bytes.

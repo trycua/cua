@@ -32,7 +32,11 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["action"],
             "properties": {
-                "action": { "type": "string", "enum": ["create", "list", "remove"] },
+                "action": {
+                    "type": "string",
+                    "enum": ["create", "list", "remove"],
+                    "description": "create a display, list this daemon's displays, or remove one."
+                },
                 "width": { "type": "integer", "description": "create: pixels, default 1920." },
                 "height": { "type": "integer", "description": "create: pixels, default 1080." },
                 "name": { "type": "string", "description": "create: display name, default \"Agent Desktop\"." },

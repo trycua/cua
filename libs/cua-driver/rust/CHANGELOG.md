@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.53.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.53.0...cua-driver-rs-v0.53.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* **cua-driver:** explain session-scoped snapshots in the stale token error ([#8110](https://github.com/trycua/cua/issues/8110)) ([6b36d0e](https://github.com/trycua/cua/commit/6b36d0e3338d0fa602dc03b020f03d5bc8383dcb))
+* **cua-driver:** publish display-only rows as observations so verify_state can read them ([#7566](https://github.com/trycua/cua/issues/7566)) ([89ad3f4](https://github.com/trycua/cua/commit/89ad3f47deec09b572558da88bc3c903cddda91b))
+* **cua-driver:** report macOS AX enumeration counts in ax_window_unresolved ([#8096](https://github.com/trycua/cua/issues/8096)) ([31fb47e](https://github.com/trycua/cua/commit/31fb47e1c1e126e8046c53f17bfbba1cdaf258c8))
+* **cua-driver:** run a background pixel-targeted menu key equivalent on macOS ([#8081](https://github.com/trycua/cua/issues/8081)) ([d4e9acf](https://github.com/trycua/cua/commit/d4e9acf7b2e819bf5ed206d8636b25838030c8dd)), closes [#5355](https://github.com/trycua/cua/issues/5355)
+
 ## [0.53.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.52.13...cua-driver-rs-v0.53.0) (2026-11-17)
 
 

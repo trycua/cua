@@ -29,16 +29,43 @@ pub fn own_display(session: &str, display_id: u32) {
 
 /// Run `create` on the blocking pool and record the display for `session` in
 /// the same task, so a caller cancelled mid-create still leaves the display
-/// owned and released when the session ends.
+/// owned and released when the session ends. A session that ended while the
+/// display was being created already ran its cleanup, so the display is
+/// removed here instead.
 pub fn create_owned(
     session: String,
     create: impl FnOnce() -> Result<DisplayInfo, String> + Send + 'static,
 ) -> tokio::task::JoinHandle<Result<DisplayInfo, String>> {
+    install();
     tokio::task::spawn_blocking(move || {
         let info = create()?;
         own_display(&session, info.display_id);
+        if cua_driver_core::session::is_session_ending(&session) {
+            disown_and_remove(&session, info.display_id);
+            return Err(format!(
+                "session {session} ended while display {} was being created; it was removed",
+                info.display_id
+            ));
+        }
         Ok(info)
     })
+}
+
+fn disown_and_remove(session: &str, display_id: u32) {
+    let owned = {
+        let mut guard = OWNED.lock().unwrap_or_else(|e| e.into_inner());
+        guard
+            .as_mut()
+            .and_then(|map| map.get_mut(session))
+            .is_some_and(|displays| {
+                let before = displays.len();
+                displays.retain(|id| *id != display_id);
+                displays.len() != before
+            })
+    };
+    if owned {
+        let _ = virtual_display::remove(display_id);
+    }
 }
 
 pub fn forget_display(display_id: u32) {
@@ -106,6 +133,28 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         assert_eq!(owned_by("session-cancelled"), vec![9002]);
+    }
+
+    #[tokio::test]
+    async fn a_display_created_after_its_session_ended_is_not_left_owned() {
+        let (release_create, wait_for_release) = std::sync::mpsc::channel::<()>();
+        let task = create_owned("session-ended-mid-create".to_owned(), move || {
+            wait_for_release.recv().unwrap();
+            Ok(DisplayInfo {
+                display_id: 9003,
+                x: 0.0,
+                y: 0.0,
+                width: 1280.0,
+                height: 720.0,
+            })
+        });
+        assert!(cua_driver_core::session::fire_session_end(
+            "session-ended-mid-create"
+        ));
+        release_create.send(()).unwrap();
+        let err = task.await.unwrap().unwrap_err();
+        assert!(err.contains("ended while display 9003"), "{err}");
+        assert!(owned_by("session-ended-mid-create").is_empty());
     }
 
     #[test]

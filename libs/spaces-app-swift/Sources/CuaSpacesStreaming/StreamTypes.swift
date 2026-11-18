@@ -113,6 +113,13 @@ public enum StreamError: Error, CustomStringConvertible, Sendable {
 
 public enum InputModifier: String, Codable, Sendable {
     case command, shift, option, control, function
+    /// The guest's own Command, Super or Windows key, which a Linux or
+    /// Windows guest never maps to Control (``InputEncoder/commandAsControl(_:)``).
+    /// The right ⌘ held alone sends it, and the wire calls it `command`.
+    case `super`
+
+    /// The name on the wire.
+    public var wireName: String { self == .super ? InputModifier.command.rawValue : rawValue }
 }
 
 public enum PointerButton: String, Codable, Sendable {
@@ -144,11 +151,11 @@ public enum InteractiveInputEvent: Sendable {
             return ["kind": "text_commit", "text": text]
         case let .key(key, down, modifiers, repeatKey):
             return ["kind": "key", "key": key, "state": down ? "down" : "up",
-                    "modifiers": modifiers.map(\.rawValue), "repeat": repeatKey]
+                    "modifiers": modifiers.map(\.wireName), "repeat": repeatKey]
         case let .pointer(phase, button, x, y, modifiers):
             var event: [String: Any] = ["kind": "pointer", "phase": phase.rawValue,
                                         "x_normalized": x, "y_normalized": y,
-                                        "modifiers": modifiers.map(\.rawValue)]
+                                        "modifiers": modifiers.map(\.wireName)]
             event["button"] = button?.rawValue as Any? ?? NSNull()
             return event
         case let .scroll(x, y, dx, dy, phase, momentum, precise):

@@ -166,6 +166,24 @@ private func pointerEvents(in text: String) -> [[String: Any]] {
         #expect(OfflineStreamSourceProvider().commandAsControl == false)
     }
 
+    /// The right ⌘ held without the left one is the guest's Super: it stays
+    /// out of the Control mapping and goes as `command` on the wire (#5345).
+    @Test func rightCommandAloneGoesAsSuper() {
+        func flags(_ device: UInt) -> NSEvent.ModifierFlags {
+            NSEvent.ModifierFlags(rawValue: NSEvent.ModifierFlags.command.rawValue | device)
+        }
+        #expect(InputEncoder.modifiers(from: flags(0x10)) == [.super])
+        #expect(InputEncoder.modifiers(from: flags(0x08)) == [.command])
+        #expect(InputEncoder.modifiers(from: flags(0x18)) == [.command])
+        #expect(InputEncoder.modifiers(from: .command) == [.command])
+
+        let chord = InputEncoder.keyEvents(name: "w", characters: "w", modifiers: [.super, .shift], down: true, isRepeat: false)
+        let mapped = InputEncoder.commandAsControl(chord)
+        guard mapped.count == 1, case let .key(key, _, modifiers, _) = mapped[0] else { Issue.record("\(mapped)"); return }
+        #expect(key == "w" && modifiers == [.super, .shift])
+        #expect(mapped[0].json["modifiers"] as? [String] == ["command", "shift"])
+    }
+
     /// The stream view is the hit-test target inside the app's grouped Form
     /// (no SwiftUI container swallows the click) and takes the first mouse,
     /// so a click on an inactive window reaches the Space too.

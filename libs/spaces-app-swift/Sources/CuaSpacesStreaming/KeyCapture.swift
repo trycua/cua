@@ -19,9 +19,11 @@ public enum KeyRoute: Equatable, Sendable {
 ///
 /// While the stream owns keyboard focus (it is its window's first responder,
 /// which a click on it makes it), every Command chord goes to the Space
-/// instead of the Cua Spaces menus: the Space sends Command to a macOS guest
-/// and Super to a Linux one (the Windows key on Windows), so ⌘2 is Super+2
-/// in Hyprland. This holds in the main window and in the floating viewer.
+/// instead of the Cua Spaces menus: a macOS guest gets Command, and a Linux
+/// or Windows one gets Control, or Super (the Windows key on Windows) from the
+/// right ⌘, so right ⌘2 is Super+2 in Hyprland
+/// (``InputEncoder/commandAsControl(guestOS:)``). This holds in the main
+/// window and in the floating viewer.
 ///
 /// Pressing and releasing Control+Option, with no other key in between,
 /// hands the keyboard back (Command shortcuts reach the Mac again) until the

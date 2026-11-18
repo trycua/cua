@@ -449,7 +449,7 @@ struct WebUIVideoSurfacesTests {
 
     /// The viewer's key monitor sends ⌘ chords to the Space with the guest's
     /// modifiers (the same `LiveStreamSession.send` as the Space window), ⌘Esc
-    /// too; Control+Option pressed and released alone gives the keyboard back
+    /// too, and the right ⌘ as Super; Control+Option pressed and released alone gives the keyboard back
     /// without reaching the Space (#4609).
     @Test(arguments: [("linux", "control"), ("macos", "command")])
     func commandChordsReachTheSpaceWithTheGuestsModifiers(os: String, expected: String) async {
@@ -475,6 +475,17 @@ struct WebUIVideoSurfacesTests {
         #expect(s.handleKey(chord("c", code: 8, [.command, .shift], in: host.window)))
         await settle { sent().count >= start2 + 2 }
         #expect(sent().dropFirst(start2).first?["modifiers"] as? [String] == [expected, "shift"])
+
+        // The left ⌘ maps like any ⌘; the right ⌘ held alone is the guest's Super (#5345).
+        let leftCommand = NSEvent.ModifierFlags(rawValue: NSEvent.ModifierFlags.command.rawValue | 0x08)
+        let rightCommand = NSEvent.ModifierFlags(rawValue: NSEvent.ModifierFlags.command.rawValue | 0x10)
+        let bothCommands = NSEvent.ModifierFlags(rawValue: NSEvent.ModifierFlags.command.rawValue | 0x18)
+        for (flags, modifier) in [(leftCommand, expected), (rightCommand, "command"), (bothCommands, expected)] {
+            let before = sent().count
+            #expect(s.handleKey(chord("w", code: 13, flags, in: host.window)))
+            await settle { sent().count >= before + 2 }
+            #expect(sent().dropFirst(before).map { $0["modifiers"] as? [String] } == [[modifier], [modifier]])
+        }
 
         // ⌘Esc is the Space's too.
         let start3 = sent().count

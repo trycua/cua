@@ -1619,7 +1619,10 @@ mod tests {
         let session = format!("real-headless-{}", std::process::id());
         let call = |tool: Box<dyn Tool>, args: Value| async move {
             let result = tool.invoke(args).await;
-            result.structured_content.expect("structured result")
+            let rendered = format!("{result:?}");
+            result
+                .structured_content
+                .unwrap_or_else(|| panic!("no structured result: {rendered}"))
         };
         let prepared = call(
             Box::new(BrowserPrepareTool::new(engine.clone())),
@@ -1688,13 +1691,19 @@ mod tests {
         )
         .await;
         assert_eq!(typed["status"], "ok", "{typed}");
-        let clicked = call(
-            Box::new(BrowserClickTool::new(engine.clone())),
-            with(json!({"ref": ref_with(&snap, "id=go").expect("button ref"),
-                        "input_route": "dom_event"})),
-        )
-        .await;
-        assert_eq!(clicked["status"], "ok", "{clicked}");
+        // A click reports through its action record; the fresh snapshot
+        // below is the proof that it took effect.
+        let clicked = BrowserClickTool::new(engine.clone())
+            .invoke(with(
+                json!({"ref": ref_with(&snap, "id=go").expect("button ref"),
+                                "input_route": "dom_event"}),
+            ))
+            .await;
+        let record = clicked.action_record.as_ref().expect("click action record");
+        assert!(
+            clicked.is_error != Some(true) && record.refusal.is_none(),
+            "{clicked:?}"
+        );
         let fresh = snapshot().await;
         assert!(
             ref_with(&fresh, "aria-label=done:hello").is_some(),

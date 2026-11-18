@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS worker containment: a deny-by-default Seatbelt profile, a trusted
 //! parent-death sentinel, inherited descriptor closure, resource limits and a
 //! supervisor-sampled memory ceiling.

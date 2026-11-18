@@ -98,6 +98,31 @@ final class MockVMVirtualizationService: VMVirtualizationService {
         currentState = .paused
     }
 
+    private(set) var savedStates: [URL] = []
+    private(set) var restoredStates: [URL] = []
+
+    func saveMachineState(to url: URL) async throws {
+        if shouldFailNextOperation { throw operationError }
+        guard currentState == .paused else {
+            throw VMError.internalError("save needs a paused VM")
+        }
+        FileManager.default.createFile(atPath: url.path, contents: Data("state".utf8))
+        savedStates.append(url)
+    }
+
+    /// How long a restore takes (a real one reads gigabytes).
+    var restoreDelayNanos: UInt64 = 0
+
+    func restoreMachineState(from url: URL) async throws {
+        if restoreDelayNanos > 0 { try? await Task.sleep(nanoseconds: restoreDelayNanos) }
+        if shouldFailNextOperation { throw operationError }
+        guard currentState == .stopped else {
+            throw VMError.internalError("restore needs a stopped VM")
+        }
+        restoredStates.append(url)
+        currentState = .paused
+    }
+
     func resume() async throws {
         resumeCallCount += 1
         if shouldFailNextOperation { throw operationError }

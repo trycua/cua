@@ -1,0 +1,7 @@
+    Checking cua-vmm v0.27.0 (/Users/dillondupont/projects/.cua-work/win6631/wt/libs/cua/crates/cua-vmm)
+    Checking cua-telemetry v0.27.0 (/Users/dillondupont/projects/.cua-work/win6631/wt/libs/cua/crates/cua-telemetry)
+    Checking cua-repo-cache v0.27.0 (/Users/dillondupont/projects/.cua-work/win6631/wt/libs/cua/crates/cua-repo-cache)
+    Checking cua-image v0.27.0 (/Users/dillondupont/projects/.cua-work/win6631/wt/libs/cua/crates/cua-image)
+    Checking cua-sandbox-core v0.27.0 (/Users/dillondupont/projects/.cua-work/win6631/wt/libs/cua/crates/cua-sandbox-core)
+    Checking cua-contrib v0.27.0 (/Users/dillondupont/projects/.cua-work/win6631/wt/libs/cua/crates/cua-contrib)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 17.47s

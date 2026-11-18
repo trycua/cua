@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-/// <reference types="vite/client" />
-
 /**
  * The Cua Spaces app core (libs/cua/crates/cua-spaces-app-core) in the
  * page, as wasm. Same crate and shim as the Tauri app
@@ -13,6 +11,8 @@
  * When ./wasm was not built, or fails to load, the core is `unavailable` and
  * the bridge falls back to its TypeScript stand-ins (see `../derive.ts`).
  */
+
+import { localizeHostWords } from "../host-words";
 
 /** The wasm-bindgen module (`core.js`, `--target web`). */
 export interface CoreWasmModule {
@@ -82,8 +82,7 @@ export function unavailableCore(reason: string, status: CoreStatus = "unavailabl
 export function wasmCore(mod: Pick<CoreWasmModule, "call" | "methods" | "flows" | "runFlow">): CoreClient {
   const methods = JSON.parse(mod.methods()) as string[];
   const known = new Set(methods);
-  const call = <T>(method: string, args: Record<string, unknown> = {}): T =>
-    JSON.parse(mod.call(method, JSON.stringify(args))) as T;
+  const call = <T>(method: string, args: Record<string, unknown> = {}): T => localizeHostWords(JSON.parse(mod.call(method, JSON.stringify(args))) as T);
   return {
     status: "ready",
     methods,
@@ -93,8 +92,7 @@ export function wasmCore(mod: Pick<CoreWasmModule, "call" | "methods" | "flows" 
       mod.flows && mod.runFlow
         ? {
             flows: () => JSON.parse(mod.flows!()) as ParityFlow[],
-            run: (name, flow, host) =>
-              JSON.parse(mod.runFlow!(name, flow, (m, a) => JSON.stringify(host(m, JSON.parse(a) as Record<string, unknown>)))),
+            run: (name, flow, host) => JSON.parse(mod.runFlow!(name, flow, (m, a) => JSON.stringify(host(m, JSON.parse(a) as Record<string, unknown>)))),
           }
         : undefined,
   };

@@ -14,7 +14,7 @@ pieces live. Architecture overview: `README.md`.
 | Golden (macOS) | `scripts/golden/` | Lume image with `Cua Spacesd.app` + `CuaDriverLocal.app` |
 
 Removed: `mcp/spaces_mcp.py` and `agent_harness.py` (now `cua daemon mcp` and
-`cua_spaces::agents`), the app's own Fleet REST client, Lume CLI driver,
+`cua_spaces::agents`), Lume CLI driver,
 loopback WebSocket relay, rcdp CLI teleport, and the in-guest rcdpd /
 rcdp-handoff / computer-server daemons.
 
@@ -50,14 +50,13 @@ Agent CLIs: Settings → AI agents installs the cua skills and registers
 
 ## 3. Tauri command contract
 
-Space ids are `direct:<host:port>`, `local:<name>` and `relay:<id>`. A `cloud:<name>`
-Space registered before Cua Cloud ended still lists, answers that it has ended
-on any action, and can be removed from the list.
+Space ids are `direct:<host:port>`, `local:<name>` and `relay:<id>`. A legacy `cloud:<name>`
+row reads as `direct`.
 
 | Area | Commands |
 | --- | --- |
 | Roster | `list_spaces`, `space_info(spaceId)`, `add_space(url, token, name)`, `create_space({image, on, kind, runtime, name, …})`, `delete_space`, `remove_space`, `get_default_location`, `set_default_location(on)`; event `spaces:changed` |
-| Status | `fleet_status` (who is signed in; reads the local session), `begin_sign_in`, `sign_out`, `daemon_status`, `ensure_daemon`, `local_status` |
+| Status | `account_status` (who is signed in; reads the local session), `begin_sign_in`, `sign_out`, `daemon_status`, `ensure_daemon`, `local_status` |
 | This machine | `host_status`, `host_setup`, `host_stop_sharing`, `host_start_sharing`, `host_remove`, `onboarding_state`, `complete_onboarding`, `installer_*` |
 | Space ops | `space_screenshot`, `send_files_to_space`, `list_remote_windows`, `remote_window_thumbnail`, `space_app_icon`, `list_space_agents` |
 | Streams | `open_space_stream(space, {kind: display|window}, opts)` → ticketed `wsUrl` (the Space's own ticket URL), `close_space_stream` |

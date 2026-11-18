@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from "react";
 
 import {
   reduceShare,
@@ -14,11 +14,11 @@ import {
   type ShareInput,
   type ShareRemovalNote,
   type ShareSheetAction,
-} from '../model/share';
-import type { ShareBridge } from '../native/share';
-import { featureSignals, shareSignals } from '../model/telemetry';
-import { telemetryBridge } from '../native/telemetry';
-import { SmallSheet } from './Devices';
+} from "../model/share";
+import type { ShareBridge } from "../native/share";
+import { featureSignals, shareSignals } from "../model/telemetry";
+import { telemetryBridge } from "../native/telemetry";
+import { SmallSheet } from "./Devices";
 import { useT } from "../i18n";
 
 function message(error: unknown): string {
@@ -52,7 +52,7 @@ export function ShareSheet({
   // In a team that can share; null until read, or when it cannot be said.
   const [hasTeam, setHasTeam] = useState<boolean | null>(null);
   // Sharing adoption: the sheet was opened.
-  useEffect(() => telemetryBridge().recordSignals(featureSignals('share_open')), []);
+  useEffect(() => telemetryBridge().recordSignals(featureSignals("share_open")), []);
   const [state, setState] = useState(shareInitial);
   const input: ShareInput = { spaceId, spaceName, shares, signedIn, shareable };
   const v = shareView(input, state);
@@ -63,7 +63,7 @@ export function ShareSheet({
     if (!signedIn) return;
     void bridge.shares(spaceId).then(
       (r) => setShares(r.shares),
-      () => {}
+      () => {},
     );
   }, [bridge, spaceId, signedIn]);
 
@@ -77,31 +77,30 @@ export function ShareSheet({
       const next = reduceShare(input, state, action);
       setState(next);
       const request = next.request;
-      const starts =
-        action.type === 'submit' || action.type === 'change-role' || action.type === 'remove';
+      const starts = action.type === "submit" || action.type === "change-role" || action.type === "remove";
       if (!starts || !request || state.busy) return;
       try {
         const r =
-          request.kind === 'share'
+          request.kind === "share"
             ? await bridge.share(request.space, request.who, request.role)
             : await bridge.unshare(request.space, request.who);
         setShares(r.shares);
         // Shared (view-only or not), unshared or a role changed: never who.
-        telemetryBridge().recordSignals(shareSignals(input, next, { type: 'done' }));
-        setState((s) => reduceShare({ ...input, shares: r.shares }, s, { type: 'done' }));
+        telemetryBridge().recordSignals(shareSignals(input, next, { type: "done" }));
+        setState((s) => reduceShare({ ...input, shares: r.shares }, s, { type: "done" }));
       } catch (e) {
         // A refusal for who is not in the team (or no team) reads in plain words.
         const raw = message(e);
         const failed: ShareSheetAction = {
-          type: 'failed',
-          error: shareErrorWords(raw, request.kind === 'share' ? request.who : '') ?? raw,
+          type: "failed",
+          error: shareErrorWords(raw, request.kind === "share" ? request.who : "") ?? raw,
         };
         telemetryBridge().recordSignals(shareSignals(input, next, failed));
         setState((s) => reduceShare(input, s, failed));
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [bridge, state, shares, signedIn, shareable, spaceId, spaceName]
+    [bridge, state, shares, signedIn, shareable, spaceId, spaceName],
   );
 
   const roleSelect = (value: string, onChange: (role: string) => void, label: string) => (
@@ -126,19 +125,13 @@ export function ShareSheet({
         className="dv-sheet-body"
         onSubmit={(event) => {
           event.preventDefault();
-          void run({ type: 'submit' });
+          void run({ type: "submit" });
         }}
       >
         <h2 className="dv-sheet-title">{v.title}</h2>
-        {(v.disabledReason || gate) && (
-          <p className="dv-sheet-text">{v.disabledReason ?? gate?.reason}</p>
-        )}
+        {(v.disabledReason || gate) && <p className="dv-sheet-text">{v.disabledReason ?? gate?.reason}</p>}
         {!v.disabledReason && gate && (
-          <button
-            type="button"
-            className="dw-btn"
-            onClick={() => onOpenExternal?.(gate.action.url)}
-          >
+          <button type="button" className="dw-btn" onClick={() => onOpenExternal?.(gate.action.url)}>
             {gate.action.label}
           </button>
         )}
@@ -152,9 +145,9 @@ export function ShareSheet({
             spellCheck={false}
             autoComplete="off"
             disabled={v.busy || closed}
-            onChange={(event) => void run({ type: 'set-who', who: event.target.value })}
+            onChange={(event) => void run({ type: "set-who", who: event.target.value })}
           />
-          {roleSelect(v.role, (role) => void run({ type: 'set-role', role }), t("sharing.sheet.role_label"))}
+          {roleSelect(v.role, (role) => void run({ type: "set-role", role }), t("sharing.sheet.role_label"))}
           <button type="submit" className="dw-btn dw-btn-primary" disabled={!v.canShare || closed}>
             {v.shareLabel}
           </button>
@@ -165,20 +158,16 @@ export function ShareSheet({
           {v.rows.map((r) => (
             <li key={r.who} className="sh-row">
               <span
-                className={`status-dot ${r.connected ? 'status-running' : 'status-suspended'}`}
+                className={`status-dot ${r.connected ? "status-running" : "status-suspended"}`}
                 aria-hidden="true"
               />
               <span className="sh-who">{r.who}</span>
-              {roleSelect(
-                r.role,
-                (role) => void run({ type: 'change-role', who: r.who, role }),
-                `Role of ${r.who}`
-              )}
+              {roleSelect(r.role, (role) => void run({ type: "change-role", who: r.who, role }), `Role of ${r.who}`)}
               <button
                 type="button"
                 className="dw-btn"
                 disabled={v.busy}
-                onClick={() => void run({ type: 'remove', who: r.who })}
+                onClick={() => void run({ type: "remove", who: r.who })}
               >
                 {v.removeLabel}
               </button>
@@ -221,7 +210,7 @@ export function ShareRemovalBanner({
     let live = true;
     void bridge.removals().then(
       (removals) => live && setNote(shareRemovalNote(removals)),
-      () => {}
+      () => {},
     );
     return () => {
       live = false;

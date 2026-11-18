@@ -64,7 +64,7 @@ const UNAVAILABLE_HELP: &str = "this Mac needs Touch ID or a login password";
 #[cfg(target_os = "windows")]
 const UNAVAILABLE_HELP: &str = "Cua asks for Windows Hello, or your Windows account password when Hello is not set up; this account has neither (set a password in Settings, Accounts, Sign-in options)";
 #[cfg(target_os = "linux")]
-const UNAVAILABLE_HELP: &str = "on Linux this needs Cua Spaces installed from the .deb (it sets up the password prompt; the AppImage cannot) and a desktop session with a polkit authentication agent running";
+const UNAVAILABLE_HELP: &str = "Confirm this from the Cua Spaces app on that machine, or run it in a desktop session (this host has no session that can ask you; the confirmation is still required). The Cua .deb installs the confirmation prompt (polkit action ai.cua.spaces.keyvault)";
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 const UNAVAILABLE_HELP: &str = "this platform has no confirmation prompt";
 
@@ -1062,7 +1062,12 @@ mod tests {
         assert!(denied.contains("If no password prompt appeared") && denied.contains(".deb"));
         let unavailable = AuthError::Unavailable.to_string();
         assert!(
-            unavailable.contains(".deb") && unavailable.contains("polkit authentication agent")
+            unavailable.contains("Confirm this from the Cua Spaces app on that machine, or run it in a desktop session"),
+            "{unavailable}"
+        );
+        assert!(
+            !unavailable.contains("authentication agent"),
+            "{unavailable}"
         );
     }
 

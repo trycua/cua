@@ -191,7 +191,7 @@ pub fn second_agent(
         },
         title: format!("{} is already working here.", other.name),
         body: "They'll share your mouse. Add a Space so they each get their own?".into(),
-        note: Some("It's made in the background. You can keep working.".into()),
+        note: None,
         primary: "Add a Space".into(),
         secondary: "Keep sharing".into(),
         never: Some("Don't ask again".into()),
@@ -231,7 +231,8 @@ pub fn risky_action(request: &RiskyRequest, now_ms: i64) -> Option<Nudge> {
         key: request.id.clone(),
         eyebrow: format!("{agent} wants to {action} on your desktop"),
         title: "Run this in a separate Space instead?".into(),
-        body: "A fresh computer inside this Mac. If something goes wrong there, your files and settings stay safe.".into(),
+        // The title says it: no second sentence about a fresh computer.
+        body: String::new(),
         note: Some(format!(
             "If you don't choose, it runs here in {secs} second{}.",
             if secs == 1 { "" } else { "s" }

@@ -56,8 +56,6 @@ export interface SandboxFactsManifest {
 }
 
 interface SourceFacts {
-  sandboxVersion: string;
-  cuaVersion: string;
   sandboxDriverVersion: string;
   qualifiedDirectDriverVersion: string;
   linuxImage: string;
@@ -204,11 +202,6 @@ function capture(contents: string, pattern: RegExp, label: string): string {
   return match[1];
 }
 
-function projectVersion(relativePath: string): string {
-  const contents = read(relativePath);
-  return capture(contents, /\[project\][\s\S]*?\nversion\s*=\s*"([^"]+)"/, relativePath);
-}
-
 const CANONICAL_RS = 'libs/cua/crates/cua-image/src/canonical.rs';
 
 /** A `pub const NAME: &str = "..."` of the canonical-image module. */
@@ -227,9 +220,7 @@ export function loadSourceFacts(): SourceFacts {
     read('libs/cua-driver/hyprland-plugin/packaging/release/profiles/omarchy-stable-20260910.json')
   ) as { source?: { driver_version?: string } };
   return {
-    sandboxVersion: projectVersion('libs/python/cua-sandbox/pyproject.toml'),
-    cuaVersion: projectVersion('libs/cua/python/pyproject.toml'),
-    sandboxDriverVersion: capture(sandboxProject, /"cua-driver==([^"]+)"/, 'Sandbox Driver pin'),
+    sandboxDriverVersion: capture(sandboxProject, /"cua-driver([^"]+)"/, 'Sandbox Driver range'),
     qualifiedDirectDriverVersion: string(
       profile.source?.driver_version,
       'Omarchy release profile Driver version',
@@ -278,8 +269,8 @@ export function replaceGeneratedSection(document: string, name: string, body: st
 }
 
 export function renderRuntimePackageFacts(source: SourceFacts): string {
-  return `This reference describes the Python Sandbox SDK in \`cua-sandbox\` **${source.sandboxVersion}**, exported
-by \`cua\` **${source.cuaVersion}**. An accepted image specification is evidence of SDK behavior,
+  return `This reference describes the Python Sandbox SDK in the \`cua-sandbox\` package, exported
+by \`cua\`. An accepted image specification is evidence of SDK behavior,
 not proof that a guest boots on every host or deployment.`;
 }
 
@@ -292,12 +283,12 @@ export function renderBuiltinMappings(source: SourceFacts): string {
 }
 
 export function renderEvidence(source: SourceFacts): string {
-  return `- \`cua-sandbox\` ${source.sandboxVersion} source: image constructors, runtime selection,
+  return `- \`cua-sandbox\` source: image constructors, runtime selection,
   firmware, and services.
 - \`cua-image\` source (\`canonical.rs\`): the canonical image references.
-- \`cua\` ${source.cuaVersion} source: public Python exports.
-- \`cua-sandbox[driver]\` ${source.sandboxVersion} maps direct Driver use to \`cua-driver\`
-  ${source.sandboxDriverVersion}. This client mapping is not the Driver version inside a particular
+- \`cua\` source: public Python exports.
+- \`cua-sandbox[driver]\` maps direct Driver use to \`cua-driver\`
+  \`${source.sandboxDriverVersion}\`. This client mapping is not the Driver version inside a particular
   published or deployment-qualified guest image.`;
 }
 
@@ -348,10 +339,12 @@ export type SandboxImageList = {
 
 export const IMAGE_LIST_PATH = 'libs/images/sandbox-images.json';
 
-const OPTIONAL_IMAGE_FIELDS = ['guide', 'lock', 'benchmarks', 'sdk', 'digest', 'sizes', 'tier', 'gpu'];
+const OPTIONAL_IMAGE_FIELDS = ['guide', 'lock', 'benchmarks', 'sdk', 'digest', 'sizes', 'tier', 'gpu', 'derived_from', 'local_build'];
 
 /** The tag suffix each tier puts before `-disk`: `<os-version>[-<tier>][-disk]`. */
-const TIER_SUFFIX: Record<string, string> = { slim: '-slim', full: '', xcode: '-xcode' };
+const TIER_SUFFIX: Record<string, string> = { slim: '-slim', full: '', xcode: '-xcode', docker: '-docker' };
+/** Tiers that exist only as a VM disk (their rootfs never runs the tier's point, dockerd). */
+const VM_ONLY_TIERS = new Set(['docker']);
 
 const IMAGE_FIELDS = [
   'ref',
@@ -450,13 +443,16 @@ export function validateImageList(value: unknown, source: SourceFacts): SandboxI
     }
     if (image.tier !== undefined) {
       if (image.group !== 'canonical' || !(image.tier in TIER_SUFFIX)) {
-        throw new Error(`${IMAGE_LIST_PATH}: ${image.ref} tier must be slim, full or xcode on a canonical image`);
+        throw new Error(`${IMAGE_LIST_PATH}: ${image.ref} tier must be slim, full, docker or xcode on a canonical image`);
       }
       if (image.tier === 'xcode' && image.os !== 'macos') {
         throw new Error(`${IMAGE_LIST_PATH}: ${image.ref} the xcode tier is macOS only`);
       }
+      if (image.tier === 'docker' && image.os !== 'linux') {
+        throw new Error(`${IMAGE_LIST_PATH}: ${image.ref} the docker tier is Linux only`);
+      }
       const base = image.ref.split(':')[1].replace(/-disk$/, '');
-      const suffix = base.match(/-(slim|xcode(-[0-9.]+)?)$/)?.[0] ?? '';
+      const suffix = base.match(/-(slim|docker|xcode(-[0-9.]+)?)$/)?.[0] ?? '';
       if (suffix.replace(/-[0-9.]+$/, '') !== TIER_SUFFIX[image.tier]) {
         throw new Error(`${IMAGE_LIST_PATH}: ${image.ref} tag does not match tier ${image.tier}`);
       }
@@ -483,6 +479,8 @@ export function validateImageList(value: unknown, source: SourceFacts): SandboxI
     `${source.windowsImage}-disk`,
     `${source.linuxImage}-slim`,
     `${source.linuxImage}-slim-disk`,
+    `${source.linuxImage}-docker`,
+    `${source.linuxImage}-docker-disk`,
     source.macosTahoeImage,
     `${source.macosTahoeImage}-slim`,
     `${source.macosTahoeImage}-xcode`,
@@ -546,7 +544,10 @@ export function renderImageList(list: SandboxImageList): string {
  */
 export function renderTiers(list: SandboxImageList): string {
   const lines = ['| Image | Tier | SDK | Status |', '| --- | --- | --- | --- |'];
-  for (const image of list.images.filter((i) => i.tier !== undefined && !i.ref.endsWith('-disk'))) {
+  // A VM-only tier (docker) is named by its disk; the others by their rootfs.
+  const named = (i: SandboxImage) =>
+    i.tier !== undefined && (VM_ONLY_TIERS.has(i.tier) ? i.ref.endsWith('-disk') : !i.ref.endsWith('-disk'));
+  for (const image of list.images.filter(named)) {
     lines.push(
       `| \`${image.ref}\` | ${image.tier} | ${image.sdk ? `\`${image.sdk}\`` : '-'} | ${
         // An unpublished tier's ref is not pullable yet: the docs image-ref
@@ -779,7 +780,7 @@ export function generateDocuments(): Map<string, string> {
   catalog = replaceGeneratedSection(catalog, 'sandbox-image-tiers', renderTiers(loadImageList(source)));
   const list = loadImageList(source);
   const page = (title: string, description: string, body: string) =>
-    renderPage({ title, description, generator: GENERATOR, source: SOURCE, version: `cua ${source.cuaVersion}`, body });
+    renderPage({ title, description, generator: GENERATOR, source: SOURCE, body });
   return new Map([
     [
       RUNTIME_DOC,

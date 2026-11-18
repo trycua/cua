@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -24,18 +27,16 @@ fn with_cursor_motion_properties(mut schema: Value) -> Value {
     if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
         properties.extend(cursor_overlay::motion_defaults::config_schema_properties());
         properties.extend(cursor_overlay::badge_mode::config_schema_properties());
+        properties.extend(cursor_overlay::cursor_options::config_schema_properties());
     }
-    schema
+    cua_driver_core::fast_path::wire::with_config_property(schema)
 }
 
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "set_config".into(),
         description: "Update cua-driver-rs configuration. Changes to \
-            max_image_dimension take effect immediately. The \
-            experimental_pip keys are persisted to ~/.cua-driver/config.json and \
-            take effect on the next daemon restart (the PiP backend is \
-            initialised once at startup).\n\nNote: capture_mode is a per-call \
+            max_image_dimension take effect immediately.\n\nNote: capture_mode is a per-call \
             param (on get_window_state / click), not a stored setting. Capture \
             modality is selected by each action's target; the old \
             capture_scope config key is retired.\n\nCursor motion defaults: \
@@ -45,7 +46,12 @@ fn def() -> &'static ToolDef {
             start_session cursor_motion and set_agent_cursor_motion override them; \
             reduced motion always wins.\n\nAgent cursor badge: cursor.badges is \
             minimal (default), verbose or off, saved to ~/.cua-driver/config.json \
-            and applied to every cursor at once."
+            and applied to every cursor at once.\n\nAgent cursor extras: \
+            cursor.float (float at rest and while moving) and cursor.halo (soft \
+            glow) are on (default), off or default; cursor.rotate is heading \
+            (default), lean, off or default. The cursor never draws action marks \
+            (cursor.marks is retired and ignored). All are saved to \
+            ~/.cua-driver/config.json and applied to every cursor at once."
             .into(),
         input_schema: with_cursor_motion_properties(serde_json::json!({
             "type": "object",
@@ -53,16 +59,6 @@ fn def() -> &'static ToolDef {
                 "max_image_dimension": {
                     "type": "integer",
                     "description": "Max dimension for screenshot resizing (0 = no limit)."
-                },
-                "experimental_pip": {
-                    "type": "boolean",
-                    "description": "Enable the experimental picture-in-picture preview window. \
-                        Applies on next daemon restart."
-                },
-                "experimental_pip_geometry": {
-                    "type": "string",
-                    "description": "PiP window size + optional position in `WxH` or `WxH+X+Y` \
-                        form (e.g. `320x200+24+24`). Applies on next daemon restart."
                 }
             },
             "additionalProperties": false
@@ -111,6 +107,15 @@ impl Tool for SetConfigTool {
             Ok(key) => key,
             Err(message) => return ToolResult::error(message),
         };
+        let option_keys = match cursor_overlay::cursor_options::apply_config_args(&args) {
+            Ok(keys) => keys,
+            Err(message) => return ToolResult::error(message),
+        };
+
+        let fast_path = match cua_driver_core::fast_path::wire::apply_config_args(&args) {
+            Ok(mode) => mode,
+            Err(message) => return ToolResult::error(message),
+        };
 
         let max_dim: Option<u32> = match args.opt_u64("max_image_dimension") {
             Some(dim) => match u32::try_from(dim) {
@@ -147,46 +152,21 @@ impl Tool for SetConfigTool {
             }
             cfg.max_image_dimension
         };
-        // PiP keys persist to the same config.json but take effect only on
-        // next daemon restart — the backend is initialised once at startup.
-        let mut pip_note = String::new();
-        if let Some(enabled) = args.get("experimental_pip").and_then(|v| v.as_bool()) {
-            if let Err(e) = pip_preview::write_config_key("experimental_pip", Value::Bool(enabled))
-            {
-                return ToolResult::error(format!("failed to persist experimental_pip: {e}"));
-            }
-            pip_note =
-                format!(" — restart cua-driver for experimental_pip={enabled} to take effect");
-        }
-        if let Some(geom) = args.opt_str("experimental_pip_geometry") {
-            // Validate before persisting so the user gets an immediate error.
-            if pip_preview::PipGeometry::parse(&geom).is_none() {
-                return ToolResult::error(format!(
-                    "experimental_pip_geometry `{geom}` is not a valid WxH or WxH+X+Y string"
-                ));
-            }
-            if let Err(e) = pip_preview::write_config_key(
-                "experimental_pip_geometry",
-                Value::String(geom.clone()),
-            ) {
-                return ToolResult::error(format!(
-                    "failed to persist experimental_pip_geometry: {e}"
-                ));
-            }
-            if pip_note.is_empty() {
-                pip_note = format!(
-                    " — restart cua-driver for experimental_pip_geometry={geom} to take effect"
-                );
-            }
-        }
+        let mut note = String::new();
         if !motion_keys.is_empty() {
-            pip_note.push_str(&format!(
+            note.push_str(&format!(
                 " — saved {} (applies to sessions started from now on)",
                 motion_keys.join(", ")
             ));
         }
-        if let Some(key) = badge_key {
-            pip_note.push_str(&format!(" — saved {key} (applies now)"));
+        if let Some(mode) = fast_path {
+            note.push_str(&format!(
+                " — fast_path={} (applies now, not saved)",
+                mode.as_str()
+            ));
+        }
+        for key in badge_key.into_iter().chain(option_keys) {
+            note.push_str(&format!(" — saved {key} (applies now)"));
         }
         let scope_note = if session_id.is_some() {
             " (session-scoped; persisted default unchanged)"
@@ -195,12 +175,13 @@ impl Tool for SetConfigTool {
         };
         ToolResult::text(format!(
             "Config updated: max_image_dimension={}{}{}",
-            effective_dim, scope_note, pip_note
+            effective_dim, scope_note, note
         ))
         .with_structured(serde_json::json!({
             "version": env!("CARGO_PKG_VERSION"),
             "platform": "macos",
             "max_image_dimension": effective_dim,
+            "fast_path": cua_driver_core::fast_path::wire::config_value(),
         }))
     }
 }

@@ -8,25 +8,28 @@ import { createFakeHostBridge } from "../native/host";
 import { Onboarding } from "./Onboarding";
 
 describe("Onboarding", () => {
-  it("offers both choices; 'open my other computers' installs nothing", async () => {
+  it("offers both choices; 'open my other machines' installs nothing", async () => {
     const host = createFakeHostBridge();
     const onDone = vi.fn();
     render(<Onboarding host={host} onDone={onDone} />);
-    expect(screen.getByText("Let my other devices reach this Mac")).toBeInTheDocument();
+    expect(screen.getByText("Let my other computers reach this Mac")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await waitFor(() => expect(onDone).toHaveBeenCalledWith("client", undefined));
     expect(host.calls).toEqual(["onboarding:client"]);
   });
 
-  it("always shows an enabled Continue with 'open my other computers' selected, and Enter continues", async () => {
+  it("always shows an enabled Continue with 'open my other machines' selected, and Enter continues", async () => {
     const host = createFakeHostBridge();
     const onDone = vi.fn();
     render(<Onboarding host={host} onDone={onDone} />);
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
-    expect(screen.getByRole("radio", { name: "Just use this Mac to open my other computers" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "Just use this Mac to open my other computers" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
     expect(screen.getByTestId("mode-later")).toHaveTextContent("This computer");
     // Choosing a card only selects it.
-    fireEvent.click(screen.getByRole("radio", { name: "Let my other devices reach this Mac" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Let my other computers reach this Mac" }));
     expect(onDone).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("radio", { name: "Just use this Mac to open my other computers" }));
     fireEvent.keyDown(document.body, { key: "Enter" });
@@ -37,9 +40,13 @@ describe("Onboarding", () => {
     const host = createFakeHostBridge({ platform: "linux" });
     const onDone = vi.fn();
     render(<Onboarding host={host} onDone={onDone} identity="ada@example.com" />);
-    fireEvent.click(screen.getByText("Let my other devices reach this Mac"));
+    fireEvent.click(screen.getByText("Let my other computers reach this Mac"));
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    expect(screen.getByText("You and the people you share with can see and use this computer’s screen from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Use this computer from your other computers. Its screen stays private unless you share it. Signed in as ada@example.com.",
+      ),
+    ).toBeInTheDocument();
     // Direct ip:port is hidden until Advanced is opened.
     expect(screen.queryByText(/Direct connection/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Turn on remote access" }));
@@ -51,7 +58,7 @@ describe("Onboarding", () => {
     const host = createFakeHostBridge({ platform: "linux" });
     const onDone = vi.fn();
     render(<Onboarding host={host} onDone={onDone} />);
-    fireEvent.click(screen.getByText("Let my other devices reach this Mac"));
+    fireEvent.click(screen.getByText("Let my other computers reach this Mac"));
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
     fireEvent.click(screen.getByLabelText(/Direct connection/));

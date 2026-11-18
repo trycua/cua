@@ -8,7 +8,7 @@
 // finished after all, or another sign-in on this machine (`cua auth login`).
 // The account's session is read again while a sign-in waits, so a session
 // that appears ends the wait even when no attempt's wait returns.
-import type { AccountRunning, SignInAttempt } from "./services";
+import type { AccountRunning, SignInAttempt, SignInOptions } from "./services";
 
 /** Why a run ended without a session: the error it caught (the core reads
  * its case and words), or the browser never confirmed in time. */
@@ -39,7 +39,7 @@ export class SignInRuns {
   ) {}
 
   /** Starts an attempt (superseding one in progress) and resolves once it ends. */
-  async begin(): Promise<void> {
+  async begin(opts?: SignInOptions): Promise<void> {
     const account = this.account();
     if (!account) return;
     const current = ++this.attempt;
@@ -47,7 +47,7 @@ export class SignInRuns {
     this.watchStore(account, current);
     let attempt: SignInAttempt;
     try {
-      attempt = await account.beginSignIn();
+      attempt = await account.beginSignIn(opts);
     } catch (error) {
       if (current === this.attempt) this.fail({ error });
       return;

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Per-process serialization for exact-target background mutations.
 //!
 //! macOS keyboard delivery and focus suppression are process-scoped. Two

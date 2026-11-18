@@ -235,8 +235,8 @@ async fn create_validates_on_and_flags() {
             .contains("valid runtime: auto, gvisor, runc, qemu, lume"),
         "{o:?}"
     );
-    // Cua Cloud has ended: --on cloud and --pool (any location) fail with
-    // the one message before anything else.
+    // Cua Cloud has ended: --on cloud fails with the one message before
+    // anything else.
     for args in [
         &[
             "img",
@@ -249,8 +249,6 @@ async fn create_validates_on_and_flags() {
         ][..],
         &["--on", "cloud"],
         &["ghcr.io/x/y@sha256:1", "--on", "cloud"],
-        &["--on", "direct:127.0.0.1:1", "--pool", "p"],
-        &["img", "--on", "local", "--pool", "p"],
     ] {
         let o = h
             .run(&[&["--embedded", "sb", "create"][..], args].concat())
@@ -258,11 +256,21 @@ async fn create_validates_on_and_flags() {
         assert_eq!(o.code, 4, "{args:?}: {o:?}");
         assert!(o.stderr.contains("Cua Cloud has ended"), "{args:?}: {o:?}");
     }
+    // --pool names a pool on this computer, which decides the image.
     let o = h
-        .run(&["--embedded", "sb", "launch", "--local", "--pool", "p"])
+        .run(&[
+            "--embedded",
+            "sb",
+            "create",
+            "img",
+            "--on",
+            "local",
+            "--pool",
+            "p",
+        ])
         .await;
-    assert_eq!(o.code, 4, "{o:?}");
-    assert!(o.stderr.contains("Cua Cloud has ended"), "{o:?}");
+    assert_eq!(o.code, 2, "{o:?}");
+    assert!(o.stderr.contains("pass IMAGE or --pool, not both"), "{o:?}");
     // The other options of the ended cloud still parse (hidden) and fail the same way.
     for args in [
         &["img", "--apply"][..],
@@ -317,6 +325,8 @@ async fn create_validates_on_and_flags() {
         "--disk",
         "--port",
         "--wait",
+        "--ttl",
+        "--pool",
         "--token",
         "--name",
     ] {
@@ -327,7 +337,7 @@ async fn create_validates_on_and_flags() {
     }
     let o = h.run(&["sb", "launch", "--help"]).await;
     o.ok();
-    for flag in ["--kind", "--runtime", "--cpu", "--memory"] {
+    for flag in ["--ttl", "--kind", "--runtime", "--cpu", "--memory"] {
         assert!(
             o.stdout.contains(flag),
             "{flag} missing from sb launch --help"

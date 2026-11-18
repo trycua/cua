@@ -7,7 +7,7 @@
 // SDK's entries and plans between the page's steps (`TeleportCache`).
 import type { SpaceLike, TeleportLike } from "../native/generated/index";
 import { dataURL, groupsOf, iconRequest, liveSources, moveOf, rememberChoice, runReport, spaceName, TeleportCache, teleportConsent } from "../model/teleport";
-import { object, string } from "./args";
+import { object, optionalString, string } from "./args";
 import { spaceStreams } from "./space-detail";
 import type { BridgeContext } from "./context";
 import { Failure, type BridgeArgs, type Handlers } from "./host";
@@ -135,7 +135,15 @@ export function teleportMethods(ctx: BridgeContext): Handlers {
       const client = model.keyvault.client;
       if (!client) throw Failure.unsupported("The Keyvault is not available");
       foreground();
-      return encode(await client.inventory(string(args, "providerId"), undefined));
+      return encode(await client.inventory(string(args, "providerId"), optionalString(args, "profile") ?? undefined));
+    },
+    "teleport.readiness": async (args) => {
+      // Whether a teleport can work now, in plain words: the Keyvault, what
+      // macOS lets the daemon read, the profiles. Reads no value and asks for
+      // no presence, so it shows nothing over the foreground window.
+      const client = model.keyvault.client;
+      if (!client) throw Failure.unsupported("The Keyvault is not available");
+      return encode(await client.readiness(string(args, "providerId"), optionalString(args, "profile") ?? undefined));
     },
     "teleport.remembered": (args) => {
       const key = native.appReviewRememberKey(string(args, "providerId"), spaceName(model, spaceId(args)));

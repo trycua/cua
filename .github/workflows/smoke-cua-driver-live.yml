@@ -20,9 +20,9 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver-core/src/snapshot_store.rs"
       - "libs/cua-driver/rust/crates/cua-driver-core/src/tool.rs"
       - "libs/cua-driver/rust/crates/cua-driver-core/src/window_target.rs"
-      - "libs/cua-driver/rust/crates/platform-windows/src/tools/impl_.rs"
+      - "libs/cua-driver/rust/crates/platform-windows/src/tools/*.rs"
       - "libs/cua-driver/rust/crates/platform-windows/src/win32/combo.rs"
-      - "libs/cua-driver/rust/crates/platform-linux/src/tools/impl_.rs"
+      - "libs/cua-driver/rust/crates/platform-linux/src/tools/*.rs"
       - "libs/cua-driver/rust/crates/platform-linux/src/atspi/**"
 
 permissions:
@@ -48,18 +48,15 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: live-smoke
       - name: Install GUI and Rust build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            xvfb dbus-x11 at-spi2-core openbox python3-gi gir1.2-gtk-3.0 \
-            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
-            libei-dev libwayland-dev libxkbcommon-dev libx11-dev libxi-dev \
-            libxtst-dev libxext-dev libxdo-dev libssl-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            xvfb dbus-x11 at-spi2-core openbox python3-gi gir1.2-gtk-3.0 clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev libwayland-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev libxdo-dev libssl-dev
       - name: Build cua-driver
         run: cargo build --release --locked -p cua-driver --manifest-path libs/cua-driver/rust/Cargo.toml
       - name: Run live smoke
@@ -83,7 +80,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: live-smoke

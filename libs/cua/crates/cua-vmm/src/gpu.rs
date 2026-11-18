@@ -199,7 +199,39 @@ pub fn qemu_support(os: &str, host: &VirglHost) -> GpuSupport {
 /// runtime. `os` is the host's: Docker on macOS and Windows runs Linux in a
 /// VM that sees no GPU.
 pub fn container_support(os: &str, runtime: &str, nvidia_runtime: bool) -> GpuSupport {
-    if os != "linux" {
+    container_support_wsl(os, runtime, nvidia_runtime, false)
+}
+
+/// [`container_support`] where the engine may be a WSL 2 distribution on a
+/// Windows PC: it reaches the PC's NVIDIA GPU through `/dev/dxg` and the
+/// driver's libraries in `/usr/lib/wsl`, with no `nvidia` runtime (`wsl_gpu`).
+pub fn container_support_wsl(
+    os: &str,
+    runtime: &str,
+    nvidia_runtime: bool,
+    wsl_gpu: bool,
+) -> GpuSupport {
+    if os == "windows" && wsl_gpu && !nvidia_runtime {
+        let gvisor = runtime == "gvisor";
+        return GpuSupport {
+            runtime: runtime.into(),
+            options: vec![GpuOption {
+                id: NVIDIA.into(),
+                label: "NVIDIA GPUs (WSL 2)".into(),
+                experimental: false,
+                supported: !gvisor,
+                reason: if gvisor {
+                    "gVisor containers get no GPU; choose runc".into()
+                } else {
+                    String::new()
+                },
+                learn_more: None,
+                usd_per_hour: None,
+            }],
+            reason: String::new(),
+        };
+    }
+    if os != "linux" && !(os == "windows" && nvidia_runtime) {
         return GpuSupport::none(
             runtime,
             "Containers here run in a Linux VM with no GPU access",
@@ -252,6 +284,25 @@ mod tests {
             lume_support_for("linux", "aarch64", true)
                 .options
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_wsl_engine_reaches_the_pcs_gpu_through_dxg() {
+        // A PC whose engine is a WSL 2 distribution with the NVIDIA driver.
+        let s = container_support_wsl("windows", "container", false, true);
+        let o = s.pick(NVIDIA).unwrap();
+        assert!(o.supported && o.label.contains("WSL"), "{o:?}");
+        // No driver, or gVisor: refused with the reasons the user can act on.
+        let none = container_support_wsl("windows", "container", false, false);
+        assert!(none.pick(NVIDIA).is_err());
+        let gv = container_support_wsl("windows", "gvisor", false, true);
+        assert!(gv.pick(NVIDIA).unwrap_err().contains("gVisor"));
+        // A Mac has no such path.
+        assert!(
+            container_support_wsl("macos", "container", false, true)
+                .pick(NVIDIA)
+                .is_err()
         );
     }
 

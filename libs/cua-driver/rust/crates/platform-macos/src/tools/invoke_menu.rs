@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use core_foundation::base::{CFRelease, CFTypeRef};
 use cua_driver_contract::InvokeMenuInput;
@@ -11,19 +14,18 @@ use cua_driver_core::{
 };
 use serde_json::Value;
 use std::{
-    ffi::c_void,
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc::{self, SyncSender},
         Arc,
     },
     time::Duration,
 };
 
 use crate::ax::bindings::{
-    ax_get_window_id, copy_action_names, copy_ax_windows, copy_bool_attr, copy_children,
-    copy_element_attr, copy_string_attr, kAXErrorSuccess, perform_action, set_bool_attr_true,
-    AXUIElementCreateApplication, AXUIElementRef, AXUIElementSetMessagingTimeout,
+    ax_get_window_id, copy_action_names, copy_ax_windows, copy_ax_windows_including,
+    copy_bool_attr, copy_children, copy_element_attr, copy_string_attr, kAXErrorSuccess,
+    perform_action, set_bool_attr_true, AXUIElementCreateApplication, AXUIElementRef,
+    AXUIElementSetMessagingTimeout,
 };
 
 pub struct InvokeMenuTool;
@@ -415,70 +417,18 @@ fn focus_ax_window(pid: i32, window_id: u32) -> Result<(), String> {
     Ok(())
 }
 
-struct AxWindowFocusRequest {
-    pid: i32,
-    window_id: u32,
-    tx: SyncSender<Result<(), String>>,
-    cancelled: Arc<AtomicBool>,
-}
-
-#[link(name = "System", kind = "framework")]
-extern "C" {
-    static _dispatch_main_q: u8;
-    fn dispatch_async_f(
-        queue: *const c_void,
-        context: *mut c_void,
-        work: unsafe extern "C" fn(*mut c_void),
-    );
-}
-
-unsafe extern "C" fn focus_ax_window_on_main(context: *mut c_void) {
-    let request = unsafe { Box::from_raw(context.cast::<AxWindowFocusRequest>()) };
-    if request.cancelled.load(Ordering::Acquire) {
-        return;
-    }
-    let result = focus_ax_window(request.pid, request.window_id);
-    let _ = request.tx.send(result);
-}
-
 fn focus_ax_window_with_thread_affinity(pid: i32, window_id: u32) -> Result<(), String> {
-    let is_main_thread = objc2_foundation::MainThreadMarker::new().is_some();
-    if pid != std::process::id() as i32 || is_main_thread {
-        return focus_ax_window(pid, window_id);
-    }
-
-    // AX actions against another process execute in that process. An embedded
-    // driver targeting its own window is different: AppKit services AXRaise
-    // in this process, and window ordering is main-thread-only. Queue just the
-    // self-process AX mutation onto AppKit's main queue, then return to the
-    // blocking worker for readiness polling and menu traversal.
-    let (tx, rx) = mpsc::sync_channel(1);
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let request = Box::new(AxWindowFocusRequest {
-        pid,
-        window_id,
-        tx,
-        cancelled: Arc::clone(&cancelled),
-    });
-    unsafe {
-        let main_queue = &raw const _dispatch_main_q as *const c_void;
-        dispatch_async_f(
-            main_queue,
-            Box::into_raw(request).cast::<c_void>(),
-            focus_ax_window_on_main,
-        );
-    }
-    match rx.recv_timeout(MAIN_QUEUE_TIMEOUT) {
-        Ok(result) => result,
-        Err(error) => {
-            // If AppKit never serviced the request, prevent a stale focus
-            // change from firing after this tool call has already failed.
-            cancelled.store(true, Ordering::Release);
-            Err(format!(
-                "invoke_menu: failed waiting for the embedded host window on the AppKit main queue: {error}"
-            ))
-        }
-    }
+    // An embedded driver targeting its own window must raise it on AppKit's
+    // main queue; see `ax::main_thread`. Only the AX mutation moves there; the
+    // blocking worker keeps readiness polling and menu traversal.
+    crate::ax::main_thread::run_ax_mutation(pid, MAIN_QUEUE_TIMEOUT, move || {
+        focus_ax_window(pid, window_id)
+    })
+    .unwrap_or_else(|error| {
+        Err(format!(
+            "invoke_menu: failed waiting for the embedded host window on the AppKit main queue: {error}"
+        ))
+    })
 }
 
 fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
@@ -506,7 +456,7 @@ fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
         if exact_window_is_ready(
             live_frontmost_pid(pid, window_id),
             pid,
-            crate::ax::bindings::focused_window_id_of_pid(pid),
+            crate::ax::bindings::focused_window_id_of_pid(pid).map(|window| window.own),
             window_id,
         ) {
             let since = stable_since.get_or_insert(now);
@@ -534,6 +484,21 @@ fn exact_window_is_ready(
     frontmost_pid == Some(target_pid) && focused_window_id == Some(target_window_id)
 }
 
+/// Whether invoke_menu puts the previously key window back after the call.
+/// Another application's window always comes back. Within the target app the
+/// requested window stays key once the command was dispatched: AppKit runs
+/// some menu actions after the press returns, against the key window then
+/// (TextEdit's File > Save), so re-keying a sibling would retarget them.
+fn restores_prior_window(
+    prior_pid: i32,
+    prior_window_id: Option<u32>,
+    target_pid: i32,
+    target_window_id: u32,
+    dispatched: bool,
+) -> bool {
+    prior_pid != target_pid || (!dispatched && prior_window_id != Some(target_window_id))
+}
+
 /// The item could not be invoked without activating its app or raising its
 /// window. Either would take the user's front window, so refuse and name the
 /// route.
@@ -545,10 +510,15 @@ fn background_unavailable(reason: String, request: &MenuRequest) -> ToolResult {
          ignores its shortcut too. Otherwise use the control in the window.",
         request.unavailable_because()
     );
+    structured_refusal("background_unavailable", message)
+}
+
+fn structured_refusal(code: &str, message: String) -> ToolResult {
     ToolResult::error(message.clone()).with_structured(serde_json::json!({
         "status": "refused",
-        "code": "background_unavailable",
-        "refusal": { "code": "background_unavailable", "message": message }
+        "code": code,
+        "effect": "refused",
+        "refusal": { "code": code, "message": message }
     }))
 }
 
@@ -567,6 +537,57 @@ enum BackgroundPressError {
         focused: Option<u32>,
         main: Option<u32>,
     },
+}
+
+/// Whether the background worker may still act for its call. The worker
+/// keeps running on the blocking pool after the caller's future is dropped,
+/// so it checks this before each mutation of the target app.
+#[derive(Clone, Default)]
+struct PressAdmission(Arc<AtomicBool>);
+
+/// Cancels its [`PressAdmission`] when dropped. Held where the caller waits.
+struct CancelOnDrop(PressAdmission);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0 .0.store(true, Ordering::Release);
+    }
+}
+
+impl PressAdmission {
+    fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+
+    /// Run `press` unless the call was cancelled.
+    fn admit<T>(&self, press: impl FnOnce() -> T) -> Result<T, BackgroundPressError> {
+        if self.is_cancelled() {
+            return Err(BackgroundPressError::Other(
+                "invoke_menu: the call was cancelled, so the menu item was not pressed".into(),
+            ));
+        }
+        Ok(press())
+    }
+}
+
+/// Run `work` on the blocking pool with an admission that is cancelled when
+/// this future is dropped, so a worker that outlives its call presses nothing.
+/// A press already admitted cannot be recalled, so the worker shares `hold`
+/// (the pid's mutation lease, and any key scope) and holds the desktop lane
+/// until it returns: the next action waits for it rather than running beside
+/// it, and a target made key stays key through the press.
+async fn run_admitted<T: Send + 'static>(
+    hold: impl Send + 'static,
+    work: impl FnOnce(&PressAdmission) -> T + Send + 'static,
+) -> Result<T, tokio::task::JoinError> {
+    let admission = PressAdmission::default();
+    let _cancel = CancelOnDrop(admission.clone());
+    let lane = cua_driver_core::tool::DesktopLease::current();
+    tokio::task::spawn_blocking(move || {
+        let _held = (hold, lane);
+        work(&admission)
+    })
+    .await
 }
 
 /// What the background route knows about the pressed item.
@@ -619,23 +640,37 @@ unsafe fn require_live_menu_window(
     require_menu_window(requested, read("AXFocusedWindow"), read("AXMainWindow"))
 }
 
+/// `advice`: the next step to recommend ([`MenuRequest::escalation`]).
+/// `off_space`: WindowServer places the requested window on another Space.
+/// Foreground delivery takes the same route for that window (see
+/// [`menu_route`]), so the refusal names the Space and `bring_to_front`
+/// instead of recommending `advice`.
 fn unbound_menu_window(
     pid: i32,
     requested: u32,
     focused: Option<u32>,
     main: Option<u32>,
     advice: &'static str,
+    off_space: bool,
 ) -> ToolResult {
+    let mut reason = format!(
+        "invoke_menu: requested window {requested} is not the confirmed document menu context \
+         (focused={focused:?}, main={main:?}); no menu action was dispatched"
+    );
+    if off_space {
+        reason.push_str(&format!(
+            ". Window {requested} is on another Space, and making it the menu context would \
+             switch the user's Space. If the user allows it, call bring_to_front for this \
+             window first, then invoke_menu"
+        ));
+    }
     super::background_refusal_result(
         pid,
         requested,
         &cua_driver_core::background_input::BackgroundRefusal {
             code: super::WINDOW_NOT_KEY,
-            reason: format!(
-                "invoke_menu: requested window {requested} is not the confirmed document menu context \
-                 (focused={focused:?}, main={main:?}); no menu action was dispatched"
-            ),
-            advice: Some(advice),
+            reason,
+            advice: (!off_space).then_some(advice),
         },
     )
 }
@@ -648,6 +683,7 @@ unsafe fn invoke_path_in_background(
     pid: i32,
     window_id: u32,
     path: &[String],
+    admission: &PressAdmission,
 ) -> Result<PressedItem, BackgroundPressError> {
     let app = AXUIElementCreateApplication(pid);
     if app.is_null() {
@@ -676,6 +712,7 @@ unsafe fn invoke_path_in_background(
         // context check above prevents this from switching to a sibling after
         // resolving that sibling's menu; the check below revalidates dispatch.
         if copy_bool_attr(target, "AXEnabled") == Some(false)
+            && !admission.is_cancelled()
             && crate::input::skylight::activate_without_raise_with(pid, window_id, false)
         {
             let mut waited = Duration::ZERO;
@@ -708,7 +745,7 @@ unsafe fn invoke_path_in_background(
         let bound = require_live_menu_window(app, window_id);
         CFRelease(app as CFTypeRef);
         bound?;
-        let error = perform_action(target, action);
+        let error = admission.admit(|| perform_action(target, action))?;
         if error != kAXErrorSuccess {
             return Err(BackgroundPressError::Other(format!(
                 "invoke_menu: native action for the final menu item failed with AX error {error}"
@@ -729,7 +766,8 @@ fn document_path_of_window(pid: i32, window_id: u32) -> Option<std::path::PathBu
         }
         set_messaging_timeout(app);
         let mut url = None;
-        for window in copy_ax_windows(app) {
+        // `AXWindows` omits a window on another Space; the probe recovers it.
+        for window in copy_ax_windows_including(app, pid, window_id) {
             if url.is_none() && ax_get_window_id(window) == Some(window_id) {
                 url = copy_string_attr(window, "AXDocument");
             }
@@ -854,15 +892,28 @@ impl MenuRequest {
     }
 }
 
-/// This pid's mutation lease, unless the calling task already holds it
-/// ([`crate::background_mutation::with_held_lease`]): the lease is not
-/// reentrant, so waiting for it again would never return.
-async fn lease_unless_held(pid: i32) -> Option<super::BackgroundMutationLease> {
-    if crate::background_mutation::held_by_current_task(pid) {
-        None
-    } else {
-        Some(super::acquire_background_mutation(pid).await)
-    }
+/// What a background press holds until both its call and its worker are
+/// done: the pid's mutation lease and, on the route behind the user's window,
+/// the key scope that made the target key. Fields drop in order, so key goes
+/// back before the lease is released.
+struct PressHold {
+    _key: Option<crate::input::skylight::WindowKeyScope>,
+    _mutation: super::BackgroundMutationLease,
+}
+
+/// Run a menu command in a background app without activating it (hotkey's
+/// menu route). Takes the pid's mutation lease for the call.
+pub(super) async fn run_in_background(
+    pid: i32,
+    window_id: u32,
+    path: Vec<String>,
+    request: MenuRequest,
+) -> ToolResult {
+    let hold = PressHold {
+        _key: None,
+        _mutation: super::acquire_background_mutation(pid).await,
+    };
+    press_in_background(pid, window_id, path, request, Arc::new(hold)).await
 }
 
 /// Run a menu command in a background app without activating it, or in a
@@ -872,15 +923,13 @@ async fn lease_unless_held(pid: i32) -> Option<super::BackgroundMutationLease> {
 /// app's scripting interface instead (TextEdit disables Save while it is
 /// behind the user's window). A Save is verified on disk. Anything else that
 /// is disabled is refused with `background_unavailable`.
-pub(super) async fn run_in_background(
+async fn press_in_background(
     pid: i32,
     window_id: u32,
     path: Vec<String>,
     request: MenuRequest,
+    hold: Arc<PressHold>,
 ) -> ToolResult {
-    // invoke_menu already holds this pid's lease for the whole call (see
-    // `invoke`); hotkey's menu route takes it here.
-    let _mutation = lease_unless_held(pid).await;
     let document = tokio::task::spawn_blocking(move || document_path_of_window(pid, window_id))
         .await
         .ok()
@@ -889,9 +938,9 @@ pub(super) async fn run_in_background(
         .as_deref()
         .and_then(crate::apple_events::modified_time);
     let press_path = path.clone();
-    let outcome = tokio::task::spawn_blocking(move || {
+    let outcome = run_admitted(hold.clone(), move |admission| {
         let _key_focus = crate::key_focus_guard::protect(pid);
-        unsafe { invoke_path_in_background(pid, window_id, &press_path) }
+        unsafe { invoke_path_in_background(pid, window_id, &press_path, admission) }
     })
     .await;
     let preface = request.preface(&path);
@@ -965,6 +1014,9 @@ pub(super) async fn run_in_background(
                     ActionTransport::MacosAppleEvent,
                     "The app's scripting interface reported the document saved",
                 ),
+                Ok(Err(refusal)) if refusal.code == "automation_consent_required" => {
+                    structured_refusal(refusal.code, format!("{preface}{}", refusal.reason))
+                }
                 Ok(Err(refusal)) => background_unavailable(
                     format!(
                         "{preface}{}, and saving through {app_name}'s scripting interface did \
@@ -986,7 +1038,21 @@ pub(super) async fn run_in_background(
             requested,
             focused,
             main,
-        })) => unbound_menu_window(pid, requested, focused, main, request.escalation()),
+        })) => {
+            let off_space = tokio::task::spawn_blocking(move || {
+                crate::windows::window_on_current_space_by_id(requested) == Some(false)
+            })
+            .await
+            .unwrap_or(false);
+            unbound_menu_window(
+                pid,
+                requested,
+                focused,
+                main,
+                request.escalation(),
+                off_space,
+            )
+        }
         Ok(Err(BackgroundPressError::Other(error))) => refusal(error),
         Err(error) => refusal(format!("invoke_menu: blocking task failed: {error}")),
     }
@@ -1020,8 +1086,9 @@ fn background_success(
 /// How a menu command reaches its window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MenuRoute {
-    /// The app is behind the user's window: press the item without
-    /// activating the app or opening the menu.
+    /// The app is behind the user's window, or the target is on another
+    /// Space: press the item without activating the app, opening the menu or
+    /// raising the window.
     Background,
     /// The app is frontmost but the target is not its key window, so the user
     /// is working in another window of the same app. Raising the target would
@@ -1043,21 +1110,26 @@ enum MenuRoute {
     KeyWindowUnknown { front_known: bool },
 }
 
-/// `key_window` is the frontmost app's `AXFocusedWindow`. `front_window` is
-/// its frontmost on-screen window, consulted only when the key window cannot
-/// be read; `None` when none can be found.
+/// `key_is_target`: whether the frontmost app's `AXFocusedWindow` is the
+/// target, `None` when it cannot be read. `front_window` is the app's
+/// frontmost on-screen window, consulted only when the key window cannot be
+/// read; `None` when none can be found. Raising a window on another Space
+/// switches the user's Space (issue #4635), so that window takes the
+/// background route even when its app is frontmost; an unreadable Space view
+/// keeps the app-in-front routes.
 fn menu_route(
     target_in_front: bool,
-    key_window: Option<u32>,
+    on_current_space: Option<bool>,
+    key_is_target: Option<bool>,
     front_window: Option<u32>,
     window_id: u32,
 ) -> MenuRoute {
-    if !target_in_front {
+    if !target_in_front || on_current_space == Some(false) {
         return MenuRoute::Background;
     }
-    match key_window {
-        Some(key) if key == window_id => MenuRoute::KeyWindowInFront,
-        Some(_) => MenuRoute::BehindUsersWindow,
+    match key_is_target {
+        Some(true) => MenuRoute::KeyWindowInFront,
+        Some(false) => MenuRoute::BehindUsersWindow,
         None if front_window == Some(window_id) => MenuRoute::KeyWindowInFront,
         None => MenuRoute::KeyWindowUnknown {
             front_known: front_window.is_some(),
@@ -1149,6 +1221,7 @@ impl Tool for InvokeMenuTool {
         // window.
         let mut args = args;
         super::default_window_for_pid(&mut args);
+        let prompt = cua_driver_core::security_prompt::PromptInput::from_args(&args);
         let input: InvokeMenuInput =
             match cua_driver_core::tool_args::parse_typed_input("invoke_menu", args) {
                 Ok(input) => input,
@@ -1162,6 +1235,9 @@ impl Tool for InvokeMenuTool {
             Ok(pid) => pid,
             Err(_) => return refusal("invoke_menu: pid is out of range".into()),
         };
+        if let Err(refusal) = crate::security_prompt::refuse_pid(prompt, pid) {
+            return refusal;
+        }
         let window_id = match u32::try_from(input.window_id) {
             Ok(window_id) => window_id,
             Err(_) => return refusal("invoke_menu: window_id is out of range".into()),
@@ -1176,37 +1252,61 @@ impl Tool for InvokeMenuTool {
         // A background target: invoke the item without activating the app or
         // raising its window. When macOS keeps the item unavailable to a
         // background app, refuse and say so instead of activating it. A window
-        // behind the user's window in the app they are using is not raised
-        // either (MenuRoute::BehindUsersWindow, MenuRoute::KeyWindowUnknown).
+        // on another Space is not raised either (issue #4635), nor a window
+        // behind the user's window in the app they are using
+        // (MenuRoute::BehindUsersWindow, MenuRoute::KeyWindowUnknown).
         //
         // One per-process mutation lease covers the route decision, every
         // focus change, the press and the hand-back. A key scope that a
         // concurrent same-pid call holds would otherwise read as the user's key
         // window and send that window down the raising path, or overlap this
         // call's scope and hand key back to the wrong window.
-        let _mutation = super::acquire_background_mutation(pid).await;
-        let (target_in_front, key_window, front_window) = tokio::task::spawn_blocking(move || {
-            if live_frontmost_app().or_else(crate::apps::frontmost_pid) != Some(pid) {
-                return (false, None, None);
-            }
-            let key_window = crate::ax::bindings::focused_window_id_of_pid(pid);
-            // The window order stands in only when the key window cannot be read.
-            let front_window = key_window
-                .is_none()
-                .then(|| {
-                    crate::input::skylight::app_window_order(pid)
-                        .first()
-                        .copied()
-                })
-                .flatten();
-            (true, key_window, front_window)
-        })
-        .await
-        .unwrap_or((false, None, None));
-        match menu_route(target_in_front, key_window, front_window, window_id) {
+        let mutation = super::acquire_background_mutation(pid).await;
+        let (target_in_front, on_current_space, key_is_target, front_window) =
+            tokio::task::spawn_blocking(move || {
+                if live_frontmost_app().or_else(crate::apps::frontmost_pid) != Some(pid) {
+                    return (false, None, None, None);
+                }
+                let key_is_target =
+                    crate::ax::bindings::focused_window_id_of_pid(pid).map(|key| key.is(window_id));
+                // The window order stands in only when the key window cannot be read.
+                let front_window = key_is_target
+                    .is_none()
+                    .then(|| {
+                        crate::input::skylight::app_window_order(pid)
+                            .first()
+                            .copied()
+                    })
+                    .flatten();
+                (
+                    true,
+                    crate::windows::window_on_current_space_by_id(window_id),
+                    key_is_target,
+                    front_window,
+                )
+            })
+            .await
+            .unwrap_or((false, None, None, None));
+        match menu_route(
+            target_in_front,
+            on_current_space,
+            key_is_target,
+            front_window,
+            window_id,
+        ) {
             MenuRoute::Background => {
-                let press = run_in_background(pid, window_id, path, MenuRequest::Path);
-                return crate::background_mutation::with_held_lease(pid, press).await;
+                let hold = PressHold {
+                    _key: None,
+                    _mutation: mutation,
+                };
+                return press_in_background(
+                    pid,
+                    window_id,
+                    path,
+                    MenuRequest::Path,
+                    Arc::new(hold),
+                )
+                .await;
             }
             MenuRoute::KeyWindowUnknown { front_known } => {
                 return behind_users_window_refusal(
@@ -1216,24 +1316,31 @@ impl Tool for InvokeMenuTool {
                 );
             }
             MenuRoute::BehindUsersWindow => {
-                let scope = match key_scope_behind_users_window(pid, window_id).await {
-                    Ok(scope) => scope,
+                let key = match key_scope_behind_users_window(pid, window_id).await {
+                    Ok(key) => key,
                     Err(refused) => return refused,
                 };
-                let press =
-                    run_in_background(pid, window_id, path, MenuRequest::PathBehindUsersWindow);
-                let result = crate::background_mutation::with_held_lease(pid, press).await;
-                // Key goes back before the lease is released.
-                drop(scope);
-                return result;
+                let hold = PressHold {
+                    _key: Some(key),
+                    _mutation: mutation,
+                };
+                return press_in_background(
+                    pid,
+                    window_id,
+                    path,
+                    MenuRequest::PathBehindUsersWindow,
+                    Arc::new(hold),
+                )
+                .await;
             }
             MenuRoute::KeyWindowInFront => {}
         }
 
         let outcome = tokio::task::spawn_blocking(move || {
             let prior_frontmost = live_frontmost_app().or_else(crate::apps::frontmost_pid);
-            let prior_frontmost_window =
-                prior_frontmost.and_then(crate::ax::bindings::focused_window_id_of_pid);
+            let prior_frontmost_window = prior_frontmost.and_then(|prior| {
+                crate::ax::bindings::focused_window_id_of_pid(prior).map(|window| window.own)
+            });
             let needs_activation = prior_frontmost != Some(pid);
 
             let result = focus_exact_window(pid, window_id)
@@ -1243,9 +1350,13 @@ impl Tool for InvokeMenuTool {
             // including across applications. Falling back to app activation
             // preserves the previous behavior for apps without an AX window.
             if let Some(prior_pid) = prior_frontmost {
-                let already_restored =
-                    prior_pid == pid && prior_frontmost_window == Some(window_id);
-                if !already_restored {
+                if restores_prior_window(
+                    prior_pid,
+                    prior_frontmost_window,
+                    pid,
+                    window_id,
+                    result.is_ok(),
+                ) {
                     let restored_exact = prior_frontmost_window.is_some_and(|prior_window_id| {
                         focus_exact_window(prior_pid, prior_window_id).is_ok()
                     });
@@ -1286,6 +1397,36 @@ impl Tool for InvokeMenuTool {
 mod tests {
     use super::*;
 
+    /// Issue #4635: a frontmost app's window on another Space must not be
+    /// raised (that switches the user's Space), so its menu goes through the
+    /// background route. Only a window known to be on another Space is
+    /// diverted; an unreadable Space view keeps the app-in-front routes.
+    #[test]
+    fn a_window_on_another_space_takes_the_background_route() {
+        for key in [Some(true), Some(false), None] {
+            assert_eq!(
+                menu_route(true, Some(false), key, Some(42), 42),
+                MenuRoute::Background
+            );
+        }
+        for space in [Some(true), None] {
+            assert_eq!(
+                menu_route(true, space, Some(true), None, 42),
+                MenuRoute::KeyWindowInFront
+            );
+            assert_eq!(
+                menu_route(true, space, Some(false), None, 42),
+                MenuRoute::BehindUsersWindow
+            );
+        }
+        for space in [Some(true), Some(false), None] {
+            assert_eq!(
+                menu_route(false, space, Some(true), Some(42), 42),
+                MenuRoute::Background
+            );
+        }
+    }
+
     #[test]
     fn background_menu_requires_both_exact_document_contexts() {
         assert!(require_menu_window(7, Some(7), Some(7)).is_ok());
@@ -1312,7 +1453,7 @@ mod tests {
             (MenuRequest::KeyEquivalent("⌘S".into()), "foreground"),
             (MenuRequest::PathBehindUsersWindow, "bring_to_front"),
         ] {
-            let result = unbound_menu_window(42, 7, Some(8), None, request.escalation());
+            let result = unbound_menu_window(42, 7, Some(8), None, request.escalation(), false);
             assert_eq!(result.is_error, Some(true));
             let data = result.structured_content.unwrap();
             assert_eq!(data["code"], "window_not_key");
@@ -1325,6 +1466,23 @@ mod tests {
                 .unwrap()
                 .contains("no menu action was dispatched"));
         }
+    }
+
+    /// Issue #4635: an off-Space window whose sibling holds the menu context
+    /// is refused with the Space named. Foreground takes the same route for
+    /// that window, so the refusal must not recommend it.
+    #[test]
+    fn an_unbound_off_space_window_is_refused_with_the_space_named() {
+        let result = unbound_menu_window(42, 7, Some(8), Some(8), "foreground", true);
+        assert_eq!(result.is_error, Some(true));
+        let data = result.structured_content.unwrap();
+        assert_eq!(data["code"], "window_not_key");
+        assert_eq!(data["window_id"], 7);
+        assert!(data.get("escalation").is_none());
+        let reason = data["reason"].as_str().unwrap();
+        assert!(reason.contains("no menu action was dispatched"));
+        assert!(reason.contains("on another Space"));
+        assert!(reason.contains("bring_to_front"));
     }
 
     #[test]
@@ -1382,6 +1540,87 @@ mod tests {
         assert!(MenuRequest::KeyEquivalent("⌘S".into())
             .scripted_save_text(&path, "TextEdit", file, true)
             .starts_with("⌘S is the key equivalent of File > Save."));
+    }
+
+    #[test]
+    fn an_automation_consent_refusal_keeps_its_code() {
+        let reason = "hotkey cmd+s: Grant TextEdit access in System Settings > Privacy & Security > Automation";
+        let result = structured_refusal("automation_consent_required", reason.into());
+        assert_eq!(result.is_error, Some(true));
+        let data = result.structured_content.unwrap();
+        assert_eq!(data["code"], "automation_consent_required");
+        assert_eq!(data["effect"], "refused");
+        assert_eq!(data["refusal"]["code"], "automation_consent_required");
+        assert_eq!(data["refusal"]["message"], reason);
+    }
+
+    #[tokio::test]
+    async fn a_dropped_background_call_never_presses_its_item() {
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let (pressed_tx, pressed_rx) = std::sync::mpsc::channel();
+        let mutation = Arc::new(super::super::acquire_background_mutation(-92_002).await);
+        let call = tokio::spawn(run_admitted(mutation, move |admission| {
+            let _ = started_tx.send(());
+            let _ = release_rx.recv();
+            let _ = pressed_tx.send(admission.admit(|| ()).is_ok());
+        }));
+        started_rx.await.unwrap();
+        call.abort();
+        assert!(call.await.unwrap_err().is_cancelled());
+        // The worker outlived its call and now reaches the press.
+        release_tx.send(()).unwrap();
+        let pressed = pressed_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(!pressed, "a worker whose call was dropped pressed the item");
+    }
+
+    /// The next action on the same pid waits for a dropped call's worker to
+    /// finish its press, instead of running beside it.
+    #[tokio::test]
+    async fn a_dropped_call_keeps_the_pid_until_its_worker_returns() {
+        let pid = -92_001;
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        // The call holds the pid's lease while it awaits the worker, as
+        // run_in_background does.
+        let call = tokio::spawn(async move {
+            let mutation = Arc::new(super::super::acquire_background_mutation(pid).await);
+            run_admitted(mutation.clone(), move |_| {
+                let _ = started_tx.send(());
+                let _ = release_rx.recv();
+            })
+            .await
+        });
+        started_rx.await.unwrap();
+        call.abort();
+        assert!(call.await.unwrap_err().is_cancelled());
+        let mut next = tokio::spawn(super::super::acquire_background_mutation(pid));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut next)
+                .await
+                .is_err(),
+            "the next action started while the dropped call's worker still ran"
+        );
+        release_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), next)
+            .await
+            .expect("the next action starts once the worker returns")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_live_background_call_presses_once() {
+        let mutation = Arc::new(super::super::acquire_background_mutation(-92_003).await);
+        let pressed = run_admitted(mutation, |admission| admission.admit(|| 7))
+            .await
+            .unwrap();
+        assert!(matches!(pressed, Ok(7)));
+        let cancelled = PressAdmission::default();
+        drop(CancelOnDrop(cancelled.clone()));
+        assert!(matches!(
+            cancelled.admit(|| 7),
+            Err(BackgroundPressError::Other(message)) if message.contains("cancelled")
+        ));
     }
 
     #[test]
@@ -1471,21 +1710,19 @@ mod tests {
     #[test]
     fn a_window_behind_the_users_window_in_the_front_app_is_never_raised() {
         for front_window in [None, Some(41), Some(42)] {
-            assert_eq!(
-                menu_route(false, None, front_window, 42),
-                MenuRoute::Background
-            );
-            assert_eq!(
-                menu_route(false, Some(42), front_window, 42),
-                MenuRoute::Background
-            );
+            for key in [None, Some(true), Some(false)] {
+                assert_eq!(
+                    menu_route(false, Some(true), key, front_window, 42),
+                    MenuRoute::Background
+                );
+            }
             // A readable key window decides; the window order does not.
             assert_eq!(
-                menu_route(true, Some(42), front_window, 42),
+                menu_route(true, Some(true), Some(true), front_window, 42),
                 MenuRoute::KeyWindowInFront
             );
             assert_eq!(
-                menu_route(true, Some(41), front_window, 42),
+                menu_route(true, Some(true), Some(false), front_window, 42),
                 MenuRoute::BehindUsersWindow
             );
         }
@@ -1495,18 +1732,18 @@ mod tests {
     fn an_unknown_key_window_takes_the_old_path_only_for_the_apps_front_window() {
         // The app's frontmost window is the user's own: raising it changes nothing.
         assert_eq!(
-            menu_route(true, None, Some(42), 42),
+            menu_route(true, Some(true), None, Some(42), 42),
             MenuRoute::KeyWindowInFront
         );
         // Any other window may be behind theirs, and the key-window record
         // cannot be confirmed without a readable key window.
         assert_eq!(
-            menu_route(true, None, Some(41), 42),
+            menu_route(true, Some(true), None, Some(41), 42),
             MenuRoute::KeyWindowUnknown { front_known: true }
         );
         // No frontmost window can be found either: refuse too.
         assert_eq!(
-            menu_route(true, None, None, 42),
+            menu_route(true, Some(true), None, None, 42),
             MenuRoute::KeyWindowUnknown { front_known: false }
         );
     }
@@ -1577,23 +1814,17 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn a_held_lease_is_reused_not_awaited_again() {
-        let pid = -91_101;
-        let _held = super::super::acquire_background_mutation(pid).await;
-        let reused = tokio::time::timeout(
-            Duration::from_secs(1),
-            crate::background_mutation::with_held_lease(pid, lease_unless_held(pid)),
-        )
-        .await
-        .expect("a lease the task holds must not be awaited again");
-        assert!(reused.is_none());
-        // Without the proof the call waits its turn.
-        assert!(
-            tokio::time::timeout(Duration::from_millis(30), lease_unless_held(pid))
-                .await
-                .is_err()
-        );
+    #[test]
+    fn a_dispatched_command_keeps_its_window_key_within_the_app() {
+        // Another app was in front: it comes back, dispatched or not.
+        assert!(restores_prior_window(8, Some(5), 7, 42, true));
+        assert!(restores_prior_window(8, None, 7, 42, false));
+        // A sibling window of the target app was key: it stays behind once
+        // the command was dispatched, and comes back after a refusal.
+        assert!(!restores_prior_window(7, Some(41), 7, 42, true));
+        assert!(restores_prior_window(7, Some(41), 7, 42, false));
+        // The requested window was already key: nothing to put back.
+        assert!(!restores_prior_window(7, Some(42), 7, 42, false));
     }
 
     fn workspace_frontmost_must_not_be_read() -> Option<i32> {

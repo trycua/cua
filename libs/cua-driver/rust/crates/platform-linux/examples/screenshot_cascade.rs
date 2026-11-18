@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Standalone smoke for the platform-linux screenshot cascade.
 //!
 //! Calls `capture::screenshot_display_bytes()` and prints the PNG size +

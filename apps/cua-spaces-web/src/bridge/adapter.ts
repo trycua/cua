@@ -2,6 +2,9 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import type { MachinesView } from "./contracts/host";
+import type { ChildrenPreview } from "./contracts/children";
+import type { NetworkPreview } from "./contracts/network";
+import type { CreatingElsewhere, ListStatus } from "./contracts/spaces";
 import type { HostEvent, OpArgs, OpName, OpResult } from "./protocol";
 
 export type BridgeMode = "tauri" | "electron" | "webkit" | "demo";
@@ -33,6 +36,27 @@ export interface DataAdapter {
    * the host says nothing beyond the list (a failed read rejects instead).
    */
   listNotice?(): string | null;
+  /**
+   * How far the host's last `spaces.list` got (the SDK's
+   * `Spaces.list_known`): whether it was read at all, and whether some of
+   * the account's computers have not answered yet. Undefined: the host
+   * lists complete lists only.
+   */
+  listStatus?(): ListStatus;
+  /**
+   * Per-Space network, Volume and clipboard settings: the native hosts'
+   * (`bridge/network.ts`, over `network.*`) or the demo's (`?demo=network`).
+   * Undefined: the host has none, and none of it shows. */
+  readonly network?: NetworkPreview;
+  /** Child Spaces: the tree, each tree's budget and the commands a Space
+   * keeps running: the native hosts' (`bridge/children.ts`) or the demo's.
+   * Undefined: the host has none, and none of it shows. */
+  readonly children?: ChildrenPreview;
+  /**
+   * The Spaces your other computers are creating now, read with
+   * `spaces.list` (CUA-2349). Undefined: the host does not read them.
+   */
+  creatingElsewhere?(): CreatingElsewhere[];
   /**
    * The host's standing notice, read with `spaces.list`: null, or a line to
    * show above every page while it lasts (another app keeps its own daemon
@@ -71,6 +95,12 @@ export interface PresentedFailure {
   title?: string;
   details?: string;
   actionLabel?: string;
+  /** Which failure it is (`HostSetupFailure.Kind`): `needsProof` is a new
+   * computer the account wants proof for, answered with a code from
+   * another computer. */
+  kind?: string;
+  /** The relay's code for a refusal (`new_computer_needs_proof`, ...), when it gave one. */
+  refusalCode?: string;
 }
 
 /** A host answered with an error. `code` is the host's, when it gave one. */

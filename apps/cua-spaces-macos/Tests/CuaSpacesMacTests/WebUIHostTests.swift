@@ -33,11 +33,26 @@ struct WebUIHostTests {
         #expect(WebUISchemeHandler.mime("wasm") == "application/wasm")
     }
 
+    /// About's Acknowledgements reads the app's bundled notices at
+    /// `/__app/THIRD_PARTY_NOTICES.md`; no other app file is reachable.
+    @Test func theSchemeHandlerServesTheBundledNoticesAndNothingElseOfTheApp() {
+        let notices = URL(fileURLWithPath: "/tmp/THIRD_PARTY_NOTICES.md")
+        let h = WebUISchemeHandler(root: nil, appFiles: ["THIRD_PARTY_NOTICES.md": notices])
+        #expect(h.appFile("/__app/THIRD_PARTY_NOTICES.md") == notices)
+        #expect(h.appFile("/__app/../Info.plist") == nil)
+        #expect(h.appFile("/__app/Info.plist") == nil)
+        #expect(h.appFile("/THIRD_PARTY_NOTICES.md") == nil)
+        // A debug build finds the checkout's copy.
+        #expect(WebUISchemeHandler.bundledAppFiles()["THIRD_PARTY_NOTICES.md"] != nil)
+    }
+
     @Test func coreRecordsEncodeAsPlainValues() {
-        let x = AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: true)
+        let x = AppExperiments(cuaVolume: true, ciRunners: false, tcpShares: false, mobile: false)
         let v = BridgeValue.encode(x) as? [String: Any]
         #expect(v?["cuaVolume"] as? Bool == true)
-        #expect(v?["webUi"] as? Bool == true)
+        #expect(v?["ciRunners"] as? Bool == false)
+        // Secure Spaces and Ask first are always on: they have no switch to send.
+        for gone in ["secureSpaces", "askFirst"] { #expect(v?[gone] == nil, "\(gone)") }
         #expect(BridgeValue.encode(Optional<String>.none) is NSNull)
         #expect(BridgeValue.encode([1, 2]) as? [Int] == [1, 2])
         #expect(BridgeValue.encode(AppSignInPhase.idle) as? String == "idle")
@@ -172,11 +187,36 @@ struct WebUIHostTests {
         #expect(try await bridge.handle("spaces.sendFiles", ["spaceId": id, "paths": ["/tmp/a.txt"]]) is [Any])
     }
 
+    /// "Choose Windows ISO…": the picked file is checked and remembered for
+    /// the image at once; a wrong file is refused in plain words, a cancelled
+    /// picker answers nothing, and no image means a bad request.
+    @Test func chooseWindowsIsoChecksAndRemembersThePickedFile() async throws {
+        let (bridge, _) = bridge()
+        var remembered: [(String, String)] = []
+        bridge.pickIso = { URL(fileURLWithPath: "/tmp/Win11_ARM64.iso") }
+        bridge.useWindowsIso = { image, path in
+            remembered.append((image, path))
+            return WindowsIsoChoice(ok: true, name: "Win11_ARM64.iso", problem: "")
+        }
+        let chosen = try await bridge.handle("windows.chooseIso", ["image": "ghcr.io/trycua/windows:11"]) as? [String: Any]
+        #expect(chosen?["name"] as? String == "Win11_ARM64.iso")
+        #expect(remembered.count == 1 && remembered[0].0 == "ghcr.io/trycua/windows:11" && remembered[0].1 == "/tmp/Win11_ARM64.iso")
+
+        bridge.useWindowsIso = { _, _ in
+            WindowsIsoChoice(ok: false, name: "", problem: "notes.txt is not a Windows disc image (.iso). Choose the file you downloaded from Microsoft.")
+        }
+        #expect(await failure(bridge, "windows.chooseIso", ["image": "ghcr.io/trycua/windows:11"]) == "bad_iso")
+
+        bridge.pickIso = { nil }
+        #expect(try await bridge.handle("windows.chooseIso", ["image": "ghcr.io/trycua/windows:11"]) is NSNull)
+        #expect(await failure(bridge, "windows.chooseIso", [:]) == "bad_args")
+    }
+
     /// The operations the Electron router answers under the same names.
     @Test func theContractsOperationsAreRouted() {
         for m in ["spaces.cancelCreate", "host.status", "keyvault.approve", "keyvault.deny", "keyvault.revokeGrant",
                   "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
-                  "agents.setup", "agents.configure", "agents.signIn"] {
+                  "agents.setup", "agents.configure", "agents.signIn", "agents.start", "agents.message"] {
             #expect(WebUIBridge.methods.contains(m), "\(m)")
         }
     }
@@ -200,6 +240,27 @@ struct WebUIHostTests {
         let count = try await bridge.handle("keyvault.revokeGrant", ["id": "grant-1"]) as? NSNumber
         #expect(count?.intValue == 1)
         #expect(fake.commands.last == .revokeGrant(id: "grant-1"))
+    }
+
+    /// The teleport setup sheet's check goes to the Keyvault with the profile
+    /// asked for (none: the last used), reads no value, and is a method the
+    /// page may call.
+    @Test func theTeleportReadinessCheckAsksTheKeyvaultForTheProfile() async throws {
+        let fake = FakeKeyvault(try fixtureOverview())
+        let (bridge, model) = bridge(kv: fake)
+        await model.keyvault.refresh()
+        #expect(WebUIBridge.methods.contains("teleport.readiness"))
+        let r = try await bridge.handle("teleport.readiness", ["providerId": "chrome", "profile": "Profile 1"]) as? [String: Any]
+        #expect(r?["providerId"] as? String == "chrome")
+        #expect(r?["keyvaultInitialized"] as? Bool == true)
+        #expect((r?["files"] as? [String: Any])?["state"] as? String == "denied")
+        #expect((r?["profiles"] as? [Any])?.count == 2)
+        #expect(fake.readinessAsks.last?.app == "chrome" && fake.readinessAsks.last?.profile == "Profile 1")
+        _ = try await bridge.handle("teleport.readiness", ["providerId": "chrome", "profile": NSNull()])
+        #expect(fake.readinessAsks.last?.profile == nil)
+        #expect(await failure(bridge, "teleport.readiness", [:]) == "bad_args")
+        // The sites list reads the profile the page chose.
+        _ = try await bridge.handle("teleport.sites", ["providerId": "chrome", "profile": "Profile 2"])
     }
 
     /// "No Keyvault yet" on the web page: Set up Keyvault runs the core's
@@ -294,6 +355,10 @@ struct WebUIHostTests {
         #expect(await failure(bridge, "agents.setup", [:]) == "unsupported")
         #expect(await failure(bridge, "agents.runs", [:]) == "bad_args")
         #expect(await failure(bridge, "agents.pause", [:]) == "bad_args")
+        #expect(await failure(bridge, "agents.start", ["spaceId": "s", "agent": "claude-code", "prompt": "hi"]) == "unsupported")
+        #expect(await failure(bridge, "agents.start", ["spaceId": "s"]) == "bad_args")
+        #expect(await failure(bridge, "agents.message", ["spaceId": "s", "runId": "r", "text": "hi"]) == "unsupported")
+        #expect(await failure(bridge, "agents.message", ["spaceId": "s", "runId": "r"]) == "bad_args")
     }
 
     @Test func agentRunsAndSetupRowsAreTheCoresRecords() async throws {
@@ -319,6 +384,27 @@ struct WebUIHostTests {
         _ = try await bridge.handle("settings.choose", ["row": "agent:claude-code", "option": "press"])
         let removed = try await bridge.handle("agents.setup", [:]) as? [[String: Any]]
         #expect(removed?.first { $0["agent"] as? String == "claude-code" }?["configured"] as? Bool == false)
+    }
+
+    /// Setup's checklist (CUA-4067): `agents.connect` answers one result per
+    /// part, and runs one part on its own for a row's Retry. `driver` adds the
+    /// Cua Driver this app carries; a build without one (this test's) writes
+    /// none and answers no driver part rather than a failure.
+    @Test func connectAnswersEachPartAndRunsOneAlone() async throws {
+        let setup = FixtureAgentSetup()
+        let (bridge, _) = bridge(agentSetup: setup)
+        let all = try await bridge.handle("agents.connect", ["agents": ["claude-code"], "signIn": true]) as? [[String: Any]]
+        let parts = (all?.first?["parts"] as? [[String: Any]])?.compactMap { $0["part"] as? String }
+        #expect(parts == ["skills", "mcp", "sign_in"])
+        let mcpOnly = try await bridge.handle("agents.connect", ["agents": ["claude-code"], "signIn": false, "skills": false, "mcp": true])
+            as? [[String: Any]]
+        let mcp = (mcpOnly?.first?["parts"] as? [[String: Any]]) ?? []
+        #expect(mcp.compactMap { $0["part"] as? String } == ["mcp"])
+        #expect(mcp.first?["where"] as? String == "~/.claude.json")
+        let driverOnly = try await bridge.handle("agents.connect", ["agents": ["claude-code"], "signIn": false, "skills": false,
+                                                                    "mcp": false, "driver": true]) as? [[String: Any]]
+        #expect((driverOnly?.first?["parts"] as? [[String: Any]])?.isEmpty == true)
+        #expect(setup.lastDriver == nil)
     }
 
     /// The page opens one notification and marks just that one read; the
@@ -349,6 +435,27 @@ struct WebUIHostTests {
         #expect(await failure(bridge, "notifications.markRead", [:]) == "bad_args")
     }
 
+    @Test func notificationsAreDeletedOneAtATimeOrAll() async throws {
+        let backend = BridgeContractTests.ToolBackend(FixtureSpacesBackend())
+        backend.agents.notifications.append(["id": "n2", "at_ms": backend.agents.now - 30_000, "agent": "ada", "kind": "message",
+                                             "title": "ada", "body": "Second.", "read": false])
+        let (bridge, _) = bridge(backend: backend)
+        func ids() async throws -> [String] {
+            let rows = try await bridge.handle("notifications.list", [:]) as? [[String: Any]] ?? []
+            return rows.compactMap { $0["id"] as? String }.sorted()
+        }
+        let all = try await ids()
+        #expect(all.count >= 2)
+        #expect(try await bridge.handle("notifications.delete", ["ids": [all[0]]]) is NSNull)
+        #expect(try await ids() == Array(all.dropFirst()))
+        // No ids deletes nothing (never all).
+        _ = try await bridge.handle("notifications.delete", ["ids": [String]()])
+        #expect(try await ids() == Array(all.dropFirst()))
+        #expect(await failure(bridge, "notifications.delete", [:]) == "bad_args")
+        #expect(try await bridge.handle("notifications.deleteAll", [:]) is NSNull)
+        #expect(try await ids().isEmpty)
+    }
+
     @Test func persistentAgentsListAsCamelCaseRecords() async throws {
         let m = PersistentModel(tools: FakeAgentsTools())
         let agents = try await m.listAgents()
@@ -369,11 +476,11 @@ struct WebUIHostTests {
     @Test func theUpdateChannelIsReadAndChosenByRow() async throws {
         let (bridge, model) = bridge()
         #expect((try await bridge.handle("settings.get", [:]) as? [String: Any])?["updateChannel"] is NSNull)
-        #expect(await failure(bridge, "settings.choose", ["row": "update-channel", "option": "beta"]) == "unsupported")
+        #expect(await failure(bridge, "settings.choose", ["row": "update-channel", "option": "nightly"]) == "unsupported")
         model.updates = UpdatesModel(updater: FixtureUpdater(), channel: .stable)
-        let s = try await bridge.handle("settings.choose", ["row": "update-channel", "option": "beta"]) as? [String: Any]
-        #expect(s?["updateChannel"] as? String == "beta")
-        #expect(model.updates.channel == .beta)
+        let s = try await bridge.handle("settings.choose", ["row": "update-channel", "option": "nightly"]) as? [String: Any]
+        #expect(s?["updateChannel"] as? String == "nightly")
+        #expect(model.updates.channel == .nightly)
     }
 
     /// The page's core has no environment: the host names the account app
@@ -382,6 +489,36 @@ struct WebUIHostTests {
         let (bridge, _) = bridge()
         let s = try await bridge.handle("settings.get", [:]) as? [String: Any]
         #expect(s?["accountUrl"] as? String == appAccountAppUrl())
+    }
+
+    /// Settings carry the channel and environment the app resolved, for the
+    /// title bar's "Local · Staging" tag.
+    @Test func settingsNameTheTarget() async throws {
+        let (bridge, _) = bridge()
+        let s = try await bridge.handle("settings.get", [:]) as? [String: Any]
+        let target = s?["target"] as? [String: Any]
+        let expected = appTarget()
+        #expect(target?["channel"] as? String == expected.channel)
+        #expect(target?["env"] as? String == expected.env)
+        #expect(target?["authHost"] as? String == expected.authHost)
+    }
+
+    /// Settings, Advanced's rows come with the page's first `settings.get`,
+    /// before New Space ever probed: every kind's runtime row, and overflow
+    /// (they were missing: only New Space's probe read the settings).
+    @Test func settingsCarryTheRuntimeChoicesOnTheFirstRead() async throws {
+        let backend = FixtureSpacesBackend()
+        backend.fixtureLumeSource = "system"
+        let (bridge, model) = bridge(backend: backend)
+        #expect(model.lumeSource == nil)
+        let s = try #require(try await bridge.handle("settings.get", [:]) as? [String: Any])
+        let page = try #require(s["page"] as? [String: Any])
+        let sections = try #require(page["sections"] as? [[String: Any]])
+        let ids = sections.flatMap { $0["rows"] as? [[String: Any]] ?? [] }.compactMap { $0["id"] as? String }
+        for kind in ["container", "vm", "microvm"] { #expect(ids.contains("runtime:\(kind)")) }
+        #expect(ids.contains("placement-overflow"))
+        // New Space's "Use built-in Lume" reads the same setting.
+        #expect(model.lumeSource == "system")
     }
 
     @Test func theGlobalShortcutSaysWhetherTheSystemGaveIt() async throws {
@@ -406,7 +543,7 @@ struct WebUIHostTests {
         for m in ["spaces.add", "clouds.status", "teleport.catalog", "teleport.run", "sharing.share", "volume.overview",
                   "agents.setupDriver", "about.set", "update.get", "update.install", "loginItem.set", "devices.approve", "storage.run",
                   "notifications.list", "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "spaces.windows", "stream.pip", "spaces.thumbnail", "spaces.sendFiles", "host.setUp", "host.action",
-                  "host.openSettings"] {
+                  "host.limits", "host.openSettings", "repoCache.get", "repoCache.set", "repoCache.clear"] {
             #expect(WebUIBridge.methods.contains(m), "\(m)")
         }
         #expect(!WebUIBridge.methods.contains("spaces.new"))
@@ -417,7 +554,7 @@ struct WebUIHostTests {
     @Test func createOptionsAreTheNativeSheetsEnv() async throws {
         let backend = FixtureSpacesBackend()
         backend.fixtureHosts = [AppSpaceHost(id: "96fedb7e", name: "gamma-4 Mac Studio", via: "relay", online: true,
-                                             os: "macos", limits: [])]
+                                             os: "macos", limits: [], load: nil)]
         let (bridge, model) = bridge(backend: backend)
         let options = try #require(try await bridge.handle("spaces.createOptions", [:]) as? [String: Any])
         let env = try #require(options["env"] as? [String: Any])
@@ -455,16 +592,11 @@ struct WebUIHostTests {
         #expect(await failure(bridge, "spaces.create", ["config": config, "pendingId": "pending:web-2"]) == "cancelled")
     }
 
-    /// While New UI is on, New Space opens its wizard; the native sheet is
-    /// the fallback.
-    @Test func newSpaceOpensTheWebWizardWhileNewUIIsOn() async {
+    /// New Space opens the web wizard.
+    @Test func newSpaceOpensTheWebWizard() async {
         let (_, model) = bridge()
         var asked: [String?] = []
         model.openWebNewSpace = { on in asked.append(on); return true }
-        await model.openNewSpace()
-        #expect(asked.isEmpty && model.showingNewSpace)
-        model.cancelNewSpace()
-        model.settings.experiments.webUi = true
         await model.openNewSpace()
         await model.openNewSpace(on: "host:m1")
         #expect(asked == [nil, "host:m1"])
@@ -514,6 +646,7 @@ struct WebUIHostTests {
         #expect(await failure(bridge, "volume.overview", [:]) == "unsupported")
         #expect(await failure(bridge, "notifications.list", [:]) == "unsupported")
         #expect(await failure(bridge, "notifications.markRead", ["ids": ["n1"]]) == "unsupported")
+        #expect(await failure(bridge, "notifications.deleteAll", [:]) == "unsupported")
         #expect(await failure(bridge, "about.set", ["autoCheck": true]) == "unsupported")
         #expect(await failure(bridge, "host.openSettings", ["url": "https://example.com"]) == "bad_args")
         #expect(await failure(bridge, "volume.reveal", ["path": "/etc/hosts"]) == "bad_args")
@@ -526,6 +659,48 @@ struct WebUIHostTests {
         let s = try await bridge.handle("host.action", ["action": "provide-spaces"]) as? [String: Any]
         #expect(s?["provideSpaces"] as? Bool == true)
         #expect(await failure(bridge, "host.action", ["action": "set-up"]) == "bad_args")
+    }
+
+    /// The limits on the Spaces other machines create here: changed through the
+    /// host (0 is no limit, a missing one keeps its value), a bad number refused.
+    @Test func hostLimitsChangeThroughTheHostModel() async throws {
+        let host = FixtureHost()
+        let (bridge, _) = bridge(host: host)
+        _ = try await bridge.handle("host.setUp", ["request": ["mode": "relay", "name": "Studio"]])
+        let s = try await bridge.handle("host.limits", ["maxSpaces": 6, "maxMemoryGb": 32]) as? [String: Any]
+        #expect(s?["maxSpaces"] as? Int == 6)
+        #expect(s?["maxMemoryGb"] as? Int == 32)
+        #expect(s?["maxDiskGb"] as? Int == 0)
+        let kept = try await bridge.handle("host.limits", ["maxDiskGb": 200]) as? [String: Any]
+        #expect(kept?["maxSpaces"] as? Int == 6, "a limit not given keeps its value")
+        #expect(kept?["maxDiskGb"] as? Int == 200)
+        let none = try await bridge.handle("host.limits", ["maxSpaces": 0]) as? [String: Any]
+        #expect(none?["maxSpaces"] as? Int == 0, "0 is no limit")
+        #expect(await failure(bridge, "host.limits", ["maxSpaces": -1]) == "bad_args")
+        #expect(await failure(bridge, "host.limits", ["maxSpaces": 1.5]) == "bad_args")
+    }
+
+    /// Settings, General's repo cache: read, switched, sized and cleared in
+    /// the host's words; a value that is not a number of GB is refused.
+    @Test func theRepoCacheReadsChangesAndClears() async throws {
+        let (bridge, _) = bridge(backend: FixtureSpacesBackend())
+        let got = try #require(try await bridge.handle("repoCache.get", [:]) as? [String: Any])
+        #expect(got["enabled"] as? Bool == true)
+        #expect(got["summary"] as? String == "Repos: 3, 1.2 GB of 5 GB")
+        #expect(got["sizeSetting"] as? String == "auto")
+        let off = try #require(try await bridge.handle("repoCache.set", ["enabled": false]) as? [String: Any])
+        #expect(off["enabled"] as? Bool == false)
+        #expect(off["sizeSetting"] as? String == "auto", "a field not given keeps its value")
+        let sized = try #require(try await bridge.handle("repoCache.set", ["enabled": true, "sizeGb": 2]) as? [String: Any])
+        #expect(sized["sizeSetting"] as? String == "2")
+        #expect(sized["summary"] as? String == "Repos: 3, 1.2 GB of 2 GB")
+        let auto = try #require(try await bridge.handle("repoCache.set", ["sizeGb": NSNull()]) as? [String: Any])
+        #expect(auto["sizeSetting"] as? String == "auto")
+        #expect(await failure(bridge, "repoCache.set", ["sizeGb": -1]) == "bad_args")
+        #expect(await failure(bridge, "repoCache.set", ["sizeGb": "lots"]) == "bad_args")
+        #expect(await failure(bridge, "repoCache.set", ["enabled": "yes"]) == "bad_args")
+        let cleared = try #require(try await bridge.handle("repoCache.clear", [:]) as? [String: Any])
+        #expect(cleared["repos"] as? Int == 0)
     }
 
     @Test func hostStatusCarriesTheWholeStateAndTheProgress() async throws {
@@ -563,6 +738,22 @@ struct WebUIHostTests {
             #expect((e["details"] as? String)?.contains("connection refused") == true)
             #expect(e["actionLabel"] as? String == "Retry")
         }
+    }
+
+    @Test func aRefusedNewComputerCarriesItsKindAndCodeToThePage() throws {
+        let f = HostSetupFailure.presenting(
+            "relay: add computers from a computer you already added, or with a pairing code [code: new_computer_needs_proof]")
+        let e = try #require(WebUIBridge.reply(id: "1", error: WebUIBridge.hostFailure(f))["error"] as? [String: Any])
+        #expect(e["kind"] as? String == "needsProof")
+        #expect(e["refusalCode"] as? String == "new_computer_needs_proof")
+        #expect(e["title"] as? String == "Confirm it\u{2019}s you")
+        #expect(e["actionLabel"] as? String == "Use a code from another computer")
+        // Any other failure says its kind, and no code it does not have.
+        let other = try #require(
+            WebUIBridge.reply(id: "2", error: WebUIBridge.hostFailure(HostSetupFailure.presenting("boom")))["error"]
+                as? [String: Any])
+        #expect(other["kind"] as? String == "other")
+        #expect(other["refusalCode"] == nil)
     }
 
     @Test func aFailedButtonIsWordedWithTheRawErrorAsDetails() async throws {
@@ -660,16 +851,6 @@ struct WebUIHostTests {
         #expect(opened == 1, "its window opens, even with only Settings up")
     }
 
-    @Test func turningNewUIOffClosesItsWindow() {
-        let (_, model) = bridge()
-        var closed = 0
-        model.closeWebUI = { closed += 1 }
-        model.chooseExperiment(row: "experiment:web_ui", option: "on")
-        #expect(closed == 0)
-        model.chooseExperiment(row: "experiment:web_ui", option: "off")
-        #expect(closed == 1)
-    }
-
     @Test func theNewUIWindowComesBackWhereItWas() {
         _ = NSApplication.shared
         let (_, model) = bridge()
@@ -720,9 +901,9 @@ struct WebUIHostTests {
     @Test func aboutIsTheUpdatesModelsInput() async throws {
         let (bridge, model) = bridge()
         model.updates = UpdatesModel(updater: FixtureUpdater(), channel: .stable)
-        let a = try await bridge.handle("about.set", ["autoCheck": true, "channel": "beta"]) as? [String: Any]
+        let a = try await bridge.handle("about.set", ["autoCheck": true, "channel": "nightly"]) as? [String: Any]
         #expect(a?["autoCheck"] as? Bool == true)
-        #expect(a?["channel"] as? String == "beta")
+        #expect(a?["channel"] as? String == "nightly")
         #expect(a?["updater"] as? Bool == true)
     }
 }

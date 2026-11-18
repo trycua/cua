@@ -10,7 +10,7 @@ The default bind is `0.0.0.0:3211` with a token and `127.0.0.1:3211` without one
 | Route | Auth | Purpose |
 | --- | --- | --- |
 | `GET /health` | None | 204 while serving, 503 while shutting down |
-| `GET`, `HEAD`, `PUT /files` | Signed URL from `CreateSignedUrl` | Upload and download with `Range`; 403 when expired or tampered |
+| `GET`, `HEAD`, `PUT`, `POST /files` | Signed URL from `CreateSignedUrl` | Upload and download with `Range`; a URL signed for `PUT` also takes `POST multipart/form-data` (the first file part, answered with `[{"name","path","type"}]`); 403 when expired or tampered |
 | `POST /mcp` | Env token | Streamable-HTTP MCP over the Cua Driver tools; 501 when disabled |
 | `GET /tunnel` (WebSocket) | Ticket from `TunnelService.Forward` | Port forwarding |
 | `GET /hotspot` (WebSocket) | Ticket from `StartHotspot` | Reverse SOCKS egress |

@@ -61,6 +61,52 @@ pub fn scan(bytes: &[u8]) -> Vec<Finding> {
     out
 }
 
+/// Overwrites every secret in `line` with `*`, keeping its length (so byte
+/// offsets into a journal stay valid and a JSON line stays JSON: the
+/// patterns match no quote or backslash). A private key is blanked from its
+/// header to its `END` marker, or to the end of the JSON string it is in.
+/// Returns the kinds found, in order.
+pub fn redact_line(line: &mut [u8]) -> Vec<&'static str> {
+    let mut kinds = vec![];
+    for (kind, re) in patterns() {
+        let spans: Vec<(usize, usize)> = re
+            .find_iter(line)
+            .map(|m| {
+                let mut end = m.end();
+                if *kind == "private key" {
+                    let rest = &line[end..];
+                    let stop = rest
+                        .windows(9)
+                        .position(|w| w == b"-----END ")
+                        .and_then(|i| {
+                            rest[i + 9..]
+                                .windows(5)
+                                .position(|w| w == b"-----")
+                                .map(|j| i + 9 + j + 5)
+                        })
+                        .or_else(|| rest.iter().position(|b| *b == b'"'))
+                        .unwrap_or(rest.len());
+                    end += stop;
+                }
+                (m.start(), end)
+            })
+            .collect();
+        if spans.is_empty() {
+            continue;
+        }
+        kinds.push(*kind);
+        for (s, e) in spans {
+            for b in &mut line[s..e] {
+                // Keep JSON escapes intact inside a blanked private key.
+                if *b != b'"' && *b != b'\\' {
+                    *b = b'*';
+                }
+            }
+        }
+    }
+    kinds
+}
+
 /// Bytes read per step by [`scan_reader`].
 const CHUNK: usize = 4 * 1024 * 1024;
 /// A line longer than this is scanned in overlapping windows (every
@@ -117,6 +163,36 @@ pub fn scan_reader(mut r: impl std::io::Read) -> std::io::Result<Option<Finding>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redaction_keeps_the_length_and_the_json() {
+        let ant = format!("sk-{}-{}", "ant", "api03-ABCDEFGHIJKLMNOPQRSTUVWXYZabcd");
+        let pem = format!(
+            "-----BEGIN {} KEY-----\\nAAAABBBB\\n-----END {} KEY-----",
+            "OPENSSH PRIVATE", "OPENSSH PRIVATE"
+        );
+        let line = serde_json::json!({"seq": 1, "text": format!("key {ant} and {pem} done")})
+            .to_string()
+            .into_bytes();
+        let mut out = line.clone();
+        let kinds = redact_line(&mut out);
+        assert_eq!(kinds, ["private key", "Anthropic API key"]);
+        assert_eq!(out.len(), line.len());
+        let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        let text = v["text"].as_str().unwrap();
+        assert!(
+            !text.contains("sk-ant") && !text.contains("AAAABBBB"),
+            "{text}"
+        );
+        assert!(
+            text.starts_with("key ***") && text.ends_with(" done"),
+            "{text}"
+        );
+        assert!(scan(&out).is_empty());
+        let mut clean = b"{\"a\":\"nothing here\"}".to_vec();
+        assert!(redact_line(&mut clean).is_empty());
+        assert_eq!(clean, b"{\"a\":\"nothing here\"}");
+    }
 
     #[test]
     fn the_stream_scanner_matches_the_buffer_scanner() {

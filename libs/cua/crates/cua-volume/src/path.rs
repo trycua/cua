@@ -19,6 +19,8 @@ pub const PUBLIC: &str = "public/";
 pub const AGENTS: &str = "agents/";
 /// The Spaces area.
 pub const SPACES: &str = "spaces/";
+/// Named volumes: `volumes/<name>/`, shared by the Spaces that mount them.
+pub const VOLUMES: &str = "volumes/";
 
 /// Normalizes a user-supplied path to a key. `""` and `"/"` are the root.
 /// A trailing `/` is kept (it names a folder).
@@ -76,6 +78,33 @@ pub fn valid_agent_name(name: &str) -> bool {
         })
 }
 
+/// Whether `name` is a valid named volume: the rules of an agent name
+/// (1 to 63 of `[a-z0-9._-]`, starting with a letter or digit).
+pub fn valid_volume_name(name: &str) -> bool {
+    valid_agent_name(name) && !name.ends_with('.')
+}
+
+/// The folder of named volume `name`: `volumes/<name>/`.
+pub fn volume_folder(name: &str) -> Result<String> {
+    if !valid_volume_name(name) {
+        return Err(Error::Invalid(format!(
+            "volume name {name:?}: use 1-63 of a-z, 0-9, `.`, `_`, `-`, starting with a letter or digit"
+        )));
+    }
+    Ok(format!("{VOLUMES}{name}/"))
+}
+
+/// The folder a mount of `name` (inside it, `subpath`) covers:
+/// `volumes/<name>/<subpath>/`. The subpath is relative; `..` is refused.
+pub fn volume_mount_folder(name: &str, subpath: &str) -> Result<String> {
+    let base = volume_folder(name)?;
+    let sub = subpath.trim().trim_matches('/');
+    if sub.is_empty() {
+        return Ok(base);
+    }
+    folder(&format!("{base}{sub}"))
+}
+
 /// An agent's home folder: `agents/<name>/`.
 pub fn agent_home(name: &str) -> Result<String> {
     if !valid_agent_name(name) {
@@ -103,6 +132,39 @@ pub fn space_folder_name(space_id: &str) -> String {
         .collect();
     let s = s.trim_matches('-').to_string();
     if s.is_empty() { "space".into() } else { s }
+}
+
+/// The id a Space's folder is named after: its id and its immutable `uid`
+/// (see [`valid_uid`]), as `local:work--0a1b2c3d`. Hand this to
+/// [`space_folder`] and [`space_folder_name`] (and to the access
+/// [`crate::Context`]) in place of the bare Space id: a Space made later
+/// under the same name has another `uid`, so it starts with an empty folder,
+/// and two ids that clean up to the same name stay apart. An empty `uid`
+/// gives the bare id (a Space from before folders had ids).
+pub fn space_volume_id(space_id: &str, uid: &str) -> String {
+    if uid.is_empty() {
+        space_id.to_string()
+    } else {
+        format!("{space_id}{UID_SEP}{uid}")
+    }
+}
+
+/// What comes between a Space's name and its id in its folder name.
+pub const UID_SEP: &str = "--";
+
+/// Whether `uid` is a Space uid: 8 lowercase hex digits.
+pub fn valid_uid(uid: &str) -> bool {
+    uid.len() == 8
+        && uid
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// The uid of a folder name made by [`space_volume_id`] (`None` for the old
+/// layout, a folder with no id).
+pub fn folder_uid(folder_name: &str) -> Option<&str> {
+    let (_, uid) = folder_name.rsplit_once(UID_SEP)?;
+    valid_uid(uid).then_some(uid)
 }
 
 /// A Space's folder: `spaces/<folder name>/`.
@@ -173,6 +235,29 @@ mod tests {
     }
 
     #[test]
+    fn volume_names_and_mount_folders() {
+        assert!(valid_volume_name("shared"));
+        assert!(valid_volume_name("my-data.v2"));
+        assert!(!valid_volume_name("Shared"));
+        assert!(!valid_volume_name("a/b"));
+        assert!(!valid_volume_name("x."));
+        assert!(!valid_volume_name(""));
+        assert_eq!(volume_folder("shared").unwrap(), "volumes/shared/");
+        assert_eq!(
+            volume_mount_folder("shared", "").unwrap(),
+            "volumes/shared/"
+        );
+        assert_eq!(
+            volume_mount_folder("shared", "/data/in/").unwrap(),
+            "volumes/shared/data/in/"
+        );
+        assert!(volume_mount_folder("shared", "../other").is_err());
+        assert!(volume_mount_folder("shared", "a/../../x").is_err());
+        assert!(volume_mount_folder("../x", "").is_err());
+        assert_eq!(area("volumes/shared/a"), Area::Other);
+    }
+
+    #[test]
     fn areas_and_names() {
         assert_eq!(area("public/x"), Area::Public);
         assert_eq!(
@@ -197,6 +282,18 @@ mod tests {
         assert_eq!(
             space_folder("direct:10.0.0.5:3211"),
             "spaces/direct-10.0.0.5-3211/"
+        );
+        // The folder carries the Space's immutable id.
+        let v = space_volume_id("local:work", "0a1b2c3d");
+        assert_eq!(space_folder(&v), "spaces/local-work--0a1b2c3d/");
+        assert_eq!(folder_uid("local-work--0a1b2c3d"), Some("0a1b2c3d"));
+        assert_eq!(folder_uid("local-work"), None);
+        assert_eq!(folder_uid("local-work--zzzzzzzz"), None);
+        assert_eq!(space_volume_id("local:work", ""), "local:work");
+        // Two ids that clean up to one name stay apart by their uid.
+        assert_ne!(
+            space_folder(&space_volume_id("local:a b", "00000001")),
+            space_folder(&space_volume_id("local:a-b", "00000002"))
         );
         assert_eq!(parent("a/b/c"), "a/b/");
         assert_eq!(parent("a"), "");

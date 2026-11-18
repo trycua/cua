@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `capture_mode` — **deprecated and ignored.**
 //!
 //! `get_window_state` is now perception-mode-agnostic: it always returns BOTH

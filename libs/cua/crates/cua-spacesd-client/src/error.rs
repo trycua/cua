@@ -293,6 +293,41 @@ pub fn transport_cause(status: &tonic::Status) -> Option<String> {
     Some(text.trim().to_string())
 }
 
+/// True when `status` is HTTP/2 flood protection closing the connection: an
+/// h2 error with reason `ENHANCE_YOUR_CALM` in the status's source chain
+/// (raised locally or received as a GOAWAY), which tonic maps to
+/// `ResourceExhausted`.
+///
+/// h2 0.4.19 raises it in `proto/streams/streams.rs` (`recv_data`) when the
+/// DATA frames received but not yet consumed by the application use up the
+/// connection's "data frame budget" (`proto/streams/counts.rs`
+/// `record_data_frame`): a frame under 256 bytes consumes `256 - len` of
+/// it, the budget is refunded only when the application reads the frame,
+/// and by default it is half the initial connection window (at least
+/// 25,600 bytes). A command printing many tiny chunks to a reader that is
+/// slow to poll therefore gets the whole connection closed with a GOAWAY.
+///
+/// A `ResourceExhausted` the server sent (a full disk, a quota) has no h2
+/// error in its chain and stays a plain [`Error::Rpc`], never retried.
+pub fn is_h2_flood_goaway(status: &tonic::Status) -> bool {
+    if status.code() != tonic::Code::ResourceExhausted {
+        return false;
+    }
+    let mut cause: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(status);
+    // Bounded: source chains are short; never loop on a cyclic one.
+    for _ in 0..16 {
+        let Some(e) = cause else { break };
+        if let Some(h2) = e.downcast_ref::<h2::Error>()
+            && h2.reason() == Some(h2::Reason::ENHANCE_YOUR_CALM)
+        {
+            return true;
+        }
+        cause = e.source();
+    }
+    // tonic words an h2 error it could not keep as a source this way.
+    error_info(status).is_none() && status.message().starts_with("h2 protocol error")
+}
+
 /// Maps a `tonic::Status` into a typed [`Error`].
 pub fn from_status(status: &tonic::Status) -> Error {
     let info = error_info(status);
@@ -306,6 +341,12 @@ pub fn from_status(status: &tonic::Status) -> Error {
             tonic::Code::Unknown | tonic::Code::Unavailable | tonic::Code::Internal
         )
     {
+        return Error::Transport(status_text(status));
+    }
+    // h2's flood protection closed the connection (see
+    // [`is_h2_flood_goaway`]): tonic reports it as `ResourceExhausted`, but
+    // it is a dropped connection, not a server-side limit.
+    if info.is_none() && is_h2_flood_goaway(status) {
         return Error::Transport(status_text(status));
     }
     let Some(info) = info else {
@@ -378,6 +419,9 @@ pub fn from_status(status: &tonic::Status) -> Error {
         ErrorReason::LimitExceeded => Error::LimitExceeded(details),
         ErrorReason::NotInitialized => Error::NotInitialized(details),
         ErrorReason::Internal => Error::Internal(details),
+        // A fenced request from an older client: `metadata["current_epoch"]`
+        // carries the Space's epoch.
+        ErrorReason::StaleEpoch => Error::Rpc(details),
         ErrorReason::Unspecified => Error::Rpc(details),
     }
 }
@@ -419,6 +463,59 @@ pub fn status_with_reason(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn h2_status(reason: h2::Reason) -> tonic::Status {
+        tonic::Status::from_error(Box::new(h2::Error::from(reason)))
+    }
+
+    #[test]
+    fn an_h2_flood_goaway_is_a_retryable_transport_error() {
+        let status = h2_status(h2::Reason::ENHANCE_YOUR_CALM);
+        assert_eq!(status.code(), tonic::Code::ResourceExhausted);
+        assert!(is_h2_flood_goaway(&status));
+        let err = Error::from(status);
+        assert!(matches!(err, Error::Transport(_)), "{err:?}");
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn other_h2_errors_keep_their_classification() {
+        // Not a flood: protocol errors stay what tonic made of them.
+        let status = h2_status(h2::Reason::PROTOCOL_ERROR);
+        assert!(!is_h2_flood_goaway(&status));
+        let err = Error::from(status);
+        assert!(
+            !matches!(err, Error::Rpc(ref d) if d.code == tonic::Code::ResourceExhausted as i32)
+        );
+    }
+
+    #[test]
+    fn a_resource_exhausted_the_server_sent_is_never_retried() {
+        // Plain, as a quota or a full disk may be reported.
+        for status in [
+            tonic::Status::resource_exhausted("no space left on device"),
+            tonic::Status::resource_exhausted("quota exceeded"),
+            status_with_reason(
+                tonic::Code::ResourceExhausted,
+                ErrorReason::DiskFull,
+                "disk full",
+                [],
+            ),
+        ] {
+            assert!(!is_h2_flood_goaway(&status), "{status:?}");
+            let err = Error::from(status);
+            assert!(!err.is_retryable(), "{err:?}");
+        }
+        // A server cannot talk its way into a retry with ErrorInfo present.
+        let with_info = status_with_reason(
+            tonic::Code::ResourceExhausted,
+            ErrorReason::Unspecified,
+            "h2 protocol error: nice try",
+            [],
+        );
+        assert!(!is_h2_flood_goaway(&with_info));
+        assert!(!Error::from(with_info).is_retryable());
+    }
 
     #[test]
     fn roundtrips_error_info() {

@@ -5,10 +5,10 @@
     "index",
     "spaces",
     "cua-driver",
-    "---More tools---",
-    "cua-cli",
-    "cua-sdk",
     "lume",
+    "hoy",
+    "cua-sdk",
+    "cua-cli",
     "cua-bench"
   ]
 }

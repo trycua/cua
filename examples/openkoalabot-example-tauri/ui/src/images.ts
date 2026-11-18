@@ -21,8 +21,8 @@ export interface ImageEntry {
   local: string | null
   /** Cloud runtime (`gvisor`, `kubevirt`); null: local only. */
   cloud: string | null
-  /** `slim`, `full` (the default) or `xcode`: canonical images only. */
-  tier?: "slim" | "full" | "xcode"
+  /** `slim`, `full` (the default), `xcode` or `docker`: canonical images only. */
+  tier?: "slim" | "full" | "xcode" | "docker"
   published: boolean
 }
 

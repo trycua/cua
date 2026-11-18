@@ -305,7 +305,12 @@ async fn daemon_mcp_starts_the_daemon_and_serves_its_spaces_runtime() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     for t in cua_spaces::contract::tools() {
-        assert!(names.contains(&t.name), "{} missing", t.name);
+        if cua_spaces::contract::person_only(t.name) {
+            // Every MCP client is an agent: a person's tool is never offered.
+            assert!(!names.contains(&t.name), "{} offered to an agent", t.name);
+        } else {
+            assert!(names.contains(&t.name), "{} missing", t.name);
+        }
     }
     assert!(names.contains(&"computer_screenshot"));
 

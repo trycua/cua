@@ -13,14 +13,7 @@
  * `desktop_stream` shows an "update the image" message instead.
  */
 
-import {
-  useEffect,
-  useMemo,
-  useReducer,
-  useRef,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-} from "react";
+import { useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { FEATURE } from "../model/spaces";
 import {
@@ -30,7 +23,7 @@ import {
   transferTitle,
   type TransferOverlayState,
 } from "../model/transfer";
-import type { FleetBridge, HotspotStatus, ViewerConfig } from "../native/fleet";
+import type { SpacesBridge, HotspotStatus, ViewerConfig } from "../native/spacesBridge";
 import { createTransferBridge, type TransferBridge } from "../native/transfer";
 import { HotspotGlyph } from "../components/HotspotGlyph";
 import type { MediaStatus, MediaTicket } from "@cua/spacesd-html5/core/mediaSession";
@@ -40,7 +33,7 @@ import { PresenceOverlay } from "./presence/PresenceOverlay";
 import { useT } from "../i18n";
 
 interface SpaceViewerProps {
-  fleet: FleetBridge;
+  bridge: SpacesBridge;
   /** Transfer overlay bridge; defaults to the environment-appropriate one. */
   transfer?: TransferBridge;
 }
@@ -57,11 +50,11 @@ export const NO_DESKTOP_STREAM_MESSAGE =
 /** Whether the Space can stream its desktop. False only when the registry
  * says its spacesd lacks `desktop_stream`; an unknown Space (registry
  * unavailable) still tries the stream. */
-export async function hasDesktopStream(fleet: FleetBridge, spaceId: string): Promise<boolean> {
+export async function hasDesktopStream(bridge: SpacesBridge, spaceId: string): Promise<boolean> {
   try {
-    const row = fleet.spaceInfo
-      ? await fleet.spaceInfo(spaceId)
-      : (await fleet.listSpaces()).find((r) => r.id === spaceId);
+    const row = bridge.spaceInfo
+      ? await bridge.spaceInfo(spaceId)
+      : (await bridge.listSpaces()).find((r) => r.id === spaceId);
     if (row && !row.features.includes(FEATURE.desktopStream)) return false;
   } catch {
     // registry unavailable: try the stream
@@ -104,7 +97,7 @@ const CODING_AGENTS: readonly CodingAgent[] = [
   // a headless ACP server), so it runs through the SDK, `cua agent run` and MCP.
 ];
 
-export function SpaceViewer({ fleet, transfer }: SpaceViewerProps) {
+export function SpaceViewer({ bridge, transfer }: SpaceViewerProps) {
   const t = useT(["spaces", "common", "errors"]);
   const [boot, setBoot] = useState<Boot>({ kind: "loading" });
   const transferBridge = useMemo(() => transfer ?? createTransferBridge(), [transfer]);
@@ -113,10 +106,10 @@ export function SpaceViewer({ fleet, transfer }: SpaceViewerProps) {
 
   useEffect(() => {
     let cancelled = false;
-    fleet
+    bridge
       .viewerConfig()
       .then(async (config) => {
-        const desktopStream = await hasDesktopStream(fleet, config.space.id);
+        const desktopStream = await hasDesktopStream(bridge, config.space.id);
         if (!cancelled) setBoot({ kind: "ready", config, desktopStream });
       })
       .catch((error: unknown) => {
@@ -129,7 +122,7 @@ export function SpaceViewer({ fleet, transfer }: SpaceViewerProps) {
     return () => {
       cancelled = true;
     };
-  }, [fleet]);
+  }, [bridge]);
 
   if (boot.kind === "loading") {
     return <div className="viewer viewer-message">{t("common.status.connecting")}</div>;
@@ -138,12 +131,7 @@ export function SpaceViewer({ fleet, transfer }: SpaceViewerProps) {
     return <div className="viewer viewer-message viewer-error">{boot.message}</div>;
   }
   return (
-    <ViewerSession
-      fleet={fleet}
-      transfer={transferBridge}
-      config={boot.config}
-      desktopStream={boot.desktopStream}
-    />
+    <ViewerSession bridge={bridge} transfer={transferBridge} config={boot.config} desktopStream={boot.desktopStream} />
   );
 }
 
@@ -164,12 +152,12 @@ export function phaseForStatus(status: MediaStatus): Phase {
 }
 
 function ViewerSession({
-  fleet,
+  bridge,
   transfer,
   config,
   desktopStream,
 }: {
-  fleet: FleetBridge;
+  bridge: SpacesBridge;
   transfer: TransferBridge;
   config: ViewerConfig;
   desktopStream: boolean;
@@ -185,14 +173,14 @@ function ViewerSession({
   const { space, view } = config;
   const openDesktop = useMemo(
     () => (): Promise<MediaTicket> =>
-      fleet
+      bridge
         .openStream(
           space.id,
           { kind: "display" },
           view === "pip" ? { policy: "view_only", audio: false, maxDimension: 1280 } : { audio: true },
         )
         .then(toMediaTicket),
-    [fleet, space.id, view],
+    [bridge, space.id, view],
   );
   // Item D: a recent screenshot (from the shared cache, via viewer_config)
   // paints a blurred background while the live stream is connecting.
@@ -244,7 +232,7 @@ function ViewerSession({
     return () => window.clearTimeout(timer);
   }, [topbarNotice]);
   const openTeleport = () => {
-    void fleet.openTeleportPicker(space).catch(() => {});
+    void bridge.openTeleportPicker(space).catch(() => {});
   };
 
   // The "Launch Agent" dropdown: a button in the bar that opens a small dark
@@ -273,15 +261,10 @@ function ViewerSession({
   const onAgentMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
     event.preventDefault();
-    const items = Array.from(
-      agentMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [],
-    );
+    const items = Array.from(agentMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
     if (items.length === 0) return;
     const current = items.indexOf(document.activeElement as HTMLButtonElement);
-    const next =
-      event.key === "ArrowDown"
-        ? (current + 1) % items.length
-        : (current - 1 + items.length) % items.length;
+    const next = event.key === "ArrowDown" ? (current + 1) % items.length : (current - 1 + items.length) % items.length;
     items[next]?.focus();
   };
   // The agent being installed and opened in a terminal. Its notice stays up
@@ -295,7 +278,7 @@ function ViewerSession({
     }
     if (agent.launch === "teleport") {
       // Straight to the teleport consent sheet for this agent's provider.
-      void fleet.launchAgent(space, agent.id, agent.name).catch(() => {});
+      void bridge.launchAgent(space, agent.id, agent.name).catch(() => {});
       return;
     }
     if (agentInstalling) {
@@ -303,12 +286,15 @@ function ViewerSession({
       return;
     }
     setAgentInstalling(agent.name);
-    fleet
+    bridge
       .launchAgentTerminal(space, agent.id)
       .then(() => setTopbarNotice(t("spaces.viewer.agent_opened", { agent: agent.name })))
       .catch((error: unknown) =>
         setTopbarNotice(
-          t("errors.viewer.agent_open_failed", { agent: agent.name, reason: error instanceof Error ? error.message : String(error) }),
+          t("errors.viewer.agent_open_failed", {
+            agent: agent.name,
+            reason: error instanceof Error ? error.message : String(error),
+          }),
         ),
       )
       .finally(() => setAgentInstalling(null));
@@ -321,15 +307,14 @@ function ViewerSession({
   useEffect(() => {
     let cancelled = false;
     let unsub: (() => void) | undefined;
-    const reflect = (status: HotspotStatus) =>
-      setHotspotOn(status.active && status.spaceId === space.id);
-    void fleet
+    const reflect = (status: HotspotStatus) => setHotspotOn(status.active && status.spaceId === space.id);
+    void bridge
       .hotspotStatus()
       .then((status) => {
         if (!cancelled) reflect(status);
       })
       .catch(() => {});
-    void fleet.onHotspotChanged(reflect).then((off) => {
+    void bridge.onHotspotChanged(reflect).then((off) => {
       if (cancelled) off();
       else unsub = off;
     });
@@ -337,9 +322,9 @@ function ViewerSession({
       cancelled = true;
       unsub?.();
     };
-  }, [fleet, space.id]);
+  }, [bridge, space.id]);
   const stopHotspot = () => {
-    void fleet.stopHotspot().catch(() => setTopbarNotice(t("errors.viewer.stop_hotspot_failed")));
+    void bridge.stopHotspot().catch(() => setTopbarNotice(t("errors.viewer.stop_hotspot_failed")));
   };
 
   // Keep the Space window at the remote desktop's aspect ratio while windowed.
@@ -371,8 +356,8 @@ function ViewerSession({
   // only when the resolution changes.
   useEffect(() => {
     if (view !== "pip" || phase !== "connected" || !frameSize) return;
-    void fleet.setPipAspect(space.id, frameSize.width, frameSize.height).catch(() => {});
-  }, [view, phase, frameSize, fleet, space.id]);
+    void bridge.setPipAspect(space.id, frameSize.width, frameSize.height).catch(() => {});
+  }, [view, phase, frameSize, bridge, space.id]);
 
   // The PiP window is FullScreenAuxiliary, so its green traffic-light zooms
   // (Tauri reports it as maximized) rather than entering fullscreen. Repurpose
@@ -391,8 +376,8 @@ function ViewerSession({
           if (disposed || maximized === wasMaximized) return;
           wasMaximized = maximized;
           if (maximized) {
-            void fleet.openSpaceWindow(space).catch(() => {});
-            void fleet.unpinSpacePip(space.id).catch(() => {});
+            void bridge.openSpaceWindow(space).catch(() => {});
+            void bridge.unpinSpacePip(space.id).catch(() => {});
           }
         });
       });
@@ -403,7 +388,7 @@ function ViewerSession({
       disposed = true;
       unlisten?.();
     };
-  }, [view, fleet, space, space.id]);
+  }, [view, bridge, space, space.id]);
 
   const retry = () => setAttempt((current) => current + 1);
 
@@ -485,11 +470,7 @@ function ViewerSession({
         </div>
       )}
       {blurredBg && phase !== "connected" && (
-        <div
-          className="viewer-bg"
-          aria-hidden="true"
-          style={{ backgroundImage: `url("${blurredBg}")` }}
-        />
+        <div className="viewer-bg" aria-hidden="true" style={{ backgroundImage: `url("${blurredBg}")` }} />
       )}
       <div
         className="viewer-screen"
@@ -522,7 +503,9 @@ function ViewerSession({
             onGeometry={(width, height) => setFrameSize({ width, height })}
           />
         )}
-        {phase !== "unsupported" && <PresenceOverlay spaceId={space.id} interactive={view === "space"} live={phase === "connected"} />}
+        {phase !== "unsupported" && (
+          <PresenceOverlay spaceId={space.id} interactive={view === "space"} live={phase === "connected"} />
+        )}
       </div>
       {phase !== "connected" && (
         <div className="viewer-status">
@@ -581,18 +564,12 @@ export function TransferOverlayView({
         <h2 className="viewer-transfer-title">{transferTitle(state)}</h2>
         {isError ? (
           <>
-            <p className="viewer-transfer-error">
-              {state.message || "The transfer did not complete."}
-            </p>
+            <p className="viewer-transfer-error">{state.message || "The transfer did not complete."}</p>
             <div className="viewer-transfer-actions">
               <button type="button" className="ghost-button" onClick={onRetry}>
                 {t("common.action.retry")}
               </button>
-              <button
-                type="button"
-                className="ghost-button viewer-transfer-cancel"
-                onClick={onCancel}
-              >
+              <button type="button" className="ghost-button viewer-transfer-cancel" onClick={onCancel}>
                 {t("common.action.cancel")}
               </button>
             </div>

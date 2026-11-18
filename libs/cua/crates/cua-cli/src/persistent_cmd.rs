@@ -1,16 +1,19 @@
-//! `cua agent create|tell|pause|resume|...`: persistent agents, their
-//! routines, notifications and access to your computers.
+//! `cua agent save|pause|resume|...`: named (persistent) agents, their
+//! schedules, notifications and access to your computers. `add`, `send
+//! NAME`, `ls`, `rm NAME` and `schedule` (in `agent_cmd`) run the commands
+//! here; `create`, `tell`, `persistent`, `forget` and `routine` are their
+//! deprecated spellings.
 //!
 //! ```text
-//! cua agent create ada --harness hermes --in local:dev --env-from-host OPENAI_API_KEY
-//! cua agent tell ada "Every morning, summarize what changed in the repo"
-//! cua agent routine add ada --title "Morning sweep" --prompt "Summarize overnight changes" --daily 08:00
+//! cua agent add ada --harness hermes --in local:dev --env-from-host OPENAI_API_KEY
+//! cua agent send ada "Every morning, summarize what changed in the repo"
+//! cua agent schedule add ada --title "Morning sweep" --prompt "Summarize overnight changes" --daily 08:00
 //! cua agent pause ada
 //! cua agent resume ada
 //! cua agent notifications --unread
 //! ```
 
-use crate::util::{json_line, line};
+use crate::util::{hint_line, json_line, line};
 use clap::Subcommand;
 use cua_sdk::{Cua, CuaError, PersistentAgentOptions};
 use std::io::Write;
@@ -19,8 +22,8 @@ use std::sync::Arc;
 /// Persistent-agent commands (flattened into `cua agent`).
 #[derive(Subcommand, Debug, Clone)]
 pub enum PersistentCmd {
-    /// Create a persistent agent: a named harness whose memory lives in the
-    /// Cua Volume (agents/NAME/) and outlives its Space.
+    /// Deprecated alias of `add`. Creates a named agent whose memory lives
+    /// in the Cua Volume (agents/NAME/) and outlives its Space.
     #[command(after_help = "Examples:
   cua agent create ada --harness hermes --in local:dev --env-from-host OPENAI_API_KEY
   cua agent create scout --harness claude-code --in local:scout --env-from-host ANTHROPIC_API_KEY")]
@@ -40,12 +43,12 @@ pub enum PersistentCmd {
         #[arg(long = "env-from-host")]
         env_from_host: Vec<String>,
     },
-    /// List persistent agents.
+    /// Deprecated alias of `ls` (without a sandbox). Lists named agents.
     #[command(after_help = "Examples:
   cua agent persistent")]
     Persistent,
-    /// Give a persistent agent a turn (starts a run with its home restored,
-    /// or follows up on its idle run).
+    /// Deprecated alias of `send NAME TEXT`. Gives a named agent a turn
+    /// (starts a run with its home restored, or follows up on its idle run).
     #[command(after_help = "Examples:
   cua agent tell ada \"what did you learn yesterday?\"")]
     Tell { name: String, text: String },
@@ -68,12 +71,12 @@ pub enum PersistentCmd {
         #[arg(long)]
         prompt: Option<String>,
     },
-    /// Forget a persistent agent (its home stays in the drive).
+    /// Deprecated alias of `rm NAME`. Forgets a named agent (its home stays
+    /// in the Cua Volume).
     #[command(after_help = "Examples:
   cua agent forget ada")]
     Forget { name: String },
-    /// A persistent agent's routines, fired by the daemon with or without
-    /// the app open.
+    /// Deprecated alias of `schedule`. A named agent's schedules.
     #[command(subcommand)]
     Routine(RoutineCmd),
     /// Let a persistent agent use one of your computers (asks for
@@ -111,23 +114,27 @@ pub enum PersistentCmd {
     /// requests).
     #[command(after_help = "Examples:
   cua agent notifications --unread
-  cua agent notifications --mark-read")]
+  cua agent notifications --mark-read
+  cua agent notifications --delete-all")]
     Notifications {
         #[arg(long)]
         unread: bool,
         /// Mark every notification read.
         #[arg(long)]
         mark_read: bool,
+        /// Delete every notification, for good.
+        #[arg(long, conflicts_with = "mark_read")]
+        delete_all: bool,
     },
 }
 
-/// `cua agent routine ...`.
+/// `cua agent schedule ...` (formerly `cua agent routine ...`).
 #[derive(Subcommand, Debug, Clone)]
 pub enum RoutineCmd {
-    /// Add a routine (give one of --every, --daily, --weekly).
+    /// Add a schedule (give one of --every, --daily, --weekly).
     #[command(after_help = "Examples:
-  cua agent routine add ada --title \"Inbox sweep\" --prompt \"Triage new issues\" --every 60
-  cua agent routine add ada --title \"Morning\" --prompt \"Plan the day\" --daily 08:00")]
+  cua agent schedule add ada --title \"Inbox sweep\" --prompt \"Triage new issues\" --every 60
+  cua agent schedule add ada --title \"Morning\" --prompt \"Plan the day\" --daily 08:00")]
     Add {
         agent: String,
         #[arg(long)]
@@ -144,25 +151,25 @@ pub enum RoutineCmd {
         #[arg(long, value_name = "DAY HH:MM")]
         weekly: Option<String>,
     },
-    /// List routines.
+    /// List schedules.
     #[command(
         visible_alias = "list",
         after_help = "Examples:
-  cua agent routine ls
-  cua agent routine ls ada"
+  cua agent schedule ls
+  cua agent schedule ls ada"
     )]
     Ls { agent: Option<String> },
-    /// Delete a routine.
+    /// Delete a schedule.
     #[command(after_help = "Examples:
-  cua agent routine rm 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B")]
+  cua agent schedule rm 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B")]
     Rm { id: String },
-    /// Turn a routine on.
+    /// Turn a schedule on.
     #[command(after_help = "Examples:
-  cua agent routine enable 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B")]
+  cua agent schedule enable 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B")]
     Enable { id: String },
-    /// Turn a routine off.
+    /// Turn a schedule off.
     #[command(after_help = "Examples:
-  cua agent routine disable 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B")]
+  cua agent schedule disable 0F3A2C1E-8B7D-4E6F-9A1B-2C3D4E5F6A7B")]
     Disable { id: String },
 }
 
@@ -241,13 +248,12 @@ pub async fn run(
                     .collect();
                 show(out, serde_json::json!({"agents": rows}));
             } else if all.is_empty() {
-                line(
-                    out,
-                    "No persistent agents. Create one with `cua agent create`.",
-                );
+                hint_line(out, "No agents. Add one with `cua agent add`.");
             } else {
                 for a in all {
-                    let state = if a.paused {
+                    let state = if a.space_state == "gone" {
+                        "gone"
+                    } else if a.paused {
                         "paused"
                     } else if a.run_id.is_some() {
                         "running"
@@ -394,7 +400,7 @@ pub async fn run(
                             .collect();
                         show(out, serde_json::json!({"routines": rows}));
                     } else if all.is_empty() {
-                        line(out, "No routines.");
+                        line(out, "No schedules.");
                     } else {
                         for r in all {
                             line(
@@ -506,10 +512,17 @@ pub async fn run(
                 }
             }
         }
-        PersistentCmd::Notifications { unread, mark_read } => {
+        PersistentCmd::Notifications {
+            unread,
+            mark_read,
+            delete_all,
+        } => {
             let all = spaces.notifications(unread, None).await?;
             if mark_read {
                 spaces.notifications_ack(vec![]).await?;
+            }
+            if delete_all {
+                spaces.notifications_delete(vec![], true).await?;
             }
             if json {
                 let rows: Vec<_> = all.iter().map(|n| serde_json::json!({"id": n.id, "at_ms": n.at_ms,

@@ -35,8 +35,7 @@ function distinct<T>(items: T[], key: (t: T) => unknown): T[] {
 
 /* ---- The Volume page ------------------------------------------------------------ */
 
-const line = (l: LineView, buttons: boolean) =>
-  `${l.text} | ${l.trailing}${buttons ? ` | ${l.actionLabel ?? ""} / ${l.secondaryLabel ?? ""}` : ""}`;
+const line = (l: LineView, buttons: boolean) => `${l.text} | ${l.trailing}${buttons ? ` | ${l.actionLabel ?? ""} / ${l.secondaryLabel ?? ""}` : ""}`;
 
 /** What the Volume page must show for a core view. */
 function expectedVolume(v: DriveView) {
@@ -124,7 +123,9 @@ function readDriveCard(page: Page) {
       note: text("[data-drive-note]"),
       error: text("[data-drive-error]"),
       settings: text("[data-drive-settings]"),
-      options: [...document.querySelectorAll<HTMLElement>("[data-storage-option]")].map((o) => `${o.dataset.active === "true" ? "*" : ""}${o.textContent?.trim()}`),
+      options: [...document.querySelectorAll<HTMLElement>("[data-storage-option]")].map(
+        (o) => `${o.dataset.active === "true" ? "*" : ""}${o.textContent?.trim()}`,
+      ),
       rows: [...document.querySelectorAll<HTMLElement>("[data-drive-card] [data-row-id]")].map(
         (r) => `${r.dataset.rowId} ${r.dataset.rowKind}: ${r.querySelector("[data-row-label]")?.textContent?.trim() ?? ""}`,
       ),
@@ -164,6 +165,12 @@ async function checkOnboardingDrive(page: Page, cps: ParityCheckpoint[]): Promis
 
 async function checkDriverCard(page: Page, cps: ParityCheckpoint[]): Promise<number> {
   let checked = 0;
+  // Background computer use sits behind "Show all" on Settings, Connections,
+  // which draws once the coding apps have loaded.
+  const showAll = page.locator("[data-connected-show-all]");
+  await expect(showAll).toBeVisible();
+  if ((await showAll.getAttribute("aria-expanded")) !== "true") await showAll.click();
+  await expect(showAll).toHaveAttribute("aria-expanded", "true");
   const card = page.locator("[data-driver-card]").first();
   for (const c of of(cps, "driver-copy").slice(0, 1)) {
     await expect(card.locator("[data-driver-label]")).toHaveText(c.agentsDriver);

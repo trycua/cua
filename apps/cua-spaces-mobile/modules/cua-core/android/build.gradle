@@ -1,0 +1,10 @@
+apply plugin: 'com.android.library'
+apply plugin: 'expo-module-gradle-plugin'
+
+group = 'expo.modules.cuacore'
+version = '0.1.0'
+
+android {
+  namespace "expo.modules.cuacore"
+  defaultConfig { versionCode 1; versionName "0.1.0" }
+}

@@ -7,17 +7,65 @@ invocation, isolation, schedule, gates and output. The method is in
 
 ## Arms
 
+`cx-browser-use-cli` (Amendment 24.2a) is staged: operational preflight always fails,
+including offline, smoke and no-model modes. No execution policy or trial home is written.
+It requires `CDB_CODEX_AUTH=chatgpt` and a nonempty selection of `browser: true` tasks;
+no existing task is flagged here. This is not like-for-like with Browser Use's own Agent loop.
+The planned GUI-only exception is recognized CLI invocations, not general Bash or arbitrary Python.
+Install an already downloaded, pinned wheel with `python tools/install_browser_use.py /path/to/browser_use-0.13.11-py3-none-any.whl`.
+Heredocs, skill discovery/provisioning, matcher-derived execution rules, browser lifecycle,
+observed-pin comparison and doctor/CDP/page-info/deny probes remain prerequisites to enabling it.
+
 | Arm | Public setup | Tools Claude Code gets |
 | --- | --- | --- |
 | `cc-cua-driver-script` | Cua Driver | Cua Driver built from the pinned main commit, MCP server `cua`, `run_script` on, the skill of that commit in the working directory, and a short `run_script` addendum in the system prompt |
 | `cc-codex-cu` | Codex Computer-Use (Sky) | OpenAI's `cua_repl` launcher from the ChatGPT app 26.930 plugin as MCP server `codex-cu` (`js`, `js_reset`), no skill |
 | `cc-codex-cu-1007-browser` | Codex Computer-Use (Sky), app 26.1007 | The same launcher from app 26.1007 with the browser surface on |
 | `cc-claude-cu-helper` | Claude Computer-Use (Desktop helper): Claude Desktop 2.31226.0 computer-use helper via a minimal adapter; an internal interface, not an Anthropic-supported procedure | Cua's adapter `tools/claude_cu_helper/cu_helper_mcp.py` as MCP server `claude-cu-helper` (`app_list_windows`, `app_screenshot` and the pinned input tools), no skill |
+| `cc-agent-desktop` | Vercel agent-desktop | agent-desktop 1.2.0 behind `tools/agent_desktop/ad_mcp.py` as MCP server `agentdesktop` (one tool per CLI command), the vendor skill text as server instructions |
+| `cc-browser-use` | Browser Use harness | Browser Use macOS harness 0.2.1 behind `tools/browser_use_harness/bu_mcp.py` as MCP server `browseruse` (`macos_harness`, `view_screenshot`), the vendor skill as server instructions |
 | `cx-cua-driver`, `cx-codex-cu`, `cx-claude-cu-helper` | Cua Driver, Codex Computer-Use (Sky) and Claude Computer-Use (Desktop helper, with the label above), driven by Codex CLI (Amendment 23) | Not Claude Code: the bundled Codex CLI as `codex app-server` (`codex_native.py`) with GPT-6.1 Sol (`gpt-6.1-sol`, default effort low), given the MCP entry and system prompt of `cc-cua-driver-script`, `cc-codex-cu` or `cc-claude-cu-helper` |
 | `cc-cua-driver`, `cc-cua-driver-main`, `cc-cua-driver-main-skill` | Internal baselines | Cua Driver 0.34.0 release; main with `run_script` off; main with the skill in the system prompt |
+| `pi-cua-driver`, `pi-cua-driver-main`, `pi-cua-driver-main-skill`, `pi-cua-driver-script` | The four Cua Driver setups above, driven by pi | Not Claude Code: `pi --mode json` (`pi_arms.py`) on `openai-codex` / `gpt-6.1-terra` by default (`CDB_PI_PROVIDER`, `CDB_PI_MODEL`, `CDB_PI_THINKING`), given the driver daemon, MCP entry, skill and system prompt of the matching `cc-*` arm. Tools: `read` (limited to the skill's `SKILL.md`, and the turn cap enforced, by `pi_gate.ts`), `tool_search` and the deferred `cua` server. Linux and macOS. |
 
 Arms `codex-native-cu` and `codex-cua-driver` (`codex exec --json`, from
 `run_pilot.py`) exist behind `--allow-codex-arms` and are not part of Bench v2.
+
+## Codex authentication
+
+`CDB_CODEX_AUTH=gateway` is the default and retains the LiteLLM route.
+Set `CDB_CODEX_AUTH=chatgpt` for direct ChatGPT-login authentication on the
+three `cx-*` arms and the Codex fallback/pilot arms; no gateway or gateway key
+is needed. Other values are rejected.
+
+```bash
+export CDB_CODEX_AUTH=chatgpt
+# Optional; defaults to the runner user's ~/.codex/auth.json:
+export CDB_CODEX_AUTH_FILE="$HOME/.codex/auth.json"
+python3 run_bench.py preflight --only-arm cx-cua-driver
+```
+
+Log in to Codex with ChatGPT beforehand. Each trial's `CODEX_HOME/auth.json`
+is a symlink to that existing file, never a credential copy. The harness does
+not read or log its contents or perform login. ChatGPT mode sets
+`cli_auth_credentials_store = "file"`; gateway configuration is unchanged.
+**The ChatGPT auth file is shared with the host and its clones; refresh-token
+rotation can sign out the other copies.**
+The harness removes each trial/preflight symlink after use and flags a symlink
+replaced with a regular file as an infrastructure failure. Gateway key
+forwarding (`CDB_PILOT_PASS_GATEWAY_KEY=1`) applies only in gateway mode.
+
+ChatGPT preflight uses only app-server metadata (`initialize`, `account/read`
+with refresh disabled, and paginated `model/list`), not a model call. It requires
+a ChatGPT account and the configured model, checks the credential link remains
+a symlink, and is skipped offline. The metadata probe runs once per run, even
+with `--no-model-preflight`. Gateway preflight is unchanged; the pilot does not
+add a live authentication probe.
+Model and effort are unchanged: native arms retain `gpt-6.1-sol` at its catalog
+default `low` effort; pilot defaults remain independent. Native rows/manifests
+record `codex_native.codex_auth` and omit the gateway URL in ChatGPT mode; pilot
+rows/manifests record `codex_auth`. The fallback native-CU `notify` setting
+is now root-level TOML in both modes, rather than inside the provider table.
 
 ## Files
 
@@ -116,6 +164,45 @@ The unit of completeness is a task block (one task, every arm, one run).
   processes by exact name, and with `CDB_BENCH_DISPOSABLE=1` the task apps too,
   so nothing else may use those apps during a run.
 
+## Interrupts and resume
+
+To resume a run that stopped, however it stopped, rerun the same `run` command with the same `--run-id`.
+The run's only state is `results.jsonl`. Each attempt appends one row and fsyncs it.
+
+* Trials with a final row are kept and skipped. A trial with only non-final rows continues at the next
+  attempt number, and the retries it already used still count.
+* An attempt cut short before its row was written (SIGKILL, a lost VM or host, a full disk) has no row. Its
+  directory is cleared and redone under the same number. `tools/check_run_evidence.py` accepts that one
+  directory until the run reaches `DONE`.
+* A row cut off halfway by a crash is dropped when the run starts again. A recorded trial whose video
+  compression was cut short or failed is compressed again from its raw recording, which is deleted only
+  after a successful `video.json` is written. A run whose videos are not all compressed ends `STOPPED_COMPRESS`, not
+  `DONE`.
+* A `--smoke` run resumes the same way, from its own smoke rows.
+* SIGTERM, SIGINT, SIGHUP and `STOP` end the current trial cleanly and write `STOPPED_USER`. Resuming
+  clears that flag.
+* `run.lock` is a kernel lock and is released when its holder dies. A second `run` or `finalize` on a live
+  run exits 5.
+* Options that change what a trial measures (for example `--no-gui-only-enforce`, `--no-tell-budget`,
+  `--tool-search`) must match the run's recorded argv. Only operational options (paths, ledger, cutoff,
+  budget cap, quota and disk floors, preflight switches) and the schedule options may change.
+* Every row records the hash of the runner, probes and briefs (`bench_src_sha256`). A start from a
+  checkout that hashes differently exits 6. Pack tasks are checked against their pinned digests by every
+  preflight.
+* A Cua Driver row records the driver binary and skill tree it ran. A start with a different build for a
+  recorded trial exits 6, whatever the pins say. `preflight` refuses a run directory that has trials, so
+  the recorded manifest stays the one the run started with.
+* Every row records its trial's place in the schedule (phase, block, run, position in the order, task position, arm slot) and its
+  setup (condition, model, effort, turn cap, time limit). A start that would give a recorded trial id other values, or drop it
+  from the schedule, exits 6 before anything in the run directory changes. Extending the schedule, for
+  example adding phase 2 to a finished phase 1, is a resume.
+* `tools/make_linux_pins.py` rerun against the same build is a no-op, so the whole Linux session command
+  can be rerun. Pins from a different build are still refused.
+
+The runner does not restart itself. Retries cover rate limits, overload and setup failures inside one
+process (Gates, above). After a crash, or after the host or VM was lost, a person or the calling job
+reruns the command once.
+
 ## Per-trial output
 
 `runs/<run>/trials/<trial id>/a<attempt>/` holds the stripped stream
@@ -126,11 +213,29 @@ arm, task, category, condition, run, seed, versions and hashes, status, pass and
 checks, turns, tool calls by class, tokens, cost, the background measures, the
 GUI-only evidence and the interruption diagnostic.
 
+## Capture setup and preflight
+
+Amendment 11: grant `app-cu-helper` Accessibility. Separately grant Apple's
+`/usr/sbin/screencapture` Screen Recording in System Settings → Privacy & Security
+→ Screen Recording → **+** → Go to `/usr/sbin/screencapture`. `cu-disclaim` wraps
+both processes. Do not grant Terminal, the adapter or launcher new permissions.
+Every selected arm gets a `real capture` row through its own MCP, even offline;
+the recorder also decodes its three-second test unless disabled. ffmpeg must be
+installed at `/opt/homebrew/bin/ffmpeg`. Empty, undecodable and uniform RGB
+frames fail; this is a deterministic blank check, not semantic recognition.
+Rows log dimensions, byte count and saved path, never image content.
+
+Errored tool results reporting capture/TCC/Accessibility setup failures or a
+stopped helper/daemon are infrastructure failures (`tool_setup`, `infra_pattern`).
+Assistant prose and successful tool results do not trigger these patterns.
+The existing policy retries once, then excludes; Cua daemon retries recheck and
+restart a down daemon. Quota and authentication classification retains precedence.
+
 ## Commands
 
 ```bash
 python3 run_bench.py dry-run --bench-v2 --phase1-runs 3 --phase2-runs 2    # schedule and commands, no side effects
-python3 run_bench.py preflight --offline --bench-v2 --build-dir WORK/build  # static checks only
+python3 run_bench.py preflight --offline --bench-v2 --build-dir WORK/build  # captures and recording, no model calls
 python3 run_bench.py gate-check                                             # HOLD file and quota, no model call
 python3 run_bench.py preflight --bench-v2 --build-dir WORK/build            # full: daemons, MCP, recording, 3 Haiku calls
 python3 run_bench.py run --bench-v2 --condition background --run-id RUN ... # see ../../README.md

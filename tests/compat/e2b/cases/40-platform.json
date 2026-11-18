@@ -1,0 +1,21 @@
+{"cases": [
+{"name": "secrets_crud", "tags": ["platform", "secrets"], "sandbox": "none", "sdk_min": "2.56.0", "steps": [
+ ["Secret.create", ["cprobe-${run_id}-a", "v1"], {"metadata": {"k": "v"}}, {"as": "a", "pick": ["name", "version", "metadata"]}],
+ ["Secret.create", ["cprobe-${run_id}-a", "v1"]],
+ ["Secret.create", ["bad name!", "v1"]],
+ ["Secret.create", ["cprobe-${run_id}-b", ""], {}, {"as": "b", "pick": ["name", "version", "metadata"]}],
+ ["Secret.update", ["cprobe-${run_id}-a", "v1b"], {}, {"pick": ["name", "version", "metadata"]}],
+ ["Secret.update", ["$a.secret_id", "v1c"], {"metadata": {"z": "1"}}, {"pick": ["name", "version", "metadata"]}],
+ ["Secret.update", ["cprobe-none-${run_id}", "x"]],
+ ["Secret.get_info", ["cprobe-none-${run_id}"]],
+ ["Secret.exists", ["cprobe-none-${run_id}"]],
+ ["Secret.exists", ["cprobe-${run_id}-a"]],
+ ["Secret.get_info", ["$a.secret_id"], {}, {"pick": ["name", "version", "metadata"]}],
+ ["Secret.list", [], {"limit": 1}, {"as": "pg", "quiet": true}],
+ ["@next_items", [], {}, {"on": "pg", "pick": ["name"], "grep": "-b"}],
+ ["Secret.destroy", ["$a.secret_id"]],
+ ["Secret.destroy", ["$a.secret_id"]],
+ ["Secret.destroy", ["cprobe-${run_id}-b"]],
+ ["Secret.fill", ["some-secret"]]
+]}
+]}

@@ -21,9 +21,10 @@ SENTINEL_BID = "ai.cua.benchsentinel"
 DEVIATION_PX = 10.0
 HID_KEYS = ("move", "down", "key", "scroll")
 # Amendment 15: overlay and indicator windows of the computer-use tools themselves (the agent cursor, the
-# "ChatGPT Computer Use" banner) are not raises. They are logged as metadata (`overlay_owners`) only.
+# "ChatGPT Computer Use" banner, the `cua-driver` process on Windows, the cua-driver agent cursor's Wayland layer
+# `cua-agent-cursor`) are not raises. They are logged as metadata (`overlay_owners`) only.
 OVERLAY_OWNER_RE = re.compile(
-    r"(?i)cua ?driver|chatgpt computer use|computer use|codex|app-cu-helper|claude"
+    r"(?i)cua[ _-]?driver|cua-agent-cursor|chatgpt computer use|computer use|codex|app-cu-helper|claude"
 )
 FRONT_EVENTS = ("s", "front", "armed", "disarmed")
 # Idle values only ever grow between samples unless a real event resets them.

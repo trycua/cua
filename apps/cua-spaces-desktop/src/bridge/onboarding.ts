@@ -28,5 +28,12 @@ export function onboardingMethods(ctx: BridgeContext): Handlers {
       ctx.model.changed("settings");
       return parts().onboarding.read();
     },
+    // Settings, About, "Reset & Show": the first run is forgotten (`onboarding.json`);
+    // the page clears its own state (`bridge/onboarding-reset.ts`).
+    "onboarding.reset": () => {
+      parts().onboarding.reset();
+      ctx.model.changed("settings");
+      return parts().onboarding.read();
+    },
   };
 }

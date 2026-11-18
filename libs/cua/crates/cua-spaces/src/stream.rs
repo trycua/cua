@@ -37,7 +37,7 @@ pub enum StreamTarget {
 }
 
 /// A window target as listed.
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WindowTarget {
     /// Window handle (`WindowRef.id`).
     pub window_id: String,
@@ -60,8 +60,12 @@ pub struct WindowTarget {
     /// Streamable right now.
     pub available: bool,
     /// Why not, when not.
-    #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub limitation: String,
+    /// Where the picture comes from when the window lives in another Space
+    /// ([`crate::stream_registry`]); absent on a Space's own windows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<crate::stream_registry::StreamOrigin>,
 }
 
 /// A window narrower or shorter than this (logical points) is a strip, a
@@ -166,7 +170,8 @@ pub struct Usage {
     pub memory_limited: bool,
     /// Home filesystem bytes in use.
     pub disk_used: u64,
-    /// Home filesystem size, bytes.
+    /// Home filesystem size, bytes; 0 when it has no size of its own
+    /// (gVisor's root overlay reports "unlimited"), never a sentinel.
     pub disk_total: u64,
     /// `disk_total` is the guest's own disk.
     pub disk_limited: bool,
@@ -181,9 +186,16 @@ impl From<pb::MetricsResponse> for Usage {
             memory_used: m.memory_used_bytes,
             memory_total: m.memory_total_bytes,
             memory_limited: m.memory_limited,
-            disk_used: m.disk_used_bytes,
-            disk_total: m.disk_total_bytes,
-            disk_limited: m.disk_limited,
+            disk_used: if m.disk_total_bytes >= crate::resources::SIZE_SENTINEL_FLOOR
+                && m.disk_used_bytes >= crate::resources::SIZE_SENTINEL_FLOOR
+            {
+                0
+            } else {
+                m.disk_used_bytes
+            },
+            disk_total: crate::resources::known_size(m.disk_total_bytes).unwrap_or(0),
+            disk_limited: m.disk_limited
+                && crate::resources::known_size(m.disk_total_bytes).is_some(),
         }
     }
 }
@@ -350,6 +362,7 @@ impl Space {
                     focused: w.focused,
                     available,
                     limitation,
+                    origin: None,
                 }
             })
             .filter(|w| {
@@ -374,6 +387,26 @@ impl Space {
             })
             .max_by(|a, b| a.area().total_cmp(&b.area()))
             .ok_or_else(|| Error::NotFound(format!("a visible {app:?} window in {}", self.id())))
+    }
+
+    /// [`Self::find_window`], waiting up to `wait` for the app's window to appear. `launch_app`
+    /// answers when the process starts, a moment before its window exists, so an agent that
+    /// launches an app and then asks for its window would otherwise get "not found" every time.
+    /// Any other error is returned at once.
+    pub async fn find_window_within(
+        &self,
+        app: &str,
+        wait: std::time::Duration,
+    ) -> Result<WindowTarget> {
+        let deadline = std::time::Instant::now() + wait;
+        loop {
+            match self.find_window(app).await {
+                Err(Error::NotFound(_)) if std::time::Instant::now() < deadline => {
+                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                }
+                other => return other,
+            }
+        }
     }
 
     /// Opens a media session and returns its ticket and URL.
@@ -418,7 +451,10 @@ impl Space {
                     ..Default::default()
                 }),
                 disable_video: false,
+                #[cfg(feature = "spaces-presence")]
                 presence_participant_id: self.presence_participant().unwrap_or_default(),
+                #[cfg(not(feature = "spaces-presence"))]
+                presence_participant_id: String::new(),
             })
             .await
             .map_err(cua_spacesd_client::Error::from)?
@@ -479,10 +515,25 @@ impl Space {
         frames: Arc<dyn FrameSink>,
         audio: Option<Arc<dyn AudioSink>>,
     ) -> Result<StreamSession> {
+        let started = std::time::Instant::now();
         let ticket = self.open_stream(target, options).await?;
+        // `stream.open` timing (debug): the ticket is the OpenMedia call,
+        // which also waits for the guest's first frame.
+        tracing::debug!(
+            target: "cua::stream::timing",
+            hop = "ticket",
+            ms = started.elapsed().as_secs_f64() * 1e3,
+            "stream.open"
+        );
         let headers = self.websocket_headers().await?;
         match StreamSession::attach(&ticket, &headers, frames, audio).await {
             Ok(mut s) => {
+                tracing::debug!(
+                    target: "cua::stream::timing",
+                    hop = "attached",
+                    ms = started.elapsed().as_secs_f64() * 1e3,
+                    "stream.open"
+                );
                 s.rpc = Some((self.clone(), ticket.media_session_id.clone()));
                 Ok(s)
             }
@@ -615,7 +666,7 @@ pub trait StreamClient: Send + Sync + 'static {
         headers: &'a [(String, String)],
         frames: Arc<dyn FrameSink>,
         audio: Option<Arc<dyn AudioSink>>,
-    ) -> crate::extension::BoxFuture<'a, Result<Box<dyn StreamConnection>>>;
+    ) -> futures_util::future::BoxFuture<'a, Result<Box<dyn StreamConnection>>>;
 }
 
 /// One attached media socket (see [`StreamClient`]).
@@ -638,7 +689,7 @@ pub trait StreamConnection: Send + Sync {
     /// Sends a raw client text message.
     fn send_text(&self, json: String) -> Result<()>;
     /// Closes the socket, waiting (bounded) for the delivery thread.
-    fn close(&mut self, wait: Duration) -> crate::extension::BoxFuture<'_, ()>;
+    fn close(&mut self, wait: Duration) -> futures_util::future::BoxFuture<'_, ()>;
 }
 
 static STREAM_CLIENT: OnceLock<Arc<dyn StreamClient>> = OnceLock::new();
@@ -844,6 +895,7 @@ mod streamable_tests {
             focused: false,
             available: on_screen,
             limitation: String::new(),
+            origin: None,
         }
     }
 

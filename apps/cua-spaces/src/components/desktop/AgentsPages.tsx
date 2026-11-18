@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   agentsInitial,
@@ -18,9 +18,9 @@ import {
   type DriveInput,
   type LineView,
   type NotificationInput,
-} from '../../model/persistent';
-import type { AgentsBridge } from '../../native/persistent';
-import { readSetting, writeSetting } from '../../state/settings';
+} from "../../model/persistent";
+import type { AgentsBridge } from "../../native/persistent";
+import { readSetting, writeSetting } from "../../state/settings";
 import { featureSignals } from "../../model/telemetry";
 import { telemetryBridge } from "../../native/telemetry";
 import { useT } from "../../i18n";
@@ -54,7 +54,14 @@ function Line({
       )}
       <span className="st-value">{line.trailing}</span>
       {line.on != null && onToggle && (
-        <button type="button" role="switch" className="kv-switch" aria-checked={line.on} aria-label={line.text} onClick={onToggle} />
+        <button
+          type="button"
+          role="switch"
+          className="kv-switch"
+          aria-checked={line.on}
+          aria-label={line.text}
+          onClick={onToggle}
+        />
       )}
       {line.actionLabel && onAction && (
         <button type="button" className="dw-btn" onClick={onAction}>
@@ -88,7 +95,15 @@ function Group({ title, children }: { title?: string; children: React.ReactNode 
  * memory, routines and access to this computer. The app core decides every
  * word; this loads its input and runs its requests through the daemon.
  */
-export function AgentsPage({ bridge, thisMachine, now = Date.now }: { bridge: AgentsBridge; thisMachine: string | null; now?: () => number }) {
+export function AgentsPage({
+  bridge,
+  thisMachine,
+  now = Date.now,
+}: {
+  bridge: AgentsBridge;
+  thisMachine: string | null;
+  now?: () => number;
+}) {
   const t = useT("agents");
   const [input, setInput] = useState<AgentsInput>({ agents: [], thisMachine });
   // Persistent agents adoption: the page was opened.
@@ -112,7 +127,7 @@ export function AgentsPage({ bridge, thisMachine, now = Date.now }: { bridge: Ag
       const [home, routines, access] = await Promise.all([bridge.home(name), bridge.routines(name), bridge.access()]);
       setInput((i) => ({ ...i, home, routines, grants: access.grants, audit: access.audit }));
     },
-    [bridge]
+    [bridge],
   );
 
   const send = useCallback(
@@ -123,21 +138,21 @@ export function AgentsPage({ bridge, thisMachine, now = Date.now }: { bridge: Ag
       const request = next.request;
       if (!request || before.busy) return;
       try {
-        if (request.kind === 'load') await loadDetail(request.name);
-        else if (request.kind === 'read-file') {
+        if (request.kind === "load") await loadDetail(request.name);
+        else if (request.kind === "read-file") {
           const file = await bridge.readFile(request.path);
           setInput((i) => ({ ...i, file }));
         } else {
           await bridge.run(request);
-          if (request.kind === 'pause' || request.kind === 'resume') await reloadAgents();
+          if (request.kind === "pause" || request.kind === "resume") await reloadAgents();
           else if (next.selected) await loadDetail(next.selected);
         }
-        setState((s) => reduceAgents(input, s, { type: 'done' }));
+        setState((s) => reduceAgents(input, s, { type: "done" }));
       } catch (e) {
-        setState((s) => reduceAgents(input, s, { type: 'failed', error: message(e) }));
+        setState((s) => reduceAgents(input, s, { type: "failed", error: message(e) }));
       }
     },
-    [bridge, input, loadDetail, reloadAgents]
+    [bridge, input, loadDetail, reloadAgents],
   );
 
   const d = v.detail;
@@ -147,7 +162,11 @@ export function AgentsPage({ bridge, thisMachine, now = Date.now }: { bridge: Ag
         {v.rows.length === 0 && <p className="st-note">{v.emptyText}</p>}
         {v.rows.map((r) => (
           <div className="st-row" key={r.name} data-selected={r.selected || undefined}>
-            <button type="button" className="st-label ag-link" onClick={() => void send({ type: 'select', name: r.name })}>
+            <button
+              type="button"
+              className="st-label ag-link"
+              onClick={() => void send({ type: "select", name: r.name })}
+            >
               {r.name}
             </button>
             <span className="st-value">
@@ -156,7 +175,11 @@ export function AgentsPage({ bridge, thisMachine, now = Date.now }: { bridge: Ag
             <button
               type="button"
               className="dw-btn"
-              onClick={() => void send(r.actionLabel === 'Resume' ? { type: 'resume', name: r.name } : { type: 'pause', name: r.name })}
+              onClick={() =>
+                void send(
+                  r.actionLabel === "Resume" ? { type: "resume", name: r.name } : { type: "pause", name: r.name },
+                )
+              }
             >
               {r.actionLabel}
             </button>
@@ -176,21 +199,28 @@ export function AgentsPage({ bridge, thisMachine, now = Date.now }: { bridge: Ag
           </div>
           <div className="ag-tabs" role="tablist">
             {d.tabs.map((t) => (
-              <button key={t.tab} type="button" role="tab" aria-selected={t.selected} className="dw-btn" onClick={() => void send({ type: 'set-tab', tab: t.tab })}>
+              <button
+                key={t.tab}
+                type="button"
+                role="tab"
+                aria-selected={t.selected}
+                className="dw-btn"
+                onClick={() => void send({ type: "set-tab", tab: t.tab })}
+              >
                 {t.label}
               </button>
             ))}
           </div>
-          {d.tabs.find((t) => t.selected)?.tab === 'memory' && (
+          {d.tabs.find((t) => t.selected)?.tab === "memory" && (
             <>
               {d.file ? (
                 <Group title={d.file.path}>
                   <pre className="ag-file">{d.file.text}</pre>
                   {d.file.versions.map((l) => (
-                    <Line key={l.id} line={l} onAction={() => void send({ type: 'restore', version: l.id })} />
+                    <Line key={l.id} line={l} onAction={() => void send({ type: "restore", version: l.id })} />
                   ))}
                   <div className="st-row">
-                    <button type="button" className="dw-btn" onClick={() => void send({ type: 'close-file' })}>
+                    <button type="button" className="dw-btn" onClick={() => void send({ type: "close-file" })}>
                       {d.file.closeLabel}
                     </button>
                   </div>
@@ -199,13 +229,13 @@ export function AgentsPage({ bridge, thisMachine, now = Date.now }: { bridge: Ag
                 <Group>
                   {d.memory.length === 0 && <p className="st-note">{d.memoryEmpty}</p>}
                   {d.memory.map((l) => (
-                    <Line key={l.id} line={l} onOpen={() => void send({ type: 'open-file', path: l.id })} />
+                    <Line key={l.id} line={l} onOpen={() => void send({ type: "open-file", path: l.id })} />
                   ))}
                 </Group>
               )}
             </>
           )}
-          {d.tabs.find((t) => t.selected)?.tab === 'routines' && (
+          {d.tabs.find((t) => t.selected)?.tab === "routines" && (
             <>
               <Group>
                 {d.routines.length === 0 && <p className="st-note">{d.routinesEmpty}</p>}
@@ -213,24 +243,38 @@ export function AgentsPage({ bridge, thisMachine, now = Date.now }: { bridge: Ag
                   <Line
                     key={l.id}
                     line={l}
-                    onToggle={() => void send({ type: 'toggle-routine', id: l.id })}
-                    onAction={() => void send({ type: 'remove-routine', id: l.id })}
+                    onToggle={() => void send({ type: "toggle-routine", id: l.id })}
+                    onAction={() => void send({ type: "remove-routine", id: l.id })}
                   />
                 ))}
               </Group>
               <Group>
                 <div className="st-row">
-                  <input className="dw-input" aria-label={t("agents.routine.title")} placeholder={t("agents.routine.title")} value={d.form.title} onChange={(e) => void send({ type: 'set-title', title: e.target.value })} />
+                  <input
+                    className="dw-input"
+                    aria-label={t("agents.routine.title")}
+                    placeholder={t("agents.routine.title")}
+                    value={d.form.title}
+                    onChange={(e) => void send({ type: "set-title", title: e.target.value })}
+                  />
                 </div>
                 <div className="st-row">
-                  <input className="dw-input" aria-label={t("agents.routine.prompt")} placeholder={t("agents.routine.prompt")} value={d.form.prompt} onChange={(e) => void send({ type: 'set-prompt', prompt: e.target.value })} />
+                  <input
+                    className="dw-input"
+                    aria-label={t("agents.routine.prompt")}
+                    placeholder={t("agents.routine.prompt")}
+                    value={d.form.prompt}
+                    onChange={(e) => void send({ type: "set-prompt", prompt: e.target.value })}
+                  />
                 </div>
                 <div className="st-row">
                   <select
                     className="dw-input"
                     aria-label={t("agents.routine.schedule")}
                     value={d.form.schedule}
-                    onChange={(e) => void send({ type: 'set-schedule', schedule: e.target.value as 'every' | 'daily' | 'weekly' })}
+                    onChange={(e) =>
+                      void send({ type: "set-schedule", schedule: e.target.value as "every" | "daily" | "weekly" })
+                    }
                   >
                     {d.schedules.map((s) => (
                       <option key={s.id} value={s.id}>
@@ -238,44 +282,63 @@ export function AgentsPage({ bridge, thisMachine, now = Date.now }: { bridge: Ag
                       </option>
                     ))}
                   </select>
-                  {d.form.schedule === 'every' ? (
+                  {d.form.schedule === "every" ? (
                     <input
                       className="dw-input"
                       aria-label={t("agents.routine.minutes")}
                       type="number"
                       min={1}
                       value={d.form.minutes}
-                      onChange={(e) => void send({ type: 'set-minutes', minutes: Number(e.target.value) })}
+                      onChange={(e) => void send({ type: "set-minutes", minutes: Number(e.target.value) })}
                     />
                   ) : (
-                    <input className="dw-input" aria-label={t("agents.routine.time")} value={d.form.time} onChange={(e) => void send({ type: 'set-time', time: e.target.value })} />
+                    <input
+                      className="dw-input"
+                      aria-label={t("agents.routine.time")}
+                      value={d.form.time}
+                      onChange={(e) => void send({ type: "set-time", time: e.target.value })}
+                    />
                   )}
-                  {d.form.schedule === 'weekly' && (
-                    <select className="dw-input" aria-label={t("agents.routine.day")} value={d.form.weekday} onChange={(e) => void send({ type: 'set-weekday', weekday: e.target.value })}>
-                      {['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((w) => (
+                  {d.form.schedule === "weekly" && (
+                    <select
+                      className="dw-input"
+                      aria-label={t("agents.routine.day")}
+                      value={d.form.weekday}
+                      onChange={(e) => void send({ type: "set-weekday", weekday: e.target.value })}
+                    >
+                      {["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map((w) => (
                         <option key={w} value={w}>
                           {w}
                         </option>
                       ))}
                     </select>
                   )}
-                  <button type="button" className="dw-btn dw-btn-primary" disabled={!d.canAddRoutine} onClick={() => void send({ type: 'add-routine' })}>
+                  <button
+                    type="button"
+                    className="dw-btn dw-btn-primary"
+                    disabled={!d.canAddRoutine}
+                    onClick={() => void send({ type: "add-routine" })}
+                  >
                     {d.addRoutineLabel}
                   </button>
                 </div>
               </Group>
             </>
           )}
-          {d.tabs.find((t) => t.selected)?.tab === 'access' && (
+          {d.tabs.find((t) => t.selected)?.tab === "access" && (
             <>
               <Group>
                 {d.access.length === 0 && <p className="st-note">{d.accessEmpty}</p>}
                 {d.access.map((l) => (
-                  <Line key={l.id} line={l} onAction={() => void send({ type: 'revoke-computer', machine: l.id })} />
+                  <Line key={l.id} line={l} onAction={() => void send({ type: "revoke-computer", machine: l.id })} />
                 ))}
                 {d.allowThisMachineLabel && thisMachine && (
                   <div className="st-row">
-                    <button type="button" className="dw-btn" onClick={() => void send({ type: 'allow-computer', machine: thisMachine })}>
+                    <button
+                      type="button"
+                      className="dw-btn"
+                      onClick={() => void send({ type: "allow-computer", machine: thisMachine })}
+                    >
                       {d.allowThisMachineLabel}
                     </button>
                   </div>
@@ -326,12 +389,12 @@ export function DrivePage({ bridge, now = Date.now }: { bridge: AgentsBridge; no
           bridge.userHome(),
         ]);
         setInput({ ...data, mount, sync, home });
-        setState((s) => reduceDrive(s, { type: 'done' }));
+        setState((s) => reduceDrive(s, { type: "done" }));
       } catch (e) {
-        setState((s) => reduceDrive(s, { type: 'failed', error: message(e) }));
+        setState((s) => reduceDrive(s, { type: "failed", error: message(e) }));
       }
     },
-    [bridge]
+    [bridge],
   );
 
   useEffect(() => {
@@ -352,7 +415,7 @@ export function DrivePage({ bridge, now = Date.now }: { bridge: AgentsBridge; no
       setState(next);
       if (!before.busy && next.busy) void runRequest(next);
     },
-    [runRequest]
+    [runRequest],
   );
 
   return (
@@ -363,7 +426,7 @@ export function DrivePage({ bridge, now = Date.now }: { bridge: AgentsBridge; no
             type="button"
             className="dw-btn dw-btn-primary"
             disabled={v.busy}
-            onClick={() => send({ type: 'open-volume', mounted: v.mountPath })}
+            onClick={() => send({ type: "open-volume", mounted: v.mountPath })}
           >
             {v.openLabel}
           </button>
@@ -376,7 +439,7 @@ export function DrivePage({ bridge, now = Date.now }: { bridge: AgentsBridge; no
             <Line key={l.id} line={l} />
           ))}
           {v.syncNote && (
-            <p className={v.syncError ? 'st-error' : 'st-note'} role={v.syncError ? 'alert' : undefined}>
+            <p className={v.syncError ? "st-error" : "st-note"} role={v.syncError ? "alert" : undefined}>
               {v.syncNote}
             </p>
           )}
@@ -389,11 +452,21 @@ export function DrivePage({ bridge, now = Date.now }: { bridge: AgentsBridge; no
               <span className="st-label">{c.text}</span>
               <span className="st-value">{c.trailing}</span>
               {c.reveal && c.openLabel && (
-                <button type="button" className="dw-btn" disabled={v.busy} onClick={() => send({ type: 'reveal', path: c.reveal! })}>
+                <button
+                  type="button"
+                  className="dw-btn"
+                  disabled={v.busy}
+                  onClick={() => send({ type: "reveal", path: c.reveal! })}
+                >
                   {c.openLabel}
                 </button>
               )}
-              <button type="button" className="dw-btn" disabled={v.busy} onClick={() => send({ type: 'resolve', path: c.path })}>
+              <button
+                type="button"
+                className="dw-btn"
+                disabled={v.busy}
+                onClick={() => send({ type: "resolve", path: c.path })}
+              >
                 {c.resolveLabel}
               </button>
             </div>
@@ -403,14 +476,19 @@ export function DrivePage({ bridge, now = Date.now }: { bridge: AgentsBridge; no
       {v.requests.length > 0 && (
         <Group title={v.requestsTitle}>
           {v.requests.map((l) => (
-            <Line key={l.id} line={l} onAction={() => send({ type: 'approve', id: l.id })} onSecondary={() => send({ type: 'deny', id: l.id })} />
+            <Line
+              key={l.id}
+              line={l}
+              onAction={() => send({ type: "approve", id: l.id })}
+              onSecondary={() => send({ type: "deny", id: l.id })}
+            />
           ))}
         </Group>
       )}
       <Group title={v.grantsTitle}>
         {v.grants.length === 0 && <p className="st-note">{v.grantsEmpty}</p>}
         {v.grants.map((l) => (
-          <Line key={l.id} line={l} onAction={() => send({ type: 'revoke', id: l.id })} />
+          <Line key={l.id} line={l} onAction={() => send({ type: "revoke", id: l.id })} />
         ))}
       </Group>
       {v.error && (
@@ -423,7 +501,7 @@ export function DrivePage({ bridge, now = Date.now }: { bridge: AgentsBridge; no
 }
 
 /** The last-seen marker in the app's settings file. */
-export const NOTIFICATIONS_SEEN_KEY = 'cua.settings.notificationsSeenMs';
+export const NOTIFICATIONS_SEEN_KEY = "cua.settings.notificationsSeenMs";
 
 /**
  * Polls the daemon's feed while the app runs and posts what the app core
@@ -432,7 +510,7 @@ export const NOTIFICATIONS_SEEN_KEY = 'cua.settings.notificationsSeenMs';
 export function useAgentNotifications(
   bridge: AgentsBridge,
   post: (title: string, body: string) => Promise<void> | void,
-  everyMs = 5000
+  everyMs = 5000,
 ): NotificationInput[] {
   const [feed, setFeed] = useState<NotificationInput[]>([]);
   useEffect(() => {
@@ -442,7 +520,7 @@ export function useAgentNotifications(
         const rows = await bridge.notifications();
         if (stopped) return;
         setFeed(rows);
-        const seen = Number(readSetting(NOTIFICATIONS_SEEN_KEY, '0')) || 0;
+        const seen = Number(readSetting(NOTIFICATIONS_SEEN_KEY, "0")) || 0;
         const plan = notificationsPlan(rows, seen);
         for (const n of plan.post) await post(n.title, n.body);
         if (plan.seenMs !== seen) writeSetting(NOTIFICATIONS_SEEN_KEY, String(plan.seenMs));

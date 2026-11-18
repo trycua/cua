@@ -12,21 +12,18 @@ use crate::model::{
 };
 use serde::{Deserialize, Serialize};
 
-/// Section title codes, in order: "Cua Cloud", "This Mac", "Connected",
-/// "My computers".
-pub const SECTION_ORDER: [&str; 4] = [
-    "spaces.sidebar.section.cloud",
+/// Section title codes, in order: "This Mac", "Connected", "My computers".
+pub const SECTION_ORDER: [&str; 3] = [
     "spaces.sidebar.section.this_mac",
     "spaces.sidebar.section.connected",
     "spaces.sidebar.section.my_computers",
 ];
 
 fn section_of(p: Option<SpaceProvider>) -> &'static str {
-    match p.unwrap_or(SpaceProvider::Cloud) {
-        SpaceProvider::Cloud => SECTION_ORDER[0],
-        SpaceProvider::Local => SECTION_ORDER[1],
-        SpaceProvider::Direct => SECTION_ORDER[2],
-        SpaceProvider::Relay => SECTION_ORDER[3],
+    match p.unwrap_or(SpaceProvider::Direct) {
+        SpaceProvider::Local => SECTION_ORDER[0],
+        SpaceProvider::Direct => SECTION_ORDER[1],
+        SpaceProvider::Relay => SECTION_ORDER[2],
     }
 }
 
@@ -181,8 +178,7 @@ pub fn location_text(space: &Space) -> &'static str {
     if space.id == THIS_MACHINE_ID {
         return "This Mac";
     }
-    match space.provider.unwrap_or(SpaceProvider::Cloud) {
-        SpaceProvider::Cloud => "Cua Cloud",
+    match space.provider.unwrap_or(SpaceProvider::Direct) {
         SpaceProvider::Local => "This Mac",
         SpaceProvider::Direct => "By address",
         SpaceProvider::Relay => "Relay",
@@ -205,7 +201,7 @@ pub fn added_by_address(space: &Space) -> bool {
     }
 }
 
-/// A Space in your cloud (AWS, Google Cloud, Modal).
+/// A Space in your cloud (AWS, Google Cloud, Hetzner, Modal).
 pub fn in_your_cloud(space: &Space) -> bool {
     space.cloud.as_deref().is_some_and(|c| !c.is_empty())
 }
@@ -253,7 +249,7 @@ pub struct SidebarRow {
 /// A titled group of rows.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SidebarSection {
-    /// "Cua Cloud", "This Mac", "Connected", "My computers"
+    /// "This Mac", "Connected", "My computers"
     /// (`spaces.sidebar.section.*`).
     pub title: Msg,
     /// Rows.
@@ -501,10 +497,6 @@ pub struct SpaceDetail {
     pub confirm: DeleteConfirm,
     /// The sections under the facts, in order (Stream, Agents, Teleport).
     pub sections: Vec<String>,
-    /// A cloud Space refused for want of credit: one line and "Add
-    /// credit" (the website billing page).
-    #[serde(default)]
-    pub credit_notice: Option<crate::billing::CreditNotice>,
     /// Why turning it off or on failed, shown inline under the preview.
     #[serde(default)]
     pub power_error: Option<String>,
@@ -580,7 +572,7 @@ pub fn desktop_note(space: &Space) -> Option<String> {
 pub fn host_desktop_note(os: crate::model::SpaceOs) -> String {
     format!(
         "This is {}\u{2019}s own screen, so it isn\u{2019}t shown here. \
-         Your other devices see and control it while Share this desktop is on.",
+         Your other machines see and control it while you let them use it.",
         os.this_machine_lower()
     )
 }
@@ -725,7 +717,7 @@ pub fn detail_copy() -> DetailCopy {
     DetailCopy {
         stream_loading: "Looking for this Space\u{2019}s windows\u{2026}".into(),
         stream_empty: "No open windows in this Space yet.".into(),
-        stream_failed: "No windows: the Space\u{2019}s window host is not up.".into(),
+        stream_failed: "Can\u{2019}t see this Space\u{2019}s windows yet.".into(),
         stream_no_match: "No windows match your filter.".into(),
         agents_loading: "Looking for this Space\u{2019}s agents\u{2026}".into(),
         agents_empty: "No agents have been started in this Space.".into(),
@@ -751,13 +743,13 @@ fn delete_confirm(space: &Space, remove_only: bool, delete_label: &str) -> Delet
             .or(space.cloud.as_deref())
             .unwrap_or_default();
         let elsewhere = space.cloud_delete.as_deref() == Some("elsewhere");
+        // Created elsewhere: only Remove from List works (the disabled reason says why).
+        // Yours: the deletion's reach stays said, since it can't be undone.
         let message = if elsewhere {
-            format!(
-                "It runs in {place} and was created on another device. Remove from List keeps it running there."
-            )
+            format!("Remove from List keeps it running in {place}.")
         } else {
             format!(
-                "Delete Permanently deletes it and everything Cua created for it in {place}. Remove from List keeps it running there."
+                "Delete Permanently deletes everything Cua created for it in {place}. Remove from List keeps it running."
             )
         };
         return DeleteConfirm {
@@ -766,7 +758,7 @@ fn delete_confirm(space: &Space, remove_only: bool, delete_label: &str) -> Delet
             confirm_label: "Delete Permanently".into(),
             confirm_enabled: !elsewhere,
             disabled_reason: elsewhere.then(|| {
-                "Created on another device: delete it there, or remove it from this list.".into()
+                "Created on another machine: delete it there, or remove it from this list.".into()
             }),
             remove_label: Some("Remove from List".into()),
             cancel_label: "Cancel".into(),
@@ -961,7 +953,8 @@ fn detail_facts(
         if u.memory_limited && u.memory_total > 0 {
             facts.push(fact("Memory", usage_text(u.memory_used, u.memory_total)));
         }
-        if u.disk_limited && u.disk_total > 0 {
+        // Never a sentinel ("unlimited" as 2^63): only a real size.
+        if u.disk_limited && crate::resources::known_size(u.disk_total).is_some() {
             facts.push(fact("Storage", usage_text(u.disk_used, u.disk_total)));
         }
     }
@@ -1135,15 +1128,6 @@ pub fn detail_live(
         progress_text: creating
             .filter(|p| p.error.is_none())
             .and_then(|p| p.transfer.clone()),
-        credit_notice: creating.and_then(|p| {
-            p.credit_url
-                .clone()
-                .map(|url| crate::billing::CreditNotice {
-                    text: crate::billing::OUT_OF_CREDIT.into(),
-                    button: crate::billing::ADD_CREDIT.into(),
-                    url,
-                })
-        }),
         delete_label: delete_label.into(),
         remove_only,
         power_error: power_error(space),
@@ -1163,23 +1147,7 @@ pub fn detail_live(
     }
 }
 
-/// [`detail_live`] without what Settings, Experiments hides: the Share
-/// button while Sharing is off (a Space already shared stays shared; its
-/// people keep their access).
-pub fn detail_with(
-    space: &Space,
-    usage: Option<&SpaceUsage>,
-    host_arch: Option<&str>,
-    experiments: &crate::experiments::Experiments,
-) -> SpaceDetail {
-    let mut d = detail_live(space, usage, host_arch);
-    if !experiments.sharing {
-        d.actions.retain(|a| a.id != DetailActionId::Share);
-    }
-    d
-}
-
-/// [`detail_with`] as this device sees it. `access` is why this device
+/// [`detail_live`] as this device sees it. `access` is why this device
 /// cannot open the account's machines (signed in, not enrolled;
 /// [`crate::devices::machine_access_notice`]): every Space reached through
 /// the relay then shows its Connect greyed out under that line, says why
@@ -1191,10 +1159,9 @@ pub fn detail_for(
     space: &Space,
     usage: Option<&SpaceUsage>,
     host_arch: Option<&str>,
-    experiments: &crate::experiments::Experiments,
     access: Option<&crate::devices::MachineAccessNotice>,
 ) -> SpaceDetail {
-    let mut d = detail_with(space, usage, host_arch, experiments);
+    let mut d = detail_live(space, usage, host_arch);
     let connection = [
         DetailActionId::Teleport,
         DetailActionId::Pip,
@@ -1284,7 +1251,6 @@ mod tests {
     /// not read this Space's agents").
     #[test]
     fn this_machines_desktop_says_why_instead_of_loading_forever() {
-        use crate::experiments::Experiments;
         use crate::host::{HostSummaryInput, this_machine_space};
         use crate::model::{SpaceOs, SpaceSdkRef};
         let sharing = HostSummaryInput {
@@ -1303,10 +1269,7 @@ mod tests {
                 reachable: true,
                 error: None,
             });
-            for d in [
-                detail(&host),
-                detail_for(&host, None, None, &Experiments::default(), None),
-            ] {
+            for d in [detail(&host), detail_for(&host, None, None, None)] {
                 assert!(d.is_host);
                 assert!(!d.can_stream);
                 assert!(!d.show_sections, "no Stream or Agents for {os:?}");
@@ -1365,35 +1328,19 @@ mod tests {
         }
     }
 
-    /// Sharing on (the default): Share, between
-    /// Picture in picture and Delete as before; off: no Share button.
+    /// Share sits between Picture in picture and Delete.
     #[test]
-    fn the_sharing_experiment_decides_the_share_button() {
-        use crate::experiments::Experiments;
+    fn the_share_button_is_always_offered() {
         let s = super::super::row_to_space(&local_row("local:a", None, None, None), 0);
-        let ids = |e: &Experiments| -> Vec<DetailActionId> {
-            detail_with(&s, None, None, e)
-                .actions
-                .iter()
-                .map(|a| a.id)
-                .collect()
-        };
-        assert!(
-            !ids(&Experiments {
-                sharing: false,
-                ..Default::default()
-            })
-            .contains(&DetailActionId::Share)
-        );
-        let on = ids(&Experiments::default());
+        let on: Vec<DetailActionId> = detail_live(&s, None, None)
+            .actions
+            .iter()
+            .map(|a| a.id)
+            .collect();
         assert_eq!(
             on.iter().position(|a| *a == DetailActionId::Share),
             Some(2),
             "{on:?}"
-        );
-        assert_eq!(
-            detail_with(&s, None, None, &Experiments::all_on()),
-            detail_live(&s, None, None)
         );
     }
 
@@ -1424,7 +1371,6 @@ mod tests {
     /// is the row's help (in plain words), never the Status itself.
     #[test]
     fn an_unreachable_space_says_unreachable_with_why_as_help() {
-        let x = crate::experiments::Experiments::default();
         for (raw, why) in [
             (
                 "cua-spacesd is not available: relay:studio has no cua-spacesd (gRPC: relay assertion refused)",
@@ -1437,13 +1383,13 @@ mod tests {
         ] {
             let mut space = machine(&[], false);
             space.sdk.as_mut().unwrap().error = Some(raw.into());
-            let d = detail_with(&space, None, None, &x);
+            let d = detail_live(&space, None, None);
             let status = fact_of(&d, "Status").unwrap();
             assert_eq!(status.value, "Unreachable");
             assert_eq!(status.help.as_deref(), Some(why));
         }
         // No error: no help.
-        let d = detail_with(&machine(&[], false), None, None, &x);
+        let d = detail_live(&machine(&[], false), None, None);
         assert_eq!(fact_of(&d, "Status").unwrap().value, "Unreachable");
         assert_eq!(fact_of(&d, "Status").unwrap().help, None);
     }
@@ -1474,20 +1420,19 @@ mod tests {
     #[test]
     fn a_machine_seen_from_a_device_that_is_not_enrolled() {
         use crate::devices::{EnrollmentKind, machine_access_notice};
-        let x = crate::experiments::Experiments::default();
         let m = machine(SHARED, true);
-        let enrolled = detail_for(&m, None, None, &x, None);
-        assert_eq!(enrolled, detail_with(&m, None, None, &x));
+        let enrolled = detail_for(&m, None, None, None);
+        assert_eq!(enrolled, detail_live(&m, None, None));
         assert!(enrolled.can_stream && enrolled.access.is_none());
         for (kind, status) in [
-            (EnrollmentKind::NeedsEnrollment, "Not enrolled"),
-            (EnrollmentKind::Waiting, "Waiting for approval"),
-            (EnrollmentKind::Due, "Re-verification due"),
+            (EnrollmentKind::NeedsEnrollment, "Not trusted yet"),
+            (EnrollmentKind::Waiting, "Waiting to be added"),
+            (EnrollmentKind::Due, "Needs a quick check"),
         ] {
             let notice = machine_access_notice(kind, Some("K7QX-M2RP")).unwrap();
             // Unreachable (the relay refuses it): still listed, still explained.
             for reachable in [false, true] {
-                let d = detail_for(&machine(&[], reachable), None, None, &x, Some(&notice));
+                let d = detail_for(&machine(&[], reachable), None, None, Some(&notice));
                 assert_eq!(d.access.as_ref(), Some(&notice));
                 assert!(!d.can_stream && !d.show_sections && d.sections.is_empty());
                 assert_eq!(fact_of(&d, "Status").unwrap().value, status);
@@ -1507,7 +1452,7 @@ mod tests {
         let local = super::super::row_to_space(&local_row("local:a", None, None, None), 0);
         let notice = machine_access_notice(EnrollmentKind::NeedsEnrollment, None).unwrap();
         assert!(
-            detail_for(&local, None, None, &x, Some(&notice))
+            detail_for(&local, None, None, Some(&notice))
                 .access
                 .is_none()
         );
@@ -1519,15 +1464,14 @@ mod tests {
     /// older one that does not say, counts as sharing.
     #[test]
     fn a_machine_that_does_not_share_its_desktop() {
-        let x = crate::experiments::Experiments::default();
-        let shared = detail_for(&machine(SHARED, true), None, None, &x, None);
+        let shared = detail_for(&machine(SHARED, true), None, None, None);
         assert_eq!(shared.sections, ["Stream", "Agents", "Teleport"]);
         assert!(shared.desktop_note.is_none() && shared.new_space.is_none());
         assert_eq!(shares_desktop(&machine(SHARED, true)), Some(true));
 
         let spaces_only = machine(&["host_spaces", "files"], true);
         assert_eq!(shares_desktop(&spaces_only), Some(false));
-        let d = detail_for(&spaces_only, None, None, &x, None);
+        let d = detail_for(&spaces_only, None, None, None);
         assert_eq!(
             d.desktop_note.as_deref(),
             Some("Studio isn\u{2019}t sharing its desktop. You can still create Spaces on it.")
@@ -1545,7 +1489,7 @@ mod tests {
             })
         );
 
-        let neither = detail_for(&machine(&["files"], true), None, None, &x, None);
+        let neither = detail_for(&machine(&["files"], true), None, None, None);
         assert_eq!(
             neither.desktop_note.as_deref(),
             Some("Studio isn\u{2019}t sharing its desktop or Spaces.")
@@ -1556,7 +1500,7 @@ mod tests {
         assert_eq!(shares_desktop(&machine(&["host_spaces"], false)), None);
         assert_eq!(shares_desktop(&machine(&[], true)), None);
         assert!(
-            detail_for(&machine(&[], true), None, None, &x, None)
+            detail_for(&machine(&[], true), None, None, None)
                 .desktop_note
                 .is_none()
         );
@@ -1567,7 +1511,7 @@ mod tests {
         assert_eq!(shares_desktop(&direct), None);
     }
 
-    /// The user's Macs after updating to 0.7.0: cua.local
+    /// The user's Macs after updating to 0.7.0: a spare Mac
     /// (`relay:9e9d…`, "Mac.localdomain") shares, keeps its desktop
     /// private, provides Spaces with none running and runs the cua-spacesd
     /// of an older app (0.2.2); this Mac (`relay:b695…`) is not sharing.
@@ -1652,7 +1596,7 @@ mod tests {
                 .sections
                 .iter()
                 .find(|s| s.title.code == "spaces.sidebar.section.my_computers")
-                .unwrap_or_else(|| panic!("no My computers for {features:?} {error:?}: {view:?}"));
+                .unwrap_or_else(|| panic!("no My machines for {features:?} {error:?}: {view:?}"));
             assert_eq!(
                 mine.rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
                 [other.as_str()],
@@ -1754,6 +1698,36 @@ mod tests {
     }
 
     #[test]
+    fn a_storage_fact_never_shows_a_sentinel() {
+        let space = super::super::row_to_space(
+            &local_row("local:o", Some("ghcr.io/trycua/linux:24.04"), None, None),
+            0,
+        );
+        for total in [i64::MAX as u64, u64::MAX, 0] {
+            let usage = SpaceUsage {
+                disk_used: 1 << 20,
+                disk_total: total,
+                disk_limited: true,
+                ..Default::default()
+            };
+            let d = detail_live(&space, Some(&usage), None);
+            assert_eq!(fact_of(&d, "Storage"), None, "{total}");
+        }
+        let real = SpaceUsage {
+            disk_used: 2 << 30,
+            disk_total: 4 << 30,
+            disk_limited: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            fact_of(&detail_live(&space, Some(&real), None), "Storage")
+                .unwrap()
+                .value,
+            "2 GB / 4 GB"
+        );
+    }
+
+    #[test]
     fn kind_and_architecture_facts_warn_about_emulation_on_this_mac_only() {
         let omarchy = super::super::row_to_space(
             &local_row("local:o", Some("ghcr.io/trycua/omarchy:edge"), None, None),
@@ -1793,15 +1767,6 @@ mod tests {
         assert_eq!(fact_of(&d, "Kind").unwrap().value, "Container");
         let arch = fact_of(&d, "Architecture").unwrap();
         assert_eq!((arch.value.as_str(), arch.warning.as_ref()), ("ARM", None));
-        // A cloud Space never warns; without the host's arch nothing does.
-        let cloud =
-            super::super::row_to_space(&local_row("cloud:c", None, Some("vm"), Some("amd64")), 0);
-        assert!(
-            fact_of(&detail_live(&cloud, None, Some("arm64")), "Architecture")
-                .unwrap()
-                .warning
-                .is_none()
-        );
         assert!(
             fact_of(&detail_live(&omarchy, None, None), "Architecture")
                 .unwrap()
@@ -1834,8 +1799,11 @@ mod tests {
     #[test]
     fn only_the_identifier_has_a_copy_button() {
         let row = SpaceRow {
+            hidden: false,
+            parent: None,
             id: "direct:127.0.0.1:34752".into(),
             name: "studio".into(),
+            display_name: None,
             provider: "direct".into(),
             spacesd_version: "0.4.0".into(),
             features: vec![],
@@ -1857,6 +1825,7 @@ mod tests {
             cloud_place: None,
             cloud_delete: None,
             stop_reason: None,
+            sharing: None,
         };
         let d = detail(&super::super::row_to_space(&row, 0));
         // Added by address: no image row, so only the identifier copies.
@@ -1883,8 +1852,11 @@ mod tests {
     #[test]
     fn a_space_being_deleted_neither_streams_nor_deletes_again() {
         let row = SpaceRow {
+            hidden: false,
+            parent: None,
             id: "local:demo".into(),
             name: "demo".into(),
+            display_name: None,
             provider: "local".into(),
             spacesd_version: "0.4.0".into(),
             features: vec!["desktop_stream".into()],
@@ -1906,6 +1878,7 @@ mod tests {
             cloud_place: None,
             cloud_delete: None,
             stop_reason: None,
+            sharing: None,
         };
         let space = super::super::creating::deleting_space(&super::super::row_to_space(&row, 0));
         let d = detail(&space);
@@ -2103,10 +2076,11 @@ mod tests {
             permille: 500,
             label: "Starting".into(),
             error: None,
-            credit_url: None,
             transfer: None,
             cancellable: true,
             cancelling: false,
+            retrying: false,
+            fix: None,
         });
         assert!(power_button(&s).is_none());
     }
@@ -2121,10 +2095,11 @@ mod tests {
             permille: 580,
             label: "Downloading image\u{2026}".into(),
             error: None,
-            credit_url: None,
             transfer: transfer.map(str::to_string),
             cancellable: true,
             cancelling: false,
+            retrying: false,
+            fix: None,
         };
         // Bytes known: the bytes line says how far, not a second percentage.
         s.progress = Some(progress(Some("15.2 of 22.2 GB \u{b7} 107 MB/s")));

@@ -32,9 +32,11 @@ export const UPDATE_POLL_MS = 4 * 60 * 60 * 1000;
 
 const RELEASES = "https://github.com/trycua/cua/releases/tag";
 
-/** The release notes for a version: the repository's `cua-spaces-v<version>` tag. */
+/** The release notes for a version: the repository's `cua-spaces-v<version>` tag; a nightly's are the rolling nightly release's. */
 export function releaseNotesUrl(version: string): string {
-  return `${RELEASES}/cua-spaces-v${encodeURIComponent(version.trim())}`;
+  const v = version.trim();
+  if (/^\d+\.\d+\.\d+-nightly(\.|$|\+)/.test(v)) return `${RELEASES}/cua-spaces-nightly`;
+  return `${RELEASES}/cua-spaces-v${encodeURIComponent(v)}`;
 }
 
 export const initialUpdateState = (currentVersion: string): UpdateStateValue => ({

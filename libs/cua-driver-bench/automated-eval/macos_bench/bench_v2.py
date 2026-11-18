@@ -53,6 +53,42 @@ V2_TASKS: tuple[str, ...] = (
     "IR-03",
     "IR-04",
 )
+# `../../taskpack/v2-taskset.json` lists every task with its category, OS availability, conditions and split (public,
+# or held out of this repository). `--task-set` selects a set; the default stays `v2`, so earlier runs reproduce.
+TASKSET_FILE = Path(__file__).resolve().parents[2] / "taskpack" / "v2-taskset.json"
+SPLITS = ("public", "heldout")
+
+
+def load_taskset(path: Path | None = None) -> dict[str, Any]:
+    """The task manifest: one entry per task with `id`, `category`, `split` and `os`."""
+    return json.loads((path or TASKSET_FILE).read_text("utf-8"))
+
+
+def split_of(task_id: str, taskset: dict[str, Any] | None = None) -> str:
+    """`public` or `heldout`. Tasks not in the manifest (the ten core tasks are listed too) default to public."""
+    for entry in (taskset or load_taskset())["tasks"]:
+        if entry["id"] == task_id:
+            return str(entry["split"])
+    return "public"
+
+
+def task_sets(taskset: dict[str, Any] | None = None) -> dict[str, tuple[str, ...]]:
+    """Named task sets for `--task-set`. `-public` and `-heldout` keep schedule order and only that split."""
+    data = taskset or load_taskset()
+    split = {e["id"]: e["split"] for e in data["tasks"]}
+    sets: dict[str, tuple[str, ...]] = {"v2": V2_TASKS}
+    for part in SPLITS:
+        sets[f"v2-{part}"] = tuple(t for t in V2_TASKS if split.get(t, "public") == part)
+    return sets
+
+
+def tasks_for_condition(
+    task_ids: list[str], condition: str | None, specs: dict[str, dict[str, Any]]
+) -> list[str]:
+    """The tasks of one condition: a task whose task.json lists `conditions` runs only in those."""
+    return [t for t in task_ids if condition in (specs.get(t, {}).get("conditions") or CONDITIONS)]
+
+
 # v1 tasks that are not in v2, and why (the S/G split is dropped).
 NOT_IN_V2: dict[str, str] = {
     "CDB-S01": "its end state needs a source-code fix and a test; no GUI-only version without changing the pack",
@@ -73,14 +109,21 @@ def category_of(spec: dict[str, Any]) -> str:
     return str(category)
 
 
-def validate_tasks(specs: dict[str, dict[str, Any]], task_ids: list[str]) -> list[str]:
+def validate_tasks(
+    specs: dict[str, dict[str, Any]], task_ids: list[str], arms: list[str] | None = None
+) -> list[str]:
     """Problems that stop a v2 run: unknown task, missing or unknown category, coding tools."""
     problems: list[str] = []
+    browser_only = "cx-browser-use-cli" in (arms or [])
+    if browser_only and not task_ids:
+        problems.append("cx-browser-use-cli requires a nonempty browser task selection")
     for tid in task_ids:
         spec = specs.get(tid)
         if spec is None:
             problems.append(f"{tid}: unknown task")
             continue
+        if browser_only and spec.get("browser") is not True:
+            problems.append(f"{tid}: cx-browser-use-cli requires browser: true")
         try:
             category_of(spec)
         except ValueError as error:
@@ -96,7 +139,20 @@ def validate_tasks(specs: dict[str, dict[str, Any]], task_ids: list[str]) -> lis
 
 # ------------------------------------------------------------------ GUI-only
 
+LINUX_TERMINALS = (
+    "xterm",
+    "gnome-terminal",
+    "gnome-terminal-server",
+    "gnome-terminal-",
+    "konsole",
+    "xfce4-terminal",
+    "kitty",
+    "alacritty",
+    "Alacritty",
+    "org.gnome.Terminal",
+)
 SIDE_DOOR_BUNDLES = {
+    **{name: name for name in LINUX_TERMINALS},
     "com.apple.Terminal": "Terminal",
     "com.googlecode.iterm2": "iTerm",
     "com.apple.ScriptEditor2": "Script Editor",
@@ -229,7 +285,9 @@ def terminal_session_ttys(rows: list[tuple[int, int, str, str]], exclude_pid: in
     never reads, and any tty its descendants open (agents, MCP servers, apps it starts)."""
     parent = {pid: ppid for pid, ppid, _, _ in rows}
     tty_of = {pid: tty for pid, _, tty, _ in rows}
-    terminals = {pid for pid, _, _, comm in rows if comm.rsplit("/", 1)[-1] == "Terminal"}
+    terminals = {
+        pid for pid, _, _, comm in rows if comm.rsplit("/", 1)[-1] in ("Terminal", *LINUX_TERMINALS)
+    }
 
     def ancestors(pid: int) -> set[int]:
         seen: set[int] = set()
@@ -239,9 +297,9 @@ def terminal_session_ttys(rows: list[tuple[int, int, str, str]], exclude_pid: in
         return seen
 
     def device(tty: str) -> str | None:
-        if tty in ("??", "-", ""):
+        if tty in ("??", "?", "-", ""):
             return None
-        return "/dev/" + (tty if tty.startswith("tty") else "tty" + tty)
+        return "/dev/" + (tty if tty.startswith(("tty", "pts/")) else "tty" + tty)
 
     excluded = {device(tty_of.get(p, "")) for p in ancestors(exclude_pid)} | {
         device(tty_of.get(exclude_pid, ""))
@@ -443,6 +501,51 @@ CONDITIONS = ("foreground", "background")
 # The user's window in the background condition, top-left screen coordinates (x, y, w, h). It partly covers
 # BenchLab's lower right and the middle of the CDB task windows, and stays clear of BenchLab's top strip.
 USER_WINDOW_FRAME = (420, 340, 900, 520)
+# Amendment 24: before every trial the harness parks the real pointer at PARK_POINT (top-left screen
+# coordinates), reads it back and records it in the trial row. A pointer left over a task window by an earlier
+# task changes how the OS treats a background sheet, so the starting state is fixed and reported.
+PARK_POINT = (
+    1000,
+    12,
+)  # an empty stretch of the top edge: above every window of the registered layout
+PARK_TOLERANCE_PX = 3.0
+# Registered window frames (x, y, w, h): the user window, BenchLab on macOS, BenchLab on Linux and Windows,
+# and the foreground witness window.
+REGISTERED_FRAMES = {
+    "user": USER_WINDOW_FRAME,
+    "benchlab_macos": (60, 80, 900, 560),
+    "benchlab_linux_windows": (40, 40, 760, 540),
+    "witness": (1000, 640, 600, 320),
+}
+
+
+def park_point_clear(
+    point: tuple[float, float], frames: dict[str, tuple[int, int, int, int]] | None = None
+) -> list[str]:
+    """Names of the registered frames that contain `point`; empty when the point is clear of all of them."""
+    px, py = point
+    return [
+        name
+        for name, (x, y, w, h) in (frames or REGISTERED_FRAMES).items()
+        if x <= px < x + w and y <= py < y + h
+    ]
+
+
+def park_record(read_back: tuple[float, float] | None, method: str) -> dict[str, Any]:
+    """The trial-row entry for a park: target, position read back, whether it landed, and the method."""
+    ok = (
+        read_back is not None
+        and abs(read_back[0] - PARK_POINT[0]) <= PARK_TOLERANCE_PX
+        and abs(read_back[1] - PARK_POINT[1]) <= PARK_TOLERANCE_PX
+    )
+    return {
+        "target": list(PARK_POINT),
+        "read_back": list(read_back) if read_back is not None else None,
+        "ok": ok,
+        "method": method,
+    }
+
+
 BACKGROUND_BRIEF = (
     'The user is working in another window, titled "User activity", and is typing in it. Leave that window '
     "in front and in focus the whole time: do not activate, raise or bring any other app or window to the "

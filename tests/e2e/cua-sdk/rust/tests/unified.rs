@@ -1,5 +1,8 @@
 //! unified-sandbox-api (Rust). Scenario definition:
 //! ../python/test_unified_api.py; the assertions here are the same.
+// The test futures nest deeply enough that computing their layout passes
+// the default query depth of 128.
+#![recursion_limit = "256"]
 
 use std::collections::HashMap;
 use std::io::{Read, Write};

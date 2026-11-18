@@ -7,6 +7,8 @@ import { useAddSpaceWhenReady, useRiskyNudge, useSecondAgentNudge, type Nudge } 
 import { CuaKey } from "@/components/cua-key";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
+import { useT } from "@/i18n";
+import { thisComputerLabel } from "@/lib/host-labels";
 
 /**
  * The two This Mac prompts, in the top-right corner over whatever page is
@@ -16,14 +18,18 @@ import { toast } from "@/components/ui/toast";
  * (`bridge/nudges.ts`).
  */
 export function ThisMacNudges() {
+  const t = useT();
   const second = useSecondAgentNudge();
   const risky = useRiskyNudge();
   const [wantSpace, setWantSpace] = useState(false);
-  const started = useCallback((os: "macos" | "linux" | null) => {
-    setWantSpace(false);
-    if (os) toast(`Making a ${os === "macos" ? "macOS" : "Linux"} Space`, { description: "It shows in Spaces with its progress. You can keep working." });
-    else toast("This Mac can't make a Space right now", { description: "Open New Space to see why." });
-  }, []);
+  const started = useCallback(
+    (os: "macos" | "linux" | null) => {
+      setWantSpace(false);
+      if (os) toast(t("computers.this_mac.making_space", { os: os === "macos" ? "macOS" : "Linux" }));
+      else toast(t("computers.this_mac.cannot_make_space", { name: thisComputerLabel() }), { description: t("computers.this_mac.cannot_make_space_help") });
+    },
+    [t],
+  );
 
   // The risky question waits on an agent: it goes first.
   const card = risky.nudge ? (
@@ -68,7 +74,7 @@ export function NudgeCard({ nudge, onPrimary, onSecondary, onNever }: { nudge: N
       aria-modal="false"
       aria-labelledby={titleId}
       data-nudge={nudge.kind}
-      className="fixed top-[calc(var(--titlebar-height,0px)+12px)] right-4 z-50 w-[392px] max-w-[calc(100vw-2rem)] rounded-2xl border bg-popover p-5 text-popover-foreground shadow-xl"
+      className="fixed top-[calc(var(--titlebar-height,0px)+12px)] right-4 z-50 w-[392px] max-w-[calc(100vw-2rem)] rounded-lg bg-popover p-5 text-popover-foreground shadow-float"
     >
       <p className="flex items-start gap-2 text-[13px] leading-snug text-muted-foreground">
         <CuaKey size={18} />
@@ -77,13 +83,13 @@ export function NudgeCard({ nudge, onPrimary, onSecondary, onNever }: { nudge: N
       <h2 id={titleId} className="mt-2 text-[17px] leading-snug font-semibold tracking-tight">
         {nudge.title}
       </h2>
-      <p className="mt-1.5 text-sm leading-relaxed">{nudge.body}</p>
+      {nudge.body ? <p className="mt-1.5 text-sm leading-relaxed">{nudge.body}</p> : null}
       {nudge.note ? <p className="mt-2 text-xs text-muted-foreground">{nudge.note}</p> : null}
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <Button data-nudge-primary="" onClick={onPrimary}>
           {nudge.primary}
         </Button>
-        <Button variant="outline" data-nudge-secondary="" onClick={onSecondary}>
+        <Button variant="secondary" data-nudge-secondary="" onClick={onSecondary}>
           {nudge.secondary}
         </Button>
         {nudge.never && onNever ? (

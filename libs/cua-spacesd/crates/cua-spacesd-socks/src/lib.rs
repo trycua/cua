@@ -278,15 +278,44 @@ async fn fulfill_via_tunnel(
     relay(client, tunnel, stats, host, port, true).await
 }
 
+/// [`serve_forward`] on a Unix socket: the guest's spawn socket
+/// (`/run/cua/spawn.sock`), whose every connection reaches the host's
+/// spawn API for this Space. A connection made while no peer is attached is
+/// closed.
+#[cfg(unix)]
+pub async fn serve_forward_unix(
+    listener: tokio::net::UnixListener,
+    hub: Hub,
+    host: String,
+    port: u16,
+) -> std::io::Result<()> {
+    loop {
+        let (client, _peer) = listener.accept().await?;
+        let Some(tunnel) = hub.tunnel() else {
+            drop(client);
+            continue;
+        };
+        let (stats, host) = (hub.stats.clone(), host.clone());
+        tokio::spawn(async move {
+            if let Err(error) = relay(client, tunnel, stats, host, port, false).await {
+                tracing::debug!(%error, "forwarded connection ended");
+            }
+        });
+    }
+}
+
 /// One stream through the peer; `socks` writes the SOCKS replies.
-async fn relay(
-    mut client: TcpStream,
+async fn relay<C>(
+    mut client: C,
     tunnel: Arc<Tunnel>,
     stats: Arc<Stats>,
     host: String,
     port: u16,
     socks: bool,
-) -> std::io::Result<()> {
+) -> std::io::Result<()>
+where
+    C: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     let (id, mut from_peer) = tunnel.register();
     if tunnel
         .to_peer
@@ -321,7 +350,7 @@ async fn relay(
         }
     }
     stats.active_connections.fetch_add(1, Ordering::SeqCst);
-    let (mut reader, mut writer) = client.into_split();
+    let (mut reader, mut writer) = tokio::io::split(client);
     let mut buf = vec![0u8; READ_CHUNK];
     loop {
         tokio::select! {
@@ -352,7 +381,10 @@ async fn relay(
     Ok(())
 }
 
-async fn write_socks_reply(client: &mut TcpStream, rep: u8) -> std::io::Result<()> {
+async fn write_socks_reply<C>(client: &mut C, rep: u8) -> std::io::Result<()>
+where
+    C: tokio::io::AsyncWrite + Unpin,
+{
     client
         .write_all(&[0x05, rep, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
         .await

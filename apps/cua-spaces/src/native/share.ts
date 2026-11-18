@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import type { ShareEntryInput, ShareRemoval } from '../model/share';
-import { hasTauri } from './bridge';
+import type { ShareEntryInput, ShareRemoval } from "../model/share";
+import { hasTauri } from "./bridge";
 
 /** The `space_shares` / `share_space` / `unshare_space` result. */
 export interface SpaceSharesResult {
@@ -32,32 +32,30 @@ export interface ShareBridge {
 }
 
 /** The account is in a team on the Teams plan (`teams_list`'s `plan`). */
-const inSharingTeam = (list: { teams: { plan: string }[] }) =>
-  list.teams.some((t) => t.plan === 'teams');
+const inSharingTeam = (list: { teams: { plan: string }[] }) => list.teams.some((t) => t.plan === "teams");
 
 export function createTauriShareBridge(): ShareBridge {
-  const core = import('@tauri-apps/api/core');
-  const invoke = async <T>(command: string, args?: Record<string, unknown>) =>
-    (await core).invoke<T>(command, args);
+  const core = import("@tauri-apps/api/core");
+  const invoke = async <T>(command: string, args?: Record<string, unknown>) => (await core).invoke<T>(command, args);
   return {
-    shares: (spaceId) => invoke('space_shares', { spaceId }),
-    share: (spaceId, who, role) => invoke('share_space', { spaceId, who, role }),
-    unshare: (spaceId, who) => invoke('unshare_space', { spaceId, who }),
+    shares: (spaceId) => invoke("space_shares", { spaceId }),
+    share: (spaceId, who, role) => invoke("share_space", { spaceId, who, role }),
+    unshare: (spaceId, who) => invoke("unshare_space", { spaceId, who }),
     hasTeam: async () => {
       try {
-        return inSharingTeam(await invoke<{ teams: { plan: string }[] }>('teams_list'));
+        return inSharingTeam(await invoke<{ teams: { plan: string }[] }>("teams_list"));
       } catch {
         return null;
       }
     },
-    removals: () => invoke<ShareRemoval[]>('share_removals'),
-    ackRemovals: () => invoke<void>('ack_share_removals'),
+    removals: () => invoke<ShareRemoval[]>("share_removals"),
+    ackRemovals: () => invoke<void>("ack_share_removals"),
   };
 }
 
 export function createShareBridge(): ShareBridge {
   if (hasTauri()) return createTauriShareBridge();
-  const unavailable = () => Promise.reject(new Error('Sharing needs the Cua Spaces app'));
+  const unavailable = () => Promise.reject(new Error("Sharing needs the Cua Spaces app"));
   return {
     shares: unavailable,
     share: unavailable,
@@ -77,16 +75,16 @@ export function createFakeShareBridge(
     refuses?: string;
     hasTeam?: boolean | null;
     removals?: ShareRemoval[];
-  } = {}
+  } = {},
 ): ShareBridge & { calls: string[] } {
   let shares = [...(options.shares ?? [])];
   let removals = [...(options.removals ?? [])];
   const calls: string[] = [];
   const result = (space: string): SpaceSharesResult => ({
     space,
-    machine: 'space-00000000000000aa',
-    invitee_space: 'relay:space-00000000000000aa',
-    url: '',
+    machine: "space-00000000000000aa",
+    invitee_space: "relay:space-00000000000000aa",
+    url: "",
     online: true,
     shares,
   });
@@ -110,11 +108,11 @@ export function createFakeShareBridge(
     },
     hasTeam: async () => options.hasTeam ?? null,
     removals: async () => {
-      calls.push('removals');
+      calls.push("removals");
       return removals;
     },
     ackRemovals: async () => {
-      calls.push('ackRemovals');
+      calls.push("ackRemovals");
       removals = [];
     },
   };

@@ -111,7 +111,7 @@ pub fn prompt(
         "machine" if kind == "free" => Some(UpsellPrompt {
             surface: "machine".into(),
             text: format!(
-                "Two computers now. Free includes {} live sessions and {} remote hours a month. Pro makes it {PRO_SESSIONS} and {PRO_HOURS}, for $18 a month.",
+                "Two computers now. Free includes {} computers in use at once and {} remote hours a month. Pro makes it {PRO_SESSIONS} and {PRO_HOURS}, for $18 a month.",
                 usage.live_sessions_limit.unwrap_or(2),
                 hours(usage.hours_limit.unwrap_or(20.0)),
             ),
@@ -122,9 +122,216 @@ pub fn prompt(
     }
 }
 
+// ---- The Pro banner (the sidebar's foot) -----------------------------------
+
+/// The Pro banner's line.
+pub const PRO_BANNER_TEXT: &str = "Use more computers at once with Pro";
+
+/// What the Pro banner reads.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ProBannerInput {
+    /// The account's plan, as the relay names it (`free`, `pro`, `team`;
+    /// empty: not known, so no banner).
+    pub plan: String,
+}
+
+/// The calm banner above the account line, on Free only: the line and
+/// Upgrade (which opens the plan card's Pro link). It cannot be closed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProBanner {
+    /// It shows.
+    pub visible: bool,
+    /// [`PRO_BANNER_TEXT`].
+    pub text: String,
+    /// "Upgrade".
+    pub button: String,
+}
+
+/// The Pro banner: on Free only, always. Paid plans never see it.
+pub fn pro_banner(input: &ProBannerInput) -> ProBanner {
+    let free = plan_kind(&input.plan.trim().to_ascii_lowercase()) == "free";
+    ProBanner {
+        visible: free,
+        text: PRO_BANNER_TEXT.into(),
+        button: crate::relay_usage::UPGRADE.into(),
+    }
+}
+
+/// The share of an allowance at which the sidebar's Pro line shows (80%).
+pub const BANNER_NEAR: f64 = 0.8;
+
+/// The sidebar's Pro line with the month's usage: on Free only, and only near
+/// a limit (80% or more of the computers in use at once or of the remote
+/// hours), saying how close: "2 of 2 computers in use. Pro allows 5." A
+/// permanent banner was marketing on a screen the person already chose.
+pub fn pro_banner_near(input: &ProBannerInput, usage: &RelayUsage) -> ProBanner {
+    let mut banner = pro_banner(input);
+    let near =
+        |used: f64, limit: Option<f64>| limit.is_some_and(|l| l > 0.0 && used >= l * BANNER_NEAR);
+    let sessions_limit = usage.live_sessions_limit.map(f64::from);
+    banner.text = if near(f64::from(usage.live_sessions), sessions_limit) {
+        format!(
+            "{} of {} computers in use. Pro allows {PRO_SESSIONS}.",
+            usage.live_sessions,
+            usage.live_sessions_limit.unwrap_or_default()
+        )
+    } else if near(usage.hours_used, usage.hours_limit) {
+        format!(
+            "{} of {} remote hours used. Pro allows {PRO_HOURS}.",
+            hours(usage.hours_used),
+            hours(usage.hours_limit.unwrap_or_default())
+        )
+    } else {
+        banner.visible = false;
+        banner.text
+    };
+    banner
+}
+
+/// Where a limit card can show, and what it is about (`card`). The matching
+/// usage events are `upsell_card_<reason>_<action>`.
+pub const CARD_REASONS: [&str; 5] = ["hours", "sessions", "invite", "seats", "machines"];
+
+/// What a Teams seat costs, as the card says it.
+const TEAMS_PRICE: &str = "$30 a seat a month";
+
+/// A card for the moment a limit stops the person: what happened, the one
+/// line of what the plan gives, the price, and one button to the checkout.
+/// Unlike a [`UpsellPrompt`] it answers something the person just ran into,
+/// so the 3-day gap and quiet rules do not apply; "Not now" closes it for the
+/// session. Nothing here enforces the limit: the relay and the control plane
+/// do, and the app only says so.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpsellCard {
+    /// One of [`CARD_REASONS`].
+    pub reason: String,
+    /// What happened.
+    pub title: String,
+    /// What the plan gives, one or two plain sentences.
+    pub body: String,
+    /// "$18 a month".
+    pub price: String,
+    /// The button; opens the plan's checkout.
+    pub cta: PlanLink,
+    /// "Not now".
+    pub dismiss: String,
+}
+
+/// The card for `reason` on this plan, or none when there is nothing to buy
+/// for it (a plan that already has what the card would offer).
+///
+/// * `hours`, `sessions`: the relay's allowance is used. Free leads to Pro,
+///   Pro to Teams, a team to its seats.
+/// * `invite`: sharing needs a team (`sharing_needs_team`). Free and Pro lead
+///   to Teams.
+/// * `seats`, `machines`: a team is out of seats, or of computers (one per
+///   seat). Only for someone who can add seats (the host words the error for
+///   an owner), so the shell passes them only then.
+pub fn card(reason: &str, usage: &RelayUsage, account_app: &str) -> Option<UpsellCard> {
+    let kind = plan_kind(&usage.plan);
+    let to = |label: &str, path: &str, from: &str| link(account_app, label, path, from);
+    let from = format!("app_card_{reason}");
+    let (title, body, price, cta) = match (reason, kind) {
+        ("hours", "free") => (
+            "You've used this month's remote hours".to_owned(),
+            format!(
+                "Free includes {} remote hours a month. Your Spaces keep working. Pro gives you {PRO_HOURS} hours and {PRO_SESSIONS} computers in use at once.",
+                hours(usage.hours_limit.unwrap_or(20.0)),
+            ),
+            "$18 a month".to_owned(),
+            to("Upgrade to Pro", BUY_PRO_PATH, &from),
+        ),
+        ("hours", "pro") => (
+            "You've used this month's remote hours".to_owned(),
+            "Your Spaces keep working. Teams pools remote hours across your seats.".to_owned(),
+            TEAMS_PRICE.to_owned(),
+            to("Upgrade to Teams", BUY_TEAMS_PATH, &from),
+        ),
+        ("sessions", "free") => (
+            format!(
+                "You have {} of {} computers in use at once",
+                usage.live_sessions,
+                usage.live_sessions_limit.unwrap_or(2),
+            ),
+            format!("Close one to start another, or get Pro: {PRO_SESSIONS} computers in use at once and {PRO_HOURS} remote hours a month."),
+            "$18 a month".to_owned(),
+            to("Upgrade to Pro", BUY_PRO_PATH, &from),
+        ),
+        ("sessions", "pro") => (
+            format!(
+                "You have {} of {} computers in use at once",
+                usage.live_sessions,
+                usage.live_sessions_limit.unwrap_or(PRO_SESSIONS),
+            ),
+            "Close one to start another, or move to Teams for a shared allowance across your seats.".to_owned(),
+            TEAMS_PRICE.to_owned(),
+            to("Upgrade to Teams", BUY_TEAMS_PATH, &from),
+        ),
+        ("hours" | "sessions", "teams") => (
+            "Your team has used its remote allowance".to_owned(),
+            "Your Spaces keep working. Each seat adds to the team's hours and computers in use at once.".to_owned(),
+            TEAMS_PRICE.to_owned(),
+            to("Add seats", "/billing", &from),
+        ),
+        ("invite", "free" | "pro") => (
+            "Sharing is for teams".to_owned(),
+            "Teams lets you share a Space with the people you work with, with roles and device approval.".to_owned(),
+            TEAMS_PRICE.to_owned(),
+            to("Start a team", BUY_TEAMS_PATH, &from),
+        ),
+        ("seats", "free" | "pro" | "teams") => (
+            "Your team is out of seats".to_owned(),
+            "A seat covers one person and one team computer. Add a seat to invite someone else.".to_owned(),
+            TEAMS_PRICE.to_owned(),
+            to("Add seats", "/billing", &from),
+        ),
+        ("machines", "free" | "pro" | "teams") => (
+            "Your team has used all its computers".to_owned(),
+            "A team gets one computer for each seat. Add a seat to add another computer.".to_owned(),
+            TEAMS_PRICE.to_owned(),
+            to("Add seats", "/billing", &from),
+        ),
+        _ => return None,
+    };
+    Some(UpsellCard {
+        reason: reason.into(),
+        title,
+        body,
+        price,
+        cta,
+        dismiss: "Not now".into(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_pro_line_shows_only_near_a_limit_and_says_how_close() {
+        let free = ProBannerInput {
+            plan: "free".into(),
+        };
+        let usage = |live: u32, hours_used: f64| RelayUsage {
+            plan: "free".into(),
+            live_sessions: live,
+            live_sessions_limit: Some(2),
+            hours_used,
+            hours_limit: Some(20.0),
+            ..RelayUsage::default()
+        };
+        assert!(!pro_banner_near(&free, &usage(1, 2.0)).visible);
+        let b = pro_banner_near(&free, &usage(2, 2.0));
+        assert!(b.visible);
+        assert_eq!(b.text, "2 of 2 computers in use. Pro allows 5.");
+        let h = pro_banner_near(&free, &usage(0, 16.0));
+        assert_eq!(h.text, "16 of 20 remote hours used. Pro allows 200.");
+        // Paid plans never see it.
+        assert!(!pro_banner_near(&ProBannerInput { plan: "pro".into() }, &usage(2, 20.0)).visible);
+    }
 
     const APP: &str = "https://app.cua.ai";
     const NOW: u64 = 100 * DAY_MS;
@@ -163,7 +370,7 @@ mod tests {
         let p = prompt("machine", &usage("free"), APP, &state()).unwrap();
         assert_eq!(
             p.text,
-            "Two computers now. Free includes 2 live sessions and 20 remote hours a month. Pro makes it 5 and 200, for $18 a month."
+            "Two computers now. Free includes 2 computers in use at once and 20 remote hours a month. Pro makes it 5 and 200, for $18 a month."
         );
         assert_eq!(p.cta.label, "Get Pro");
         assert_eq!(p.cta.url, "https://app.cua.ai/buy/pro?from=app_machine");
@@ -213,5 +420,85 @@ mod tests {
         };
         assert!(!allows(&closed(29)));
         assert!(allows(&closed(30)));
+    }
+
+    fn banner(plan: &str) -> ProBanner {
+        pro_banner(&ProBannerInput { plan: plan.into() })
+    }
+
+    #[test]
+    fn the_pro_banner_shows_on_free_only_and_cannot_be_closed() {
+        let b = banner("free");
+        assert!(b.visible);
+        assert_eq!(b.text, "Use more computers at once with Pro");
+        assert_eq!(b.button, "Upgrade");
+        assert!(banner("Free").visible);
+        for paid in ["pro", "team", "teams", "", "enterprise"] {
+            assert!(!banner(paid).visible, "{paid}");
+        }
+    }
+
+    #[test]
+    fn limit_cards_say_what_happened_what_the_plan_gives_and_the_price() {
+        let mut u = usage("free");
+        u.hours_used = 20.0;
+        let c = card("hours", &u, APP).unwrap();
+        assert_eq!(c.title, "You've used this month's remote hours");
+        assert_eq!(
+            c.body,
+            "Free includes 20 remote hours a month. Your Spaces keep working. Pro gives you 200 hours and 5 computers in use at once."
+        );
+        assert_eq!(c.price, "$18 a month");
+        assert_eq!(c.cta.url, "https://app.cua.ai/buy/pro?from=app_card_hours");
+        assert_eq!(c.dismiss, "Not now");
+
+        u.live_sessions = 2;
+        let s = card("sessions", &u, APP).unwrap();
+        assert_eq!(s.title, "You have 2 of 2 computers in use at once");
+        assert_eq!(s.cta.label, "Upgrade to Pro");
+
+        let t = card("invite", &u, APP).unwrap();
+        assert_eq!(t.price, "$30 a seat a month");
+        assert_eq!(
+            t.cta.url,
+            "https://app.cua.ai/buy/teams?from=app_card_invite"
+        );
+    }
+
+    #[test]
+    fn a_card_leads_each_plan_one_step_up_and_never_offers_what_it_has() {
+        let pro = card("hours", &usage("pro"), APP).unwrap();
+        assert_eq!(
+            pro.cta.url,
+            "https://app.cua.ai/buy/teams?from=app_card_hours"
+        );
+        assert!(card("invite", &usage("team"), APP).is_none());
+        assert!(card("hours", &usage("enterprise"), APP).is_none());
+        assert!(card("nonsense", &usage("free"), APP).is_none());
+        let seats = card("seats", &usage("team"), APP).unwrap();
+        assert_eq!(seats.cta.url, "https://app.cua.ai/billing");
+        assert!(card("machines", &usage("team"), APP).is_some());
+    }
+
+    #[test]
+    fn card_words_are_plain() {
+        for plan in ["free", "pro", "team"] {
+            for reason in CARD_REASONS {
+                let Some(c) = card(reason, &usage(plan), APP) else {
+                    continue;
+                };
+                let all = format!("{} {} {}", c.title, c.body, c.price).to_lowercase();
+                for bad in [
+                    "relay",
+                    "entitlement",
+                    "quota",
+                    "!",
+                    "hurry",
+                    "limited time",
+                ] {
+                    assert!(!all.contains(bad), "{reason}/{plan}: {bad}");
+                }
+            }
+        }
     }
 }

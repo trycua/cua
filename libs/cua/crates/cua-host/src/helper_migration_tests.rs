@@ -138,6 +138,9 @@ impl ServiceManager for FakeHelper {
             detail: String::new(),
         }
     }
+    fn port_free(&self, _: std::net::SocketAddr, _: crate::ports::Transport) -> bool {
+        true
+    }
 }
 
 /// A GUI session, and permissions not granted (to the new identity).

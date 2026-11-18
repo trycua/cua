@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Low-latency, stateful input delivery to one X11 target (window or display
 //! region): the Linux native session behind
 //! [`cua_driver_core::interactive_input`].

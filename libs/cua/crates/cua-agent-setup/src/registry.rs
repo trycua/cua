@@ -681,6 +681,32 @@ pub static AGENTS: &[AgentSpec] = &[
         unverified: "named profiles (`hermes profile use`) are not configured, only HERMES_HOME or the default home; HERMES_DATA_DIR_SUFFIX is ignored",
         login: None,
     },
+    // T3 Code (pingdotgg/t3code): a desktop and web app that drives the
+    // agents already on this computer. It runs Codex's app-server with
+    // Codex's home, so Cua's tools reach it through Codex's config.toml;
+    // it has no MCP config or sign-in of its own (README and
+    // `apps/server/src/provider/CodexManagedRuntime.ts`, v0.1.2, checked
+    // 2026-10-24). State in `~/.t3` (`T3CODE_HOME`).
+    AgentSpec {
+        id: "t3code",
+        name: "T3 Code",
+        aliases: &["t3", "t3-code"],
+        bins: &["t3"],
+        markers: &[Loc::home(".t3").env("T3CODE_HOME", "")],
+        apps: &["T3 Code.app", "T3 Code (Beta).app"],
+        skills: Some(AGENTS_SKILLS),
+        also_reads: &[],
+        mcp: Some(McpSpec {
+            file: Loc::home(".codex/config.toml").env("CODEX_HOME", "config.toml"),
+            alt_files: &[],
+            format: Format::Toml,
+            key_path: &["mcp_servers"],
+            shape: Shape::Plain,
+            owner_cli: None,
+        }),
+        unverified: "that T3 Code's Codex sessions load ~/.codex/config.toml's MCP servers; the app bundle name",
+        login: None,
+    },
 ];
 
 /// The agent with id or alias `id`.

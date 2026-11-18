@@ -147,6 +147,12 @@ async fn the_bridge_answers_as_the_agent_and_only_with_its_rights() {
         "space_bash",
         json!({"space": space_id, "command": "id"}),
     ));
+    // Opening an app is for the agent's own children: its own Space is refused, in plain words.
+    requests.push_str(&call(
+        9,
+        "launch_space_app",
+        json!({"space": space_id, "app": "Firefox"}),
+    ));
     // Half a line: not answered until its newline arrives.
     requests.push_str("{\"jsonrpc\":\"2.0\",\"id\":8,");
     srv.state.put_file(&pipe_in, requests.into_bytes());
@@ -155,8 +161,17 @@ async fn the_bridge_answers_as_the_agent_and_only_with_its_rights() {
     let n = bridge::pump(&guest, RUN_DIR, &mut state, &server)
         .await
         .unwrap();
-    assert_eq!(n, 7, "seven complete requests");
-    let lines = answers(&srv, &pipe_out, 7).await;
+    assert_eq!(n, 8, "eight complete requests");
+    let lines = answers(&srv, &pipe_out, 8).await;
+    let refused = by_id(&lines, 9);
+    assert_eq!(refused["result"]["isError"], true, "{refused}");
+    assert!(
+        refused["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("not a child Space of yours"),
+        "{refused}"
+    );
 
     let init = by_id(&lines, 1);
     assert_eq!(init["result"]["serverInfo"]["name"], "cua-agent");
@@ -174,6 +189,14 @@ async fn the_bridge_answers_as_the_agent_and_only_with_its_rights() {
         .collect();
     assert!(names.contains(&"notify_user".to_string()), "{names:?}");
     assert!(names.contains(&"volume_write".to_string()), "{names:?}");
+    // Showing a child's window is a host tool: a home whose image carries an older `cua` has it too.
+    for t in [
+        "stream_space_window",
+        "list_space_windows",
+        "launch_space_app",
+    ] {
+        assert!(names.contains(&t.to_string()), "{t} in {names:?}");
+    }
     assert!(
         !names
             .iter()
@@ -232,7 +255,7 @@ async fn the_bridge_answers_as_the_agent_and_only_with_its_rights() {
             .unwrap(),
         1
     );
-    let lines = answers(&srv, &pipe_out, 8).await;
+    let lines = answers(&srv, &pipe_out, 9).await;
     assert_eq!(by_id(&lines, 8)["result"], json!({}));
 
     // Refusals are in the computer-access audit, attributed to the agent.

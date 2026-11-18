@@ -1,0 +1,91 @@
+---
+title: Write an external runtime provider
+description: Add a local runtime to cua without changing cua itself, a program that starts, stops and lists Spaces through a small JSON protocol.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+An external runtime provider is a program, installed separately from cua,
+that adds a local runtime. Once it is installed, its Spaces work like the
+built-in ones (Lume, QEMU, gVisor, Firecracker, Apple's Containerization):
+`cua sb create --runtime <name>`, `cua sb ls` and `cua sb rm`, the SDK, the
+MCP tools, the Spaces app's New Space window, `cua runtime doctor` and
+placement on your machines (`--on auto`).
+
+The provider only manages the lifecycle of its instances. Everything inside a
+Space (the desktop, computer use, streaming, teleport, MCP servers) goes
+through cua-spacesd running in the guest, so a provider's images carry
+cua-spacesd like the other Spaces images, and the provider publishes its
+port.
+
+With no provider installed, nothing changes.
+
+## Install and discovery
+
+A provider is an executable named `cua-runtime-<name>`. cua looks for it in
+`$CUA_HOME/runtime-providers/` (by default `~/.cua/runtime-providers/`),
+then in each `PATH` directory; the first one found for a name wins.
+`~/.cua/runtimes/` holds the runtimes cua installs itself and is not searched.
+
+- `<name>` is the runtime word people type. It matches
+  `[a-z0-9][a-z0-9-]{0,31}`.
+- A built-in runtime, kind or location word (`lume`, `qemu`, `vm`,
+  `container`, `local`, ...) cannot be taken: the built-in wins and
+  `cua runtime doctor` lists the executable as ignored.
+- cua reads the provider's `info` once per process and checks again when a
+  searched directory or the executable changes, so a provider installed
+  while the Spaces app or `cua daemon` runs shows up without a restart.
+
+```bash test="cli-shape" id="cua-external-runtime"
+cua runtime doctor                                    # one row per provider
+cua sb create registry.example/acme/macos:15 --runtime acme --name mac
+cua sb ls
+cua sb rm mac
+```
+
+The provider's runtime runs Spaces of the kind it presents as (`vm`,
+`container` or `microvm`). It is never chosen by `auto`: a Space runs on it
+only when `--runtime <name>` asks for it.
+
+## Calling convention
+
+cua runs `cua-runtime-<name> <verb>` once per call:
+
+- the request is JSON on stdin (`{}` when the verb takes nothing);
+- the response is JSON on stdout, and the exit code is 0;
+- the environment carries `CUA_RUNTIME_PROTOCOL=1`;
+- stderr is free-form log text. cua logs it at debug level and puts its last
+  lines in error messages;
+- every call has a timeout: `start` gets the request's `ready_timeout_secs`
+  plus 60 seconds, `info` 10 seconds, the others 60 seconds. When it expires,
+  or the caller goes away, cua kills the process.
+
+A failed call exits non-zero and prints an error object on stdout:
+
+```json skip="pseudo"
+{"error": {"kind": "not_found", "message": "no instance named mac"}}
+```
+
+| `kind` | Meaning |
+| --- | --- |
+| `not_found` | No such instance. `cua sb ls` shows the Space as missing. |
+| `unsupported` | The provider cannot do this. |
+| `invalid` | The request does not fit this runtime (an image or size it cannot run). |
+| `unavailable` | The provider cannot work right now (a service it needs is down). |
+| `other` | Anything else. |
+
+## Verbs, manifest and start
+
+The verbs, the `info` manifest and the `start` request and response are in
+[External runtime protocol](/cua-sdk/guides/external-runtime-protocol).
+
+## On all your machines
+
+A machine with a provider installed advertises its runtime word and kind, so
+a Space or a job (`--on auto`) that asks for that runtime is placed on a
+machine that has the provider.
+
+<Callout type="info">
+  Test a provider without cua: run `echo '{}' | CUA_RUNTIME_PROTOCOL=1
+  cua-runtime-acme info` and check that each verb answers the JSON above.
+</Callout>

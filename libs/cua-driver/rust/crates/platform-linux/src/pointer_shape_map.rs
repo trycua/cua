@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Pure mapping tables for the Linux pointer-shape backend
 //! ([`cua_driver_core::pointer_shape`]): AT-SPI roles and X cursor names to
 //! [`SystemCursorShape`]. No OS calls, so the tables compile and are tested

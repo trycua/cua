@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Firefox's profile data as Keyvault items, from the profile's own files
-//! (formats in `~/projects/.cua-work/keyvault-v2/browser-formats.md`):
+//! Firefox's profile data as Keyvault items, from the profile's own files:
 //!
 //! * profile discovery: `profiles.ini` and `installs.ini`;
 //! * cookies: `cookies.sqlite` (`moz_cookies`, schema 16), plaintext values;
@@ -134,7 +133,7 @@ fn private_copy(src: &Path) -> Result<Copy, TeleportError> {
         .map_err(perr)?;
     let name = src.file_name().ok_or_else(|| perr("a database path"))?;
     let db = dir.path().join(name);
-    std::fs::copy(src, &db).map_err(|e| perr(format!("copying {}: {e}", src.display())))?;
+    crate::plain_copy::copy_named("a Firefox database", src, &db)?;
     for suffix in ["-wal", "-shm"] {
         let mut side = src.as_os_str().to_owned();
         side.push(suffix);
@@ -142,7 +141,7 @@ fn private_copy(src: &Path) -> Result<Copy, TeleportError> {
         if side.is_file() {
             let mut to = db.as_os_str().to_owned();
             to.push(suffix);
-            let _ = std::fs::copy(&side, PathBuf::from(to));
+            let _ = crate::plain_copy::copy_data_only(&side, Path::new(&to));
         }
     }
     Ok(Copy { _dir: dir, db })

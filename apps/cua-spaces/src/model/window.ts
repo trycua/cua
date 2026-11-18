@@ -11,7 +11,7 @@ import { core } from "../core";
 import type { Msg } from "../i18n";
 import type { DriveSyncInput } from "./persistent";
 import type { RemoteWindow } from "./teleport";
-import type { Location, Space, SpaceOs, SpaceStatus } from "./types";
+import type { Space, SpaceOs, SpaceStatus } from "./types";
 
 export interface SidebarRow {
   id: string;
@@ -118,9 +118,6 @@ export interface SpaceDetailView {
     cancelLabel: string;
   };
   sections: string[];
-  /** A cloud Space refused for want of credit: one line and "Add credit"
-   * (the website billing page). */
-  creditNotice?: { text: string; button: string; url: string } | null;
   /** Why turning it off or on failed, shown inline. */
   powerError?: string | null;
 }
@@ -140,19 +137,12 @@ export const USAGE_REFRESH_MS = 10_000;
 
 /** The selected Space's detail (`spaces::sidebar::detail_live`). */
 /** `hostArch`: this Mac's CPU architecture; a local Space of another one
- * warns on its Architecture (emulated). With `experiments`, what Settings,
- * Experiments hides is left out (Share while Sharing is off). */
-export function spaceDetail(
-  space: Space,
-  usage?: SpaceUsage | null,
-  hostArch?: string | null,
-  experiments?: import("./experiments").Experiments | null,
-): SpaceDetailView {
+ * warns on its Architecture (emulated). */
+export function spaceDetail(space: Space, usage?: SpaceUsage | null, hostArch?: string | null): SpaceDetailView {
   return core("sidebar.detail", {
     space,
     usage: usage ?? null,
     hostArch: hostArch ?? null,
-    experiments: experiments ?? null,
   });
 }
 
@@ -169,20 +159,21 @@ export interface StreamSectionInput {
   query?: string;
 }
 
-export type StreamRowIcon =
-  | { kind: "os"; id: string }
-  | { kind: "app"; appName: string; appId: string; pid: number };
+export type StreamRowIcon = { kind: "os"; id: string } | { kind: "app"; appName: string; appId: string; pid: number };
 
 export interface StreamRow {
   /** "desktop" or the window's handle. */
   id: string;
   kind: "desktop" | "window";
-  /** One line: "Desktop (1280×800)" or the window's title. */
+  /** One line: "Desktop" or the window's title. */
   label: string;
   /** The full label, for the tooltip. */
   help: string;
+  /** The Desktop row's display resolution ("1280×800"), its quiet right-hand detail. */
   resolution: string | null;
   icon: StreamRowIcon;
+  /** A window another Space shows here: where it lives (its OS mark and name). */
+  origin?: { spaceId: string; name: string; osIcon: string };
   actions: { id: "pip"; symbol: string; help: string; active: boolean }[];
 }
 
@@ -245,8 +236,7 @@ export const deleteFailedText = (name: string, error: string): string =>
   core("sidebar.deleteFailedText", { name, error });
 
 /** The power button of a Space, when it turns off and on. */
-export const powerButton = (space: Space): PowerButton | null =>
-  core("sidebar.powerButton", { space });
+export const powerButton = (space: Space): PowerButton | null => core("sidebar.powerButton", { space });
 
 export interface MainChrome {
   title: string;
@@ -302,14 +292,10 @@ export interface SettingsInput {
   signIn: SignInPhase;
   canSignOut: boolean;
   menuBar: boolean;
-  defaultLocation: Location;
-  locationLockedBy?: string | null;
   telemetry?: { enabled: boolean; lockedBy?: string | null } | null;
   agents?: AgentSettingsRow[] | null;
   agentsBusy: boolean;
   agentsPending: string[];
-  /** The account's Cua Cloud billing (Settings, Billing), once read. */
-  billing?: import("../native/fleet").BillingStatus | null;
   /** Launch at login, once the system was asked (none: no rows). */
   loginItem?: import("./loginItem").LoginItemInput | null;
   /** Settings, Experiments (what the page mentions follows them). */
@@ -388,4 +374,10 @@ export function trayMenu(input: MenuInput): MenuItem[] {
  * counts only while it is shared and reachable (the notch tab's count). */
 export function openableCount(spaces: readonly Space[]): number {
   return core("spaces.openableCount", { spaces });
+}
+
+/** The Spaces on or starting (the notch tab's and the menu bar item's
+ * count): never a stopped Space or This machine. */
+export function onCount(spaces: readonly Space[]): number {
+  return core("spaces.onCount", { spaces });
 }

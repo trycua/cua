@@ -233,6 +233,17 @@ impl<'a> Ctx<'a> {
 
     /// The `browser_prepare` call that attaches the user's own browser. It
     /// refuses with nothing changed when it cannot attach.
+    /// The `browser_prepare` call a browser refusal names in
+    /// `detail.next_call`, kept with its exact arguments.
+    fn named_prepare_call(&self) -> Option<NextCall> {
+        let call = self.refusal_detail()?.get("next_call")?;
+        let arguments = call.get("arguments")?.as_object()?.clone();
+        (call.get("tool")?.as_str()? == "browser_prepare").then_some(NextCall {
+            tool: "browser_prepare",
+            arguments,
+        })
+    }
+
     fn attach_browser(&self) -> Option<NextCall> {
         let mut arguments = self.window_args()?;
         arguments.insert("strategy".into(), json!({ "kind": "existing_profile" }));
@@ -310,7 +321,7 @@ static RULES: &[Rule] = &[
         },
     },
     Rule {
-        codes: &["target_changed", "stale_target", "stale_geometry"],
+        codes: &["target_changed", "stale_target", "stale_observation"],
         build: |c| {
             RecoveryHint::new(
                 "The window changed since your last read, so nothing was sent. Read it again and aim from \
@@ -434,6 +445,15 @@ static RULES: &[Rule] = &[
         },
     },
     Rule {
+        codes: &[crate::security_prompt::SECURITY_PROMPT_PROTECTED],
+        build: |_| {
+            RecoveryHint::new(
+                "That is a system security or consent prompt, and answering it is the user's call. Do \
+                 not click, type into or work around it: tell the user what it asks and wait.",
+            )
+        },
+    },
+    Rule {
         codes: &["os_permission_prompt_requires_trusted_host"],
         build: |_| {
             RecoveryHint::new(
@@ -470,6 +490,15 @@ static RULES: &[Rule] = &[
                 tool: "start_session",
                 arguments,
             }))
+        },
+    },
+    Rule {
+        codes: &["session_owned_by_other_transport"],
+        build: |_| {
+            RecoveryHint::new(
+                "That session is live on another connection, so it has not ended and start_session with \
+                 its label is refused too. Make the call from that connection, or use a new session label.",
+            )
         },
     },
     Rule {
@@ -613,6 +642,83 @@ static RULES: &[Rule] = &[
             )
         },
     },
+    // Controls and targets that cannot take the action.
+    Rule {
+        codes: &["element_disabled"],
+        build: |c| {
+            if c.recommended() == Some("foreground") {
+                return RecoveryHint::new(format!(
+                    "The app disables this control while it is behind the user's window. Use the same \
+                     control by element_token or invoke_menu. bring_to_front first {FOREGROUND_CONDITION}."
+                ))
+                .call(c.read_window());
+            }
+            RecoveryHint::new(
+                "The app disables this control for now, so nothing was sent. Read the window: it usually \
+                 enables after you select a row or fill a required field. Do that first, or use a menu \
+                 item or shortcut for the same action.",
+            )
+            .call(c.read_window())
+        },
+    },
+    Rule {
+        codes: &["invalid_element_token"],
+        build: |c| {
+            RecoveryHint::new(
+                "Use element_token exactly as <snapshot_id>:<row> from the latest read of this window. \
+                 Read it again to get current tokens.",
+            )
+            .call(c.read_window())
+        },
+    },
+    Rule {
+        codes: &[
+            "window_target_mismatch",
+            "window_owner_pid_mismatch",
+            "window_scope_unproven",
+            "surface_identity_unproven",
+            "bring_to_front_window_not_found",
+            "bring_to_front_window_pid_mismatch",
+            "bring_to_front_window_id_out_of_range",
+            "bring_to_front_pid_out_of_range",
+        ],
+        build: |c| {
+            RecoveryHint::new(
+                "That window could not be matched to the app. List the app's windows and use a current \
+                 pid and window_id.",
+            )
+            .call(c.list_windows())
+        },
+    },
+    Rule {
+        codes: &["input_delivery_unavailable"],
+        build: |_| {
+            RecoveryHint::new(
+                "This window cannot take typed text reliably, so nothing was sent. Run the command in a \
+                 process or terminal session instead, or open a terminal app whose input can be read back.",
+            )
+        },
+    },
+    Rule {
+        codes: &["modified_pointer_unavailable"],
+        build: |c| {
+            RecoveryHint::new(
+                "This pointer route cannot hold Shift, Ctrl or Alt during a drag. Drag without the \
+                 modifier, or use the app's own menu item or keyboard shortcut for the same action.",
+            )
+            .call(c.read_window())
+        },
+    },
+    Rule {
+        codes: &["ax_timeout"],
+        build: |c| {
+            RecoveryHint::new(
+                "The app did not answer in time, so the effect is unknown. Read what changed before \
+                 repeating, then retry once or aim by pixel x,y from a fresh screenshot.",
+            )
+            .call(c.read_changes())
+        },
+    },
     // Browser tools.
     Rule {
         codes: &["browser_consent_required"],
@@ -621,12 +727,20 @@ static RULES: &[Rule] = &[
     Rule {
         codes: &["browser_requires_setup"],
         build: |c| {
-            RecoveryHint::new(
+            match c.named_prepare_call() {
+            Some(named) => RecoveryHint::new(
+                "No browser endpoint is attached to this window yet. Make the browser_prepare call in \
+                 next_call; it attaches, or refuses with nothing changed and says why. Do not switch \
+                 to desktop pointer tools.",
+            )
+            .call(Some(named)),
+            None => RecoveryHint::new(
                 "No browser endpoint is attached to this window yet. Call browser_prepare with this pid \
                  and window_id; it attaches, or refuses with nothing changed and says why. Do not switch \
                  to desktop pointer tools.",
             )
-            .call(c.attach_browser())
+            .call(c.attach_browser()),
+        }
         },
     },
     Rule {
@@ -773,8 +887,8 @@ fn background_unavailable(c: &Ctx) -> RecoveryHint {
         )
         .call(c.look_at_window()),
         (_, Some("drag_and_drop_session")) => RecoveryHint::new(format!(
-            "No drop landed: macOS drag-and-drop needs the real pointer. Try a route that is not a drag \
-             first (Move button, menu item, shortcut). {foreground}"
+            "No drop landed: the drag-and-drop session did not end at the drop point. Try a route that \
+             is not a drag first (Move button, menu item, shortcut). {foreground}"
         ))
         .call(c.read_window()),
         (_, Some("electron_main_process_unavailable")) => RecoveryHint::new(format!(
@@ -791,6 +905,21 @@ fn background_unavailable(c: &Ctx) -> RecoveryHint {
             "The daemon has no valid WindowServer connection. Run the app-bundle daemon (not a bare \
              `cua-driver serve`) and retry.",
         ),
+        ("scroll", Some(reason)) if reason.contains("Electron") => RecoveryHint::new(format!(
+            "Electron windows drop background scrolling. Query get_window_state for the item and act by \
+             element_token, or enlarge the window with set_window_frame. {foreground}"
+        ))
+        .call(c.read_window()),
+        ("type_text", Some(reason)) if reason.contains("Electron") => RecoveryHint::new(format!(
+            "Electron windows drop background typing into web fields. Write the field with \
+             set_value(element_token, text), or type_text with the field's x,y. {foreground}"
+        ))
+        .call(c.read_window()),
+        (_, Some(reason)) if reason.contains("Electron") => RecoveryHint::new(format!(
+            "Electron windows drop background keystrokes. Act by element_token, write fields with \
+             set_value, and run menu commands with invoke_menu. {foreground}"
+        ))
+        .call(c.read_window()),
         ("invoke_menu", _) => RecoveryHint::new(format!(
             "macOS keeps this menu item disabled while its window is behind the user's window. Use the \
              same control in the window (get_window_state, then click by element_token). bring_to_front \
@@ -825,6 +954,18 @@ fn background_unavailable(c: &Ctx) -> RecoveryHint {
 }
 
 fn browser_consent_required(c: &Ctx) -> RecoveryHint {
+    let reason = c
+        .refusal_detail()
+        .and_then(|detail| detail.get("reason"))
+        .and_then(Value::as_str);
+    if c.tool == "browser_prepare" && reason == Some("browser_consent_unanswered") {
+        return RecoveryHint::new(
+            "Nobody answered the browser's \"Allow remote debugging?\" prompt in time, so the driver \
+             closed it. Ask the user to click Allow, then retry browser_prepare once. Meanwhile read \
+             the page with get_window_state.",
+        )
+        .call(c.attach_browser());
+    }
     if c.tool == "browser_prepare" {
         return RecoveryHint::new(
             "Attaching to this browser needs authorization from the user or the host. Retrying will not \
@@ -833,17 +974,7 @@ fn browser_consent_required(c: &Ctx) -> RecoveryHint {
         )
         .call(c.read_window());
     }
-    // A producer that already names the attach call keeps its exact arguments.
-    let named = c
-        .refusal_detail()
-        .and_then(|detail| detail.get("next_call"))
-        .and_then(|call| {
-            let arguments = call.get("arguments")?.as_object()?.clone();
-            (call.get("tool")?.as_str()? == "browser_prepare").then_some(NextCall {
-                tool: "browser_prepare",
-                arguments,
-            })
-        });
+    let named = c.named_prepare_call();
     RecoveryHint::new(
         "Attach to this browser window first: make the browser_prepare call in next_call. It attaches, \
          or refuses with nothing changed and says why. Do not switch to desktop pointer tools; they move \
@@ -1056,6 +1187,38 @@ pub fn annotate(tool: &str, seed: &Seed, result: &mut ToolResult) {
         structured
             .entry("next_call")
             .or_insert_with(|| call.to_value());
+    }
+    let refused = is_error
+        || structured.get("effect").and_then(Value::as_str) == Some("refused")
+        || structured.get("status").and_then(Value::as_str) == Some("refused");
+    let hint = structured
+        .get("hint")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    if let (true, Some(hint)) = (refused, hint) {
+        append_next_line(result, &hint);
+    }
+}
+
+/// Many clients show an agent only the text of a result, not its structured
+/// fields. Put the hint on a new last line of the refusal text so it is read.
+/// The first line stays the refusal itself; a text that already says it is
+/// left alone.
+fn append_next_line(result: &mut ToolResult, hint: &str) {
+    if result
+        .content
+        .iter()
+        .any(|content| matches!(content, Content::Text { text, .. } if text.contains(hint)))
+    {
+        return;
+    }
+    if let Some(Content::Text { text, .. }) = result
+        .content
+        .iter_mut()
+        .find(|content| matches!(content, Content::Text { .. }))
+    {
+        text.push_str("\nNext: ");
+        text.push_str(hint);
     }
 }
 

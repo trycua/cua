@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Transport selection for window-addressed pixel clicks (`click`,
 //! `double_click`, `right_click`) on macOS.
 //!
@@ -27,9 +30,23 @@ pub(crate) enum PixelClickRoute {
     /// Background delivery routed to the target pid. The hardware pointer is
     /// never moved, so the result stays "not driver-verified".
     BackgroundPid,
+    /// Background left click on a GTK 3 (Quartz) app: hold the app
+    /// AppKit-active with the activation event, then post NSEvent-built
+    /// mouse events to the pid. The pointer is never moved and the app is
+    /// never raised (`input::appkit_activation`).
+    BackgroundAppKitActivated,
     /// Background delivery refused: the target's toolkit reads the hardware
     /// pointer, so a PID-routed event would land wherever the pointer is.
     RefuseBackground(PointerReadingToolkit),
+}
+
+/// What kind of pointer event a route is resolved for. Only a plain left
+/// click has an AppKit-activated route; GDK activates itself on any other
+/// press, so those keep the refusal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PointerGesture {
+    LeftClick,
+    Other,
 }
 
 /// Pure route decision. `effective_foreground` is the requested foreground
@@ -39,11 +56,17 @@ pub(crate) fn pixel_click_route(
     effective_foreground: bool,
     has_window: bool,
     toolkit: Option<PointerReadingToolkit>,
+    gesture: PointerGesture,
 ) -> PixelClickRoute {
     if effective_foreground && has_window {
         return PixelClickRoute::ForegroundHid;
     }
     match toolkit {
+        Some(PointerReadingToolkit::GdkQuartz)
+            if has_window && gesture == PointerGesture::LeftClick =>
+        {
+            PixelClickRoute::BackgroundAppKitActivated
+        }
         Some(toolkit) if has_window => PixelClickRoute::RefuseBackground(toolkit),
         _ => PixelClickRoute::BackgroundPid,
     }
@@ -57,6 +80,7 @@ pub(crate) async fn resolve(
     effective_foreground: bool,
     window_id: Option<u32>,
     event_kind: &str,
+    gesture: PointerGesture,
 ) -> Result<PixelClickRoute, ToolResult> {
     let has_window = window_id.is_some();
     let toolkit = if !effective_foreground && has_window {
@@ -67,7 +91,7 @@ pub(crate) async fn resolve(
     } else {
         None
     };
-    match pixel_click_route(effective_foreground, has_window, toolkit) {
+    match pixel_click_route(effective_foreground, has_window, toolkit, gesture) {
         PixelClickRoute::RefuseBackground(toolkit) => {
             Err(pointer_reading_background_refusal(pid, toolkit, event_kind))
         }
@@ -98,6 +122,10 @@ pub(crate) fn pointer_reading_background_refusal(
                 "the target toolkit ignores background PID-routed mouse events; retry with \
                  delivery_mode:\"foreground\"."
             }
+            PointerReadingToolkit::GdkQuartz => {
+                "the target toolkit activates its app on a background press other than a left \
+                 click; use a left click, keys, or retry with delivery_mode:\"foreground\"."
+            }
         },
         serde_json::json!({
             "event_kind": event_kind,
@@ -114,6 +142,13 @@ pub(crate) fn delivery_note(route: PixelClickRoute) -> &'static str {
             "foreground: exact window activated, hardware pointer moved to the target, \
              HID event tap; not driver-verified — confirm via screenshot"
         }
+        PixelClickRoute::BackgroundAppKitActivated => {
+            "background: the app was told it is active through the AppKit activation event \
+             (not raised; the user's window keeps focus) and the click was posted to the pid as \
+             NSEvent-built mouse events; the first click after activation can only make its \
+             window key, and GTK may show the effect only after the next input; not \
+             driver-verified — confirm via screenshot"
+        }
         _ => {
             "background CGEvent routed to the pid; the hardware pointer was not moved, \
              so apps that read the pointer position may not receive it at the target; \
@@ -129,6 +164,7 @@ pub(crate) fn delivery_note(route: PixelClickRoute) -> &'static str {
 pub(crate) fn path_label(route: PixelClickRoute) -> &'static str {
     match route {
         PixelClickRoute::ForegroundHid => "cgevent_fg",
+        PixelClickRoute::BackgroundAppKitActivated => "appkit_activated",
         _ => "cgevent",
     }
 }
@@ -155,29 +191,29 @@ mod tests {
     fn pixel_click_route_moves_pointer_only_for_foreground_and_refuses_tk_background() {
         let tk = Some(PointerReadingToolkit::Tk);
         assert_eq!(
-            pixel_click_route(true, true, None),
+            pixel_click_route(true, true, None, PointerGesture::LeftClick),
             PixelClickRoute::ForegroundHid
         );
         assert_eq!(
-            pixel_click_route(true, true, tk),
+            pixel_click_route(true, true, tk, PointerGesture::LeftClick),
             PixelClickRoute::ForegroundHid,
             "foreground delivery moves the pointer, so Tk is supported"
         );
         assert_eq!(
-            pixel_click_route(false, true, None),
+            pixel_click_route(false, true, None, PointerGesture::LeftClick),
             PixelClickRoute::BackgroundPid
         );
         assert_eq!(
-            pixel_click_route(false, true, tk),
+            pixel_click_route(false, true, tk, PointerGesture::LeftClick),
             PixelClickRoute::RefuseBackground(PointerReadingToolkit::Tk)
         );
         assert_eq!(
-            pixel_click_route(false, false, tk),
+            pixel_click_route(false, false, tk, PointerGesture::LeftClick),
             PixelClickRoute::BackgroundPid,
             "legacy window-less pid clicks keep their established route"
         );
         assert_eq!(
-            pixel_click_route(true, false, None),
+            pixel_click_route(true, false, None, PointerGesture::LeftClick),
             PixelClickRoute::BackgroundPid,
             "foreground without an exact window cannot use the unaddressed HID tap"
         );
@@ -207,7 +243,12 @@ mod tests {
     #[test]
     fn libreoffice_background_clicks_are_refused_with_the_foreground_route() {
         assert_eq!(
-            pixel_click_route(false, true, Some(PointerReadingToolkit::Vcl)),
+            pixel_click_route(
+                false,
+                true,
+                Some(PointerReadingToolkit::Vcl),
+                PointerGesture::LeftClick
+            ),
             PixelClickRoute::RefuseBackground(PointerReadingToolkit::Vcl)
         );
         let result =
@@ -216,6 +257,37 @@ mod tests {
         assert_eq!(structured["code"], "background_unavailable");
         assert_eq!(structured["toolkit"], "libreoffice-vcl");
         assert_eq!(structured["escalation"]["recommended"], "foreground");
+    }
+
+    #[test]
+    fn gtk_left_clicks_take_the_activation_route_and_other_presses_refuse() {
+        let gdk = Some(PointerReadingToolkit::GdkQuartz);
+        assert_eq!(
+            pixel_click_route(false, true, gdk, PointerGesture::LeftClick),
+            PixelClickRoute::BackgroundAppKitActivated
+        );
+        assert_eq!(
+            pixel_click_route(false, true, gdk, PointerGesture::Other),
+            PixelClickRoute::RefuseBackground(PointerReadingToolkit::GdkQuartz)
+        );
+        assert_eq!(
+            pixel_click_route(true, true, gdk, PointerGesture::LeftClick),
+            PixelClickRoute::ForegroundHid
+        );
+        assert_eq!(
+            pixel_click_route(
+                false,
+                true,
+                Some(PointerReadingToolkit::Vcl),
+                PointerGesture::LeftClick
+            ),
+            PixelClickRoute::RefuseBackground(PointerReadingToolkit::Vcl),
+            "only GDK has an activation route"
+        );
+        assert_eq!(
+            path_label(PixelClickRoute::BackgroundAppKitActivated),
+            "appkit_activated"
+        );
     }
 
     #[test]

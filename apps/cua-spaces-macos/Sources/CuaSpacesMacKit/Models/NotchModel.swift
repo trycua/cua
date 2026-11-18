@@ -67,10 +67,30 @@ public final class NotchModel {
         for effect in t.effects { run(effect, draggedWindow: draggedWindow) }
     }
 
+    /// A hotspot started by hand is running (what `setActivity(hotspot:)`
+    /// last said). The indicator shows it, and also while a Space exits
+    /// through this machine (`setExits`).
+    @ObservationIgnored public private(set) var manualHotspot = false
+    /// The Spaces whose "Exit through" is this machine, sorted.
+    @ObservationIgnored public private(set) var exitSpaces: [String] = []
+
     /// The hotspot or a transfer changed (the indicator left of the notch).
+    /// `hotspot` is a hotspot started by hand; Spaces exiting through this
+    /// machine keep the indicator on as well.
     public func setActivity(hotspot: Bool, transfer: AppNotchTransfer?) {
-        guard hotspot != state.hotspot || transfer != state.transfer else { return }
-        send(.activity(hotspot: hotspot, transfer: transfer))
+        manualHotspot = hotspot
+        let shown = hotspot || !exitSpaces.isEmpty
+        guard shown != state.hotspot || transfer != state.transfer else { return }
+        send(.activity(hotspot: shown, transfer: transfer))
+    }
+
+    /// The Spaces that exit through this machine changed: the hotspot
+    /// indicator is on while there are any, as the Electron notch's is.
+    public func setExits(_ ids: [String]) {
+        let next = Array(Set(ids)).sorted()
+        guard next != exitSpaces else { return }
+        exitSpaces = next
+        setActivity(hotspot: manualHotspot, transfer: state.transfer)
     }
 
     /// Keyvault sign-ins went live in a Space, changed, or stopped (the
@@ -79,6 +99,13 @@ public final class NotchModel {
     public func setKeyvault(label: String?, signedIn: [String] = []) {
         guard label != state.keyvault || signedIn != state.signedIn else { return }
         send(.keyvault(label: label, signedIn: signedIn))
+    }
+
+    /// The pinned Spaces and desktops changed (Pin to notch, Unpin from
+    /// notch, or the settings read at start): their ids in pin order.
+    public func setPinned(_ ids: [String]) {
+        guard ids != state.pinned else { return }
+        send(.pinned(ids: ids))
     }
 
     /// The header's search text.

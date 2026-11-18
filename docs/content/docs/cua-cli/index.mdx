@@ -27,14 +27,15 @@ flags: [Install Cua Spaces](/spaces/guides/install).
 | Group | Alias | Purpose |
 |-------|-------|---------|
 | `cua auth` | | Sign in, session ([Authentication](/cua-cli/guides/authentication)). |
-| `cua agents` | | Install cua skills and the cua MCP server into AI coding agents. |
+| `cua connect` | `agents` | Install cua skills and the cua MCP server into AI coding agents ([Connect your agent](/spaces/guides/connect-your-agent)). |
+| `cua agent` | | Agents in a Space: add, send, run, schedule ([Agents in a Space](/spaces/guides/agents-in-a-space)). |
 | `cua sandbox` | `sb` | Create, list and operate sandboxes; `--on local\|aws\|gcp\|modal\|direct:<addr>`, `--kind`, `--runtime`. |
 | `cua config` | | User defaults: where sandboxes run (`default.on`), the default kind and runtime. |
 | `cua do` | | One computer action (click, type, screenshot, ...) against the selected sandbox. |
 | `cua mcp` | `serve-mcp` | Stdio MCP server ([MCP server](/cua-cli/guides/mcp-server)). |
 | `cua daemon` | | Shared background runtime; `cua daemon mcp`. |
 | `cua spaces` | | Registered Spaces and your relay machines ([Cua Spaces](/spaces)). |
-| `cua cloud` | | Your own AWS, Google Cloud or Modal account as a location ([Choose where sandboxes run](/cua-sdk/guides/local-runtimes#your-own-cloud)). |
+| `cua cloud` | | Your own AWS, Google Cloud, Hetzner or Modal account as a location ([Choose where sandboxes run](/cua-sdk/guides/your-cloud)). |
 | `cua host` | | [Unattended access](/spaces/guides/add-a-computer#add-a-computer-from-a-terminal) to this machine. |
 | `cua teleport` | | [Move an app session](/spaces/guides/teleport-an-app) into a sandbox. |
 | `cua image` | `img` | Local OCI images. |

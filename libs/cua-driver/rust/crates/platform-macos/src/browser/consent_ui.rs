@@ -1,9 +1,12 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Exact macOS handling for Chrome's browser-owned remote-debugging consent.
 
 use std::time::{Duration, Instant};
 use std::{collections::HashSet, iter};
 
-use core_foundation::base::{CFRelease, CFTypeRef};
+use core_foundation::base::{CFEqual, CFRelease, CFTypeRef};
 use cua_driver_core::browser::{
     BrowserConsentOutcome, BrowserConsentRequest, BrowserRefusal, BrowserRefusalCode,
 };
@@ -12,10 +15,6 @@ use crate::ax::bindings::{kAXErrorSuccess, perform_action, AXUIElementRef};
 use crate::ax::tree::{walk_native_chrome_bounded, AXNode, TreeWalkResult};
 
 const CONSENT_MAX_ELEMENTS: usize = 5_000;
-
-fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
-    BrowserRefusal::new(code, message)
-}
 
 fn normalized_text(node: &AXNode) -> String {
     let mut parts = Vec::new();
@@ -36,12 +35,42 @@ fn normalized_text(node: &AXNode) -> String {
     parts.join(" ")
 }
 
+/// Collapse references to the same accessibility element. One sheet is
+/// reachable both as its own prompt window and as a child of its parent
+/// browser window; each walk hands back a distinct reference to it.
+fn distinct_elements(mut elements: Vec<usize>) -> Vec<usize> {
+    elements.sort_unstable();
+    elements.dedup();
+    let mut distinct: Vec<usize> = Vec::with_capacity(elements.len());
+    for element in elements {
+        if !distinct
+            .iter()
+            .any(|known| unsafe { CFEqual(*known as CFTypeRef, element as CFTypeRef) != 0 })
+        {
+            distinct.push(element);
+        }
+    }
+    distinct
+}
+
 fn release_actionable_nodes(nodes: &[AXNode]) {
     for node in nodes.iter().filter(|node| node.element_index.is_some()) {
         unsafe { CFRelease(node.element_ptr as CFTypeRef) };
     }
 }
 
+/// Whether a window title is Chrome's own remote-debugging prompt.
+fn is_consent_prompt_title(title: &str) -> bool {
+    matches!(title.trim(), "Allow remote debugging?" | CHINESE_PROMPT)
+}
+
+/// Windows to inspect for the prompt, in order. Current Chrome on macOS
+/// shows the prompt as its own window (an `AXSheet` root) attached to the
+/// browser window that was active last, which need not be the approved one.
+/// Those prompt windows are read first: they are tiny, so the driver finds
+/// the exact sheet without first walking every large browser window. The
+/// approved window and the other titled browser windows follow, for Chrome
+/// builds that expose the sheet only as a child of its parent window.
 fn consent_surface_ids(
     windows: impl IntoIterator<Item = crate::windows::WindowInfo>,
     pid: i32,
@@ -51,16 +80,21 @@ fn consent_surface_ids(
         .into_iter()
         .filter(|window| {
             window.pid == pid
-                && window.title != "Allow remote debugging?"
                 && !window.title.trim().is_empty()
                 && window.bounds.width > 0.0
                 && window.bounds.height > 0.0
         })
         .collect::<Vec<_>>();
     windows.sort_by_key(|window| std::cmp::Reverse(window.z_index));
+    let (prompts, browsers): (Vec<_>, Vec<_>) = windows
+        .into_iter()
+        .partition(|window| is_consent_prompt_title(&window.title));
     let mut seen = HashSet::new();
-    iter::once(approved_window_id)
-        .chain(windows.into_iter().map(|window| window.window_id))
+    prompts
+        .into_iter()
+        .map(|window| window.window_id)
+        .chain(iter::once(approved_window_id))
+        .chain(browsers.into_iter().map(|window| window.window_id))
         .filter(|window_id| seen.insert(*window_id))
         .collect()
 }
@@ -144,7 +178,7 @@ fn exact_button(nodes: &[AXNode], allow: bool) -> Result<Option<usize>, BrowserR
             if (is_allow && is_cancel)
                 || (chinese && (is_allow || is_cancel) && has_text(node, "在“设置”中关闭"))
             {
-                return Err(refusal(
+                return Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserWrongTargetRefused,
                     "a browser consent button matched conflicting decisions",
                 ));
@@ -157,7 +191,7 @@ fn exact_button(nodes: &[AXNode], allow: bool) -> Result<Option<usize>, BrowserR
             }
         }
         if chinese && (allows.len() != 1 || cancels.len() != 1) {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "localized browser consent requires unique positive allow and cancel actions",
             ));
@@ -167,7 +201,7 @@ fn exact_button(nodes: &[AXNode], allow: bool) -> Result<Option<usize>, BrowserR
     match matches.as_slice() {
         [] => Ok(None),
         [element] => Ok(Some(*element)),
-        _ => Err(refusal(
+        _ => Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "multiple browser consent actions matched the requested decision",
         )),
@@ -189,7 +223,7 @@ impl ConsentTrees {
         let incomplete = tree.truncated || tree.walk.truncated();
         self.0.push(tree.nodes);
         if incomplete {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "browser consent observation was truncated",
             ));
@@ -228,7 +262,7 @@ fn settled_after_scan(
         return Ok(Some(BrowserConsentOutcome::Accepted));
     }
     if deadline_expired {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             format!(
                 "Chrome remote-debugging consent did not settle for reconnect attempt {attempt}"
@@ -260,25 +294,24 @@ pub fn dismiss(pid: i32, approved_window_id: u32) -> Result<bool, BrowserRefusal
                 candidates.push(element);
             }
         }
-        candidates.sort_unstable();
-        candidates.dedup();
+        let candidates = distinct_elements(candidates);
         let pressed = match candidates.as_slice() {
             [element] => unsafe { perform_action(*element as AXUIElementRef, "AXPress") },
             [] => {
-                return Err(refusal(
+                return Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserWrongTargetRefused,
                     "the exact remote-debugging consent sheet exposed no semantic cancel action",
                 ));
             }
             _ => {
-                return Err(refusal(
+                return Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserWrongTargetRefused,
                     "multiple Chrome-owned remote-debugging consent sheets exposed semantic cancel actions",
                 ));
             }
         };
         if pressed != kAXErrorSuccess {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the exact browser consent cancel action became stale before AXPress",
             ));
@@ -286,7 +319,7 @@ pub fn dismiss(pid: i32, approved_window_id: u32) -> Result<bool, BrowserRefusal
         drop(trees);
         dismissed = true;
         if Instant::now() >= deadline {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the remote-debugging consent sheet remained after its exact cancel action",
             ));
@@ -299,13 +332,13 @@ pub async fn handle(
     request: BrowserConsentRequest,
 ) -> Result<BrowserConsentOutcome, BrowserRefusal> {
     let pid = i32::try_from(request.pid).map_err(|_| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "the approved browser pid is outside the macOS process-id range",
         )
     })?;
     let window_id = u32::try_from(request.window_id).map_err(|_| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "the approved browser window is outside the macOS window-id range",
         )
@@ -317,7 +350,7 @@ pub async fn handle(
         let trees = tokio::task::spawn_blocking(move || read_consent_trees(pid, window_id))
             .await
             .map_err(|error| {
-                refusal(
+                BrowserRefusal::new(
                     BrowserRefusalCode::BrowserRouteUnavailable,
                     format!("could not inspect the browser consent UI: {error}"),
                 )
@@ -341,15 +374,14 @@ pub async fn handle(
                 candidates.push(element);
             }
         }
-        candidates.sort_unstable();
-        candidates.dedup();
+        let candidates = distinct_elements(candidates);
         if let [element] = candidates.as_slice() {
             let pressed = request
                 .action
                 .perform(|| unsafe { perform_action(*element as AXUIElementRef, "AXPress") });
             drop(trees);
             if pressed != kAXErrorSuccess {
-                return Err(refusal(
+                return Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserWrongTargetRefused,
                     "the exact browser consent action became stale before AXPress",
                 ));
@@ -365,13 +397,13 @@ pub async fn handle(
         }
         drop(trees);
         if candidates.len() > 1 {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "multiple Chrome-owned remote-debugging consent sheets exposed semantic allow actions",
             ));
         }
         if saw_prompt && !prompt_present {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserConsentRevoked,
                 "the person dismissed the browser consent sheet",
             ));
@@ -407,6 +439,8 @@ mod tests {
             title: title.map(str::to_owned),
             value: None,
             description: None,
+            placeholder: None,
+            subrole: None,
             identifier: None,
             help: None,
             actions: actions.iter().map(|value| (*value).to_owned()).collect(),
@@ -506,7 +540,7 @@ mod tests {
     }
 
     #[test]
-    fn consent_surfaces_keep_approved_window_then_frontmost_normal_windows() {
+    fn consent_surfaces_read_prompt_windows_first_then_approved_then_frontmost() {
         let window = |window_id, title: &str, z_index| crate::windows::WindowInfo {
             window_id,
             pid: 42,
@@ -531,12 +565,29 @@ mod tests {
                     window(7, "Approved", 10),
                     window(8, "Frontmost", 30),
                     window(9, "Allow remote debugging?", 40),
+                    window(11, CHINESE_PROMPT, 5),
+                    window(12, "", 50),
                 ],
                 42,
                 7,
             ),
-            vec![7, 8]
+            vec![9, 11, 7, 8]
         );
+    }
+
+    #[test]
+    fn the_same_sheet_seen_through_two_windows_is_one_candidate() {
+        use core_foundation::base::TCFType;
+        use core_foundation::string::CFString;
+        let first = CFString::new("consent-sheet-allow");
+        let second = CFString::new("consent-sheet-allow");
+        let other = CFString::new("another-sheet-allow");
+        let first = first.as_concrete_TypeRef() as usize;
+        let second = second.as_concrete_TypeRef() as usize;
+        let other = other.as_concrete_TypeRef() as usize;
+        assert_eq!(distinct_elements(vec![first, second]).len(), 1);
+        assert_eq!(distinct_elements(vec![first, first]).len(), 1);
+        assert_eq!(distinct_elements(vec![first, other, second]).len(), 2);
     }
 
     fn captured_chinese_sheet() -> Vec<AXNode> {
@@ -639,8 +690,10 @@ mod tests {
                     nodes: vec![button],
                     tree_markdown: String::new(),
                     truncated: false,
+                    depth_truncated: false,
                     walk: budget.outcome(),
                     window_scope: None,
+                    ax_enumeration: None,
                 })?;
             }
             Ok::<_, BrowserRefusal>(())

@@ -34,6 +34,8 @@ fn opts(on: &str, name: &str) -> SandboxCreateOptions {
         wait_for: vec![],
         ready_timeout_ms: None,
         env: HashMap::new(),
+        pool: None,
+        ttl_seconds: None,
         command: None,
         sidecars: vec![],
         registry_secret: None,
@@ -42,6 +44,10 @@ fn opts(on: &str, name: &str) -> SandboxCreateOptions {
         overlays: vec![],
         keep_on_failure: false,
         gpu: None,
+        headless: false,
+        spacesd: None,
+        profile: None,
+        forkable: None,
     }
 }
 

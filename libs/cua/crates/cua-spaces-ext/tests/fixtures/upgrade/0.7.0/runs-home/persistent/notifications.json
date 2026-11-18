@@ -1,0 +1,13 @@
+[
+  {
+    "id": "0eb1728137d38c57",
+    "at_ms": 1792859758572,
+    "agent": "lee",
+    "kind": "error",
+    "title": "lee stopped: API Error: 401 invalid x-api-key",
+    "body": "API Error: 401 {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"invalid x-api-key\"}}",
+    "run_id": "run-0000lee1",
+    "space": "direct:127.0.0.1:50279",
+    "read": false
+  }
+]

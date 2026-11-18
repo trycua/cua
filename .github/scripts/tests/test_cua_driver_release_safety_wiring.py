@@ -25,13 +25,17 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 CD = REPO_ROOT / ".github/workflows/cd-rust-cua-driver.yml"
 SIGNATURES = REPO_ROOT / ".github/workflows/cua-driver-release-signatures.yml"
 SELF_TEST = REPO_ROOT / ".github/workflows/ci-cua-driver-release-signatures.yml"
-DO_NOTARIZE = "${{ startsWith(github.ref, 'refs/tags/cua-driver-rs-v') || inputs.notarize == true }}"
-# Only the Release Please tag push can publish; there is no manual publish input.
-TAG_PUSH = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')"
+# Publishing happens only on the Release Please tag push, or on a workflow_dispatch
+# from main that rebuilds an existing stable tag (rebuild_tag); there is no publish input.
+TAG_PUSH = (
+    "((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) "
+    "|| (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != ''))"
+)
+DO_NOTARIZE = "${{ " + TAG_PUSH + " || inputs.notarize == true }}"
 CAN_PUBLISH = "${{ " + TAG_PUSH + " }}"
 E2E_GATES = {"e2e-linux", "e2e-windows", "e2e-macos", "e2e-standalone-browsers"}
 # The same suites gate the stable tag push and nightly builds.
-E2E_GATE_IF = f"({TAG_PUSH}) || inputs.channel == 'nightly'"
+E2E_GATE_IF = f"{TAG_PUSH} || inputs.channel == 'nightly'"
 SIGNATURE_GATES = {"verify-macos-release-signatures", "verify-windows-release-signatures"}
 STATUS_OVERRIDES = ("always()", "failure()", "cancelled()", "!cancelled()")
 
@@ -83,7 +87,7 @@ def test_macos_build_notarizes_every_tag_build(cd: dict) -> None:
     first = build["steps"][0]
     assert first["name"] == "Assert notarization for publishable builds"
     assert first["env"]["CAN_PUBLISH"] == CAN_PUBLISH
-    assert '"$GITHUB_REF" == refs/tags/cua-driver-rs-v* && "$DO_NOTARIZE" != "true"' in first["run"]
+    assert '"$RELEASE_REF" == refs/tags/cua-driver-rs-v* && "$DO_NOTARIZE" != "true"' in first["run"]
     assert '"$CAN_PUBLISH" == "true" && "$DO_NOTARIZE" != "true"' in first["run"]
     # Signing and notarization steps are all keyed on the same switch.
     for name in (

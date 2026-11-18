@@ -943,6 +943,41 @@ Examples:
     },
 }
 
+impl SpacesCmd {
+    /// Whether the command goes through the SDK handle (the daemon when one
+    /// runs), which shares the registry the daemon's Spaces runtime and
+    /// `cua mcp` use. `ls` and `default` have their own routes. No wildcard:
+    /// a new command has to pick a route here.
+    pub(crate) fn runs_through_sdk(&self) -> bool {
+        match self {
+            Self::Ls { .. } | Self::Default { .. } | Self::Rename { .. } | Self::Set { .. } => {
+                false
+            }
+            Self::Add { .. }
+            | Self::Create { .. }
+            | Self::Prewarm { .. }
+            | Self::Egress { .. }
+            | Self::Children { .. }
+            | Self::Budget { .. }
+            | Self::Orphans
+            | Self::Service(..)
+            | Self::Cancel { .. }
+            | Self::Gpus { .. }
+            | Self::Delete { .. }
+            | Self::Stop { .. }
+            | Self::Suspend { .. }
+            | Self::Resize { .. }
+            | Self::Start { .. }
+            | Self::Rm { .. }
+            | Self::Share { .. }
+            | Self::Unshare { .. }
+            | Self::Shares { .. }
+            | Self::RelayRegister { .. }
+            | Self::RelayUnregister { .. } => true,
+        }
+    }
+}
+
 /// Checks a `cua spaces share` before it goes to a running daemon. The
 /// daemon confirms every share with user presence (Touch ID or the login
 /// password on this computer) and `--yes` cannot skip that. Without a
@@ -5350,6 +5385,22 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert!(parse_spaces(&["set"]).is_err());
+    }
+
+    /// #7589: `cua spaces set` and `cua spaces rename` fell through to the
+    /// registry-only route, which answers every command but `ls` with
+    /// "only 'cua spaces ls' runs over the registry directly".
+    #[test]
+    fn only_ls_and_default_skip_the_sdk() {
+        for args in [
+            &["set", "local:studio", "--clipboard", "viewing"][..],
+            &["rename", "local:studio", "design-review"],
+            &["rm", "local:studio"],
+        ] {
+            let cmd = parse_spaces(args).unwrap();
+            assert!(cmd.runs_through_sdk(), "{args:?}");
+        }
+        assert!(!parse_spaces(&["ls"]).unwrap().runs_through_sdk());
     }
 
     #[test]

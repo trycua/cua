@@ -251,25 +251,62 @@ fn enumerate(require_capture: bool) -> anyhow::Result<Option<Vec<WindowInfo>>> {
     Ok(Some(merge_atspi_records(
         native,
         crate::atspi::list_windows(None),
+        require_capture,
     )))
 }
 
+/// Pair ext records with AT-SPI windows for pid and geometry. A capturable
+/// listing pairs only unambiguous matches: its window_id yields that
+/// toplevel's own pixels, so a pid guessed from a repeated title or app_id
+/// would bind them to another application's accessibility tree.
 fn merge_atspi_records(
     native: Vec<(u64, ToplevelRecord)>,
     atspi: Vec<WindowInfo>,
+    unambiguous: bool,
 ) -> Vec<WindowInfo> {
     let mut claimed = vec![false; atspi.len()];
     let mut out = Vec::with_capacity(native.len() + atspi.len());
+    let unique_title: Vec<bool> = native
+        .iter()
+        .map(|(_, record)| {
+            native
+                .iter()
+                .filter(|(_, other)| other.title == record.title)
+                .count()
+                == 1
+        })
+        .collect();
+    let unique_app_id: Vec<bool> = native
+        .iter()
+        .map(|(_, record)| {
+            native
+                .iter()
+                .filter(|(_, other)| other.app_id == record.app_id)
+                .count()
+                == 1
+        })
+        .collect();
 
-    for (id, record) in native {
-        let exact_title = atspi.iter().enumerate().find_map(|(index, window)| {
-            (!claimed[index] && !record.title.is_empty() && window.title == record.title)
-                .then_some(index)
-        });
-        let matching_atspi = exact_title.or_else(|| {
-            unique_match(&atspi, &claimed, |window| {
-                !record.app_id.is_empty() && window.app_name == record.app_id
+    for (position, (id, record)) in native.into_iter().enumerate() {
+        let title_matches =
+            |window: &WindowInfo| !record.title.is_empty() && window.title == record.title;
+        let exact_title = if unambiguous {
+            unique_title[position]
+                .then(|| unique_match(&atspi, &claimed, title_matches))
+                .flatten()
+        } else {
+            atspi.iter().enumerate().find_map(|(index, window)| {
+                (!claimed[index] && title_matches(window)).then_some(index)
             })
+        };
+        let matching_atspi = exact_title.or_else(|| {
+            (!unambiguous || unique_app_id[position])
+                .then(|| {
+                    unique_match(&atspi, &claimed, |window| {
+                        !record.app_id.is_empty() && window.app_name == record.app_id
+                    })
+                })
+                .flatten()
         });
 
         let mut window = WindowInfo {
@@ -408,6 +445,7 @@ mod tests {
                 atspi(12, 202, "Different title", "org.viewer", 30),
                 atspi(13, 303, "AT-SPI only", "org.extra", 50),
             ],
+            false,
         );
 
         assert_eq!(merged.len(), 4);
@@ -431,6 +469,7 @@ mod tests {
                 atspi(11, 101, "One", "org.same", 10),
                 atspi(12, 202, "Two", "org.same", 30),
             ],
+            false,
         );
         assert_eq!(merged.len(), 3);
         assert_eq!(merged[0].pid, None);
@@ -455,10 +494,50 @@ mod tests {
                 atspi(11, 101, "Document", "first", 10),
                 atspi(12, 202, "Document", "second", 30),
             ],
+            false,
         );
         assert_eq!(merged.len(), 2);
         assert_eq!(merged[0].pid, Some(101));
         assert_eq!(merged[1].pid, Some(202));
+    }
+
+    #[test]
+    fn capturable_merge_refuses_repeated_titles_and_app_ids() {
+        let merged = merge_atspi_records(
+            vec![
+                (
+                    u64::from(EXT_ID_NAMESPACE_START),
+                    record("a", "Document", "org.first"),
+                ),
+                (
+                    u64::from(EXT_ID_NAMESPACE_START + 1),
+                    record("b", "Document", "org.second"),
+                ),
+                (
+                    u64::from(EXT_ID_NAMESPACE_START + 2),
+                    record("c", "", "org.same"),
+                ),
+                (
+                    u64::from(EXT_ID_NAMESPACE_START + 3),
+                    record("d", "", "org.same"),
+                ),
+                (
+                    u64::from(EXT_ID_NAMESPACE_START + 4),
+                    record("e", "Unique", "org.unique"),
+                ),
+            ],
+            vec![
+                atspi(11, 101, "Document", "first", 10),
+                atspi(13, 303, "Other", "org.same", 50),
+                atspi(14, 404, "Unique", "org.unique", 70),
+            ],
+            true,
+        );
+
+        let pids: Vec<_> = merged[..5].iter().map(|window| window.pid).collect();
+        assert_eq!(pids, [None, None, None, None, Some(404)]);
+        assert_eq!(merged[4].x, 70);
+        assert_eq!(merged.len(), 7);
     }
 
     #[test]

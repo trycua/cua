@@ -208,12 +208,13 @@ fn post_action_foreground_allowed(relation: PostActionForegroundRelation) -> boo
             || (relation.target_dismissed && relation.actual_is_prior_owner))
 }
 
-/// A dismissed target is destroyed, or is the same window and now hidden: a
-/// common dialog hides itself on OK or Save and is destroyed only later.
-fn target_dismissed(current_pid: Option<u32>, snapshot_pid: u32, visible: bool) -> bool {
+/// A dismissed target is destroyed, or, after a click, is the same window and
+/// now hidden: a common dialog hides itself on OK or Save and is destroyed only
+/// later.
+fn target_dismissed(current_pid: Option<u32>, snapshot_pid: u32, hidden: bool) -> bool {
     match current_pid {
         None => true,
-        Some(pid) => pid == snapshot_pid && !visible,
+        Some(pid) => pid == snapshot_pid && hidden,
     }
 }
 
@@ -265,13 +266,23 @@ pub(crate) fn capture_foreground_target(target: u64) -> Option<ForegroundTarget>
 /// may then legitimately open a same-process owned popup or modal, so the
 /// post-action check accepts that transient only when it is still a live,
 /// visible HWND and its complete `GW_OWNER` chain reaches the exact target.
-/// A dismiss action may instead destroy or hide the requested owned modal; that
-/// is accepted only when foreground returns to its snapshotted same-process owner.
+/// A dismiss action may instead destroy the requested owned modal; that is
+/// accepted only when foreground returns to its snapshotted same-process owner.
 /// Unrelated same-process siblings and foreign foreground windows fail closed.
 pub(crate) fn foreground_matches_target_or_owned_window(
     target: ForegroundTarget,
     actual: u64,
 ) -> bool {
+    foreground_matches(target, actual, false)
+}
+
+/// [`foreground_matches_target_or_owned_window`] after a click, which may also
+/// dismiss the owned modal by hiding it.
+pub(crate) fn foreground_after_click_matches(target: ForegroundTarget, actual: u64) -> bool {
+    foreground_matches(target, actual, true)
+}
+
+fn foreground_matches(target: ForegroundTarget, actual: u64, hidden_dismisses: bool) -> bool {
     let current_target_pid = window_owner_pid(target.hwnd);
     let actual_pid = window_owner_pid(actual);
     let actual_hwnd = HWND(actual as *mut _);
@@ -290,7 +301,7 @@ pub(crate) fn foreground_matches_target_or_owned_window(
         target_dismissed: target_dismissed(
             current_target_pid,
             target.pid,
-            unsafe { IsWindowVisible(HWND(target.hwnd as *mut _)) }.as_bool(),
+            hidden_dismisses && !unsafe { IsWindowVisible(HWND(target.hwnd as *mut _)) }.as_bool(),
         ),
         actual_live: actual_pid.is_some(),
         actual_visible,
@@ -782,9 +793,9 @@ mod exact_window_tests {
     #[test]
     fn destroyed_or_hidden_same_target_counts_as_dismissed() {
         assert!(target_dismissed(None, 42, false));
-        assert!(target_dismissed(Some(42), 42, false));
-        assert!(!target_dismissed(Some(42), 42, true));
-        assert!(!target_dismissed(Some(43), 42, false));
+        assert!(target_dismissed(Some(42), 42, true));
+        assert!(!target_dismissed(Some(42), 42, false));
+        assert!(!target_dismissed(Some(43), 42, true));
     }
 
     #[test]

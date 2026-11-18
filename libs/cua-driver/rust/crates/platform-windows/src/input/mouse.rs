@@ -802,7 +802,7 @@ fn send_click_synthesized_mods_impl(
         }
         if activate {
             let actual = GetForegroundWindow();
-            if !crate::win32::foreground_matches_target_or_owned_window(
+            if !crate::win32::foreground_after_click_matches(
                 foreground_target.expect("foreground target captured before input"),
                 actual.0 as usize as u64,
             ) {

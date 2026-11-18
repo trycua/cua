@@ -68,8 +68,18 @@ private final class RecordingProvider: SpaceStreamSourceProviding, @unchecked Se
     /// A longer delay for one text: a transfer that stalls.
     var clipboardDelays: [String: Duration] = [:]
 
+    private var startedTexts: [String] = []
+    /// The clipboard texts whose transfer started, in order.
+    var clipboardsStarted: [String] { lock.lock(); defer { lock.unlock() }; return startedTexts }
+    /// Delays for successive transfers of one text, used up in order.
+    var clipboardDelaySequence: [String: [Duration]] = [:]
+
     func sendClipboard(_ text: String) async throws -> Bool {
-        try? await Task.sleep(for: clipboardDelays[text] ?? clipboardDelay)
+        lock.lock()
+        startedTexts.append(text)
+        let next = clipboardDelaySequence[text]?.isEmpty == false ? clipboardDelaySequence[text]?.removeFirst() : nil
+        lock.unlock()
+        try? await Task.sleep(for: next ?? clipboardDelays[text] ?? clipboardDelay)
         guard sendsClipboard else { return false }
         lock.lock(); clipboardTexts.append(text); framesBefore.append(media.sent.count); lock.unlock()
         return true
@@ -403,6 +413,24 @@ private func pointerEvents(in text: String) -> [[String: Any]] {
         await eventually("the late text and the newest again") { stalls.clipboards.count == 3 }
         #expect(stalls.clipboards == ["next", "stalled", "next"])
         await late.stop()
+
+        // The repair can stall too, past a third paste: it is a transfer
+        // like any other, so its late landing is repaired in turn.
+        let repairs = RecordingProvider()
+        repairs.clipboardDelays = ["stalled": .milliseconds(100)]
+        repairs.clipboardDelaySequence = ["next": [.zero, .milliseconds(400)]]
+        let third = LiveStreamSession(provider: repairs)
+        third.pasteWait = .milliseconds(20)
+        await third.start()
+        third.paste(v, text: "stalled")
+        await eventually("the first chord") { repairs.media.sent.count == 1 }
+        third.paste(v, text: "next")
+        await eventually("the repair starting") { repairs.clipboardsStarted == ["stalled", "next", "next"] }
+        third.paste(v, text: "third")
+        await eventually("the third chord") { repairs.media.sent.count == 3 }
+        await eventually("the late repair and the newest again") { repairs.clipboards.count == 5 }
+        #expect(repairs.clipboards == ["next", "stalled", "third", "next", "third"])
+        await third.stop()
 
         let slow = RecordingProvider()
         slow.clipboardDelay = .seconds(30)

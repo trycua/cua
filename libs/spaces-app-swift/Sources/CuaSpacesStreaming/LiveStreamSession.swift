@@ -716,12 +716,9 @@ public final class LiveStreamSession: ObservableObject {
         heldInput = [.input(events)]
         pasteGeneration &+= 1
         let generation = pasteGeneration
-        clipboardStarted &+= 1
-        let transfer = clipboardStarted
         newestClipboard = text
-        Task { @MainActor [weak self, provider] in
-            _ = try? await provider.sendClipboard(text)
-            self?.clipboardLanded(transfer)
+        Task { @MainActor [weak self] in
+            await self?.transferClipboard(text)
             self?.releaseHeldInput(generation)
         }
         Task { @MainActor [weak self, pasteWait] in
@@ -747,15 +744,28 @@ public final class LiveStreamSession: ObservableObject {
         }
     }
 
-    /// A transfer that outlived its wait can land after a newer paste's
-    /// (the call cannot be recalled): the newest text goes again, so the
-    /// Space keeps the last paste's clipboard.
+    /// Puts `text` on the Space. A transfer that outlived its wait can land
+    /// after a newer one (the call cannot be recalled): the newest text then
+    /// goes again, as a transfer of its own, so however late any of them
+    /// lands the Space ends with the last paste's clipboard.
+    private func transferClipboard(_ text: String) async {
+        clipboardStarted &+= 1
+        let transfer = clipboardStarted
+        _ = try? await provider.sendClipboard(text)
+        clipboardLanded(transfer)
+    }
+
     private func clipboardLanded(_ transfer: UInt64) {
-        guard transfer < newestLanded, let text = newestClipboard else {
+        guard transfer < newestLanded, let newest = newestClipboard else {
             newestLanded = max(newestLanded, transfer)
             return
         }
-        Task { [provider] in _ = try? await provider.sendClipboard(text) }
+        clipboardStarted &+= 1
+        let repair = clipboardStarted
+        Task { @MainActor [weak self, provider] in
+            _ = try? await provider.sendClipboard(newest)
+            self?.clipboardLanded(repair)
+        }
     }
 
     /// Input held for a paste was meant for the stream that is going away.

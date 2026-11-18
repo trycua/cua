@@ -1997,6 +1997,7 @@ fn fixed_cli_operation(command: &str, operation: &str) -> &'static str {
         "permissions" => match operation {
             "status" => "status",
             "grant" => "grant",
+            "vnc" => "vnc",
             _ => "other",
         },
         "config" => match operation {

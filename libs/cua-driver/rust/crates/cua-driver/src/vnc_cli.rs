@@ -162,12 +162,15 @@ fn execute(invocation: Invocation) -> Result<(), String> {
 fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
-    open_private(&options, path)?.write_all(bytes)
+    open_private(&mut options, path)?.write_all(bytes)
 }
 
-/// Open with `options`, then make the file owner-only. The mode given at
-/// creation does not apply to a file that already exists.
-fn open_private(options: &std::fs::OpenOptions, path: &Path) -> std::io::Result<std::fs::File> {
+/// Open with `options` as an owner-only file. The mode applies only when the
+/// file is created, so an existing file is also set to owner-only before
+/// anything is written to it.
+fn open_private(options: &mut std::fs::OpenOptions, path: &Path) -> std::io::Result<std::fs::File> {
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(options, 0o600);
     let file = options.open(path)?;
     #[cfg(unix)]
     file.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
@@ -198,7 +201,7 @@ fn record(entry: &str) {
         .and_then(|()| {
             let mut options = std::fs::OpenOptions::new();
             options.append(true).create(true);
-            open_private(&options, &path)?.write_all(line.as_bytes())
+            open_private(&mut options, &path)?.write_all(line.as_bytes())
         });
     if let Err(error) = written {
         eprintln!(

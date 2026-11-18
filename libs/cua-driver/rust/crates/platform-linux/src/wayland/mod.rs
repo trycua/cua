@@ -8,9 +8,10 @@
 //! staging `ext_foreign_toplevel_list_v1`, captures per-output screenshots via
 //! `zwlr_screencopy_manager_v1` + `wl_shm` (native — `grim` remains a
 //! fallback), and synthesises pointer / scroll / drag input via
-//! `zwlr_virtual_pointer_v1`. Until identified per-toplevel capture is broadly
-//! available, window-scoped screenshots use output crops only for visible,
-//! compositor-attested surfaces and return a typed identity error otherwise.
+//! `zwlr_virtual_pointer_v1`. Window-scoped screenshots copy the toplevel
+//! itself where `ext_foreign_toplevel_image_capture_source_manager_v1` names
+//! it; otherwise they use output crops only for visible, compositor-attested
+//! surfaces and return a typed identity error.
 
 mod compositor_peer;
 mod cua_compositor_capture;
@@ -1231,14 +1232,29 @@ fn wayland_window_crop(xid: u64) -> anyhow::Result<WaylandWindowCrop> {
     ))
 }
 
+/// Copy the toplevel an ext-foreign-toplevel-list window_id names, or `None`
+/// when the window was not listed through that protocol.
+fn ext_toplevel_capture(xid: u64) -> Option<anyhow::Result<Vec<u8>>> {
+    let identifier = ext_toplevel::identifier_for(xid)?;
+    Some(ext_screencopy::screenshot_toplevel(&identifier))
+}
+
 fn screenshot_window_bytes_with_dispatch(
     wayland: bool,
     xid: u64,
+    toplevel_capture: impl FnOnce(u64) -> Option<anyhow::Result<Vec<u8>>>,
     wayland_crop: impl FnOnce(u64) -> anyhow::Result<WaylandWindowCrop>,
     display_capture: impl FnOnce() -> anyhow::Result<Vec<u8>>,
     x11_capture: impl FnOnce(u64) -> anyhow::Result<Vec<u8>>,
 ) -> anyhow::Result<Vec<u8>> {
     if wayland {
+        // The compositor copied this exact toplevel: no crop is needed, and
+        // a refused copy must not fall back to output pixels.
+        if let Some(capture) = toplevel_capture(xid) {
+            return capture.map_err(|error| {
+                surface_identity_unproven(xid, format!("ext toplevel capture: {error:#}"))
+            });
+        }
         let crop = wayland_crop(xid)?;
         let output = display_capture()?;
         return crop_png_to_rect(
@@ -1254,8 +1270,10 @@ fn screenshot_window_bytes_with_dispatch(
 }
 
 /// Window capture dispatcher. X11 uses its per-window capture path. Wayland
-/// crops output pixels only when compositor metadata proves that the requested
-/// surface is currently rendered; otherwise it fails closed. Output-level
+/// copies the toplevel itself when its window_id came from
+/// ext-foreign-toplevel-list, and otherwise crops output pixels only when
+/// compositor metadata proves that the requested surface is currently
+/// rendered; otherwise it fails closed. Output-level
 /// capture remains available through [`screenshot_display_dispatch`].
 pub fn screenshot_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
     screenshot_dispatch_for_pid(xid, None)
@@ -1308,6 +1326,7 @@ fn screenshot_dispatch_for_pid(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec
     screenshot_window_bytes_with_dispatch(
         is_wayland(),
         xid,
+        ext_toplevel_capture,
         wayland_window_crop,
         screenshot_display_dispatch,
         crate::capture::screenshot_window_bytes,
@@ -4204,6 +4223,35 @@ fn niri_window_info(window: niri::Window) -> WindowInfo {
     }
 }
 
+/// Windows listed through ext-foreign-toplevel-list when the compositor can
+/// also copy each one by its handle. Sway keeps its IPC-attested container
+/// ids and the cua compositor its own targets, so neither switches.
+fn ext_capture_listing() -> Option<Vec<WindowInfo>> {
+    if is_inject_mode() || sway_ipc::list_windows().is_some() {
+        return None;
+    }
+    let windows = match ext_toplevel::list_capturable_windows() {
+        Ok(windows) => windows?,
+        Err(error) => {
+            tracing::debug!("ext toplevel capture listing unavailable: {error:#}");
+            return None;
+        }
+    };
+    // wlroots activation still resolves a window by title and app_id.
+    for window in &windows {
+        remember_identity(
+            window.xid,
+            &Toplevel {
+                title: window.title.clone(),
+                app_id: window.app_name.clone(),
+                closed: false,
+                activated: false,
+            },
+        );
+    }
+    (!windows.is_empty()).then_some(windows)
+}
+
 fn apply_pid_filter(mut windows: Vec<WindowInfo>, filter_pid: Option<u32>) -> Vec<WindowInfo> {
     if let Some(pid) = filter_pid {
         windows.retain(|window| window.pid == Some(pid));
@@ -4271,21 +4319,26 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
         if let Some(ws) = kwin_helper::list_window_infos() {
             return listed_windows(apply_pid_filter(ws, filter_pid));
         }
-        // Prefer the richer wlroots protocol when no trusted KWin helper is available.
-        // only consulted when wlroots yields no windows (including when its
-        // manager global is absent).
-        let native = match list_windows() {
-            Ok(ws) if !ws.is_empty() => Ok(enrich_native_windows(
-                ws,
-                wayland_atspi_windows(filter_pid),
-                is_inject_mode(),
-            )),
-            Ok(_) => ext_toplevel::list_windows(),
-            Err(wlr_error) => ext_toplevel::list_windows().map_err(|ext_error| {
-                anyhow::anyhow!(
-                    "wlr provider failed ({wlr_error}); ext provider failed ({ext_error})"
-                )
-            }),
+        // A compositor that copies toplevels by their ext handle gets ext
+        // window_ids, so window capture names the exact toplevel (#5327).
+        // Otherwise prefer the richer wlroots protocol; ext-foreign-toplevel
+        // is then only consulted when wlroots yields no windows (including
+        // when its manager global is absent).
+        let native = match ext_capture_listing() {
+            Some(ws) => Ok(ws),
+            None => match list_windows() {
+                Ok(ws) if !ws.is_empty() => Ok(enrich_native_windows(
+                    ws,
+                    wayland_atspi_windows(filter_pid),
+                    is_inject_mode(),
+                )),
+                Ok(_) => ext_toplevel::list_windows(),
+                Err(wlr_error) => ext_toplevel::list_windows().map_err(|ext_error| {
+                    anyhow::anyhow!(
+                        "wlr provider failed ({wlr_error}); ext provider failed ({ext_error})"
+                    )
+                }),
+            },
         };
         match native {
             Ok(ws) if !ws.is_empty() => {
@@ -5257,6 +5310,7 @@ mod tests {
         let error = screenshot_window_bytes_with_dispatch(
             true,
             0x2962,
+            |_| None,
             |xid| {
                 Err(surface_identity_unproven(
                     xid,
@@ -5286,6 +5340,7 @@ mod tests {
         let bytes = screenshot_window_bytes_with_dispatch(
             false,
             42,
+            |_| panic!("X11 must not copy an ext toplevel"),
             |_| panic!("X11 must not resolve a Wayland crop"),
             || panic!("X11 must not capture the Wayland output"),
             |xid| {
@@ -5337,6 +5392,7 @@ mod tests {
         let cropped = screenshot_window_bytes_with_dispatch(
             true,
             42,
+            |_| None,
             |_| {
                 Ok(WaylandWindowCrop {
                     x: 2,
@@ -5351,6 +5407,52 @@ mod tests {
         .expect("visible compositor-attested Wayland surface should capture");
         let decoded = image::load_from_memory(&cropped).expect("decode cropped PNG");
         assert_eq!((decoded.width(), decoded.height()), (3, 4));
+    }
+
+    #[test]
+    fn ext_toplevel_window_capture_returns_the_toplevel_copy_without_a_crop() {
+        let requested = std::cell::Cell::new(None);
+        let bytes = screenshot_window_bytes_with_dispatch(
+            true,
+            0xF000_0000,
+            |xid| {
+                requested.set(Some(xid));
+                Some(Ok(vec![7, 7, 7]))
+            },
+            |_| panic!("an ext toplevel copy needs no geometry"),
+            || panic!("an ext toplevel copy must not capture the output"),
+            |_| panic!("Wayland must not use the X11 capture path"),
+        )
+        .expect("an ext-listed window should capture through its toplevel source");
+
+        assert_eq!(requested.get(), Some(0xF000_0000));
+        assert_eq!(bytes, vec![7, 7, 7]);
+    }
+
+    #[test]
+    fn refused_ext_toplevel_copy_fails_closed_naming_the_cause() {
+        let error = screenshot_window_bytes_with_dispatch(
+            true,
+            0xF000_0000,
+            |_| {
+                Some(Err(anyhow::anyhow!(
+                    "compositor does not expose \
+                     ext_foreign_toplevel_image_capture_source_manager_v1"
+                )))
+            },
+            |_| panic!("a refused toplevel copy must not fall back to a crop"),
+            || panic!("a refused toplevel copy must not capture the output"),
+            |_| panic!("Wayland must not use the X11 capture path"),
+        )
+        .expect_err("a refused toplevel copy must not return pixels");
+
+        assert!(is_surface_identity_unproven(&error));
+        assert_eq!(
+            error.to_string(),
+            "surface_identity_unproven: Wayland capture cannot prove pixels belong to window \
+             4026531840: ext toplevel capture: compositor does not expose \
+             ext_foreign_toplevel_image_capture_source_manager_v1"
+        );
     }
 
     #[test]

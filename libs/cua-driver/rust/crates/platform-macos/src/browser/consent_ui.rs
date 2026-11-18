@@ -6,7 +6,7 @@
 use std::time::{Duration, Instant};
 use std::{collections::HashSet, iter};
 
-use core_foundation::base::{CFRelease, CFTypeRef};
+use core_foundation::base::{CFEqual, CFRelease, CFTypeRef};
 use cua_driver_core::browser::{
     BrowserConsentOutcome, BrowserConsentRequest, BrowserRefusal, BrowserRefusalCode,
 };
@@ -35,12 +35,42 @@ fn normalized_text(node: &AXNode) -> String {
     parts.join(" ")
 }
 
+/// Collapse references to the same accessibility element. One sheet is
+/// reachable both as its own prompt window and as a child of its parent
+/// browser window; each walk hands back a distinct reference to it.
+fn distinct_elements(mut elements: Vec<usize>) -> Vec<usize> {
+    elements.sort_unstable();
+    elements.dedup();
+    let mut distinct: Vec<usize> = Vec::with_capacity(elements.len());
+    for element in elements {
+        if !distinct
+            .iter()
+            .any(|known| unsafe { CFEqual(*known as CFTypeRef, element as CFTypeRef) != 0 })
+        {
+            distinct.push(element);
+        }
+    }
+    distinct
+}
+
 fn release_actionable_nodes(nodes: &[AXNode]) {
     for node in nodes.iter().filter(|node| node.element_index.is_some()) {
         unsafe { CFRelease(node.element_ptr as CFTypeRef) };
     }
 }
 
+/// Whether a window title is Chrome's own remote-debugging prompt.
+fn is_consent_prompt_title(title: &str) -> bool {
+    matches!(title.trim(), "Allow remote debugging?" | CHINESE_PROMPT)
+}
+
+/// Windows to inspect for the prompt, in order. Current Chrome on macOS
+/// shows the prompt as its own window (an `AXSheet` root) attached to the
+/// browser window that was active last, which need not be the approved one.
+/// Those prompt windows are read first: they are tiny, so the driver finds
+/// the exact sheet without first walking every large browser window. The
+/// approved window and the other titled browser windows follow, for Chrome
+/// builds that expose the sheet only as a child of its parent window.
 fn consent_surface_ids(
     windows: impl IntoIterator<Item = crate::windows::WindowInfo>,
     pid: i32,
@@ -50,16 +80,21 @@ fn consent_surface_ids(
         .into_iter()
         .filter(|window| {
             window.pid == pid
-                && window.title != "Allow remote debugging?"
                 && !window.title.trim().is_empty()
                 && window.bounds.width > 0.0
                 && window.bounds.height > 0.0
         })
         .collect::<Vec<_>>();
     windows.sort_by_key(|window| std::cmp::Reverse(window.z_index));
+    let (prompts, browsers): (Vec<_>, Vec<_>) = windows
+        .into_iter()
+        .partition(|window| is_consent_prompt_title(&window.title));
     let mut seen = HashSet::new();
-    iter::once(approved_window_id)
-        .chain(windows.into_iter().map(|window| window.window_id))
+    prompts
+        .into_iter()
+        .map(|window| window.window_id)
+        .chain(iter::once(approved_window_id))
+        .chain(browsers.into_iter().map(|window| window.window_id))
         .filter(|window_id| seen.insert(*window_id))
         .collect()
 }
@@ -259,8 +294,7 @@ pub fn dismiss(pid: i32, approved_window_id: u32) -> Result<bool, BrowserRefusal
                 candidates.push(element);
             }
         }
-        candidates.sort_unstable();
-        candidates.dedup();
+        let candidates = distinct_elements(candidates);
         let pressed = match candidates.as_slice() {
             [element] => unsafe { perform_action(*element as AXUIElementRef, "AXPress") },
             [] => {
@@ -340,8 +374,7 @@ pub async fn handle(
                 candidates.push(element);
             }
         }
-        candidates.sort_unstable();
-        candidates.dedup();
+        let candidates = distinct_elements(candidates);
         if let [element] = candidates.as_slice() {
             let pressed = request
                 .action
@@ -507,7 +540,7 @@ mod tests {
     }
 
     #[test]
-    fn consent_surfaces_keep_approved_window_then_frontmost_normal_windows() {
+    fn consent_surfaces_read_prompt_windows_first_then_approved_then_frontmost() {
         let window = |window_id, title: &str, z_index| crate::windows::WindowInfo {
             window_id,
             pid: 42,
@@ -532,12 +565,29 @@ mod tests {
                     window(7, "Approved", 10),
                     window(8, "Frontmost", 30),
                     window(9, "Allow remote debugging?", 40),
+                    window(11, CHINESE_PROMPT, 5),
+                    window(12, "", 50),
                 ],
                 42,
                 7,
             ),
-            vec![7, 8]
+            vec![9, 11, 7, 8]
         );
+    }
+
+    #[test]
+    fn the_same_sheet_seen_through_two_windows_is_one_candidate() {
+        use core_foundation::base::TCFType;
+        use core_foundation::string::CFString;
+        let first = CFString::new("consent-sheet-allow");
+        let second = CFString::new("consent-sheet-allow");
+        let other = CFString::new("another-sheet-allow");
+        let first = first.as_concrete_TypeRef() as usize;
+        let second = second.as_concrete_TypeRef() as usize;
+        let other = other.as_concrete_TypeRef() as usize;
+        assert_eq!(distinct_elements(vec![first, second]).len(), 1);
+        assert_eq!(distinct_elements(vec![first, first]).len(), 1);
+        assert_eq!(distinct_elements(vec![first, other, second]).len(), 2);
     }
 
     fn captured_chinese_sheet() -> Vec<AXNode> {
@@ -643,6 +693,7 @@ mod tests {
                     depth_truncated: false,
                     walk: budget.outcome(),
                     window_scope: None,
+                    ax_enumeration: None,
                 })?;
             }
             Ok::<_, BrowserRefusal>(())

@@ -331,7 +331,7 @@ fn query_with<T: serde::de::DeserializeOwned>(
     // dispatch commands. JSON output does not imply a read-only operation.
     let read_only = matches!(
         command,
-        "j/monitors" | "j/clients" | "j/activewindow" | "j/cursorpos"
+        "j/monitors" | "j/clients" | "j/activewindow" | "j/cursorpos" | "j/locked"
     );
     for attempt in 1..=QUERY_MAX_ATTEMPTS {
         query_time_remaining(deadline)?;
@@ -809,6 +809,34 @@ pub fn move_cursor(x: f64, y: f64) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Whether any output is in DPMS standby. The plugin refuses all isolated
+/// and foreground input then (`session_unavailable`), by design.
+pub fn any_output_asleep() -> Result<bool> {
+    let monitors: Vec<Monitor> = query("j/monitors")?;
+    Ok(monitors.iter().any(|monitor| !monitor.dpms_status))
+}
+
+#[derive(Deserialize)]
+struct Locked {
+    locked: bool,
+}
+
+/// Whether the compositor holds a session lock (`hyprctl locked`). Hyprland
+/// refuses keyboard focus to windows while locked, whether or not a lock
+/// client is still running.
+pub fn session_locked() -> Result<bool> {
+    Ok(query::<Locked>("j/locked")?.locked)
+}
+
+/// The availability predicate a compositor projection can establish, for a
+/// plugin that does not name its own: a lock first, then standby.
+pub fn projected_unavailable() -> Option<&'static str> {
+    if session_locked().ok()? {
+        return Some("session_locked");
+    }
+    any_output_asleep().ok()?.then_some("compositor_dpms_off")
 }
 
 pub fn window_for_address(address: u64) -> Option<Window> {

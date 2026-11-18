@@ -314,6 +314,16 @@ extension WebUIBridge {
         }
     }
 
+    /// The entry Connect's driver part writes: this app's own driver, with
+    /// whether Cua Spaces has Screen Recording and Accessibility now. Nil in
+    /// a build that carries none.
+    func connectDriver() async -> (embedded: EmbeddedDriver, entry: DriverConnect)? {
+        guard let driver = EmbeddedDriver.current() else { return nil }
+        let granted = await PermissionGuide.readGranted()
+        let both = granted.contains(.screenRecording) && granted.contains(.accessibility)
+        return (driver, DriverConnect.embedded(driver, permissionsGranted: both))
+    }
+
     /// Set up and Repair: each agent's MCP entry runs this driver through
     /// its embedded proxy, and the cua-driver skill is installed.
     private func setUpDriverAgents(_: EmbeddedDriver, agents: [String]) async throws {

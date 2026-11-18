@@ -35,7 +35,6 @@ on:
       - "libs/cua-driver/rust/crates/cua-cursor-motion/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
       - "!libs/cua-driver/rust/crates/cursor-overlay/examples/export_gallery_frames.rs"
-      - "libs/cua-driver/rust/crates/pip-preview/**"
       - "libs/cua-driver/rust/crates/platform-linux/**"
       - "libs/cua-driver/wayland-helper/**"
       - "libs/cua-driver/tests/fixtures/shared/web/index.html"

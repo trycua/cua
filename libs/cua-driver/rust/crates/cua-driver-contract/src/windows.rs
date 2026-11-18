@@ -291,6 +291,26 @@ pub struct WindowElement {
     pub max: Option<f64>,
 }
 
+/// A readable native row with no action handle: static text, a label, a
+/// read-only value. It comes from the same walk as `elements`, carries no
+/// `element_index` or `element_token`, and no action tool accepts it.
+/// `parent_index` names the nearest addressable ancestor in `elements`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+pub struct WindowObservation {
+    pub role: String,
+    pub depth: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame: Option<ElementFrame>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_index: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_web_content: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 pub struct SnapshotImage {
     pub mime_type: String,
@@ -311,6 +331,13 @@ pub struct WindowStateOutput {
     pub tree_markdown: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub elements: Option<Vec<WindowElement>>,
+    /// Display-only rows of the same walk. Absent means the platform did not
+    /// observe them, never that the window has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observations: Option<Vec<WindowObservation>>,
+    /// True when `observations` stopped at its row cap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observations_truncated: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub element_count: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -3963,112 +3963,6 @@ class _UniffiFfiConverterTypeEndSessionOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.session, buf)
         _UniffiFfiConverterBoolean.write(value.active, buf)
 
-
-
-
-
-
-class EscalationReason(enum.Enum):
-
-    AX_TREE_PIXEL_MISMATCH = 0
-
-    BACKGROUND_DELIVERY_FAILED = 1
-
-    FOREGROUND_INEFFECTIVE = 2
-
-    NO_WINDOW_TARGET = 3
-
-    OTHER = 4
-
-
-
-class _UniffiFfiConverterTypeEscalationReason(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        variant = buf.read_i32()
-        if variant == 1:
-            return EscalationReason.AX_TREE_PIXEL_MISMATCH
-        if variant == 2:
-            return EscalationReason.BACKGROUND_DELIVERY_FAILED
-        if variant == 3:
-            return EscalationReason.FOREGROUND_INEFFECTIVE
-        if variant == 4:
-            return EscalationReason.NO_WINDOW_TARGET
-        if variant == 5:
-            return EscalationReason.OTHER
-        raise InternalError("Raw enum value doesn't match any cases")
-
-    @staticmethod
-    def check_lower(value):
-        if value == EscalationReason.AX_TREE_PIXEL_MISMATCH:
-            return
-        if value == EscalationReason.BACKGROUND_DELIVERY_FAILED:
-            return
-        if value == EscalationReason.FOREGROUND_INEFFECTIVE:
-            return
-        if value == EscalationReason.NO_WINDOW_TARGET:
-            return
-        if value == EscalationReason.OTHER:
-            return
-        raise ValueError(value)
-
-    @staticmethod
-    def write(value, buf):
-        if value == EscalationReason.AX_TREE_PIXEL_MISMATCH:
-            buf.write_i32(1)
-        if value == EscalationReason.BACKGROUND_DELIVERY_FAILED:
-            buf.write_i32(2)
-        if value == EscalationReason.FOREGROUND_INEFFECTIVE:
-            buf.write_i32(3)
-        if value == EscalationReason.NO_WINDOW_TARGET:
-            buf.write_i32(4)
-        if value == EscalationReason.OTHER:
-            buf.write_i32(5)
-
-
-
-@dataclass
-class EscalateSessionInput:
-    def __init__(self, *, session:str, reason:EscalationReason, detail:typing.Optional[str]):
-        self.session = session
-        self.reason = reason
-        self.detail = detail
-
-
-
-
-    def __str__(self):
-        return "EscalateSessionInput(session={}, reason={}, detail={})".format(self.session, self.reason, self.detail)
-    def __eq__(self, other):
-        if self.session != other.session:
-            return False
-        if self.reason != other.reason:
-            return False
-        if self.detail != other.detail:
-            return False
-        return True
-
-class _UniffiFfiConverterTypeEscalateSessionInput(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        return EscalateSessionInput(
-            session=_UniffiFfiConverterString.read(buf),
-            reason=_UniffiFfiConverterTypeEscalationReason.read(buf),
-            detail=_UniffiFfiConverterOptionalString.read(buf),
-        )
-
-    @staticmethod
-    def check_lower(value):
-        _UniffiFfiConverterString.check_lower(value.session)
-        _UniffiFfiConverterTypeEscalationReason.check_lower(value.reason)
-        _UniffiFfiConverterOptionalString.check_lower(value.detail)
-
-    @staticmethod
-    def write(value, buf):
-        _UniffiFfiConverterString.write(value.session, buf)
-        _UniffiFfiConverterTypeEscalationReason.write(value.reason, buf)
-        _UniffiFfiConverterOptionalString.write(value.detail, buf)
-
 @dataclass
 class GetAgentCursorStateInput:
     def __init__(self, *, session:str):
@@ -4320,36 +4214,6 @@ class _UniffiFfiConverterTypeGetSessionInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.session, buf)
 
 @dataclass
-class GetSessionStateInput:
-    def __init__(self, *, session:typing.Optional[str]):
-        self.session = session
-
-
-
-
-    def __str__(self):
-        return "GetSessionStateInput(session={})".format(self.session)
-    def __eq__(self, other):
-        if self.session != other.session:
-            return False
-        return True
-
-class _UniffiFfiConverterTypeGetSessionStateInput(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        return GetSessionStateInput(
-            session=_UniffiFfiConverterOptionalString.read(buf),
-        )
-
-    @staticmethod
-    def check_lower(value):
-        _UniffiFfiConverterOptionalString.check_lower(value.session)
-
-    @staticmethod
-    def write(value, buf):
-        _UniffiFfiConverterOptionalString.write(value.session, buf)
-
-@dataclass
 class GetWindowStateInput:
     def __init__(self, *, pid:int, window_id:int, session:typing.Optional[str], query:typing.Optional[str], include_accessibility_tree:typing.Optional[bool], include_screenshot:typing.Optional[bool], screenshot_out_file:typing.Optional[str], max_elements:typing.Optional[int], max_depth:typing.Optional[int], max_dimension:typing.Optional[int], max_image_dimension:typing.Optional[int], timeout_ms:typing.Optional[int] = _DEFAULT, tree_format:typing.Optional[str] = _DEFAULT, since:typing.Optional[str] = _DEFAULT, verbose:typing.Optional[bool] = _DEFAULT, full_output:typing.Optional[bool] = _DEFAULT):
         self.pid = pid
@@ -4532,6 +4396,31 @@ class _UniffiFfiConverterTypeHotkeyInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeDesktopScope.write(value.scope, buf)
         _UniffiFfiConverterOptionalString.write(value.session, buf)
 
+class _UniffiFfiConverterOptionalTypeInputDeliveryMode(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeInputDeliveryMode.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeInputDeliveryMode.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeInputDeliveryMode.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 @dataclass
 class InvokeMenuInput:
     """
@@ -4541,23 +4430,26 @@ class InvokeMenuInput:
     macOS, three periods in a label also match the ellipsis character that
     native menu titles use (`Save As...` finds `Save As…`).
 """
-    def __init__(self, *, pid:int, window_id:int, path:typing.List[str], session:typing.Optional[str]):
+    def __init__(self, *, pid:int, window_id:int, path:typing.List[str], delivery_mode:typing.Optional[InputDeliveryMode], session:typing.Optional[str]):
         self.pid = pid
         self.window_id = window_id
         self.path = path
+        self.delivery_mode = delivery_mode
         self.session = session
 
 
 
 
     def __str__(self):
-        return "InvokeMenuInput(pid={}, window_id={}, path={}, session={})".format(self.pid, self.window_id, self.path, self.session)
+        return "InvokeMenuInput(pid={}, window_id={}, path={}, delivery_mode={}, session={})".format(self.pid, self.window_id, self.path, self.delivery_mode, self.session)
     def __eq__(self, other):
         if self.pid != other.pid:
             return False
         if self.window_id != other.window_id:
             return False
         if self.path != other.path:
+            return False
+        if self.delivery_mode != other.delivery_mode:
             return False
         if self.session != other.session:
             return False
@@ -4570,6 +4462,7 @@ class _UniffiFfiConverterTypeInvokeMenuInput(_UniffiConverterRustBuffer):
             pid=_UniffiFfiConverterUInt32.read(buf),
             window_id=_UniffiFfiConverterUInt64.read(buf),
             path=_UniffiFfiConverterSequenceString.read(buf),
+            delivery_mode=_UniffiFfiConverterOptionalTypeInputDeliveryMode.read(buf),
             session=_UniffiFfiConverterOptionalString.read(buf),
         )
 
@@ -4578,6 +4471,7 @@ class _UniffiFfiConverterTypeInvokeMenuInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterUInt32.check_lower(value.pid)
         _UniffiFfiConverterUInt64.check_lower(value.window_id)
         _UniffiFfiConverterSequenceString.check_lower(value.path)
+        _UniffiFfiConverterOptionalTypeInputDeliveryMode.check_lower(value.delivery_mode)
         _UniffiFfiConverterOptionalString.check_lower(value.session)
 
     @staticmethod
@@ -4585,6 +4479,7 @@ class _UniffiFfiConverterTypeInvokeMenuInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterUInt32.write(value.pid, buf)
         _UniffiFfiConverterUInt64.write(value.window_id, buf)
         _UniffiFfiConverterSequenceString.write(value.path, buf)
+        _UniffiFfiConverterOptionalTypeInputDeliveryMode.write(value.delivery_mode, buf)
         _UniffiFfiConverterOptionalString.write(value.session, buf)
 
 @dataclass
@@ -6966,50 +6861,23 @@ class _UniffiFfiConverterTypeEffectiveScope(_UniffiConverterRustBuffer):
 
 
 
-class _UniffiFfiConverterOptionalTypeEscalationReason(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        if value is not None:
-            _UniffiFfiConverterTypeEscalationReason.check_lower(value)
-
-    @classmethod
-    def write(cls, value, buf):
-        if value is None:
-            buf.write_u8(0)
-            return
-
-        buf.write_u8(1)
-        _UniffiFfiConverterTypeEscalationReason.write(value, buf)
-
-    @classmethod
-    def read(cls, buf):
-        flag = buf.read_u8()
-        if flag == 0:
-            return None
-        elif flag == 1:
-            return _UniffiFfiConverterTypeEscalationReason.read(buf)
-        else:
-            raise InternalError("Unexpected flag byte for optional type")
-
 @dataclass
 class SessionStateOutput:
     """
-    Successful structured result shared by session state and escalation tools.
+    Capture-scope state carried by the `start_session` result.
 """
-    def __init__(self, *, session:str, capture_scope:CaptureScope, effective_scope:EffectiveScope, desktop_capture_authorized:bool, desktop_unlocked:bool, escalation_reason:typing.Optional[EscalationReason], escalation_detail:typing.Optional[str]):
+    def __init__(self, *, session:str, capture_scope:CaptureScope, effective_scope:EffectiveScope, desktop_capture_authorized:bool, desktop_unlocked:bool):
         self.session = session
         self.capture_scope = capture_scope
         self.effective_scope = effective_scope
         self.desktop_capture_authorized = desktop_capture_authorized
         self.desktop_unlocked = desktop_unlocked
-        self.escalation_reason = escalation_reason
-        self.escalation_detail = escalation_detail
 
 
 
 
     def __str__(self):
-        return "SessionStateOutput(session={}, capture_scope={}, effective_scope={}, desktop_capture_authorized={}, desktop_unlocked={}, escalation_reason={}, escalation_detail={})".format(self.session, self.capture_scope, self.effective_scope, self.desktop_capture_authorized, self.desktop_unlocked, self.escalation_reason, self.escalation_detail)
+        return "SessionStateOutput(session={}, capture_scope={}, effective_scope={}, desktop_capture_authorized={}, desktop_unlocked={})".format(self.session, self.capture_scope, self.effective_scope, self.desktop_capture_authorized, self.desktop_unlocked)
     def __eq__(self, other):
         if self.session != other.session:
             return False
@@ -7020,10 +6888,6 @@ class SessionStateOutput:
         if self.desktop_capture_authorized != other.desktop_capture_authorized:
             return False
         if self.desktop_unlocked != other.desktop_unlocked:
-            return False
-        if self.escalation_reason != other.escalation_reason:
-            return False
-        if self.escalation_detail != other.escalation_detail:
             return False
         return True
 
@@ -7036,8 +6900,6 @@ class _UniffiFfiConverterTypeSessionStateOutput(_UniffiConverterRustBuffer):
             effective_scope=_UniffiFfiConverterTypeEffectiveScope.read(buf),
             desktop_capture_authorized=_UniffiFfiConverterBoolean.read(buf),
             desktop_unlocked=_UniffiFfiConverterBoolean.read(buf),
-            escalation_reason=_UniffiFfiConverterOptionalTypeEscalationReason.read(buf),
-            escalation_detail=_UniffiFfiConverterOptionalString.read(buf),
         )
 
     @staticmethod
@@ -7047,8 +6909,6 @@ class _UniffiFfiConverterTypeSessionStateOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterTypeEffectiveScope.check_lower(value.effective_scope)
         _UniffiFfiConverterBoolean.check_lower(value.desktop_capture_authorized)
         _UniffiFfiConverterBoolean.check_lower(value.desktop_unlocked)
-        _UniffiFfiConverterOptionalTypeEscalationReason.check_lower(value.escalation_reason)
-        _UniffiFfiConverterOptionalString.check_lower(value.escalation_detail)
 
     @staticmethod
     def write(value, buf):
@@ -7057,8 +6917,6 @@ class _UniffiFfiConverterTypeSessionStateOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterTypeEffectiveScope.write(value.effective_scope, buf)
         _UniffiFfiConverterBoolean.write(value.desktop_capture_authorized, buf)
         _UniffiFfiConverterBoolean.write(value.desktop_unlocked, buf)
-        _UniffiFfiConverterOptionalTypeEscalationReason.write(value.escalation_reason, buf)
-        _UniffiFfiConverterOptionalString.write(value.escalation_detail, buf)
 
 @dataclass
 class SetAgentCursorEnabledInput:
@@ -8327,6 +8185,78 @@ class _UniffiFfiConverterTypeWindowElement(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalFloat64.write(value.min, buf)
         _UniffiFfiConverterOptionalFloat64.write(value.max, buf)
 
+@dataclass
+class WindowObservation:
+    """
+    A readable native row with no action handle: static text, a label, a
+    read-only value. It comes from the same walk as `elements`, carries no
+    `element_index` or `element_token`, and no action tool accepts it.
+    `parent_index` names the nearest addressable ancestor in `elements`.
+"""
+    def __init__(self, *, role:str, depth:int, label:typing.Optional[str], value:typing.Optional[str], frame:typing.Optional[ElementFrame], parent_index:typing.Optional[int], in_web_content:typing.Optional[bool]):
+        self.role = role
+        self.depth = depth
+        self.label = label
+        self.value = value
+        self.frame = frame
+        self.parent_index = parent_index
+        self.in_web_content = in_web_content
+
+
+
+
+    def __str__(self):
+        return "WindowObservation(role={}, depth={}, label={}, value={}, frame={}, parent_index={}, in_web_content={})".format(self.role, self.depth, self.label, self.value, self.frame, self.parent_index, self.in_web_content)
+    def __eq__(self, other):
+        if self.role != other.role:
+            return False
+        if self.depth != other.depth:
+            return False
+        if self.label != other.label:
+            return False
+        if self.value != other.value:
+            return False
+        if self.frame != other.frame:
+            return False
+        if self.parent_index != other.parent_index:
+            return False
+        if self.in_web_content != other.in_web_content:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeWindowObservation(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return WindowObservation(
+            role=_UniffiFfiConverterString.read(buf),
+            depth=_UniffiFfiConverterUInt32.read(buf),
+            label=_UniffiFfiConverterOptionalString.read(buf),
+            value=_UniffiFfiConverterOptionalString.read(buf),
+            frame=_UniffiFfiConverterOptionalTypeElementFrame.read(buf),
+            parent_index=_UniffiFfiConverterOptionalUInt64.read(buf),
+            in_web_content=_UniffiFfiConverterOptionalBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.role)
+        _UniffiFfiConverterUInt32.check_lower(value.depth)
+        _UniffiFfiConverterOptionalString.check_lower(value.label)
+        _UniffiFfiConverterOptionalString.check_lower(value.value)
+        _UniffiFfiConverterOptionalTypeElementFrame.check_lower(value.frame)
+        _UniffiFfiConverterOptionalUInt64.check_lower(value.parent_index)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.in_web_content)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.role, buf)
+        _UniffiFfiConverterUInt32.write(value.depth, buf)
+        _UniffiFfiConverterOptionalString.write(value.label, buf)
+        _UniffiFfiConverterOptionalString.write(value.value, buf)
+        _UniffiFfiConverterOptionalTypeElementFrame.write(value.frame, buf)
+        _UniffiFfiConverterOptionalUInt64.write(value.parent_index, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.in_web_content, buf)
+
 class _UniffiFfiConverterSequenceTypeWindowElement(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -8372,6 +8302,54 @@ class _UniffiFfiConverterOptionalSequenceTypeWindowElement(_UniffiConverterRustB
             return None
         elif flag == 1:
             return _UniffiFfiConverterSequenceTypeWindowElement.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+class _UniffiFfiConverterSequenceTypeWindowObservation(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeWindowObservation.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeWindowObservation.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeWindowObservation.read(buf) for i in range(count)
+        ]
+
+class _UniffiFfiConverterOptionalSequenceTypeWindowObservation(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterSequenceTypeWindowObservation.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterSequenceTypeWindowObservation.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterSequenceTypeWindowObservation.read(buf)
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
@@ -8425,7 +8403,7 @@ class _UniffiFfiConverterSequenceTypeSnapshotImage(_UniffiConverterRustBuffer):
 
 @dataclass
 class WindowStateOutput:
-    def __init__(self, *, pid:int, window_id:int, snapshot_id:typing.Optional[str], app_name:typing.Optional[str], window_title:typing.Optional[str], tree_markdown:typing.Optional[str], elements:typing.Optional[typing.List[WindowElement]], element_count:typing.Optional[int], total_element_count:typing.Optional[int], returned_element_count:typing.Optional[int], filtered_element_count:typing.Optional[int], elements_complete:typing.Optional[bool], degraded:typing.Optional[bool], degraded_reason:typing.Optional[str], truncated:typing.Optional[bool], truncation_reason:typing.Optional[str], truncation_hint:typing.Optional[str], tree_format:typing.Optional[str], since:typing.Optional[str], since_status:typing.Optional[str], tree_diff:typing.Optional[str], screenshot_width:typing.Optional[int], screenshot_height:typing.Optional[int], screenshot_scale:typing.Optional[float], screenshot_mime_type:typing.Optional[str], screenshot_file_path:typing.Optional[str], screenshot_frame_valid:typing.Optional[bool], window_bounds:typing.Optional[WindowBounds], images:typing.List[SnapshotImage]):
+    def __init__(self, *, pid:int, window_id:int, snapshot_id:typing.Optional[str], app_name:typing.Optional[str], window_title:typing.Optional[str], tree_markdown:typing.Optional[str], elements:typing.Optional[typing.List[WindowElement]], observations:typing.Optional[typing.List[WindowObservation]], observations_truncated:typing.Optional[bool], element_count:typing.Optional[int], total_element_count:typing.Optional[int], returned_element_count:typing.Optional[int], filtered_element_count:typing.Optional[int], elements_complete:typing.Optional[bool], degraded:typing.Optional[bool], degraded_reason:typing.Optional[str], truncated:typing.Optional[bool], truncation_reason:typing.Optional[str], truncation_hint:typing.Optional[str], tree_format:typing.Optional[str], since:typing.Optional[str], since_status:typing.Optional[str], tree_diff:typing.Optional[str], screenshot_width:typing.Optional[int], screenshot_height:typing.Optional[int], screenshot_scale:typing.Optional[float], screenshot_mime_type:typing.Optional[str], screenshot_file_path:typing.Optional[str], screenshot_frame_valid:typing.Optional[bool], window_bounds:typing.Optional[WindowBounds], images:typing.List[SnapshotImage]):
         self.pid = pid
         self.window_id = window_id
         self.snapshot_id = snapshot_id
@@ -8433,6 +8411,8 @@ class WindowStateOutput:
         self.window_title = window_title
         self.tree_markdown = tree_markdown
         self.elements = elements
+        self.observations = observations
+        self.observations_truncated = observations_truncated
         self.element_count = element_count
         self.total_element_count = total_element_count
         self.returned_element_count = returned_element_count
@@ -8460,7 +8440,7 @@ class WindowStateOutput:
 
 
     def __str__(self):
-        return "WindowStateOutput(pid={}, window_id={}, snapshot_id={}, app_name={}, window_title={}, tree_markdown={}, elements={}, element_count={}, total_element_count={}, returned_element_count={}, filtered_element_count={}, elements_complete={}, degraded={}, degraded_reason={}, truncated={}, truncation_reason={}, truncation_hint={}, tree_format={}, since={}, since_status={}, tree_diff={}, screenshot_width={}, screenshot_height={}, screenshot_scale={}, screenshot_mime_type={}, screenshot_file_path={}, screenshot_frame_valid={}, window_bounds={}, images={})".format(self.pid, self.window_id, self.snapshot_id, self.app_name, self.window_title, self.tree_markdown, self.elements, self.element_count, self.total_element_count, self.returned_element_count, self.filtered_element_count, self.elements_complete, self.degraded, self.degraded_reason, self.truncated, self.truncation_reason, self.truncation_hint, self.tree_format, self.since, self.since_status, self.tree_diff, self.screenshot_width, self.screenshot_height, self.screenshot_scale, self.screenshot_mime_type, self.screenshot_file_path, self.screenshot_frame_valid, self.window_bounds, self.images)
+        return "WindowStateOutput(pid={}, window_id={}, snapshot_id={}, app_name={}, window_title={}, tree_markdown={}, elements={}, observations={}, observations_truncated={}, element_count={}, total_element_count={}, returned_element_count={}, filtered_element_count={}, elements_complete={}, degraded={}, degraded_reason={}, truncated={}, truncation_reason={}, truncation_hint={}, tree_format={}, since={}, since_status={}, tree_diff={}, screenshot_width={}, screenshot_height={}, screenshot_scale={}, screenshot_mime_type={}, screenshot_file_path={}, screenshot_frame_valid={}, window_bounds={}, images={})".format(self.pid, self.window_id, self.snapshot_id, self.app_name, self.window_title, self.tree_markdown, self.elements, self.observations, self.observations_truncated, self.element_count, self.total_element_count, self.returned_element_count, self.filtered_element_count, self.elements_complete, self.degraded, self.degraded_reason, self.truncated, self.truncation_reason, self.truncation_hint, self.tree_format, self.since, self.since_status, self.tree_diff, self.screenshot_width, self.screenshot_height, self.screenshot_scale, self.screenshot_mime_type, self.screenshot_file_path, self.screenshot_frame_valid, self.window_bounds, self.images)
     def __eq__(self, other):
         if self.pid != other.pid:
             return False
@@ -8475,6 +8455,10 @@ class WindowStateOutput:
         if self.tree_markdown != other.tree_markdown:
             return False
         if self.elements != other.elements:
+            return False
+        if self.observations != other.observations:
+            return False
+        if self.observations_truncated != other.observations_truncated:
             return False
         if self.element_count != other.element_count:
             return False
@@ -8533,6 +8517,8 @@ class _UniffiFfiConverterTypeWindowStateOutput(_UniffiConverterRustBuffer):
             window_title=_UniffiFfiConverterOptionalString.read(buf),
             tree_markdown=_UniffiFfiConverterOptionalString.read(buf),
             elements=_UniffiFfiConverterOptionalSequenceTypeWindowElement.read(buf),
+            observations=_UniffiFfiConverterOptionalSequenceTypeWindowObservation.read(buf),
+            observations_truncated=_UniffiFfiConverterOptionalBoolean.read(buf),
             element_count=_UniffiFfiConverterOptionalUInt64.read(buf),
             total_element_count=_UniffiFfiConverterOptionalUInt64.read(buf),
             returned_element_count=_UniffiFfiConverterOptionalUInt64.read(buf),
@@ -8566,6 +8552,8 @@ class _UniffiFfiConverterTypeWindowStateOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.check_lower(value.window_title)
         _UniffiFfiConverterOptionalString.check_lower(value.tree_markdown)
         _UniffiFfiConverterOptionalSequenceTypeWindowElement.check_lower(value.elements)
+        _UniffiFfiConverterOptionalSequenceTypeWindowObservation.check_lower(value.observations)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.observations_truncated)
         _UniffiFfiConverterOptionalUInt64.check_lower(value.element_count)
         _UniffiFfiConverterOptionalUInt64.check_lower(value.total_element_count)
         _UniffiFfiConverterOptionalUInt64.check_lower(value.returned_element_count)
@@ -8598,6 +8586,8 @@ class _UniffiFfiConverterTypeWindowStateOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.window_title, buf)
         _UniffiFfiConverterOptionalString.write(value.tree_markdown, buf)
         _UniffiFfiConverterOptionalSequenceTypeWindowElement.write(value.elements, buf)
+        _UniffiFfiConverterOptionalSequenceTypeWindowObservation.write(value.observations, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.observations_truncated, buf)
         _UniffiFfiConverterOptionalUInt64.write(value.element_count, buf)
         _UniffiFfiConverterOptionalUInt64.write(value.total_element_count, buf)
         _UniffiFfiConverterOptionalUInt64.write(value.returned_element_count, buf)
@@ -8700,7 +8690,6 @@ __all__ = [
     "CursorReducedMotion",
     "CursorAction",
     "DesktopScope",
-    "EscalationReason",
     "SessionLifecycleState",
     "SessionClientKindOutput",
     "SessionTransportOutput",
@@ -8742,14 +8731,12 @@ __all__ = [
     "ElementPredicate",
     "EndSessionInput",
     "EndSessionOutput",
-    "EscalateSessionInput",
     "GetAgentCursorStateInput",
     "GetAgentCursorStateOutput",
     "GetCursorPositionInput",
     "GetDesktopStateInput",
     "GetScreenSizeInput",
     "GetSessionInput",
-    "GetSessionStateInput",
     "GetWindowStateInput",
     "HotkeyInput",
     "InvokeMenuInput",
@@ -8794,5 +8781,6 @@ __all__ = [
     "VerifyStateOutput",
     "VisualParseError",
     "WindowElement",
+    "WindowObservation",
     "WindowStateOutput",
 ]

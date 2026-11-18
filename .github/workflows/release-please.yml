@@ -222,9 +222,11 @@ jobs:
               '.files | any(.path == "libs/cua/VERSION")')
             BENCH=$(echo "$PR" | jq -r \
               '.files | any(.path == "libs/cua-bench/pyproject.toml")')
+            SPACES=$(echo "$PR" | jq -r \
+              '.files | any(.path == "apps/cua-spaces-macos/VERSION")')
             if [[ "$DRIVER" != "true" && "$PERCEPTION" != "true" && "$LUME" != "true" && \
                   "$SANDBOX" != "true" && "$SPACESD" != "true" && "$SDK" != "true" && \
-                  "$BENCH" != "true" ]]; then
+                  "$BENCH" != "true" && "$SPACES" != "true" ]]; then
               continue
             fi
 
@@ -287,6 +289,9 @@ jobs:
               if [[ "${BENCH}" == "true" ]]; then
                 COMPONENT_ARGS+=(--component bench)
               fi
+              if [[ "${SPACES}" == "true" ]]; then
+                COMPONENT_ARGS+=(--component cua-spaces)
+              fi
               "$TOOLS/replay_release_branch.sh" "origin/$BRANCH" "${COMPONENT_ARGS[@]}"
             fi
             if [[ "$PERCEPTION" == "true" ]]; then
@@ -337,6 +342,12 @@ jobs:
                 git add -- "${SDK_LOCK_PATHS[@]}"
               fi
               COMMIT_MESSAGE="chore(cua-sdk): synchronize release documentation and lockfiles"
+            elif [[ "$SPACES" == "true" ]]; then
+              # Release Please bumps every Cua Spaces version file itself (the
+              # Info.plist, the Tauri app and its lockfile); nothing is generated
+              # here, but the replay above keeps the branch mergeable.
+              python3 .github/scripts/validate_release_versions.py --product spaces
+              COMMIT_MESSAGE="chore(cua-spaces): synchronize release files"
             elif [[ "$BENCH" == "true" ]]; then
               # Other lockfiles lock cua-bench from the checkout and still record
               # the old version; follow it without relocking.

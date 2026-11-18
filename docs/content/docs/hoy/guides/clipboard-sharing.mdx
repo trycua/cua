@@ -1,0 +1,62 @@
+---
+title: Clipboard sharing
+description: 'Copy and paste between your Mac and a Hoy VM, choose which directions are allowed, opt VMs in to share with each other, and add the clipboard agent to older VMs.'
+---
+
+Copy on your Mac and paste in a VM, or the other way round. Plain text, rich
+text and images (PNG and TIFF) are shared, up to 16 MiB per copy. Files and
+drag and drop are not.
+
+Sharing is on between your Mac and each VM by default, in both directions. VMs
+share with each other only if you opt both in.
+
+## Choose the directions
+
+```bash skip="no-runner"
+hoy set dev --clipboard host-to-vm
+```
+
+| Setting | Mac to VM | VM to Mac |
+|---|---|---|
+| `both` (default) | yes | yes |
+| `host-to-vm` | yes | no |
+| `vm-to-host` | no | yes |
+| `off` | no | no, and no VM to VM either |
+
+The change applies at once to a running VM. `hoy inspect dev` shows the setting
+and counters of what was shared and dropped.
+
+Use `off` or `host-to-vm` for a VM you do not trust: with `both` or
+`vm-to-host`, software in the VM can put text or an image on your Mac's
+clipboard.
+
+## Share between VMs
+
+```bash skip="no-runner"
+hoy set dev --clipboard-vm-to-vm on
+hoy set dev2 --clipboard-vm-to-vm on
+```
+
+A copy goes from one VM to another only when both have `--clipboard-vm-to-vm on`
+and neither is set to `off`. The default is off. The Mac is not a bridge: what a
+VM copies reaches your Mac's clipboard, but Hoy does not forward it from there
+to other VMs.
+
+## Older VMs
+
+New images carry the clipboard agent. A VM made from an older image needs it
+once. With the VM running:
+
+```bash skip="no-runner"
+hoy clipboard install dev
+```
+
+This copies the agent into the VM over ssh and loads it. The agent runs in the
+logged-in desktop session, so a headless VM with no desktop user shares nothing.
+
+## What Hoy keeps
+
+- Copies from password managers that mark them as secret are not shared.
+- Hoy logs sizes, types and directions, never the contents.
+- After a restore or fork, only copies made after the VM is running again are
+  shared. Nothing is replayed.

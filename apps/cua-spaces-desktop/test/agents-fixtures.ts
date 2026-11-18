@@ -260,7 +260,12 @@ export class FixtureAgentSetup implements AgentSetupRunning {
   async connectJson(agents: string[], signIn: boolean, skills: boolean, mcp: boolean) {
     await this.setUp(agents, skills, mcp);
     this.calls.push(`connect:${agents.join(",")}:${signIn}`);
-    return JSON.stringify(agents.map((agent) => ({ agent, tools_ok: true, tools_line: null, sign_in: null })));
+    const parts = (agent: string) => [
+      ...(skills ? [{ part: "skills", status: "done", where: `~/.${agent}/skills`, line: null }] : []),
+      ...(mcp ? [{ part: "mcp", status: "done", where: `~/.${agent}.json`, line: null }] : []),
+      ...(signIn ? [{ part: "sign_in", status: "skipped", where: null, line: `${agent} has no sign-in to save` }] : []),
+    ];
+    return JSON.stringify(agents.map((agent) => ({ agent, tools_ok: true, tools_line: null, sign_in: null, parts: parts(agent) })));
   }
 
   async disconnectJson(agents: string[], _signIn: boolean) {

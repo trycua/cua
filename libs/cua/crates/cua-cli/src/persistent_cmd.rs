@@ -114,13 +114,17 @@ pub enum PersistentCmd {
     /// requests).
     #[command(after_help = "Examples:
   cua agent notifications --unread
-  cua agent notifications --mark-read")]
+  cua agent notifications --mark-read
+  cua agent notifications --delete-all")]
     Notifications {
         #[arg(long)]
         unread: bool,
         /// Mark every notification read.
         #[arg(long)]
         mark_read: bool,
+        /// Delete every notification, for good.
+        #[arg(long, conflicts_with = "mark_read")]
+        delete_all: bool,
     },
 }
 
@@ -508,10 +512,17 @@ pub async fn run(
                 }
             }
         }
-        PersistentCmd::Notifications { unread, mark_read } => {
+        PersistentCmd::Notifications {
+            unread,
+            mark_read,
+            delete_all,
+        } => {
             let all = spaces.notifications(unread, None).await?;
             if mark_read {
                 spaces.notifications_ack(vec![]).await?;
+            }
+            if delete_all {
+                spaces.notifications_delete(vec![], true).await?;
             }
             if json {
                 let rows: Vec<_> = all.iter().map(|n| serde_json::json!({"id": n.id, "at_ms": n.at_ms,

@@ -27507,10 +27507,14 @@ export interface AgentSetupLike {
  * Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
  * (`server`, default this channel's cua), and with `sign_in` the
  * agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
- * sign-in it already has, read from where Claude Code keeps it). JSON:
- * one result per agent.
+ * sign-in it already has, read from where Claude Code keeps it). With
+ * `driver`, the `cua-driver` entry the host app wants (the Cua Driver it
+ * carries, by absolute path) is written too; `driver_permissions_granted`
+ * says whether Screen Recording and Accessibility are on for it (None:
+ * unknown). Each part asked for is reported on its own (`parts`), so
+ * one can be retried by asking for it alone. JSON: one result per agent.
  */
-    connectJson(agents: Array<string>, server: AgentMcpServer | undefined, skills: boolean, mcp: boolean, signIn: boolean, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
+    connectJson(agents: Array<string>, server: AgentMcpServer | undefined, skills: boolean, mcp: boolean, signIn: boolean, driver: AgentMcpServer | undefined, driverPermissionsGranted: boolean | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
 /**
  * Whether each agent is really connected (CONTRACT §4: `{agents,
  * checked_at_ms}`), as JSON, the same JSON `cua connect status --json`
@@ -27658,17 +27662,21 @@ private constructor(pointer: UniffiHandle) {
  * Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
  * (`server`, default this channel's cua), and with `sign_in` the
  * agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
- * sign-in it already has, read from where Claude Code keeps it). JSON:
- * one result per agent.
+ * sign-in it already has, read from where Claude Code keeps it). With
+ * `driver`, the `cua-driver` entry the host app wants (the Cua Driver it
+ * carries, by absolute path) is written too; `driver_permissions_granted`
+ * says whether Screen Recording and Accessibility are on for it (None:
+ * unknown). Each part asked for is reported on its own (`parts`), so
+ * one can be retried by asking for it alone. JSON: one result per agent.
  */
-    async connectJson(agents: Array<string>, server: AgentMcpServer | undefined, skills: boolean, mcp: boolean, signIn: boolean, asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
+    async connectJson(agents: Array<string>, server: AgentMcpServer | undefined, skills: boolean, mcp: boolean, signIn: boolean, driver: AgentMcpServer | undefined, driverPermissionsGranted: boolean | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
         return await uniffiRustCallAsync(
             /*rustCaller:*/ uniffiCaller,
             /*rustFutureFunc:*/ () => {
                 return nativeModule().uniffi_cua_sdk_fn_method_agentsetup_connect_json(
-                    uniffiTypeAgentSetupObjectFactory.clonePointer(this),FfiConverterSequenceString.lower(agents, nativeModule().rustbuffer_alloc),FfiConverterOptionalTypeAgentMcpServer.lower(server, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(skills, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(mcp, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(signIn, nativeModule().rustbuffer_alloc)
+                    uniffiTypeAgentSetupObjectFactory.clonePointer(this),FfiConverterSequenceString.lower(agents, nativeModule().rustbuffer_alloc),FfiConverterOptionalTypeAgentMcpServer.lower(server, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(skills, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(mcp, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(signIn, nativeModule().rustbuffer_alloc),FfiConverterOptionalTypeAgentMcpServer.lower(driver, nativeModule().rustbuffer_alloc),FfiConverterOptionalBoolean.lower(driverPermissionsGranted, nativeModule().rustbuffer_alloc)
                 );
             },
             /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
@@ -42788,6 +42796,11 @@ export interface SpacesLike {
  */
     notificationsAck(ids: Array<string>, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<bigint>;
 /**
+ * Deletes notifications: these ids, or every one when `all` (an empty
+ * `ids` without `all` deletes nothing). Returns how many were deleted.
+ */
+    notificationsDelete(ids: Array<string>, all: boolean, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<bigint>;
+/**
  * Posts a notification to the Cua app. Returns its id.
  */
     notifyUser(title: string, body: string | undefined, agent: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
@@ -44897,6 +44910,42 @@ private constructor(pointer: UniffiHandle) {
             /*rustFutureFunc:*/ () => {
                 return nativeModule().uniffi_cua_sdk_fn_method_spaces_notifications_ack(
                     uniffiTypeSpacesObjectFactory.clonePointer(this),FfiConverterSequenceString.lower(ids, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_u64,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_u64,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_u64,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_u64,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterUInt64.lift.bind(FfiConverterUInt64),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Deletes notifications: these ids, or every one when `all` (an empty
+ * `ids` without `all` deletes nothing). Returns how many were deleted.
+ */
+    async notificationsDelete(ids: Array<string>, all: boolean, asyncOpts_?: { signal: AbortSignal }): Promise<bigint> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_notifications_delete(
+                    uniffiTypeSpacesObjectFactory.clonePointer(this),FfiConverterSequenceString.lower(ids, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(all, nativeModule().rustbuffer_alloc)
                 );
             },
             /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_u64,
@@ -49646,7 +49695,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() !== 53713) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_connect_json() !== 21138) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_connect_json() !== 1379) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_connect_json");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_connection_status_json() !== 47692) {
@@ -50647,6 +50696,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_notifications_ack() !== 64477) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_notifications_ack");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_notifications_delete() !== 26912) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_notifications_delete");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_notify_user() !== 48805) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_notify_user");

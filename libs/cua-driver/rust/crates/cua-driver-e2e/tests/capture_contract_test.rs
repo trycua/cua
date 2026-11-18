@@ -30,7 +30,7 @@ use cua_driver_testkit::e2e::{
 };
 #[cfg(target_os = "windows")]
 use cua_driver_testkit::e2e::{CaseSpec, Delivery, Scope};
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 use cua_driver_testkit::observer::TargetWindow;
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 use cua_driver_testkit::sentinel::ForegroundSentinel;
@@ -756,6 +756,309 @@ fn background_screenshot_preserves_desktop() {
             );
         }
         passed.push(OracleKind::Pixels);
+        Observation::delivered(passed, Evidence::default())
+    });
+}
+
+/// The `element_token` of the snapshot element whose tree line names `name`.
+#[cfg(target_os = "linux")]
+fn element_token(resp: &ToolResponse, name: &str) -> String {
+    let index = cua_driver_testkit::ax::element_index_containing(resp.tree_text(), name)
+        .unwrap_or_else(|| panic!("{name:?} not in the tree: {}", resp.tree_text()));
+    resp.structured()["elements"]
+        .as_array()
+        .and_then(|elements| {
+            elements
+                .iter()
+                .find(|element| element["element_index"].as_u64() == Some(index))
+        })
+        .and_then(|element| element["element_token"].as_str())
+        .unwrap_or_else(|| panic!("{name:?} has no element_token"))
+        .to_owned()
+}
+
+/// The decoded RGBA screenshot of a `get_window_state` response.
+#[cfg(target_os = "linux")]
+fn screenshot_rgba(resp: &ToolResponse) -> image::RgbaImage {
+    use base64::Engine as _;
+    let png = resp.raw["result"]["content"]
+        .as_array()
+        .and_then(|content| {
+            content
+                .iter()
+                .find(|entry| entry["type"].as_str() == Some("image"))
+        })
+        .and_then(|entry| entry["data"].as_str())
+        .unwrap_or_else(|| panic!("response carries no screenshot: {}", resp.raw));
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(png)
+        .expect("screenshot is base64");
+    image::load_from_memory(&bytes)
+        .expect("screenshot decodes")
+        .to_rgba8()
+}
+
+/// On the nested cua-compositor, a GTK3 window covered by the foreground
+/// sentinel still yields its own, fresh pixels: the screenshot is the
+/// target's size, PX targeting can use it, and it changes when the covered
+/// fixture changes. Neither capture may disturb the foreground desktop.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore]
+fn occluded_cua_compositor_window_capture_is_fresh() {
+    if std::env::var_os("CUA_INJECT_SOCKET").is_none() {
+        return;
+    }
+    let case = cua_driver_testkit::e2e::CaseSpec::delivered(
+        "linux-gtk3-screenshot-px-background",
+        "gtk3",
+        "gtk3",
+        "screenshot",
+        Targeting::Px,
+        cua_driver_testkit::e2e::Delivery::Background,
+        cua_driver_testkit::e2e::Scope::Window,
+        DriverRoute::WindowState,
+        vec![
+            OracleKind::Pixels,
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+        ],
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = test_driver(&cell_id).expect("start exact source-built driver");
+        *evidence = recording_evidence(driver.recording_dir());
+        let (pid, wid) = launch(&mut driver).expect("required capture harness did not launch");
+        let target = TargetWindow {
+            pid,
+            native_id: wid,
+        };
+        let tree = snapshot_settled_tree_only(&mut driver, pid, wid);
+        assert!(tree_has_marker(&tree), "fixture tree never settled");
+
+        let sentinel = ForegroundSentinel::launch(&mut driver);
+        sentinel
+            .assert_background_posture(target)
+            .expect("the sentinel covers the fixture");
+        driver.start_behavior_recording();
+        sentinel
+            .prepare_background_observation(&mut driver, target)
+            .expect("re-establish background posture after recording setup");
+        let (captures, mut passed) = sentinel
+            .observe_background(target, || {
+                let args = serde_json::json!({ "pid": pid as i64, "window_id": wid });
+                let mut captures = vec![driver.call("get_window_state", args.clone())];
+                // Several increments: a covered client that is no longer sent
+                // frame callbacks draws one more frame and then goes stale.
+                for count in 1..=3 {
+                    let increment = element_token(captures.last().unwrap(), TREE_MARKER);
+                    let clicked = driver.call(
+                        "click",
+                        serde_json::json!({
+                            "pid": pid as i64,
+                            "window_id": wid,
+                            "element_token": increment,
+                            "delivery_mode": "background"
+                        }),
+                    );
+                    assert!(
+                        !clicked.is_error(),
+                        "background increment failed: {}",
+                        clicked.text()
+                    );
+                    let expected = format!("counter={count}");
+                    let deadline = Instant::now() + Duration::from_secs(5);
+                    let capture = loop {
+                        let capture = driver.call("get_window_state", args.clone());
+                        if capture.tree_text().contains(&expected) || Instant::now() >= deadline {
+                            break capture;
+                        }
+                        std::thread::sleep(Duration::from_millis(200));
+                    };
+                    assert!(
+                        capture.tree_text().contains(&expected),
+                        "background increment {count} never reached the fixture"
+                    );
+                    // Let the client draw the change before the next capture.
+                    std::thread::sleep(Duration::from_millis(500));
+                    captures.push(driver.call("get_window_state", args.clone()));
+                }
+                captures
+            })
+            .unwrap_or_else(|error| panic!("occluded capture disturbed the desktop: {error}"));
+
+        assert!(captures[0].tree_text().contains("counter=0"));
+        let pixels = captures
+            .iter()
+            .map(|capture| {
+                let png = screenshot_rgba(capture);
+                assert_eq!(capture.structured()["screenshot_frame_valid"], true);
+                assert_eq!(
+                    (
+                        capture.structured()["screenshot_width"].as_u64(),
+                        capture.structured()["screenshot_height"].as_u64()
+                    ),
+                    (Some(png.width() as u64), Some(png.height() as u64)),
+                );
+                png
+            })
+            .collect::<Vec<_>>();
+        // The 1280x900 sentinel is larger than the fixture, so a crop of the
+        // output would be the sentinel's size.
+        assert!(
+            pixels[0].width() < 1280 && pixels[0].height() < 900,
+            "capture is not the fixture window: {:?}",
+            pixels[0].dimensions()
+        );
+        for (count, pair) in pixels.windows(2).enumerate() {
+            assert_eq!(pair[0].dimensions(), pair[1].dimensions());
+            assert_ne!(
+                pair[0].as_raw(),
+                pair[1].as_raw(),
+                "the capture after increment {} still shows the previous frame",
+                count + 1
+            );
+        }
+        passed.extend([OracleKind::Pixels, OracleKind::FixtureState]);
+        Observation::delivered(passed, Evidence::default())
+    });
+}
+
+/// On the nested cua-compositor, a background PX `type_text` aims at the
+/// pixel of the window's own screenshot, even when that screenshot is
+/// downscaled: the point must land on the field in the screenshot, not on
+/// whatever sits at the same number in window pixels. Without a screenshot of
+/// the window, the point is refused before anything is clicked or typed.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore]
+fn downscaled_cua_compositor_px_type_text_reaches_the_field() {
+    if std::env::var_os("CUA_INJECT_SOCKET").is_none() {
+        return;
+    }
+    let case = cua_driver_testkit::e2e::CaseSpec::delivered(
+        "linux-gtk3-type-text-px-background-downscaled",
+        "gtk3",
+        "gtk3",
+        "type_text",
+        Targeting::Px,
+        cua_driver_testkit::e2e::Delivery::Background,
+        cua_driver_testkit::e2e::Scope::Window,
+        DriverRoute::WindowState,
+        vec![
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+        ],
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = test_driver(&cell_id).expect("start exact source-built driver");
+        *evidence = recording_evidence(driver.recording_dir());
+        let (pid, wid) = launch(&mut driver).expect("required capture harness did not launch");
+        let target = TargetWindow {
+            pid,
+            native_id: wid,
+        };
+        let tree = snapshot_settled_tree_only(&mut driver, pid, wid);
+        assert!(tree_has_marker(&tree), "fixture tree never settled");
+        let text = "cua-downscaled";
+        let type_at = |driver: &mut McpDriver, x: f64, y: f64| {
+            driver.call(
+                "type_text",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "x": x,
+                    "y": y,
+                    "text": text,
+                    "delivery_mode": "background"
+                }),
+            )
+        };
+
+        // The tree-only read published no screenshot frame.
+        let refused = type_at(&mut driver, 10.0, 10.0);
+        assert_eq!(
+            refused.structured()["code"],
+            "screenshot_context_missing",
+            "a PX point read off no screenshot must be refused: {}",
+            refused.text()
+        );
+
+        let sentinel = ForegroundSentinel::launch(&mut driver);
+        sentinel
+            .assert_background_posture(target)
+            .expect("the sentinel covers the fixture");
+        driver.start_behavior_recording();
+        sentinel
+            .prepare_background_observation(&mut driver, target)
+            .expect("re-establish background posture after recording setup");
+        let (after, passed) = sentinel
+            .observe_background(target, || {
+                // Half the window's width, so screenshot and window pixels differ.
+                let shot = driver.call(
+                    "get_window_state",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": wid,
+                        "max_image_dimension": 300
+                    }),
+                );
+                let width = shot.structured()["screenshot_width"]
+                    .as_f64()
+                    .unwrap_or_else(|| panic!("no screenshot: {}", shot.text()));
+                let original = shot.structured()["screenshot_original_width"]
+                    .as_f64()
+                    .unwrap_or(width);
+                assert!(
+                    original >= width * 1.5,
+                    "the screenshot was not downscaled: {width} of {original}"
+                );
+                // Screen frame -> window-local -> screenshot pixels.
+                let structured = shot.structured();
+                let field = structured["elements"]
+                    .as_array()
+                    .and_then(|elements| {
+                        elements
+                            .iter()
+                            .find(|element| element["label"].as_str() == Some("txt-input"))
+                    })
+                    .map(|element| element["frame"].clone())
+                    .unwrap_or_else(|| panic!("txt-input has no frame: {}", shot.raw));
+                let number = |value: &serde_json::Value, key: &str| {
+                    value[key]
+                        .as_f64()
+                        .unwrap_or_else(|| panic!("{key} missing from {value}"))
+                };
+                let bounds = &structured["window_bounds"];
+                let scale = width / original;
+                let typed = type_at(
+                    &mut driver,
+                    (number(&field, "x") + number(&field, "w") / 2.0 - number(bounds, "x")) * scale,
+                    (number(&field, "y") + number(&field, "h") / 2.0 - number(bounds, "y")) * scale,
+                );
+                assert!(!typed.is_error(), "PX type_text failed: {}", typed.text());
+                let expected = format!("mirror={text}");
+                let deadline = Instant::now() + Duration::from_secs(5);
+                loop {
+                    let state = snapshot_settled_tree_only(&mut driver, pid, wid);
+                    if state.tree_text().contains(&expected) || Instant::now() >= deadline {
+                        break state;
+                    }
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+            })
+            .unwrap_or_else(|error| panic!("PX type_text disturbed the desktop: {error}"));
+        assert!(
+            after.tree_text().contains(&format!("mirror={text}")),
+            "the text never reached the field the screenshot pixel names"
+        );
+        let mut passed = passed;
+        passed.push(OracleKind::FixtureState);
         Observation::delivered(passed, Evidence::default())
     });
 }

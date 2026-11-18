@@ -29,7 +29,7 @@ requires-python = ">=3.11,<3.14"
 
 [project.optional-dependencies]
 computer = [
-    "cua-sandbox>=0.8.0,<0.11.0",
+    "cua-sandbox>=0.8.0,<0.12.0",
 ]
 openai = []
 anthropic = []
@@ -133,3 +133,4 @@ distribution = true
 
 [tool.pdm.build]
 includes = ["cua_agent/"]
+source-includes = ["README.md", "LICENSE"]

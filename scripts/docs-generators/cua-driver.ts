@@ -238,7 +238,7 @@ export const MCP_CATEGORIES: Array<McpCategory & { tools: string[] }> = [
     slug: 'page',
     title: 'Page tools',
     summary: 'Read and act on web pages, and prepare and navigate browsers',
-    tools: ['page', 'get_browser_state', 'browser_prepare', 'browser_navigate'],
+    tools: ['page', 'get_browser_state', 'browser_prepare', 'browser_navigate', 'browser_motion_policy'],
   },
   {
     slug: 'browser-input',
@@ -249,8 +249,8 @@ export const MCP_CATEGORIES: Array<McpCategory & { tools: string[] }> = [
   {
     slug: 'sessions',
     title: 'Session tools',
-    summary: 'Start, escalate, inspect and end lifecycle sessions',
-    tools: ['start_session', 'escalate_session', 'get_session', 'list_sessions', 'get_session_state', 'end_session'],
+    summary: 'Start, inspect and end lifecycle sessions',
+    tools: ['start_session', 'get_session', 'list_sessions', 'end_session'],
   },
   {
     slug: 'agent-cursor',

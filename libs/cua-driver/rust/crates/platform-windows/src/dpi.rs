@@ -96,17 +96,30 @@ impl OwnedThreadDpi {
 
 /// Initialize explicitly-created Windows threads outside Tokio's callback.
 /// Inherit an owner when the submitting thread has one (e.g. UIA work inside
-/// the ABI executor). Otherwise create an independent owner: registry creation
-/// can start the overlay synchronously on a host thread before entering the
-/// executor. That overlay uses the same initializer, not the executor's sticky
-/// failure state. The caller/host thread's DPI context is never changed.
+/// the ABI executor). A host thread has none: registry creation starts the
+/// overlay synchronously on it, after the embedded SDK has registered its ABI
+/// executor, so that thread joins the executor's sticky failure state. Only
+/// callers without an embedded executor get an independent owner. The
+/// caller/host thread's DPI context is never changed.
 pub fn owned_thread<F, T>(work: F) -> impl FnOnce() -> Result<T, String> + Send + 'static
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    owned_thread_with_fallback(ABI_EXECUTOR_OWNER.get().cloned(), work)
+}
+
+fn owned_thread_with_fallback<F, T>(
+    fallback: Option<Arc<OwnedThreadDpi>>,
+    work: F,
+) -> impl FnOnce() -> Result<T, String> + Send + 'static
 where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
     let owner = OWNED_THREAD_DPI
         .with(|slot| slot.borrow().clone())
+        .or(fallback)
         .unwrap_or_default();
     move || {
         owner.initialize_current_thread();
@@ -121,8 +134,14 @@ where
 /// worker belongs to the embedded ABI runtime and must share its sticky
 /// failure state. Existing Cua-owned thread context takes precedence.
 pub fn initialize_recording_state_thread() -> Result<(), String> {
+    initialize_recording_state_thread_with_fallback(ABI_EXECUTOR_OWNER.get().cloned())
+}
+
+fn initialize_recording_state_thread_with_fallback(
+    fallback: Option<Arc<OwnedThreadDpi>>,
+) -> Result<(), String> {
     let current = OWNED_THREAD_DPI.with(|slot| slot.borrow().clone());
-    let owner = current.or_else(|| ABI_EXECUTOR_OWNER.get().cloned());
+    let owner = current.or(fallback);
     let Some(owner) = owner else {
         // Standalone/platform callers without an embedded ABI runtime retain
         // an independent Cua-owned context.
@@ -149,7 +168,17 @@ pub fn with_recording_state_thread<F, T>(work: F) -> Result<T, String>
 where
     F: FnOnce() -> T,
 {
-    initialize_recording_state_thread()?;
+    with_recording_state_thread_and_fallback(ABI_EXECUTOR_OWNER.get().cloned(), work)
+}
+
+fn with_recording_state_thread_and_fallback<F, T>(
+    fallback: Option<Arc<OwnedThreadDpi>>,
+    work: F,
+) -> Result<T, String>
+where
+    F: FnOnce() -> T,
+{
+    initialize_recording_state_thread_with_fallback(fallback)?;
     let result = work();
     check_owned_thread().map(|()| result)
 }
@@ -247,13 +276,13 @@ mod tests {
 
     #[test]
     fn host_started_threads_have_independent_owners_without_changing_host_dpi() {
-        // A fresh OS thread models the synchronous host-side registry builder,
-        // not an ABI worker. It must not acquire an executor owner implicitly.
+        // A fresh OS thread with no registered ABI executor models the
+        // standalone driver. Each thread it starts gets its own owner.
         std::thread::spawn(|| {
             assert!(OWNED_THREAD_DPI.with(|slot| slot.borrow().is_none()));
             let host_dpi = unsafe { GetThreadDpiAwarenessContext() };
             let start = || {
-                std::thread::spawn(owned_thread(|| {
+                std::thread::spawn(owned_thread_with_fallback(None, || {
                     assert!(current_thread_uses_per_monitor_v2());
                     current_owner()
                 }))
@@ -271,6 +300,36 @@ mod tests {
         })
         .join()
         .unwrap();
+    }
+
+    #[test]
+    fn host_started_thread_joins_the_abi_executor_owner_and_poisons_it() {
+        // Models the overlay started on the host thread during registry
+        // creation, after the embedded SDK registered its executor owner.
+        let owner = Arc::new(OwnedThreadDpi::new(Arc::new(|| {
+            Err("host-started overlay PMv2 rejection".to_owned())
+        })));
+        let fallback = owner.clone();
+        let work_ran = Arc::new(AtomicBool::new(false));
+        let work = work_ran.clone();
+        let error = std::thread::spawn(move || {
+            assert!(OWNED_THREAD_DPI.with(|slot| slot.borrow().is_none()));
+            std::thread::spawn(owned_thread_with_fallback(Some(fallback), move || {
+                work.store(true, Ordering::SeqCst)
+            }))
+            .join()
+            .unwrap()
+        })
+        .join()
+        .unwrap()
+        .unwrap_err();
+
+        assert!(error.contains("host-started overlay PMv2 rejection"));
+        assert!(!work_ran.load(Ordering::SeqCst));
+        assert!(owner
+            .check()
+            .unwrap_err()
+            .contains("host-started overlay PMv2 rejection"));
     }
 
     #[test]
@@ -299,11 +358,12 @@ mod tests {
                 use_per_monitor_v2_for_current_thread()
             }
         })));
-        register_abi_executor_owner(owner.clone()).unwrap();
-
+        // Pass the executor owner directly: registering it globally would
+        // leak this deliberately poisoned owner into other tests' threads.
+        let fallback = owner.clone();
         let expected_owner = owner.clone();
         std::thread::spawn(move || {
-            with_recording_state_thread(|| {
+            with_recording_state_thread_and_fallback(Some(fallback), || {
                 assert!(current_thread_uses_per_monitor_v2());
                 assert!(Arc::ptr_eq(&current_owner(), &expected_owner));
             })
@@ -317,8 +377,11 @@ mod tests {
         reject_recording_thread.store(true, Ordering::SeqCst);
         let native_work_ran = Arc::new(AtomicBool::new(false));
         let native_work = native_work_ran.clone();
+        let fallback = owner.clone();
         let error = std::thread::spawn(move || {
-            with_recording_state_thread(|| native_work.store(true, Ordering::SeqCst))
+            with_recording_state_thread_and_fallback(Some(fallback), || {
+                native_work.store(true, Ordering::SeqCst)
+            })
         })
         .join()
         .unwrap()

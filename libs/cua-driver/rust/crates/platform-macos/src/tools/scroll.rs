@@ -418,7 +418,7 @@ impl Tool for ScrollTool {
                         screen_y: cy,
                         win_local,
                         wid,
-                        rect,
+                        rect: Some(rect),
                     }
                 }))
             });

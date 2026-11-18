@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Run the cross-platform external Chromium browser matrix in the caller's desktop session.
 set -euo pipefail
+# macOS shells default to 256 open files, too few for the cua-spaces test binaries (see scripts/ci/tests/test_nofile_limit.py).
+[ "$(ulimit -Sn)" = unlimited ] || [ "$(ulimit -Sn)" -ge 10240 ] || ulimit -Sn 10240 2>/dev/null || ulimit -Sn "$(ulimit -Hn)" 2>/dev/null || true # nofile-limit
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -137,12 +139,17 @@ else
     standalone_browser_stale_ref
     standalone_browser_trust_gated_dom_click
     standalone_browser_trusted_click
+    standalone_browser_trusted_click_covered_ref
     standalone_browser_upload
     standalone_browser_window_collision
   )
   if [[ "${HOST_OS}" == Darwin ]]; then
-    # macOS-only native-chrome keyboard regressions.
-    tests+=(standalone_browser_native_omnibox_select_all)
+    # macOS-only native-chrome keyboard regressions, and the background
+    # web-press no-op report (#4243).
+    tests+=(
+      standalone_browser_native_omnibox_select_all
+      standalone_browser_background_web_click_noop
+    )
   fi
 fi
 # shellcheck source=lib/e2e-retry-once.sh

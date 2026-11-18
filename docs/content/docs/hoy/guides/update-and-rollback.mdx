@@ -1,0 +1,73 @@
+---
+title: Update and rollback
+description: 'Update Hoy with hoy update, check for a new release, go back to the previous release, and turn the daily check or automatic updates on or off.'
+---
+
+## Update
+
+Hoy checks once a day whether a newer release is out. When one is, every `hoy`
+command prints one line, for example `Hoy 0.18.0 is available: run 'hoy update'`.
+To install it:
+
+```bash skip="no-runner"
+hoy update
+```
+
+`hoy update` downloads the release, runs the same checks as the install command
+(Apple's notarization, Cua's Developer ID signature, SHA-256 and entitlements),
+installs it next to the current release under `~/.local/hoy/versions`, and
+switches over. It never installs an older release than the one in use, and
+nothing that is not signed by Cua and notarized by Apple.
+
+Running VMs keep running on the release they started with. Each VM uses the new
+release from its next start, and the background service restarts on it without stopping any VM.
+The Hoy system extension is replaced in place and needs no new approval.
+
+To only ask, without installing:
+
+```bash skip="no-runner"
+hoy update --check
+```
+
+## Roll back
+
+Hoy keeps the previous release. To go back to it:
+
+```bash skip="no-runner"
+hoy update --rollback
+```
+
+## Automatic updates and the daily check
+
+Nothing installs automatically unless you turn it on:
+
+```bash skip="no-runner"
+hoy config set auto-update on
+```
+
+To turn the daily check off, for example where IT rolls out releases:
+
+```bash skip="no-runner"
+hoy config set update-check off
+```
+
+`HOY_UPDATE_CHECK=off` and `HOY_AUTO_UPDATE` set the same two switches from
+the environment.
+
+The check is a separate request from [data collection](/hoy/guides/data-collection).
+It sends the installed Hoy version, the update channel and your download token.
+
+If no download token is saved (a DMG install does not save one), `hoy doctor`
+shows an `info:` line saying Hoy cannot check for updates. That is not a
+problem with the Mac. To update, run `hoy update`, or download the new release from
+the [Hoy download page](https://hoy.cua.ai). To let Hoy check from the Mac too,
+save your download token once: `HOY_TOKEN=<your token> hoy update --check`.
+
+## From release 0.16
+
+Release 0.16 has no `hoy update`. Run your install command once more. It
+installs the new release in place: your VMs and images stay, and running VMs
+keep running. From then on `hoy update` works.
+
+If the install says your token has expired or was revoked, sign in at
+[hoy.cua.ai](https://hoy.cua.ai), renew it and run the new command.

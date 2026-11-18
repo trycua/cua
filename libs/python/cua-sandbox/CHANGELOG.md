@@ -1,5 +1,89 @@
 # Changelog
 
+## [0.11.9](https://github.com/trycua/cua/compare/sandbox-v0.11.8...sandbox-v0.11.9) (2026-11-17)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** accept cua-driver 0.53 ([#8042](https://github.com/trycua/cua/issues/8042)) ([fcc16eb](https://github.com/trycua/cua/commit/fcc16ebb629eb20a9f1279421185620ca14aa0e5))
+
+## [0.11.8](https://github.com/trycua/cua/compare/sandbox-v0.11.7...sandbox-v0.11.8) (2026-11-16)
+
+
+### Bug Fixes
+
+* **sandbox:** honor shell timeout on Android ADB transport ([#7981](https://github.com/trycua/cua/issues/7981)) ([bf75fc9](https://github.com/trycua/cua/commit/bf75fc924950f760cdab877ae99e9bb01a865575))
+
+## [0.11.7](https://github.com/trycua/cua/compare/sandbox-v0.11.6...sandbox-v0.11.7) (2026-11-15)
+
+
+### Bug Fixes
+
+* **sandbox:** preserve registry identity for QEMU image layers ([#7865](https://github.com/trycua/cua/issues/7865)) ([2509cba](https://github.com/trycua/cua/commit/2509cba9f3769807c7fb3a5c752de93e5f6697a1))
+
+## [0.11.6](https://github.com/trycua/cua/compare/sandbox-v0.11.5...sandbox-v0.11.6) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** allow cua-driver 0.52 in the driver extra ([#7840](https://github.com/trycua/cua/issues/7840)) ([a7d3173](https://github.com/trycua/cua/commit/a7d317373f80372c0bc93a130c0e22f5383ba61d))
+
+## [0.11.5](https://github.com/trycua/cua/compare/sandbox-v0.11.4...sandbox-v0.11.5) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** allow cua-driver 0.51 ([#7781](https://github.com/trycua/cua/issues/7781)) ([1569bea](https://github.com/trycua/cua/commit/1569bea5977d61d38b5f341bb7632cc809e2f464))
+
+## [0.11.4](https://github.com/trycua/cua/compare/sandbox-v0.11.3...sandbox-v0.11.4) (2026-11-14)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** allow cua-driver 0.50 ([#7767](https://github.com/trycua/cua/issues/7767)) ([e31ab77](https://github.com/trycua/cua/commit/e31ab7705de2806bd22492b70867cb5fb767f224))
+
+## [0.11.3](https://github.com/trycua/cua/compare/sandbox-v0.11.2...sandbox-v0.11.3) (2026-11-14)
+
+
+### Bug Fixes
+
+* **core:** upgrade dnspython and the OpenTelemetry stack (CVE-2026-128089, CVE-2026-126360) ([#7699](https://github.com/trycua/cua/issues/7699)) ([79c4a8d](https://github.com/trycua/cua/commit/79c4a8dd7e0de599cd29739f6c04523aca54835c))
+
+## [0.11.2](https://github.com/trycua/cua/compare/sandbox-v0.11.1...sandbox-v0.11.2) (2026-11-13)
+
+
+### Bug Fixes
+
+* **deps:** upgrade pillow to 13.0.0 and soupsieve to 4.1 (CVE-2026-128066, CVE-2026-128067, CVE-2026-126190) ([#7598](https://github.com/trycua/cua/issues/7598)) ([4d14f88](https://github.com/trycua/cua/commit/4d14f88d9482528ea0e9bdf2c7020d002bcd488d))
+
+## [0.11.1](https://github.com/trycua/cua/compare/sandbox-v0.11.0...sandbox-v0.11.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** let the driver extra install Cua Driver 0.48 and 0.49 ([#7588](https://github.com/trycua/cua/issues/7588)) ([db29132](https://github.com/trycua/cua/commit/db29132bcf91da170cd7fd98fe7129db08d80c91))
+
+## [0.11.0](https://github.com/trycua/cua/compare/sandbox-v0.10.2...sandbox-v0.11.0) (2026-11-13)
+
+
+### Features
+
+* **cua:** Windows 11 on Apple silicon built locally, ISO downloaded automatically (QEMU+HVF); Windows 10, Server 2019 and 2025 from an ISO ([#6631](https://github.com/trycua/cua/issues/6631)) ([49bf362](https://github.com/trycua/cua/commit/49bf362196b9dc8b420e11f771969cd6d61a1f8c))
+
+## [0.10.2](https://github.com/trycua/cua/compare/sandbox-v0.10.1...sandbox-v0.10.2) (2026-11-12)
+
+
+### Bug Fixes
+
+* **sandbox:** unpin cua-driver in the driver extra so installs resolve ([#7464](https://github.com/trycua/cua/issues/7464)) ([934d527](https://github.com/trycua/cua/commit/934d527c41320cd17461367f6fe171175eb2b978))
+
+## [0.10.1](https://github.com/trycua/cua/compare/sandbox-v0.10.0...sandbox-v0.10.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **sandbox:** forward time_to_start to the local runtime's readiness budget ([#7304](https://github.com/trycua/cua/issues/7304)) ([6086a10](https://github.com/trycua/cua/commit/6086a10126945c1079b5069a720436aab32a2bf6))
+
 ## [0.10.0](https://github.com/trycua/cua/compare/sandbox-v0.9.1...sandbox-v0.10.0) (2026-11-10)
 
 

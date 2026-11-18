@@ -4,6 +4,7 @@
 //! Linux identity and endpoint evidence for the first-class browser tools.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -22,8 +23,8 @@ use cua_driver_core::browser::types::{
     NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
 use cua_driver_core::browser::{
-    existing_profile_setup_descriptor, fetch_json_version_ws_url, is_firefox,
-    loopback_websocket_port, parse_devtools_active_port, BrowserCursorTracker,
+    existing_profile_setup_descriptor, fetch_json_version_ws_url, is_electron_app_layout,
+    is_firefox, loopback_websocket_port, parse_devtools_active_port, BrowserCursorTracker,
 };
 
 pub struct LinuxBrowserPlatform {
@@ -340,15 +341,33 @@ fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
     Ok(listeners)
 }
 
-fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+/// Chromium resolves its default profile under the browser's own
+/// `$XDG_CONFIG_HOME`, used verbatim even when relative, falling back to
+/// `$HOME/.config`, so read both from the browser process's environment. The
+/// driver runs as the same user, so its `$HOME` stands in when the browser's
+/// environment cannot be read. A relative result is resolved by the caller.
+fn default_user_data_dir(product: BrowserProduct, environ: &[u8]) -> Option<PathBuf> {
     let relative = match product {
-        BrowserProduct::GoogleChrome => ".config/google-chrome",
-        BrowserProduct::MicrosoftEdge => ".config/microsoft-edge",
-        BrowserProduct::Chromium => ".config/chromium",
+        BrowserProduct::GoogleChrome => "google-chrome",
+        BrowserProduct::MicrosoftEdge => "microsoft-edge",
+        BrowserProduct::Chromium => "chromium",
+        BrowserProduct::Brave => "BraveSoftware/Brave-Browser",
         _ => return None,
     };
-    Some(home.join(relative))
+    let var = |name: &[u8]| {
+        environ
+            .split(|byte| *byte == 0)
+            .find_map(|entry| entry.strip_prefix(name)?.strip_prefix(b"="))
+            .filter(|value| !value.is_empty())
+            .map(|value| PathBuf::from(std::ffi::OsStr::from_bytes(value)))
+    };
+    let config_home = match var(b"XDG_CONFIG_HOME") {
+        Some(path) => path,
+        None => var(b"HOME")
+            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))?
+            .join(".config"),
+    };
+    Some(config_home.join(relative))
 }
 
 fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
@@ -377,7 +396,7 @@ fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
     }
     directories.sort();
     directories.dedup();
-    match directories.as_slice() {
+    let path = match directories.as_slice() {
         [] => {
             let Some(executable) = std::fs::read_link(format!("/proc/{pid}/exe"))
                 .ok()
@@ -385,23 +404,30 @@ fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
             else {
                 return Ok(None);
             };
-            Ok(default_user_data_dir(browser_product(&executable)))
+            let environ = std::fs::read(format!("/proc/{pid}/environ")).unwrap_or_default();
+            let Some(path) = default_user_data_dir(browser_product(&executable), &environ) else {
+                return Ok(None);
+            };
+            path
         }
-        [path] if path.is_absolute() => Ok(Some(path.clone())),
-        [path] => {
-            let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).map_err(|_| {
-                BrowserRefusal::new(
-                    BrowserRefusalCode::BrowserBindingStale,
-                    format!("browser process {pid} working directory is unavailable"),
-                )
-            })?;
-            Ok(Some(cwd.join(path)))
+        [path] => path.clone(),
+        _ => {
+            return Err(BrowserRefusal::new(
+                BrowserRefusalCode::BrowserBindingAmbiguous,
+                "browser process has multiple distinct --user-data-dir arguments",
+            ))
         }
-        _ => Err(BrowserRefusal::new(
-            BrowserRefusalCode::BrowserBindingAmbiguous,
-            "browser process has multiple distinct --user-data-dir arguments",
-        )),
+    };
+    if path.is_absolute() {
+        return Ok(Some(path));
     }
+    let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).map_err(|_| {
+        BrowserRefusal::new(
+            BrowserRefusalCode::BrowserBindingStale,
+            format!("browser process {pid} working directory is unavailable"),
+        )
+    })?;
+    Ok(Some(cwd.join(path)))
 }
 
 fn active_port_endpoint(pid: i64) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
@@ -564,18 +590,20 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 format!("pid {pid} is outside the Linux process-id range"),
             )
         })?;
-        let (process, executable) = tokio::task::spawn_blocking(move || {
+        let (process, executable, electron_app) = tokio::task::spawn_blocking(move || {
             let process = crate::proc_fs::list_processes()
                 .into_iter()
                 .find(|process| process.pid == pid_u32);
-            let executable = std::fs::read_link(format!("/proc/{pid}/exe"))
-                .ok()
-                .map(|path| path.to_string_lossy().into_owned());
-            (process, executable)
+            let executable = std::fs::read_link(format!("/proc/{pid}/exe")).ok();
+            let electron_app = executable.as_deref().is_some_and(is_electron_app_layout);
+            let executable = executable.map(|path| path.to_string_lossy().into_owned());
+            (process, executable, electron_app)
         })
         .await
         .ok()
-        .and_then(|(process, executable)| process.map(|process| (process, executable)))
+        .and_then(|(process, executable, electron_app)| {
+            process.map(|process| (process, executable, electron_app))
+        })
         .ok_or_else(|| {
             BrowserRefusal::new(
                 BrowserRefusalCode::BrowserBindingStale,
@@ -585,9 +613,13 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         let identity = executable
             .filter(|path| !path.is_empty())
             .unwrap_or_else(|| process.name.clone());
-        let chromium = is_chromium(&identity);
+        let chromium = electron_app || is_chromium(&identity);
         let gecko = is_firefox(&identity);
-        let product_kind = browser_product(&identity);
+        let product_kind = if electron_app {
+            BrowserProduct::Electron
+        } else {
+            browser_product(&identity)
+        };
         Ok(BrowserClassification {
             is_browser: chromium || gecko,
             engine: if chromium {
@@ -1238,6 +1270,24 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         })
     }
 
+    async fn dismiss_abandoned_existing_profile_consent(
+        &self,
+        pid: i64,
+        window_id: u64,
+    ) -> Result<bool, BrowserRefusal> {
+        let Ok(pid) = u32::try_from(pid) else {
+            return Ok(false);
+        };
+        tokio::task::spawn_blocking(move || crate::browser_consent_ui::dismiss(pid, window_id))
+            .await
+            .unwrap_or_else(|join_error| {
+                Err(BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not close the abandoned browser consent prompt: {join_error}"),
+                ))
+            })
+    }
+
     async fn handle_existing_profile_consent(
         &self,
         request: BrowserConsentRequest,
@@ -1291,6 +1341,36 @@ impl BrowserPlatform for LinuxBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_user_data_dir_follows_the_browser_process_config_home() {
+        let brave = browser_product("/opt/brave.com/brave/brave");
+        assert_eq!(
+            default_user_data_dir(brave, b"HOME=/home/ana\0LANG=C\0"),
+            Some(PathBuf::from(
+                "/home/ana/.config/BraveSoftware/Brave-Browser"
+            ))
+        );
+        assert_eq!(
+            default_user_data_dir(brave, b"HOME=/home/ana\0XDG_CONFIG_HOME=/srv/cfg\0"),
+            Some(PathBuf::from("/srv/cfg/BraveSoftware/Brave-Browser"))
+        );
+        assert_eq!(
+            default_user_data_dir(
+                BrowserProduct::GoogleChrome,
+                b"XDG_CONFIG_HOME=\0HOME=/home/ana\0"
+            ),
+            Some(PathBuf::from("/home/ana/.config/google-chrome"))
+        );
+        assert_eq!(
+            default_user_data_dir(brave, b"HOME=/home/ana\0XDG_CONFIG_HOME=cfg\0"),
+            Some(PathBuf::from("cfg/BraveSoftware/Brave-Browser"))
+        );
+        assert_eq!(
+            default_user_data_dir(BrowserProduct::Vivaldi, b"HOME=/home/ana\0"),
+            None
+        );
+    }
 
     #[test]
     fn x11_identity_and_cardinality_precede_compositor_selection() {

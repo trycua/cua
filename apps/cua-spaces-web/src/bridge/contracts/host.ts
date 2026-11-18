@@ -788,6 +788,10 @@ export interface SettingsInput {
   autoConnect?: boolean | null;
   /** Overflow into your clouds when this machine is full (`placement.overflow`; none: no row). */
   overflow?: boolean | null;
+  /** Settings, General's "When I close the window" (none: no rows). */
+  closeWindowKeepsRunning?: boolean | null;
+  /** The notice that Cua Spaces keeps running is on (shown with the row above). */
+  closeNotice?: boolean;
   /** Settings, Advanced's runtimes: each kind's setting, what is installed
    * for it and whether it runs here (`runtimes::RuntimesInput`). None: not
    * read yet (the rows still show, "Checking…"). */

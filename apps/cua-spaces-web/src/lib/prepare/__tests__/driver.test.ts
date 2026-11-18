@@ -259,7 +259,7 @@ describe.skipIf(!wasmBuilt)("the preparing driver (wasm core)", () => {
     expect(d.view()?.phase).toBe("ready");
   });
 
-  it("a home that was removed is made again", async () => {
+  it("a home that was removed stays removed", async () => {
     const core = await testCore();
     const host = fakeHost();
     const d = new PrepareDriver(core, host.env(), memoryStorage());
@@ -272,8 +272,53 @@ describe.skipIf(!wasmBuilt)("the preparing driver (wasm core)", () => {
     d.checkHome();
     await flush();
     await flush();
+    expect(host.calls.create).toBe(1);
+    expect(d.state?.homeSpaceId).toBeNull();
+    expect(d.state?.wanted).toBe(false);
+    expect(d.view()?.phase).toBe("idle");
+    d.resume();
+    d.tick();
+    await flush();
+    expect(host.calls.create).toBe(1);
+  });
+
+  it("deleting during agent setup ignores its late failure and stops retries", async () => {
+    const core = await testCore();
+    const host = fakeHost();
+    const env = host.env();
+    let fail: (e: Error) => void = () => {};
+    env.attachAgent = () => new Promise<void>((_, reject) => (fail = reject));
+    const d = new PrepareDriver(core, env, memoryStorage());
+    d.start("claude-code");
+    await flush();
+    expect(d.state?.homeSpaceId).toBe("local:home-1");
+    expect(d.state?.readyMs).toBeNull();
+    host.exists = false;
+    d.checkHome();
+    fail(new Error("connection refused"));
+    await flush();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(host.calls.create).toBe(1);
+    expect(d.state?.wanted).toBe(false);
+    expect(d.state?.retryAtMs).toBeNull();
+  });
+
+  it("a cancelled create cannot attach an agent when it completes late", async () => {
+    const core = await testCore();
+    const host = fakeHost();
+    let finish: (id: string) => void = () => {};
+    host.nextCreates(() => new Promise<string>((resolve) => (finish = resolve)));
+    const d = new PrepareDriver(core, host.env(), memoryStorage());
+    d.start("claude-code");
+    d.removeHome("pending:p1");
+    finish("local:cancelled");
+    await flush();
+    expect(host.calls.attach).toBe(0);
+    expect(d.state?.wanted).toBe(false);
+    expect(d.state?.homeSpaceId).toBeNull();
+    d.start("claude-code");
+    await flush();
     expect(host.calls.create).toBe(2);
-    expect(d.state?.homeSpaceId).toBe("local:home-2");
     expect(d.view()?.phase).toBe("ready");
   });
 

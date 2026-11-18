@@ -58,12 +58,14 @@ fn def() -> &'static ToolDef {
         name: "set_value".into(),
         description: "Set an element's value by `element_token`. A popup button / select dropdown: selects the menu item whose title or value matches `value` (case-insensitive). Safari `<select>` is set through the DOM; AppKit and Chromium popups list items only while open, so the menu is opened, the item pressed and the menu closed again (in the background the user's front window keeps key focus). An unknown value lists the options. Native non-secure single-line text fields: select the whole value, type its replacement and end editing. Other elements: write AXValue (sliders, steppers, date pickers, search and secure fields). `committed` distinguishes an ended typed edit with the value in place from `not_committed` or an AX-only `unproven` readback. Committed does not mean saved to disk.\n\
             \n\
+            A LibreOffice Calc cell ignores AXValue writes, so set_value on a cell goes to it through the Name Box with keys posted to its window (Cmd+Shift+F5, the address, Return), types the value and Return (an empty value clears the cell), and reads the cell back into cell_value; the app stays in the background. On the Name Box itself the value is a cell address to go to. A value with Tab or Return is refused: one cell takes one entry.\n\
+            \n\
             A Finder file name cell (list or icon view, not being edited) is renamed through Finder's scripting interface with Finder left in the background, and the new name is read back from disk; the value is the full new name with its extension. macOS may prompt for Automation consent; with serve --no-automation-prompts, ungranted consent refuses with automation_consent_required. Finder's Get Info `Name` field is refused with `file_name_needs_rename`. For free-form text in web inputs use `type_text_chars`: WebKit ignores AXValue writes.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["value"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it." },
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "pid": { "type": "integer", "description": "Target process ID. Optional with element_token (the token carries the pid)." },
                 "window_id": {
                     "type": "integer",
@@ -186,6 +188,28 @@ impl Tool for SetValueTool {
             None => {}
         }
 
+        // A LibreOffice Calc cell ignores the AX write: go to it through the
+        // Name Box with keys posted to its window and type the value.
+        let calc_guard = element_guard.clone();
+        let calc_target = tokio::task::spawn_blocking(move || unsafe {
+            super::calc_cell::target_of(pid, calc_guard.as_ptr() as AXUIElementRef)
+        })
+        .await
+        .ok()
+        .flatten();
+        if let Some(target) = calc_target {
+            return calc_set_value(
+                &_mutation_lease,
+                pid,
+                window_id,
+                element_index,
+                element_guard,
+                target,
+                value,
+            )
+            .await;
+        }
+
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
         let center_guard = element_guard.clone();
         if let Ok((Some((screen_x, screen_y)), target_rect)) =
@@ -223,6 +247,9 @@ impl Tool for SetValueTool {
             Some((element_ptr, Some(element_index))),
             Some(window_id),
         );
+        // WebKit (not Chromium or Electron) web content: a field that ignores
+        // the write may take it once focused.
+        let webkit_field = ax_echo_surface && !is_chromium_popup_owner(pid);
 
         let plan = resolve_write_plan(
             &_mutation_lease,
@@ -239,6 +266,7 @@ impl Tool for SetValueTool {
         // child option which can trigger app activation in some setups.
         let prior_front = apps::frontmost_pid();
         let snapshot = WindowChangeDetector::snapshot(prior_front);
+        let settle_guard = element_guard.clone();
 
         let result = focus_guard::with_focus_suppressed(
             Some(pid),
@@ -253,6 +281,7 @@ impl Tool for SetValueTool {
                         window_id,
                         &value,
                         plan,
+                        webkit_field,
                     )
                 })
                 .await
@@ -260,7 +289,20 @@ impl Tool for SetValueTool {
         )
         .await;
 
-        let changes = snapshot.detect_async().await;
+        // A native text write the read-back confirmed is done once the field
+        // holds the value; the result need not wait out the window-change
+        // report window for it. Web content's AX echo proves nothing, so it
+        // keeps the full wait.
+        let changes = match &result {
+            Ok(Ok(outcome)) if !ax_echo_surface && outcome.verified == Some(true) => {
+                let settled = watch_field_settle(settle_guard, outcome.value.clone());
+                snapshot.detect_async_until(settled).await
+            }
+            _ => {
+                drop(settle_guard);
+                snapshot.detect_async().await
+            }
+        };
 
         match result {
             Ok(Ok(outcome)) if outcome.not_applied && !ax_echo_surface => {
@@ -303,6 +345,145 @@ impl Tool for SetValueTool {
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
+}
+
+// ── LibreOffice Calc cells ───────────────────────────────────────────────────
+
+const CALC_MULTI_ENTRY: &str = "A cell takes one entry: the value has a Tab or Return in it. \
+     set_value one cell at a time, or type rows with type_text (Tab and Return move between \
+     cells) after going to the first cell.";
+
+/// `set_value` on a Calc cell (or its Name Box) through keys posted to its
+/// window: Name Box, address, Return, then the value and Return.
+async fn calc_set_value(
+    lease: &super::BackgroundMutationLease,
+    pid: i32,
+    window_id: u32,
+    element_index: usize,
+    element_guard: crate::ax::snapshot::RetainedElement,
+    target: super::calc_cell::CalcTarget,
+    value: String,
+) -> ToolResult {
+    use super::calc_cell::CalcTarget;
+    let (address, text) = match &target {
+        CalcTarget::NameBox => match super::calc_cell::cell_address(&value) {
+            Some(address) => (address, None),
+            None => {
+                return ToolResult::error(format!(
+                    "set_value on the Name Box takes one cell address such as H9; got {value:?}."
+                ))
+            }
+        },
+        CalcTarget::Cell { address } => {
+            if !super::calc_cell::single_entry(&value) {
+                return ToolResult::error(CALC_MULTI_ENTRY);
+            }
+            (address.clone(), Some(value.clone()))
+        }
+    };
+    if let Err(refusal) = lease
+        .gate_again(
+            window_id,
+            None,
+            super::window_keyboard_action(
+                cua_driver_core::background_input::BackgroundAction::GenericKey,
+            ),
+        )
+        .await
+    {
+        return refusal;
+    }
+    let _key_scope = match super::acquire_key_scope(pid, Some(window_id), false).await {
+        Ok(scope) => scope,
+        Err(refusal) => return refusal,
+    };
+    let prior_front = apps::frontmost_pid();
+    let snapshot = WindowChangeDetector::snapshot(prior_front);
+    let typed_address = address.clone();
+    let result = focus_guard::with_focus_suppressed(
+        Some(pid),
+        prior_front,
+        "set_value.calc_cell",
+        || async move {
+            tokio::task::spawn_blocking(move || {
+                super::calc_cell::go_to_and_type(pid, &typed_address, text.as_deref())?;
+                Ok::<_, anyhow::Error>(text.map(|text| unsafe {
+                    super::calc_cell::read_back(element_guard.as_ptr() as AXUIElementRef, &text)
+                }))
+            })
+            .await
+        },
+    )
+    .await;
+    let changes = super::finish_window_observation(snapshot).await;
+    let shown = match result {
+        Ok(Ok(shown)) => shown,
+        Ok(Err(error)) => {
+            let message = format!(
+                "set_value on Calc {address} did not complete: {error}. Read the window before \
+                 retrying."
+            );
+            return ToolResult::error(&message).with_structured(serde_json::json!({
+                "code": "delivery_failed",
+                "message": message,
+                "path": "keys",
+                "cell": address,
+                "effect": "unverifiable",
+            }));
+        }
+        Err(error) => return ToolResult::error(format!("Task error: {error}")),
+    };
+    let (verified, detail) = match (&target, &shown) {
+        (CalcTarget::NameBox, _) => (true, format!("✅ Went to {address} through the Name Box.")),
+        (CalcTarget::Cell { .. }, Some(Some(shown))) => {
+            super::calc_cell::cell_outcome(&address, element_index, &value, shown)
+        }
+        (CalcTarget::Cell { .. }, _) => (
+            false,
+            format!(
+                "📨 Typed {value:?} into {address} [{element_index}] through the Name Box and \
+                 keys, but the cell could not be read back. Read the window before relying on it."
+            ),
+        ),
+    };
+    let mut structured = serde_json::json!({
+        "path": "keys",
+        "cell": address,
+        "verified": verified,
+        "effect": if verified { "confirmed" } else { "unverifiable" },
+    });
+    if let Some(Some(shown)) = shown {
+        structured["cell_value"] = serde_json::json!(shown);
+    }
+    changes.add_window_identity(&mut structured);
+    ToolResult::text(format!("{detail}{}", changes.result_suffix()))
+        .with_structured(structured)
+        .with_action_record(calc_cell_record(verified))
+}
+
+fn calc_cell_record(verified: bool) -> cua_driver_core::action_record::ActionExecutionRecord {
+    use cua_driver_core::action_record::{
+        ActionEffect, ActionEvidence, ActionExecutionRecord, ActionTransport, ActualDelivery,
+        EvidenceKind, RequestedDelivery,
+    };
+    let effect = if verified {
+        ActionEffect::Confirmed
+    } else {
+        ActionEffect::Unverifiable
+    };
+    let mut record = ActionExecutionRecord::builder(
+        effect,
+        ActionTransport::MacosCgEventPid,
+        RequestedDelivery::Background,
+    )
+    .actual_delivery(ActualDelivery::Background);
+    if verified {
+        record = record.evidence(ActionEvidence {
+            kind: EvidenceKind::AccessibilityReadback,
+            detail: "the Name Box shows the address and the cell reads the value".into(),
+        });
+    }
+    record.build().expect("calc cell record is valid")
 }
 
 // ── File name cells ──────────────────────────────────────────────────────────
@@ -667,6 +848,8 @@ fn judge_commit(
 /// it — the same trap `type_text` already documents.
 struct SetValueOutcome {
     detail: String,
+    /// The field's value as read back after the write, when readable.
+    value: Option<String>,
     verified: Option<bool>,
     /// `Some(false)` when the element already held the requested value, so the
     /// write was a no-op. Lets callers distinguish "idempotent" from "applied".
@@ -711,6 +894,7 @@ fn set_value_blocking(
     window_id: u32,
     value: &str,
     plan: WritePlan,
+    webkit_field: bool,
 ) -> anyhow::Result<SetValueOutcome> {
     let element = element_ptr as AXUIElementRef;
 
@@ -729,6 +913,7 @@ fn set_value_blocking(
         )
         .map(|detail| SetValueOutcome {
             detail,
+            value: None,
             verified: None,
             changed: None,
             not_applied: false,
@@ -760,6 +945,7 @@ fn set_value_blocking(
         let numeric_target = value.trim().parse::<f64>().ok();
         // Read the value before writing so an unchanged field can be reported as
         // idempotent rather than silently indistinguishable from a fresh write.
+        unsafe { crate::ax::enablement::flush_pending_web_updates_for_element(pid, element) };
         let before = unsafe { copy_string_attr(element, "AXValue") };
         let err = match numeric_target {
             Some(n) => {
@@ -773,6 +959,7 @@ fn set_value_blocking(
             None => unsafe { set_string_attr(element, "AXValue", value) },
         };
         if err == kAXErrorSuccess {
+            unsafe { crate::ax::enablement::flush_pending_web_updates_for_element(pid, element) };
             let mut after = unsafe { copy_string_attr(element, "AXValue") };
             let (mut verified, mut changed) = classify_write(
                 before.as_deref(),
@@ -789,6 +976,9 @@ fn set_value_blocking(
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100));
+                unsafe {
+                    crate::ax::enablement::flush_pending_web_updates_for_element(pid, element)
+                };
                 after = unsafe { copy_string_attr(element, "AXValue") };
                 (verified, changed) = classify_write(
                     before.as_deref(),
@@ -796,6 +986,37 @@ fn set_value_blocking(
                     value,
                     numeric_target.is_some(),
                 );
+            }
+            // WebKit form fields ignore an AXValue write while they are not
+            // the page's focused element and accept it once they are. Focus
+            // moves inside the app only; the app is not activated or raised.
+            let mut focused_retry = false;
+            if webkit_field && !secure && write_not_applied(verified, changed) {
+                let focused =
+                    unsafe { crate::ax::bindings::set_bool_attr_true(element, "AXFocused") };
+                if focused == kAXErrorSuccess
+                    && unsafe { set_string_attr(element, "AXValue", value) } == kAXErrorSuccess
+                {
+                    focused_retry = true;
+                    for _ in 0..NOT_APPLIED_REREADS {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        unsafe {
+                            crate::ax::enablement::flush_pending_web_updates_for_element(
+                                pid, element,
+                            )
+                        };
+                        after = unsafe { copy_string_attr(element, "AXValue") };
+                        (verified, changed) = classify_write(
+                            before.as_deref(),
+                            after.as_deref(),
+                            value,
+                            numeric_target.is_some(),
+                        );
+                        if !write_not_applied(verified, changed) {
+                            break;
+                        }
+                    }
+                }
             }
             let (committed, commit_detail) =
                 commit_written_value(element, pid, value, numeric_target.is_some(), plan);
@@ -814,9 +1035,15 @@ fn set_value_blocking(
             };
             Ok(SetValueOutcome {
                 detail: format!(
-                    "✅ Set AXValue on [{element_index}] {role}.{suffix}{commit_detail}{}",
+                    "✅ Set AXValue on [{element_index}] {role}{}.{suffix}{commit_detail}{}",
+                    if focused_retry {
+                        " after focusing it (the first write was not applied)"
+                    } else {
+                        ""
+                    },
                     document.note()
                 ),
+                value: after,
                 verified,
                 changed,
                 // A secure text field reads back empty or masked, so its
@@ -838,6 +1065,7 @@ fn set_value_blocking(
                     detail: format!(
                         "✅ Set AXValue on [{element_index}] {role} via AXIncrement/AXDecrement stepping."
                     ),
+                    value: after,
                     verified,
                     changed,
                     not_applied: false,
@@ -855,6 +1083,77 @@ fn set_value_blocking(
     }
 }
 
+/// How long a written field must keep its read-back value before the result
+/// returns without waiting out the window-change report window.
+const FIELD_QUIET: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// Whether a written field has settled: it has held the value its read-back
+/// confirmed for [`FIELD_QUIET`] since the write. A field that reads anything
+/// else even once (a later change, a rejection, an unreadable or lost element)
+/// never settles, and the result waits the usual report window instead.
+struct FieldSettle {
+    expected: Option<String>,
+    written_at: std::time::Instant,
+}
+
+impl FieldSettle {
+    fn new(expected: Option<String>, written_at: std::time::Instant) -> Self {
+        Self {
+            expected,
+            written_at,
+        }
+    }
+
+    /// False once a read has ruled settling out.
+    fn can_settle(&self) -> bool {
+        self.expected.is_some()
+    }
+
+    /// Record one read of the field at `now`; true once it has settled.
+    fn observe(&mut self, now: std::time::Instant, current: Option<&str>) -> bool {
+        if self.expected.is_none() || current != self.expected.as_deref() {
+            self.expected = None;
+            return false;
+        }
+        now.duration_since(self.written_at) >= FIELD_QUIET
+    }
+}
+
+/// Watch a written field on its own thread and return a check that is true
+/// once it has settled. The detector's poll loop only reads the flag, so an
+/// app that stops answering accessibility calls stalls this thread, never the
+/// window-change watch or its focus-steal lease. The thread ends when the
+/// field settles or reads anything else, or when the detector drops the check.
+fn watch_field_settle(
+    element: crate::ax::snapshot::RetainedElement,
+    expected: Option<String>,
+) -> impl FnMut() -> bool + Send + 'static {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let settled = Arc::new(AtomicBool::new(false));
+    let flag = Arc::downgrade(&settled);
+    let mut settle = FieldSettle::new(expected, std::time::Instant::now());
+    let _ = std::thread::Builder::new()
+        .name("cua-field-settle".into())
+        .spawn(move || loop {
+            std::thread::sleep(FIELD_POLL);
+            if flag.strong_count() == 0 {
+                return;
+            }
+            let current =
+                unsafe { copy_string_attr(element.as_ptr() as AXUIElementRef, "AXValue") };
+            let done = settle.observe(std::time::Instant::now(), current.as_deref());
+            match flag.upgrade() {
+                Some(flag) if done => return flag.store(true, Ordering::Release),
+                Some(_) if settle.can_settle() => {}
+                _ => return,
+            }
+        });
+    move || settled.load(Ordering::Acquire)
+}
+
+/// How often [`watch_field_settle`] re-reads the field.
+const FIELD_POLL: std::time::Duration = std::time::Duration::from_millis(25);
+
 /// Re-reads (100 ms apart) before an unchanged value counts as not applied.
 const NOT_APPLIED_REREADS: usize = 3;
 
@@ -868,10 +1167,10 @@ fn write_not_applied(verified: Option<bool>, changed: Option<bool>) -> bool {
 /// script must stop here instead of carrying on as if it had.
 fn not_applied_result(element_index: usize, vcl: bool) -> ToolResult {
     let route = if vcl {
-        "LibreOffice ignores accessibility value writes and drops background pointer \
-         input, so its cells cannot be edited in the background. Editing them needs the \
-         window in front: bring_to_front if the user allows it, then type_text into the \
-         cell. Otherwise stop and report that the edit is blocked."
+        "LibreOffice ignores accessibility value writes and background pointer input, \
+         but takes keys posted to its window: pass window_id, go to the cell with the \
+         Name Box (hotkey cmd+shift+f5, then the address and return), then type_text the \
+         value and return."
     } else {
         "Try the control's own input route instead: click it, then type_text, or use a \
          keyboard shortcut. If that needs the window in front, bring_to_front only if the \
@@ -982,6 +1281,7 @@ fn retype_blocking(
         detail: format!(
             "{gesture} through the app's own editing pipeline.{delivery}{commit_detail}"
         ),
+        value: after,
         verified,
         changed,
         committed,
@@ -1667,12 +1967,14 @@ fn hex_digit(n: u8) -> char {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_surface_trust, apply_verification_label, classify_write, commit_written_value,
-        file_name_needs_rename, is_file_name_cell, is_get_info_name_field, judge_commit,
-        not_applied_result, refused_keystroke_plan, write_not_applied, write_plan, SetValueOutcome,
-        ToolResult, WritePlan, GET_INFO_RENAME_ROUTE, LIST_RENAME_ROUTE,
+        apply_surface_trust, apply_verification_label, calc_cell_record, classify_write,
+        commit_written_value, file_name_needs_rename, is_file_name_cell, is_get_info_name_field,
+        judge_commit, not_applied_result, refused_keystroke_plan, write_not_applied, write_plan,
+        FieldSettle, SetValueOutcome, ToolResult, WritePlan, FIELD_QUIET, GET_INFO_RENAME_ROUTE,
+        LIST_RENAME_ROUTE,
     };
     use cua_driver_contract::ActionCommit;
+    use std::time::Duration;
 
     #[test]
     fn a_listed_file_name_is_a_file_name_cell() {
@@ -1858,6 +2160,7 @@ mod tests {
     ) -> SetValueOutcome {
         SetValueOutcome {
             detail: detail.to_owned(),
+            value: None,
             verified,
             changed: Some(true),
             committed,
@@ -2006,6 +2309,13 @@ mod tests {
     }
 
     #[test]
+    fn a_calc_cell_write_publishes_a_background_key_record() {
+        use cua_driver_core::action_record::ActionEffect;
+        assert_eq!(calc_cell_record(true).effect, ActionEffect::Confirmed);
+        assert_eq!(calc_cell_record(false).effect, ActionEffect::Unverifiable);
+    }
+
+    #[test]
     fn unreadable_value_reports_neither_verified_nor_changed() {
         // AXValue is not exposed: the write can be neither confirmed nor denied,
         // so the tool must not claim success on the return code alone.
@@ -2065,6 +2375,36 @@ mod tests {
             classify_write(None, Some("25.0"), "25", true),
             (Some(true), None)
         );
+    }
+
+    #[test]
+    fn a_field_that_keeps_its_value_settles_after_the_quiet_period() {
+        let t0 = std::time::Instant::now();
+        let mut settle = FieldSettle::new(Some("hello".into()), t0);
+        assert!(!settle.observe(t0 + Duration::from_millis(25), Some("hello")));
+        assert!(!settle.observe(t0 + Duration::from_millis(125), Some("hello")));
+        assert!(settle.can_settle());
+        assert!(settle.observe(t0 + FIELD_QUIET, Some("hello")));
+    }
+
+    #[test]
+    fn a_field_that_changes_after_the_write_never_settles() {
+        let t0 = std::time::Instant::now();
+        let mut settle = FieldSettle::new(Some("hello".into()), t0);
+        assert!(!settle.observe(t0 + Duration::from_millis(50), Some("HELLO")));
+        // Changing back does not restart the clock: the field is not quiet.
+        assert!(!settle.observe(t0 + Duration::from_millis(400), Some("hello")));
+    }
+
+    #[test]
+    fn an_unreadable_or_unknown_field_never_settles() {
+        let t0 = std::time::Instant::now();
+        let mut lost = FieldSettle::new(Some("hello".into()), t0);
+        assert!(!lost.observe(t0 + Duration::from_millis(50), None));
+        assert!(!lost.observe(t0 + Duration::from_millis(400), Some("hello")));
+        assert!(!lost.can_settle());
+        let mut unknown = FieldSettle::new(None, t0);
+        assert!(!unknown.observe(t0 + Duration::from_millis(400), None));
     }
 
     #[test]

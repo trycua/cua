@@ -9,12 +9,14 @@
 //! [`crate::disk::set_probe`] apply here too.
 
 use std::path::{Path, PathBuf};
+#[cfg(feature = "container")]
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 use cua_home::channel::CuaChannel;
 
+#[cfg(feature = "container")]
 use crate::container::engine::{self, EngineKind};
 use crate::host;
 
@@ -162,6 +164,7 @@ pub fn lume_default_location(yaml: &str) -> Option<String> {
 /// disk), Docker Desktop (the volume its `Docker.raw` grows on), OrbStack
 /// (its data directory's volume) and dockerd on Linux (`/var/lib/docker`).
 /// `None` for anything else.
+#[cfg(feature = "container")]
 pub async fn container_volume() -> Option<Volume> {
     let ep = engine::discover()?;
     let home = host::home_dir();
@@ -209,7 +212,14 @@ pub async fn container_volume() -> Option<Volume> {
     }
 }
 
+/// Without the `container` feature there is no engine to ask.
+#[cfg(not(feature = "container"))]
+pub async fn container_volume() -> Option<Volume> {
+    None
+}
+
 /// The engine's own disk, unless the host volume under it has less room.
+#[cfg(any(feature = "container", test))]
 fn tighter(engine: Volume, host: Option<Volume>) -> Volume {
     match host {
         Some(h) if h.available < engine.available => h,

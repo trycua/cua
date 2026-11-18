@@ -15,6 +15,7 @@
   wlroots_0_19,
   libxkbcommon,
   pixman,
+  wayland-utils,
 }:
 
 stdenv.mkDerivation {
@@ -43,6 +44,10 @@ stdenv.mkDerivation {
     wp=${wayland-protocols}/share/wayland-protocols
     wayland-scanner server-header "$wp/stable/xdg-shell/xdg-shell.xml" xdg-shell-protocol.h
     wayland-scanner private-code  "$wp/stable/xdg-shell/xdg-shell.xml" xdg-shell-protocol.c
+    # wlroots' layer-shell header includes this generated header but does not
+    # install it; generate it from the same wlroots source.
+    wayland-scanner server-header ${wlroots_0_19.src}/protocol/wlr-layer-shell-unstable-v1.xml \
+      wlr-layer-shell-unstable-v1-protocol.h
     $CC -DWLR_USE_UNSTABLE -I. cua-compositor.c xdg-shell-protocol.c -o cua-compositor \
       $(pkg-config --cflags --libs wlroots-0.19 wayland-server xkbcommon pixman-1)
     runHook postBuild
@@ -52,6 +57,32 @@ stdenv.mkDerivation {
     runHook preInstall
     install -Dm755 cua-compositor $out/bin/cua-compositor
     runHook postInstall
+  '';
+
+  # cua-driver draws the agent cursor only on a compositor that advertises
+  # wlr-layer-shell; without it the cursor and badge are silently absent.
+  doInstallCheck = true;
+  nativeInstallCheckInputs = [ wayland-utils ];
+  installCheckPhase = ''
+    runHook preInstallCheck
+    export XDG_RUNTIME_DIR=$(mktemp -d) WLR_BACKENDS=headless WLR_RENDERER=pixman \
+      WLR_LIBINPUT_NO_DEVICES=1 WAYLAND_DISPLAY=wayland-0
+    $out/bin/cua-compositor > compositor.log 2>&1 &
+    compositor=$!
+    for _ in $(seq 100); do
+      [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ] && break
+      sleep 0.1
+    done
+    wayland-info > globals.txt || true
+    kill $compositor
+    for global in zwlr_layer_shell_v1 zwlr_screencopy_manager_v1 zwlr_foreign_toplevel_manager_v1; do
+      grep -q "'$global'" globals.txt || {
+        echo "cua-compositor does not advertise $global" >&2
+        cat globals.txt compositor.log >&2
+        exit 1
+      }
+    done
+    runHook postInstallCheck
   '';
 
   meta = {

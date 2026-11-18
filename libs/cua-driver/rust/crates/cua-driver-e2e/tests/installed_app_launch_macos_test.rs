@@ -161,3 +161,58 @@ fn calculator_launch_preserves_finder_frontmost() {
         "calculator",
     );
 }
+
+/// Close the Finder windows showing `folder`.
+fn close_finder_windows_for(folder: &std::path::Path) {
+    let _ = osascript(&format!(
+        r#"tell application "Finder" to close (every Finder window whose target is (POSIX file "{}" as alias))"#,
+        folder.display()
+    ));
+}
+
+/// Issue #7613: the Finder folder handoff waits on the main dispatch queue, so
+/// a daemon started with `--no-overlay` must still serve that queue.
+#[test]
+#[ignore]
+fn finder_folder_launch_works_without_overlay() {
+    let case = CaseSpec::delivered(
+        "macos-finder-folder-launch-no-overlay",
+        "finder folder launch without overlay",
+        "appkit",
+        "launch_app",
+        Targeting::NotApplicable,
+        Delivery::Background,
+        Scope::Desktop,
+        DriverRoute::Composite,
+        vec![OracleKind::Protocol],
+    );
+    execute_case(case, |evidence| {
+        let temp = tempfile::tempdir().expect("create temp folder");
+        let folder = temp.path().canonicalize().expect("canonical temp folder");
+        // The testkit's own daemon runs `serve --no-overlay`.
+        let mut driver = McpDriver::spawn_named("macos-finder-folder-launch-no-overlay")
+            .expect("start test-owned no-overlay daemon");
+        *evidence = recording_evidence(driver.recording_dir());
+        driver.start_behavior_recording();
+
+        let launch = driver.call(
+            "launch_app",
+            serde_json::json!({
+                "bundle_id": FINDER_BUNDLE,
+                "urls": [folder.display().to_string()],
+            }),
+        );
+        close_finder_windows_for(&folder);
+        assert!(
+            !launch.is_error(),
+            "launch_app(Finder, folder) failed without overlay: {}",
+            launch.text()
+        );
+        assert!(
+            launch.structured()["pid"].as_i64().unwrap_or(0) > 0,
+            "launch_app(Finder, folder) returned no pid: {:?}",
+            launch.raw
+        );
+        Observation::delivered(vec![OracleKind::Protocol], Default::default())
+    });
+}

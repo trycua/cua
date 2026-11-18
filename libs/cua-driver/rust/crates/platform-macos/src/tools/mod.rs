@@ -910,7 +910,7 @@ async fn focused_element_holds_point(
                 return false;
             }
             let hit = crate::ax::bindings::element_at_screen_position(pid, screen_x, screen_y);
-            let hit_in_window = hit.is_some_and(|hit| in_window(hit));
+            let hit_in_window = hit.is_some_and(in_window);
             let evidence = PixelFocusEvidence {
                 focused_covers_point: crate::ax::bindings::element_screen_rect(focused)
                     .is_some_and(|rect| point_within_rect(rect, screen_x, screen_y)),
@@ -950,8 +950,17 @@ struct PixelFocusEvidence {
     hit_reports_focus: bool,
 }
 
+/// Keyboard focus holds a pixel when the field there has it. A focused element
+/// whose rect merely encloses the point is not enough: Firefox reports its page
+/// document as focused while an input inside it is not, and keys sent then
+/// reach the document instead of the input (#5384). So the focused element must
+/// also be the hit-tested element (or inside it), or itself be a text input
+/// (whose hit-test can return one of its own text runs). The hit-tested
+/// element reporting `AXFocused` is enough on its own.
 fn focus_holds_pixel(evidence: PixelFocusEvidence) -> bool {
-    evidence.focused_covers_point
+    evidence.hit_reports_focus
+        || (evidence.focused_covers_point
+            && (evidence.focused_within_hit || evidence.focused_is_text_input))
 }
 
 /// Whether `[x, y, width, height]` (screen coordinates, top-left origin)

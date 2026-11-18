@@ -17,8 +17,12 @@
 //! - Application close codes mirror the WebSocket close codes
 //!   (`v2::close_code::quic_error`).
 
+use std::collections::VecDeque;
+use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
+use cua_media_protocol::v2::{encode_client_text, ClientMessage};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
@@ -170,6 +174,173 @@ pub fn client_config_with_alpn(pin: [u8; 32], alpn: &[u8]) -> Result<quinn::Clie
         .keep_alive_interval(Some(std::time::Duration::from_secs(5)));
     config.transport_config(Arc::new(transport));
     Ok(config)
+}
+
+/// One input from a [`MediaQuic`] connection, in the shape a WebSocket
+/// carries it.
+#[derive(Debug, PartialEq, Eq)]
+pub enum QuicItem {
+    /// A JSON control message.
+    Text(String),
+    /// A whole binary message: a reassembled length-prefixed video packet,
+    /// or a `RAU2` audio packet.
+    Binary(Vec<u8>),
+    /// Video packets that lost fragments (the client should resync on a
+    /// keyframe).
+    Loss {
+        incomplete_frames: u64,
+        lost_keyframe: bool,
+    },
+    /// The connection ended, with the WebSocket close code its application
+    /// close mirrors when it had one.
+    Closed(Option<u16>),
+}
+
+/// A client attached to a direct QUIC media listener: the ticket is sent,
+/// the reliable stream and datagrams are read as [`QuicItem`]s.
+pub struct MediaQuic {
+    _endpoint: quinn::Endpoint,
+    connection: quinn::Connection,
+    send: quinn::SendStream,
+    reliable: tokio::sync::mpsc::UnboundedReceiver<Option<Vec<u8>>>,
+    reassembler: crate::VideoDatagramReassembler,
+    pending: VecDeque<Vec<u8>>,
+}
+
+impl MediaQuic {
+    /// Connects to `host:port`, pinning the certificate to `pin` (the
+    /// `QuicEndpoint.certificate_sha256` hex), and sends `ticket`. The
+    /// handshake must finish within `timeout`.
+    pub async fn connect(
+        host: &str,
+        port: u16,
+        pin: &str,
+        ticket: &str,
+        timeout: Duration,
+    ) -> Result<Self, String> {
+        let pin = parse_sha256(pin).ok_or("QuicEndpoint has no valid certificate_sha256")?;
+        let server: SocketAddr = tokio::net::lookup_host((host, port))
+            .await
+            .map_err(|error| format!("resolving {host}: {error}"))?
+            .next()
+            .ok_or("QUIC host resolved to no addresses")?;
+        let bind: SocketAddr = if server.is_ipv4() {
+            (std::net::Ipv4Addr::UNSPECIFIED, 0).into()
+        } else {
+            (std::net::Ipv6Addr::UNSPECIFIED, 0).into()
+        };
+        let mut endpoint = quinn::Endpoint::client(bind).map_err(|error| error.to_string())?;
+        endpoint.set_default_client_config(client_config(pin)?);
+        let connecting = endpoint
+            .connect(server, "cua-spacesd.local")
+            .map_err(|error| error.to_string())?;
+        let connection = tokio::time::timeout(timeout, connecting)
+            .await
+            .map_err(|_| "QUIC connect timed out")?
+            .map_err(|error| error.to_string())?;
+        let (mut send, mut receive) = connection
+            .open_bi()
+            .await
+            .map_err(|error| error.to_string())?;
+        let ticket = encode_client_text(&ClientMessage::Ticket {
+            ticket: ticket.to_owned(),
+        });
+        write_message(&mut send, ticket.as_bytes())
+            .await
+            .map_err(|error| error.to_string())?;
+        let (sender, reliable) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            loop {
+                let message = read_message(&mut receive).await.ok().flatten();
+                let end = message.is_none();
+                if sender.send(message).is_err() || end {
+                    return;
+                }
+            }
+        });
+        Ok(Self {
+            _endpoint: endpoint,
+            connection,
+            send,
+            reliable,
+            reassembler: crate::VideoDatagramReassembler::default(),
+            pending: VecDeque::new(),
+        })
+    }
+
+    /// The next input. Cancel-safe: a dropped call loses nothing.
+    pub async fn next(&mut self) -> Result<QuicItem, String> {
+        if let Some(packet) = self.pending.pop_front() {
+            return Ok(QuicItem::Binary(packet));
+        }
+        loop {
+            tokio::select! {
+                message = self.reliable.recv() => {
+                    return match message.flatten() {
+                        Some(bytes) if bytes.first() == Some(&b'{') => String::from_utf8(bytes)
+                            .map(QuicItem::Text)
+                            .map_err(|error| error.to_string()),
+                        Some(bytes) => Ok(QuicItem::Binary(bytes)),
+                        None => Ok(QuicItem::Closed(self.close_code())),
+                    };
+                }
+                datagram = self.connection.read_datagram() => {
+                    let Ok(datagram) = datagram else {
+                        return Ok(QuicItem::Closed(self.close_code()));
+                    };
+                    if crate::audio::is_audio_packet(&datagram) {
+                        return Ok(QuicItem::Binary(datagram.to_vec()));
+                    }
+                    let update = self
+                        .reassembler
+                        .push(&datagram, Instant::now())
+                        .map_err(|error| error.to_string())?;
+                    if let Some(packet) = update.packet {
+                        self.pending.push_back(packet);
+                    }
+                    if update.dropped_incomplete > 0 {
+                        return Ok(QuicItem::Loss {
+                            incomplete_frames: update.dropped_incomplete,
+                            lost_keyframe: update.lost_keyframe,
+                        });
+                    }
+                    if let Some(packet) = self.pending.pop_front() {
+                        return Ok(QuicItem::Binary(packet));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Sends one client control message on the reliable stream.
+    pub async fn send_text(&mut self, text: &str) -> std::io::Result<()> {
+        write_message(&mut self.send, text.as_bytes()).await
+    }
+
+    /// The connection's current round-trip estimate.
+    pub fn rtt(&self) -> Duration {
+        self.connection.rtt()
+    }
+
+    /// Closes the connection.
+    pub fn close(&self) {
+        self.connection.close(0u32.into(), b"client closed");
+    }
+
+    fn close_code(&self) -> Option<u16> {
+        match self.connection.close_reason() {
+            Some(quinn::ConnectionError::ApplicationClosed(close)) => {
+                // 0x401 -> 4401: the hex digits read as decimal after "4".
+                let digits = format!("{:x}", close.error_code.into_inner());
+                digits
+                    .parse::<u16>()
+                    .ok()
+                    .filter(|value| *value < 1000)
+                    .map(|value| 4000 + value)
+            }
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug)]

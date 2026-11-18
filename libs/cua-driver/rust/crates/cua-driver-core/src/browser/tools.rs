@@ -1629,19 +1629,33 @@ impl Tool for BrowserClickTool {
             }
             let before =
                 read_dom_click_state(conn, cdp, &object_id, DOM_CLICK_BASELINE_DEADLINE).await;
-            let click = conn.call(
+            let hover = conn.call(
                 Some(cdp),
                 "Runtime.callFunctionOn",
                 json!({
                     "objectId": object_id,
-                    "functionDeclaration": DOM_EVENT_CLICK_SEQUENCE,
-                    "awaitPromise": true,
-                    "returnByValue": true,
+                    "functionDeclaration": DOM_EVENT_HOVER_SEQUENCE,
                 }),
             );
-            let outcome = call_until_dialog(conn, cdp_target_id, click)
-                .await
-                .unwrap_or(Ok(json!({})));
+            let outcome = match call_until_dialog(conn, cdp_target_id, hover).await {
+                Ok(Ok(_)) => {
+                    let click = conn.call(
+                        Some(cdp),
+                        "Runtime.callFunctionOn",
+                        json!({
+                            "objectId": object_id,
+                            "functionDeclaration": DOM_EVENT_CLICK_SEQUENCE,
+                            "awaitPromise": true,
+                            "returnByValue": true,
+                        }),
+                    );
+                    call_until_dialog(conn, cdp_target_id, click)
+                        .await
+                        .unwrap_or(Ok(json!({})))
+                }
+                Ok(Err(error)) => Err(error),
+                Err(_) => Ok(json!({})),
+            };
             return match (outcome, conn.dialog_state(cdp_target_id)) {
                 (Ok(reply), None) => {
                     let page_changed = reply
@@ -1972,15 +1986,18 @@ fn dialog_block(dialog: &super::cdp_ws::CdpDialogState) -> Value {
 /// compatibility mouse events, and on `mousedown` suppresses the focus move.
 /// The events stay untrusted (`isTrusted === false`).
 ///
-/// It resolves to `{ pageMutations }`: how many DOM mutations outside the
-/// node's own subtree and ancestors' attributes happened from `pointerdown`
-/// until the microtasks queued by the handlers ran. No other task can run in
-/// that span, so those mutations are the handlers' own, for example a button
-/// that reveals fields elsewhere without changing its own state. Mutations
-/// from hover and move, and from the microtasks their handlers queue, are
-/// left out, so a hover tooltip does not count.
-const DOM_EVENT_CLICK_SEQUENCE: &str = "async function() { \
-    const el = this; \
+/// Hover and move go out in their own call, [`DOM_EVENT_HOVER_SEQUENCE`]. The
+/// renderer runs every microtask their handlers queue before it answers, so
+/// none of them lands inside the click call. [`DOM_EVENT_CLICK_SEQUENCE`]
+/// then resolves to `{ pageMutations }`: how many DOM mutations outside the
+/// node's own subtree and its ancestors' attributes happened from
+/// `pointerdown` until the microtasks its handlers queued ran. No other task
+/// can run in that span, so those mutations are the handlers' own, for
+/// example a button that reveals fields elsewhere without changing its own
+/// state.
+macro_rules! dom_event_pointer_prelude {
+    () => {
+        "const el = this; \
     const doc = el.ownerDocument; \
     const view = doc.defaultView; \
     const r = el.getBoundingClientRect(); \
@@ -1995,18 +2012,27 @@ const DOM_EVENT_CLICK_SEQUENCE: &str = "async function() { \
         { ...base, buttons, pointerId: 1, pointerType: 'mouse', isPrimary: true, \
           width: 1, height: 1, pressure: buttons ? 0.5 : 0, ...extra })); \
     const M = (type, buttons, extra) => target.dispatchEvent(new view.MouseEvent(type, \
-        { ...base, buttons, detail: 0, ...extra })); \
-    let records = []; \
+        { ...base, buttons, detail: 0, ...extra })); "
+    };
+}
+
+const DOM_EVENT_HOVER_SEQUENCE: &str = concat!(
+    "function() { ",
+    dom_event_pointer_prelude!(),
+    "P('pointerover', 0); P('pointerenter', 0, { bubbles: false, cancelable: false }); \
+    M('mouseover', 0); M('mouseenter', 0, { bubbles: false, cancelable: false }); \
+    P('pointermove', 0); M('mousemove', 0); \
+    return true; \
+}"
+);
+
+const DOM_EVENT_CLICK_SEQUENCE: &str = concat!(
+    "async function() { ",
+    dom_event_pointer_prelude!(),
+    "const records = []; \
     const observer = new view.MutationObserver(batch => { records.push(...batch); }); \
     for (const scope of new Set([doc, root])) observer.observe(scope, \
         { subtree: true, childList: true, attributes: true, characterData: true }); \
-    P('pointerover', 0); P('pointerenter', 0, { bubbles: false, cancelable: false }); \
-    M('mouseover', 0); M('mouseenter', 0, { bubbles: false, cancelable: false }); \
-    P('pointermove', 0); M('mousemove', 0); \
-    const settle = async () => { for (let turn = 0; turn < 8; turn++) await null; }; \
-    await settle(); \
-    observer.takeRecords(); \
-    records = []; \
     const compat = P('pointerdown', 1); \
     if (compat && M('mousedown', 1, { detail: 1 })) { \
         const focusable = target.closest('a[href],button,input,select,textarea,summary,[tabindex],[contenteditable=\"\"],[contenteditable=\"true\"]'); \
@@ -2015,13 +2041,14 @@ const DOM_EVENT_CLICK_SEQUENCE: &str = "async function() { \
     P('pointerup', 0); \
     if (compat) M('mouseup', 0, { detail: 1 }); \
     M('click', 0, { detail: 1 }); \
-    await settle(); \
+    for (let turn = 0; turn < 8; turn++) await null; \
     records.push(...observer.takeRecords()); \
     observer.disconnect(); \
     const caused = records.filter(m => !el.contains(m.target) \
         && !(m.type === 'attributes' && m.target.contains(el))); \
     return { pageMutations: caused.length }; \
-}";
+}"
+);
 
 // ── browser_type ─────────────────────────────────────────────────────────────
 

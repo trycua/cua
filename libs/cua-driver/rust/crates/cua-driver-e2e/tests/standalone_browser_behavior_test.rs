@@ -63,10 +63,28 @@ fn standalone_trust_gated_click_html() -> String {
   </span>
 </fieldset>
 <script>
-  document.getElementById('standalone-trust-gated').addEventListener('click', event => {
-    document.getElementById('standalone-trust-gated-state').textContent = event.isTrusted
-      ? 'activation=accepted-trusted'
-      : 'activation=ignored-untrusted';
+  const trustGated = document.getElementById('standalone-trust-gated');
+  const trustGatedState = document.getElementById('standalone-trust-gated-state');
+  // An app that ignores an untrusted click leaves the page alone, so the
+  // fixture records that outcome for the harness in a later task. A
+  // MessageChannel task is not throttled in a background window.
+  const ignored = new MessageChannel();
+  ignored.port1.onmessage = () => {
+    trustGatedState.textContent = 'activation=ignored-untrusted';
+  };
+  trustGated.addEventListener('click', event => {
+    if (event.isTrusted) {
+      trustGatedState.textContent = 'activation=accepted-trusted';
+    } else {
+      ignored.port2.postMessage(null);
+    }
+  });
+  // A hover change that lands after a long microtask chain belongs to the
+  // hover, and must not confirm the ignored click.
+  trustGated.addEventListener('mouseenter', () => {
+    let chain = Promise.resolve();
+    for (let turn = 0; turn < 50; turn++) chain = chain.then(() => null);
+    chain.then(() => document.body.appendChild(document.createElement('span')));
   });
 </script>
 </body>"#,
@@ -2004,7 +2022,7 @@ fn run_roundtrip(spec: &BrowserSpec) {
                 "{}",
                 click.raw
             );
-            assert_eq!(click.action_effect(), Some("unverifiable"), "{}", click.raw);
+            assert_eq!(click.action_effect(), Some("confirmed"), "{}", click.raw);
             assert_eq!(
                 click.structured()["evidence"][0]["kind"],
                 "value_readback",
@@ -2180,7 +2198,7 @@ fn run_semantic_state(spec: &BrowserSpec) {
             );
             assert_eq!(
                 clicked.action_effect(),
-                Some("unverifiable"),
+                Some("confirmed"),
                 "{}",
                 clicked.raw
             );
@@ -2928,7 +2946,7 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
                 );
                 assert_eq!(
                     clicked.action_effect(),
-                    Some("unverifiable"),
+                    Some("confirmed"),
                     "{}",
                     clicked.raw
                 );
@@ -3081,7 +3099,7 @@ fn run_reduced_motion_policy(spec: &BrowserSpec) {
         );
         assert_eq!(
             clicked.action_effect(),
-            Some("unverifiable"),
+            Some("confirmed"),
             "{}",
             clicked.raw
         );
@@ -3318,7 +3336,7 @@ fn run_existing_profile_attach(spec: &BrowserSpec) {
                 );
                 assert_eq!(
                     clicked.action_effect(),
-                    Some("unverifiable"),
+                    Some("confirmed"),
                     "{}",
                     clicked.raw
                 );
@@ -3493,7 +3511,7 @@ fn run_existing_profile_setup(spec: &BrowserSpec) {
                 );
                 assert_eq!(
                     clicked.action_effect(),
-                    Some("unverifiable"),
+                    Some("confirmed"),
                     "{}",
                     clicked.raw
                 );
@@ -3732,7 +3750,15 @@ fn run_frame_roundtrip(spec: &BrowserSpec) {
             let oopif_button = ref_by_frame_label(&snapshot, "oopif", "id=btn-increment");
             let oopif_input = ref_by_frame_label(&snapshot, "oopif", "id=txt-input");
 
-            for reference in [&shadow_button, &frame_button, &oopif_button] {
+            // The shadow button writes to its host's document and the OOPIF
+            // button to its own document, which the click watches. The
+            // same-process frame button writes only to the parent document,
+            // which the click does not watch.
+            for (reference, effect) in [
+                (&shadow_button, "confirmed"),
+                (&frame_button, "unverifiable"),
+                (&oopif_button, "confirmed"),
+            ] {
                 let clicked = fixture.driver.call(
                     "browser_click",
                     serde_json::json!({
@@ -3743,12 +3769,7 @@ fn run_frame_roundtrip(spec: &BrowserSpec) {
                         "session": session,
                     }),
                 );
-                assert_eq!(
-                    clicked.action_effect(),
-                    Some("unverifiable"),
-                    "{}",
-                    clicked.raw
-                );
+                assert_eq!(clicked.action_effect(), Some(effect), "{}", clicked.raw);
             }
             wait_for_text(&fixture.server, "standalone-shadow-state", "shadow=clicked");
             wait_for_text(&fixture.server, "standalone-frame-state", "iframe=clicked");
@@ -4088,7 +4109,7 @@ fn run_multi_tab(spec: &BrowserSpec) {
             );
             assert_eq!(
                 clicked.action_effect(),
-                Some("unverifiable"),
+                Some("confirmed"),
                 "{}",
                 clicked.raw
             );

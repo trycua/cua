@@ -980,7 +980,7 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 let declaration = call.params["functionDeclaration"]
                     .as_str()
                     .unwrap_or_default();
-                if st.click_opens_dialog && declaration.contains("const el = this;") {
+                if st.click_opens_dialog && declaration.contains("'pointerdown'") {
                     let events = st
                         .page_sessions
                         .iter()
@@ -997,7 +997,7 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                         .collect();
                     return MockReply::hang().with_events(events);
                 }
-                if declaration.contains("const el = this;") {
+                if declaration.contains("'pointerdown'") {
                     return MockReply::ok(json!({
                         "result": { "value": { "pageMutations": st.dom_click_page_mutations } }
                     }));
@@ -3871,11 +3871,18 @@ async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable
     assert!(public["escalation"].is_null(), "{public}");
     assert!(public.get("status").is_none(), "{public}");
     let dispatches = recorded_calls(&f, "Runtime.callFunctionOn");
-    let click_sequence = dispatches
+    let sequences: Vec<&str> = dispatches
         .iter()
         .filter_map(|(_, params)| params["functionDeclaration"].as_str())
-        .find(|declaration| declaration.contains("'pointerdown'"))
-        .expect("dom_event click dispatches a pointer sequence, not a bare click()");
+        .filter(|declaration| declaration.contains("dispatchEvent"))
+        .collect();
+    // Hover and move go out in their own call, so the microtasks their
+    // handlers queue settle before the click's mutations are counted.
+    assert_eq!(sequences.len(), 2, "{sequences:?}");
+    assert!(sequences[0].contains("'pointermove'"), "{sequences:?}");
+    assert!(!sequences[0].contains("'pointerdown'"), "{sequences:?}");
+    assert!(!sequences[1].contains("'pointermove'"), "{sequences:?}");
+    let click_sequence = sequences.join("\n");
     // Apps that open rows from pointer/mouse down+up ignore a bare click(),
     // so the synthetic route must replay the whole primary-button sequence
     // at the element's center, in order.
@@ -3990,7 +3997,7 @@ async fn dom_event_click_confirms_when_its_handlers_change_the_page() {
         .find(|params| {
             params["functionDeclaration"]
                 .as_str()
-                .is_some_and(|declaration| declaration.contains("const el = this;"))
+                .is_some_and(|declaration| declaration.contains("'pointerdown'"))
         })
         .expect("click sequence recorded");
     assert_eq!(click["awaitPromise"], true, "{click}");
@@ -4693,7 +4700,7 @@ async fn dom_event_click_returns_when_its_handler_opens_a_dialog() {
                 m == "Runtime.callFunctionOn"
                     && p["functionDeclaration"]
                         .as_str()
-                        .is_some_and(|d| d.contains("const el = this;"))
+                        .is_some_and(|d| d.contains("'pointerdown'"))
             })
             .expect("click recorded");
         assert!(enable_at < click_at, "Page.enable must precede the click");
@@ -4772,7 +4779,7 @@ async fn dom_event_click_refuses_while_a_dialog_is_already_open() {
         .filter(|(_, p)| {
             p["functionDeclaration"]
                 .as_str()
-                .is_some_and(|d| d.contains("const el = this;"))
+                .is_some_and(|d| d.contains("'pointerdown'"))
         })
         .count();
     assert_eq!(

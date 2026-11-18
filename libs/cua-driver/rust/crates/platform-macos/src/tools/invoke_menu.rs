@@ -1177,13 +1177,26 @@ fn key_window_unknown(front_known: bool) -> &'static str {
 }
 
 /// Make the target the app's key window for one press, without raising it.
-/// The returned scope hands key back to the user's window when dropped.
+/// The blocking worker owns `mutation` and returns it with the scope, so a
+/// cancelled call cannot release the lease while the worker still changes or
+/// hands back key. The returned hold hands key back to the user's window when
+/// dropped, then releases the lease.
 async fn key_scope_behind_users_window(
     pid: i32,
     window_id: u32,
-) -> Result<crate::input::skylight::WindowKeyScope, ToolResult> {
-    match tokio::task::spawn_blocking(move || super::key_scope(pid, Some(window_id))).await {
-        Ok(Ok(Some(scope))) => Ok(scope),
+    mutation: super::BackgroundMutationLease,
+) -> Result<PressHold, ToolResult> {
+    let primed = tokio::task::spawn_blocking(move || {
+        super::key_scope(pid, Some(window_id)).map(|key| {
+            key.map(|key| PressHold {
+                _key: Some(key),
+                _mutation: mutation,
+            })
+        })
+    })
+    .await;
+    match primed {
+        Ok(Ok(Some(hold))) => Ok(hold),
         Ok(Ok(None)) => Err(behind_users_window_refusal(
             pid,
             window_id,
@@ -1316,13 +1329,9 @@ impl Tool for InvokeMenuTool {
                 );
             }
             MenuRoute::BehindUsersWindow => {
-                let key = match key_scope_behind_users_window(pid, window_id).await {
-                    Ok(key) => key,
+                let hold = match key_scope_behind_users_window(pid, window_id, mutation).await {
+                    Ok(hold) => hold,
                     Err(refused) => return refused,
-                };
-                let hold = PressHold {
-                    _key: Some(key),
-                    _mutation: mutation,
                 };
                 return press_in_background(
                     pid,
@@ -1336,7 +1345,10 @@ impl Tool for InvokeMenuTool {
             MenuRoute::KeyWindowInFront => {}
         }
 
+        // The worker owns the lease: a cancelled call must not release it
+        // while the worker still raises, presses or restores.
         let outcome = tokio::task::spawn_blocking(move || {
+            let _mutation = mutation;
             let prior_frontmost = live_frontmost_app().or_else(crate::apps::frontmost_pid);
             let prior_frontmost_window = prior_frontmost.and_then(|prior| {
                 crate::ax::bindings::focused_window_id_of_pid(prior).map(|window| window.own)

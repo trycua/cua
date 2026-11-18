@@ -3491,6 +3491,10 @@ mod tests {
         /// Each launched browser raises a prompt, as a Chromium that reads
         /// its keychain secret does.
         prompt_on_launch: std::sync::atomic::AtomicBool,
+        /// What `managed_extension_policy` reports for every executable.
+        managed_extension_policy: std::sync::Mutex<Option<String>>,
+        /// The arguments of each isolated browser command core built.
+        launched_args: std::sync::Mutex<Vec<Vec<String>>>,
     }
 
     impl MockPlatform {
@@ -3655,14 +3659,28 @@ mod tests {
                 .load(std::sync::atomic::Ordering::SeqCst)
         }
 
+        fn managed_extension_policy(&self, _executable: &str) -> Option<String> {
+            self.launches
+                .managed_extension_policy
+                .lock()
+                .unwrap()
+                .clone()
+        }
+
         fn spawn_isolated_browser(
             &self,
-            _command: std::process::Command,
+            command: std::process::Command,
             profile: &std::path::Path,
         ) -> Result<Box<dyn crate::browser::platform::IsolatedBrowserProcess>, BrowserRefusal>
         {
             use std::sync::atomic::Ordering;
             self.launches.spawned.fetch_add(1, Ordering::SeqCst);
+            self.launches.launched_args.lock().unwrap().push(
+                command
+                    .get_args()
+                    .map(|arg| arg.to_string_lossy().into_owned())
+                    .collect(),
+            );
             if self.launches.prompt_on_launch.load(Ordering::SeqCst) {
                 self.launches.prompt_open.store(true, Ordering::SeqCst);
             }
@@ -4156,6 +4174,49 @@ mod tests {
             0,
             "the user's own profile must never be launched or relaunched"
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn isolated_launch_keeps_extensions_only_under_managed_extension_policy() {
+        let launches = Arc::new(LaunchSignals::default());
+        let engine = observed_launching_engine(std::time::Duration::ZERO, launches.clone());
+        // One named profile, launched and then relaunched under the policy.
+        let name = format!("managed-extensions-{}", uuid::Uuid::new_v4().simple());
+        let switches = [
+            "--disable-background-networking",
+            "--disable-component-update",
+            "--disable-extensions",
+        ];
+        for (policy, kept) in [
+            (None, true),
+            (
+                Some("/etc/opt/chrome/policies/managed/extensions.json".to_owned()),
+                false,
+            ),
+        ] {
+            *launches.managed_extension_policy.lock().unwrap() = policy;
+            let (session, owner) = start_lifecycle_session(None);
+            prepare_isolated(
+                &engine,
+                &session,
+                &owner,
+                json!({ "mode": "isolated_named", "name": name }),
+            )
+            .await;
+            crate::session::end_session(&session);
+            let args = launches.launched_args.lock().unwrap().pop().unwrap();
+            for switch in switches {
+                assert_eq!(
+                    args.iter().any(|arg| arg == switch),
+                    kept,
+                    "{switch}: {args:?}"
+                );
+            }
+            assert!(args.iter().any(|arg| arg == "--disable-default-apps"));
+        }
+        let root = std::env::var_os("CUA_DRIVER_BROWSER_PROFILE_ROOT").unwrap();
+        std::fs::remove_dir_all(std::path::Path::new(&root).join(name)).unwrap();
     }
 
     #[cfg(unix)]

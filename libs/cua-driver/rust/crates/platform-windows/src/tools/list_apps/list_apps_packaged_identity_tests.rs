@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use super::packaged_installed_match;
 use crate::win32::{InstalledApp, PackageIdentity};
 

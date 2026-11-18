@@ -38,8 +38,9 @@ impl Tool for ListAppsTool {
                 pid (mirrors NSApplicationActivationPolicyRegular's intent: background \
                 services and console processes are excluded). Installed apps are merged \
                 from Start-Menu `.lnk` enumeration and the WinRT PackageManager — running \
-                processes whose executable matches a Start-Menu target are folded into a \
-                single entry with `running: true`.\n\n\
+                processes whose executable matches a Start-Menu target, and running \
+                packaged apps whose package identity matches a `uwp` entry, are folded \
+                into a single entry with `running: true`.\n\n\
                 Use this for \"is X installed?\" as well as \"is X running?\". For per-window \
                 state — on-screen, minimized, window titles — call list_windows instead. \
                 For just opening an app — running or not — call launch_app({path: ...}) \

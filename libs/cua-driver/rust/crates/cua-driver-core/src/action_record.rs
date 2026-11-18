@@ -1618,6 +1618,58 @@ mod tests {
         );
     }
 
+    /// What every `move_cursor` producer publishes: only a cursor moved, so
+    /// no effect is provable and no app delivery applies. The route is
+    /// global input for the user's real pointer and synthetic events for the
+    /// drawn agent cursor, including window-target hover moves.
+    #[test]
+    fn move_cursor_publishes_the_pinned_cursor_projection() {
+        let public = |args: serde_json::Value, structured: serde_json::Value| {
+            let record = ActionExecutionRecord::from_legacy("move_cursor", &args, &structured)
+                .expect("move_cursor normalizes");
+            serde_json::to_value(record.public_result().unwrap()).unwrap()
+        };
+        let projection = |route: &str| {
+            serde_json::json!({
+                "effect": "unverifiable",
+                "route": route,
+                "delivery": {"mode": "not_applicable"},
+            })
+        };
+        let desktop = serde_json::json!({"scope": "desktop", "x": 1, "y": 1});
+        for path in [
+            None,
+            Some("SetCursorPos"),
+            Some("wayland_desktop"),
+            Some("xtest_desktop"),
+        ] {
+            let mut structured = serde_json::json!({"scope": "desktop", "effect": "unverifiable"});
+            if let Some(path) = path {
+                structured["path"] = path.into();
+            }
+            assert_eq!(
+                public(desktop.clone(), structured),
+                projection("global_input"),
+                "{path:?}"
+            );
+        }
+        assert_eq!(
+            public(serde_json::json!({"x": 1, "y": 1}), serde_json::Value::Null),
+            projection("synthetic_events")
+        );
+        let window = serde_json::json!({"pid": 1, "window_id": 2, "x": 1, "y": 1});
+        for effect in ["unverifiable", "unknown", "confirmed"] {
+            assert_eq!(
+                public(
+                    window.clone(),
+                    serde_json::json!({"scope": "window", "hover_delivered": true, "effect": effect}),
+                ),
+                projection("synthetic_events"),
+                "{effect}"
+            );
+        }
+    }
+
     #[test]
     fn confirmed_rejects_debug_only_evidence() {
         let record = ActionExecutionRecord::builder(

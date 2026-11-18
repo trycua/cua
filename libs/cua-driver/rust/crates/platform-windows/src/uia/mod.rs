@@ -29,7 +29,7 @@ use windows::Win32::UI::Accessibility::{
     UIA_NamePropertyId, UIA_ProcessIdPropertyId, UIA_RangeValuePatternId, UIA_ScrollPatternId,
     UIA_SelectionItemIsSelectedPropertyId, UIA_SelectionItemPatternId, UIA_TextPatternId,
     UIA_TogglePatternId, UIA_ToggleToggleStatePropertyId, UIA_ValuePatternId,
-    UIA_ValueValuePropertyId,
+    UIA_ValueValuePropertyId, UIA_WindowControlTypeId,
 };
 
 pub mod fg_bypass;
@@ -944,6 +944,41 @@ fn effective_enabled(
         return (Some(false), false);
     }
     (reported_enabled, reported_enabled.unwrap_or(true))
+}
+
+/// The live counterpart of [`effective_enabled`]: `false` when the element or
+/// any control-view ancestor up to the nearest `Window` reports
+/// `IsEnabled=false`. `None` when the element's own state cannot be read; an
+/// unreadable ancestor ends the climb.
+pub(crate) unsafe fn live_effective_enabled(element: &IUIAutomationElement) -> Option<bool> {
+    if !element.CurrentIsEnabled().ok()?.as_bool() {
+        return Some(false);
+    }
+    let walker = ensure_com()
+        .ok()
+        .and_then(|()| {
+            CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()
+        })
+        .and_then(|automation| automation.ControlViewWalker().ok());
+    let Some(walker) = walker else {
+        return Some(true);
+    };
+    let mut current = element.clone();
+    while let Ok(parent) = walker.GetParentElement(&current) {
+        match parent.CurrentIsEnabled() {
+            Ok(enabled) if !enabled.as_bool() => return Some(false),
+            Ok(_) => {}
+            Err(_) => break,
+        }
+        if parent
+            .CurrentControlType()
+            .is_ok_and(|id| id == UIA_WindowControlTypeId)
+        {
+            break;
+        }
+        current = parent;
+    }
+    Some(true)
 }
 
 /// Keep `IsPassword` where it carries information: always when it is true,

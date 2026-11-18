@@ -199,10 +199,10 @@ pub(crate) fn resolve_onscreen_point_with_scroll(
     })))
 }
 
-/// Re-read `IsEnabled` on an admitted token target and refuse a disabled one
-/// before any cursor or input work, as macOS does (`element_disabled`). The
-/// snapshot's `enabled` can be stale. An element whose state cannot be read
-/// is left to the tool.
+/// Re-read the effective `IsEnabled` on an admitted token target and refuse a
+/// disabled one, or one under a disabled ancestor, before any cursor or input
+/// work, as macOS does (`element_disabled`). The snapshot's `enabled` can be
+/// stale. An element whose state cannot be read is left to the tool.
 pub(crate) async fn refuse_if_disabled(
     pid: u32,
     admitted: &Option<crate::uia::snapshot::RetainedElement>,
@@ -217,7 +217,8 @@ pub(crate) async fn refuse_if_disabled(
 
 pub(crate) fn element_disabled_refusal(pid: u32, tool: &str) -> ToolResult {
     ToolResult::error(format!(
-        "refusing {tool}: the target reports IsEnabled=false, so the app would ignore it. \
+        "refusing {tool}: the target or a control containing it reports IsEnabled=false, \
+         so the app would ignore it. \
          Nothing was sent. Snapshot again and act once the element reports enabled"
     ))
     .with_structured(json!({

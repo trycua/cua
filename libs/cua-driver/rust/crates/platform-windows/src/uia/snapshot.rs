@@ -90,8 +90,9 @@ impl RetainedElement {
         result.map_err(|e| anyhow::anyhow!("UIA SetFocus failed: {e}"))
     }
 
-    /// The element's live `IsEnabled`. `None` for an MSAA element or when UIA
-    /// cannot read it.
+    /// The element's live effective `IsEnabled`, which a disabled ancestor in
+    /// the same window forces false (`super::live_effective_enabled`). `None`
+    /// for an MSAA element or when UIA cannot read the element's own state.
     pub fn element_is_enabled(&self) -> Option<bool> {
         if !self.is_uia() || self.ptr == 0 {
             return None;
@@ -99,9 +100,7 @@ impl RetainedElement {
         let element = std::mem::ManuallyDrop::new(unsafe {
             IUIAutomationElement::from_raw(self.ptr as *mut _)
         });
-        unsafe { element.CurrentIsEnabled() }
-            .ok()
-            .map(|value| value.as_bool())
+        unsafe { super::live_effective_enabled(&element) }
     }
 
     pub fn element_has_keyboard_focus(&self) -> Option<bool> {

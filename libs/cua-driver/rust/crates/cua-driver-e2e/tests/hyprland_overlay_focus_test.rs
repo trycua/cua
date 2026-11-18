@@ -12,6 +12,8 @@ use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -41,10 +43,12 @@ fn hypr_json(query: &str) -> Value {
 }
 
 /// Records every focus event Hyprland broadcasts until `finish`, so a change
-/// that reverts before the end still fails the test.
+/// that reverts before the end still fails the test. A read error or an EOF
+/// before `finish` fails too, since focus would then go unobserved.
 struct FocusEvents {
     stream: UnixStream,
-    reader: JoinHandle<Vec<String>>,
+    finishing: Arc<AtomicBool>,
+    reader: JoinHandle<Result<Vec<String>, String>>,
 }
 
 impl FocusEvents {
@@ -54,23 +58,46 @@ impl FocusEvents {
             .join(std::env::var("HYPRLAND_INSTANCE_SIGNATURE").unwrap())
             .join(".socket2.sock");
         let stream = UnixStream::connect(&socket).expect("connect to Hyprland event socket");
-        let reader = BufReader::new(stream.try_clone().expect("clone event socket"));
+        let mut reader = BufReader::new(stream.try_clone().expect("clone event socket"));
+        let finishing = Arc::new(AtomicBool::new(false));
+        let reader_finishing = Arc::clone(&finishing);
         let reader = thread::spawn(move || {
-            reader
-                .lines()
-                .map_while(Result::ok)
-                .filter(|line| {
-                    line.split_once(">>")
-                        .is_some_and(|(event, _)| FOCUS_EVENTS.contains(&event))
-                })
-                .collect::<Vec<_>>()
+            let mut events = Vec::new();
+            let mut line = String::new();
+            loop {
+                line.clear();
+                let read = reader.read_line(&mut line);
+                if reader_finishing.load(Ordering::SeqCst) {
+                    return Ok(events);
+                }
+                match read {
+                    Ok(0) => return Err("Hyprland closed the event socket".to_owned()),
+                    Ok(_) => {}
+                    Err(error) => return Err(format!("read Hyprland event socket: {error}")),
+                }
+                let line = line.trim_end();
+                if line
+                    .split_once(">>")
+                    .is_some_and(|(event, _)| FOCUS_EVENTS.contains(&event))
+                {
+                    events.push(line.to_owned());
+                }
+            }
         });
-        Self { stream, reader }
+        Self {
+            stream,
+            finishing,
+            reader,
+        }
     }
 
     fn finish(self) -> Vec<String> {
+        self.finishing.store(true, Ordering::SeqCst);
         let _ = self.stream.shutdown(Shutdown::Both);
-        self.reader.join().expect("event reader")
+        self.reader
+            .join()
+            .expect("event reader")
+            .unwrap_or_else(|error| panic!("focus events went unobserved: {error}"))
     }
 }
 

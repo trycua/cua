@@ -144,11 +144,13 @@ else
     standalone_browser_window_collision
   )
   if [[ "${HOST_OS}" == Darwin ]]; then
-    # macOS-only native-chrome keyboard regressions, and the background
-    # web-press no-op report (#4243).
+    # macOS-only native-chrome keyboard regressions, the background
+    # web-press no-op report (#4243), and background pixel clicks that land
+    # at their point on web content (#5484).
     tests+=(
       standalone_browser_native_omnibox_select_all
       standalone_browser_background_web_click_noop
+      standalone_browser_background_canvas_pixel_click
     )
   fi
 fi

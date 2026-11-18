@@ -2453,10 +2453,14 @@ fn webkit_background_paste_runs_the_edit_menu_item() {
             }
         }
     }
-    assert!(
-        selected > 0 || std::env::var("CUA_E2E_CELL_FILTER").is_ok(),
-        "no WebKit paste cells were selected; check CUA_E2E_HARNESS_FILTER"
-    );
+    let filtered = ["CUA_E2E_HARNESS_FILTER", "CUA_E2E_CELL_FILTER"]
+        .iter()
+        .any(|name| std::env::var(name).is_ok_and(|filter| !filter.trim().is_empty()));
+    if selected == 0 && filtered {
+        eprintln!("no WebKit paste rows matched CUA_E2E_HARNESS_FILTER or CUA_E2E_CELL_FILTER");
+        return;
+    }
+    assert!(selected > 0, "no WebKit paste cells were selected");
     resume_first_failure(failure);
 }
 

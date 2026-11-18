@@ -290,24 +290,26 @@ fn merge_atspi_records(
     for (position, (id, record)) in native.into_iter().enumerate() {
         let title_matches =
             |window: &WindowInfo| !record.title.is_empty() && window.title == record.title;
-        let exact_title = if unambiguous {
+        let app_id_matches =
+            |window: &WindowInfo| !record.app_id.is_empty() && window.app_name == record.app_id;
+        let matching_atspi = if unambiguous {
             unique_title[position]
-                .then(|| unique_match(&atspi, &claimed, title_matches))
+                .then(|| sole_match(&atspi, &claimed, title_matches))
                 .flatten()
-        } else {
-            atspi.iter().enumerate().find_map(|(index, window)| {
-                (!claimed[index] && title_matches(window)).then_some(index)
-            })
-        };
-        let matching_atspi = exact_title.or_else(|| {
-            (!unambiguous || unique_app_id[position])
-                .then(|| {
-                    unique_match(&atspi, &claimed, |window| {
-                        !record.app_id.is_empty() && window.app_name == record.app_id
-                    })
+                .or_else(|| {
+                    unique_app_id[position]
+                        .then(|| sole_match(&atspi, &claimed, app_id_matches))
+                        .flatten()
                 })
-                .flatten()
-        });
+        } else {
+            atspi
+                .iter()
+                .enumerate()
+                .find_map(|(index, window)| {
+                    (!claimed[index] && title_matches(window)).then_some(index)
+                })
+                .or_else(|| unique_match(&atspi, &claimed, app_id_matches))
+        };
 
         let mut window = WindowInfo {
             xid: id,
@@ -361,6 +363,17 @@ fn unique_match(
         .filter(|(index, window)| !claimed[*index] && predicate(window));
     let (index, _) = matches.next()?;
     matches.next().is_none().then_some(index)
+}
+
+/// The one window of all `windows`, claimed or not, that `predicate`
+/// accepts, provided no earlier record claimed it.
+fn sole_match(
+    windows: &[WindowInfo],
+    claimed: &[bool],
+    predicate: impl Fn(&WindowInfo) -> bool,
+) -> Option<usize> {
+    let index = unique_match(windows, &vec![false; windows.len()], predicate)?;
+    (!claimed[index]).then_some(index)
 }
 
 #[cfg(test)]
@@ -538,6 +551,42 @@ mod tests {
         assert_eq!(pids, [None, None, None, None, Some(404)]);
         assert_eq!(merged[4].x, 70);
         assert_eq!(merged.len(), 7);
+    }
+
+    #[test]
+    fn capturable_merge_counts_windows_an_earlier_record_claimed() {
+        let merged = merge_atspi_records(
+            vec![
+                (
+                    u64::from(EXT_ID_NAMESPACE_START),
+                    record("a", "Untitled", "org.editor"),
+                ),
+                (
+                    u64::from(EXT_ID_NAMESPACE_START + 1),
+                    record("b", "Shared", "org.other"),
+                ),
+                (
+                    u64::from(EXT_ID_NAMESPACE_START + 2),
+                    record("c", "Viewer A", "org.c"),
+                ),
+                (
+                    u64::from(EXT_ID_NAMESPACE_START + 3),
+                    record("d", "Unlisted", "org.viewer"),
+                ),
+            ],
+            vec![
+                atspi(11, 101, "Shared", "org.editor", 10),
+                atspi(12, 202, "Shared", "org.unrelated", 30),
+                atspi(13, 303, "Viewer A", "org.viewer", 50),
+                atspi(14, 404, "Viewer B", "org.viewer", 70),
+            ],
+            true,
+        );
+
+        // `a` claims 11 by app_id, yet `b`'s title still matches two AT-SPI
+        // windows; `c` claims 13 by title, yet `d`'s app_id still matches two.
+        let pids: Vec<_> = merged[..4].iter().map(|window| window.pid).collect();
+        assert_eq!(pids, [Some(101), None, Some(303), None]);
     }
 
     #[test]

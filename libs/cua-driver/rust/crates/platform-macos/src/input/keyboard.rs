@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex};
 use super::input_source;
 
 const SCREEN_SHARING_BUNDLE_ID: &str = "com.apple.ScreenSharing";
+const IOS_SIMULATOR_BUNDLE_ID: &str = "com.apple.iphonesimulator";
 const SHIFT_KEY_CODE: u16 = 56;
 
 /// Default key down→up gap and inter-key pacing.
@@ -36,20 +37,37 @@ fn key_gap_sleep() {
     std::thread::sleep(key_gap());
 }
 
-fn is_screen_sharing_bundle_id(bundle_id: &str) -> bool {
-    bundle_id == SCREEN_SHARING_BUNDLE_ID
+/// Whether `pid` is Apple's Screen Sharing client.
+pub fn is_screen_sharing_pid(pid: i32) -> bool {
+    key_forwarder_for_pid(pid) == Some(KeyForwarder::ScreenSharing)
 }
 
-/// Whether `pid` is Apple's Screen Sharing client.
-///
-/// Screen Sharing is an input forwarder rather than a text consumer: it relays
-/// physical virtual-key transitions to the guest and ignores the Unicode string
-/// attached to a synthetic keycode-0 event. Keep that special case explicit so
-/// ordinary PID-routed text input retains its layout-independent Unicode path.
-pub fn is_screen_sharing_pid(pid: i32) -> bool {
+/// An app that is an input forwarder rather than a text consumer: it relays
+/// physical virtual-key transitions to a guest and ignores the Unicode string
+/// attached to a synthetic keycode-0 event, so ordinary PID-routed text
+/// arrives as repeated A keys. Keep these special cases explicit so ordinary
+/// PID-routed text input retains its layout-independent Unicode path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyForwarder {
+    ScreenSharing,
+    /// Xcode's Simulator: every character typed into an iOS app arrived as
+    /// the A key (`abc` became `Aaa`, or `ㅁㅁㅁ` on a Korean guest keyboard).
+    IosSimulator,
+}
+
+fn key_forwarder_for_bundle_id(bundle_id: &str) -> Option<KeyForwarder> {
+    match bundle_id {
+        SCREEN_SHARING_BUNDLE_ID => Some(KeyForwarder::ScreenSharing),
+        IOS_SIMULATOR_BUNDLE_ID => Some(KeyForwarder::IosSimulator),
+        _ => None,
+    }
+}
+
+/// The key forwarder `pid` is, if any.
+pub fn key_forwarder_for_pid(pid: i32) -> Option<KeyForwarder> {
     crate::apps::bundle_id_for_pid(pid)
         .as_deref()
-        .is_some_and(is_screen_sharing_bundle_id)
+        .and_then(key_forwarder_for_bundle_id)
 }
 
 /// Press and release a single key, delivered to `pid` without stealing focus.
@@ -664,7 +682,7 @@ enum PhysicalEventType {
 fn physical_text_events(ch: char) -> anyhow::Result<Vec<PhysicalTextEvent>> {
     let (key_code, shift) = physical_key_for_char(ch).ok_or_else(|| {
         anyhow::anyhow!(
-            "Screen Sharing physical text delivery does not support character U+{:04X}",
+            "physical key text delivery does not support character U+{:04X}",
             ch as u32
         )
     })?;
@@ -1459,6 +1477,21 @@ mod tests {
     }
 
     #[test]
+    fn key_forwarder_detection_is_exact_and_case_sensitive() {
+        assert_eq!(
+            key_forwarder_for_bundle_id("com.apple.ScreenSharing"),
+            Some(KeyForwarder::ScreenSharing)
+        );
+        assert_eq!(
+            key_forwarder_for_bundle_id("com.apple.iphonesimulator"),
+            Some(KeyForwarder::IosSimulator)
+        );
+        assert_eq!(key_forwarder_for_bundle_id("com.apple.screensharing"), None);
+        assert_eq!(key_forwarder_for_bundle_id("com.microsoft.rdc.macos"), None);
+        assert_eq!(key_forwarder_for_bundle_id("com.apple.TextEdit"), None);
+    }
+
+    #[test]
     fn physical_text_rejects_characters_without_a_lossless_keycode() {
         let error = physical_text_events('🙂').unwrap_err().to_string();
         assert!(error.contains("U+1F642"), "{error}");
@@ -1667,13 +1700,6 @@ mod tests {
             let code = chord_key_code(&letter.to_string(), &[], Some(&*layout)).unwrap();
             assert!(layout.plain.contains(&(code, letter)), "{letter}");
         }
-    }
-
-    #[test]
-    fn screen_sharing_detection_is_exact_and_case_sensitive() {
-        assert!(is_screen_sharing_bundle_id("com.apple.ScreenSharing"));
-        assert!(!is_screen_sharing_bundle_id("com.apple.screensharing"));
-        assert!(!is_screen_sharing_bundle_id("com.microsoft.rdc.macos"));
     }
 }
 

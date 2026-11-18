@@ -413,14 +413,6 @@ impl Tool for GetWindowStateTool {
         // this tool never does — so treat that as resolved.
         let scope_matched = window_scope.as_ref().is_none_or(|s| s.is_matched());
 
-        let removed = (!scope_matched && !observation_only)
-            .then(|| {
-                self.state
-                    .snapshots
-                    .remove(pid, u64::from(window_id), session_id.as_deref())
-            })
-            .flatten();
-
         // Capture the screenshot and deliver it alongside the tree — the
         // grounding frame the agent cross-checks the (sometimes-lying) tree
         // against. Skipped only when `include_screenshot:false` (and no
@@ -601,39 +593,23 @@ impl Tool for GetWindowStateTool {
                     .flatten()
                     .map(|bounds| (bounds.width, bounds.height))
             });
-        // A screenshot-only read adds an image but no new element rows, so it
-        // refreshes the current snapshot's frame and keeps its tokens valid.
-        let refreshed = match (&prepared_snapshot, screenshot_resize_scale) {
-            (None, Some(scale)) if scope_matched && !observation_only => {
-                self.state.snapshots.refresh_screenshot_for_session(
-                    pid,
-                    u64::from(window_id),
-                    session_id.as_deref(),
-                    scale,
-                    window_size,
-                )
-            }
-            _ => None,
-        };
-        let snapshot_payload = prepared_snapshot.or_else(|| {
-            (screenshot_resize_scale.is_some() && refreshed.is_none())
-                .then(|| crate::ax::snapshot::AxSnapshot::from_nodes(&[]))
-        });
-        let (snapshot_id, replaced) = match refreshed {
-            Some(id) => (Some(id), None),
-            None => snapshot_payload
-                .filter(|_| scope_matched && !observation_only)
-                .and_then(|payload| {
-                    self.state.snapshots.publish_sized_for_session(
-                        pid,
-                        u64::from(window_id),
-                        payload,
-                        session_id.as_deref(),
-                        screenshot_resize_scale,
-                        window_size,
-                    )
-                })
-                .unzip(),
+        let SnapshotUpdate {
+            snapshot_id,
+            refreshed,
+            invalidated,
+        } = if observation_only {
+            SnapshotUpdate::default()
+        } else {
+            update_snapshot(
+                &self.state.snapshots,
+                pid,
+                u64::from(window_id),
+                session_id.as_deref(),
+                scope_matched,
+                prepared_snapshot,
+                screenshot_resize_scale,
+                window_size,
+            )
         };
         if let (Some(sid), Some(tree)) = (snapshot_id, tree_result.as_ref()) {
             if !observation_only {
@@ -737,9 +713,8 @@ impl Tool for GetWindowStateTool {
             structured["snapshot_id"] =
                 serde_json::json!(cua_driver_core::element_token::format_snapshot_id(sid));
         }
-        let invalidated: Vec<String> = removed
+        let invalidated: Vec<String> = invalidated
             .into_iter()
-            .chain(replaced.into_iter().flatten())
             .map(cua_driver_core::element_token::format_snapshot_id)
             .collect();
         if !invalidated.is_empty() {
@@ -765,7 +740,7 @@ impl Tool for GetWindowStateTool {
                 "mapped_window_count": summary.mapped_window_count,
             });
         }
-        if let Some(id) = refreshed {
+        if let Some(id) = snapshot_id.filter(|_| refreshed) {
             let sid = cua_driver_core::element_token::format_snapshot_id(id);
             content.push(Content::text(format!(
                 "Screenshot only: snapshot {sid} keeps its rows, and its element_tokens \
@@ -974,6 +949,88 @@ impl Tool for GetWindowStateTool {
             structured_content: Some(structured),
             action_record: None,
         }
+    }
+}
+
+/// What a read did to the caller's snapshot of the window.
+#[derive(Debug, Default, PartialEq)]
+struct SnapshotUpdate {
+    /// The window's current snapshot after the read, if it has one.
+    snapshot_id: Option<u32>,
+    /// A screenshot-only read kept the current snapshot's rows and tokens.
+    refreshed: bool,
+    /// Snapshot ids the read removed or replaced.
+    invalidated: Vec<u32>,
+}
+
+/// Record a model-facing read in the snapshot store.
+///
+/// A resolved read publishes its rows, or, when it carried only a screenshot,
+/// refreshes the current snapshot's pixel frame. An unresolved read has no rows
+/// to publish, but its verified screenshot is still the requested window, so it
+/// publishes an empty snapshot with that frame: background input stays refused
+/// by the exact-target gate, while a foreground pixel action can map x,y off
+/// the screenshot the response recommends it for (#6755). Without a verified
+/// screenshot the unresolved read drops the window's snapshot.
+#[allow(clippy::too_many_arguments)]
+fn update_snapshot(
+    snapshots: &crate::ax::snapshot::Snapshots,
+    pid: i32,
+    window_id: u64,
+    session: Option<&str>,
+    scope_matched: bool,
+    rows: Option<crate::ax::snapshot::AxSnapshot>,
+    screenshot_scale: Option<f64>,
+    window_size: Option<(f64, f64)>,
+) -> SnapshotUpdate {
+    if !scope_matched {
+        return SnapshotUpdate {
+            invalidated: snapshots
+                .remove(pid, window_id, session)
+                .into_iter()
+                .collect(),
+            ..SnapshotUpdate::default()
+        };
+    }
+    let rows = if scope_matched { rows } else { None };
+    if let (None, Some(scale)) = (&rows, screenshot_scale) {
+        if scope_matched {
+            if let Some(id) = snapshots.refresh_screenshot_for_session(
+                pid,
+                window_id,
+                session,
+                scale,
+                window_size,
+            ) {
+                return SnapshotUpdate {
+                    snapshot_id: Some(id),
+                    refreshed: true,
+                    invalidated: Vec::new(),
+                };
+            }
+        }
+    }
+    let Some(payload) = rows.or_else(|| {
+        screenshot_scale
+            .is_some()
+            .then(|| crate::ax::snapshot::AxSnapshot::from_nodes(&[]))
+    }) else {
+        return SnapshotUpdate::default();
+    };
+    match snapshots.publish_sized_for_session(
+        pid,
+        window_id,
+        payload,
+        session,
+        screenshot_scale,
+        window_size,
+    ) {
+        Some((id, replaced)) => SnapshotUpdate {
+            snapshot_id: Some(id),
+            refreshed: false,
+            invalidated: replaced,
+        },
+        None => SnapshotUpdate::default(),
     }
 }
 
@@ -1537,6 +1594,74 @@ mod window_scope_contract_tests {
     #[test]
     fn screenshot_only_path_does_not_degrade() {
         assert_eq!(degradation_for(false, 0, None, false), Degradation::None);
+    }
+
+    /// #6755: an unresolved read recommends a foreground pixel action off its
+    /// screenshot, so it must leave that screenshot's frame for x,y to map onto.
+    #[test]
+    fn unresolved_read_keeps_its_screenshot_frame_for_pixel_actions() {
+        let snapshots = crate::ax::snapshot::Snapshots::new();
+        let (pid, window_id) = (0x6755_0001, 18535);
+        let earlier = snapshots.publish(
+            pid,
+            window_id,
+            crate::ax::snapshot::AxSnapshot::from_nodes(&[]),
+        );
+
+        let update = update_snapshot(
+            &snapshots,
+            pid,
+            window_id,
+            None,
+            false,
+            Some(crate::ax::snapshot::AxSnapshot::from_nodes(&[])),
+            Some(2.0),
+            Some((260.0, 337.0)),
+        );
+
+        let snapshot_id = update.snapshot_id.expect("frame-only snapshot published");
+        assert!(!update.refreshed);
+        assert_eq!(update.invalidated, vec![earlier]);
+        let frame = snapshots
+            .screenshot_context(pid, Some(window_id), None)
+            .expect("foreground pixel actions find the unresolved read's frame");
+        assert_eq!(frame.snapshot_id, snapshot_id);
+        assert_eq!(frame.scale, 2.0);
+    }
+
+    #[test]
+    fn unresolved_read_without_a_screenshot_drops_the_window_snapshot() {
+        let snapshots = crate::ax::snapshot::Snapshots::new();
+        let (pid, window_id) = (0x6755_0002, 18535);
+        let earlier = snapshots.publish(
+            pid,
+            window_id,
+            crate::ax::snapshot::AxSnapshot::from_nodes(&[]),
+        );
+
+        let update = update_snapshot(
+            &snapshots,
+            pid,
+            window_id,
+            None,
+            false,
+            Some(crate::ax::snapshot::AxSnapshot::from_nodes(&[])),
+            None,
+            None,
+        );
+
+        assert_eq!(
+            update,
+            SnapshotUpdate {
+                invalidated: vec![earlier],
+                ..SnapshotUpdate::default()
+            }
+        );
+        let refusal = snapshots
+            .screenshot_context(pid, Some(window_id), None)
+            .expect_err("no frame survives an unresolved tree-only read");
+        let structured = refusal.structured_content.expect("structured refusal");
+        assert_eq!(structured["reason"], "window_never_read");
     }
 
     #[test]

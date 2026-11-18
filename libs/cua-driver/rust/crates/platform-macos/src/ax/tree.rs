@@ -1056,10 +1056,10 @@ fn format_node_line(node: &AXNode) -> String {
             .as_deref()
             .filter(|id| !id.trim().is_empty())
         {
-            attrs.push(format!("id={}", id));
+            attrs.push(format!("id={}", escape_controls(id)));
         }
         if let Some(h) = &node.help {
-            attrs.push(format!("help=\"{}\"", h));
+            attrs.push(format!("help=\"{}\"", escape_controls(h)));
         }
         if node.enabled == Some(false) {
             attrs.push("enabled=false".to_owned());
@@ -1068,7 +1068,7 @@ fn format_node_line(node: &AXNode) -> String {
             .actions
             .iter()
             .filter(|a| !UNLISTED_ACTIONS.contains(&a.as_str()))
-            .map(|a| a.strip_prefix("AX").unwrap_or(a).to_lowercase())
+            .map(|a| escape_controls(&a.strip_prefix("AX").unwrap_or(a).to_lowercase()))
             .collect();
         if !shown.is_empty() {
             attrs.push(format!("actions=[{}]", shown.join(",")));
@@ -1081,6 +1081,21 @@ fn format_node_line(node: &AXNode) -> String {
     }
 
     parts
+}
+
+/// Write control characters as escapes (`\n`, `\u{1}`) so an app's raw
+/// newline in a custom action name or help text cannot split its row
+/// (issue #7666). The structured `elements` keep the raw strings.
+fn escape_controls(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c.is_control() {
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 thread_local! {

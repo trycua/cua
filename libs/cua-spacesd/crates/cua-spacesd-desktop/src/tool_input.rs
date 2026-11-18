@@ -794,6 +794,68 @@ mod tests {
         );
     }
 
+    /// Regression (#5344): Super+W from an Omarchy viewer reached the focused
+    /// window as a plain `w`. The window-addressed key goes straight to the
+    /// client's keyboard, past the compositor's key bindings; a Super chord
+    /// has to arrive through the desktop scope, as a physical keyboard's does.
+    #[test]
+    fn desktop_super_chords_reach_the_compositor_through_the_desktop_scope() {
+        let tools = Arc::new(Recorded::default());
+        let lease = open(
+            &display_target(),
+            InteractiveDeliveryMode::PersistentForeground,
+            unknown_window,
+            |_| Ok(display()),
+            Box::new(|| Some((4242, 77))),
+            tools.clone(),
+        )
+        .unwrap();
+        let chord = |key: &str, modifiers| InteractiveInputEvent::Key {
+            key: key.into(),
+            state: InputKeyState::Down,
+            modifiers,
+            repeat: false,
+        };
+        lease
+            .dispatch(&batch(
+                0,
+                vec![
+                    chord("w", vec![cua_media_protocol::InputModifier::Command]),
+                    chord(
+                        "w",
+                        vec![
+                            cua_media_protocol::InputModifier::Command,
+                            cua_media_protocol::InputModifier::Shift,
+                        ],
+                    ),
+                    chord("w", vec![cua_media_protocol::InputModifier::Control]),
+                ],
+            ))
+            .unwrap();
+        assert_eq!(
+            tools.0.lock().unwrap().clone(),
+            vec![
+                (
+                    "press_key".into(),
+                    json!({"scope": "desktop", "key": "w", "modifiers": ["super"]})
+                ),
+                (
+                    "press_key".into(),
+                    json!({"scope": "desktop", "key": "w", "modifiers": ["super", "shift"]})
+                ),
+                // Other chords keep the focused window's verified route.
+                (
+                    "press_key".into(),
+                    json!({
+                        "pid": 4242, "window_id": 77, "delivery_mode": "foreground",
+                        "_skip_window_change_detection": true, "key": "w",
+                        "modifiers": ["ctrl"],
+                    })
+                ),
+            ]
+        );
+    }
+
     #[test]
     fn desktop_keys_without_a_focused_window_use_the_desktop_scope() {
         let tools = Arc::new(Recorded::default());

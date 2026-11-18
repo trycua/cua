@@ -72,6 +72,15 @@ fn direct_capture_evidence_store_for_identity(
     if attribution != Some("driver-daemon") {
         return None;
     }
+    driver_direct_capture_evidence_store(executable, home)
+}
+
+/// The evidence `permissions grant` records for the driver bundle that runs
+/// `executable`, without checking who this process is attributed to.
+pub(crate) fn driver_direct_capture_evidence_store(
+    executable: &str,
+    home: &Path,
+) -> Option<DirectCaptureEvidenceStore> {
     let bundle_id = driver_bundle_id_for_executable(executable)?;
     let state_directory = match bundle_id {
         "com.trycua.driver.local" => ".cua-driver-local",

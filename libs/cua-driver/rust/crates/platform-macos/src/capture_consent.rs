@@ -26,11 +26,18 @@
 //! where the user expects system prompts (see `check_permissions`), and
 //! skips implicit captures while no entry exists, rather than letting the
 //! alert pop over the user's window in the middle of background work.
+//!
+//! A capture that `permissions grant` verified for this bundle also counts as
+//! consent: its probe frame already raised the alert. On macOS 26.6 a daemon
+//! can find no entry for the bundle after that grant (#6831), so the approvals
+//! file alone would block every capture the user just allowed.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+use crate::permission_observation::DirectCaptureEvidenceStore;
 
 /// Machine-readable code carried in the capture error.
 pub const CONSENT_REQUIRED_CODE: &str = "direct_capture_consent_required";
@@ -57,7 +64,7 @@ pub fn capture_blocked_reason() -> Option<String> {
     if std::env::var(ALLOW_ALERT_ENV).is_ok_and(|value| value == "1") {
         return None;
     }
-    let Some(bundle) = own_app_bundle() else {
+    let Some((executable, bundle)) = own_app_bundle() else {
         // A bare binary is not the responsible app; its alert names the
         // terminal or host, which this check cannot look up.
         return None;
@@ -72,11 +79,16 @@ pub fn capture_blocked_reason() -> Option<String> {
         }
     }
     let home = std::env::var_os("HOME")?;
+    let home = Path::new(&home);
     let bundle_id = crate::tools::main_bundle_identifier();
+    let evidence = executable.to_str().and_then(|executable| {
+        crate::tools::driver_direct_capture_evidence_store(executable, home)
+    });
     match consent_state(
-        &Path::new(&home).join(APPROVALS_RELATIVE_PATH),
+        &home.join(APPROVALS_RELATIVE_PATH),
         &bundle,
         bundle_id.as_deref(),
+        evidence.as_ref(),
     ) {
         ConsentState::Recorded | ConsentState::Unknown => {
             RECORDED.store(true, Ordering::Relaxed);
@@ -115,7 +127,15 @@ enum ConsentState {
     Unknown,
 }
 
-fn consent_state(approvals: &Path, bundle: &Path, bundle_id: Option<&str>) -> ConsentState {
+fn consent_state(
+    approvals: &Path,
+    bundle: &Path,
+    bundle_id: Option<&str>,
+    evidence: Option<&DirectCaptureEvidenceStore>,
+) -> ConsentState {
+    if evidence.is_some_and(|store| store.load().is_some()) {
+        return ConsentState::Recorded;
+    }
     let bytes = match std::fs::read(approvals) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return ConsentState::Missing,
@@ -196,10 +216,11 @@ fn percent_decode(text: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-/// The `.app` bundle this process runs from, canonicalized.
-fn own_app_bundle() -> Option<PathBuf> {
+/// This process's executable and the `.app` bundle it runs from, canonicalized.
+fn own_app_bundle() -> Option<(PathBuf, PathBuf)> {
     let executable = std::fs::canonicalize(std::env::current_exe().ok()?).ok()?;
-    app_bundle_of(&executable)
+    let bundle = app_bundle_of(&executable)?;
+    Some((executable, bundle))
 }
 
 fn app_bundle_of(executable: &Path) -> Option<PathBuf> {
@@ -284,16 +305,28 @@ mod tests {
         let id = Some("com.trycua.driver");
 
         let _ = std::fs::remove_file(&file);
-        assert_eq!(consent_state(&file, bundle, id), ConsentState::Missing);
+        assert_eq!(
+            consent_state(&file, bundle, id, None),
+            ConsentState::Missing
+        );
 
         write_plist(&file, &["file:///Applications/Other.app/"]);
-        assert_eq!(consent_state(&file, bundle, id), ConsentState::Missing);
+        assert_eq!(
+            consent_state(&file, bundle, id, None),
+            ConsentState::Missing
+        );
 
         write_plist(&file, &["com.trycua.driver"]);
-        assert_eq!(consent_state(&file, bundle, id), ConsentState::Recorded);
-        assert_eq!(consent_state(&file, bundle, None), ConsentState::Missing);
         assert_eq!(
-            consent_state(&file, bundle, Some("com.trycua.driver.local")),
+            consent_state(&file, bundle, id, None),
+            ConsentState::Recorded
+        );
+        assert_eq!(
+            consent_state(&file, bundle, None, None),
+            ConsentState::Missing
+        );
+        assert_eq!(
+            consent_state(&file, bundle, Some("com.trycua.driver.local"), None),
             ConsentState::Missing
         );
 
@@ -304,10 +337,60 @@ mod tests {
                 "file:///Applications/CuaDriver.app/",
             ],
         );
-        assert_eq!(consent_state(&file, bundle, id), ConsentState::Recorded);
+        assert_eq!(
+            consent_state(&file, bundle, id, None),
+            ConsentState::Recorded
+        );
 
         std::fs::write(&file, b"not a plist").unwrap();
-        assert_eq!(consent_state(&file, bundle, id), ConsentState::Unknown);
+        assert_eq!(
+            consent_state(&file, bundle, id, None),
+            ConsentState::Unknown
+        );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_verified_grant_counts_as_consent_without_an_approvals_entry() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let file = home.path().join("ScreenCaptureApprovals.plist");
+        let bundle = Path::new("/Applications/CuaDriver.app");
+        let id = Some("com.trycua.driver");
+        let evidence = crate::tools::driver_direct_capture_evidence_store(
+            "/Applications/CuaDriver.app/Contents/MacOS/cua-driver",
+            home.path(),
+        )
+        .expect("release evidence store");
+
+        assert_eq!(
+            consent_state(&file, bundle, id, Some(&evidence)),
+            ConsentState::Missing
+        );
+        write_plist(&file, &["file:///Applications/Other.app/"]);
+        assert_eq!(
+            consent_state(&file, bundle, id, Some(&evidence)),
+            ConsentState::Missing
+        );
+
+        evidence.record_now().expect("record grant verification");
+        assert_eq!(
+            consent_state(&file, bundle, id, Some(&evidence)),
+            ConsentState::Recorded
+        );
+        std::fs::remove_file(&file).unwrap();
+        assert_eq!(
+            consent_state(&file, bundle, id, Some(&evidence)),
+            ConsentState::Recorded
+        );
+
+        let local = crate::tools::driver_direct_capture_evidence_store(
+            "/Applications/CuaDriverLocal.app/Contents/MacOS/cua-driver-local",
+            home.path(),
+        )
+        .expect("local evidence store");
+        assert_eq!(
+            consent_state(&file, bundle, id, Some(&local)),
+            ConsentState::Missing
+        );
     }
 }

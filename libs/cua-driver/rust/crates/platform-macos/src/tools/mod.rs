@@ -267,6 +267,7 @@ pub use check_permissions::{
     PERMISSIONS_HOST_REQUEST_ARG,
 };
 
+pub(crate) use check_permissions::driver_direct_capture_evidence_store;
 pub use cua_driver_core::snapshot_store::ZoomContext;
 pub(crate) use health_report::current_bundle_identifier as main_bundle_identifier;
 pub(crate) use health_report::sw_vers_product_version as macos_product_version;

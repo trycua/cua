@@ -346,7 +346,9 @@ mod tests {
 
     #[test]
     fn the_browser_hover_note_routes_to_the_browser_tools_not_the_desktop() {
-        let result = super::browser_hover_result("default", 8601, 659, 344.0, 450.0, 384.0, 490.0);
+        use cua_driver_core::action_record::{ActionExecutionRecord, ActionTransport};
+        let args = serde_json::json!({"pid": 8601, "window_id": 659, "x": 344.0, "y": 450.0});
+        let result = super::browser_hover_result("default", &args, 659, 344.0, 450.0);
         let value = serde_json::to_value(&result).unwrap();
         let text = value["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("the page saw no hover"));
@@ -354,10 +356,13 @@ mod tests {
         assert!(text.contains("browser_pointer with action \"hover\""));
         assert!(text.contains("detail.next_call"));
         assert!(!text.contains("scope:\"desktop\""));
-        let structured = result.structured_content.unwrap();
-        assert_eq!(structured["hover_delivered"], false);
-        assert_eq!(structured["next_call"]["tool"], "get_browser_state");
-        assert_eq!(structured["next_call"]["arguments"]["pid"], 8601);
+        assert_eq!(
+            result.action_record,
+            Some(ActionExecutionRecord::cursor_move(
+                ActionTransport::AgentCursorOverlay,
+                &args
+            ))
+        );
     }
 
     #[test]

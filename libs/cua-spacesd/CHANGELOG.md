@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.3](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.2...cua-spacesd-v0.16.3) (2026-11-18)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** probe hardware encoders off the GetCapabilities path ([#8161](https://github.com/trycua/cua/issues/8161)) ([9346cab](https://github.com/trycua/cua/commit/9346cabc2e0614a2ec9d9b629ab0db39b44db4bb))
+
 ## [0.16.2](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.1...cua-spacesd-v0.16.2) (2026-11-18)
 
 

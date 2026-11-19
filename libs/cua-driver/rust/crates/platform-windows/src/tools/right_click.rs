@@ -209,10 +209,10 @@ impl Tool for RightClickTool {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Injected right-click to [{idx}] at screen ({cx},{cy}) (background, no foreground swap)."
                     )),
-                    Ok(Err(e)) => crate::input::delivery::background_unavailable_error_with_cause(
+                    Ok(Err(e)) => crate::input::delivery::background_injection_error(
                         hwnd,
                         EventKind::MouseClick,
-                        e.to_string(),
+                        &e,
                     ),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
@@ -323,10 +323,10 @@ impl Tool for RightClickTool {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Injected right-click to pid {pid} at screen ({sx_i},{sy_i}) (background, no foreground swap)."
                     )),
-                    Ok(Err(e)) => crate::input::delivery::background_unavailable_error_with_cause(
+                    Ok(Err(e)) => crate::input::delivery::background_injection_error(
                         hwnd,
                         EventKind::MouseClick,
-                        e.to_string(),
+                        &e,
                     ),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };

@@ -328,6 +328,7 @@ impl MediaStream {
             tokio::spawn(async move {
                 let mut client = MediaClient::new(1);
                 let mut early: VecDeque<Incoming> = VecDeque::new();
+                let mut early_overflowed = false;
                 let mut replay: VecDeque<Incoming> = VecDeque::new();
                 let mut close = (1006u16, "socket ended".to_string());
                 // Per-hop clock of this open (`stream.open` at debug): the
@@ -380,6 +381,8 @@ impl MediaStream {
                             {
                                 if early.len() < MAX_EARLY_MEDIA {
                                     early.push_back(held);
+                                } else {
+                                    early_overflowed = true;
                                 }
                             }
                             Incoming::Text(text) => match client.apply_text(text.as_str()) {
@@ -482,6 +485,10 @@ impl MediaStream {
                     }
                     if !early.is_empty() && client.phase() == MediaPhase::Open {
                         replay.append(&mut early);
+                        // Media dropped past the cap: resync on a keyframe.
+                        if std::mem::take(&mut early_overflowed) {
+                            replay.push_back(Incoming::Loss);
+                        }
                     }
                     for text in outgoing {
                         if !link.send_text(text).await {
@@ -630,11 +637,11 @@ mod tests {
         .collect()
     }
 
-    fn keyframe() -> Vec<u8> {
+    fn keyframe(sequence: u64) -> Vec<u8> {
         cua_media_transport::encode_packet(
             &WireHeader::Video(VideoFrameDescriptor {
                 session_id: WindowSessionId("media-1".into()),
-                sequence: FrameSequence(1),
+                sequence: FrameSequence(sequence),
                 geometry_epoch: GeometryEpoch(1),
                 codec_epoch: CodecEpoch(1),
                 width_px: 8,
@@ -649,9 +656,9 @@ mod tests {
         .unwrap()
     }
 
-    /// A QUIC media listener that takes [`TICKET`], sends a keyframe as
-    /// datagrams before its greeting, then repeats it until the client goes
-    /// away.
+    /// A QUIC media listener that takes [`TICKET`], sends keyframe 1 as
+    /// datagrams before its greeting, then keyframes 2, 3, ... until the
+    /// client goes away.
     fn serve_quic() -> QuicTarget {
         let identity = QuicIdentity::generate().unwrap();
         let endpoint = quinn::Endpoint::server(
@@ -679,7 +686,7 @@ mod tests {
             let max = connection.max_datagram_size().unwrap();
             // Media overtakes the greeting, as datagrams may.
             for fragment in
-                cua_media_transport::fragment_video_packet_v2(1, true, &keyframe(), max).unwrap()
+                cua_media_transport::fragment_video_packet_v2(1, true, &keyframe(1), max).unwrap()
             {
                 connection.send_datagram(fragment.into()).unwrap();
             }
@@ -690,9 +697,13 @@ mod tests {
                     .unwrap();
             }
             for packet_id in 2.. {
-                for fragment in
-                    cua_media_transport::fragment_video_packet_v2(packet_id, true, &keyframe(), max)
-                        .unwrap()
+                for fragment in cua_media_transport::fragment_video_packet_v2(
+                    packet_id,
+                    true,
+                    &keyframe(packet_id),
+                    max,
+                )
+                .unwrap()
                 {
                     if connection.send_datagram(fragment.into()).is_err() {
                         return;
@@ -720,7 +731,7 @@ mod tests {
                     .await
                     .unwrap();
             }
-            ws.send(tungstenite::Message::Binary(keyframe().into()))
+            ws.send(tungstenite::Message::Binary(keyframe(1).into()))
                 .await
                 .unwrap();
             while ws.next().await.is_some() {}
@@ -774,6 +785,8 @@ mod tests {
         let (mut stream, frame) = first_frame(&ticket(ws_url, Some(serve_quic()))).await;
         assert!(frame.keyframe);
         assert_eq!((frame.width, frame.height), (8, 8));
+        // The keyframe sent before the greeting, held until the session opened.
+        assert_eq!(frame.sequence, 1);
         assert!(stream.is_open());
         stream.close(Duration::from_secs(1)).await;
     }

@@ -62,16 +62,21 @@ fn standalone_trust_gated_click_html() -> String {
     activation=idle
   </span>
   <div id="standalone-focus-only-host"></div>
+  <span id="standalone-focus-only-hint"></span>
 </fieldset>
 <script>
-  // Focus-intent styling on a shadow button's host and the outer document
-  // belongs to its ancestors, so it must not confirm a click either.
+  // A shadow button whose focus styles its host and the outer document and
+  // shows a hint beside it, with nothing on click. Focus is not activation,
+  // so none of that may confirm the click.
   const focusOnlyHost = document.getElementById('standalone-focus-only-host');
   const focusOnly = focusOnlyHost.attachShadow({ mode: 'open' });
   focusOnly.innerHTML = '<button aria-label="standalone-shadow-focus-only">Focus only</button>';
   focusOnly.querySelector('button').addEventListener('focus', () => {
     focusOnlyHost.classList.add('focus-within');
     document.body.classList.add('focus-visible');
+    Promise.resolve().then(() => {
+      document.getElementById('standalone-focus-only-hint').textContent = 'focused';
+    });
   });
   const trustGated = document.getElementById('standalone-trust-gated');
   const trustGatedState = document.getElementById('standalone-trust-gated-state');

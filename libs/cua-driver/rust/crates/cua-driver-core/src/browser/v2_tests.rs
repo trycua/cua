@@ -999,7 +999,9 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 }
                 if declaration.contains("'pointerdown'") {
                     return MockReply::ok(json!({
-                        "result": { "value": { "pageMutations": st.dom_click_page_mutations } }
+                        "result": {
+                            "value": { "pageMutations": st.dom_click_page_mutations, "compat": true }
+                        }
                     }));
                 }
                 MockReply::ok(json!({ "result": { "value": true } }))
@@ -3876,12 +3878,14 @@ async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable
         .filter_map(|(_, params)| params["functionDeclaration"].as_str())
         .filter(|declaration| declaration.contains("dispatchEvent"))
         .collect();
-    // Hover and move go out in their own call, so the microtasks their
-    // handlers queue settle before the click's mutations are counted.
-    assert_eq!(sequences.len(), 2, "{sequences:?}");
+    // Hover, press and release go out in their own calls, so the microtasks
+    // hover and focus handlers queue settle outside the counted mutations.
+    assert_eq!(sequences.len(), 3, "{sequences:?}");
     assert!(sequences[0].contains("'pointermove'"), "{sequences:?}");
     assert!(!sequences[0].contains("'pointerdown'"), "{sequences:?}");
-    assert!(!sequences[1].contains("'pointermove'"), "{sequences:?}");
+    assert!(sequences[1].contains("'mousedown'"), "{sequences:?}");
+    assert!(!sequences[1].contains("'pointerup'"), "{sequences:?}");
+    assert!(!sequences[2].contains("'pointerdown'"), "{sequences:?}");
     let click_sequence = sequences.join("\n");
     // Apps that open rows from pointer/mouse down+up ignore a bare click(),
     // so the synthetic route must replay the whole primary-button sequence
@@ -3999,9 +4003,24 @@ async fn dom_event_click_confirms_when_its_handlers_change_the_page() {
                 .as_str()
                 .is_some_and(|declaration| declaration.contains("'pointerdown'"))
         })
-        .expect("click sequence recorded");
+        .expect("press sequence recorded");
     assert_eq!(click["awaitPromise"], true, "{click}");
     assert_eq!(click["returnByValue"], true, "{click}");
+    let release = recorded_calls(&f, "Runtime.callFunctionOn")
+        .into_iter()
+        .map(|(_, params)| params)
+        .find(|params| {
+            params["functionDeclaration"]
+                .as_str()
+                .is_some_and(|declaration| declaration.contains("'pointerup'"))
+        })
+        .expect("release sequence recorded");
+    assert_eq!(
+        release["arguments"],
+        json!([{ "value": true }]),
+        "{release}"
+    );
+    assert_eq!(release["awaitPromise"], true, "{release}");
 }
 
 #[tokio::test]

@@ -2012,8 +2012,9 @@ fn dialog_block(dialog: &super::cdp_ws::CdpDialogState) -> Value {
 /// compatibility mouse events, and on `mousedown` suppresses the focus move.
 /// The events stay untrusted (`isTrusted === false`).
 ///
-/// The sequence goes out in three calls. Hover and move go first, in
-/// [`DOM_EVENT_HOVER_SEQUENCE`]. [`DOM_EVENT_PRESS_SEQUENCE`] sends
+/// The sequence goes out in three calls, all at the point and on the
+/// descendant the hover call hit-tested, which it keeps on the node until the
+/// release call. Hover and move go first, in [`DOM_EVENT_HOVER_SEQUENCE`]. [`DOM_EVENT_PRESS_SEQUENCE`] sends
 /// `pointerdown` and `mousedown`, counts their handlers' page mutations, then
 /// moves focus. [`DOM_EVENT_RELEASE_SEQUENCE`] sends `pointerup`, `mouseup`
 /// and `click`, and counts theirs. The renderer runs every microtask a call's
@@ -2034,11 +2035,15 @@ macro_rules! dom_event_pointer_prelude {
         "const el = this; \
     const doc = el.ownerDocument; \
     const view = doc.defaultView; \
-    const r = el.getBoundingClientRect(); \
-    const x = r.left + r.width / 2, y = r.top + r.height / 2; \
     const root = el.getRootNode(); \
-    const hit = ('elementFromPoint' in root) ? root.elementFromPoint(x, y) : null; \
-    const target = (hit && el.contains(hit)) ? hit : el; \
+    const pointerKey = Symbol.for('cua.domEventPointer'); \
+    const { target, x, y } = el[pointerKey] || (() => { \
+        const r = el.getBoundingClientRect(); \
+        const x = r.left + r.width / 2, y = r.top + r.height / 2; \
+        const hit = ('elementFromPoint' in root) ? root.elementFromPoint(x, y) : null; \
+        return { target: (hit && el.contains(hit)) ? hit : el, x, y }; \
+    })(); \
+    el[pointerKey] = { target, x, y }; \
     const sx = x + (view.screenX || 0), sy = y + (view.screenY || 0); \
     const base = { bubbles: true, cancelable: true, composed: true, view, \
         clientX: x, clientY: y, screenX: sx, screenY: sy, button: 0 }; \
@@ -2051,7 +2056,7 @@ macro_rules! dom_event_pointer_prelude {
 }
 
 const DOM_EVENT_HOVER_SEQUENCE: &str = concat!(
-    "function() { ",
+    "function() { delete this[Symbol.for('cua.domEventPointer')]; ",
     dom_event_pointer_prelude!(),
     "P('pointerover', 0); P('pointerenter', 0, { bubbles: false, cancelable: false }); \
     M('mouseover', 0); M('mouseenter', 0, { bubbles: false, cancelable: false }); \
@@ -2099,6 +2104,7 @@ const DOM_EVENT_RELEASE_SEQUENCE: &str = concat!(
     "P('pointerup', 0); \
     if (compat) M('mouseup', 0, { detail: 1 }); \
     M('click', 0, { detail: 1 }); \
+    delete el[pointerKey]; \
     return { pageMutations: await settle() }; \
 }"
 );

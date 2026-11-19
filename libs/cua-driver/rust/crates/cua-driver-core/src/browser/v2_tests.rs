@@ -3886,6 +3886,22 @@ async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable
     assert!(sequences[1].contains("'mousedown'"), "{sequences:?}");
     assert!(!sequences[1].contains("'pointerup'"), "{sequences:?}");
     assert!(!sequences[2].contains("'pointerdown'"), "{sequences:?}");
+    // The hover call hit-tests afresh and keeps its point and descendant on
+    // the node, so a handler that re-renders between calls cannot move the
+    // press or the click onto another node. The release call clears it.
+    let pointer = "Symbol.for('cua.domEventPointer')";
+    assert!(
+        sequences[0].starts_with(&format!("function() {{ delete this[{pointer}];")),
+        "{sequences:?}"
+    );
+    assert!(
+        sequences.iter().all(|s| s.contains(pointer)),
+        "{sequences:?}"
+    );
+    assert!(
+        sequences[2].contains("delete el[pointerKey]"),
+        "{sequences:?}"
+    );
     let click_sequence = sequences.join("\n");
     // Apps that open rows from pointer/mouse down+up ignore a bare click(),
     // so the synthetic route must replay the whole primary-button sequence

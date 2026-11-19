@@ -50,7 +50,7 @@ impl FrameEncoderFactory for CodecEncoderFactory {
     }
 
     fn create(&self, config: &EncoderConfig) -> Result<Box<dyn FrameEncoder>, EncoderError> {
-        let encoders = cua_media_codec::probe();
+        let encoders = crate::encoder_probe::host_encoders();
         let mut codec_config = CodecConfig::new(
             VideoCodec::H264,
             config.width,

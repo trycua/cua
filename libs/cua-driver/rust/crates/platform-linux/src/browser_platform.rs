@@ -347,28 +347,46 @@ fn parse_proc_net_loopback_listeners(text: &str) -> Vec<(u16, u64)> {
         .collect()
 }
 
-/// Resolve the kernel inode of the filesystem-bound AF_UNIX socket listening
-/// at exactly `target`, by scanning `/proc/net/unix`.
+/// Map the path of every filesystem-bound AF_UNIX stream socket that is
+/// listening to its kernel inode, by scanning `/proc/net/unix`.
+///
+/// The columns are `Num RefCount Protocol Flags Type St Inode Path`. The
+/// kernel sets `__SO_ACCEPTCON` in `Flags` only for a listening socket, and
+/// Chromium's process-singleton socket is a `SOCK_STREAM` listener, so a bound
+/// datagram socket or an unlistened stream socket never qualifies.
 ///
 /// The kernel's `Inode` column is `%5lu`: right-justified in a minimum
 /// five-character field, so a small inode number is left-padded with extra
 /// spaces. Splitting on runs of whitespace (rather than a fixed column
 /// offset) is what keeps that padding from being misread as additional
 /// fields.
-fn unix_socket_inode(target: &std::path::Path) -> Option<u64> {
-    let text = std::fs::read_to_string("/proc/net/unix").ok()?;
-    text.lines().skip(1).find_map(|line| {
-        let mut fields = line.split_whitespace();
-        let inode = fields.nth(6)?.parse::<u64>().ok()?;
-        // Only a filesystem-bound socket carries a path column; an
-        // abstract-namespace socket has none and never matches an absolute
-        // target. A path containing internal runs of more than one space is
-        // an inherent ambiguity in this whitespace-delimited encoding, not
-        // one this parser can resolve — Chromium's own singleton-socket path
-        // is a single-token generated directory name and never hits it.
-        let rest: Vec<&str> = fields.collect();
-        (!rest.is_empty() && std::path::Path::new(&rest.join(" ")) == target).then_some(inode)
-    })
+fn unix_listener_inodes() -> HashMap<PathBuf, u64> {
+    const SO_ACCEPTCON: u32 = 1 << 16;
+    const SOCK_STREAM: &str = "0001";
+    let Ok(text) = std::fs::read_to_string("/proc/net/unix") else {
+        return HashMap::new();
+    };
+    text.lines()
+        .skip(1)
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace().skip(3);
+            let flags = u32::from_str_radix(fields.next()?, 16).ok()?;
+            let kind = fields.next()?;
+            let inode = fields.nth(1)?.parse::<u64>().ok()?;
+            if kind != SOCK_STREAM || flags & SO_ACCEPTCON == 0 {
+                return None;
+            }
+            // Only a filesystem-bound socket carries a path column; an
+            // abstract-namespace socket has none and never matches an
+            // absolute target. A path containing internal runs of more than
+            // one space is an inherent ambiguity in this whitespace-delimited
+            // encoding, not one this parser can resolve — Chromium's own
+            // singleton-socket path is a single-token generated directory
+            // name and never hits it.
+            let rest: Vec<&str> = fields.collect();
+            (!rest.is_empty()).then(|| (PathBuf::from(rest.join(" ")), inode))
+        })
+        .collect()
 }
 
 fn descendant_pids(root: i64, relationships: impl IntoIterator<Item = (i64, i64)>) -> HashSet<i64> {
@@ -413,27 +431,37 @@ fn process_family_pids(root: i64) -> Result<HashSet<i64>, BrowserRefusal> {
     Ok(descendant_pids(root, relationships))
 }
 
-fn socket_inodes_for_process_tree(pid: i64) -> Result<HashSet<u64>, BrowserRefusal> {
-    let process_family = process_family_pids(pid)?;
-    let mut inodes = HashSet::new();
-    for owner_pid in process_family {
+/// What every file descriptor held by `pid` or one of its descendants points
+/// at, as the kernel reports it in `/proc/<pid>/fd`.
+fn fd_targets_for_process_tree(pid: i64) -> Result<Vec<PathBuf>, BrowserRefusal> {
+    let mut targets = Vec::new();
+    for owner_pid in process_family_pids(pid)? {
         let Ok(directory) = std::fs::read_dir(format!("/proc/{owner_pid}/fd")) else {
             continue;
         };
-        inodes.extend(
+        targets.extend(
             directory
                 .flatten()
-                .filter_map(|entry| std::fs::read_link(entry.path()).ok())
-                .filter_map(|target| {
-                    let target = target.to_string_lossy();
-                    target
-                        .strip_prefix("socket:[")
-                        .and_then(|value| value.strip_suffix(']'))
-                        .and_then(|value| value.parse::<u64>().ok())
-                }),
+                .filter_map(|entry| std::fs::read_link(entry.path()).ok()),
         );
     }
-    Ok(inodes)
+    Ok(targets)
+}
+
+fn socket_inode(fd_target: &std::path::Path) -> Option<u64> {
+    fd_target
+        .to_str()?
+        .strip_prefix("socket:[")?
+        .strip_suffix(']')?
+        .parse::<u64>()
+        .ok()
+}
+
+fn socket_inodes_for_process_tree(pid: i64) -> Result<HashSet<u64>, BrowserRefusal> {
+    Ok(fd_targets_for_process_tree(pid)?
+        .iter()
+        .filter_map(|target| socket_inode(target))
+        .collect())
 }
 
 fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
@@ -501,19 +529,50 @@ fn default_user_data_dir(product: BrowserProduct, environ: &[u8]) -> Option<Path
 /// including one the process's cwd or some incidental fd happens to fall
 /// under, but cannot inject a socket file descriptor into another process's
 /// fd table; only the kernel can put one there.
+///
+/// The `SingletonSocket` symlink itself is only text, though: any other
+/// directory can carry a link to the same live socket. So the browser must
+/// also hold files open inside the candidate, as Chromium does with its
+/// profile databases, and among the directories on the paths of those files
+/// the candidate must be the only one linking to the socket. A forged sibling
+/// holds no open files; a forged ancestor or descendant of the real profile
+/// shares its files with the real profile, which links to the same socket.
 fn process_owns_profile_directory(pid: i64, directory: &std::path::Path) -> bool {
-    let Ok(target) = std::fs::read_link(directory.join("SingletonSocket")) else {
+    let Ok(directory) = std::fs::canonicalize(directory) else {
         return false;
     };
-    let target = if target.is_absolute() {
-        target
-    } else {
-        directory.join(target)
-    };
-    let Some(inode) = unix_socket_inode(&target) else {
+    let Ok(fd_targets) = fd_targets_for_process_tree(pid) else {
         return false;
     };
-    socket_inodes_for_process_tree(pid).is_ok_and(|inodes| inodes.contains(&inode))
+    let listeners = unix_listener_inodes();
+    let singleton_inode = |candidate: &std::path::Path| {
+        let target = std::fs::read_link(candidate.join("SingletonSocket")).ok()?;
+        listeners.get(&candidate.join(target)).copied()
+    };
+    let Some(inode) = singleton_inode(directory.as_path()) else {
+        return false;
+    };
+    if !fd_targets
+        .iter()
+        .any(|target| socket_inode(target) == Some(inode))
+    {
+        return false;
+    }
+    let held_files = fd_targets
+        .iter()
+        .filter(|target| target.starts_with(&directory) && **target != directory)
+        .collect::<Vec<_>>();
+    if held_files.is_empty() {
+        return false;
+    }
+    let claimants = held_files
+        .into_iter()
+        .flat_map(|file| file.ancestors().skip(1))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .filter(|candidate| singleton_inode(*candidate) == Some(inode))
+        .count();
+    claimants == 1
 }
 
 fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
@@ -575,7 +634,7 @@ fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
     if candidate_is_unseparated && !process_owns_profile_directory(pid, &resolved) {
         return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingAmbiguous,
-            "the browser's command line has no argument separators, so a --user-data-dir value read from it could not be distinguished from ordinary argument text and the process does not own that directory's SingletonSocket",
+            "the browser's command line has no argument separators, so a --user-data-dir value read from it could not be distinguished from ordinary argument text, and the kernel does not show the process owning that directory as its profile",
         ));
     }
     Ok(Some(resolved))
@@ -1870,15 +1929,17 @@ mod tests {
     }
 
     #[test]
-    fn unix_socket_inode_resolves_only_a_live_kernel_listener() {
-        // Held for the listener's whole lifetime so no sibling test can fork
-        // this descriptor into a child that outlives `drop(listener)`.
+    fn unix_listener_inodes_resolve_only_a_live_stream_listener() {
+        // Held for the sockets' whole lifetime so no sibling test can fork
+        // these descriptors into a child that outlives `drop(listener)`.
         let _fork_exclusion = exclude_concurrent_forks();
         let directory = tempfile::tempdir().expect("temporary socket directory");
         let sock_path = directory.path().join("probe.sock");
         let listener =
             std::os::unix::net::UnixListener::bind(&sock_path).expect("bind probe socket");
-        assert!(unix_socket_inode(&sock_path).is_some_and(|inode| inode > 0));
+        assert!(unix_listener_inodes()
+            .get(&sock_path)
+            .is_some_and(|inode| *inode > 0));
 
         // Dropping the listener closes its only fd. The bind path remains a
         // socket special file on disk (Rust's UnixListener never unlinks on
@@ -1886,13 +1947,19 @@ mod tests {
         // -- is gone. A path that merely exists on disk must not resolve.
         drop(listener);
         assert!(sock_path.exists());
-        assert!(unix_socket_inode(&sock_path).is_none());
+        assert!(!unix_listener_inodes().contains_key(&sock_path));
 
-        assert!(unix_socket_inode(&directory.path().join("never-bound.sock")).is_none());
+        // A bound datagram socket is live but never listens.
+        let datagram_path = directory.path().join("datagram.sock");
+        let _datagram =
+            std::os::unix::net::UnixDatagram::bind(&datagram_path).expect("bind datagram socket");
+        assert!(!unix_listener_inodes().contains_key(&datagram_path));
+
+        assert!(!unix_listener_inodes().contains_key(&directory.path().join("never-bound.sock")));
     }
 
     #[test]
-    fn process_owns_profile_directory_requires_this_exact_process_to_hold_the_socket() {
+    fn process_owns_profile_directory_requires_the_sole_owned_singleton_claimant() {
         let pid = i64::from(std::process::id());
 
         // No SingletonSocket symlink at all.
@@ -1909,16 +1976,69 @@ mod tests {
             .expect("symlink stale SingletonSocket");
         assert!(!process_owns_profile_directory(pid, stale_candidate.path()));
 
-        // A SingletonSocket symlink resolving to a socket this exact process
-        // genuinely holds open -- the only case that must corroborate.
+        // A SingletonSocket symlink resolving to a datagram socket this
+        // process holds: live, owned, but not a listener.
+        let datagram_root = tempfile::tempdir().expect("datagram socket directory");
+        let datagram_sock = datagram_root.path().join("SingletonSocket");
+        let _datagram =
+            std::os::unix::net::UnixDatagram::bind(&datagram_sock).expect("bind datagram");
+        let datagram_candidate = tempfile::tempdir().expect("datagram candidate directory");
+        std::fs::create_dir(datagram_candidate.path().join("Default")).expect("create Default");
+        let _datagram_held =
+            std::fs::File::create(datagram_candidate.path().join("Default/History"))
+                .expect("hold a datagram-candidate file open");
+        std::os::unix::fs::symlink(
+            &datagram_sock,
+            datagram_candidate.path().join("SingletonSocket"),
+        )
+        .expect("symlink datagram SingletonSocket");
+        assert!(!process_owns_profile_directory(
+            pid,
+            datagram_candidate.path()
+        ));
+
+        // The real profile: a SingletonSocket symlink resolving to a listener
+        // this exact process holds, and a file held open inside it.
         let owned_root = tempfile::tempdir().expect("owned socket directory");
         let owned_sock = owned_root.path().join("SingletonSocket");
         let _listener =
             std::os::unix::net::UnixListener::bind(&owned_sock).expect("bind owned socket");
-        let profile = tempfile::tempdir().expect("real candidate directory");
-        std::os::unix::fs::symlink(&owned_sock, profile.path().join("SingletonSocket"))
+        let profile_root = tempfile::tempdir().expect("profile root");
+        let profile = profile_root.path().join("profile");
+        std::fs::create_dir_all(profile.join("Default")).expect("create profile");
+        std::os::unix::fs::symlink(&owned_sock, profile.join("SingletonSocket"))
             .expect("symlink real SingletonSocket");
-        assert!(process_owns_profile_directory(pid, profile.path()));
+
+        // Without any file held open inside it, the link alone is not enough.
+        assert!(!process_owns_profile_directory(pid, &profile));
+        let _held = std::fs::File::create(profile.join("Default/History"))
+            .expect("hold a profile file open");
+        assert!(process_owns_profile_directory(pid, &profile));
+
+        // A forged sibling links to the same live socket but holds no files.
+        let forged = tempfile::tempdir().expect("forged sibling directory");
+        std::os::unix::fs::symlink(&owned_sock, forged.path().join("SingletonSocket"))
+            .expect("symlink aliased SingletonSocket");
+        assert!(!process_owns_profile_directory(pid, forged.path()));
+
+        // A forged descendant of the real profile shares its open files, but
+        // the real profile above it links to the same socket.
+        std::os::unix::fs::symlink(&owned_sock, profile.join("Default/SingletonSocket"))
+            .expect("symlink descendant SingletonSocket");
+        assert!(!process_owns_profile_directory(
+            pid,
+            &profile.join("Default")
+        ));
+        std::fs::remove_file(profile.join("Default/SingletonSocket"))
+            .expect("remove descendant SingletonSocket");
+
+        // Likewise a forged ancestor, with the real profile below it.
+        std::os::unix::fs::symlink(&owned_sock, profile_root.path().join("SingletonSocket"))
+            .expect("symlink ancestor SingletonSocket");
+        assert!(!process_owns_profile_directory(pid, profile_root.path()));
+        // The forged ancestor shares the socket, so the real profile is no
+        // longer the sole claimant either: refusing is the safe outcome.
+        assert!(!process_owns_profile_directory(pid, &profile));
     }
 
     /// A disposable stand-in for `/opt/helium-browser-bin/helium`: a real
@@ -1951,6 +2071,7 @@ mod tests {
             packed_cmdline: &str,
             current_dir: &std::path::Path,
             stdout: std::process::Stdio,
+            stderr: std::process::Stdio,
         ) -> Self {
             use std::os::unix::fs::PermissionsExt;
             use std::os::unix::process::CommandExt;
@@ -1969,7 +2090,7 @@ mod tests {
                 .current_dir(current_dir)
                 .stdin(std::process::Stdio::piped())
                 .stdout(stdout)
-                .stderr(std::process::Stdio::null())
+                .stderr(stderr)
                 .spawn()
                 .expect("spawn fake Helium process");
             let stdin = child.stdin.take().expect("piped stdin handle");
@@ -2012,8 +2133,12 @@ mod tests {
             attacker_dir.path().display(),
             attacker_dir.path().display()
         );
-        let process =
-            FakeHeliumProcess::spawn(&packed, attacker_dir.path(), std::process::Stdio::null());
+        let process = FakeHeliumProcess::spawn(
+            &packed,
+            attacker_dir.path(),
+            std::process::Stdio::null(),
+            std::process::Stdio::null(),
+        );
 
         // Precondition: the process's real cwd genuinely is the candidate
         // directory, which is exactly what made the old cwd-based check
@@ -2040,10 +2165,10 @@ mod tests {
         // a profile directory with a space in its path, an unrelated
         // working directory, and a SingletonSocket this exact process
         // genuinely owns (mirroring Chromium's real process-singleton
-        // mechanism). This must attach.
+        // mechanism), plus a profile file it holds open. This must attach.
         let profile_root = tempfile::tempdir().expect("profile root");
         let profile = profile_root.path().join("profile with space");
-        std::fs::create_dir_all(&profile).expect("create spaced profile directory");
+        std::fs::create_dir_all(profile.join("Default")).expect("create spaced profile directory");
         let singleton_root = tempfile::tempdir().expect("singleton socket root");
         let singleton_sock = singleton_root.path().join("SingletonSocket");
         let listener =
@@ -2055,12 +2180,15 @@ mod tests {
             std::process::Stdio::from_raw_fd(listener.into_raw_fd())
         };
 
+        let held = std::fs::File::create(profile.join("Default/History"))
+            .expect("create a profile file for the browser to hold");
+
         let unrelated_cwd = tempfile::tempdir().expect("unrelated working directory");
         let packed = format!(
             "/opt/helium-browser-bin/helium --user-data-dir={}",
             profile.display()
         );
-        let process = FakeHeliumProcess::spawn(&packed, unrelated_cwd.path(), stdout);
+        let process = FakeHeliumProcess::spawn(&packed, unrelated_cwd.path(), stdout, held.into());
 
         let cwd = std::fs::read_link(format!("/proc/{}/cwd", process.pid()))
             .expect("fake Helium process cwd");
@@ -2069,6 +2197,49 @@ mod tests {
         assert_eq!(
             user_data_dir_for_pid(process.pid()).expect("resolve the owned profile directory"),
             Some(profile)
+        );
+    }
+
+    #[test]
+    fn user_data_dir_for_pid_refuses_a_forged_directory_aliasing_the_real_singleton_socket() {
+        // Helium runs on its real profile, which links to a singleton listener
+        // the process holds and contains a file it holds open. Ordinary
+        // argument text names a different directory whose SingletonSocket
+        // symlink points at that same live socket. The link is only text, so
+        // it must not make the forged directory the profile.
+        let profile_root = tempfile::tempdir().expect("profile root");
+        let profile = profile_root.path().join("profile");
+        std::fs::create_dir_all(profile.join("Default")).expect("create profile directory");
+        let singleton_root = tempfile::tempdir().expect("singleton socket root");
+        let singleton_sock = singleton_root.path().join("SingletonSocket");
+        let listener =
+            std::os::unix::net::UnixListener::bind(&singleton_sock).expect("bind singleton");
+        std::os::unix::fs::symlink(&singleton_sock, profile.join("SingletonSocket"))
+            .expect("symlink real SingletonSocket into the profile");
+        let forged = tempfile::tempdir().expect("forged profile directory");
+        std::os::unix::fs::symlink(&singleton_sock, forged.path().join("SingletonSocket"))
+            .expect("symlink aliased SingletonSocket into the forged directory");
+        let stdout = unsafe {
+            use std::os::fd::{FromRawFd, IntoRawFd};
+            std::process::Stdio::from_raw_fd(listener.into_raw_fd())
+        };
+        let held = std::fs::File::create(profile.join("Default/History"))
+            .expect("create a profile file for the browser to hold");
+
+        let packed = format!(
+            "/opt/helium-browser-bin/helium {}/report --user-data-dir={}",
+            forged.path().display(),
+            forged.path().display()
+        );
+        let process = FakeHeliumProcess::spawn(&packed, profile_root.path(), stdout, held.into());
+
+        let outcome = user_data_dir_for_pid(process.pid());
+        assert!(
+            matches!(
+                &outcome,
+                Err(refusal) if refusal.code == BrowserRefusalCode::BrowserBindingAmbiguous
+            ),
+            "expected a browser_binding_ambiguous refusal, got {outcome:?}"
         );
     }
 
@@ -2094,8 +2265,12 @@ mod tests {
             "/opt/helium-browser-bin/helium --user-data-dir={}",
             profile.display()
         );
-        let process =
-            FakeHeliumProcess::spawn(&packed, profile_root.path(), std::process::Stdio::null());
+        let process = FakeHeliumProcess::spawn(
+            &packed,
+            profile_root.path(),
+            std::process::Stdio::null(),
+            std::process::Stdio::null(),
+        );
 
         let outcome = user_data_dir_for_pid(process.pid());
         assert!(

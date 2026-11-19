@@ -42,7 +42,7 @@ fn def() -> &'static ToolDef {
              • `background` (default): post the combo to the target pid WITHOUT \
                fronting or raising it, using the macOS 14+ auth-message envelope. \
                Chromium/Electron renderers often drop it anyway, so an unverifiable \
-               background result for those apps carries `escalation.recommended: \
+               background result for those apps carries `escalation.target: \
                \"foreground\"`. With an AX target, \
                focus that exact element first. No top-level focus steal. \
                `window_id` here only targets the combo; it does not raise. Background \

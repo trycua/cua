@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.38.16](https://github.com/trycua/cua/compare/cua-spaces-v0.38.15...cua-spaces-v0.38.16) (2026-11-19)
+
+
+### Bug Fixes
+
+* **spaces:** deliver agent messages once ([#8218](https://github.com/trycua/cua/issues/8218)) ([a88ded9](https://github.com/trycua/cua/commit/a88ded951c5e66285bc788b75fddc1c1cdff5eb0))
+
+## [0.38.15](https://github.com/trycua/cua/compare/cua-spaces-v0.38.14...cua-spaces-v0.38.15) (2026-11-19)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.28.4 in Cua Spaces ([#8217](https://github.com/trycua/cua/issues/8217)) ([261871e](https://github.com/trycua/cua/commit/261871e28526da412b9d6ef3a6dfab8da51cbb0b))
+
 ## [0.38.14](https://github.com/trycua/cua/compare/cua-spaces-v0.38.13...cua-spaces-v0.38.14) (2026-11-19)
 
 

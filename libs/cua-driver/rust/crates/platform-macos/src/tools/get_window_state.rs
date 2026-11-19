@@ -357,8 +357,12 @@ impl Tool for GetWindowStateTool {
         // Start the screenshot grab before the tree walk so the two overlap:
         // ScreenCaptureKit and the accessibility walk use independent system
         // services, and the read otherwise pays for them one after the other.
+        // The prefetch carries its own geometry bracket: when its image is the
+        // one delivered, a sample taken after the walk would not describe it.
         let prefetched_capture = prefetch_capture(should_capture, want_tree, move || {
-            crate::capture::screenshot_window_image(window_id)
+            crate::native_window_geometry::observe_capture(pid, window_id, || {
+                crate::capture::screenshot_window_image(window_id)
+            })
         });
         let (tree_result, prepared_snapshot) = if want_tree {
             let q = query.clone();
@@ -442,14 +446,23 @@ impl Tool for GetWindowStateTool {
         let mut native_geometry =
             cua_driver_core::native_window_geometry::GeometryAssessment::Unavailable;
         let mut screenshot_resize_scale = None;
-        let prefetched_raw = match prefetched_capture {
-            Some(handle) => Some(handle.await.unwrap_or_else(|e| Err(anyhow::anyhow!(e)))),
-            None => None,
+        let (prefetched_raw, prefetched_geometry) = match prefetched_capture {
+            Some(handle) => {
+                let (raw, geometry) = handle.await.unwrap_or_else(|e| {
+                    (
+                        Err(anyhow::anyhow!(e)),
+                        cua_driver_core::native_window_geometry::GeometryAssessment::Unavailable,
+                    )
+                });
+                (Some(raw), Some(geometry))
+            }
+            None => (None, None),
         };
         let screenshot = if should_capture {
             let out_file = screenshot_out_file.clone();
             let res = tokio::task::spawn_blocking(move || {
-                crate::native_window_geometry::observe_capture(pid, window_id, || -> Result<
+                let fresh_capture = std::cell::Cell::new(false);
+                let (capture, geometry) = crate::native_window_geometry::observe_capture(pid, window_id, || -> Result<
                 (
                     Vec<u8>,
                     Option<String>,
@@ -469,7 +482,10 @@ impl Tool for GetWindowStateTool {
                     window_id,
                     prefetched_raw,
                     &bounds,
-                    || crate::capture::screenshot_window_image(window_id),
+                    || {
+                        fresh_capture.set(true);
+                        crate::capture::screenshot_window_image(window_id)
+                    },
                 )?;
                 crate::fast_path_guard::record_read_image(pid, window_id, &raw, &bounds);
                 // Resize and encode once from the raw pixels; the PNG bytes
@@ -509,7 +525,12 @@ impl Tool for GetWindowStateTool {
                         scale,
                     ))
                 }
-            })
+            });
+                let geometry = match prefetched_geometry {
+                    Some(prefetched) if !fresh_capture.get() => prefetched,
+                    _ => geometry,
+                };
+                (capture, geometry)
             })
             .await;
             let res = res.map(|(capture, geometry)| {

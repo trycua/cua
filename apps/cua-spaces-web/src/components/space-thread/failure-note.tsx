@@ -2,11 +2,13 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { CheckIcon, ChevronRightIcon, CopyIcon, Loader2Icon, PlugIcon, RotateCcwIcon } from "lucide-react";
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { Link } from "@tanstack/react-router";
 
 import { computerSignInAgentOf, connectPlan, useAgentKeys, useBridge, type ThreadFailure } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { useConnectors } from "@/hooks/use-connectors";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 import { ComputerSignIn } from "./computer-sign-in";
@@ -20,7 +22,7 @@ export function failureApp(harness: string, provider: string | null): string | n
   return HARNESS_APP[harness] ?? (provider ? (PROVIDER_APP[provider] ?? null) : null);
 }
 
-/** The computer the agent runs on: This Mac uses its own sign-in; any other computer signs in itself. */
+/** Where the agent runs: a Space (including a local VM) has its own sign-in unless sharing is enabled. */
 export interface FailureComputer {
   space: string;
   name: string;
@@ -29,6 +31,19 @@ export interface FailureComputer {
 
 /** The computer a thread's agents run on, for the failures in it (`ThreadView` provides it). */
 export const FailureComputerContext = createContext<FailureComputer | undefined>(undefined);
+
+/** A Space's sign-in is separate from the host's Connected badge, even for a local VM. */
+export function FailureSummary({ failure, harness, children }: { failure: ThreadFailure; harness: string; children: ReactNode }) {
+  const computer = useContext(FailureComputerContext);
+  const t = useT();
+  const agent = computerSignInAgentOf(harness);
+  if (failure.class !== "needs_connect" || !computer || computer.thisMac || !agent) return children;
+  return (
+    <p data-failure-summary="" className="text-[13px] leading-[1.55] break-words text-foreground select-text">
+      {t("spaces.sign_in.failure", { agent: agent === "claude-code" ? "Claude Code" : "Codex" })}
+    </p>
+  );
+}
 
 /**
  * What sits under an agent's failed reply (the reply's own text is the plain
@@ -82,6 +97,7 @@ function ConnectActions({
   onRetry?: (text: string) => Promise<void>;
   computer?: FailureComputer;
 }) {
+  const t = useT();
   const c = useConnectors();
   const { core } = useBridge();
   // The agent was refused its credential: Settings reads the saved list again, which says it needs a reconnect.
@@ -103,11 +119,19 @@ function ConnectActions({
     if (app && plan && (plan.appToken || plan.device)) void c.connectApp(app);
     else c.openProvider(provider ?? plan?.provider ?? null, app);
   };
-  // Claude Code or Codex on another computer: that computer signs in itself (CUA-3907); an API key is the other way.
+  // A Space (local VM or remote) can sign in itself, use an API key, or receive a saved sign-in with the sharing opt-in.
   const signInAgent = computer && !computer.thisMac ? computerSignInAgentOf(harness) : null;
   if (computer && signInAgent)
     return (
       <>
+        {keys.report?.available && keys.report.copySignIn === false ? (
+          <div data-failure-sign-in-sharing="" className="basis-full text-xs text-muted-foreground">
+            <p>{t("spaces.sign_in.sharing_off", { setting: t("settings.connections.page.copy_sign_in") })}</p>
+            <Link to="/settings/connections" hash="sign-ins-in-spaces" className="inline-block mt-1 text-foreground underline underline-offset-2">
+              {t("spaces.sign_in.sharing_settings")}
+            </Link>
+          </div>
+        ) : null}
         <ComputerSignIn
           agent={signInAgent}
           space={computer.space}

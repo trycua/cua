@@ -88,7 +88,7 @@ describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
     await waitFor(() => expect(document.querySelector("[data-connectors-providers]")).not.toBeNull(), { timeout: 8000 });
     const t = tab("connections")!;
     const headings = [...t.querySelectorAll("h2")].map((h) => h.textContent);
-    expect(headings).toEqual(["Coding apps", "Agent menu", "On another computer", "Providers"]);
+    expect(headings).toEqual(["Coding apps", "Agent menu", "Sign-ins in Spaces", "On another computer", "Providers"]);
     // The providers are the last section on the page.
     const sections = [...t.querySelectorAll("[data-connectors-apps], [data-connectors-other-machine-group], [data-connectors-providers]")].map((e) =>
       e.getAttributeNames().find((n) => n.startsWith("data-connectors-")),

@@ -17,5 +17,8 @@
   "spaces.status.suspending": "Suspending…",
   "spaces.status.resuming": "Resuming…",
   "spaces.status.turning_off": "Turning off…",
-  "spaces.status.turning_on": "Turning on…"
+  "spaces.status.turning_on": "Turning on…",
+  "spaces.sign_in.failure": "{agent} needs a working sign-in in this Space. A local Space/VM has its own sign-in, even on the same computer.",
+  "spaces.sign_in.sharing_off": "Sign-in sharing is off. Sign in to this Space below, or enable “{setting}” in Settings → Connections → Sign-ins in Spaces to use a sign-in saved on this computer.",
+  "spaces.sign_in.sharing_settings": "Open sign-in sharing settings"
 }

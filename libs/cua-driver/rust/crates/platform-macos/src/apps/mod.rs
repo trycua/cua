@@ -1393,9 +1393,8 @@ mod tests {
         assert_eq!(super::get_app_name_for_pid(pid), Some(expected));
     }
     use super::{
-        all_pids, background_launch_config, bundle_root_of_executable, bundles_electron,
-        executable_bundles_electron, finder_folder_handoff, merge_app_lists, path_of_pid,
-        running_apps_from_processes, AppInfo,
+        all_pids, bundle_root_of_executable, bundles_electron, executable_bundles_electron,
+        finder_folder_handoff, merge_app_lists, path_of_pid, running_apps_from_processes, AppInfo,
     };
     use std::collections::HashSet;
 
@@ -1410,19 +1409,6 @@ mod tests {
             kind: None,
             last_used: None,
         }
-    }
-
-    #[test]
-    fn bundle_and_name_launches_share_background_launch_config() {
-        let bundle_route = background_launch_config(Some("com.example.App".to_owned()));
-        let name_route = background_launch_config(Some("com.example.App".to_owned()));
-
-        assert_eq!(
-            bundle_route.apple_event_bundle_id,
-            name_route.apple_event_bundle_id
-        );
-        assert!(!bundle_route.creates_new_instance);
-        assert!(!name_route.creates_new_instance);
     }
 
     fn states(pairs: &[(&str, i32, bool, Option<&str>)]) -> super::RunningAppStates {

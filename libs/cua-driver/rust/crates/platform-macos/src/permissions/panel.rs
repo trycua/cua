@@ -175,10 +175,17 @@ fn enclosing_app(path: &std::path::Path) -> Option<std::path::PathBuf> {
         .map(std::path::Path::to_path_buf)
 }
 
-pub(crate) fn host_app_folder() -> Option<std::path::PathBuf> {
-    app_bundle_path()?
-        .parent()
-        .map(std::path::Path::to_path_buf)
+/// The host app as the + button's file picker shows it: its name in Finder,
+/// which is the file name rather than the bundle's own name, and its folder.
+pub(crate) fn host_app_in_finder() -> Option<(String, std::path::PathBuf)> {
+    let bundle = app_bundle_path()?;
+    let name = unsafe { finder_name(&bundle) }?;
+    Some((name, bundle.parent()?.to_path_buf()))
+}
+
+unsafe fn finder_name(path: &std::path::Path) -> Option<String> {
+    let manager: *mut AnyObject = msg_send![class!(NSFileManager), defaultManager];
+    string_value(msg_send![manager, displayNameAtPath: ns_string(path.to_str()?)])
 }
 
 pub(crate) fn host_app_name() -> String {
@@ -1201,6 +1208,10 @@ mod tests {
         assert_eq!(
             unsafe { bundle_shown_name(&localized) }.as_deref(),
             Some("Host App")
+        );
+        assert_eq!(
+            unsafe { finder_name(&localized) }.as_deref(),
+            Some("Localized")
         );
     }
 

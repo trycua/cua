@@ -670,24 +670,29 @@ fn still_waiting_line(missing: &[MissingPermission], app: &str) -> String {
 }
 
 fn print_banner(missing: &[MissingPermission], open_settings: bool) {
-    let text = super::guide::for_app(
-        &banner_text(missing, open_settings),
-        &super::panel::host_app_name(),
-    );
+    let app = super::panel::host_app_name();
+    let text = super::guide::for_app(&banner_text(missing, open_settings), &app);
     print!(
         "{}",
-        in_host_folder(text, super::panel::host_app_folder().as_deref())
+        in_file_picker(text, &app, super::panel::host_app_in_finder())
     );
     let _ = std::io::stdout().flush();
 }
 
-fn in_host_folder(text: String, folder: Option<&std::path::Path>) -> String {
-    match folder {
-        Some(folder) if folder != std::path::Path::new("/Applications") => {
-            text.replace(" in Applications.", &format!(" in {}.", folder.display()))
-        }
-        _ => text,
-    }
+/// Name the host app in the + button's file picker as the picker shows it.
+fn in_file_picker(text: String, app: &str, file: Option<(String, std::path::PathBuf)>) -> String {
+    let Some((name, folder)) = file else {
+        return text;
+    };
+    let folder = if folder == std::path::Path::new("/Applications") {
+        "Applications".to_owned()
+    } else {
+        folder.display().to_string()
+    };
+    text.replace(
+        &format!(" choose {app} in Applications."),
+        &format!(" choose {name} in {folder}."),
+    )
 }
 
 fn banner_text(missing: &[MissingPermission], open_settings: bool) -> String {
@@ -916,19 +921,26 @@ mod tests {
     }
 
     #[test]
-    fn the_banner_points_to_the_folder_that_holds_the_host_app() {
-        let text = banner_text(&[MissingPermission::Accessibility], true);
-        let elsewhere = in_host_folder(
+    fn the_banner_points_to_the_host_app_as_the_file_picker_shows_it() {
+        let text = super::super::guide::for_app(
+            &banner_text(&[MissingPermission::Accessibility], true),
+            "Host",
+        );
+        let elsewhere = in_file_picker(
             text.clone(),
-            Some(std::path::Path::new("/Users/u/Applications/Vendor")),
+            "Host",
+            Some(("Host Beta".into(), "/Users/u/Applications/Vendor".into())),
         );
-        assert!(elsewhere.contains("choose Cua Driver in /Users/u/Applications/Vendor."));
+        assert!(elsewhere.contains("choose Host Beta in /Users/u/Applications/Vendor."));
         assert!(!elsewhere.contains("in Applications."));
-        assert_eq!(
-            in_host_folder(text.clone(), Some(std::path::Path::new("/Applications"))),
-            text
+        let installed = in_file_picker(
+            text.clone(),
+            "Host",
+            Some(("Host Beta".into(), "/Applications".into())),
         );
-        assert_eq!(in_host_folder(text.clone(), None), text);
+        assert!(installed.contains("choose Host Beta in Applications."));
+        assert!(installed.contains("next to Host."));
+        assert_eq!(in_file_picker(text.clone(), "Host", None), text);
     }
 
     #[test]

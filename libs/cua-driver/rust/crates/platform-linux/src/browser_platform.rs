@@ -531,12 +531,12 @@ fn default_user_data_dir(product: BrowserProduct, environ: &[u8]) -> Option<Path
 /// fd table; only the kernel can put one there.
 ///
 /// The `SingletonSocket` symlink itself is only text, though: any other
-/// directory can carry a link to the same live socket. So the browser must
-/// also hold files open inside the candidate, as Chromium does with its
-/// profile databases, and among the directories on the paths of those files
-/// the candidate must be the only one linking to the socket. A forged sibling
-/// holds no open files; a forged ancestor or descendant of the real profile
-/// shares its files with the real profile, which links to the same socket.
+/// directory can carry a link to the same live socket. Chromium keeps its
+/// profile databases open, so the real profile always lies on the path of a
+/// file the browser holds. Among the directories on the paths of every file
+/// the process tree holds, the candidate must be the only one linking to the
+/// socket: a forged directory either holds no browser file, or is a second
+/// claimant beside the real profile.
 fn process_owns_profile_directory(pid: i64, directory: &std::path::Path) -> bool {
     let Ok(directory) = std::fs::canonicalize(directory) else {
         return false;
@@ -558,21 +558,15 @@ fn process_owns_profile_directory(pid: i64, directory: &std::path::Path) -> bool
     {
         return false;
     }
-    let held_files = fd_targets
+    let claimants = fd_targets
         .iter()
-        .filter(|target| target.starts_with(&directory) && **target != directory)
-        .collect::<Vec<_>>();
-    if held_files.is_empty() {
-        return false;
-    }
-    let claimants = held_files
-        .into_iter()
+        .filter(|target| target.is_absolute())
         .flat_map(|file| file.ancestors().skip(1))
         .collect::<HashSet<_>>()
         .into_iter()
-        .filter(|candidate| singleton_inode(*candidate) == Some(inode))
-        .count();
-    claimants == 1
+        .filter(|candidate| singleton_inode(candidate) == Some(inode))
+        .collect::<Vec<_>>();
+    claimants == [directory.as_path()]
 }
 
 fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
@@ -2020,6 +2014,16 @@ mod tests {
         std::os::unix::fs::symlink(&owned_sock, forged.path().join("SingletonSocket"))
             .expect("symlink aliased SingletonSocket");
         assert!(!process_owns_profile_directory(pid, forged.path()));
+
+        // Holding an incidental file there, such as a download, does not
+        // help: the real profile is still a second claimant.
+        let incidental = std::fs::File::create(forged.path().join("download.bin"))
+            .expect("hold an incidental file in the forged sibling");
+        assert!(!process_owns_profile_directory(pid, forged.path()));
+        drop(incidental);
+        std::fs::remove_file(forged.path().join("SingletonSocket"))
+            .expect("remove aliased SingletonSocket");
+        assert!(process_owns_profile_directory(pid, &profile));
 
         // A forged descendant of the real profile shares its open files, but
         // the real profile above it links to the same socket.

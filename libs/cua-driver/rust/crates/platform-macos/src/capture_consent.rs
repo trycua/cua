@@ -28,8 +28,8 @@
 //! alert pop over the user's window in the middle of background work.
 //!
 //! A capture that `permissions grant` verified for this bundle also counts as
-//! consent when this process is the driver daemon: the grant's probe frame
-//! already raised the alert for the bundle. On macOS 26.6 a daemon
+//! consent when macOS holds this daemon responsible for itself: the grant's
+//! probe frame already raised the alert for the bundle. On macOS 26.6 a daemon
 //! can find no entry for the bundle after that grant (#6831), so the approvals
 //! file alone would block every capture the user just allowed.
 
@@ -356,10 +356,11 @@ mod tests {
         let id = Some("com.trycua.driver");
         let release = "/Applications/CuaDriver.app/Contents/MacOS/cua-driver";
         let evidence_for = |executable: &str, attribution: Option<&str>| {
-            crate::tools::direct_capture_evidence_store_for_identity(
+            crate::tools::consent_evidence_store_for_identity(
                 executable,
                 home.path(),
                 attribution,
+                true,
             )
         };
         let evidence =
@@ -409,5 +410,17 @@ mod tests {
                 ConsentState::Missing
             );
         }
+        // A daemon macOS does not hold responsible for itself raises the
+        // alert for whichever app it answers to.
+        let reparented = crate::tools::consent_evidence_store_for_identity(
+            release,
+            home.path(),
+            Some("driver-daemon"),
+            false,
+        );
+        assert_eq!(
+            consent_state(&file, bundle, id, reparented.as_ref()),
+            ConsentState::Missing
+        );
     }
 }

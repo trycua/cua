@@ -64,7 +64,7 @@ fn current_executable() -> String {
         .unwrap_or_default()
 }
 
-pub(crate) fn direct_capture_evidence_store_for_identity(
+fn direct_capture_evidence_store_for_identity(
     executable: &str,
     home: &Path,
     attribution: Option<&str>,
@@ -91,11 +91,43 @@ fn current_direct_capture_evidence_store(source: &Value) -> Option<DirectCapture
     direct_capture_evidence_store_for_identity(&current_executable(), Path::new(&home), attribution)
 }
 
-/// The evidence `permissions grant` recorded for this process when it is the
-/// driver daemon. An embedded or caller-launched driver gets none, since macOS
-/// attributes its captures to another app.
+unsafe extern "C" {
+    fn responsibility_get_pid_responsible_for_pid(pid: libc::pid_t) -> libc::pid_t;
+}
+
+/// Whether macOS attributes this process's TCC checks to itself. A driver
+/// reparented to launchd after its launcher exits still answers to that
+/// launcher's host, so the parent pid alone does not prove it.
+fn is_own_responsible_process() -> bool {
+    let pid = unsafe { libc::getpid() };
+    unsafe { responsibility_get_pid_responsible_for_pid(pid) == pid }
+}
+
+/// The grant evidence that stands for consent to capture as this process: the
+/// driver daemon's own record, and only while macOS confirms the daemon is
+/// responsible for itself. Anything else would raise its alert for another app.
+pub(crate) fn consent_evidence_store_for_identity(
+    executable: &str,
+    home: &Path,
+    attribution: Option<&str>,
+    own_responsible: bool,
+) -> Option<DirectCaptureEvidenceStore> {
+    if !own_responsible {
+        return None;
+    }
+    direct_capture_evidence_store_for_identity(executable, home, attribution)
+}
+
+/// [`consent_evidence_store_for_identity`] for the running process.
 pub(crate) fn driver_daemon_direct_capture_evidence_store() -> Option<DirectCaptureEvidenceStore> {
-    current_direct_capture_evidence_store(&permission_source(false, None))
+    let home = std::env::var_os("HOME")?;
+    let source = permission_source(false, None);
+    consent_evidence_store_for_identity(
+        &current_executable(),
+        Path::new(&home),
+        source.get("attribution").and_then(Value::as_str),
+        is_own_responsible_process(),
+    )
 }
 
 /// (A) Real ScreenCaptureKit capability probe — what THIS process can

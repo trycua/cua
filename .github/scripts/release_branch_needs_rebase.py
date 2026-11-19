@@ -27,6 +27,12 @@ SHARED_PATHS = (
     ".github/scripts",
     "release-please-config.json",
 )
+# Inputs outside a component's own paths that its release checks read. The Driver
+# release PR fails test_cua_sandbox_driver_range.py until cua-sandbox's `driver`
+# bound covers it, so a merge that raises the bound must refresh the Driver branch.
+EXTRA_PATHS = {
+    "cua-driver-rs": ("libs/python/cua-sandbox/pyproject.toml",),
+}
 
 
 def git(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -51,6 +57,7 @@ def decide(config: dict, branch: str, base: str, head: str) -> tuple[str, str]:
     paths = component_paths(config, branch)
     if not paths:
         return "rebase", "unknown component; keep the previous behavior"
+    paths += EXTRA_PATHS.get(branch[len(COMPONENT_PREFIX) :], ())
 
     merge_tree = git("merge-tree", "--write-tree", base, head, check=False)
     if merge_tree.returncode != 0:

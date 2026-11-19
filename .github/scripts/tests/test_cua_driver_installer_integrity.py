@@ -385,7 +385,7 @@ foreach ($fn in $ast.FindAll({ param($n) $n -is [System.Management.Automation.La
 }
 foreach ($assign in $ast.EndBlock.Statements | Where-Object {
     $_ -is [System.Management.Automation.Language.AssignmentStatementAst] -and
-    $_.Left.Extent.Text -in @('$Repo', '$TagPrefix', '$ChecksumsRequiredFrom', '$SigstoreRequiredFrom', '$AuthenticodeRequiredFrom', '$CosignOidcIssuer')
+    $_.Left.Extent.Text -in @('$Repo', '$ReleaseDownloadBase', '$TagPrefix', '$ChecksumsRequiredFrom', '$SigstoreRequiredFrom', '$AuthenticodeRequiredFrom', '$CosignOidcIssuer')
 }) {
     . ([scriptblock]::Create($assign.Extent.Text))
 }

@@ -106,6 +106,7 @@ function fakeSystem(state: {
   hv?: string;
   features?: string;
   rebootPending?: boolean;
+  resumeEntry?: boolean;
   result?: string;
   elevated?: { code: number; stderr?: string };
 }) {
@@ -118,6 +119,7 @@ function fakeSystem(state: {
       if (script.includes("Win32_OptionalFeature")) return { code: 0, stdout: state.features ?? "{}", stderr: "" };
       if (script.includes("Win32_ComputerSystem")) return { code: 0, stdout: state.hv ?? "True|True", stderr: "" };
       if (script.includes("RebootPending")) return { code: 0, stdout: state.rebootPending ? "pending" : "clear", stderr: "" };
+      if (script.includes("Get-ItemProperty") && script.includes("RunOnce")) return { code: 0, stdout: state.resumeEntry ? "wanted" : "no", stderr: "" };
       if (script.includes("RunOnce")) return { code: 0, stdout: "", stderr: "" };
       if (script.includes("-Verb RunAs")) {
         const r = state.elevated ?? { code: 0 };
@@ -161,7 +163,7 @@ describe("WindowsRuntime", () => {
     expect(elevated).toHaveLength(1);
     expect(elevated[0]).toContain("'-File','C:\\tmp");
     expect(f.files.get([...f.files.keys()].find((k) => k.endsWith(".ps1"))!)).toBe(ELEVATED_SETUP_SCRIPT);
-    expect(f.ran.some((s) => s.includes("RunOnce"))).toBe(false);
+    expect(f.ran.some((s) => s.includes("New-ItemProperty"))).toBe(false);
     expect(f.ran.some((s) => s.startsWith("launch "))).toBe(false);
   });
 
@@ -173,9 +175,24 @@ describe("WindowsRuntime", () => {
     const a = await w.advice();
     expect(a.reason).toMatch(/^Restart this PC/);
     expect(a.fix).toBeNull();
-    const resume = f.ran.find((s) => s.includes("RunOnce"))!;
+    const resume = f.ran.find((s) => s.includes("New-ItemProperty"))!;
     expect(resume).toContain("CuaSpacesResume");
     expect(resume).toContain("C:\\Apps\\Cua Spaces.exe");
+  });
+
+  it("knows a restart is wanted only from its own setup, not from any pending update", async () => {
+    // WSL answers `--version` once installed, before the Virtual Machine Platform has restarted.
+    const idle = new WindowsRuntime(fakeSystem({ rebootPending: true }).sys, "C:\\tmp");
+    expect(await idle.restartWanted()).toBe(false);
+    // The setup left its resume entry: still wanted after the app itself reopens.
+    expect(await new WindowsRuntime(fakeSystem({ resumeEntry: true }).sys, "C:\\tmp").restartWanted()).toBe(true);
+    // And right after the setup asked, in this process.
+    const f = fakeSystem({ result: "0|False" });
+    const w = new WindowsRuntime(f.sys, "C:\\tmp");
+    w.run("setup-wsl");
+    await settleAll();
+    expect(await w.restartWanted()).toBe(true);
+    expect((await new WindowsRuntime(fakeSystem({ resumeEntry: true, wsl: true }).sys, "C:\\tmp").advice()).reason).toMatch(/^Restart this PC/);
   });
 
   it("asks for a restart when the setup exits with the restart code", async () => {

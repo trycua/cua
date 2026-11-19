@@ -180,6 +180,8 @@ export class AppModel {
   hosts: AppSpaceHost[] = [];
   /** Windows or Linux without a usable local runtime: why, and the fix New Space offers (null when one is ready). */
   runtimeAdvice: WindowsRuntimeAdvice | null = null;
+  /** Windows: the app's own engine is installed but waits for a restart, so local Spaces can't be made yet. */
+  private restartBlocksLocal = false;
   readonly windowsRuntime: WindowsRuntime | null;
   readonly linuxRuntime: LinuxRuntime | null;
   /** How long one read of the registry may take before a refresh gives up on it (s). */
@@ -699,7 +701,14 @@ export class AppModel {
   private async readRuntimeAdvice(runtimes: LocalRuntimes | null): Promise<void> {
     if (!runtimes) return;
     const w = this.windowsRuntime;
+    this.restartBlocksLocal = false;
     if (runtimes.ready.length > 0) {
+      // Only the app's own engine, and Windows still has to restart for it: it is not ready yet.
+      if (w && runtimes.ready.every((r) => r === "managed") && (await w.restartWanted().catch(() => false))) {
+        this.restartBlocksLocal = true;
+        this.runtimeAdvice = await w.advice().catch(() => null);
+        return;
+      }
       w?.settled();
       this.runtimeAdvice = null;
       return;
@@ -740,7 +749,7 @@ export class AppModel {
   }
 
   private wizardEnv(runtimes: LocalRuntimes | null, storage: LocalStorage | null, gpus: AppGpuChoice[] | null): AppWizardEnv {
-    const backends = runtimes?.ready;
+    const backends = this.restartBlocksLocal ? [] : runtimes?.ready;
     const env: AppWizardEnv = {
       defaultLocation: this.settings.defaultLocation,
       localAvailable: backends ? backends.length > 0 : true,

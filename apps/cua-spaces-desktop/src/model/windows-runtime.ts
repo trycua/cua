@@ -179,7 +179,7 @@ export class WindowsRuntime {
     const [wslReady, virtualization, restartPending, features] = await Promise.all([
       this.readWslReady(),
       this.readVirtualization(),
-      this.restartAsked ? Promise.resolve(true) : this.readRestartPending(),
+      this.restartWanted().then((wanted) => wanted || this.readRestartPending()),
       this.phase.kind === "installing" ? Promise.resolve(parseFeatures("")) : this.readFeatures(),
     ]);
     return { wslReady, virtualization, restartPending, features };
@@ -188,6 +188,23 @@ export class WindowsRuntime {
   /** The advice now. */
   async advice(): Promise<WindowsRuntimeAdvice> {
     return windowsRuntimeAdvice(await this.facts(), this.phase);
+  }
+
+  /**
+   * Windows still has to restart before WSL 2 can run. The WSL package answers `wsl.exe --version`
+   * as soon as it is installed, so a runtime can look ready while the Virtual Machine Platform waits
+   * for the restart: this is the setup's own mark of it (the resume entry the setup leaves for the
+   * next sign-in, which Windows clears after the restart), not any pending update.
+   */
+  async restartWanted(): Promise<boolean> {
+    if (this.restartAsked) return true;
+    const r = await this.sys
+      .powershell(
+        "if ($null -ne (Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce' -Name 'CuaSpacesResume' -ErrorAction SilentlyContinue)) { 'wanted' } else { 'no' }",
+        15_000,
+      )
+      .catch(() => null);
+    return r?.stdout.trim() === "wanted";
   }
 
   /** A runtime answers: forget the fix. */

@@ -26,8 +26,8 @@ use std::sync::Arc;
 use crate::apps;
 use crate::ax::bindings::{
     copy_bool_attr, copy_children, copy_children_checked, copy_number_attr, copy_string_attr,
-    copy_url_attr, kAXErrorSuccess, perform_action, set_number_attr, set_string_attr,
-    AXUIElementRef,
+    copy_string_attr_checked, copy_url_attr, kAXErrorSuccess, perform_action, set_number_attr,
+    set_string_attr, AXUIElementRef,
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
@@ -1193,11 +1193,11 @@ fn is_chromium_popup_owner(pid: i32) -> bool {
 /// same role, but only a `<select>` lists its options as `AXMenuItem` children
 /// (or an `AXMenu`) and carries the selected option as its value. A menu
 /// button has neither: its menu is drawn in the page and opening it raises no
-/// window. Children that could not be read (`None`), including a child whose
-/// role could not be read, count as a `<select>`, so a failed read refuses
-/// rather than sends.
-fn chromium_popup_is_select(child_roles: Option<&[Option<String>]>, value: &str) -> bool {
-    let Some(child_roles) = child_roles else {
+/// window. A value or children that could not be read (`None`), including a
+/// child whose role could not be read, count as a `<select>`, so a failed read
+/// refuses rather than sends.
+fn chromium_popup_is_select(child_roles: Option<&[Option<String>]>, value: Option<&str>) -> bool {
+    let (Some(child_roles), Some(value)) = (child_roles, value) else {
         return true;
     };
     !value.is_empty()
@@ -1215,7 +1215,7 @@ pub(super) fn is_chromium_web_select(pid: i32, window_id: u32, element: AXUIElem
     unsafe { copy_string_attr(element, "AXRole") }.as_deref() == Some("AXPopUpButton")
         && is_chromium_popup_owner(pid)
         && {
-            let value = unsafe { copy_string_attr(element, "AXValue") }.unwrap_or_default();
+            let value = unsafe { copy_string_attr_checked(element, "AXValue") };
             let child_roles: Option<Vec<Option<String>>> =
                 unsafe { copy_children_checked(element) }.map(|children| {
                     children
@@ -1227,7 +1227,7 @@ pub(super) fn is_chromium_web_select(pid: i32, window_id: u32, element: AXUIElem
                         })
                         .collect()
                 });
-            chromium_popup_is_select(child_roles.as_deref(), &value)
+            chromium_popup_is_select(child_roles.as_deref(), value.as_deref())
         }
         && super::type_text::target_in_web_area(
             pid,
@@ -1510,24 +1510,25 @@ mod popup_option_tests {
         // <select>: its options are AXMenuItem children, its value the choice.
         assert!(chromium_popup_is_select(
             Some(roles(&["AXMenuItem"]).as_slice()),
-            "One"
+            Some("One")
         ));
         assert!(chromium_popup_is_select(
             Some(roles(&["AXMenu"]).as_slice()),
-            ""
+            Some("")
         ));
-        assert!(chromium_popup_is_select(Some(&[][..]), "One"));
-        // Children, or a child's role, that could not be read refuse.
-        assert!(chromium_popup_is_select(None, ""));
+        assert!(chromium_popup_is_select(Some(&[][..]), Some("One")));
+        // A value, children, or a child's role that could not be read refuse.
+        assert!(chromium_popup_is_select(Some(&[][..]), None));
+        assert!(chromium_popup_is_select(None, Some("")));
         assert!(chromium_popup_is_select(
             Some(&[Some("AXStaticText".to_owned()), None][..]),
-            ""
+            Some("")
         ));
         // <button aria-haspopup="menu">: no children and no value (#7664).
-        assert!(!chromium_popup_is_select(Some(&[][..]), ""));
+        assert!(!chromium_popup_is_select(Some(&[][..]), Some("")));
         assert!(!chromium_popup_is_select(
             Some(roles(&["AXImage", "AXStaticText"]).as_slice()),
-            ""
+            Some("")
         ));
     }
 

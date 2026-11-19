@@ -195,6 +195,30 @@ pub unsafe fn copy_string_attr(element: AXUIElementRef, attr_name: &str) -> Opti
     Some(s.to_string())
 }
 
+/// [`copy_string_attr`], but `None` only when the attribute could not be read
+/// or is not a string, so a caller can tell an empty value from a failed read.
+/// An attribute that reports no value reads as the empty string.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
+pub unsafe fn copy_string_attr_checked(element: AXUIElementRef, attr_name: &str) -> Option<String> {
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if err == kAXErrorNoValue {
+        return Some(String::new());
+    }
+    if err != kAXErrorSuccess || value.is_null() {
+        return None;
+    }
+    if core_foundation::base::CFGetTypeID(value) != CFStr::type_id() {
+        CFRelease(value);
+        return None;
+    }
+    Some(CFStr::wrap_under_create_rule(value as _).to_string())
+}
+
 /// Copy the `AXURL` attribute (a `CFURL`) as its absolute URL string.
 /// Returns `None` on any error or if the attribute is not a `CFURL`.
 ///

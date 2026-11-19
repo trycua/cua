@@ -285,6 +285,10 @@ pub struct WindowElement {
     pub in_web_content: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actions: Option<Vec<String>>,
+    /// macOS only: application-defined actions, with a readable name and the
+    /// exact action envelope accepted by `click`. Windows and Linux omit this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_actions: Option<Vec<ElementCustomAction>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_index: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -313,6 +317,12 @@ pub struct WindowObservation {
     pub parent_index: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub in_web_content: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+pub struct ElementCustomAction {
+    pub name: String,
+    pub raw: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]

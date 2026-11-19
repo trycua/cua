@@ -163,6 +163,8 @@ const SELECTION_READBACK_SETTLE: std::time::Duration = std::time::Duration::from
 const SELECTION_READBACK_STABILITY: std::time::Duration = std::time::Duration::from_millis(250);
 /// How long a menu-opening press waits for its menu to reach the AX tree.
 const MENU_OPEN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1000);
+/// The longest one AX read of the menu wait may block an unresponsive app.
+const MENU_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// Whether `ax_action` on `role` opens a menu that belongs to the element: a
 /// SwiftUI `Menu` (AXMenuButton) or an AppKit popup button publishes it beside
@@ -175,36 +177,62 @@ fn opens_menu(ax_action: &str, role: &str) -> bool {
 }
 
 /// Whether `count` reports a menu before `timeout` (#6082). Returns as soon
-/// as it does; a press that opens nothing costs the full timeout.
+/// as it does; a press that opens nothing costs the full timeout. `count`
+/// gets the deadline and must not read past it.
 fn menu_appeared(
-    mut count: impl FnMut() -> usize,
+    mut count: impl FnMut(std::time::Instant) -> usize,
     timeout: std::time::Duration,
     poll: std::time::Duration,
 ) -> bool {
     let deadline = std::time::Instant::now() + timeout;
     loop {
-        if count() > 0 {
+        if count(deadline) > 0 {
             return true;
         }
-        if std::time::Instant::now() >= deadline {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
             return false;
         }
-        std::thread::sleep(poll);
+        std::thread::sleep(poll.min(left));
     }
 }
 
 /// The AXMenu nodes holding at least one item among `element`'s children and
 /// its siblings. SwiftUI publishes a `Menu`'s open menu in both places; AppKit
-/// puts it under the popup button or menu bar item.
-unsafe fn menus_beside(element: AXUIElementRef) -> usize {
-    let mut nodes = copy_children(element);
-    if let Some(parent) = copy_element_attr(element, "AXParent") {
-        nodes.extend(copy_children(parent));
-        CFRelease(parent as CFTypeRef);
+/// puts it under the popup button or menu bar item. Each read is capped at
+/// `MENU_READ_TIMEOUT` and the scan stops at `deadline`, so an app that stops
+/// answering cannot hold the caller past it.
+unsafe fn menus_beside(element: AXUIElementRef, deadline: std::time::Instant) -> usize {
+    use crate::ax::bindings::AXUIElementSetMessagingTimeout;
+    // Caps `node`'s reads to what is left of the budget; false once none is.
+    let bound = |node: AXUIElementRef| {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if !left.is_zero() {
+            let cap = left.min(MENU_READ_TIMEOUT).as_secs_f32();
+            let _ = unsafe { AXUIElementSetMessagingTimeout(node, cap) };
+        }
+        !left.is_zero()
+    };
+    let mut nodes = Vec::new();
+    if bound(element) {
+        nodes = copy_children(element);
+        if bound(element) {
+            if let Some(parent) = copy_element_attr(element, "AXParent") {
+                if bound(parent) {
+                    nodes.extend(copy_children(parent));
+                }
+                CFRelease(parent as CFTypeRef);
+            }
+        }
     }
+    // The element is the snapshot's; give it the walker's bound back.
+    let _ = AXUIElementSetMessagingTimeout(element, crate::ax::tree::AX_MESSAGING_TIMEOUT_SECONDS);
     let mut menus = 0;
     for node in nodes {
-        if copy_string_attr(node, "AXRole").as_deref() == Some("AXMenu") {
+        if bound(node)
+            && copy_string_attr(node, "AXRole").as_deref() == Some("AXMenu")
+            && bound(node)
+        {
             let items = copy_children(node);
             if !items.is_empty() {
                 menus += 1;
@@ -2249,8 +2277,10 @@ fn perform_ax_click(
         .then(|| unsafe { crate::ax::web_effect::PageProbe::before_press(pid, element) })
         .flatten();
     // A control that already shows a menu gives the wait nothing to see.
-    let menu_wait =
-        wait_for_menu && opens_menu(ax_action, &role) && unsafe { menus_beside(element) } == 0;
+    let menu_wait = wait_for_menu && opens_menu(ax_action, &role) && {
+        let deadline = std::time::Instant::now() + MENU_OPEN_TIMEOUT;
+        unsafe { menus_beside(element, deadline) == 0 }
+    };
     let pressed_at = std::time::Instant::now();
     let err = unsafe { crate::ax::bindings::perform_action(element, ax_action) };
     if err != crate::ax::bindings::kAXErrorSuccess {
@@ -2316,7 +2346,7 @@ fn perform_ax_click(
     // taken right after this call finds its items.
     let menu_opened = menu_wait.then(|| {
         menu_appeared(
-            || unsafe { menus_beside(element) },
+            |deadline| unsafe { menus_beside(element, deadline) },
             MENU_OPEN_TIMEOUT,
             SELECTION_READBACK_POLL,
         )
@@ -2704,7 +2734,7 @@ mod tests {
         let poll = std::time::Duration::from_millis(1);
         let mut reads = 0;
         assert!(menu_appeared(
-            || {
+            |_| {
                 reads += 1;
                 if reads < 3 {
                     0
@@ -2719,8 +2749,27 @@ mod tests {
 
         let started = std::time::Instant::now();
         let timeout = std::time::Duration::from_millis(30);
-        assert!(!menu_appeared(|| 0, timeout, poll));
+        assert!(!menu_appeared(|_| 0, timeout, poll));
         assert!(started.elapsed() >= timeout);
+    }
+
+    /// #6082: the wait hands every read its deadline and never sleeps past
+    /// it, so a long poll interval cannot stretch the bound.
+    #[test]
+    fn menu_wait_stays_within_its_deadline() {
+        let timeout = std::time::Duration::from_millis(30);
+        let started = std::time::Instant::now();
+        let mut deadlines = Vec::new();
+        assert!(!menu_appeared(
+            |deadline| {
+                deadlines.push(deadline);
+                0
+            },
+            timeout,
+            std::time::Duration::from_secs(5),
+        ));
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        assert!(deadlines.windows(2).all(|d| d[0] == d[1]));
     }
 
     /// A press the driver confirmed, or one it has no evidence against, never

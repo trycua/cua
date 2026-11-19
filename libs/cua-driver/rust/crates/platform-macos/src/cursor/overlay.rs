@@ -1110,31 +1110,36 @@ fn render_loop(
 
         // Repin: immediately on target change, then defensive every ~1 s while
         // the render loop is active. When quiescent, z-order is left unchanged
-        // until the next command wakes the loop.
-        if shown && (frame_tick_needed || had_msg) {
-            repin_frames += 1;
+        // until the next command wakes the loop. `last_pinned` is tracked even
+        // while ordered out: a frame without a command falls back to it, so a
+        // stale value would repin a newly shown cursor above the previous
+        // session's window.
+        if frame_tick_needed || had_msg {
             let pin_changed = pinned_wid != last_pinned;
             last_pinned = pinned_wid;
-            let requested = REPIN_REQUESTED.swap(false, Ordering::AcqRel);
-            if should_repin(pinned_wid, pin_changed || refit, requested, repin_frames) {
-                for surface in &surfaces {
-                    MacZOrderEnforcer {
-                        win_ptr: surface.win_ptr,
+            if shown {
+                repin_frames += 1;
+                let requested = REPIN_REQUESTED.swap(false, Ordering::AcqRel);
+                if should_repin(pinned_wid, pin_changed || refit, requested, repin_frames) {
+                    for surface in &surfaces {
+                        MacZOrderEnforcer {
+                            win_ptr: surface.win_ptr,
+                        }
+                        .reassert(pinned_wid);
                     }
-                    .reassert(pinned_wid);
+                    repin_frames = 0;
+                } else if raise_unpinned {
+                    // A direct move_cursor has no target window to pin against.
+                    // Raise the normal-level, click-through overlay without
+                    // activating the driver so a later foreground application
+                    // cannot cover a standalone session cursor.
+                    for surface in &surfaces {
+                        dispatch_order_front(surface.win_ptr);
+                    }
+                    repin_frames = 0;
+                } else if repin_frames >= 60 {
+                    repin_frames = 0;
                 }
-                repin_frames = 0;
-            } else if raise_unpinned {
-                // A direct move_cursor has no target window to pin against.
-                // Raise the normal-level, click-through overlay without
-                // activating the driver so a later foreground application
-                // cannot cover a standalone session cursor.
-                for surface in &surfaces {
-                    dispatch_order_front(surface.win_ptr);
-                }
-                repin_frames = 0;
-            } else if repin_frames >= 60 {
-                repin_frames = 0;
             }
         }
 

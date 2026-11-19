@@ -893,8 +893,9 @@ fn foreground_settle_ms(pid: i32, frontmost_pid: Option<i32>) -> u64 {
 /// the UTF-16 selection the text replaces, read just before the write. A
 /// shortfall is counted only against it: from growth alone, `abc` becoming
 /// `aXbc` could be `X` inserted or a selected `bc` replaced by all of `Xbc`.
-/// Without it a shortfall is still reported as `Partial` so the drain keeps
-/// waiting, and [`await_typed_delivery`] makes the final one unverifiable.
+/// Without it, or with a range that does not fit `before`, a shortfall is
+/// still reported as `Partial` so the drain keeps waiting, and
+/// [`await_typed_delivery`] makes the final one unverifiable.
 fn typed_progress(
     before: Option<&str>,
     selection: Option<(usize, usize)>,
@@ -1180,7 +1181,6 @@ fn cgevent_type_verified(
     pid: i32,
     text: &str,
     delay_ms: u64,
-    before: Option<&str>,
     element_ptr_and_idx: Option<(usize, Option<usize>)>,
     settle_ms: u64,
     window_id: Option<u32>,
@@ -1211,7 +1211,18 @@ fn cgevent_type_verified(
     if settle_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
-    // The keystrokes replace whatever is selected once the element is focused.
+    let read_trusted = || {
+        let trusted = element_ptr_and_idx
+            .is_some_and(|(ptr, _)| crate::input::ax_actions::is_element_focused(pid, ptr))
+            && target_in_web_area(pid, element_ptr_and_idx, window_id) == Some(false);
+        trusted.then(|| read_axvalue(element_ptr_and_idx)).flatten()
+    };
+    // The keystrokes replace whatever is selected once the element is focused,
+    // so they are measured against the value and selection read together
+    // after focus, immediately before the first key. An unreadable value is
+    // not evidence that the field is empty.
+    let before = read_trusted();
+    let before = before.as_deref();
     let selection =
         element_ptr_and_idx.and_then(|(ptr, _)| unsafe { selected_range(ptr as AXUIElementRef) });
     crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)?;
@@ -1223,12 +1234,6 @@ fn cgevent_type_verified(
     // visible instead of treating any growth as success. If the deadline
     // expires after observable growth, surface the exact partial count.
     let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
-    let read_trusted = || {
-        let trusted = element_ptr_and_idx
-            .is_some_and(|(ptr, _)| crate::input::ax_actions::is_element_focused(pid, ptr))
-            && target_in_web_area(pid, element_ptr_and_idx, window_id) == Some(false);
-        trusted.then(|| read_axvalue(element_ptr_and_idx)).flatten()
-    };
     let progress = await_typed_delivery(before, selection, text, deadline, read_trusted);
     // A batched send that a native field only partly took (an app that reads
     // just the first character of a multi-character event) is finished one
@@ -1259,6 +1264,12 @@ fn await_typed_delivery(
     deadline: std::time::Instant,
     mut read_value: impl FnMut() -> Option<String>,
 ) -> TypedProgress {
+    // A shortfall counts only when the selection the text replaced fits the
+    // value it was read with.
+    let placed = before
+        .zip(selection)
+        .and_then(|(before, (location, length))| split_utf16_range(before, location, length))
+        .is_some();
     // Keep the strongest observation. A field that falls back to its prior
     // value after showing progress contradicts that progress.
     let mut best = TypedProgress::Unchanged;
@@ -1284,7 +1295,7 @@ fn await_typed_delivery(
             || std::time::Instant::now() >= deadline
         {
             return match best {
-                TypedProgress::Partial(_) if selection.is_none() => TypedProgress::Unverifiable,
+                TypedProgress::Partial(_) if !placed => TypedProgress::Unverifiable,
                 best => best,
             };
         }
@@ -1373,10 +1384,6 @@ fn type_text_in_key_window(
         key_window_confirmed,
         prompt,
     } = route;
-    // Original field value before any rung drives read-back verification only.
-    // An unreadable value is not evidence that the field is empty — and for a
-    // window-addressed request it must come from the exact target window,
-    // never a same-process sibling.
     // A background terminal insert has no semantic AX rung: when the
     // exact-target decision restricted this request to semantic-only, there is
     // nothing safe to run, and an over-budget synthesis cannot start. Both
@@ -1417,9 +1424,6 @@ fn type_text_in_key_window(
     };
     let element_ptr_and_idx =
         caller_element.or_else(|| focused_guard.as_ref().map(|guard| (guard.as_ptr(), None)));
-    let before = (target_in_web_area(pid, element_ptr_and_idx, window_id) == Some(false))
-        .then(|| read_axvalue(element_ptr_and_idx))
-        .flatten();
 
     // --- Foreground rung: explicit agent request (skip AX/background ladder). ---
     if delivery_mode.is_foreground() {
@@ -1467,7 +1471,6 @@ fn type_text_in_key_window(
                 pid,
                 text,
                 delay_ms,
-                before.as_deref(),
                 element,
                 foreground_settle_ms,
                 window_id,
@@ -1595,7 +1598,6 @@ fn type_text_in_key_window(
             pid,
             text,
             delay_ms,
-            before.as_deref(),
             element_ptr_and_idx,
             /*settle_ms=*/ 0,
             window_id,
@@ -1667,9 +1669,9 @@ fn type_text_in_key_window(
             .then(|| single_line_submit_body(&role, text))
             .flatten();
         let ax_text = submit_body.unwrap_or(text);
-        // What a full insert of the line must leave in the field, from the
-        // value and selection read just before the write.
-        let pre_write = submit_body.and_then(|_| unsafe { copy_string_attr(element, "AXValue") });
+        // The value and selection the write replaces, read together just
+        // before it.
+        let pre_write = unsafe { copy_string_attr(element, "AXValue") };
         let selection = unsafe { selected_range(element) };
         let expected_after_submit = submit_body
             .zip(pre_write.as_deref())
@@ -1684,7 +1686,7 @@ fn type_text_in_key_window(
         let progress = match submit_body {
             None => ax_write_progress(
                 err,
-                before.as_deref(),
+                pre_write.as_deref(),
                 selection,
                 text,
                 trusted,
@@ -1775,7 +1777,6 @@ fn type_text_in_key_window(
         pid,
         text,
         delay_ms,
-        before.as_deref(),
         element_ptr_and_idx,
         /*settle_ms=*/ 0,
         window_id,
@@ -2864,6 +2865,22 @@ mod tests {
         };
         assert_eq!(drain(None), TypedProgress::Unverifiable);
         assert_eq!(drain(Some((1, 2))), TypedProgress::Complete);
+        // A range past the end, or one that splits a surrogate pair, is no
+        // better than none.
+        for (before, selection) in [("abc", (4, 0)), ("🙂bc", (1, 0))] {
+            let progress = await_typed_delivery(
+                Some(before),
+                Some(selection),
+                "bcd",
+                std::time::Instant::now(),
+                || Some(format!("{before}b")),
+            );
+            assert_eq!(
+                progress,
+                TypedProgress::Unverifiable,
+                "{before:?} {selection:?}"
+            );
+        }
     }
 
     #[test]

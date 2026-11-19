@@ -1304,6 +1304,16 @@ fn cgevent_type_verified(
     if settle_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
+    // A terminal confirms only by a copy its scrollback did not already hold,
+    // so count copies on the screen the keys go to: activation can restore a
+    // different pane than the one read before it.
+    let settled;
+    let before = if is_terminal_target {
+        settled = read_axvalue_bound(pid, element_ptr_and_idx, window_id);
+        settled.as_deref()
+    } else {
+        before
+    };
     crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)?;
     let batched = delay_ms == 0;
 

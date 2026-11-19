@@ -227,8 +227,9 @@ fn running_inside_app_bundle() -> bool {
 
 // ── Layout ──────────────────────────────────────────────────────────────
 //
-// Fixed layout, measured from the top of the content view (AppKit's origin
-// is bottom-left, so `top()` converts).
+// Measured from the top of the content view (AppKit's origin is
+// bottom-left, so `top()` converts). The step rows stack in `ROWS` order and
+// grow to fit their words, and the window grows to hold them.
 
 const WIN_W: f64 = 480.0;
 const WIN_H: f64 = 420.0;
@@ -238,6 +239,36 @@ const TILE_H: f64 = 60.0;
 const ICON: f64 = 36.0;
 /// Ticks (1 s each) the finished state stays up before the window closes.
 const DONE_TICKS: u32 = 2;
+
+/// The step view's rows, top to bottom: the gap above each and the least
+/// height it takes. Counter, title, why, how, waiting line, Open System
+/// Settings, drag hint, tile, note.
+const ROWS: [(f64, f64); 9] = [
+    (20.0, 16.0),
+    (4.0, 26.0),
+    (6.0, 36.0),
+    (6.0, 18.0),
+    (10.0, 18.0),
+    (12.0, 32.0),
+    (24.0, 18.0),
+    (4.0, TILE_H),
+    (10.0, 32.0),
+];
+/// Below the last row: a gap, then Not Now 16 pt above the bottom edge.
+const BELOW_ROWS: f64 = 20.0 + 32.0 + 16.0;
+
+/// Each row's top and height for the heights its contents need, and the
+/// window height that holds them.
+fn stack(needed: [f64; 9]) -> ([(f64, f64); 9], f64) {
+    let mut y = 0.0;
+    let mut rows = [(0.0, 0.0); 9];
+    for (row, ((gap, least), need)) in rows.iter_mut().zip(ROWS.into_iter().zip(needed)) {
+        y += gap;
+        *row = (y, least.max(need.ceil()));
+        y += row.1;
+    }
+    (rows, y + BELOW_ROWS)
+}
 
 fn top(y_from_top: f64, height: f64) -> f64 {
     WIN_H - y_from_top - height
@@ -269,6 +300,11 @@ struct Views {
     why: usize,
     how: usize,
     note: usize,
+    spinner: usize,
+    /// The step rows in `ROWS` order.
+    rows: [usize; 9],
+    /// Content height, the most either step needs.
+    win_h: f64,
 }
 
 struct Session {
@@ -390,11 +426,7 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
 
     let bundle = app_bundle_path();
     TILE_BUNDLE.with(|cell| *cell.borrow_mut() = bundle.clone());
-    let tile = drag_tile(
-        rect(PAD, 250.0, CONTENT_W, TILE_H),
-        bundle.as_deref(),
-        &app_name,
-    );
+    let tile = drag_tile(CONTENT_W, bundle.as_deref(), &app_name);
     let _: () = msg_send![step_view, addSubview: tile];
 
     let note = label("", 11.0, false, rect(PAD, 320.0, CONTENT_W, 32.0));
@@ -438,20 +470,22 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
         true,
         rect(PAD, 184.0, CONTENT_W, 24.0),
     );
+    let done_title_h = needed_height(done_title).max(24.0);
+    let _: () = msg_send![done_title, setFrame: rect(PAD, 184.0, CONTENT_W, done_title_h)];
     center_text(done_title);
     let _: () = msg_send![done_view, addSubview: done_title];
     let done_why = label(
         GuideStep::Done.copy().why,
         13.0,
         false,
-        rect(PAD, 214.0, CONTENT_W, 18.0),
+        rect(PAD, 190.0 + done_title_h, CONTENT_W, 18.0),
     );
     center_text(done_why);
     set_secondary(done_why);
     let _: () = msg_send![done_view, addSubview: done_why];
     let _: () = msg_send![content, addSubview: done_view];
 
-    let views = Views {
+    let mut views = Views {
         window: window as usize,
         step_view: step_view as usize,
         done_view: done_view as usize,
@@ -460,9 +494,30 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
         why: why as usize,
         how: how as usize,
         note: note as usize,
+        spinner: spinner as usize,
+        rows: [
+            counter, title, why, how, waiting, open_btn, hint, tile, note,
+        ]
+        .map(|v| v as usize),
+        win_h: WIN_H,
     };
+    // Tall enough for either step, so the window keeps its size between them.
+    views.win_h = [GuideStep::Accessibility, GuideStep::ScreenRecording]
+        .into_iter()
+        .map(|step| {
+            set_words(&views, step, &app_name);
+            stack(views.rows.map(|v| needed_height(ptr(v)))).1
+        })
+        .fold(WIN_H, f64::max);
+    // Not Now and the finished view keep their place from the bottom.
+    for view in [step_view, done_view] {
+        // NSViewWidthSizable | NSViewHeightSizable.
+        let _: () = msg_send![view, setAutoresizingMask: 2u64 | 16u64];
+    }
+    let _: () = msg_send![window, setContentSize: NSSize { width: WIN_W, height: views.win_h }];
     render(&views, machine.step(), &app_name);
     OUTCOME.with(|cell| *cell.borrow_mut() = None);
+    let views_h = views.win_h;
     SESSION.with(|cell| {
         *cell.borrow_mut() = Some(Session {
             machine,
@@ -478,7 +533,7 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
     let visible: NSRect = msg_send![main_screen, visibleFrame];
     let origin = NSPoint {
         x: visible.origin.x + visible.size.width - WIN_W - 24.0,
-        y: visible.origin.y + visible.size.height - WIN_H - 48.0,
+        y: visible.origin.y + visible.size.height - views_h - 48.0,
     };
     let _: () = msg_send![window, setFrameOrigin: origin];
     let _: () = msg_send![window, makeKeyAndOrderFront: std::ptr::null::<AnyObject>()];
@@ -511,6 +566,23 @@ unsafe fn render(views: &Views, step: GuideStep, app: &str) {
     if done {
         return;
     }
+    set_words(views, step, app);
+    let (rows, _) = stack(views.rows.map(|v| needed_height(ptr(v))));
+    for (&view, (y, h)) in views.rows.iter().zip(rows) {
+        let mut frame: NSRect = msg_send![ptr(view), frame];
+        frame.origin.y = views.win_h - y - h;
+        frame.size.height = h;
+        let _: () = msg_send![ptr(view), setFrame: frame];
+    }
+    let (waiting_y, _) = rows[4];
+    let _: () = msg_send![ptr(views.spinner), setFrameOrigin: NSPoint {
+        x: PAD,
+        y: views.win_h - waiting_y - 2.0 - 16.0,
+    }];
+}
+
+/// Put `step`'s words in the step view's labels.
+unsafe fn set_words(views: &Views, step: GuideStep, app: &str) {
     let copy = step.copy();
     let _: () = msg_send![ptr(views.counter), setStringValue: ns_string(copy.counter)];
     let _: () =
@@ -685,10 +757,19 @@ fn target_class() -> &'static objc2::runtime::AnyClass {
 // drag puts the app bundle's file URL on the pasteboard, which System
 // Settings' privacy lists accept, the same as dragging the app from Finder.
 
-unsafe fn drag_tile(frame: NSRect, bundle: Option<&std::path::Path>, app: &str) -> *mut AnyObject {
+unsafe fn drag_tile(width: f64, bundle: Option<&std::path::Path>, app: &str) -> *mut AnyObject {
+    let name_w = width - ICON - 120.0;
+    let name = label(
+        &guide::for_app(guide::TILE_NAME, app),
+        15.0,
+        false,
+        rect(0.0, 0.0, name_w, 20.0),
+    );
+    let name_h = needed_height(name).max(20.0);
+    let height = TILE_H.max(name_h + 24.0);
     let cls = tile_class();
     let tile: *mut AnyObject = msg_send![cls, alloc];
-    let tile: *mut AnyObject = msg_send![tile, initWithFrame: frame];
+    let tile: *mut AnyObject = msg_send![tile, initWithFrame: rect(0.0, 0.0, width, height)];
     let _: () = msg_send![tile, setWantsLayer: true];
     let layer: *mut AnyObject = msg_send![tile, layer];
     if !layer.is_null() {
@@ -701,8 +782,6 @@ unsafe fn drag_tile(frame: NSRect, bundle: Option<&std::path::Path>, app: &str) 
         let fill_cg: CGColorRef = msg_send![fill, CGColor];
         let _: () = msg_send![layer, setBackgroundColor: fill_cg];
     }
-    let height = frame.size.height;
-    let width = frame.size.width;
 
     let icon_view: *mut AnyObject = msg_send![class!(NSImageView), alloc];
     let icon_frame = NSRect {
@@ -722,21 +801,16 @@ unsafe fn drag_tile(frame: NSRect, bundle: Option<&std::path::Path>, app: &str) 
     }
     let _: () = msg_send![tile, addSubview: icon_view];
 
-    let name = label(
-        &guide::for_app(guide::TILE_NAME, app),
-        15.0,
-        false,
-        NSRect {
-            origin: NSPoint {
-                x: 12.0 + ICON + 12.0,
-                y: (height - 20.0) / 2.0,
-            },
-            size: NSSize {
-                width: width - ICON - 120.0,
-                height: 20.0,
-            },
+    let _: () = msg_send![name, setFrame: NSRect {
+        origin: NSPoint {
+            x: 12.0 + ICON + 12.0,
+            y: (height - name_h) / 2.0,
         },
-    );
+        size: NSSize {
+            width: name_w,
+            height: name_h,
+        },
+    }];
     let _: () = msg_send![tile, addSubview: name];
 
     let hand: *mut AnyObject = msg_send![class!(NSImageView), alloc];
@@ -958,6 +1032,29 @@ unsafe fn label(text: &str, size: f64, bold: bool, frame: NSRect) -> *mut AnyObj
     label
 }
 
+/// The height `view` needs at its current width: a label's wrapped text,
+/// else its frame.
+unsafe fn needed_height(view: *mut AnyObject) -> f64 {
+    let frame: NSRect = msg_send![view, frame];
+    let has_cell: bool = msg_send![view, respondsToSelector: objc2::sel!(cell)];
+    if !has_cell {
+        return frame.size.height;
+    }
+    let cell: *mut AnyObject = msg_send![view, cell];
+    if cell.is_null() {
+        return frame.size.height;
+    }
+    let bounds = NSRect {
+        origin: NSPoint { x: 0.0, y: 0.0 },
+        size: NSSize {
+            width: frame.size.width,
+            height: 10_000.0,
+        },
+    };
+    let size: NSSize = msg_send![cell, cellSizeForBounds: bounds];
+    size.height.ceil()
+}
+
 unsafe fn set_secondary(label: *mut AnyObject) {
     let color: *mut AnyObject = msg_send![class!(NSColor), secondaryLabelColor];
     let _: () = msg_send![label, setTextColor: color];
@@ -1086,21 +1183,32 @@ mod tests {
 
     #[test]
     fn layout_fits_the_window() {
-        // Every row from the top stays inside the window.
-        for (y, h) in [
-            (20.0, 16.0),
-            (40.0, 26.0),
-            (72.0, 36.0),
-            (114.0, 18.0),
-            (142.0, 18.0),
-            (172.0, 32.0),
-            (228.0, 18.0),
-            (250.0, TILE_H),
-            (320.0, 32.0),
-        ] {
+        let (rows, win_h) = stack([0.0; 9]);
+        let tops: Vec<f64> = rows.iter().map(|&(y, _)| y).collect();
+        assert_eq!(
+            tops,
+            [20.0, 40.0, 72.0, 114.0, 142.0, 172.0, 228.0, 250.0, 320.0]
+        );
+        assert_eq!(win_h, WIN_H);
+        for (y, h) in rows {
             let r = rect(PAD, y, CONTENT_W, h);
             assert!(r.origin.y >= 48.0, "row at {y} overlaps the bottom buttons");
             assert!(r.origin.y + r.size.height <= WIN_H);
         }
+    }
+
+    #[test]
+    fn rows_grow_to_fit_a_long_host_name() {
+        let (short, short_h) = stack([0.0; 9]);
+        let mut needed = [0.0; 9];
+        needed[1] = 52.0;
+        needed[3] = 35.2;
+        let (long, long_h) = stack(needed);
+        assert_eq!(long[1], (40.0, 52.0));
+        assert_eq!(long[3], (140.0, 36.0));
+        assert_eq!(long[8].0, short[8].0 + 26.0 + 18.0);
+        assert_eq!(long_h, short_h + 26.0 + 18.0);
+        let (last_y, last_h) = long[8];
+        assert!(long_h - last_y - last_h >= BELOW_ROWS);
     }
 }

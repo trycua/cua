@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.14](https://github.com/trycua/cua/compare/cua-spaces-v0.38.13...cua-spaces-v0.38.14) (2026-11-19)
+
+
+### Bug Fixes
+
+* **spaces:** send the Mac clipboard on paste in the native viewer ([#8145](https://github.com/trycua/cua/issues/8145)) ([54312cf](https://github.com/trycua/cua/commit/54312cfce862d13a57f0c28851bd399e261c8e70))
+
 ## [0.38.13](https://github.com/trycua/cua/compare/cua-spaces-v0.38.12...cua-spaces-v0.38.13) (2026-11-18)
 
 

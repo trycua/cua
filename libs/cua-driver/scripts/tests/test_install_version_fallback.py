@@ -119,6 +119,37 @@ def _powershell_download_server(
         thread.join()
 
 
+def _windows_release_download_base(source: str) -> str:
+    match = re.search(
+        r"^\$ReleaseDownloadBase = if .*?^\}$", source, re.MULTILINE | re.DOTALL
+    )
+    assert match, "could not locate $ReleaseDownloadBase"
+    return match.group(0)
+
+
+@requires_powershell
+@pytest.mark.parametrize(
+    ("override", "expected"),
+    [
+        ("", "https://github.com/trycua/cua/releases/download"),
+        ("https://mirror.example/cua/", "https://mirror.example/cua"),
+    ],
+)
+def test_windows_release_download_base_honours_the_mirror_override(
+    tmp_path: Path, override: str, expected: str
+) -> None:
+    result = _run_powershell(
+        tmp_path,
+        f"""
+$Repo = 'trycua/cua'
+$env:CUA_DRIVER_RS_DOWNLOAD_BASE_URL = '{override}'
+{_windows_release_download_base(_windows_source())}
+$ReleaseDownloadBase
+""",
+    )
+    assert result.stdout.strip() == expected
+
+
 def test_windows_installer_falls_back_when_baked_release_is_unpublished() -> None:
     source = _windows_source()
 
@@ -219,9 +250,6 @@ def test_windows_download_classifies_and_retries_failures_behaviorally(
             )
         )
         functions = functions.replace(
-            "https://github.com/$Repo/releases/download/",
-            f"{base_url}/",
-        ).replace(
             "Start-Sleep -Seconds $delaySeconds",
             "$null = $delaySeconds",
         )
@@ -233,6 +261,9 @@ def test_windows_download_classifies_and_retries_failures_behaviorally(
             f"""
 $Repo = 'trycua/cua'
 $TagPrefix = 'cua-driver-rs-v'
+$Script:CuaDriverRsReleaseTag = 'cua-driver-rs-v1.2.3'
+$env:CUA_DRIVER_RS_DOWNLOAD_BASE_URL = '{base_url}/mirror/'
+{_windows_release_download_base(source)}
 {delays}
 function Write-Step {{ param([string]$Message) }}
 function Write-WarningStep {{ param([string]$Message) }}
@@ -253,6 +284,7 @@ $download = Get-ReleaseZip '1.2.3' 'windows-x86_64' '{tmp_path.as_posix()}'
         "Attempts": attempts,
         "HasError": has_error,
     }
+    assert set(requests) == {"/mirror/cua-driver-rs-v1.2.3/cua-driver-rs-1.2.3-windows-x86_64.zip"}
     if scenario == "network":
         # Invoke-WebRequest has its own transport retry on a dropped socket;
         # the installer-level Attempts count must still remain bounded at seven.
@@ -550,8 +582,14 @@ def test_unix_api_resolver_stops_after_ten_full_pages(tmp_path: Path) -> None:
     assert not any("&page=11" in line for line in calls)
 
 
+def _unix_release_download_base() -> str:
+    lines = re.findall(r"^RELEASE_DOWNLOAD_BASE=.*$", _unix_source(), re.MULTILINE)
+    assert len(lines) == 2, "could not locate RELEASE_DOWNLOAD_BASE"
+    return "\n            ".join(lines)
+
+
 def _run_download(
-    tmp_path: Path, scenario: str, token_env: str = "", entry: str = 'download_release_tarball "1.2.3"'
+    tmp_path: Path, scenario: str, env_lines: str = "", entry: str = 'download_release_tarball "1.2.3"'
 ) -> tuple[int, list[str], str, list[str]]:
     """Run the real download helper with deterministic HTTP/curl behavior."""
     calls = tmp_path / "download-calls"
@@ -566,7 +604,8 @@ def _run_download(
             TAG="cua-driver-rs-v1.2.3"
             LABEL="linux-x86_64"
             TMP_DIR="{tmp_path.as_posix()}"
-            {token_env}
+            {env_lines}
+            {_unix_release_download_base()}
             log() {{ printf '==> %s\\n' "$*"; }}
             err() {{ printf 'error: %s\\n' "$*" >&2; }}
             sleep() {{ printf '%s\\n' "$1" >> "{sleeps.as_posix()}"; }}
@@ -685,6 +724,34 @@ def test_unix_download_does_not_retry_auth_failure_or_fallback(tmp_path: Path) -
     assert sleeps == []
     assert "HTTP 401" in stderr
     assert "refusing to fall back to an older release" in stderr
+
+
+@requires_posix_bash
+def test_unix_download_uses_github_releases_by_default(tmp_path: Path) -> None:
+    returncode, calls, stderr, _ = _run_download(tmp_path, "success")
+    assert returncode == 0, stderr
+    assert (
+        "https://github.com/trycua/cua/releases/download/cua-driver-rs-v1.2.3/"
+        "cua-driver-rs-1.2.3-linux-x86_64-binary.tar.gz"
+    ) in calls[0]
+
+
+@requires_posix_bash
+@pytest.mark.parametrize(
+    "entry",
+    ['download_release_tarball "1.2.3"', 'fetch_release_file SHA256SUMS "$TMP_DIR/SHA256SUMS"'],
+)
+def test_unix_download_honours_the_mirror_override(tmp_path: Path, entry: str) -> None:
+    returncode, calls, stderr, _ = _run_download(
+        tmp_path,
+        "success",
+        'CUA_DRIVER_RS_DOWNLOAD_BASE_URL="https://mirror.example/cua/"',
+        entry,
+    )
+    assert returncode == 0, stderr
+    assert len(calls) == 1
+    assert "https://mirror.example/cua/cua-driver-rs-v1.2.3/" in calls[0]
+    assert "github.com" not in calls[0]
 
 
 @requires_posix_bash

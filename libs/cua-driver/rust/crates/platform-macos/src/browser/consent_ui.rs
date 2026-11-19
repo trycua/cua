@@ -553,7 +553,7 @@ mod tests {
                 height: 800.0,
             },
             layer: 0,
-            z_index,
+            z_index: Some(z_index),
             is_on_screen: true,
             current_space_id: None,
             on_current_space: Some(true),
@@ -693,6 +693,7 @@ mod tests {
                     depth_truncated: false,
                     walk: budget.outcome(),
                     window_scope: None,
+                    ax_enumeration: None,
                 })?;
             }
             Ok::<_, BrowserRefusal>(())

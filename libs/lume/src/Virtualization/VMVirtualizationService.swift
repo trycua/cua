@@ -17,6 +17,7 @@ struct VMVirtualizationServiceContext {
     let usbMassStoragePaths: [Path]?
     let additionalDiskPaths: [Path]?
     let stackedDiskSpecs: [StackedDiskSpec]?
+    let nbdDisks: NBDDisks?
     let networkMode: NetworkMode
     /// Adds a virtio socket device (for host port forwards over vsock and
     /// the guest time service).
@@ -37,6 +38,9 @@ protocol VMVirtualizationService {
     var vmHandle: BaseVirtualizationService.VirtualMachineHandle? { get }
     func start() async throws
     func stop() async throws
+    /// Asks the guest to shut down, as a power button press does. It returns at
+    /// once; the VM stops when the guest has shut down.
+    func requestStop() throws
     func pause() async throws
     func resume() async throws
     func updateSharedDirectories(_ sharedDirectories: [SharedDirectory]) async throws
@@ -152,6 +156,13 @@ class BaseVirtualizationService: VMVirtualizationService {
                     }
                 }
             }
+        }
+    }
+
+    func requestStop() throws {
+        let handle = virtualMachineHandle
+        try handle.queue.sync {
+            try handle.machine.requestStop()
         }
     }
 
@@ -506,7 +517,10 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
         // Common configurations
         vzConfig.keyboards = [VZUSBKeyboardConfiguration()]
         vzConfig.pointingDevices = [VZUSBScreenCoordinatePointingDeviceConfiguration()]
-        var storageDevices = [try createStorageDeviceConfiguration(diskPath: config.diskPath)]
+        var storageDevices = [
+            try config.nbdDisks?.rootDevice()
+                ?? createStorageDeviceConfiguration(diskPath: config.diskPath)
+        ]
         if let mount = config.mount {
             storageDevices.append(
                 try createStorageDeviceConfiguration(diskPath: mount, readOnly: true))
@@ -530,6 +544,7 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
                 storageDevices.append(try stack.storageDeviceConfiguration())
             }
         }
+        storageDevices += try config.nbdDisks?.extraDevices() ?? []
         vzConfig.storageDevices = storageDevices
         vzConfig.networkDevices = [
             try createNetworkDeviceConfiguration(
@@ -717,8 +732,11 @@ final class LinuxVirtualizationService: BaseVirtualizationService {
         // due to a known issue in Apple's Virtualization framework.
         // See: https://github.com/utmapp/UTM/pull/5919, https://github.com/lima-vm/lima/pull/2026
         let diskCachingMode = VZDiskImageCachingMode.cached
-        var storageDevices = [try createStorageDeviceConfiguration(
-            diskPath: config.diskPath, cachingMode: diskCachingMode)]
+        var storageDevices = [
+            try config.nbdDisks?.rootDevice()
+                ?? createStorageDeviceConfiguration(
+                    diskPath: config.diskPath, cachingMode: diskCachingMode)
+        ]
         if let mount = config.mount {
             storageDevices.append(
                 try createStorageDeviceConfiguration(
@@ -746,6 +764,7 @@ final class LinuxVirtualizationService: BaseVirtualizationService {
                     try stack.storageDeviceConfiguration(cachingMode: diskCachingMode))
             }
         }
+        storageDevices += try config.nbdDisks?.extraDevices() ?? []
         vzConfig.storageDevices = storageDevices
         vzConfig.networkDevices = [
             try createNetworkDeviceConfiguration(

@@ -73,6 +73,46 @@ struct Run: AsyncParsableCommand {
     var stackedDisks: [String] = []
 
     @Option(
+        name: [.customLong("nbd-disk")],
+        help: ArgumentHelp(
+            """
+            Attach a read-write virtio-blk disk served over NBD, after every other disk \
+            (e.g. --nbd-disk="nbd+unix:///disk?socket=/path/disk.sock"). Repeatable.
+            """))
+    var nbdDisks: [String] = []
+
+    @Option(
+        name: [.customLong("nbd-root")],
+        help: ArgumentHelp(
+            """
+            Boot from a root disk served over NBD instead of the VM's disk image \
+            (e.g. --nbd-root="nbd+unix:///root?socket=/path/root.sock").
+            """))
+    var nbdRoot: String?
+
+    @Option(
+        name: [.customLong("nbd-timeout")],
+        help: ArgumentHelp(
+            "Seconds an NBD disk waits on a request before reconnecting. Defaults to 120.",
+            discussion: """
+                A flush after gigabytes of writes can take longer than a few seconds, and a \
+                reconnect while requests are in flight can leave the guest's disk stuck. A \
+                server that has gone away is still noticed at once: its socket refuses the \
+                reconnect.
+                """))
+    var nbdTimeout: Double = 120
+
+    @Option(
+        name: [.customLong("stop-timeout")],
+        help: ArgumentHelp(
+            """
+            On SIGINT or SIGTERM, ask the guest to shut down and give it this many seconds \
+            before forcing the VM off. The command then exits 0 only if the guest shut down \
+            by itself. Without this option a signal ends the process at once.
+            """))
+    var stopTimeout: Int?
+
+    @Option(
         name: [.customLong("vsock-forward")],
         help: ArgumentHelp(
             """
@@ -228,6 +268,13 @@ struct Run: AsyncParsableCommand {
     init() {
     }
 
+    private func parsedNBDDisks() throws -> NBDDisks? {
+        if nbdRoot == nil && nbdDisks.isEmpty {
+            return nil
+        }
+        return try NBDDisks(root: nbdRoot, extra: nbdDisks, timeout: nbdTimeout)
+    }
+
     func validate() throws {
         if clipboard && noClipboardDevice {
             throw ValidationError("'--clipboard' cannot be combined with '--no-clipboard-device'.")
@@ -235,6 +282,15 @@ struct Run: AsyncParsableCommand {
         if let timeVsock, !GuestTimeService.isValidPort(timeVsock) {
             throw ValidationError(
                 "Invalid --time-vsock port \(timeVsock). Expected 1 to \(GuestTimeService.validPorts.upperBound).")
+        }
+        if nbdTimeout <= 0 {
+            throw ValidationError("--nbd-timeout must be positive")
+        }
+        // Checked here as well as in run(): with --detach, run() returns before
+        // it builds the disks, and a bad URL would only show in the child's log.
+        _ = try parsedNBDDisks()
+        if let stopTimeout, stopTimeout <= 0 {
+            throw ValidationError("--stop-timeout must be positive")
         }
         if let option = VNCPolicy.conflictingOption(
             policy: vnc,
@@ -285,6 +341,8 @@ struct Run: AsyncParsableCommand {
             additionalDiskPaths: parsedAdditionalDisks.isEmpty ? nil : parsedAdditionalDisks,
             stackedDiskSpecs: stackedDisks.isEmpty ? nil : try parsedStackedDisks(),
             vsockForwards: vsockForwards.isEmpty ? nil : try parsedVsockForwards(),
+            nbdDisks: try parsedNBDDisks(),
+            stopTimeout: stopTimeout.map { TimeInterval($0) },
             networkMode: parsedNetworkMode,
             clipboard: clipboard,
             vncPolicy: vnc,

@@ -51,6 +51,10 @@ final class MockVMVirtualizationService: VMVirtualizationService {
         currentState = .running
     }
 
+    func requestStop() throws {
+        currentState = .stopped
+    }
+
     func stop() async throws {
         stopCallCount += 1
         if shouldFailNextOperation { throw operationError }

@@ -92,10 +92,11 @@ pub const FOREGROUND_RETRY_SUGGESTION: &str =
 /// Build a structured background-delivery refusal.
 ///
 /// The result is an error with `message` as its text. Its structured content
-/// holds `status: "refused"`, `code`, the shared [`FOREGROUND_RETRY_SUGGESTION`], and an
+/// holds `code`, the shared [`FOREGROUND_RETRY_SUGGESTION`], and an
 /// `escalation` that recommends `foreground` for `escalation_reason`, plus
 /// every field of the `fields` object. `fields` cannot override those
-/// contract keys.
+/// contract keys. `effect` is `refused` unless `fields` names the effect of
+/// input that was already sent.
 pub fn background_unavailable_result(
     message: impl Into<String>,
     code: &str,
@@ -126,7 +127,9 @@ pub fn background_unavailable_result_with_suggestion(
         Value::Object(fields) => fields,
         _ => serde_json::Map::new(),
     };
-    structured.insert("status".to_owned(), json!("refused"));
+    structured
+        .entry("effect")
+        .or_insert_with(|| json!("refused"));
     structured.insert("code".to_owned(), json!(code));
     structured.insert("suggestion".to_owned(), json!(suggestion));
     structured.insert(
@@ -252,7 +255,6 @@ mod tests {
             json!({
                 "event_kind": "mouse_click",
                 "code": "forged",
-                "status": "forged",
                 "suggestion": "forged",
             }),
         );
@@ -260,7 +262,7 @@ mod tests {
         assert_eq!(
             result.structured_content,
             Some(json!({
-                "status": "refused",
+                "effect": "refused",
                 "code": "background_occluded",
                 "event_kind": "mouse_click",
                 "suggestion": "Retry this action with delivery_mode:\"foreground\".",

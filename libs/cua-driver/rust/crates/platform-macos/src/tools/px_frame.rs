@@ -130,14 +130,15 @@ pub fn resolve_window_px_frame(pid: i32, window_id: u32) -> Result<WindowPxFrame
     let (frame, geometry) = crate::native_window_geometry::observe_capture(pid, window_id, || {
         resolve_capture_frame(window_id)
     });
-    let frame = frame?;
+    // A confirmed mismatch takes precedence over a capture failure, so callers
+    // that tolerate an unframed window still refuse it.
     if geometry.blocks_pointer() {
         return Err(PxFrameError::NativeGeometryMismatch {
             window_id,
             geometry,
         });
     }
-    Ok(frame)
+    frame
 }
 
 impl std::fmt::Display for PxFrameError {

@@ -176,17 +176,17 @@ fn opens_menu(ax_action: &str, role: &str) -> bool {
         && matches!(role, "AXMenuButton" | "AXPopUpButton")
 }
 
-/// Whether `count` reports a menu before `timeout` (#6082). Returns as soon
-/// as it does; a press that opens nothing costs the full timeout. `count`
-/// gets the deadline and must not read past it.
+/// Whether `shows_menu` reports a menu before `timeout` (#6082). Returns as
+/// soon as it does; a press that opens nothing costs the full timeout.
+/// `shows_menu` gets the deadline and must not read past it.
 fn menu_appeared(
-    mut count: impl FnMut(std::time::Instant) -> usize,
+    mut shows_menu: impl FnMut(std::time::Instant) -> bool,
     timeout: std::time::Duration,
     poll: std::time::Duration,
 ) -> bool {
     let deadline = std::time::Instant::now() + timeout;
     loop {
-        if count(deadline) > 0 {
+        if shows_menu(deadline) {
             return true;
         }
         let left = deadline.saturating_duration_since(std::time::Instant::now());
@@ -197,21 +197,23 @@ fn menu_appeared(
     }
 }
 
-/// The AXMenu nodes holding at least one item among `element`'s children and
-/// its siblings. SwiftUI publishes a `Menu`'s open menu in both places; AppKit
-/// puts it under the popup button or menu bar item. Each read is capped at
-/// `MENU_READ_TIMEOUT` and the scan stops at `deadline`, so an app that stops
-/// answering cannot hold the caller past it.
-unsafe fn menus_beside(element: AXUIElementRef, deadline: std::time::Instant) -> usize {
+/// Whether an AXMenu holding at least one item is among `element`'s children
+/// or its siblings. SwiftUI publishes a `Menu`'s open menu in both places;
+/// AppKit puts it under the popup button or menu bar item. Each read is
+/// capped at `MENU_READ_TIMEOUT` and none starts after `deadline`, so an app
+/// that stops answering cannot hold the caller past it.
+unsafe fn menu_beside(element: AXUIElementRef, deadline: std::time::Instant) -> bool {
     use crate::ax::bindings::AXUIElementSetMessagingTimeout;
-    // Caps `node`'s reads to what is left of the budget; false once none is.
+    let left = || deadline.saturating_duration_since(std::time::Instant::now());
+    // Caps `node`'s next read at what is left of the budget; false, and no
+    // read, once none is.
     let bound = |node: AXUIElementRef| {
-        let left = deadline.saturating_duration_since(std::time::Instant::now());
-        if !left.is_zero() {
-            let cap = left.min(MENU_READ_TIMEOUT).as_secs_f32();
-            let _ = unsafe { AXUIElementSetMessagingTimeout(node, cap) };
-        }
-        !left.is_zero()
+        let budget = left();
+        !budget.is_zero()
+            && unsafe {
+                AXUIElementSetMessagingTimeout(node, budget.min(MENU_READ_TIMEOUT).as_secs_f32())
+            } == kAXErrorSuccess
+            && !left().is_zero()
     };
     let mut nodes = Vec::new();
     if bound(element) {
@@ -227,23 +229,22 @@ unsafe fn menus_beside(element: AXUIElementRef, deadline: std::time::Instant) ->
     }
     // The element is the snapshot's; give it the walker's bound back.
     let _ = AXUIElementSetMessagingTimeout(element, crate::ax::tree::AX_MESSAGING_TIMEOUT_SECONDS);
-    let mut menus = 0;
+    let mut found = false;
     for node in nodes {
-        if bound(node)
+        if !found
+            && bound(node)
             && copy_string_attr(node, "AXRole").as_deref() == Some("AXMenu")
             && bound(node)
         {
             let items = copy_children(node);
-            if !items.is_empty() {
-                menus += 1;
-            }
+            found = !items.is_empty();
             for item in items {
                 CFRelease(item as CFTypeRef);
             }
         }
         CFRelease(node as CFTypeRef);
     }
-    menus
+    found
 }
 
 /// AXPress on a radio button or checkbox that advertises it: a press whose
@@ -2279,7 +2280,7 @@ fn perform_ax_click(
     // A control that already shows a menu gives the wait nothing to see.
     let menu_wait = wait_for_menu && opens_menu(ax_action, &role) && {
         let deadline = std::time::Instant::now() + MENU_OPEN_TIMEOUT;
-        unsafe { menus_beside(element, deadline) == 0 }
+        unsafe { !menu_beside(element, deadline) }
     };
     let pressed_at = std::time::Instant::now();
     let err = unsafe { crate::ax::bindings::perform_action(element, ax_action) };
@@ -2346,7 +2347,7 @@ fn perform_ax_click(
     // taken right after this call finds its items.
     let menu_opened = menu_wait.then(|| {
         menu_appeared(
-            |deadline| unsafe { menus_beside(element, deadline) },
+            |deadline| unsafe { menu_beside(element, deadline) },
             MENU_OPEN_TIMEOUT,
             SELECTION_READBACK_POLL,
         )
@@ -2736,11 +2737,7 @@ mod tests {
         assert!(menu_appeared(
             |_| {
                 reads += 1;
-                if reads < 3 {
-                    0
-                } else {
-                    2
-                }
+                reads >= 3
             },
             std::time::Duration::from_secs(5),
             poll,
@@ -2749,7 +2746,7 @@ mod tests {
 
         let started = std::time::Instant::now();
         let timeout = std::time::Duration::from_millis(30);
-        assert!(!menu_appeared(|_| 0, timeout, poll));
+        assert!(!menu_appeared(|_| false, timeout, poll));
         assert!(started.elapsed() >= timeout);
     }
 
@@ -2763,7 +2760,7 @@ mod tests {
         assert!(!menu_appeared(
             |deadline| {
                 deadlines.push(deadline);
-                0
+                false
             },
             timeout,
             std::time::Duration::from_secs(5),

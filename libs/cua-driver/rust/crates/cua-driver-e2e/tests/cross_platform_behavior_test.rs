@@ -2384,6 +2384,86 @@ fn embedded_browser_routes_are_exact_or_refused() {
     resume_first_failure(failure);
 }
 
+/// A background Cmd+V to a WebKit page runs the app's Edit > Paste: AppKit
+/// sends a key equivalent only to the active app, and WebKit pastes only from
+/// the `paste:` action (#5355). Each row must put the clipboard in the page
+/// field it names.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore]
+fn webkit_background_paste_runs_the_edit_menu_item() {
+    const PASTED: &str = "cua-background-paste";
+    let mut failure = None;
+    let mut selected = 0usize;
+    for spec in host_specs()
+        .into_iter()
+        .filter(|spec| matches!(spec.name, "tauri" | "wkwebview"))
+    {
+        for addressing in ["ax", "px"] {
+            let oracles = vec![
+                OracleKind::FixtureState,
+                OracleKind::Focus,
+                OracleKind::ZOrder,
+                OracleKind::NoLeakedInput,
+                OracleKind::Cursor,
+            ];
+            let case = CaseSpec::delivered(
+                format!("macos-{}-paste-hotkey-{addressing}-background", spec.name),
+                spec.name,
+                "platform-webview",
+                "paste_hotkey",
+                if addressing == "ax" {
+                    Targeting::Ax
+                } else {
+                    Targeting::Px
+                },
+                Delivery::Background,
+                Scope::Window,
+                cua_driver_testkit::e2e::DriverRoute::MacosAxAction,
+                oracles,
+            );
+            if !cell_selected(&case) {
+                continue;
+            }
+            selected += 1;
+            let result = run_host_case_with_outcome(case, &spec, |fixture| {
+                let _clipboard = TextClipboardGuard::replace(PASTED);
+                let state = snapshot(fixture);
+                let mut args =
+                    action_target_args(fixture, &state, "keyboard-input", addressing, "background");
+                args["keys"] = serde_json::json!(["cmd", "v"]);
+                let response = fixture.driver.call("hotkey", args);
+                assert!(
+                    !response.is_error(),
+                    "{}: background Cmd+V ({addressing}) failed: {}",
+                    fixture.name,
+                    response.raw
+                );
+                assert!(
+                    response.text().contains("key equivalent of Edit > Paste"),
+                    "{}: background Cmd+V ({addressing}) did not run Edit > Paste: {}",
+                    fixture.name,
+                    response.raw
+                );
+                assert_fixture_value(fixture, "keyboard-input", PASTED);
+                delivered_observation()
+            });
+            if failure.is_none() {
+                failure = result;
+            }
+        }
+    }
+    let filtered = ["CUA_E2E_HARNESS_FILTER", "CUA_E2E_CELL_FILTER"]
+        .iter()
+        .any(|name| std::env::var(name).is_ok_and(|filter| !filter.trim().is_empty()));
+    if selected == 0 && filtered {
+        eprintln!("no WebKit paste rows matched CUA_E2E_HARNESS_FILTER or CUA_E2E_CELL_FILTER");
+        return;
+    }
+    assert!(selected > 0, "no WebKit paste cells were selected");
+    resume_first_failure(failure);
+}
+
 #[test]
 #[ignore]
 fn shared_web_action_matrix_is_state_verified() {

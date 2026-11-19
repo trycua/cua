@@ -85,6 +85,7 @@ def test_release_workflow_runs_the_script_from_main_in_its_own_job() -> None:
     assert "${{ " not in job.split("run: |", 1)[1]
     assert job.index("--detach origin/main") < job.index("sync_cua_sandbox_driver_bound.py")
     assert "--auto --squash --match-head-commit" in job
+    assert 'gh pr merge "$PR" --auto --match-head-commit' in job
     # The release job must not run it (it executes release-branch code).
     assert "sync_cua_sandbox_driver_bound" not in workflow.split("\n  driver-bound:\n", 1)[0]
 

@@ -518,4 +518,6 @@ jobs:
               --json number --jq '.[0].number')
           fi
           # Re-enabled on every run, so a run that died before this line heals.
-          gh pr merge "$PR" --auto --squash --match-head-commit "$HEAD_SHA"
+          # With a merge queue on main the queue sets the method and gh refuses --squash.
+          gh pr merge "$PR" --auto --squash --match-head-commit "$HEAD_SHA" ||
+            gh pr merge "$PR" --auto --match-head-commit "$HEAD_SHA"

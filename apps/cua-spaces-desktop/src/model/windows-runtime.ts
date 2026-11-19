@@ -2,34 +2,32 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Local Spaces on Windows run in Docker Desktop (its WSL 2 engine). A clean
- * Windows 11 PC has neither, so New Space and onboarding used to stop at a
- * red line with a docs link. This finds out what is missing and fixes what
- * it can from the app:
+ * Local Spaces on Windows run in a runtime Cua Spaces manages itself: a small
+ * WSL 2 distribution with Docker inside (cua-vmm's managed runtime), like the
+ * built-in runtime on a Mac. Nothing else is installed, so New Space never
+ * offers Docker Desktop (a person who wants their own engine picks it in
+ * Settings, Runtimes). The one thing a clean PC may lack is WSL 2 itself; this
+ * finds out and fixes it from the app:
  *
- * - Docker Desktop not installed: downloads Docker's signed installer,
- *   checks its signature, and runs Docker's documented silent install
- *   (`install --quiet --accept-license --backend=wsl-2`) through one UAC
- *   prompt. The installer turns on WSL 2 itself.
- * - Installed but not running: starts it.
- * - Starting: says so; the page asks again until the engine answers.
- * - Needs a restart (Windows turned on WSL 2 or the installer said so): says so.
- * - Virtualization off in the firmware: nothing to install; says how to
- *   turn it on, or to use another computer.
+ * - WSL 2 not set up: one Windows approval prompt (UAC) runs
+ *   `wsl --install --no-distribution --web-download`, which turns on the
+ *   Windows parts and fetches the WSL package. No distribution and no Docker.
+ * - Windows waits for a restart to finish it: says so, and registers Cua
+ *   Spaces to open again by itself after the restart (RunOnce), where the
+ *   built-in runtime takes over.
+ * - Virtualization off in the firmware: nothing to install; says how to turn
+ *   it on, or to use another computer.
  *
  * Everything that touches the system goes through {@link WindowsSystem}, so
  * the decisions are tested without Windows.
  */
 
-import { createWriteStream } from "node:fs";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { execFile, spawn } from "node:child_process";
 import { join } from "node:path";
-import { Readable, Transform } from "node:stream";
-import { pipeline } from "node:stream/promises";
 
 /** What the page's fix button does (`spaces.fixRuntime {action}`). */
-export const RUNTIME_FIX_ACTIONS = ["install-docker", "start-docker", "restart-app", "open-windows-features"] as const;
+export const RUNTIME_FIX_ACTIONS = ["setup-wsl", "restart-app", "open-windows-features"] as const;
 export type RuntimeFixAction = (typeof RUNTIME_FIX_ACTIONS)[number];
 
 type ContractAction = import("../../../cua-spaces-web/src/bridge/contracts/new-space").RuntimeFixAction;
@@ -51,36 +49,29 @@ export interface WindowsFeatures {
 export interface RuntimeFix {
   /** What the button runs; null while something runs, or when only the person can act (restart, firmware). */
   action: RuntimeFixAction | null;
-  /** The button's label ("Install Docker Desktop"). */
+  /** The button's label. */
   label: string;
   /** One line under the button: what happens, how long, what Windows asks. */
   note: string | null;
-  /** Something runs now (download, install, start): the page polls the options until it settles. */
+  /** Something runs now: the page polls the options until it settles. */
   busy: boolean;
-  /** Terms the action accepts (Docker's), linked beside the note. */
+  /** Always null: nothing here has terms to accept. Kept for the page's contract. */
   termsUrl: string | null;
 }
 
 /** What the probe found out about this PC. */
 export interface WindowsRuntimeFacts {
-  /** `Docker Desktop.exe` is installed. */
-  dockerInstalled: boolean;
-  /** Its process runs (the engine may still be starting). */
-  dockerRunning: boolean;
+  /** `wsl.exe --version` answers: the WSL package is there. */
+  wslReady: boolean;
   /** Hardware virtualization: on (or a hypervisor already runs), off in the firmware, or unknown. */
   virtualization: "on" | "off" | "unknown";
-  /** Windows waits for a restart to finish turning on WSL 2 / the install. */
+  /** Windows waits for a restart to finish turning on WSL 2. */
   restartPending: boolean;
   features: WindowsFeatures;
 }
 
 /** Where a fix the app started is now. */
-export type FixPhase =
-  | { kind: "idle" }
-  | { kind: "downloading"; percent: number | null }
-  | { kind: "installing" }
-  | { kind: "starting"; since: number }
-  | { kind: "failed"; message: string };
+export type FixPhase = { kind: "idle" } | { kind: "installing" } | { kind: "failed"; message: string };
 
 /** The reason and the fix New Space shows when no local runtime is ready. */
 export interface WindowsRuntimeAdvice {
@@ -88,15 +79,10 @@ export interface WindowsRuntimeAdvice {
   fix: RuntimeFix | null;
 }
 
-const DOCKER_TERMS = "https://www.docker.com/legal/docker-subscription-service-agreement/";
-/** After this long "starting", say where to look instead of waiting quietly. */
-export const START_PATIENCE_MS = 3 * 60_000;
-
 /**
- * The reason and the fix for a PC where no local runtime answered.
- * `containerDetail` is the runtime doctor's word for the container engine.
+ * The reason and the fix for a PC where no local runtime is ready.
  */
-export function windowsRuntimeAdvice(facts: WindowsRuntimeFacts, phase: FixPhase, now: number): WindowsRuntimeAdvice {
+export function windowsRuntimeAdvice(facts: WindowsRuntimeFacts, phase: FixPhase): WindowsRuntimeAdvice {
   if (facts.virtualization === "off") {
     return {
       reason:
@@ -104,151 +90,74 @@ export function windowsRuntimeAdvice(facts: WindowsRuntimeFacts, phase: FixPhase
       fix: null,
     };
   }
-  switch (phase.kind) {
-    case "downloading":
-      return {
-        reason: "Getting Docker Desktop, which runs local Spaces on Windows.",
-        fix: {
-          action: null,
-          label: phase.percent === null ? "Downloading Docker Desktop…" : `Downloading Docker Desktop… ${phase.percent}%`,
-          note: "About 600 MB. Windows asks for administrator approval when it's in.",
-          busy: true,
-          termsUrl: null,
-        },
-      };
-    case "installing":
-      return {
-        reason: "Installing Docker Desktop, which runs local Spaces on Windows.",
-        fix: { action: null, label: "Installing Docker Desktop…", note: "Approve the Windows prompt. This takes a few minutes.", busy: true, termsUrl: null },
-      };
-    case "failed":
-      return {
-        reason: phase.message,
-        fix: facts.dockerInstalled ? startFix() : installFix(),
-      };
-    default:
-      break;
+  if (phase.kind === "installing") {
+    return {
+      reason: "Setting up Linux support for local Spaces.",
+      fix: { action: null, label: "Setting up…", note: "Approve the Windows prompt. This takes a minute or two.", busy: true, termsUrl: null },
+    };
   }
+  if (phase.kind === "failed") return { reason: phase.message, fix: setupFix() };
   if (facts.restartPending) {
     return {
-      reason: "Restart this PC to finish setting up Docker Desktop (Windows turned on WSL 2). Then open Cua Spaces again.",
+      reason: "Restart this PC to finish setting up Linux support. Cua Spaces opens again by itself and carries on.",
       fix: null,
     };
   }
-  if (!facts.dockerInstalled) {
-    return {
-      reason: "Local Spaces on Windows run in Docker Desktop, which isn't installed yet.",
-      fix: installFix(),
-    };
-  }
-  const disabled = [
+  const off = [
     facts.features.virtualMachinePlatform === "disabled" ? "Virtual Machine Platform" : null,
     facts.features.subsystemLinux === "disabled" ? "Windows Subsystem for Linux" : null,
   ].filter(Boolean);
-  if (disabled.length) {
+  if (!facts.wslReady || off.length) {
     return {
-      reason: `Windows features are turned off: ${disabled.join(", ")}.`,
-      fix: {
-        action: "open-windows-features",
-        label: "Open Windows Features",
-        note: "Turn on the listed features, then restart this PC and open Cua Spaces again.",
-        busy: false,
-        termsUrl: null,
-      },
+      reason: "Local Spaces run on Windows' built-in Linux support (WSL 2), which isn't set up on this PC yet.",
+      fix: setupFix(),
     };
   }
-  if (facts.dockerRunning || phase.kind === "starting") {
-    const waited = phase.kind === "starting" ? now - phase.since : 0;
-    return {
-      reason:
-        waited > START_PATIENCE_MS
-          ? "Docker Desktop is still starting. If it shows a window (terms, sign-in or an update), finish it there; this updates when its engine runs."
-          : "Docker Desktop is starting. This updates when its engine runs (about a minute).",
-      fix: { action: null, label: "Waiting for Docker Desktop…", note: null, busy: true, termsUrl: null },
-    };
-  }
-  return { reason: "Docker Desktop is installed but not running.", fix: startFix() };
+  return { reason: "Cua Spaces is preparing its local runtime.", fix: null };
 }
 
-function installFix(): RuntimeFix {
+function setupFix(): RuntimeFix {
   return {
-    action: "install-docker",
-    label: "Install Docker Desktop",
-    note: "About 600 MB. Windows asks for administrator approval (Windows PowerShell) and may need a restart. Installing accepts Docker's subscription terms; Docker Desktop is free for personal use and small businesses.",
+    action: "setup-wsl",
+    label: "Set up Linux support",
+    note: "A small Windows component. Windows asks for administrator approval and may need a restart; Cua Spaces opens again by itself afterwards.",
     busy: false,
-    termsUrl: DOCKER_TERMS,
+    termsUrl: null,
   };
-}
-
-function startFix(): RuntimeFix {
-  return { action: "start-docker", label: "Start Docker Desktop", note: null, busy: false, termsUrl: null };
 }
 
 /* ---- The system ------------------------------------------------------------ */
 
 /** The Windows calls the fixes make (faked in tests). */
 export interface WindowsSystem {
-  exists(path: string): Promise<boolean>;
-  /** Image names of running processes, lower case. */
-  running(image: string): Promise<boolean>;
   /** PowerShell, no profile; stdout, or null when it failed. */
   powershell(script: string, timeoutMs: number): Promise<{ code: number; stdout: string; stderr: string }>;
-  download(url: string, to: string, progress: (percent: number | null) => void): Promise<void>;
   writeFile(path: string, text: string): Promise<void>;
   readFile(path: string): Promise<string>;
   launch(path: string): void;
 }
 
 /**
- * Runs elevated (one UAC prompt): Docker Desktop's documented silent install
- * with the WSL 2 backend, the signed-in user into docker-users, then the WSL
- * package when `wsl --version` says it is missing. Writes
- * `<installer exit>|<added to docker-users>|<wsl ready>` to `-Result`.
+ * Runs elevated (one UAC prompt): turns on WSL 2 and fetches its package, with
+ * no distribution. Writes `<wsl exit code>|<wsl ready>` to `-Result`.
  */
-export const ELEVATED_INSTALL_SCRIPT = `param([string]$Installer, [string]$User, [string]$Result)
+export const ELEVATED_SETUP_SCRIPT = `param([string]$Result)
 $ErrorActionPreference = 'Continue'
-$added = $false
-$wsl = $false
-$p = Start-Process -FilePath $Installer -ArgumentList 'install','--quiet','--accept-license','--backend=wsl-2' -Wait -PassThru
-$code = $p.ExitCode
-if ($code -eq 0 -or $code -eq 3010 -or $code -eq 1641) {
-  if ($User) {
-    $member = Get-LocalGroupMember -Group 'docker-users' -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq $User }
-    if (-not $member) {
-      try { Add-LocalGroupMember -Group 'docker-users' -Member $User -ErrorAction Stop; $added = $true } catch { }
-    }
-  }
-  & wsl.exe --version *> $null
-  if ($LASTEXITCODE -ne 0) {
-    & wsl.exe --install --no-distribution --web-download *> $null
-    & wsl.exe --version *> $null
-  }
-  $wsl = ($LASTEXITCODE -eq 0)
-}
-"$code|$added|$wsl" | Set-Content -LiteralPath $Result -Encoding ascii
+& wsl.exe --install --no-distribution --web-download *> $null
+$code = $LASTEXITCODE
+& wsl.exe --version *> $null
+$ready = ($LASTEXITCODE -eq 0)
+"$code|$ready" | Set-Content -LiteralPath $Result -Encoding ascii
 `;
 
 /** The elevated script's result line, or null when it never wrote one. */
-export function parseInstallResult(text: string): { installer: number; addedToGroup: boolean; wslReady: boolean } | null {
-  const [code, added, wsl] = text.trim().split("|");
+export function parseSetupResult(text: string): { code: number; wslReady: boolean } | null {
+  const [code, ready] = text.trim().split("|");
   if (code === undefined || code === "" || !/^-?\d+$/.test(code)) return null;
-  return { installer: Number(code), addedToGroup: added?.toLowerCase() === "true", wslReady: wsl?.toLowerCase() === "true" };
+  return { code: Number(code), wslReady: ready?.toLowerCase() === "true" };
 }
 
-/** `DOMAIN\\user` for docker-users (the signed-in user, not the approving administrator). */
-export function currentUser(env: NodeJS.ProcessEnv = process.env): string {
-  const user = env.USERNAME ?? "";
-  if (!user) return "";
-  return env.USERDOMAIN ? `${env.USERDOMAIN}\\${user}` : user;
-}
-
-export const DOCKER_INSTALLER_URL = "https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe";
-
-export function dockerDesktopExe(env: NodeJS.ProcessEnv = process.env): string {
-  return join(env.ProgramFiles ?? "C:\\Program Files", "Docker", "Docker", "Docker Desktop.exe");
-}
-
-/** Exit codes that mean "done, restart to finish" (Windows Installer's and Docker's). */
+/** Exit codes that mean "done, restart to finish" (Windows Installer's). */
 const RESTART_CODES = new Set([3010, 1641]);
 /** UAC declined: `Start-Process -Verb RunAs` reports ERROR_CANCELLED. */
 const CANCELLED = /cancel+ed by the user|ERROR_CANCELLED|\b1223\b/i;
@@ -257,55 +166,47 @@ const CANCELLED = /cancel+ed by the user|ERROR_CANCELLED|\b1223\b/i;
 export class WindowsRuntime {
   private phase: FixPhase = { kind: "idle" };
   private virtualization: WindowsRuntimeFacts["virtualization"] | null = null;
-  /** The installer asked for a restart (until this process ends, which a restart does). */
+  /** The setup asked for a restart (until this process ends, which a restart does). */
   private restartAsked = false;
 
   constructor(
     private readonly sys: WindowsSystem,
     private readonly tempDir: string,
-    private readonly now: () => number = Date.now,
+    private readonly appExe: string = process.execPath,
   ) {}
 
   async facts(): Promise<WindowsRuntimeFacts> {
-    const exe = dockerDesktopExe();
-    const [dockerInstalled, dockerRunning, virtualization, restartPending, features] = await Promise.all([
-      this.sys.exists(exe),
-      this.sys.running("Docker Desktop.exe"),
+    const [wslReady, virtualization, restartPending, features] = await Promise.all([
+      this.readWslReady(),
       this.readVirtualization(),
       this.restartAsked ? Promise.resolve(true) : this.readRestartPending(),
-      this.phase.kind === "downloading" || this.phase.kind === "installing" ? Promise.resolve(parseFeatures("")) : this.readFeatures(),
+      this.phase.kind === "installing" ? Promise.resolve(parseFeatures("")) : this.readFeatures(),
     ]);
-    return { dockerInstalled, dockerRunning, virtualization, restartPending, features };
+    return { wslReady, virtualization, restartPending, features };
   }
 
-  /** The advice now; a finished start (the engine answered) is the caller's to see. */
+  /** The advice now. */
   async advice(): Promise<WindowsRuntimeAdvice> {
-    const facts = await this.facts();
-    // A start that ended with Docker Desktop gone (quit, crashed): offer it again.
-    if (this.phase.kind === "starting" && !facts.dockerRunning && this.now() - this.phase.since > 20_000) this.phase = { kind: "idle" };
-    return windowsRuntimeAdvice(facts, this.phase, this.now());
+    return windowsRuntimeAdvice(await this.facts(), this.phase);
   }
 
-  /** The engine answers: forget the fix. */
+  /** A runtime answers: forget the fix. */
   settled(): void {
     this.phase = { kind: "idle" };
   }
 
   /** Runs `action` in the background; the page sees its progress in the options. */
   run(action: RuntimeFixAction): void {
-    if (this.phase.kind === "downloading" || this.phase.kind === "installing") return;
+    if (this.phase.kind === "installing") return;
     switch (action) {
       case "restart-app":
-        return;
-      case "start-docker":
-        this.start();
         return;
       case "open-windows-features":
         this.sys.launch("optionalfeatures.exe");
         return;
-      case "install-docker":
-        void this.install().catch((e: unknown) => {
-          this.phase = { kind: "failed", message: installFailedText(e) };
+      case "setup-wsl":
+        void this.setup().catch((e: unknown) => {
+          this.phase = { kind: "failed", message: setupFailedText(e) };
         });
         return;
       default: {
@@ -315,50 +216,46 @@ export class WindowsRuntime {
     }
   }
 
-  private start(): void {
-    this.sys.launch(dockerDesktopExe());
-    this.phase = { kind: "starting", since: this.now() };
-  }
-
-  private async install(): Promise<void> {
-    this.phase = { kind: "downloading", percent: null };
-    const file = join(this.tempDir, "DockerDesktopInstaller.exe");
-    await this.sys.download(DOCKER_INSTALLER_URL, file, (percent) => {
-      this.phase = { kind: "downloading", percent };
-    });
-    const sig = await this.sys.powershell(
-      `$s = Get-AuthenticodeSignature -LiteralPath '${psQuote(file)}'; "$($s.Status)|$($s.SignerCertificate.Subject)"`,
-      60_000,
-    );
-    if (!signedByDocker(sig.stdout)) throw new Error(`the downloaded installer isn't signed by Docker (${sig.stdout.trim() || sig.stderr.trim()})`);
+  private async setup(): Promise<void> {
     this.phase = { kind: "installing" };
-    // One UAC prompt for everything that needs an administrator: Docker's
-    // silent install, this user in docker-users (an administrator who isn't
-    // this user may approve the prompt) and the WSL package (Windows 11
-    // ships only its stub; Docker Desktop can't start without it).
-    const script = join(this.tempDir, "install-docker.ps1");
-    const result = join(this.tempDir, "install-docker.result");
-    await this.sys.writeFile(script, ELEVATED_INSTALL_SCRIPT);
+    // One UAC prompt for everything that needs an administrator.
+    const script = join(this.tempDir, "setup-wsl.ps1");
+    const result = join(this.tempDir, "setup-wsl.result");
+    await this.sys.writeFile(script, ELEVATED_SETUP_SCRIPT);
     await this.sys.writeFile(result, "");
-    const args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-Installer", file, "-User", currentUser(), "-Result", result]
-      .map((a) => `'${psQuote(a)}'`)
-      .join(",");
+    const args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-Result", result].map((a) => `'${psQuote(a)}'`).join(",");
     const r = await this.sys.powershell(
       `$ErrorActionPreference = 'Stop'; $p = Start-Process -FilePath 'powershell.exe' -ArgumentList ${args} -Verb RunAs -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode`,
       30 * 60_000,
     );
     if (CANCELLED.test(r.stderr) || CANCELLED.test(r.stdout)) throw new Error("cancelled");
-    const outcome = parseInstallResult(await this.sys.readFile(result).catch(() => ""));
-    if (!outcome) throw new Error(`the installer didn't finish${r.stderr.trim() ? ` (${r.stderr.trim().split(/\r?\n/)[0]})` : ""}`);
-    if (outcome.installer !== 0 && !RESTART_CODES.has(outcome.installer)) throw new Error(`the installer exited with code ${outcome.installer}`);
-    // A restart finishes it when the installer asks, when Windows has
-    // features to turn on (WSL 2), or when this user just joined docker-users.
-    if (RESTART_CODES.has(outcome.installer) || outcome.addedToGroup || !outcome.wslReady || (await this.readRestartPending())) {
+    const outcome = parseSetupResult(await this.sys.readFile(result).catch(() => ""));
+    if (!outcome) throw new Error(`the setup didn't finish${r.stderr.trim() ? ` (${r.stderr.trim().split(/\r?\n/)[0]})` : ""}`);
+    // A restart finishes it when Windows asks, or when WSL still isn't usable
+    // because Windows has features to turn on.
+    if (RESTART_CODES.has(outcome.code) || !outcome.wslReady || (await this.readRestartPending())) {
       this.restartAsked = true;
       this.phase = { kind: "idle" };
+      await this.resumeAfterRestart();
       return;
     }
-    this.start();
+    if (outcome.code !== 0) throw new Error(`Windows reported error ${outcome.code}`);
+    this.phase = { kind: "idle" };
+  }
+
+  /** Cua Spaces opens again by itself at the person's next sign-in after the restart. */
+  private async resumeAfterRestart(): Promise<void> {
+    await this.sys
+      .powershell(
+        `New-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce' -Name 'CuaSpacesResume' -Value '"${psQuote(this.appExe)}"' -PropertyType String -Force | Out-Null`,
+        15_000,
+      )
+      .catch(() => null);
+  }
+
+  private async readWslReady(): Promise<boolean> {
+    const r = await this.sys.powershell("& wsl.exe --version *> $null; exit $LASTEXITCODE", 15_000).catch(() => null);
+    return r?.code === 0;
   }
 
   private async readFeatures(): Promise<WindowsFeatures> {
@@ -433,22 +330,17 @@ export function parseFeatures(stdout: string): WindowsFeatures {
   };
 }
 
-export function signedByDocker(stdout: string): boolean {
-  const [status, subject = ""] = stdout.trim().split("|");
-  return status === "Valid" && /\bO="?Docker Inc/i.test(subject);
-}
-
-export function installFailedText(e: unknown): string {
+export function setupFailedText(e: unknown): string {
   const raw = e instanceof Error ? e.message : String(e);
-  if (raw === "cancelled") return "Docker Desktop wasn't installed: the Windows prompt was declined. Try again and choose Yes.";
-  return `Couldn't install Docker Desktop: ${raw}. Try again, or install it from https://docs.docker.com/desktop/setup/install/windows-install/.`;
+  if (raw === "cancelled") return "Linux support wasn't set up: the Windows prompt was declined. Try again and choose Yes.";
+  return `Couldn't set up Linux support: ${raw}. Try again, or run \`wsl --install --no-distribution\` in an administrator PowerShell and restart.`;
 }
 
 const psQuote = (s: string) => s.replace(/'/g, "''");
 
 /* ---- The real system ------------------------------------------------------- */
 
-export function nodeWindowsSystem(fetchImpl: typeof fetch = fetch): WindowsSystem {
+export function nodeWindowsSystem(): WindowsSystem {
   const exec = (file: string, args: string[], timeoutMs: number) =>
     new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
       execFile(file, args, { timeout: timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
@@ -457,38 +349,7 @@ export function nodeWindowsSystem(fetchImpl: typeof fetch = fetch): WindowsSyste
       });
     });
   return {
-    exists: async (path) => (await stat(path).catch(() => null)) !== null,
-    running: async (image) => {
-      const r = await exec("tasklist.exe", ["/FI", `IMAGENAME eq ${image}`, "/FO", "CSV", "/NH"], 10_000);
-      return r.stdout.toLowerCase().includes(`"${image.toLowerCase()}"`);
-    },
     powershell: (script, timeoutMs) => exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], timeoutMs),
-    async download(url, to, progress) {
-      const part = `${to}.part`;
-      await mkdir(join(to, ".."), { recursive: true });
-      await rm(part, { force: true });
-      const res = await fetchImpl(url, { redirect: "follow" });
-      if (!res.ok || !res.body) throw new Error(`download failed (HTTP ${res.status})`);
-      const total = Number(res.headers.get("content-length")) || 0;
-      let got = 0;
-      let last = -1;
-      // Progress counts in the pipeline itself: a 'data' listener on the
-      // source would start it flowing before the file is open and drop chunks.
-      const count = new Transform({
-        transform(chunk: Buffer, _enc, done) {
-          got += chunk.length;
-          const pct = total ? Math.floor((got / total) * 100) : null;
-          if (pct !== last) {
-            last = pct ?? -1;
-            progress(pct);
-          }
-          done(null, chunk);
-        },
-      });
-      await pipeline(Readable.fromWeb(res.body as import("node:stream/web").ReadableStream), count, createWriteStream(part));
-      if (total && got !== total) throw new Error(`download incomplete (${got} of ${total} bytes)`);
-      await rename(part, to);
-    },
     async writeFile(path, text) {
       await mkdir(join(path, ".."), { recursive: true });
       await writeFile(path, text, "utf8");

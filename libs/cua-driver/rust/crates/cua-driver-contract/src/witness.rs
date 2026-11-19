@@ -289,10 +289,10 @@ mod tests {
             false,
             vec![],
         );
-        assert!(witness
-            .validate()
-            .unwrap_err()
-            .contains("health_overall must be unknown"));
+        assert_eq!(
+            witness.validate(),
+            Err("health_overall must be unknown when health_report was not observed".into())
+        );
     }
 
     #[test]
@@ -309,10 +309,10 @@ mod tests {
             false,
             vec![probe],
         );
-        assert!(witness
-            .validate()
-            .unwrap_err()
-            .contains("refuses acting probe"));
+        assert_eq!(
+            witness.validate(),
+            Err("runtime witness v0 refuses acting probe get_screen_size".into())
+        );
     }
 
     #[test]
@@ -329,10 +329,10 @@ mod tests {
             false,
             vec![probe],
         );
-        assert!(witness
-            .validate()
-            .unwrap_err()
-            .contains("refuses acting probe"));
+        assert_eq!(
+            witness.validate(),
+            Err("runtime witness v0 refuses acting probe click".into())
+        );
     }
 
     #[test]
@@ -373,10 +373,10 @@ mod tests {
             false,
             vec![probe],
         );
-        assert!(witness
-            .validate()
-            .unwrap_err()
-            .contains("must not claim output schema validation"));
+        assert_eq!(
+            witness.validate(),
+            Err("Timeout probe get_screen_size must not claim output schema validation".into())
+        );
     }
 
     #[test]
@@ -421,10 +421,10 @@ mod ordering_tests {
                 diagnostic_code: None,
             }],
         );
-        assert!(witness
-            .validate()
-            .unwrap_err()
-            .contains("without observing tools/list"));
+        assert_eq!(
+            witness.validate(),
+            Err("runtime witness cannot contain probes without observing tools/list".into())
+        );
     }
 
     #[test]
@@ -458,10 +458,10 @@ mod ordering_tests {
                 },
             ],
         );
-        assert!(duplicate
-            .validate()
-            .unwrap_err()
-            .contains("duplicate probe"));
+        assert_eq!(
+            duplicate.validate(),
+            Err("runtime witness contains duplicate probe get_screen_size".into())
+        );
 
         let unsorted_capabilities = RuntimeWitnessV0::new(
             "0.14.0",
@@ -481,9 +481,12 @@ mod ordering_tests {
                 diagnostic_code: None,
             }],
         );
-        assert!(unsorted_capabilities
-            .validate()
-            .unwrap_err()
-            .contains("sorted and unique"));
+        assert_eq!(
+            unsorted_capabilities.validate(),
+            Err(
+                "runtime witness probe get_screen_size capabilities must be sorted and unique"
+                    .into()
+            )
+        );
     }
 }

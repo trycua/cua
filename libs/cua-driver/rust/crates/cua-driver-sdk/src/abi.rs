@@ -577,6 +577,7 @@ fn build_abi_executor() -> Result<AbiExecutor, String> {
 #[derive(Debug, Clone, Copy)]
 enum InvokeMode {
     Regular,
+    #[cfg(target_os = "windows")]
     TrustedAdapter,
 }
 
@@ -588,10 +589,12 @@ async fn invoke_runtime_to_json(
 ) -> Result<String, AbiFailure> {
     let shutdown_message = match mode {
         InvokeMode::Regular => "the Cua Driver SDK has been shut down",
+        #[cfg(target_os = "windows")]
         InvokeMode::TrustedAdapter => "the owning Cua Driver runtime has been shut down",
     };
     let result = match mode {
         InvokeMode::Regular => runtime.invoke(&name, arguments).await,
+        #[cfg(target_os = "windows")]
         InvokeMode::TrustedAdapter => runtime.invoke_from_trusted_adapter(&name, arguments).await,
     }
     .ok_or_else(|| AbiFailure::new(CuaDriverStatus::Shutdown, shutdown_message))?;
@@ -599,9 +602,9 @@ async fn invoke_runtime_to_json(
         .map_err(|error| AbiFailure::new(CuaDriverStatus::Internal, error.to_string()))
 }
 
-// Embedded tool invocations, including trusted adapter calls, run on the
-// ABI-owned executor rather than the caller's runtime. OperationGuard
-// preserves cancellation when a Rust caller drops its await.
+// Embedded tool invocations run on the ABI-owned executor rather than the
+// caller's runtime; on Windows that includes trusted adapter calls.
+// OperationGuard preserves cancellation when a Rust caller drops its await.
 fn start_invoke_completion(
     runtime: Arc<DriverRuntime>,
     name: String,
@@ -1608,13 +1611,34 @@ impl NativeAbiDriver {
                     .clone()
             }
         };
-        if !arguments.is_object() {
-            return Err(DriverError::InvalidArguments {
-                tool: name.into(),
-                reason: "arguments must be a JSON object".into(),
-            });
+        // Elsewhere the caller's runtime is fine, and running there keeps the
+        // ABI executor's blocking-pool threads from outliving the host.
+        #[cfg(not(target_os = "windows"))]
+        {
+            let result = runtime
+                .invoke_from_trusted_adapter(name, arguments)
+                .await
+                .ok_or(DriverError::Shutdown)?;
+            serde_json::to_value(result).map_err(|error| DriverError::Protocol {
+                reason: format!("serialize {name} trusted-adapter result: {error}"),
+            })
         }
+        // A trusted adapter's caller runs in the host's DPI context, so on
+        // Windows the call moves to the ABI executor's Per-Monitor V2 threads.
+        #[cfg(target_os = "windows")]
+        {
+            self.invoke_on_executor_from_trusted_adapter(runtime, name, arguments)
+                .await
+        }
+    }
 
+    #[cfg(target_os = "windows")]
+    async fn invoke_on_executor_from_trusted_adapter(
+        &self,
+        runtime: Arc<DriverRuntime>,
+        name: &str,
+        arguments: Value,
+    ) -> Result<Value, DriverError> {
         let (receiver, guard) = {
             let (sender, receiver) = oneshot::channel();
             let context = Box::into_raw(Box::new(CallbackContext { sender })).cast::<c_void>();

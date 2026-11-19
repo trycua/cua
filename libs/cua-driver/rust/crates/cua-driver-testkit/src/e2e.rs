@@ -1445,7 +1445,9 @@ fn validate_turn_evidence(
         return;
     }
 
-    let turn_observation = (turns.len() == 1).then_some(observed_behavior);
+    // A read-only case's oracle describes its reads, not the one action it
+    // probes, so only an action case's observation binds its sole turn.
+    let turn_observation = (require_turn && turns.len() == 1).then_some(observed_behavior);
     for turn in turns {
         validate_one_turn(&turn, cell_id, turn_observation, errors);
     }
@@ -2467,6 +2469,40 @@ mod tests {
             .expect_err("driver refusal claim must contradict delivered external oracle");
         assert!(
             errors
+                .iter()
+                .any(|error| error.contains("action-truth contradiction")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn catalog_validator_does_not_bind_a_read_only_case_oracle_to_its_probe_turn() {
+        // A fail-closed read-only case (a stale token, a windowless pid) passes
+        // as delivered when its reads hold, while its one probe is refused.
+        let (root, mut case, _, turn) = complete_turn_fixture();
+        case.driver_route = DriverRoute::AxRead;
+        let evidence = Evidence {
+            video: Some("recordings/cell-pid1-001/recording.mp4".to_owned()),
+            trajectory: Some("recordings/cell-pid1-001/trajectory.json".to_owned()),
+            ..Evidence::default()
+        };
+        let result = CaseResult::evaluate(
+            case.clone(),
+            Observation::delivered(vec![OracleKind::FixtureState], evidence),
+            Duration::from_millis(1),
+        );
+        let action_path = turn.join("action.json");
+        let mut action: Value =
+            serde_json::from_slice(&std::fs::read(&action_path).unwrap()).unwrap();
+        action["result_error"] = serde_json::json!(true);
+        action["action_truth"] = serde_json::json!({"effect": "refused", "evidence": []});
+        std::fs::write(&action_path, action.to_string()).unwrap();
+
+        let errors = validate_catalog(&[case], &[result], Some(root.path()), true)
+            .err()
+            .unwrap_or_default();
+        assert!(
+            !errors
                 .iter()
                 .any(|error| error.contains("action-truth contradiction")),
             "{errors:?}"

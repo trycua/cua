@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.16](https://github.com/trycua/cua/compare/cua-spaces-v0.38.15...cua-spaces-v0.38.16) (2026-11-19)
+
+
+### Bug Fixes
+
+* **spaces:** deliver agent messages once ([#8218](https://github.com/trycua/cua/issues/8218)) ([a88ded9](https://github.com/trycua/cua/commit/a88ded951c5e66285bc788b75fddc1c1cdff5eb0))
+
 ## [0.38.15](https://github.com/trycua/cua/compare/cua-spaces-v0.38.14...cua-spaces-v0.38.15) (2026-11-19)
 
 

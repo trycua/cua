@@ -28,6 +28,12 @@ public struct Space: Sendable, Identifiable {
         try await connection.nativeSpace(id)
     }
 
+    /// When a viewer may send this computer's clipboard here, as the record
+    /// says now (``SpacesConnection/clipboardSetting(_:)``).
+    public func clipboardSetting() async throws -> String? {
+        try await connection.clipboardSetting(id)
+    }
+
     public var id: SpaceID { info.id }
     public var provider: SpaceProvider { info.provider }
     public var state: SpaceState { info.state }

@@ -25,8 +25,9 @@ use std::sync::Arc;
 
 use crate::apps;
 use crate::ax::bindings::{
-    copy_bool_attr, copy_children, copy_number_attr, copy_string_attr, copy_url_attr,
-    kAXErrorSuccess, perform_action, set_number_attr, set_string_attr, AXUIElementRef,
+    copy_bool_attr, copy_children, copy_children_checked, copy_number_attr, copy_string_attr,
+    copy_string_attr_checked, copy_url_attr, kAXErrorSuccess, perform_action, set_number_attr,
+    set_string_attr, AXUIElementRef,
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
@@ -1187,12 +1188,47 @@ fn is_chromium_popup_owner(pid: i32) -> bool {
         || crate::browser::electron_js::ElectronJs::is_electron(pid)
 }
 
+/// Whether a Chromium `AXPopUpButton` is a `<select>` rather than a web menu
+/// button (`<button aria-haspopup="menu">`). Chromium exposes both with the
+/// same role, but only a `<select>` lists its options as `AXMenuItem` children
+/// (or an `AXMenu`) and carries the selected option as its value. A menu
+/// button has neither: its menu is drawn in the page and opening it raises no
+/// window. A value or children that could not be read (`None`), including a
+/// child whose role could not be read, count as a `<select>`, so a failed read
+/// refuses rather than sends.
+fn chromium_popup_is_select(child_roles: Option<&[Option<String>]>, value: Option<&str>) -> bool {
+    let (Some(child_roles), Some(value)) = (child_roles, value) else {
+        return true;
+    };
+    !value.is_empty()
+        || child_roles.iter().any(|role| {
+            role.as_deref()
+                .is_none_or(|role| matches!(role, "AXMenuItem" | "AXMenu"))
+        })
+}
+
 /// Whether pressing `element` would open a Chromium or Electron `<select>`
-/// menu: an `AXPopUpButton` inside web content of a Chromium renderer. The
-/// browser's own toolbar popups have no web-area ancestor and do not match.
+/// menu: an `AXPopUpButton` inside web content of a Chromium renderer that
+/// lists options. The browser's own toolbar popups have no web-area ancestor
+/// and do not match, nor does a web menu button.
 pub(super) fn is_chromium_web_select(pid: i32, window_id: u32, element: AXUIElementRef) -> bool {
     unsafe { copy_string_attr(element, "AXRole") }.as_deref() == Some("AXPopUpButton")
         && is_chromium_popup_owner(pid)
+        && {
+            let value = unsafe { copy_string_attr_checked(element, "AXValue") };
+            let child_roles: Option<Vec<Option<String>>> =
+                unsafe { copy_children_checked(element) }.map(|children| {
+                    children
+                        .into_iter()
+                        .map(|child| {
+                            let role = unsafe { copy_string_attr(child, "AXRole") };
+                            unsafe { CFRelease(child as _) };
+                            role
+                        })
+                        .collect()
+                });
+            chromium_popup_is_select(child_roles.as_deref(), value.as_deref())
+        }
         && super::type_text::target_in_web_area(
             pid,
             Some((element as usize, None)),
@@ -1463,7 +1499,38 @@ fn select_popup_option(
 
 #[cfg(test)]
 mod popup_option_tests {
-    use super::matching_option;
+    use super::{chromium_popup_is_select, matching_option};
+
+    fn roles(roles: &[&str]) -> Vec<Option<String>> {
+        roles.iter().map(|role| Some((*role).to_owned())).collect()
+    }
+
+    #[test]
+    fn a_chromium_select_is_told_apart_from_a_web_menu_button() {
+        // <select>: its options are AXMenuItem children, its value the choice.
+        assert!(chromium_popup_is_select(
+            Some(roles(&["AXMenuItem"]).as_slice()),
+            Some("One")
+        ));
+        assert!(chromium_popup_is_select(
+            Some(roles(&["AXMenu"]).as_slice()),
+            Some("")
+        ));
+        assert!(chromium_popup_is_select(Some(&[][..]), Some("One")));
+        // A value, children, or a child's role that could not be read refuse.
+        assert!(chromium_popup_is_select(Some(&[][..]), None));
+        assert!(chromium_popup_is_select(None, Some("")));
+        assert!(chromium_popup_is_select(
+            Some(&[Some("AXStaticText".to_owned()), None][..]),
+            Some("")
+        ));
+        // <button aria-haspopup="menu">: no children and no value (#7664).
+        assert!(!chromium_popup_is_select(Some(&[][..]), Some("")));
+        assert!(!chromium_popup_is_select(
+            Some(roles(&["AXImage", "AXStaticText"]).as_slice()),
+            Some("")
+        ));
+    }
 
     fn pairs(titles: &[&str]) -> Vec<(String, String)> {
         titles

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.18](https://github.com/trycua/cua/compare/cua-spaces-v0.38.17...cua-spaces-v0.38.18) (2026-11-19)
+
+
+### Bug Fixes
+
+* **spaces:** serve the loopback control server on Windows and Linux so open_space_viewer works ([#8255](https://github.com/trycua/cua/issues/8255)) ([7b7fb01](https://github.com/trycua/cua/commit/7b7fb01f05ce470847980f08570df84286f9c8ef)), closes [#8254](https://github.com/trycua/cua/issues/8254)
+
 ## [0.38.17](https://github.com/trycua/cua/compare/cua-spaces-v0.38.16...cua-spaces-v0.38.17) (2026-11-19)
 
 

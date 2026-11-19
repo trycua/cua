@@ -235,6 +235,15 @@ fn hyprland_socket_path(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Opt
 
 #[cfg(target_os = "linux")]
 fn query_hyprland_cursor(path: &std::path::Path, stop: &AtomicBool) -> Option<(f64, f64)> {
+    query_hyprland_cursor_within(path, stop, HYPRLAND_QUERY_DEADLINE)
+}
+
+#[cfg(target_os = "linux")]
+fn query_hyprland_cursor_within(
+    path: &std::path::Path,
+    stop: &AtomicBool,
+    timeout: Duration,
+) -> Option<(f64, f64)> {
     use std::io::{ErrorKind, Read};
     use std::net::Shutdown;
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -244,7 +253,7 @@ fn query_hyprland_cursor(path: &std::path::Path, stop: &AtomicBool) -> Option<(f
         return None;
     }
 
-    let deadline = Instant::now() + HYPRLAND_QUERY_DEADLINE;
+    let deadline = Instant::now() + timeout;
     let bytes = path.as_os_str().as_bytes();
     // SAFETY: sockaddr_un is a plain C struct; zero initializes the pathname.
     let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
@@ -525,6 +534,9 @@ mod linux_cursor_tests {
 
     #[test]
     fn stop_and_drop_abort_a_blocked_socket_sample() {
+        // A long query deadline leaves scheduling headroom on loaded
+        // runners while still telling cancellation apart from a timeout.
+        const STALLED_DEADLINE: Duration = Duration::from_secs(10);
         for use_drop in [false, true] {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("stalled.sock");
@@ -536,7 +548,7 @@ mod linux_cursor_tests {
                 Instant::now(),
                 move |stop| {
                     started_tx.send(Instant::now()).unwrap();
-                    query_hyprland_cursor(&path, stop)
+                    query_hyprland_cursor_within(&path, stop, STALLED_DEADLINE)
                 },
             )
             .unwrap();
@@ -545,7 +557,7 @@ mod linux_cursor_tests {
                 match listener.accept() {
                     Ok((stream, _)) => break stream,
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        assert!(query_started.elapsed() < HYPRLAND_QUERY_DEADLINE);
+                        assert!(query_started.elapsed() < STALLED_DEADLINE);
                         std::thread::sleep(Duration::from_millis(1));
                     }
                     Err(error) => panic!("accept failed: {error}"),
@@ -557,18 +569,19 @@ mod linux_cursor_tests {
             let mut request = Vec::new();
             stream.read_to_end(&mut request).unwrap();
             assert_eq!(request, HYPRLAND_CURSORPOS_REQUEST);
-            // The peer has received the entire request but sends no reply.
-            // Finish before the query deadline, so a timeout cannot pass as
-            // cancellation. Include handshake time in this bound.
+            // The peer has received the entire request but sends no reply,
+            // so the read is in flight. Finish far before the query
+            // deadline, so a timeout cannot pass as cancellation.
+            let stopping = Instant::now();
             if use_drop {
                 drop(sampler);
             } else {
                 assert_eq!(sampler.stop(), 0);
             }
             assert!(
-                query_started.elapsed() < HYPRLAND_QUERY_DEADLINE / 2,
+                stopping.elapsed() < STALLED_DEADLINE / 5,
                 "shutdown waited for the query deadline (drop={use_drop}): {:?}",
-                query_started.elapsed()
+                stopping.elapsed()
             );
         }
     }

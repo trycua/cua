@@ -96,7 +96,10 @@ through the app's scripting interface instead, still in the background, and the
 result says so; TextEdit disables Save whenever it is behind the user's window.
 A Save is verified on disk. A background `hotkey` whose combo is a menu item's
 key equivalent (⌘S, ⌘W, ⌘C, ...) in a native app takes the same route, because
-background key events never reach an app's menus; no keys are sent. By default,
+background key events never reach an app's menus; no keys are sent. With `x`,`y`
+or an element in web content, the field is focused by a pixel focus click
+first, so a background ⌘V in a WebKit app (Tauri, WKWebView) pastes into it
+through Edit > Paste. By default,
 macOS may prompt for Automation consent on first use; unanswered prompts can
 recur. Denied consent refuses the scripting action.
 

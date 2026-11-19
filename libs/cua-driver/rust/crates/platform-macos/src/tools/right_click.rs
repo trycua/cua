@@ -250,7 +250,14 @@ impl Tool for RightClickTool {
         };
 
         let fg = delivery_mode.is_foreground() && window_id.is_some();
-        let route = match super::pixel_route::resolve(pid, fg, window_id, "mouse_right_click").await
+        let route = match super::pixel_route::resolve(
+            pid,
+            fg,
+            window_id,
+            "mouse_right_click",
+            super::pixel_route::PointerGesture::Other,
+        )
+        .await
         {
             Ok(route) => route,
             Err(refusal) => return refusal,

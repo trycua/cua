@@ -46,6 +46,7 @@ pub mod engine;
 mod grant;
 mod input;
 mod keyed_gates;
+pub mod managed_policy;
 #[cfg(test)]
 pub(crate) mod mock_cdp;
 mod motion_policy;

@@ -334,39 +334,43 @@ raw background PX possible on a standard compositor.
 
 ### GNOME/Mutter
 
+- **Supported Shell versions.** The WinRects helper supports GNOME Shell 45
+  to 49. On GNOME Shell 50 or newer, keep it disabled. If an older copy is
+  still active, leave disabling it to the user or trusted host before any
+  helper diagnostics.
 - **Shell attestation.** The driver uses the WinRects helper only when its
   bus owner also owns `org.gnome.Shell` and runs a root-owned `gnome-shell`
   image that no other user can write.
 - **Helper API and window capture.** Standard window screenshots use the
   helper's `CaptureWindow` on API 9 or later, which captures the window's own
-  content even when another window covers it. With an older helper, the window image
-  is a crop of the Shell stage and shows whatever covers the window. Shell
-  loads a new helper version only at the next login, so check the version in
-  memory rather than the files on disk:
+  content even when another window covers it. With an older helper, the
+  window image is a crop of the Shell stage and shows whatever covers the
+  window. Shell loads a new helper version only at the next login, so query
+  the running helper's version, not the files on disk:
   `gdbus call --session --dest org.cua.WinRects --object-path /org/cua/WinRects --method org.cua.WinRects.GetVersion`.
 - **Window scope.** AT-SPI publishes one tree per process and can omit a
   window the Shell has mapped. Element tokens, pixel hit-tests and element
-  bounds are bound to one exact Shell window only when the driver can prove
-  which AT-SPI top-level belongs to it: geometry correlation, or the helper
-  listing that window as the process's only window. Otherwise
-  `get_window_state` returns the tree as `degraded`
-  (`accessibility_window_identity_unproven`) without tokens or frames, token
-  actions refuse with `window_scope_unproven` before any input, and a
-  background pixel click returns `background_unavailable`. Read that exact
-  window again after its other windows (often a menu or popover) close, or
-  use an authorized foreground pixel click. Without the helper, an
-  application with one AT-SPI top-level can still use the window handle from
-  the AT-SPI window list for semantic reads and actions.
-- **Focus after a foreground action.** When a foreground action reports "the
-  input was sent, but the prior focus could not be restored", focus may still
-  be on the target. Read fresh state before any retry.
+  bounds are bound to one exact Shell window only when the driver proves
+  which AT-SPI top-level belongs to it, by geometry correlation or because the
+  helper lists that window as the process's only window. Otherwise
+  `get_window_state` marks the tree `degraded`
+  (`accessibility_window_identity_unproven`) and omits element tokens. Treat
+  any returned element frames as unverified. Using a token invalidated by
+  that read returns `stale_element_token`. A token that
+  still resolves but whose window membership cannot be proved refuses with
+  `window_scope_unproven` before any input, and a background pixel click
+  returns `background_unavailable`. Read that exact window again after its
+  other windows (often a menu or popover) close, or use an authorized
+  foreground pixel click. Without the helper, an application with one AT-SPI
+  top-level can still use the window handle from the AT-SPI window list for
+  semantic reads and actions.
 - **Shell prompts.** Polkit authentication and keyring prompts are drawn by
   the Shell, not by an application window, so the helper's window list does
   not include them. While one is open, its input grab blocks ordinary pointer
   and keyboard delivery to application windows; it does not prove that an
   AT-SPI action had no effect. When full-display capture is authorized, find
-  it with `get_desktop_state` (pass `screenshot_out_file` to write the PNG to
-  disk), and leave it to the user or trusted host under the
+  the prompt with `get_desktop_state` (pass `screenshot_out_file` to write the
+  PNG to disk). Leave the prompt to the user or trusted host under the
   [permission-prompt rule](SKILL.md#rules).
 
 ### Hyprland input v3 source candidate

@@ -298,7 +298,7 @@ where
         return Err(AppsFolderLookupError::Busy);
     };
     let timed_out = permit.timeout_flag();
-    let worker = crate::dpi::spawn_blocking(move || {
+    let worker = tokio::task::spawn_blocking(move || {
         let _permit = permit;
         work()
     });

@@ -522,7 +522,7 @@ impl Tool for ExactPidWindowTargetGuard {
                         }));
                 };
                 let owner_pid =
-                    crate::dpi::spawn_blocking(move || crate::win32::window_owner_pid(window_id))
+                    tokio::task::spawn_blocking(move || crate::win32::window_owner_pid(window_id))
                         .await
                         .ok()
                         .flatten();
@@ -831,7 +831,7 @@ pub(crate) async fn restore_foreground_polling_best_effort(
         // antivirus filters tolerate better than QUERY_INFORMATION.
         // OpenProcess result is also `!Send` (HANDLE), so do the open +
         // wait + close in one blocking task.
-        let _ = crate::dpi::spawn_blocking(move || unsafe {
+        let _ = tokio::task::spawn_blocking(move || unsafe {
             if let Ok(handle) = OpenProcess(
                 PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
                 false,
@@ -1092,7 +1092,7 @@ pub(crate) async fn chromium_click_short_circuit(
     gesture: &str,
 ) -> Option<ToolResult> {
     let is_chromium =
-        crate::dpi::spawn_blocking(move || crate::input::is_chromium_target_window(hwnd))
+        tokio::task::spawn_blocking(move || crate::input::is_chromium_target_window(hwnd))
             .await
             .unwrap_or(false);
     if !is_chromium {
@@ -1104,11 +1104,11 @@ pub(crate) async fn chromium_click_short_circuit(
     let prev_fg_addr =
         unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize };
     let button_owned = button.to_string();
-    let send_result = crate::dpi::spawn_blocking(move || {
+    let send_result = tokio::task::spawn_blocking(move || {
         crate::input::send_click_synthesized(hwnd, sx, sy, count, &button_owned)
     })
     .await;
-    crate::dpi::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+    tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
     Some(match send_result {
         Ok(Ok(())) => ToolResult::text(format!(
             "✅ Sent {gesture} via SendInput to pid {pid} at screen ({sx},{sy}) (Chromium target)."
@@ -1204,7 +1204,7 @@ pub(crate) async fn winui3_background_gesture(
     count: usize,
     button: &str,
 ) -> Option<ToolResult> {
-    let is_w = crate::dpi::spawn_blocking({
+    let is_w = tokio::task::spawn_blocking({
         let admitted = admitted.clone();
         move || {
             let _admission = &admitted;
@@ -1218,7 +1218,7 @@ pub(crate) async fn winui3_background_gesture(
     }
     if count >= 2 && button == "left" {
         if let Some(idx) = idx {
-            let uia = crate::dpi::spawn_blocking({
+            let uia = tokio::task::spawn_blocking({
                 let admitted = admitted.clone();
                 move || {
                     let _admission = &admitted;

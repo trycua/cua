@@ -550,7 +550,6 @@ pub(crate) fn screenshot_window_click_target(
 }
 
 fn screenshot_window_mapped(hwnd: u64) -> Result<(Vec<u8>, bool, Option<FrameGeometry>)> {
-    crate::dpi::check_owned_thread().map_err(anyhow::Error::msg)?;
     match unsafe { screenshot_window_bytes_with_occlusion_unsafe(hwnd) } {
         Ok(capture) => Ok(capture),
         Err(primary_error) => {
@@ -896,7 +895,6 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(
 
 /// Capture the primary display (full screen), returning raw PNG bytes.
 pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
-    crate::dpi::check_owned_thread().map_err(anyhow::Error::msg)?;
     unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
         // Under Per-Monitor V2 DPI awareness, GetSystemMetrics returns

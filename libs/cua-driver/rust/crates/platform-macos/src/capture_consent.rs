@@ -28,10 +28,11 @@
 //! alert pop over the user's window in the middle of background work.
 //!
 //! A capture that `permissions grant` verified for this bundle also counts as
-//! consent when macOS holds this daemon responsible for itself: the grant's
-//! probe frame already raised the alert for the bundle. On macOS 26.6 a daemon
-//! can find no entry for the bundle after that grant (#6831), so the approvals
-//! file alone would block every capture the user just allowed.
+//! consent when the grant recorded that its probe frame raised the alert for
+//! the bundle itself and macOS holds this daemon responsible for itself. On
+//! macOS 26.6 a daemon can find no entry for the bundle after that grant
+//! (#6831), so the approvals file alone would block every capture the user
+//! just allowed.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -132,7 +133,7 @@ fn consent_state(
     bundle_id: Option<&str>,
     evidence: Option<&DirectCaptureEvidenceStore>,
 ) -> ConsentState {
-    if evidence.is_some_and(|store| store.load().is_some()) {
+    if evidence.is_some_and(DirectCaptureEvidenceStore::records_consent_alert) {
         return ConsentState::Recorded;
     }
     let bytes = match std::fs::read(approvals) {
@@ -232,7 +233,7 @@ fn app_bundle_of(executable: &Path) -> Option<PathBuf> {
 }
 
 /// macOS 15 introduced the direct-capture consent.
-fn macos_has_direct_capture_consent() -> bool {
+pub(crate) fn macos_has_direct_capture_consent() -> bool {
     crate::tools::macos_product_version()
         .and_then(|version| version.split('.').next()?.parse::<u32>().ok())
         .is_some_and(|major| major >= 15)
@@ -376,7 +377,19 @@ mod tests {
             ConsentState::Missing
         );
 
-        evidence.record_now().expect("record grant verification");
+        // A grant on macOS 14, or by a process answering to another app,
+        // never raised this bundle's alert.
+        evidence
+            .record_now(false)
+            .expect("record grant verification");
+        assert_eq!(
+            consent_state(&file, bundle, id, Some(&evidence)),
+            ConsentState::Missing
+        );
+
+        evidence
+            .record_now(true)
+            .expect("record grant verification");
         assert_eq!(
             consent_state(&file, bundle, id, Some(&evidence)),
             ConsentState::Recorded

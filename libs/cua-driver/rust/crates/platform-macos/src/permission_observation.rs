@@ -21,6 +21,10 @@ struct PersistedVerification {
     source: String,
     verified_at_unix_seconds: i64,
     bundle_id: String,
+    /// The probe raised the direct-capture consent alert for this bundle
+    /// itself: macOS 15 or later, with the bundle its own responsible process.
+    #[serde(default)]
+    consent_alert_raised: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -37,22 +41,20 @@ impl DirectCaptureEvidenceStore {
         }
     }
 
-    pub(crate) fn record_now(&self) -> Result<DirectCaptureVerification, String> {
-        self.record_at(time::OffsetDateTime::now_utc().unix_timestamp())?;
+    pub(crate) fn record_now(
+        &self,
+        consent_alert_raised: bool,
+    ) -> Result<DirectCaptureVerification, String> {
+        self.record_at(
+            time::OffsetDateTime::now_utc().unix_timestamp(),
+            consent_alert_raised,
+        )?;
         self.load()
             .ok_or_else(|| "recorded direct-capture verification did not validate".to_owned())
     }
 
     pub(crate) fn load(&self) -> Option<DirectCaptureVerification> {
-        let bytes = std::fs::read(&self.path).ok()?;
-        let record: PersistedVerification = serde_json::from_slice(&bytes).ok()?;
-        if record.schema_version != SCHEMA_VERSION
-            || record.source != SOURCE
-            || record.verified_at_unix_seconds <= 0
-            || record.bundle_id != self.bundle_id
-        {
-            return None;
-        }
+        let record = self.load_record()?;
         let verified_at =
             time::OffsetDateTime::from_unix_timestamp(record.verified_at_unix_seconds)
                 .ok()?
@@ -65,6 +67,26 @@ impl DirectCaptureEvidenceStore {
         })
     }
 
+    /// Whether a valid verification says its probe already raised this
+    /// bundle's own consent alert.
+    pub(crate) fn records_consent_alert(&self) -> bool {
+        self.load_record()
+            .is_some_and(|record| record.consent_alert_raised)
+    }
+
+    fn load_record(&self) -> Option<PersistedVerification> {
+        let bytes = std::fs::read(&self.path).ok()?;
+        let record: PersistedVerification = serde_json::from_slice(&bytes).ok()?;
+        if record.schema_version != SCHEMA_VERSION
+            || record.source != SOURCE
+            || record.verified_at_unix_seconds <= 0
+            || record.bundle_id != self.bundle_id
+        {
+            return None;
+        }
+        Some(record)
+    }
+
     pub(crate) fn clear(&self) -> Result<(), String> {
         match std::fs::remove_file(&self.path) {
             Ok(()) => Ok(()),
@@ -73,7 +95,11 @@ impl DirectCaptureEvidenceStore {
         }
     }
 
-    fn record_at(&self, verified_at_unix_seconds: i64) -> Result<(), String> {
+    fn record_at(
+        &self,
+        verified_at_unix_seconds: i64,
+        consent_alert_raised: bool,
+    ) -> Result<(), String> {
         if verified_at_unix_seconds <= 0 {
             return Err("verification timestamp is unavailable".to_owned());
         }
@@ -88,6 +114,7 @@ impl DirectCaptureEvidenceStore {
             source: SOURCE.to_owned(),
             verified_at_unix_seconds,
             bundle_id: self.bundle_id.clone(),
+            consent_alert_raised,
         };
         write_json_atomic(&self.path, &record)
     }
@@ -131,7 +158,9 @@ mod tests {
     fn verification_round_trips_with_honest_consent_provenance() {
         let temp = tempfile::tempdir().expect("tempdir");
         let store = store(temp.path().join("verification.json"));
-        store.record_at(VERIFIED_AT).expect("record verification");
+        store
+            .record_at(VERIFIED_AT, false)
+            .expect("record verification");
 
         assert_eq!(
             store.load(),
@@ -153,6 +182,7 @@ mod tests {
             source: SOURCE.to_owned(),
             verified_at_unix_seconds: VERIFIED_AT,
             bundle_id: RELEASE_BUNDLE_ID.to_owned(),
+            consent_alert_raised: true,
         };
         let invalid_records = [
             PersistedVerification {
@@ -180,14 +210,45 @@ mod tests {
             )
             .expect("write invalid record");
             assert_eq!(store.load(), None);
+            assert!(!store.records_consent_alert());
         }
+    }
+
+    #[test]
+    fn only_records_that_raised_the_alert_count_as_consent() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("verification.json");
+        let store = store(path.clone());
+
+        store
+            .record_at(VERIFIED_AT, true)
+            .expect("record verification");
+        assert!(store.records_consent_alert());
+        store
+            .record_at(VERIFIED_AT, false)
+            .expect("record verification");
+        assert!(store.load().is_some());
+        assert!(!store.records_consent_alert());
+
+        // Written before the field existed.
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"schema_version":{SCHEMA_VERSION},"source":"{SOURCE}","verified_at_unix_seconds":{VERIFIED_AT},"bundle_id":"{RELEASE_BUNDLE_ID}"}}"#
+            ),
+        )
+        .expect("write legacy record");
+        assert!(store.load().is_some());
+        assert!(!store.records_consent_alert());
     }
 
     #[test]
     fn clear_removes_existing_evidence_and_tolerates_absence() {
         let temp = tempfile::tempdir().expect("tempdir");
         let store = store(temp.path().join("verification.json"));
-        store.record_at(VERIFIED_AT).expect("record verification");
+        store
+            .record_at(VERIFIED_AT, true)
+            .expect("record verification");
 
         store.clear().expect("clear verification");
         store.clear().expect("clear absent verification");

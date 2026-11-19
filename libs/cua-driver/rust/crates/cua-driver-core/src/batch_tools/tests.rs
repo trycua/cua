@@ -737,6 +737,54 @@ async fn click_step_refuses_null_target_and_button_five() {
     assert!(text(&refused).contains("/button"), "{}", text(&refused));
 }
 
+// #8090: a step's own typed window target names its window; the batch's
+// window and an earlier step's window must not be added beside it.
+#[tokio::test]
+async fn a_typed_window_target_step_ignores_the_batch_window() {
+    let harness = Harness::new();
+    let result = harness
+        .run(json!({
+            "pid": 4090,
+            "window_id": 7,
+            "steps": [{"tool": "hotkey", "args": {
+                "target": {"kind": "window", "pid": 4090, "window_id": 7},
+                "keys": ["ctrl", "s"],
+            }}],
+        }))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    let call = harness.last("hotkey");
+    assert_eq!(call["pid"], 4090);
+    assert_eq!(call["window_id"], 7);
+    assert_eq!(call["scope"], "window");
+}
+
+#[tokio::test]
+async fn a_typed_window_target_step_after_a_token_step_runs() {
+    let harness = Harness::new();
+    let result = harness
+        .run(json!({
+            "steps": [
+                {"tool": "click", "args": {"element_token": "s00000001:3"}},
+                {"tool": "hotkey", "args": {
+                    "target": {"kind": "window", "pid": 4091, "window_id": 8},
+                    "keys": ["ctrl", "s"],
+                }},
+            ],
+            "observe": {},
+        }))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    assert_eq!(harness.hits("click"), 1);
+    let call = harness.last("hotkey");
+    assert_eq!(call["pid"], 4091);
+    assert_eq!(call["window_id"], 8);
+    // The end read looks at the window the last step targeted.
+    let observed = harness.last("get_window_state");
+    assert_eq!(observed["pid"], 4091);
+    assert_eq!(observed["window_id"], 8);
+}
+
 #[cfg(test)]
 #[path = "reliability_tests.rs"]
 mod reliability_tests;

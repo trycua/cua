@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.6](https://github.com/trycua/cua/compare/cua-sdk-v0.28.5...cua-sdk-v0.28.6) (2026-11-19)
+
+
+### Bug Fixes
+
+* **cua-vmm:** wait for a starting container engine, name and retry its failed pings ([#8241](https://github.com/trycua/cua/issues/8241)) ([fd4e019](https://github.com/trycua/cua/commit/fd4e01991b42350dc8cf0e807c9f211ada44e0bd))
+
 ## [0.28.5](https://github.com/trycua/cua/compare/cua-sdk-v0.28.4...cua-sdk-v0.28.5) (2026-11-19)
 
 

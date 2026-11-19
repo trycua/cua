@@ -116,6 +116,20 @@ Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
   Out-of-image points are rejected, never moved to an image edge. Other dispatched clicks whose markers
   cannot be resolved or rendered remain evidence failures.
 
+## What the recording folder contains
+
+`session.json` sits next to the turn folders and describes the whole
+recording:
+
+- `schema_version`: `1`.
+- `started_at_unix_ms`: the wall-clock time recording started, in Unix
+  epoch milliseconds. Stopping the recording does not change it.
+- `started_at_monotonic_ms`: the same value, kept for readers of the
+  original schema. Despite its name, it is not a monotonic clock reading.
+- `video`: whether `recording.mp4` was captured and, after stop, its
+  duration and finalization.
+- `cursor`: whether `cursor.jsonl` was sampled and how many samples landed.
+
 ## Replay is a new action sequence
 
 `replay_trajectory` is deprecated and will be removed in the first Cua Driver

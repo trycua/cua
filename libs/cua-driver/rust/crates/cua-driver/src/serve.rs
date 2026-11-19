@@ -681,6 +681,21 @@ fn prepare_embedded_socket_path(
     }
 }
 
+/// Resolve once an update has replaced the executable this daemon runs.
+/// macOS checks the TCC grants of a daemon left running the old image against
+/// an install that is gone, so its permission gate never opens (#7461). The
+/// daemon exits instead; launchd or the next client launch starts the new one.
+#[cfg(target_os = "macos")]
+async fn wait_for_executable_replacement() {
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
+    loop {
+        interval.tick().await;
+        if platform_macos::running_image::was_replaced() {
+            return;
+        }
+    }
+}
+
 #[cfg(target_os = "macos")]
 /// Mark whether the macOS first-launch gate is still waiting for TCC grants.
 /// The daemon socket and lifecycle diagnostics remain reachable, but the
@@ -1071,6 +1086,17 @@ pub async fn run_serve(
         }
     };
     tokio::pin!(parent_liveness);
+    // An embedded host owns this process's lifetime, so only a standalone
+    // daemon steps aside for an updated install.
+    let executable_replaced = async {
+        #[cfg(target_os = "macos")]
+        if !embedded {
+            wait_for_executable_replacement().await;
+            return;
+        }
+        std::future::pending::<()>().await;
+    };
+    tokio::pin!(executable_replaced);
 
     // Idle-session and recording maintenance is owned by the SDK runtime so
     // direct embedded applications and daemon-backed clients behave alike.
@@ -1473,6 +1499,12 @@ pub async fn run_serve(
             }
             _ = &mut parent_liveness => {
                 eprintln!("Cua Driver embedded host closed its lifetime pipe; shutting down.");
+                break;
+            }
+            _ = &mut executable_replaced => {
+                eprintln!(
+                    "Cua Driver was updated on disk; shutting down so the next launch runs the new install."
+                );
                 break;
             }
         }
@@ -2728,7 +2760,7 @@ mod socket_tests {
 
     #[test]
     fn every_local_service_socket_is_forced_private() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
         let socket = directory.path().join("driver.sock");
         let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
         std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o770)).unwrap();
@@ -2742,7 +2774,7 @@ mod socket_tests {
 
     #[test]
     fn a_second_standalone_launch_cannot_take_a_held_socket() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
         let socket = directory.path().join("driver.sock");
         let socket = socket.to_str().unwrap();
         let first = super::claim_standalone_socket(socket).unwrap();
@@ -2758,7 +2790,7 @@ mod socket_tests {
 
     #[test]
     fn cleanup_preserves_a_replacement_socket() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
         let socket = directory.path().join("driver.sock");
         let first = std::os::unix::net::UnixListener::bind(&socket).unwrap();
         let first_identity = socket_identity(socket.to_str().unwrap()).unwrap();

@@ -54,24 +54,45 @@ Next: make a VM from it, then start it. Creating a VM does not boot it.
 ## Create, start and ssh in
 
 ```bash skip="no-runner"
-hoy create demo --image macos-26.5.2
+hoy create demo --image macos-27.2.1 --window
 hoy start demo --wait ready
 hoy ssh demo
 ```
 
+Use the image name that `hoy image create` printed. It depends on the newest
+macOS your Mac supports, for example `macos-26.6.2` on a Mac with macOS 26.
+`hoy images` lists the names you have.
+
 - `hoy create` clones the image in seconds and uses no extra disk until the
   guest writes. It prints `created demo (stopped)` and the command to start it:
-  creating a VM does not boot it. Use the image name that `hoy images` shows: a
-  plain name always means the newest image of that name that passed its tests.
+  creating a VM does not boot it. A plain image name always means the newest
+  image of that name that passed its tests. `--window` gives the VM a desktop
+  you can open (see below). You choose it when you create the VM; it can't be
+  added later, so a VM made without it has no desktop to open.
 - `hoy start --wait ready` boots the VM and returns when ssh answers.
 - `hoy ssh demo` opens a shell in the VM. It uses the VM's own address, user and
   key, so you do not copy any of them. `hoy ssh demo -- uname -a` runs one
   command and exits with its exit code.
 
 `hoy create` also takes `--cpu`, `--memory 8G` and `--disk 150G` (the disk only
-grows). Add `--vnc` to get a desktop you can open with `hoy vnc demo`, or
-`--profile headless` for a VM with no desktop session. Every option is in the
-[CLI reference](/hoy/guides/cli-reference).
+grows). Add `--profile headless` for a VM with no desktop session. Every
+option is in the [CLI reference](/hoy/guides/cli-reference).
+
+## Open its desktop
+
+```bash skip="no-runner"
+hoy vnc demo
+```
+
+This opens the running VM's desktop in Screen Sharing. Screen Sharing asks for
+a password: Hoy has copied it to the clipboard, so paste it with Command-V and
+press Return. `hoy start demo --window` starts the VM and opens its desktop in
+one step. Both stay in the foreground while the desktop is open; press Ctrl-C
+in the terminal, or close the viewer, to end them. The VM keeps running.
+
+Both need a VM created with `--window` (or `--vnc`, the same thing). For a VM
+created without it, they stop with exit code 5 and say the VM has no VNC
+console.
 
 `hoy exec demo -- sw_vers` runs one command in the guest and exits with its exit
 code. `hoy restart demo` reboots the guest from inside.

@@ -301,6 +301,26 @@ fn already_front(observation: ExactWindowObservation, pid: i32, window_id: u32) 
             .is_none_or(|front| front == pid)
 }
 
+/// The early return for a window that is already front. Every read in an
+/// observation is WindowServer or AX state, so AppKit can still hold another
+/// app active (as during a relaunch), and AX focus can hold while the NSWindow
+/// is not key, which leaves native menu commands disabled. `request` asks for
+/// both again; the observation after it must still be already front, or the
+/// caller takes the full activation path.
+fn confirm_already_front(
+    pid: i32,
+    window_id: u32,
+    mut observe: impl FnMut() -> ExactWindowObservation,
+    request: impl FnOnce() -> bool,
+) -> Option<(bool, ExactWindowObservation)> {
+    if !already_front(observe(), pid, window_id) {
+        return None;
+    }
+    let request_accepted = request();
+    let confirmed = observe();
+    already_front(confirmed, pid, window_id).then_some((request_accepted, confirmed))
+}
+
 fn wait_for_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
     let deadline = Instant::now() + VERIFY_TIMEOUT;
     let mut stable_since = None;
@@ -520,20 +540,19 @@ impl BringToFrontTool {
                 }));
             }
 
-            let observed = observe_exact_window(pid, window_id);
-            if already_front(observed, pid, window_id) {
-                // AX focus can hold while AppKit has not made the NSWindow
-                // key, which leaves native menu commands disabled. Re-assert
-                // native key; nothing else needs activating or settling.
-                let native_key_requested =
-                    crate::input::skylight::make_exact_window_key(pid, window_id);
-                return exact_result(
-                    pid,
-                    window_id,
-                    "already_front",
-                    native_key_requested,
-                    observed,
-                );
+            if let Some((request_accepted, confirmed)) = confirm_already_front(
+                pid,
+                window_id,
+                || observe_exact_window(pid, window_id),
+                || {
+                    let native_key_requested =
+                        crate::input::skylight::make_exact_window_key(pid, window_id);
+                    let cocoa_accepted =
+                        unsafe { app.activateWithOptions(NSApplicationActivationOptions::empty()) };
+                    native_key_requested || cocoa_accepted
+                },
+            ) {
+                return exact_result(pid, window_id, "already_front", request_accepted, confirmed);
             }
 
             // The persistent kCPSNoWindows request owns process activation
@@ -876,7 +895,7 @@ mod tests {
     }
 
     #[test]
-    fn a_window_server_front_that_appkit_does_not_share_still_activates() {
+    fn a_front_process_pid_other_than_the_window_owner_still_activates() {
         assert!(!already_front(
             observation(Some(515), Some(true), Some(7), Some(7), true),
             42,
@@ -887,6 +906,50 @@ mod tests {
             42,
             7
         ));
+    }
+
+    #[test]
+    fn a_window_that_loses_the_front_during_the_requests_takes_the_full_path() {
+        let front = contested_observation(Some(7), Some(7), Some(7));
+        let sibling_on_top = contested_observation(Some(7), Some(8), Some(8));
+
+        let mut reads = [front, sibling_on_top].into_iter();
+        let mut requested = false;
+        let confirmed = confirm_already_front(
+            42,
+            7,
+            || reads.next().unwrap(),
+            || {
+                requested = true;
+                true
+            },
+        );
+        assert_eq!(confirmed, None);
+        assert!(requested);
+
+        let mut reads = [front, front].into_iter();
+        assert_eq!(
+            confirm_already_front(42, 7, || reads.next().unwrap(), || true),
+            Some((true, front))
+        );
+
+        let mut requested = false;
+        assert_eq!(
+            confirm_already_front(
+                42,
+                7,
+                || sibling_on_top,
+                || {
+                    requested = true;
+                    true
+                }
+            ),
+            None
+        );
+        assert!(
+            !requested,
+            "a window that is not front sends no early requests"
+        );
     }
 
     #[test]

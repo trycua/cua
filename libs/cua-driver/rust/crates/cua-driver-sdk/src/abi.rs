@@ -563,20 +563,29 @@ fn build_abi_executor() -> Result<AbiExecutor, String> {
 
     // Probe both async workers and one blocking worker so an OS without
     // Per-Monitor V2 fails creation instead of returning virtualized pixels.
-    for _ in 0..2 {
-        thread_ready
+    let probe = (|| {
+        for _ in 0..2 {
+            thread_ready
+                .recv_timeout(Duration::from_secs(5))
+                .map_err(|error| format!("start Cua Driver ABI async worker: {error}"))?;
+        }
+        let (blocking_started, blocking_ready) = std::sync::mpsc::channel();
+        runtime.spawn_blocking(move || {
+            let _ = blocking_started.send(());
+        });
+        blocking_ready
             .recv_timeout(Duration::from_secs(5))
-            .map_err(|error| format!("start Cua Driver ABI async worker: {error}"))?;
-    }
-    let (blocking_started, blocking_ready) = std::sync::mpsc::channel();
-    runtime.spawn_blocking(move || {
-        let _ = blocking_started.send(());
-    });
-    blocking_ready
-        .recv_timeout(Duration::from_secs(5))
-        .map_err(|error| format!("start Cua Driver ABI blocking worker: {error}"))?;
-    if let Some(error) = dpi_failure.get() {
-        return Err(error.clone());
+            .map_err(|error| format!("start Cua Driver ABI blocking worker: {error}"))?;
+        match dpi_failure.get() {
+            Some(error) => Err(error.clone()),
+            None => Ok(()),
+        }
+    })();
+    if let Err(error) = probe {
+        // Creation can run inside a host's Tokio task, where dropping a
+        // runtime panics; release this one without blocking instead.
+        runtime.shutdown_background();
+        return Err(error);
     }
     Ok(AbiExecutor {
         runtime,

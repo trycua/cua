@@ -3147,7 +3147,10 @@ mod tests {
                 && error.contains("classified state_capture_disabled")
         }));
 
-        let trajectory = turn.parent().expect("recording dir").join("trajectory.json");
+        let trajectory = turn
+            .parent()
+            .expect("recording dir")
+            .join("trajectory.json");
         let mut manifest = read_json_value(&trajectory).expect("read trajectory");
         manifest["accessibility_tree"] = Value::String("disabled".to_owned());
         std::fs::write(&trajectory, serde_json::to_vec(&manifest).expect("encode"))

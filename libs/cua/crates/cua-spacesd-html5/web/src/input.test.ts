@@ -3,7 +3,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import { chord, mapBeforeInput, mapKey, shortcutKey, type KeyLike } from "./input";
+import type { InteractiveInputEvent } from "./core/mediaWire";
+import { chord, InputController, mapBeforeInput, mapKey, shortcutKey, type KeyLike } from "./input";
 
 const key = (over: Partial<KeyLike>): KeyLike => ({
   key: "a",
@@ -42,6 +43,32 @@ describe("keyboard mapping", () => {
     const mac = { metaAsControl: true };
     expect(mapKey(key({ key: "v", code: "KeyV", metaKey: true }), "down", mac)).toMatchObject({ key: "v", modifiers: ["control"] });
     expect(mapKey(key({ key: "Meta", code: "MetaLeft", metaKey: true }), "down", mac)).toMatchObject({ key: "control" });
+  });
+
+  it("sends the right Cmd held alone as Super, the left as Ctrl", () => {
+    const surface = document.createElement("div");
+    const sent: InteractiveInputEvent[] = [];
+    const input = new InputController({ surface, screen: () => surface, emit: (e) => sent.push(e), keyOptions: () => ({ metaAsControl: true }) });
+    const press = (type: string, init: KeyboardEventInit) => input.textarea.dispatchEvent(new KeyboardEvent(type, { cancelable: true, ...init }));
+    press("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
+    press("keydown", { key: "q", code: "KeyQ", metaKey: true });
+    press("keyup", { key: "q", code: "KeyQ", metaKey: true });
+    press("keyup", { key: "Meta", code: "MetaRight" });
+    press("keydown", { key: "Meta", code: "MetaLeft", metaKey: true });
+    press("keydown", { key: "w", code: "KeyW", metaKey: true });
+    press("keyup", { key: "w", code: "KeyW", metaKey: true });
+    press("keyup", { key: "Meta", code: "MetaLeft" });
+    input.dispose();
+    expect(sent.map((e) => (e.kind === "key" ? `${[...e.modifiers, e.key].join("+")}:${e.state}` : e.kind))).toEqual([
+      "meta:down",
+      "command+q:down",
+      "command+q:up",
+      "meta:up",
+      "control:down",
+      "control+w:down",
+      "control+w:up",
+      "control:up",
+    ]);
   });
 
   it("treats AltGr and IME composition as text", () => {

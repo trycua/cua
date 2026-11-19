@@ -166,6 +166,30 @@ private func pointerEvents(in text: String) -> [[String: Any]] {
         #expect(OfflineStreamSourceProvider().commandAsControl == false)
     }
 
+    /// The right ⌘ held alone goes to a Linux or Windows guest as Super
+    /// (`command` on the wire) while the left ⌘ still goes as Control, so
+    /// a Super-driven desktop such as Hyprland can be used from a Mac.
+    @Test func rightCommandGoesAsSuperToALinuxGuest() {
+        let left = NSEvent.ModifierFlags(rawValue: NSEvent.ModifierFlags.command.rawValue | 0x08)
+        let right = NSEvent.ModifierFlags(rawValue: NSEvent.ModifierFlags.command.rawValue | 0x10)
+        let both = NSEvent.ModifierFlags(rawValue: NSEvent.ModifierFlags.command.rawValue | 0x18)
+        #expect(InputEncoder.modifiers(from: left) == [.command])
+        #expect(InputEncoder.modifiers(from: right) == [.superKey])
+        #expect(InputEncoder.modifiers(from: both) == [.command])
+        #expect(InputEncoder.modifiers(from: .command) == [.command])
+
+        let enter = InputEncoder.keyEvents(name: "enter", characters: "\r", modifiers: [.superKey],
+                                           down: true, isRepeat: false)
+        let q = InputEncoder.keyEvents(name: "q", characters: "q", modifiers: [.superKey],
+                                       down: true, isRepeat: false)
+        let mapped = InputEncoder.commandAsControl(enter + q)
+        #expect(mapped.count == 2)
+        for event in mapped {
+            #expect(event.json["modifiers"] as? [String] == ["command"])
+        }
+        if case let .key(key, _, _, _) = mapped[1] { #expect(key == "q") } else { Issue.record("\(mapped)") }
+    }
+
     /// The stream view is the hit-test target inside the app's grouped Form
     /// (no SwiftUI container swallows the click) and takes the first mouse,
     /// so a click on an inactive window reaches the Space too.

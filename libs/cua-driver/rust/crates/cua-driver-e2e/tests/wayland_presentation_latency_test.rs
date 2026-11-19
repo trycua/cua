@@ -377,6 +377,24 @@ fn settle_window(driver: &mut McpDriver, window_id: u64) {
     std::thread::sleep(Duration::from_millis(500));
 }
 
+/// Read the settled window once so this session holds its screenshot frame.
+///
+/// A pixel click is refused until the session has read the target window, and
+/// the published region centers are in that frame. The window does not resize
+/// after `settle_window`, so one read serves every measured click.
+fn read_window(driver: &mut McpDriver, pid: u32, window_id: u64) {
+    let state = driver.call(
+        "get_window_state",
+        json!({"pid": pid as i64, "window_id": window_id}),
+    );
+    assert!(!state.is_error(), "window read failed: {}", state.text());
+    assert!(
+        state.structured().get("screenshot_error").is_none(),
+        "{}",
+        state.structured()
+    );
+}
+
 fn launch(driver: &mut McpDriver, directory: &Path) -> Fixture {
     let path = harness_app(
         "harness-wayland-presentation",
@@ -429,6 +447,7 @@ fn launch(driver: &mut McpDriver, directory: &Path) -> Fixture {
                         "the listed window must belong to the fixture process"
                     );
                     settle_window(driver, window_id);
+                    read_window(driver, pid, window_id);
                     return Fixture {
                         pid,
                         window_id,

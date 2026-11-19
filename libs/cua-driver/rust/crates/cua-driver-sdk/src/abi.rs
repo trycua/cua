@@ -503,6 +503,16 @@ fn abi_executor() -> Result<&'static AbiExecutor, AbiFailure> {
     Ok(executor)
 }
 
+/// On Windows, refuse to admit new GUI work unless the executor holds the
+/// physical-pixel DPI contract. Elsewhere there is no such contract, and the
+/// executor stays lazy: it starts on the first ABI invocation, so a host that
+/// only uses in-process calls never leaves its threads running at exit.
+fn require_physical_pixel_executor() -> Result<(), AbiFailure> {
+    #[cfg(target_os = "windows")]
+    abi_executor()?;
+    Ok(())
+}
+
 // Shutdown must still revoke sessions and finalize recordings after a DPI
 // failure. It neither admits GUI work nor reports physical-pixel results.
 fn abi_executor_for_cleanup() -> Result<&'static AbiExecutor, AbiFailure> {
@@ -755,7 +765,7 @@ pub unsafe extern "C" fn cua_driver_create_v1(
         // The embedded runtime promises physical-pixel capture and input on
         // Windows. Refuse creation if its owned executor cannot establish
         // that contract instead of returning virtualized results later.
-        abi_executor()?;
+        require_physical_pixel_executor()?;
         let runtime = DriverRuntime::create(runtime_options).map_err(runtime_create_failure)?;
         *out_handle = Box::into_raw(Box::new(CuaDriverHandle { runtime }));
         Ok(())
@@ -794,7 +804,7 @@ pub unsafe extern "C" fn cua_driver_is_available_v1(
         // `runtime.is_running()` only describes shutdown state. An embedded
         // Windows runtime is also unavailable once its owned executor has
         // lost the physical-pixel DPI contract.
-        *out_available = driver.runtime.is_running() && abi_executor().is_ok();
+        *out_available = driver.runtime.is_running() && require_physical_pixel_executor().is_ok();
         Ok(())
     })
 }
@@ -951,7 +961,7 @@ pub unsafe extern "C" fn cua_driver_session_create_v1(
         // not issue fresh authority after the embedded executor has lost the
         // physical-pixel DPI contract; cleanup of existing sessions remains
         // allowed.
-        abi_executor()?;
+        require_physical_pixel_executor()?;
         let capability_manifest = options
             .capability_manifest_path()?
             .map(|path| {
@@ -1395,7 +1405,7 @@ impl NativeAbiDriver {
     }
 
     pub(crate) fn create_for_host(options: RuntimeOptions) -> Result<Self, DriverError> {
-        abi_executor().map_err(|error| DriverError::Protocol {
+        require_physical_pixel_executor().map_err(|error| DriverError::Protocol {
             reason: error.message,
         })?;
         let runtime = DriverRuntime::create(options).map_err(map_runtime_create_error)?;

@@ -64,7 +64,7 @@ fn current_executable() -> String {
         .unwrap_or_default()
 }
 
-fn direct_capture_evidence_store_for_identity(
+pub(crate) fn direct_capture_evidence_store_for_identity(
     executable: &str,
     home: &Path,
     attribution: Option<&str>,
@@ -72,15 +72,6 @@ fn direct_capture_evidence_store_for_identity(
     if attribution != Some("driver-daemon") {
         return None;
     }
-    driver_direct_capture_evidence_store(executable, home)
-}
-
-/// The evidence `permissions grant` records for the driver bundle that runs
-/// `executable`, without checking who this process is attributed to.
-pub(crate) fn driver_direct_capture_evidence_store(
-    executable: &str,
-    home: &Path,
-) -> Option<DirectCaptureEvidenceStore> {
     let bundle_id = driver_bundle_id_for_executable(executable)?;
     let state_directory = match bundle_id {
         "com.trycua.driver.local" => ".cua-driver-local",
@@ -98,6 +89,13 @@ fn current_direct_capture_evidence_store(source: &Value) -> Option<DirectCapture
     let home = std::env::var_os("HOME")?;
     let attribution = source.get("attribution").and_then(Value::as_str);
     direct_capture_evidence_store_for_identity(&current_executable(), Path::new(&home), attribution)
+}
+
+/// The evidence `permissions grant` recorded for this process when it is the
+/// driver daemon. An embedded or caller-launched driver gets none, since macOS
+/// attributes its captures to another app.
+pub(crate) fn driver_daemon_direct_capture_evidence_store() -> Option<DirectCaptureEvidenceStore> {
+    current_direct_capture_evidence_store(&permission_source(false, None))
 }
 
 /// (A) Real ScreenCaptureKit capability probe — what THIS process can

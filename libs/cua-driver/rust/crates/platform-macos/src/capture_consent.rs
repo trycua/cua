@@ -28,7 +28,8 @@
 //! alert pop over the user's window in the middle of background work.
 //!
 //! A capture that `permissions grant` verified for this bundle also counts as
-//! consent: its probe frame already raised the alert. On macOS 26.6 a daemon
+//! consent when this process is the driver daemon: the grant's probe frame
+//! already raised the alert for the bundle. On macOS 26.6 a daemon
 //! can find no entry for the bundle after that grant (#6831), so the approvals
 //! file alone would block every capture the user just allowed.
 
@@ -64,7 +65,7 @@ pub fn capture_blocked_reason() -> Option<String> {
     if std::env::var(ALLOW_ALERT_ENV).is_ok_and(|value| value == "1") {
         return None;
     }
-    let Some((executable, bundle)) = own_app_bundle() else {
+    let Some(bundle) = own_app_bundle() else {
         // A bare binary is not the responsible app; its alert names the
         // terminal or host, which this check cannot look up.
         return None;
@@ -81,9 +82,7 @@ pub fn capture_blocked_reason() -> Option<String> {
     let home = std::env::var_os("HOME")?;
     let home = Path::new(&home);
     let bundle_id = crate::tools::main_bundle_identifier();
-    let evidence = executable.to_str().and_then(|executable| {
-        crate::tools::driver_direct_capture_evidence_store(executable, home)
-    });
+    let evidence = crate::tools::driver_daemon_direct_capture_evidence_store();
     match consent_state(
         &home.join(APPROVALS_RELATIVE_PATH),
         &bundle,
@@ -216,11 +215,10 @@ fn percent_decode(text: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-/// This process's executable and the `.app` bundle it runs from, canonicalized.
-fn own_app_bundle() -> Option<(PathBuf, PathBuf)> {
+/// The `.app` bundle this process runs from, canonicalized.
+fn own_app_bundle() -> Option<PathBuf> {
     let executable = std::fs::canonicalize(std::env::current_exe().ok()?).ok()?;
-    let bundle = app_bundle_of(&executable)?;
-    Some((executable, bundle))
+    app_bundle_of(&executable)
 }
 
 fn app_bundle_of(executable: &Path) -> Option<PathBuf> {
@@ -356,11 +354,16 @@ mod tests {
         let file = home.path().join("ScreenCaptureApprovals.plist");
         let bundle = Path::new("/Applications/CuaDriver.app");
         let id = Some("com.trycua.driver");
-        let evidence = crate::tools::driver_direct_capture_evidence_store(
-            "/Applications/CuaDriver.app/Contents/MacOS/cua-driver",
-            home.path(),
-        )
-        .expect("release evidence store");
+        let release = "/Applications/CuaDriver.app/Contents/MacOS/cua-driver";
+        let evidence_for = |executable: &str, attribution: Option<&str>| {
+            crate::tools::direct_capture_evidence_store_for_identity(
+                executable,
+                home.path(),
+                attribution,
+            )
+        };
+        let evidence =
+            evidence_for(release, Some("driver-daemon")).expect("release evidence store");
 
         assert_eq!(
             consent_state(&file, bundle, id, Some(&evidence)),
@@ -383,14 +386,28 @@ mod tests {
             ConsentState::Recorded
         );
 
-        let local = crate::tools::driver_direct_capture_evidence_store(
+        let local = evidence_for(
             "/Applications/CuaDriverLocal.app/Contents/MacOS/cua-driver-local",
-            home.path(),
+            Some("driver-daemon"),
         )
         .expect("local evidence store");
         assert_eq!(
             consent_state(&file, bundle, id, Some(&local)),
             ConsentState::Missing
         );
+
+        // Embedded in a host, or launched by a caller, the alert names that
+        // app, so the driver's own grant does not count.
+        for attribution in [Some("host"), Some("caller"), None] {
+            assert_eq!(
+                consent_state(
+                    &file,
+                    bundle,
+                    id,
+                    evidence_for(release, attribution).as_ref()
+                ),
+                ConsentState::Missing
+            );
+        }
     }
 }

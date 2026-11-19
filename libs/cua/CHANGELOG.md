@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.28.4](https://github.com/trycua/cua/compare/cua-sdk-v0.28.3...cua-sdk-v0.28.4) (2026-11-19)
+
+
+### Bug Fixes
+
+* **spaces:** send the Mac clipboard on paste in the native viewer ([#8145](https://github.com/trycua/cua/issues/8145)) ([54312cf](https://github.com/trycua/cua/commit/54312cfce862d13a57f0c28851bd399e261c8e70))
+
+## [0.28.3](https://github.com/trycua/cua/compare/cua-sdk-v0.28.2...cua-sdk-v0.28.3) (2026-11-18)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** probe hardware encoders off the GetCapabilities path ([#8161](https://github.com/trycua/cua/issues/8161)) ([9346cab](https://github.com/trycua/cua/commit/9346cabc2e0614a2ec9d9b629ab0db39b44db4bb))
+
 ## [0.28.2](https://github.com/trycua/cua/compare/cua-sdk-v0.28.1...cua-sdk-v0.28.2) (2026-11-17)
 
 

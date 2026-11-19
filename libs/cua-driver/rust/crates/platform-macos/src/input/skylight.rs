@@ -331,10 +331,14 @@ pub fn enter_exact_window_key(pid: pid_t, target_wid: u32) -> Result<WindowKeySc
     let before = key_focus_of_pid(pid);
     let previous = before.window.map(|window| window.own);
     let order_before = app_window_order(pid);
+    // Which steps ran, so a refusal still hands back whatever key they moved.
+    let posted_records = std::cell::Cell::new(false);
+    let set_ax_focus = std::cell::Cell::new(false);
     let primed = prime_exact_window_key(
         target_wid,
         || key_focus_of_pid(pid),
         || {
+            posted_records.set(true);
             let ok = post_window_key_records(pid, previous, target_wid);
             if ok {
                 await_key_focus(pid, target_wid, std::time::Duration::from_millis(400));
@@ -342,6 +346,7 @@ pub fn enter_exact_window_key(pid: pid_t, target_wid: u32) -> Result<WindowKeySc
             ok
         },
         || {
+            set_ax_focus.set(true);
             let ok = set_app_focused_window(pid, target_wid);
             if ok {
                 await_key_focus(pid, target_wid, std::time::Duration::from_millis(200));
@@ -361,6 +366,25 @@ pub fn enter_exact_window_key(pid: pid_t, target_wid: u32) -> Result<WindowKeySc
                 (own, title)
             });
         with_blocker_hint(message, blocker.as_ref().map(|(id, t)| (*id, t.as_str())))
+    })
+    .inspect_err(|_| {
+        // A refusal hands back whatever key the steps that ran had moved,
+        // after the hint above has named the window holding focus. Dropping
+        // each scope undoes its step the same way a confirmed scope does.
+        let scope = |primed| WindowKeyScope {
+            pid,
+            target: target_wid,
+            previous,
+            order_before: order_before.clone(),
+            primed,
+            activation: None,
+        };
+        if set_ax_focus.get() {
+            drop(scope(KeyPrime::AxFocusedWindow));
+        }
+        if posted_records.get() {
+            drop(scope(KeyPrime::KeyRecords));
+        }
     })?;
     Ok(WindowKeyScope {
         pid,

@@ -9,6 +9,8 @@
 //!   granting the missing permissions before `serve` binds.
 //! - [`guide`]  — the step-by-step guide's logic (which step shows, request
 //!   order, resuming after macOS's "Quit & Reopen"), free of AppKit.
+//! - [`dock`]   — where the guide docks under System Settings, as plain
+//!   geometry.
 //!
 //! The gate is a Rust port of Swift's `PermissionsGate` (SwiftUI panel).
 //! Two presentation surfaces:
@@ -21,12 +23,15 @@
 //! - `Permissions.swift`      → `permissions::status`
 //! - `PermissionsGate.swift`  → `permissions::gate` + `permissions::panel`
 
+pub mod dock;
 pub mod gate;
 pub mod guide;
 pub mod status;
 
 #[cfg(target_os = "macos")]
 pub mod panel;
+#[cfg(target_os = "macos")]
+mod settings_window;
 
 pub use gate::{
     run_if_needed, run_if_needed_with_observer, GateOpts, GateProgress, MissingPermission,

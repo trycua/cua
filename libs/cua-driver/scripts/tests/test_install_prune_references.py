@@ -209,3 +209,32 @@ def test_desktop_entry_under_xdg_data_home_is_reported(runner: Path, tmp_path: P
 
     assert not oldest.exists()
     assert str(desktop) in completed.stderr
+
+
+def test_closed_stderr_does_not_stop_the_prune(runner: Path, tmp_path: Path) -> None:
+    home = _home(tmp_path)
+    oldest, _ = _three_releases(home)
+    unit = home / ".config/systemd/user/cua-driver.service"
+    unit.write_text(f"ExecStart={oldest}/cua-driver serve\n", encoding="utf-8")
+    # A log reader that has already exited: the warning's write raises
+    # SIGPIPE, which must not abort the installer before the delete.
+    read_end, write_end = os.pipe()
+    os.close(read_end)
+    packages = home / ".cua-driver/packages"
+    try:
+        completed = subprocess.run(
+            [str(runner), str(packages / "releases"), str(packages / "current"), TARGET, "2"],
+            stdout=subprocess.PIPE,
+            stderr=write_end,
+            text=True,
+            env={
+                **{key: value for key, value in os.environ.items() if key != "XDG_DATA_HOME"},
+                "HOME": str(home),
+                "XDG_CONFIG_HOME": str(home / ".config"),
+            },
+        )
+    finally:
+        os.close(write_end)
+
+    assert completed.returncode == 0
+    assert not oldest.exists()

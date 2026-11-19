@@ -372,8 +372,9 @@ raw background PX possible on a standard compositor.
   may still be on the target. Read fresh state before any retry ([No blind retry](WORKFLOW.md#no-blind-retry)).
 - **Shell prompts.** Polkit authentication and keyring prompts are drawn by
   the Shell, not by an application window, so the helper's window list does
-  not include them. While one is open it holds the input grab, and input to
-  application windows does not arrive. Find it with `get_desktop_state` (pass
+  not include them. While one is open, its input grab blocks ordinary pointer
+  and keyboard delivery to application windows; it does not prove that an
+  AT-SPI action had no effect. Find it with `get_desktop_state` (pass
   `screenshot_out_file` to keep the full display image out of the response),
   and act on it only with a desktop target and the user's approval.
 

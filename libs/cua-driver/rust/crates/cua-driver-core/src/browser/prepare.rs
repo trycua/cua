@@ -63,10 +63,74 @@ fn validate_profile(profile: &PrepareProfile) -> Result<(), BrowserRefusal> {
     Ok(())
 }
 
+/// How long the driver itself looks for the exact browser-owned prompt and
+/// presses its Allow action.
+const AUTOMATIC_CONSENT_BOUND: Duration = Duration::from_secs(4);
+
+/// How long an attach the person can see keeps the browser's pending
+/// connection open for them to answer a prompt the driver did not answer.
+/// Chrome ties each approval to the one connection that raised the prompt:
+/// closing that connection early leaves a prompt whose Allow attaches
+/// nothing, and the next attempt raises another one.
+pub(crate) const PERSON_CONSENT_BOUND: Duration = Duration::from_secs(120);
+
+/// Refusal for a prompt nobody answered before the attempt gave up.
+fn unanswered_consent_refusal(waited: Duration, cause: Option<BrowserRefusal>) -> BrowserRefusal {
+    BrowserRefusal::new(
+        BrowserRefusalCode::BrowserConsentRequired,
+        format!(
+            "the browser's \"Allow remote debugging?\" prompt was not answered within {} s; the \
+             driver closed its pending connection and the prompt, and changed nothing else",
+            waited.as_secs().max(AUTOMATIC_CONSENT_BOUND.as_secs())
+        ),
+    )
+    .with_detail(serde_json::json!({
+        "reason": "browser_consent_unanswered",
+        "waited_for_person_ms": waited.as_millis() as u64,
+        "driver_cause": cause,
+    }))
+}
+
+/// Keep the one pending connection open while a person answers the prompt.
+/// The browser completes the connection only after Allow, so the claim result
+/// is the ground truth: success means the person approved this exact
+/// connection; a closed connection means they declined it.
+async fn await_person_consent<T, Claim>(
+    claim: &mut Pin<Box<Claim>>,
+    person_wait: Duration,
+    cause: Option<BrowserRefusal>,
+) -> Result<(anyhow::Result<T>, bool), BrowserRefusal>
+where
+    Claim: Future<Output = anyhow::Result<T>>,
+{
+    if person_wait.is_zero() {
+        // Nobody can see the prompt: report what the observation found.
+        return Err(match cause {
+            Some(cause) => cause,
+            None => unanswered_consent_refusal(person_wait, None),
+        });
+    }
+    match tokio::time::timeout(person_wait, claim.as_mut()).await {
+        Ok(Ok(value)) => Ok((Ok(value), true)),
+        Ok(Err(error)) => Err(BrowserRefusal::new(
+            BrowserRefusalCode::BrowserConsentRevoked,
+            "the browser closed the pending DevTools connection without approving it, so the \
+             remote-debugging prompt was cancelled or dismissed",
+        )
+        .with_detail(serde_json::json!({
+            "reason": "browser_consent_declined",
+            "connection_error": error.to_string(),
+            "driver_cause": cause,
+        }))),
+        Err(_) => Err(unanswered_consent_refusal(person_wait, cause)),
+    }
+}
+
 async fn claim_with_optional_consent<T, Claim, Consent>(
     claim: &mut Pin<Box<Claim>>,
     action: &BrowserConsentAction,
     consent: Consent,
+    person_wait: Duration,
 ) -> Result<(anyhow::Result<T>, bool), BrowserRefusal>
 where
     Claim: Future<Output = anyhow::Result<T>>,
@@ -76,7 +140,7 @@ where
     let mut consent = Box::pin(consent);
     let (result, outcome) = {
         let mut bounded = Box::pin(tokio::time::timeout(
-            Duration::from_secs(4),
+            AUTOMATIC_CONSENT_BOUND,
             consent.as_mut(),
         ));
         tokio::select! {
@@ -89,24 +153,45 @@ where
             outcome = bounded.as_mut() => (None, outcome),
         }
     };
+    if !action.started() {
+        // The driver did not act on the prompt. Whatever the observation
+        // reported (no exact prompt found, an ambiguous or unreadable one, or
+        // its own deadline), the browser's pending connection still decides
+        // the outcome. Stop observing, but keep that connection open for the
+        // person instead of dropping it and orphaning the prompt.
+        match outcome {
+            Ok(Ok(BrowserConsentOutcome::Accepted)) => {
+                return Ok((claim.as_mut().await, true));
+            }
+            Ok(Ok(BrowserConsentOutcome::NotPresent)) => {
+                return Ok((claim.as_mut().await, false));
+            }
+            // The platform has no route to observe this browser's prompt at
+            // all; nothing here can be answered on its behalf.
+            Ok(Err(cause)) if cause.code == BrowserRefusalCode::BrowserRouteUnavailable => {
+                return Err(cause);
+            }
+            Ok(Err(cause)) => {
+                drop(consent);
+                return await_person_consent(claim, person_wait, Some(cause)).await;
+            }
+            Err(_) => {
+                drop(consent);
+                return await_person_consent(claim, person_wait, None).await;
+            }
+        }
+    }
     let consent_timed_out = outcome.is_err();
     let outcome = match outcome {
         Ok(outcome) => outcome?,
-        Err(_) if action.started() => consent.await.map_err(|mut error| {
+        Err(_) => consent.await.map_err(|mut error| {
             error
                 .message
                 .push_str(" (consent attempt deadline expired)");
             error
         })?,
-        Err(_) => {
-            return Err(BrowserRefusal::new(
-                BrowserRefusalCode::BrowserWrongTargetRefused,
-                "browser consent did not settle within its bounded attempt",
-            ));
-        }
     };
-    let accepted = outcome == BrowserConsentOutcome::Accepted;
-    if action.started() && !accepted {
+    if outcome != BrowserConsentOutcome::Accepted {
         return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "browser consent action did not produce a confirmed outcome",
@@ -114,7 +199,8 @@ where
     }
     let result = match result {
         Some(result) => result,
-        None if consent_timed_out => tokio::time::timeout(Duration::from_secs(4), claim.as_mut())
+        None if !consent_timed_out => claim.as_mut().await,
+        None => tokio::time::timeout(AUTOMATIC_CONSENT_BOUND, claim.as_mut())
             .await
             .map_err(|_| {
                 BrowserRefusal::new(
@@ -122,14 +208,14 @@ where
                     "browser reconnect did not settle after confirmed consent",
                 )
             })?,
-        None => claim.as_mut().await,
     };
-    Ok((result, accepted))
+    Ok((result, true))
 }
 
 async fn claim_with_delayed_consent<T, Claim, Consent, MakeConsent>(
     claim: Claim,
     consent: MakeConsent,
+    person_wait: Duration,
 ) -> Result<(anyhow::Result<T>, bool), BrowserRefusal>
 where
     MakeConsent: FnOnce(BrowserConsentAction) -> Consent,
@@ -145,7 +231,8 @@ where
         Some(result) => Ok((result, false)),
         None => {
             let action = BrowserConsentAction::default();
-            claim_with_optional_consent(&mut claim, &action, consent(action.clone())).await
+            claim_with_optional_consent(&mut claim, &action, consent(action.clone()), person_wait)
+                .await
         }
     }
 }
@@ -1245,6 +1332,37 @@ impl BrowserEngine {
         })
     }
 
+    /// Close the prompt left by a connection this attempt abandoned, and
+    /// record what happened on the refusal. The browser keeps that prompt
+    /// after the connection closes; approving it then would attach nothing.
+    async fn close_abandoned_consent_prompt(
+        &self,
+        pid: i64,
+        window_id: u64,
+        mut error: BrowserRefusal,
+    ) -> BrowserRefusal {
+        let closed = match self
+            .platform
+            .dismiss_abandoned_existing_profile_consent(pid, window_id)
+            .await
+        {
+            Ok(closed) => serde_json::json!({ "closed": closed }),
+            Err(failure) => serde_json::json!({ "closed": false, "error": failure }),
+        };
+        let mut detail = match error.detail.take() {
+            Some(serde_json::Value::Object(detail)) => detail,
+            Some(cause) => {
+                let mut detail = serde_json::Map::new();
+                detail.insert("cause".to_owned(), cause);
+                detail
+            }
+            None => serde_json::Map::new(),
+        };
+        detail.insert("abandoned_consent_prompt".to_owned(), closed);
+        error.detail = Some(serde_json::Value::Object(detail));
+        error
+    }
+
     /// Existing-profile attachment, plus the foreground bookkeeping around
     /// it: with `delivery_mode:"foreground"`, the app that was in front
     /// before the call is brought back once the browser's setup and consent
@@ -1412,9 +1530,11 @@ impl BrowserEngine {
         } else {
             return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserConsentRequired,
-                "existing-profile attachment in standard mode requires --grant existing-profile or an embedding authorization host; bounded mode requires a matching manifest",
+                "existing-profile attachment in standard mode requires --grant existing-profile or an embedding authorization host; bounded mode requires a matching manifest. The running driver was started without the grant, and a grant cannot be added to it: the person who owns this computer can stop it (cua-driver stop) and start it again with the grant, for example by adding --grant existing-profile to the cua-driver mcp command in the MCP client configuration",
             )
             .with_detail(serde_json::json!({
+                "reason": "launch_grant_required",
+                "launch_grant": "existing-profile",
                 "permission_mode": mode.as_str(),
                 "authorization_required": true,
                 "authorization_host": self.approval_broker.provider_id(),
@@ -1612,6 +1732,13 @@ impl BrowserEngine {
                 self.approval_broker.revoke(protected).await;
             }
         }
+        // A person can answer the prompt only when it opens where they can
+        // see it. Under the background guard it opens on another Space.
+        let person_wait = if guarded {
+            Duration::ZERO
+        } else {
+            PERSON_CONSENT_BOUND
+        };
         let (claimed, displayed_consent_prompt) = match claim_with_delayed_consent(
             self.pool.claim_existing(&endpoint.ws_url, grant.generation),
             |action| {
@@ -1623,6 +1750,7 @@ impl BrowserEngine {
                         attempt: 1,
                     })
             },
+            person_wait,
         )
         .await
         {
@@ -1631,6 +1759,9 @@ impl BrowserEngine {
                 // The helper owns and cancels the connection future before it
                 // returns a consent error. Grant revocation can therefore take
                 // the same socket-pool mutex without deadlocking.
+                let error = self
+                    .close_abandoned_consent_prompt(pid, window_id, error)
+                    .await;
                 self.revoke_existing_profile_grant(
                     &request.session,
                     request.transport_session.as_deref(),
@@ -1659,12 +1790,16 @@ impl BrowserEngine {
                         attempt: 2,
                     })
             },
+            person_wait,
         );
         let (claimed, initial_claim_error, fresh_consent_prompt) =
             match retry_claim_after_accepted_consent(claimed, displayed_consent_prompt, retry).await
             {
                 Ok(result) => result,
                 Err(error) => {
+                    let error = self
+                        .close_abandoned_consent_prompt(pid, window_id, error)
+                        .await;
                     self.revoke_existing_profile_grant(
                         &request.session,
                         request.transport_session.as_deref(),
@@ -1809,6 +1944,107 @@ mod tests {
         }
     }
 
+    /// The browser holds the handshake until its prompt is answered. When the
+    /// driver could not answer it (prompt unreadable, ambiguous, or slower
+    /// than the automatic bound), a person's later Allow must complete this
+    /// same pending connection instead of a dropped one.
+    #[tokio::test(start_paused = true)]
+    async fn a_person_answer_completes_the_same_pending_claim_after_the_driver_gave_up() {
+        for consent_error in [true, false] {
+            let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let guard = DropSignal(dropped.clone());
+            let mut claim = Box::pin(async move {
+                let _guard = guard;
+                // The person clicks Allow 30 s in, long after the 4 s bound.
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                Ok::<_, anyhow::Error>(5_u8)
+            });
+            let consent = async move {
+                if consent_error {
+                    Err(BrowserRefusal::new(
+                        BrowserRefusalCode::BrowserWrongTargetRefused,
+                        "no exact consent prompt was readable",
+                    ))
+                } else {
+                    std::future::pending().await
+                }
+            };
+            let (result, accepted) = claim_with_optional_consent(
+                &mut claim,
+                &BrowserConsentAction::default(),
+                consent,
+                PERSON_CONSENT_BOUND,
+            )
+            .await
+            .expect("the person's answer must attach");
+            assert_eq!(result.unwrap(), 5);
+            assert!(accepted);
+            drop(claim);
+            assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_unanswered_prompt_refuses_as_consent_required_not_wrong_target() {
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let guard = DropSignal(dropped.clone());
+        let mut claim = Box::pin(async move {
+            let _guard = guard;
+            std::future::pending::<anyhow::Result<u8>>().await
+        });
+        let error = claim_with_optional_consent(
+            &mut claim,
+            &BrowserConsentAction::default(),
+            std::future::pending(),
+            PERSON_CONSENT_BOUND,
+        )
+        .await
+        .expect_err("nobody answered");
+        assert_eq!(error.code, BrowserRefusalCode::BrowserConsentRequired);
+        assert_eq!(
+            error.detail.as_ref().unwrap()["reason"],
+            "browser_consent_unanswered"
+        );
+        drop(claim);
+        assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+
+        // Without a person who can see the prompt the attempt still ends at
+        // the automatic bound, with the same honest code.
+        let mut claim = Box::pin(std::future::pending::<anyhow::Result<u8>>());
+        let started = tokio::time::Instant::now();
+        let error = claim_with_optional_consent(
+            &mut claim,
+            &BrowserConsentAction::default(),
+            std::future::pending(),
+            Duration::ZERO,
+        )
+        .await
+        .expect_err("background attempts do not wait for a person");
+        assert_eq!(error.code, BrowserRefusalCode::BrowserConsentRequired);
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_closed_pending_connection_while_waiting_for_a_person_is_a_decline() {
+        let mut claim = Box::pin(async {
+            tokio::time::sleep(Duration::from_secs(9)).await;
+            Err::<u8, _>(anyhow::anyhow!("handshake rejected"))
+        });
+        let error = claim_with_optional_consent(
+            &mut claim,
+            &BrowserConsentAction::default(),
+            std::future::pending(),
+            PERSON_CONSENT_BOUND,
+        )
+        .await
+        .expect_err("a declined prompt must not attach");
+        assert_eq!(error.code, BrowserRefusalCode::BrowserConsentRevoked);
+        assert_eq!(
+            error.detail.as_ref().unwrap()["reason"],
+            "browser_consent_declined"
+        );
+    }
+
     #[tokio::test]
     async fn claim_completion_preserves_started_consent_confirmation() {
         use std::sync::atomic::{AtomicBool, Ordering};
@@ -1828,9 +2064,10 @@ mod tests {
             confirmation.store(true, Ordering::SeqCst);
             Ok(BrowserConsentOutcome::Accepted)
         };
-        let (result, displayed) = claim_with_optional_consent(&mut claim, &action, consent)
-            .await
-            .unwrap();
+        let (result, displayed) =
+            claim_with_optional_consent(&mut claim, &action, consent, Duration::ZERO)
+                .await
+                .unwrap();
         assert_eq!(result.unwrap(), 7);
         assert!(displayed, "performed consent must be reported");
         assert!(
@@ -1882,7 +2119,8 @@ mod tests {
                         ))
                     }
                 };
-                let result = claim_with_optional_consent(&mut claim, &action, consent).await;
+                let result =
+                    claim_with_optional_consent(&mut claim, &action, consent, Duration::ZERO).await;
                 assert!(dropped.load(Ordering::SeqCst));
                 match outcome {
                     0 | 2 => {
@@ -1917,9 +2155,10 @@ mod tests {
             Ok(BrowserConsentOutcome::Accepted)
         };
 
-        let (result, displayed) = claim_with_optional_consent(&mut claim, &action, consent)
-            .await
-            .unwrap();
+        let (result, displayed) =
+            claim_with_optional_consent(&mut claim, &action, consent, Duration::ZERO)
+                .await
+                .unwrap();
         assert_eq!(result.unwrap(), 7);
         assert!(displayed);
     }
@@ -1950,6 +2189,7 @@ mod tests {
                     .unwrap();
                 Ok(BrowserConsentOutcome::Accepted)
             },
+            Duration::ZERO,
         )
         .await;
         assert_eq!(
@@ -1977,7 +2217,12 @@ mod tests {
         };
         let (result, displayed) = tokio::time::timeout(
             Duration::from_millis(100),
-            claim_with_optional_consent(&mut claim, &BrowserConsentAction::default(), consent),
+            claim_with_optional_consent(
+                &mut claim,
+                &BrowserConsentAction::default(),
+                consent,
+                Duration::ZERO,
+            ),
         )
         .await
         .unwrap()
@@ -1992,10 +2237,15 @@ mod tests {
         let action = BrowserConsentAction::default();
         let marker = action.clone();
         let mut claim = Box::pin(std::future::pending::<anyhow::Result<u8>>());
-        let result = claim_with_optional_consent(&mut claim, &action, async move {
-            marker.perform(|| ());
-            Ok(BrowserConsentOutcome::NotPresent)
-        })
+        let result = claim_with_optional_consent(
+            &mut claim,
+            &action,
+            async move {
+                marker.perform(|| ());
+                Ok(BrowserConsentOutcome::NotPresent)
+            },
+            Duration::ZERO,
+        )
         .await;
         assert_eq!(
             result.unwrap_err().code,
@@ -2016,10 +2266,14 @@ mod tests {
                 "no consent surface",
             ))
         };
-        let (result, displayed) =
-            claim_with_optional_consent(&mut claim, &BrowserConsentAction::default(), consent)
-                .await
-                .expect("the completed claim should win the race");
+        let (result, displayed) = claim_with_optional_consent(
+            &mut claim,
+            &BrowserConsentAction::default(),
+            consent,
+            Duration::ZERO,
+        )
+        .await
+        .expect("the completed claim should win the race");
         assert_eq!(result.unwrap(), 7);
         assert!(!displayed);
     }
@@ -2030,12 +2284,14 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
             Ok::<_, anyhow::Error>(9_u8)
         });
-        let (result, displayed) =
-            claim_with_optional_consent(&mut claim, &BrowserConsentAction::default(), async {
-                Ok(BrowserConsentOutcome::Accepted)
-            })
-            .await
-            .expect("accepted consent should resume the existing claim");
+        let (result, displayed) = claim_with_optional_consent(
+            &mut claim,
+            &BrowserConsentAction::default(),
+            async { Ok(BrowserConsentOutcome::Accepted) },
+            Duration::ZERO,
+        )
+        .await
+        .expect("accepted consent should resume the existing claim");
         assert_eq!(result.unwrap(), 9);
         assert!(displayed);
     }
@@ -2056,6 +2312,7 @@ mod tests {
                 action.perform(|| first_approved.send(()).unwrap());
                 Ok(BrowserConsentOutcome::Accepted)
             },
+            Duration::ZERO,
         )
         .await
         .expect("first consent should remain bound to the initial claim");
@@ -2075,6 +2332,7 @@ mod tests {
                 action.perform(|| second_approved.send(()).unwrap());
                 Ok(BrowserConsentOutcome::Accepted)
             },
+            Duration::ZERO,
         );
         let (result, initial_error, fresh_displayed) =
             retry_claim_after_accepted_consent(initial, displayed, retry)
@@ -2094,11 +2352,14 @@ mod tests {
     async fn immediately_completed_fresh_claim_does_not_poll_second_consent() {
         let consent_polled = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let consent_marker = consent_polled.clone();
-        let retry =
-            claim_with_delayed_consent(async { Ok::<_, anyhow::Error>(17_u8) }, |_| async move {
+        let retry = claim_with_delayed_consent(
+            async { Ok::<_, anyhow::Error>(17_u8) },
+            |_| async move {
                 consent_marker.store(true, std::sync::atomic::Ordering::SeqCst);
                 Ok(BrowserConsentOutcome::Accepted)
-            });
+            },
+            Duration::ZERO,
+        );
         let (result, initial_error, fresh_displayed) = retry_claim_after_accepted_consent(
             Err(anyhow::anyhow!("first handshake rejected")),
             true,
@@ -2129,6 +2390,7 @@ mod tests {
                     "second consent was revoked",
                 ))
             },
+            Duration::ZERO,
         );
         let error = retry_claim_after_accepted_consent(
             Err(anyhow::anyhow!("first handshake rejected")),

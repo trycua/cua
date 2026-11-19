@@ -240,6 +240,9 @@ impl Tool for SetValueTool {
             Some((element_ptr, Some(element_index))),
             Some(window_id),
         );
+        // WebKit (not Chromium or Electron) web content: a field that ignores
+        // the write may take it once focused.
+        let webkit_field = ax_echo_surface && !is_chromium_popup_owner(pid);
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // AXValue writes on popups / sliders can cause reflex activations
@@ -247,6 +250,7 @@ impl Tool for SetValueTool {
         // child option which can trigger app activation in some setups.
         let prior_front = apps::frontmost_pid();
         let snapshot = WindowChangeDetector::snapshot(prior_front);
+        let settle_guard = element_guard.clone();
 
         let result = focus_guard::with_focus_suppressed(
             Some(pid),
@@ -260,6 +264,7 @@ impl Tool for SetValueTool {
                         pid,
                         window_id,
                         &value,
+                        webkit_field,
                     )
                 })
                 .await
@@ -267,7 +272,20 @@ impl Tool for SetValueTool {
         )
         .await;
 
-        let changes = snapshot.detect_async().await;
+        // A native text write the read-back confirmed is done once the field
+        // holds the value; the result need not wait out the window-change
+        // report window for it. Web content's AX echo proves nothing, so it
+        // keeps the full wait.
+        let changes = match &result {
+            Ok(Ok(outcome)) if !ax_echo_surface && outcome.verified == Some(true) => {
+                let settled = watch_field_settle(settle_guard, outcome.value.clone());
+                snapshot.detect_async_until(settled).await
+            }
+            _ => {
+                drop(settle_guard);
+                snapshot.detect_async().await
+            }
+        };
 
         match result {
             Ok(Ok(outcome)) if outcome.not_applied && !ax_echo_surface => {
@@ -617,6 +635,8 @@ fn file_name_needs_rename(pid: i32, window_id: u32, reason: &str) -> ToolResult 
 /// it — the same trap `type_text` already documents.
 struct SetValueOutcome {
     detail: String,
+    /// The field's value as read back after the write, when readable.
+    value: Option<String>,
     verified: Option<bool>,
     /// `Some(false)` when the element already held the requested value, so the
     /// write was a no-op. Lets callers distinguish "idempotent" from "applied".
@@ -654,6 +674,7 @@ fn set_value_blocking(
     pid: i32,
     window_id: u32,
     value: &str,
+    webkit_field: bool,
 ) -> anyhow::Result<SetValueOutcome> {
     let element = element_ptr as AXUIElementRef;
 
@@ -672,6 +693,7 @@ fn set_value_blocking(
         )
         .map(|detail| SetValueOutcome {
             detail,
+            value: None,
             verified: None,
             changed: None,
             not_applied: false,
@@ -731,6 +753,37 @@ fn set_value_blocking(
                     numeric_target.is_some(),
                 );
             }
+            // WebKit form fields ignore an AXValue write while they are not
+            // the page's focused element and accept it once they are. Focus
+            // moves inside the app only; the app is not activated or raised.
+            let mut focused_retry = false;
+            if webkit_field && !secure && write_not_applied(verified, changed) {
+                let focused =
+                    unsafe { crate::ax::bindings::set_bool_attr_true(element, "AXFocused") };
+                if focused == kAXErrorSuccess
+                    && unsafe { set_string_attr(element, "AXValue", value) } == kAXErrorSuccess
+                {
+                    focused_retry = true;
+                    for _ in 0..NOT_APPLIED_REREADS {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        unsafe {
+                            crate::ax::enablement::flush_pending_web_updates_for_element(
+                                pid, element,
+                            )
+                        };
+                        after = unsafe { copy_string_attr(element, "AXValue") };
+                        (verified, changed) = classify_write(
+                            before.as_deref(),
+                            after.as_deref(),
+                            value,
+                            numeric_target.is_some(),
+                        );
+                        if !write_not_applied(verified, changed) {
+                            break;
+                        }
+                    }
+                }
+            }
             let suffix = match (verified, changed) {
                 (Some(true), Some(false)) => " Value already matched; write was idempotent.",
                 (Some(true), _) => "",
@@ -746,9 +799,15 @@ fn set_value_blocking(
             };
             Ok(SetValueOutcome {
                 detail: format!(
-                    "✅ Set AXValue on [{element_index}] {role}.{suffix}{}",
+                    "✅ Set AXValue on [{element_index}] {role}{}.{suffix}{}",
+                    if focused_retry {
+                        " after focusing it (the first write was not applied)"
+                    } else {
+                        ""
+                    },
                     document.note()
                 ),
+                value: after,
                 verified,
                 changed,
                 // A secure text field reads back empty or masked, so its
@@ -767,6 +826,7 @@ fn set_value_blocking(
                     detail: format!(
                         "✅ Set AXValue on [{element_index}] {role} via AXIncrement/AXDecrement stepping."
                     ),
+                    value: after,
                     verified,
                     changed,
                     not_applied: false,
@@ -780,6 +840,77 @@ fn set_value_blocking(
         }
     }
 }
+
+/// How long a written field must keep its read-back value before the result
+/// returns without waiting out the window-change report window.
+const FIELD_QUIET: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// Whether a written field has settled: it has held the value its read-back
+/// confirmed for [`FIELD_QUIET`] since the write. A field that reads anything
+/// else even once (a later change, a rejection, an unreadable or lost element)
+/// never settles, and the result waits the usual report window instead.
+struct FieldSettle {
+    expected: Option<String>,
+    written_at: std::time::Instant,
+}
+
+impl FieldSettle {
+    fn new(expected: Option<String>, written_at: std::time::Instant) -> Self {
+        Self {
+            expected,
+            written_at,
+        }
+    }
+
+    /// False once a read has ruled settling out.
+    fn can_settle(&self) -> bool {
+        self.expected.is_some()
+    }
+
+    /// Record one read of the field at `now`; true once it has settled.
+    fn observe(&mut self, now: std::time::Instant, current: Option<&str>) -> bool {
+        if self.expected.is_none() || current != self.expected.as_deref() {
+            self.expected = None;
+            return false;
+        }
+        now.duration_since(self.written_at) >= FIELD_QUIET
+    }
+}
+
+/// Watch a written field on its own thread and return a check that is true
+/// once it has settled. The detector's poll loop only reads the flag, so an
+/// app that stops answering accessibility calls stalls this thread, never the
+/// window-change watch or its focus-steal lease. The thread ends when the
+/// field settles or reads anything else, or when the detector drops the check.
+fn watch_field_settle(
+    element: crate::ax::snapshot::RetainedElement,
+    expected: Option<String>,
+) -> impl FnMut() -> bool + Send + 'static {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let settled = Arc::new(AtomicBool::new(false));
+    let flag = Arc::downgrade(&settled);
+    let mut settle = FieldSettle::new(expected, std::time::Instant::now());
+    let _ = std::thread::Builder::new()
+        .name("cua-field-settle".into())
+        .spawn(move || loop {
+            std::thread::sleep(FIELD_POLL);
+            if flag.strong_count() == 0 {
+                return;
+            }
+            let current =
+                unsafe { copy_string_attr(element.as_ptr() as AXUIElementRef, "AXValue") };
+            let done = settle.observe(std::time::Instant::now(), current.as_deref());
+            match flag.upgrade() {
+                Some(flag) if done => return flag.store(true, Ordering::Release),
+                Some(_) if settle.can_settle() => {}
+                _ => return,
+            }
+        });
+    move || settled.load(Ordering::Acquire)
+}
+
+/// How often [`watch_field_settle`] re-reads the field.
+const FIELD_POLL: std::time::Duration = std::time::Duration::from_millis(25);
 
 /// Re-reads (100 ms apart) before an unchanged value counts as not applied.
 const NOT_APPLIED_REREADS: usize = 3;
@@ -1479,8 +1610,10 @@ mod tests {
     use super::{
         apply_surface_trust, apply_verification_label, calc_cell_record, classify_write,
         file_name_needs_rename, is_file_name_cell, is_get_info_name_field, not_applied_result,
-        write_not_applied, SetValueOutcome, GET_INFO_RENAME_ROUTE, LIST_RENAME_ROUTE,
+        write_not_applied, FieldSettle, SetValueOutcome, FIELD_QUIET, GET_INFO_RENAME_ROUTE,
+        LIST_RENAME_ROUTE,
     };
+    use std::time::Duration;
 
     #[test]
     fn a_listed_file_name_is_a_file_name_cell() {
@@ -1729,9 +1862,40 @@ mod tests {
     }
 
     #[test]
+    fn a_field_that_keeps_its_value_settles_after_the_quiet_period() {
+        let t0 = std::time::Instant::now();
+        let mut settle = FieldSettle::new(Some("hello".into()), t0);
+        assert!(!settle.observe(t0 + Duration::from_millis(25), Some("hello")));
+        assert!(!settle.observe(t0 + Duration::from_millis(125), Some("hello")));
+        assert!(settle.can_settle());
+        assert!(settle.observe(t0 + FIELD_QUIET, Some("hello")));
+    }
+
+    #[test]
+    fn a_field_that_changes_after_the_write_never_settles() {
+        let t0 = std::time::Instant::now();
+        let mut settle = FieldSettle::new(Some("hello".into()), t0);
+        assert!(!settle.observe(t0 + Duration::from_millis(50), Some("HELLO")));
+        // Changing back does not restart the clock: the field is not quiet.
+        assert!(!settle.observe(t0 + Duration::from_millis(400), Some("hello")));
+    }
+
+    #[test]
+    fn an_unreadable_or_unknown_field_never_settles() {
+        let t0 = std::time::Instant::now();
+        let mut lost = FieldSettle::new(Some("hello".into()), t0);
+        assert!(!lost.observe(t0 + Duration::from_millis(50), None));
+        assert!(!lost.observe(t0 + Duration::from_millis(400), Some("hello")));
+        assert!(!lost.can_settle());
+        let mut unknown = FieldSettle::new(None, t0);
+        assert!(!unknown.observe(t0 + Duration::from_millis(400), None));
+    }
+
+    #[test]
     fn web_content_ax_echo_is_never_reported_as_verified() {
         let mut outcome = SetValueOutcome {
             detail: "Set value.".to_owned(),
+            value: None,
             verified: Some(true),
             changed: Some(true),
             not_applied: false,
@@ -1747,6 +1911,7 @@ mod tests {
     fn native_read_back_remains_trusted() {
         let mut outcome = SetValueOutcome {
             detail: "Set value.".to_owned(),
+            value: None,
             verified: Some(true),
             changed: Some(true),
             not_applied: false,
@@ -1762,6 +1927,7 @@ mod tests {
     fn unverified_result_does_not_keep_a_success_checkmark() {
         let mut outcome = SetValueOutcome {
             detail: "✅ Set AXValue on [4] AXTextField.".to_owned(),
+            value: None,
             verified: Some(false),
             changed: Some(false),
             not_applied: false,

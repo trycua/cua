@@ -133,3 +133,4 @@ distribution = true
 
 [tool.pdm.build]
 includes = ["cua_agent/"]
+source-includes = ["README.md", "LICENSE"]

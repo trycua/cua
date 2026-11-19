@@ -24,4 +24,4 @@ distribution = true
 
 [tool.pdm.build]
 includes = ["bench_ui/"]
-source-includes = ["README.md"]
+source-includes = ["README.md", "LICENSE"]

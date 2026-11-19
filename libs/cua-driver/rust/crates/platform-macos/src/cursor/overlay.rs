@@ -98,6 +98,31 @@ static RENDER_LOOP_RUNNING: AtomicBool = AtomicBool::new(false);
 /// settles well inside it; a stalled render loop must never wedge a tool.
 const ARRIVAL_TIMEOUT: Duration = Duration::from_secs(8);
 
+/// Set when another window was raised over the overlay's pin target, so the
+/// render loop re-orders the overlay above it even though the target did not
+/// change and no cursor is animating.
+static REPIN_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// Re-order the overlay above its pinned window. Call after raising a window
+/// for input: the raise puts it over the normal-level overlay, and a resting
+/// cursor's parked render loop would otherwise leave it covered.
+pub(crate) fn request_repin() {
+    REPIN_REQUESTED.store(true, Ordering::Release);
+    if let Some(tx) = CMD_TX.get() {
+        let _ = tx.try_send(OverlayMsg::Wake);
+    }
+}
+
+/// Whether the render loop re-orders the overlay above `pinned` this frame.
+fn should_repin(
+    pinned: Option<u64>,
+    pin_changed: bool,
+    requested: bool,
+    repin_frames: u32,
+) -> bool {
+    pinned.is_some() && (pin_changed || requested || repin_frames >= 60)
+}
+
 pub(crate) fn is_overlay_window(window_id: u32) -> bool {
     window_id != 0 && OVERLAY_WINDOW_IDS.lock().unwrap().contains(&window_id)
 }
@@ -548,14 +573,13 @@ pub async fn animate_cursor_to_target(key: CursorKey, x: f64, y: f64, target: Op
     // should-animate check passes on the first action just like later ones.
     seed_start_if_unplaced(&key, x, y);
 
-    // Check whether animation should run for THIS cursor. A disabled cursor
-    // never animates; an absent cursor (seed found nothing to prime) is skipped.
+    // An absent cursor (seed found nothing to prime) is skipped.
     let should_animate = {
         let guard = RENDER.lock().unwrap();
-        matches!(
-            guard.as_ref().and_then(|m| m.cursors.get(&key)),
-            Some(rs) if rs.core.cfg.enabled && rs.core.placed
-        )
+        guard
+            .as_ref()
+            .and_then(|m| m.cursors.get(&key))
+            .is_some_and(|rs| rs.core.animates())
     };
     if !should_animate {
         return;
@@ -903,9 +927,9 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     // AppKit uses Text Input Sources on this thread from here on.
     crate::input::input_source::main_thread_runs_event_loop();
     let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
-    // NSApplicationActivationPolicyAccessory = 1 (no Dock icon, no menu bar)
+    // NSApplicationActivationPolicyProhibited = 2 (no Dock icon, no menu bar, never active)
     // setActivationPolicy: returns BOOL (success), not void.
-    let _: bool = msg_send![app, setActivationPolicy: 1i64];
+    let _: bool = msg_send![app, setActivationPolicy: 2i64];
     // Finish launching without presenting a UI (needed for NSApp.run())
     let _: () = msg_send![app, finishLaunching];
 
@@ -1083,7 +1107,8 @@ fn render_loop(
             repin_frames += 1;
             let pin_changed = pinned_wid != last_pinned;
             last_pinned = pinned_wid;
-            if pinned_wid.is_some() && (pin_changed || refit || repin_frames >= 60) {
+            let requested = REPIN_REQUESTED.swap(false, Ordering::AcqRel);
+            if should_repin(pinned_wid, pin_changed || refit, requested, repin_frames) {
                 for surface in &surfaces {
                     MacZOrderEnforcer {
                         win_ptr: surface.win_ptr,
@@ -1483,6 +1508,18 @@ fn pixmap_to_cgimage(pixmap: &tiny_skia::Pixmap) -> Option<usize> {
 mod tests {
     use super::*;
 
+    /// A raised target window must get the overlay back above it at once,
+    /// even with no pin change and a parked render loop; nothing re-orders
+    /// an overlay that has no pin target.
+    #[test]
+    fn a_requested_repin_reorders_the_overlay_above_its_target() {
+        assert!(should_repin(Some(7), false, true, 0));
+        assert!(should_repin(Some(7), true, false, 0));
+        assert!(should_repin(Some(7), false, false, 60));
+        assert!(!should_repin(Some(7), false, false, 1));
+        assert!(!should_repin(None, false, true, 60));
+    }
+
     /// A human-origin session (a Cua Spaces viewer's relayed input) never
     /// reaches the renderer; an agent's session does. The rule itself lives
     /// in `cua_driver_core::agent_cursor`.
@@ -1533,6 +1570,38 @@ mod tests {
             done.is_ok(),
             "animate_cursor_to waited for a render loop that is not running"
         );
+    }
+
+    /// A cursor turned off with `set_agent_cursor_enabled(false)` after it was
+    /// shown never registers a glide waiter, so the action does not wait for
+    /// an arrival the hidden cursor never reports (#4276).
+    #[test]
+    fn a_cursor_turned_off_at_runtime_registers_no_glide_wait() {
+        init(CursorConfig {
+            enabled: true,
+            ..CursorConfig::default()
+        });
+        let waits = |key: &str| {
+            ARRIVAL_TX
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|map| map.contains_key(key))
+        };
+        let rt = runtime();
+        for (key, enabled) in [("session-runtime-on", true), ("session-runtime-off", false)] {
+            rt.block_on(animate_cursor_to(key.to_owned(), 240.0, 180.0));
+            assert!(waits(key), "{key}: a shown cursor glides");
+            arrival_cancel(&key.to_owned());
+            // The render loop applies queued commands; none runs in a test.
+            let mut guard = RENDER.lock().unwrap();
+            let map = guard.as_mut().unwrap();
+            map.apply_command(key.to_owned(), OverlayCommand::SetEnabled(enabled));
+            drop(guard);
+            rt.block_on(animate_cursor_to(key.to_owned(), 300.0, 220.0));
+            assert_eq!(waits(key), enabled, "{key}");
+            arrival_cancel(&key.to_owned());
+        }
     }
 
     #[test]
@@ -1643,6 +1712,67 @@ mod tests {
         map.cursors.get_mut("sessA").unwrap().core.pos = (200.0, 150.0);
         assert!(paint_tile_for(&map, left).is_none());
         assert!(paint_tile_for(&map, right).is_some());
+    }
+
+    /// The top-left corner of a tile's painted pixels, in global points.
+    fn painted_origin(tile: &PaintTile, geometry: SurfaceGeometry) -> (f64, f64) {
+        let width = tile.pixmap.width() as usize;
+        let (col, row) = tile
+            .pixmap
+            .pixels()
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.alpha() > 128)
+            .fold((usize::MAX, usize::MAX), |(c, r), (i, _)| {
+                (c.min(i % width), r.min(i / width))
+            });
+        assert_ne!(col, usize::MAX, "tile paints");
+        (
+            geometry.frame.x + tile.frame[0] + col as f64 / tile.scale,
+            geometry.frame.y + tile.frame[1] + row as f64 / tile.scale,
+        )
+    }
+
+    /// trycua/cua#4907: with a 1728x1117 @2x primary and a 5120x1440 @1x
+    /// display at (-4333, -1440), the cursor sits at the same offset from its
+    /// target on either display as on a zero-origin display of that scale,
+    /// and only the display holding the target paints it.
+    #[test]
+    fn cursor_lands_on_target_on_an_upper_left_mixed_scale_display() {
+        let primary = SurfaceGeometry::new(ScreenFrame::new(0.0, 0.0, 1728.0, 1117.0), 2.0);
+        let external =
+            SurfaceGeometry::new(ScreenFrame::new(-4333.0, -1440.0, 5120.0, 1440.0), 1.0);
+        let paint_at = |geometry: SurfaceGeometry, (x, y): (f64, f64)| {
+            let mut map = empty_map();
+            let core = &mut placed(&mut map, "sessA").core;
+            core.pos = cursor_overlay::anchor_for_pointer(x, y, core.heading);
+            let tile = paint_tile_for(&map, geometry);
+            (map, tile)
+        };
+        for (target, owner, other) in [
+            ((800.0, 500.0), primary, external),
+            ((-2000.0, -700.0), external, primary),
+            ((-4000.0, -1400.0), external, primary),
+        ] {
+            let (map, tile) = paint_at(owner, target);
+            assert!(paint_tile_for(&map, other).is_none(), "{target:?}");
+            let tile = tile.expect("the display holding the target paints");
+            assert_eq!(tile.scale, owner.scale);
+            let painted = painted_origin(&tile, owner);
+
+            let reference =
+                SurfaceGeometry::new(ScreenFrame::new(0.0, 0.0, 400.0, 300.0), owner.scale);
+            let (_, ref_tile) = paint_at(reference, (200.0, 150.0));
+            let ref_painted = painted_origin(&ref_tile.unwrap(), reference);
+            let expected = (
+                target.0 + ref_painted.0 - 200.0,
+                target.1 + ref_painted.1 - 150.0,
+            );
+            assert!(
+                (painted.0 - expected.0).abs() <= 0.5 && (painted.1 - expected.1).abs() <= 0.5,
+                "painted at {painted:?}, expected {expected:?} for target {target:?}"
+            );
+        }
     }
 
     #[test]

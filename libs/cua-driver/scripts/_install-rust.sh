@@ -64,6 +64,13 @@
 #                                        ~/.cua-driver-rs is swept post-install.
 #   CUA_DRIVER_RS_NO_MODIFY_PATH=1       same as --no-modify-path
 #   CUA_DRIVER_RS_REQUIRE_SIGNATURE=1    same as --require-signature
+#   CUA_DRIVER_RS_DOWNLOAD_BASE_URL=URL  download release assets from
+#                                        URL/<tag>/<asset> instead of
+#                                        https://github.com/trycua/cua/releases/download,
+#                                        for a mirror closer to you when GitHub
+#                                        is slow or unreachable. The mirror
+#                                        must serve SHA256SUMS and the Sigstore
+#                                        bundles too; the usual checks apply.
 #   CUA_DRIVER_RS_KEEP_VERSIONS=N        keep the N most recent per-version
 #                                        release dirs after install; older
 #                                        ones are deleted (default 5; set 0
@@ -139,6 +146,8 @@ if [[ "$_cua_install_common_loaded" == "0" ]]; then
 fi
 
 REPO="trycua/cua"
+RELEASE_DOWNLOAD_BASE="${CUA_DRIVER_RS_DOWNLOAD_BASE_URL:-https://github.com/$REPO/releases/download}"
+RELEASE_DOWNLOAD_BASE="${RELEASE_DOWNLOAD_BASE%/}"
 BINARY_NAME="cua-driver"
 TAG_PREFIX="cua-driver-rs-v"
 NIGHTLY_TAG_PREFIX="nightly-cua-driver-rs-v"
@@ -687,7 +696,7 @@ done
 # asset — see the recovery at the download step below.
 #
 # ~~~ BAKED_VERSION: auto-updated after release publication — do not edit ~~~
-CUA_DRIVER_RS_BAKED_VERSION="0.53.2" # published-installer-version
+CUA_DRIVER_RS_BAKED_VERSION="0.54.0" # published-installer-version
 # ~~~ END_BAKED_VERSION ~~~
 #
 # Withdrawn releases (for example, a macOS archive published unsigned) are
@@ -985,7 +994,7 @@ fetch_release_url() {
 download_release_tarball() {
     local version="$1" tarball url status=0
     tarball="$(release_tarball_name "$version")"
-    url="https://github.com/$REPO/releases/download/${TAG}/$tarball"
+    url="$RELEASE_DOWNLOAD_BASE/${TAG}/$tarball"
     log "downloading $url"
     fetch_release_url "$url" "$TMP_DIR/$tarball" || status=$?
     (( status == 0 || status == 44 )) && return "$status"
@@ -1015,7 +1024,7 @@ COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"
 # Fetches one small release asset (SHA256SUMS, a bundle) to $2.
 # 0 = fetched, 44 = HTTP 404, 1 = any other failure (after retries).
 fetch_release_file() {
-    local url="https://github.com/$REPO/releases/download/${TAG}/$1" status=0
+    local url="$RELEASE_DOWNLOAD_BASE/${TAG}/$1" status=0
     fetch_release_url "$url" "$2" || status=$?
     (( status == 0 || status == 44 )) && return "$status"
     err "could not download $url after $RELEASE_ATTEMPTS attempt(s) (HTTP ${RELEASE_HTTP_CODE:-unknown}, curl exit $RELEASE_CURL_STATUS)"

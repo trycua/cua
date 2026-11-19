@@ -19,6 +19,7 @@
  */
 
 import {
+  CommandSides,
   modifiersOf,
   normalizePoint,
   pointerButton,
@@ -212,6 +213,7 @@ export class InputController {
   private touchMode: "none" | "pointer" | "scroll" | "longpress" = "none";
   private pendingPaste: { resolve: () => void; timer: number } | null = null;
   private readonly heldKeys = new Map<string, InteractiveInputEvent>();
+  private readonly commandSides = new CommandSides();
   enabled = true;
 
   constructor(private readonly options: InputControllerOptions) {
@@ -261,6 +263,12 @@ export class InputController {
     this.off.push(() => target.removeEventListener(type, handler as EventListener, options));
   }
 
+  /** The key options, with ⌘ as Super while the right ⌘ is held alone. */
+  private keyOptions(asSuper: boolean): KeyMapOptions {
+    const options = this.options.keyOptions();
+    return asSuper ? { ...options, metaAsControl: false } : options;
+  }
+
   private point(event: { clientX: number; clientY: number }) {
     return normalizePoint(event.clientX, event.clientY, this.options.screen().getBoundingClientRect());
   }
@@ -270,7 +278,7 @@ export class InputController {
     const textarea = this.textarea;
 
     this.on(textarea, "keydown", (event) => {
-      const mapped = mapKey(event, "down", this.options.keyOptions());
+      const mapped = mapKey(event, "down", this.keyOptions(this.commandSides.rightOnly(event, "down")));
       if (!mapped) return; // text arrives through beforeinput
       const isPaste = mapped.kind === "key" && mapped.key === "v" && mapped.modifiers.length > 0 && this.options.onPaste;
       if (isPaste) {
@@ -287,6 +295,7 @@ export class InputController {
       }
     });
     this.on(textarea, "keyup", (event) => {
+      const asSuper = this.commandSides.rightOnly(event, "up");
       // Release exactly what went down for this physical key, even if the
       // modifiers changed in between (Ctrl released before C).
       const held = this.heldKeys.get(event.code || event.key);
@@ -296,7 +305,7 @@ export class InputController {
         this.send({ ...held, state: "up", repeat: false });
         return;
       }
-      const mapped = mapKey(event, "up", this.options.keyOptions());
+      const mapped = mapKey(event, "up", this.keyOptions(asSuper));
       if (!mapped || !MODIFIER_KEYS.has(event.key)) return;
       event.preventDefault();
       this.send(mapped);

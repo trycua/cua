@@ -168,7 +168,10 @@ fn app_bundle_path() -> Option<std::path::PathBuf> {
 
 fn enclosing_app(path: &std::path::Path) -> Option<std::path::PathBuf> {
     path.ancestors()
-        .find(|p| p.extension().and_then(|e| e.to_str()) == Some("app"))
+        .find(|p| {
+            p.extension().and_then(|e| e.to_str()) == Some("app")
+                && p.join("Contents/Info.plist").is_file()
+        })
         .map(std::path::Path::to_path_buf)
 }
 

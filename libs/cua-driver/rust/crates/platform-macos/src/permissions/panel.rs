@@ -772,7 +772,7 @@ unsafe fn drag_tile(width: f64, bundle: Option<&std::path::Path>, app: &str) -> 
     let height = TILE_H.max(name_h + 24.0);
     let cls = tile_class();
     let tile: *mut AnyObject = msg_send![cls, alloc];
-    let tile: *mut AnyObject = msg_send![tile, initWithFrame: rect(0.0, 0.0, width, height)];
+    let tile: *mut AnyObject = msg_send![tile, initWithFrame: rect(PAD, 0.0, width, height)];
     let _: () = msg_send![tile, setWantsLayer: true];
     let layer: *mut AnyObject = msg_send![tile, layer];
     if !layer.is_null() {

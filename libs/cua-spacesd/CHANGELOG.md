@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.16.5](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.4...cua-spacesd-v0.16.5) (2026-11-19)
+
+
+### Bug Fixes
+
+* **cua-driver:** rank macOS list_windows z_index by live stacking ([#8158](https://github.com/trycua/cua/issues/8158)) ([9d8bb07](https://github.com/trycua/cua/commit/9d8bb07cef136d8d0add2f6282b05d76a7fbd9b1))
+
+## [0.16.4](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.3...cua-spacesd-v0.16.4) (2026-11-19)
+
+
+### Bug Fixes
+
+* **relay:** size the client stream budget to the memory limit, add memory and stream gauges (CUA-3138) ([#6379](https://github.com/trycua/cua/issues/6379)) ([4e5a10e](https://github.com/trycua/cua/commit/4e5a10e78e8fe4040dc9d4ef1d16a84544c27ae6))
+
+## [0.16.3](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.2...cua-spacesd-v0.16.3) (2026-11-18)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** probe hardware encoders off the GetCapabilities path ([#8161](https://github.com/trycua/cua/issues/8161)) ([9346cab](https://github.com/trycua/cua/commit/9346cabc2e0614a2ec9d9b629ab0db39b44db4bb))
+
+## [0.16.2](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.1...cua-spacesd-v0.16.2) (2026-11-18)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** send desktop Super chords through the desktop scope ([#8143](https://github.com/trycua/cua/issues/8143)) ([d9dcb1e](https://github.com/trycua/cua/commit/d9dcb1ee770fce99b531a85d4989d81ade098639)), closes [#5344](https://github.com/trycua/cua/issues/5344)
+
 ## [0.16.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.0...cua-spacesd-v0.16.1) (2026-11-13)
 
 

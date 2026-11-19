@@ -263,7 +263,7 @@ driver selects a backend from compositor capabilities:
   activation and window capture, plus portal/libei for foreground raw input.
   Window capture needs helper API 9 or newer; with an older helper loaded,
   `get_window_state` returns the tree and `surface_identity_unproven`, whose
-  reason names the loaded API. Ask the user to re-run the Cua Driver
+  reason names the API the helper reports, if any. Ask the user to re-run the Cua Driver
   installer and log in again; `get_desktop_state` still works meanwhile.
 - KDE/KWin uses AT-SPI and portal facilities where available. Where the
   operator has enabled it, it also gets exact window geometry, stacking,

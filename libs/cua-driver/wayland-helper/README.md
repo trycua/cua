@@ -99,9 +99,9 @@ or newer); it never crops the stage, which would show whatever covers the
 window. If the helper refuses a window, or the loaded helper is older than
 API 9 or does not report its version, `get_window_state` keeps the
 accessibility tree and returns `screenshot_error.code`
-`surface_identity_unproven` with no image; the reason names the loaded API.
-Re-run the installer, then log out and back in so GNOME Shell loads the new
-helper.
+`surface_identity_unproven` with no image. For an older helper, the reason
+names the API it reports and says to re-run the installer, then log out and
+back in so GNOME Shell loads the new helper.
 
 The semantic cursor requires helper v8. When an older helper is still loaded,
 cua-driver does not draw its legacy cursor. Re-run the helper installer, then

@@ -79,6 +79,7 @@ pub fn gnome_shell_session() -> bool {
             .any(|desktop| desktop.eq_ignore_ascii_case("gnome"))
     }) || SessionShellProbe {
         deadline: operation_deadline(CALL_CAP),
+        recheck_after_version_timeout: false,
     }
     .name_owner(COMPOSITOR_DEST)
     .is_some()
@@ -123,7 +124,11 @@ fn shell_owner(require_browser_api: bool, deadline: Instant) -> Option<String> {
 }
 
 fn shell_owner_with_min_version(min_version: Option<u32>, deadline: Instant) -> Option<String> {
-    select_shell_owner(&SessionShellProbe { deadline }, min_version)
+    let probe = SessionShellProbe {
+        deadline,
+        recheck_after_version_timeout: false,
+    };
+    select_shell_owner(&probe, min_version)
 }
 
 /// Session-bus and procfs observations behind [`select_shell_owner`]. The
@@ -199,6 +204,9 @@ fn attest_shell_owner<P: ShellOwnerProbe>(
 /// The live session bus, with every call sharing the caller's `deadline`.
 struct SessionShellProbe {
     deadline: Instant,
+    /// Give `GetVersion` only half the time left (window capture), so a
+    /// helper that never answers still gets the owner recheck after it.
+    recheck_after_version_timeout: bool,
 }
 
 impl ShellOwnerProbe for SessionShellProbe {
@@ -265,7 +273,11 @@ impl ShellOwnerProbe for SessionShellProbe {
             PATH,
             &format!("{IFACE}.GetVersion"),
             &[],
-            version_call_deadline(Instant::now(), self.deadline),
+            if self.recheck_after_version_timeout {
+                version_call_deadline(Instant::now(), self.deadline)
+            } else {
+                self.deadline
+            },
         )?;
         parse_first_u32(&raw)
     }
@@ -340,7 +352,11 @@ fn window_capture_owner<P: ShellOwnerProbe>(probe: &P) -> Result<String, WindowC
 /// the window's logical frame, the frame its window coordinates are in.
 pub fn screenshot_window(id: u64, pid: Option<u32>) -> WindowCapture {
     let deadline = operation_deadline(CAPTURE_CAP);
-    let owner = match window_capture_owner(&SessionShellProbe { deadline }) {
+    let probe = SessionShellProbe {
+        deadline,
+        recheck_after_version_timeout: true,
+    };
+    let owner = match window_capture_owner(&probe) {
         Ok(owner) => owner,
         Err(outcome) => return outcome,
     };

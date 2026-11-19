@@ -1,6 +1,6 @@
 """Raise the upper bound of cua-sandbox's `driver` extra to cover a Cua Driver release.
 
-The extra pins `cua-driver>=0.37.0,<0.55`. Cua Driver is 0.x, so the bound stays below
+The extra pins `cua-driver>=LOW,<0.NN`. Cua Driver is 0.x, so the bound stays below
 the next minor, and every new minor used to need the same hand edit across the
 pyproject, the README, the docs, two tests and five uv.lock files. This is that edit,
 done by one reviewed script (called from release-please.yml, run from main, never from

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.4](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.3...cua-spacesd-v0.16.4) (2026-11-19)
+
+
+### Bug Fixes
+
+* **relay:** size the client stream budget to the memory limit, add memory and stream gauges (CUA-3138) ([#6379](https://github.com/trycua/cua/issues/6379)) ([4e5a10e](https://github.com/trycua/cua/commit/4e5a10e78e8fe4040dc9d4ef1d16a84544c27ae6))
+
 ## [0.16.3](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.2...cua-spacesd-v0.16.3) (2026-11-18)
 
 

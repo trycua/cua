@@ -836,7 +836,13 @@ const LocalStatusShape = ref(
     fix: optNull(
       ref(
         "RuntimeFix",
-        obj<RuntimeFix>()({ action: nullable(oneOf("setup-wsl", "restart-app", "open-windows-features")), label: str, note: nullable(str), busy: bool, termsUrl: nullable(str) }),
+        obj<RuntimeFix>()({
+          action: nullable(oneOf("setup-wsl", "restart-app", "open-windows-features")),
+          label: str,
+          note: nullable(str),
+          busy: bool,
+          termsUrl: nullable(str),
+        }),
       ),
     ),
     hostArch: opt(str),

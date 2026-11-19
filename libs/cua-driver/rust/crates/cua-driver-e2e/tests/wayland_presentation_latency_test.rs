@@ -562,7 +562,9 @@ fn wayland_presentation_feedback_attributes_action_latency_across_the_boundary()
             .expect("start source-built Linux driver");
         *evidence = recording_evidence(driver.recording_dir());
         let fixture = launch(&mut driver, &directory);
-        driver.start_behavior_recording();
+        // The raw Wayland fixture publishes no AT-SPI tree, and a per-turn
+        // walk would also land inside the Driver return stamp measured here.
+        driver.start_behavior_recording_without_accessibility_tree();
 
         let startup_record = startup(&fixture.journal).expect("fixture startup record");
         // The clock domain is recorded, not assumed. A foreign presentation

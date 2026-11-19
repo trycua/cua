@@ -1385,8 +1385,10 @@ fn validate_turn_evidence(
     errors: &mut Vec<String>,
 ) {
     let trajectory = recording_dir.join("trajectory.json");
+    let mut state_disabled = false;
     match read_json_value(&trajectory) {
         Ok(manifest) => {
+            state_disabled = manifest["accessibility_tree"] == "disabled";
             if manifest["behavior_video"]["status"] != "finalized" {
                 errors.push(format!(
                     "behavioral video phase is not finalized for {cell_id}: {}",
@@ -1449,7 +1451,7 @@ fn validate_turn_evidence(
     // probes, so only an action case's observation binds its sole turn.
     let turn_observation = (require_turn && turns.len() == 1).then_some(observed_behavior);
     for turn in turns {
-        validate_one_turn(&turn, cell_id, turn_observation, errors);
+        validate_one_turn(&turn, cell_id, turn_observation, state_disabled, errors);
     }
 }
 
@@ -1457,6 +1459,7 @@ fn validate_one_turn(
     turn: &Path,
     cell_id: &str,
     observed_behavior: Option<ObservedBehavior>,
+    state_disabled: bool,
     errors: &mut Vec<String>,
 ) {
     let turn_name = turn
@@ -1591,6 +1594,13 @@ fn validate_one_turn(
                 && manifest.as_ref().is_some_and(|value| {
                     value[phase]["state"]["status"] == "not_applicable"
                         && value[phase]["state"]["classification"] == NO_TARGET_WINDOW
+                }))
+            // A cell that started recording without the accessibility tree
+            // declares so in its trajectory, and the recorder must agree.
+            || (state_disabled
+                && manifest.as_ref().is_some_and(|value| {
+                    value[phase]["state"]["status"] == "not_applicable"
+                        && value[phase]["state"]["classification"] == STATE_SKIPPED_DISABLED
                 }))
     };
     if state_expected {
@@ -1888,6 +1898,10 @@ fn semantic_action_without_point(action: &Value) -> bool {
 /// Recorder classification for a pid that has no window (see
 /// `cua_driver_core::recording::TARGET_UNAVAILABLE`).
 const NO_TARGET_WINDOW: &str = cua_driver_core::recording::TARGET_UNAVAILABLE;
+
+/// Recorder classification for state skipped because the recording was
+/// started without the accessibility tree.
+const STATE_SKIPPED_DISABLED: &str = cua_driver_core::recording::STATE_SKIPPED_DISABLED;
 
 fn validate_capture_status(
     manifest: Option<&Value>,
@@ -3099,6 +3113,47 @@ mod tests {
         }
         validate_catalog(&[case], &[result], Some(root.path()), true)
             .expect("an errored call on a windowless pid needs no image or tree");
+    }
+
+    fn disable_turn_state(turn: &Path) {
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"not_applicable","classification":"state_capture_disabled"},"screenshot":{"status":"captured"}},
+                "after":{"state":{"status":"not_applicable","classification":"state_capture_disabled"},"screenshot":{"status":"captured"}},
+                "click":{"status":"captured"}
+            }"#,
+        )
+        .expect("write state-disabled evidence");
+        for file in ["before_state.json", "after_state.json", "app_state.json"] {
+            std::fs::remove_file(turn.join(file)).expect("remove state evidence");
+        }
+    }
+
+    #[test]
+    fn validator_accepts_disabled_state_only_when_the_trajectory_declares_it() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        disable_turn_state(&turn);
+        let errors = validate_catalog(
+            std::slice::from_ref(&case),
+            std::slice::from_ref(&result),
+            Some(root.path()),
+            true,
+        )
+        .expect_err("undeclared disabled state is a missing walk");
+        assert!(errors.iter().any(|error| {
+            error.contains("turn-00001/before state")
+                && error.contains("classified state_capture_disabled")
+        }));
+
+        let trajectory = turn.parent().expect("recording dir").join("trajectory.json");
+        let mut manifest = read_json_value(&trajectory).expect("read trajectory");
+        manifest["accessibility_tree"] = Value::String("disabled".to_owned());
+        std::fs::write(&trajectory, serde_json::to_vec(&manifest).expect("encode"))
+            .expect("write trajectory");
+        validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect("a declared tree-less recording needs no state files");
     }
 
     #[test]

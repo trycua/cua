@@ -14,10 +14,11 @@
 //! `window_id` and window-local capture pixels with the session's delivery
 //! mode; a display gets `scope: desktop` and desktop pixels for the pointer,
 //! and its keys and text go to the focused window in the foreground (the
-//! gRPC backend's Linux keyboard rule; the desktop scope only when nothing is
-//! focused). A display has no window to address background input to, so a
-//! background session on one is refused with `WouldRequireActivation`, as on
-//! X11 and macOS. A window gesture also preserves an activation-required
+//! gRPC backend's Linux keyboard rule; the desktop scope when nothing is
+//! focused, and for a Super chord so the compositor's bindings see it). A
+//! display has no window to address background input to, so a background
+//! session on one is refused with `WouldRequireActivation`, as on X11 and
+//! macOS. A window gesture also preserves an activation-required
 //! refusal from the driver when its background route cannot reach the target.
 //!
 //! Windows desktop leases also forward hover (a move while no button is held)
@@ -273,9 +274,16 @@ impl ToolInputLease {
     }
 
     /// Base arguments for a key or text: a display's keys go to the focused
-    /// window in the foreground, as a physical keyboard's would.
-    fn keyboard_base(&self) -> Map<String, Value> {
+    /// window in the foreground, as a physical keyboard's would. A Super
+    /// chord goes to the desktop scope instead: the window-addressed key
+    /// reaches the client's keyboard past the compositor's key bindings
+    /// (Hyprland binds Super), and the desktop scope's virtual keyboard
+    /// passes through them as a physical key does.
+    fn keyboard_base(&self, modifiers: &[Modifier]) -> Map<String, Value> {
         match &self.target {
+            ToolInputTarget::Display { .. } if modifiers.contains(&Modifier::Command) => {
+                desktop_arguments()
+            }
             ToolInputTarget::Display { focused, .. } => match focused() {
                 Some((pid, window_id)) => window_arguments(
                     pid,
@@ -369,7 +377,7 @@ impl ToolInputLease {
                 calls
             }
             Gesture::Key { key, modifiers } => {
-                let mut arguments = self.keyboard_base();
+                let mut arguments = self.keyboard_base(&modifiers);
                 arguments.insert("key".into(), key_name(&key).into());
                 let modifiers = modifier_names(&modifiers);
                 if !modifiers.is_empty() {
@@ -378,7 +386,7 @@ impl ToolInputLease {
                 vec![("press_key", arguments)]
             }
             Gesture::Text { text } => {
-                let mut arguments = self.keyboard_base();
+                let mut arguments = self.keyboard_base(&[]);
                 arguments.insert("text".into(), text.into());
                 vec![("type_text", arguments)]
             }
@@ -789,6 +797,68 @@ mod tests {
                     desktop_pointer(
                         json!({"scope":"desktop", "x":959.0, "y":599.0, "direction":"down", "amount":1})
                     )
+                ),
+            ]
+        );
+    }
+
+    /// Regression (#5344): Super+W from an Omarchy viewer reached the focused
+    /// window as a plain `w`. The window-addressed key goes straight to the
+    /// client's keyboard, past the compositor's key bindings; a Super chord
+    /// has to arrive through the desktop scope, as a physical keyboard's does.
+    #[test]
+    fn desktop_super_chords_reach_the_compositor_through_the_desktop_scope() {
+        let tools = Arc::new(Recorded::default());
+        let lease = open(
+            &display_target(),
+            InteractiveDeliveryMode::PersistentForeground,
+            unknown_window,
+            |_| Ok(display()),
+            Box::new(|| Some((4242, 77))),
+            tools.clone(),
+        )
+        .unwrap();
+        let chord = |key: &str, modifiers| InteractiveInputEvent::Key {
+            key: key.into(),
+            state: InputKeyState::Down,
+            modifiers,
+            repeat: false,
+        };
+        lease
+            .dispatch(&batch(
+                0,
+                vec![
+                    chord("w", vec![cua_media_protocol::InputModifier::Command]),
+                    chord(
+                        "w",
+                        vec![
+                            cua_media_protocol::InputModifier::Command,
+                            cua_media_protocol::InputModifier::Shift,
+                        ],
+                    ),
+                    chord("w", vec![cua_media_protocol::InputModifier::Control]),
+                ],
+            ))
+            .unwrap();
+        assert_eq!(
+            tools.0.lock().unwrap().clone(),
+            vec![
+                (
+                    "press_key".into(),
+                    json!({"scope": "desktop", "key": "w", "modifiers": ["super"]})
+                ),
+                (
+                    "press_key".into(),
+                    json!({"scope": "desktop", "key": "w", "modifiers": ["super", "shift"]})
+                ),
+                // Other chords keep the focused window's verified route.
+                (
+                    "press_key".into(),
+                    json!({
+                        "pid": 4242, "window_id": 77, "delivery_mode": "foreground",
+                        "_skip_window_change_detection": true, "key": "w",
+                        "modifiers": ["ctrl"],
+                    })
                 ),
             ]
         );

@@ -347,6 +347,7 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         surface.bound = true
         let input = surface.view.input
         input.onInput = { [weak session] events in session?.send(events) }
+        input.onPaste = { [weak session] events, text in session?.paste(events, text: text) }
         session.presentation.viewDidAttach()
         input.onDetach = { [weak session] in session?.presentation.viewDidDetach() }
         if let overlay = surface.view.presence {
@@ -496,6 +497,7 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         surface.view.input.onDetach?()
         surface.view.input.onDetach = nil
         surface.view.input.onInput = nil
+        surface.view.input.onPaste = nil
         surface.view.removeFromSuperview()
         if surfaces.isEmpty { unwatchWindow() }
         guard let stream = streams[surface.key] else { return }

@@ -339,6 +339,7 @@ impl SpacesExecutor {
         };
         // Services with slow one-time work (the compat gateway's image pull
         // and first boot) start it now, beside the member Space's own.
+        #[cfg(feature = "spaces-hotspot")]
         if let Some(p) = crate::job_services::provider() {
             for name in &job.services {
                 let (p, name, job) = (p.clone(), name.clone(), job.clone());

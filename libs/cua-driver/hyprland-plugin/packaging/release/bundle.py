@@ -42,6 +42,7 @@ src/primary_trace.hpp
 src/protocol.cpp
 src/seat_lifetime.hpp
 src/session.cpp
+src/session_availability.hpp
 src/status.cpp
 src/user_seat_guard.cpp
 src/user_seat_guard.hpp
@@ -69,6 +70,7 @@ tests/plugin_api_test.cpp
 tests/plugin_input_lifetime_test.cpp
 tests/protocol_test.cpp
 tests/seat_lifetime_test.cpp
+tests/session_availability_test.cpp
 tests/status_test.cpp
 tests/transport_test.cpp
 tests/user_seat_policy_test.cpp

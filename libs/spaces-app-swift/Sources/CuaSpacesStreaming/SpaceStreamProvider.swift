@@ -78,6 +78,26 @@ public final class SpaceStreamProvider: SpaceStreamSourceProviding, @unchecked S
         return try await native.streamSession(options: options, frames: frames, audio: audio)
     }
 
+    /// Through the Space's cua-spacesd (`ComputerService.SetClipboard`), on
+    /// whichever route the Space is reached by. Only under `viewing`: `ask`
+    /// needs a prompt this viewer does not have, and `off` moves nothing.
+    /// The setting is read on each paste, not from the handle's
+    /// connection-time info: it can change while a viewer stays open.
+    public func sendClipboard(_ text: String) async throws -> Bool {
+        let native = try await handle()
+        guard let setting = try await space.clipboardSetting(),
+              Self.pasteSendsClipboard(setting: setting) else { return false }
+        _ = try await native.spacesd().setClipboard(text: text)
+        return true
+    }
+
+    /// Whether a paste in the viewer sends this Mac's clipboard under the
+    /// Space's clipboard `setting` (empty is the default, `viewing`).
+    public static func pasteSendsClipboard(setting: String) -> Bool {
+        let word = setting.trimmingCharacters(in: .whitespaces).lowercased()
+        return word.isEmpty || word == "viewing"
+    }
+
     /// The input policy a viewer of `source` opens its session with.
     ///
     /// A window takes input in the background (no focus change on the

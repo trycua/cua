@@ -591,7 +591,17 @@ fn screenshot_scale(state: &ToolResponse) -> (f64, f64) {
 }
 
 fn screenshot_scale_for_platform(state: &serde_json::Value, linux: bool) -> (f64, f64) {
-    let window_role = if linux { "frame" } else { "AXWindow" };
+    if linux {
+        // The AT-SPI frame can include a client-side shadow that the window
+        // capture leaves out, so its size says nothing about a resize. The
+        // driver publishes frame_scale exactly when it shrank the capture.
+        let scale = state["frame_scale"].as_f64().unwrap_or(1.0);
+        assert!(
+            scale.is_finite() && scale > 0.0,
+            "invalid frame_scale: {scale}"
+        );
+        return (scale, scale);
+    }
     let capture = (
         state["screenshot_width"].as_f64().unwrap_or(0.0),
         state["screenshot_height"].as_f64().unwrap_or(0.0),
@@ -601,7 +611,7 @@ fn screenshot_scale_for_platform(state: &serde_json::Value, linux: bool) -> (f64
         .and_then(|elements| {
             elements
                 .iter()
-                .find(|element| element["role"].as_str() == Some(window_role))
+                .find(|element| element["role"].as_str() == Some("AXWindow"))
         })
         .map(|window| {
             (
@@ -629,10 +639,11 @@ fn screenshot_local_point(
 }
 
 #[test]
-fn linux_frame_geometry_drives_resized_screenshot_scale() {
+fn linux_frame_scale_drives_resized_screenshot_scale() {
     let state = serde_json::json!({
         "screenshot_width": 1568,
         "screenshot_height": 852,
+        "frame_scale": 0.8,
         "elements": [{
             "element_index": 0,
             "role": "frame",
@@ -644,9 +655,7 @@ fn linux_frame_geometry_drives_resized_screenshot_scale() {
         }]
     });
 
-    let linux_scale = screenshot_scale_for_platform(&state, true);
-    assert!((linux_scale.0 - 1568.0 / 1896.0).abs() < f64::EPSILON);
-    assert!((linux_scale.1 - 852.0 / 1030.0).abs() < f64::EPSILON);
+    assert_eq!(screenshot_scale_for_platform(&state, true), (0.8, 0.8));
 
     let ax_scale = screenshot_scale_for_platform(&state, false);
     assert!((ax_scale.0 - 1568.0 / 1000.0).abs() < f64::EPSILON);
@@ -654,10 +663,33 @@ fn linux_frame_geometry_drives_resized_screenshot_scale() {
 }
 
 #[test]
+fn linux_decorated_frame_is_not_a_screenshot_resize() {
+    // A cua-compositor window capture is the 896x736 window without its
+    // client-side shadow, while AT-SPI reports the 940x780 shadowed frame.
+    // The driver did not resize the capture, so it publishes no frame_scale.
+    let state = serde_json::json!({
+        "screenshot_width": 896,
+        "screenshot_height": 736,
+        "elements": [{
+            "element_index": 0,
+            "role": "frame",
+            "frame": {"x": 0, "y": 0, "w": 940, "h": 780}
+        }]
+    });
+
+    let scale = screenshot_scale_for_platform(&state, true);
+    assert_eq!(scale, (1.0, 1.0));
+    // The "Open child window" button centre stays on the button.
+    let point = screenshot_local_point((672.5, 363.5), (0.0, 0.0), scale);
+    assert_eq!(point, (672.5, 363.5));
+}
+
+#[test]
 fn resized_screenshot_coordinates_use_capture_scale() {
     let state = serde_json::json!({
         "screenshot_width": 1568,
         "screenshot_height": 852,
+        "frame_scale": 0.8,
         "elements": [{
             "role": "frame",
             "frame": {"x": 12, "y": 38, "w": 1896, "h": 1030}
@@ -666,8 +698,9 @@ fn resized_screenshot_coordinates_use_capture_scale() {
     let scale = screenshot_scale_for_platform(&state, true);
     let point = screenshot_local_point((949.0, 398.0), (12.0, 38.0), scale);
 
-    assert!((point.0 - 774.903).abs() < 0.001);
-    assert!((point.1 - 297.786).abs() < 0.001);
+    // (949 - 12) * 0.8 and (398 - 38) * 0.8.
+    assert!((point.0 - 749.6).abs() < 0.001);
+    assert!((point.1 - 288.0).abs() < 0.001);
     assert!(point.0 < 1568.0);
     assert!(point.1 < 852.0);
 }
@@ -2348,6 +2381,86 @@ fn embedded_browser_routes_are_exact_or_refused() {
         selected > 0,
         "no embedded-browser cells were selected; check CUA_E2E_HARNESS_FILTER"
     );
+    resume_first_failure(failure);
+}
+
+/// A background Cmd+V to a WebKit page runs the app's Edit > Paste: AppKit
+/// sends a key equivalent only to the active app, and WebKit pastes only from
+/// the `paste:` action (#5355). Each row must put the clipboard in the page
+/// field it names.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore]
+fn webkit_background_paste_runs_the_edit_menu_item() {
+    const PASTED: &str = "cua-background-paste";
+    let mut failure = None;
+    let mut selected = 0usize;
+    for spec in host_specs()
+        .into_iter()
+        .filter(|spec| matches!(spec.name, "tauri" | "wkwebview"))
+    {
+        for addressing in ["ax", "px"] {
+            let oracles = vec![
+                OracleKind::FixtureState,
+                OracleKind::Focus,
+                OracleKind::ZOrder,
+                OracleKind::NoLeakedInput,
+                OracleKind::Cursor,
+            ];
+            let case = CaseSpec::delivered(
+                format!("macos-{}-paste-hotkey-{addressing}-background", spec.name),
+                spec.name,
+                "platform-webview",
+                "paste_hotkey",
+                if addressing == "ax" {
+                    Targeting::Ax
+                } else {
+                    Targeting::Px
+                },
+                Delivery::Background,
+                Scope::Window,
+                cua_driver_testkit::e2e::DriverRoute::MacosAxAction,
+                oracles,
+            );
+            if !cell_selected(&case) {
+                continue;
+            }
+            selected += 1;
+            let result = run_host_case_with_outcome(case, &spec, |fixture| {
+                let _clipboard = TextClipboardGuard::replace(PASTED);
+                let state = snapshot(fixture);
+                let mut args =
+                    action_target_args(fixture, &state, "keyboard-input", addressing, "background");
+                args["keys"] = serde_json::json!(["cmd", "v"]);
+                let response = fixture.driver.call("hotkey", args);
+                assert!(
+                    !response.is_error(),
+                    "{}: background Cmd+V ({addressing}) failed: {}",
+                    fixture.name,
+                    response.raw
+                );
+                assert!(
+                    response.text().contains("key equivalent of Edit > Paste"),
+                    "{}: background Cmd+V ({addressing}) did not run Edit > Paste: {}",
+                    fixture.name,
+                    response.raw
+                );
+                assert_fixture_value(fixture, "keyboard-input", PASTED);
+                delivered_observation()
+            });
+            if failure.is_none() {
+                failure = result;
+            }
+        }
+    }
+    let filtered = ["CUA_E2E_HARNESS_FILTER", "CUA_E2E_CELL_FILTER"]
+        .iter()
+        .any(|name| std::env::var(name).is_ok_and(|filter| !filter.trim().is_empty()));
+    if selected == 0 && filtered {
+        eprintln!("no WebKit paste rows matched CUA_E2E_HARNESS_FILTER or CUA_E2E_CELL_FILTER");
+        return;
+    }
+    assert!(selected > 0, "no WebKit paste cells were selected");
     resume_first_failure(failure);
 }
 

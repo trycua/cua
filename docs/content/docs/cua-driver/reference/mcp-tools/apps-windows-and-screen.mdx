@@ -19,7 +19,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 | [`kill_app`](#kill_app) | Force-terminate a process by pid (kill -9 equivalent on macOS / Linux; taskkill /F equivalent on Windows). | macOS, Linux, Windows |
 | [`bring_to_front`](#bring_to_front) | Persistently activate an app and leave it in the foreground. | macOS, Linux, Windows |
 | [`set_window_frame`](#set_window_frame) | Set one exact top-level window's frame in the desktop-coordinate space reported by list_windows and verify the resulting geometry through an independent readback. | macOS, Linux, Windows |
-| [`invoke_menu`](#invoke_menu) | Resolve an exact application-menu path one live native level at a time and invoke its final item through accessibility APIs. | macOS, Linux, Windows |
+| [`invoke_menu`](#invoke_menu) | Resolve an exact application-menu path one live native level at a time and normally invoke its final item through accessibility APIs. | macOS, Linux, Windows |
 | [`debug_window_info`](#debug_window_info) | Diagnostic: dump everything cua-driver sees about a pid's top-level windows from the daemon's session perspective. | Windows |
 | [`get_window_state`](#get_window_state) | Snapshot a window: the accessibility tree plus a screenshot. | macOS, Linux, Windows |
 | [`get_accessibility_tree`](#get_accessibility_tree) | DEPRECATED, removed in the first release after 26 Nov 2026. | macOS, Linux, Windows |
@@ -366,7 +366,7 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 
 ### `invoke_menu`
 
-Resolve an exact application-menu path one live native level at a time and invoke its final item through accessibility APIs. Missing, ambiguous, disabled, or structurally mismatched segments fail closed; this tool never falls back to pixels. Menu paths and refusals: `get_guide({topic:"menus"})`.
+Resolve an exact application-menu path one live native level at a time and normally invoke its final item through accessibility APIs. Missing, ambiguous, structurally mismatched, and other disabled segments fail closed; this tool never falls back to pixels. On macOS, a disabled Save (⌘S) in a background document window with a known document path is saved through the app’s scripting interface using Apple Events instead, without activating the app. This requires per-app Automation consent and may show macOS’s first-use consent prompt; denied permission refuses the save. Menu paths and refusals: `get_guide({topic:"menus"})`.
 
 Effect: destructive. Platforms: macOS, Linux, Windows.
 
@@ -478,7 +478,7 @@ POPUP MENUS: a context menu / popover / combo list is an override-redirect windo
 </Tab>
 <Tab value="Windows">
 
-Walk a running app's UIA tree and return it ONCE, as compact Markdown by default (`tree_format:"markdown"`). Every actionable element is tagged `[N]` (an element_index); its element_token is `<snapshot_id>:N`, where `snapshot_id` is printed in the response header and returned in structuredContent. Pass `tree_format:"elements"` for the structured `elements` array instead (explicit `element_token`, `frame`, `parent_index`, `value`, `actions` per row), or `"both"` for both (about twice the size).
+Walk a running app's UIA tree and return it ONCE, as compact Markdown by default (`tree_format:"markdown"`). Every actionable element is tagged `[N]` (an element_index); its element_token is `<snapshot_id>:N`, where `snapshot_id` is printed in the response header and returned in structuredContent. Pass `tree_format:"elements"` for the structured `elements` array instead (explicit `element_token`, `frame`, `parent_index`, `value`, `actions` per row), or `"both"` for both (about twice the size). `Edit` elements carry `is_password` (`true` for a password field), and the Markdown row marks a password field with `password`.
 
 Size: a read is bounded by default (`max_elements` 250). When the walk stops at that budget the response says `Tree truncated at max_elements=…` and `truncated: true`; pass a larger `max_elements`, or `query` / `max_depth`, to reach the rest. `_note` is omitted unless `verbose:true`. `full_output:true` restores the previous full response: both representations, all metadata, and the platform's walk limits (≤5 000 elements, depth ≤25).
 
@@ -532,7 +532,7 @@ Windows requires no special permissions.
 | <span id="get_window_state--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 | <span id="get_window_state--since"></span>`since` | `string` |  | A `snapshot_id` from an earlier get_window_state of the same window, or "latest" for this window's most recent read with the same query/max_elements/max_depth. Use it on every re-read after acting. Returns only what changed against that snapshot: `+` added rows, `~` changed rows, `-` removed rows (removed ids are the old snapshot's), or `no change`. Falls back to a full read when the snapshot is unknown, expired, belongs to another window, or was read with a different query/max_elements/max_depth; `since_status` says which. The response still carries a NEW snapshot_id and its element_tokens; rows not listed keep their previous [N] unless a `reindexed:` line says otherwise. |
 | <span id="get_window_state--timeout_ms"></span>`timeout_ms` | `integer` | `1000` | Wall-clock budget in milliseconds for the accessibility-tree walk (default 1000, min 100, max 120000). Bounds the WHOLE walk. When the budget runs out the tool returns the PARTIAL tree it has, flagged with `truncated: true`, `truncation_reason`, `nodes_visited`, `nodes_pending` and `elements_complete: false`; retry with a larger value (e.g. 5000) or narrow with `query` / `max_depth`. Range: 100 to 120000. |
-| <span id="get_window_state--tree_format"></span>`tree_format` | `"markdown" \| "elements" \| "both"` |  | Which tree representation to return. Default "markdown": the compact `tree_markdown` only, where a row `[N]` is addressed with element_token `<snapshot_id>:N`. "elements": the structured `elements` array only (per-element element_token, frame, parent_index, value). "both": the two together, as before; roughly doubles the size. |
+| <span id="get_window_state--tree_format"></span>`tree_format` | `"markdown" \| "elements" \| "both"` |  | Which tree representation to return. Default "markdown": the compact `tree_markdown` only, where a row `[N]` is addressed with element_token `<snapshot_id>:N`. "elements": the structured `elements` array only (per-element element_token, frame, parent_index, value), plus `observations`: display-only rows such as static text, with role, label, value and frame but no element_token, for reading and verify_state only. "both": the two together, as before; roughly doubles the size. |
 | <span id="get_window_state--verbose"></span>`verbose` | `boolean` |  | Default false. Set true to include the `_note` string and the full `background_input` capability report (macOS), which are omitted by default to save context. |
 
 **Example arguments**

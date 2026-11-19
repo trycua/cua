@@ -61,8 +61,18 @@ fn standalone_trust_gated_click_html() -> String {
   <span id="standalone-trust-gated-state" data-cua-id="standalone-trust-gated-state">
     activation=idle
   </span>
+  <div id="standalone-focus-only-host"></div>
 </fieldset>
 <script>
+  // Focus-intent styling on a shadow button's host and the outer document
+  // belongs to its ancestors, so it must not confirm a click either.
+  const focusOnlyHost = document.getElementById('standalone-focus-only-host');
+  const focusOnly = focusOnlyHost.attachShadow({ mode: 'open' });
+  focusOnly.innerHTML = '<button aria-label="standalone-shadow-focus-only">Focus only</button>';
+  focusOnly.querySelector('button').addEventListener('focus', () => {
+    focusOnlyHost.classList.add('focus-within');
+    document.body.classList.add('focus-visible');
+  });
   const trustGated = document.getElementById('standalone-trust-gated');
   const trustGatedState = document.getElementById('standalone-trust-gated-state');
   // An app that ignores an untrusted click leaves the page alone, so the
@@ -2116,6 +2126,24 @@ fn run_trust_gated_dom_click(spec: &BrowserSpec) {
                 &fixture.server,
                 "standalone-trust-gated-state",
                 "activation=ignored-untrusted",
+            );
+
+            let focus_only_ref = ref_by_label(&snapshot, "standalone-shadow-focus-only");
+            let focus_only = fixture.driver.call(
+                "browser_click",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "ref": focus_only_ref,
+                    "input_route": "dom_event",
+                    "session": session,
+                }),
+            );
+            assert_eq!(
+                focus_only.action_effect(),
+                Some("unverifiable"),
+                "{}",
+                focus_only.raw
             );
 
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())

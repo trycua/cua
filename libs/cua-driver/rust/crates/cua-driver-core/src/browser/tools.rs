@@ -1990,9 +1990,10 @@ fn dialog_block(dialog: &super::cdp_ws::CdpDialogState) -> Value {
 /// renderer runs every microtask their handlers queue before it answers, so
 /// none of them lands inside the click call. [`DOM_EVENT_CLICK_SEQUENCE`]
 /// then resolves to `{ pageMutations }`: how many DOM mutations outside the
-/// node's own subtree and its ancestors' attributes happened from
-/// `pointerdown` until the microtasks its handlers queued ran. No other task
-/// can run in that span, so those mutations are the handlers' own, for
+/// node's own subtree and its ancestors' attributes, across shadow roots to
+/// their hosts, happened from `pointerdown` until the microtasks its handlers
+/// queued ran. No other task can run in that span, so those mutations are the
+/// handlers' own, for
 /// example a button that reveals fields elsewhere without changing its own
 /// state. The click call waits a bounded 256 microtask turns, not for a later
 /// task: a task boundary would let unrelated timers and network callbacks
@@ -2032,7 +2033,9 @@ const DOM_EVENT_HOVER_SEQUENCE: &str = concat!(
 const DOM_EVENT_CLICK_SEQUENCE: &str = concat!(
     "async function() { ",
     dom_event_pointer_prelude!(),
-    "const records = []; \
+    "const ancestors = new Set(); \
+    for (let node = el; node; node = node.parentNode || node.host) ancestors.add(node); \
+    const records = []; \
     const observer = new view.MutationObserver(batch => { records.push(...batch); }); \
     for (const scope of new Set([doc, root])) observer.observe(scope, \
         { subtree: true, childList: true, attributes: true, characterData: true }); \
@@ -2048,7 +2051,7 @@ const DOM_EVENT_CLICK_SEQUENCE: &str = concat!(
     records.push(...observer.takeRecords()); \
     observer.disconnect(); \
     const caused = records.filter(m => !el.contains(m.target) \
-        && !(m.type === 'attributes' && m.target.contains(el))); \
+        && !(m.type === 'attributes' && ancestors.has(m.target))); \
     return { pageMutations: caused.length }; \
 }"
 );

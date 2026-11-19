@@ -296,8 +296,8 @@ fn has_process_type(arguments: &[String]) -> bool {
 /// This is deliberately narrow. It applies only to a one-record command line,
 /// and every caller gates it on the product already resolved from
 /// `/proc/<pid>/exe`, so no non-Helium process reaches it. Splitting happens
-/// only at a ` --` switch boundary, so a value containing spaces
-/// (`--user-data-dir=/tmp/helium profile`) survives intact, and leading
+/// only at a ` --` switch boundary, so a value containing spaces survives
+/// intact, and leading
 /// positional arguments (`helium https://example.test --flag`) do not defeat
 /// recovery. Every other process keeps ordinary NUL semantics.
 ///
@@ -401,30 +401,6 @@ fn parse_proc_net_loopback_listeners(text: &str) -> Vec<(u16, u64)> {
             ))
         })
         .collect()
-}
-
-/// Resolve the kernel inode of the filesystem-bound AF_UNIX socket listening
-/// at exactly `target`, by scanning `/proc/net/unix`.
-///
-/// The kernel's `Inode` column is `%5lu`: right-justified in a minimum
-/// five-character field, so a small inode number is left-padded with extra
-/// spaces. Splitting on runs of whitespace (rather than a fixed column
-/// offset) is what keeps that padding from being misread as additional
-/// fields.
-fn unix_socket_inode(target: &std::path::Path) -> Option<u64> {
-    let text = std::fs::read_to_string("/proc/net/unix").ok()?;
-    text.lines().skip(1).find_map(|line| {
-        let mut fields = line.split_whitespace();
-        let inode = fields.nth(6)?.parse::<u64>().ok()?;
-        // Only a filesystem-bound socket carries a path column; an
-        // abstract-namespace socket has none and never matches an absolute
-        // target. A path containing internal runs of more than one space is
-        // an inherent ambiguity in this whitespace-delimited encoding, not
-        // one this parser can resolve — Chromium's own singleton-socket path
-        // is a single-token generated directory name and never hits it.
-        let rest: Vec<&str> = fields.collect();
-        (!rest.is_empty() && std::path::Path::new(&rest.join(" ")) == target).then_some(inode)
-    })
 }
 
 fn descendant_pids(root: i64, relationships: impl IntoIterator<Item = (i64, i64)>) -> HashSet<i64> {
@@ -544,34 +520,6 @@ fn default_user_data_dir(product: BrowserProduct, environ: &[u8]) -> Option<Path
     Some(config_home.join(relative))
 }
 
-/// Corroborate a candidate profile directory against the kernel's own view of
-/// the process.
-///
-/// A Chromium profile is not merely named on the command line; the running
-/// browser owns that profile's process-singleton listener. Chromium creates
-/// `<profile>/SingletonSocket` as a symlink to a private AF_UNIX socket and
-/// keeps it bound for the life of the browser, so the kernel's own listing of
-/// live sockets — not the process's ambient working directory or its
-/// unrelated open file descriptors — is what ties a directory to this exact
-/// process. An attacker who controls only argument text can name any path,
-/// including one the process's cwd or some incidental fd happens to fall
-/// under, but cannot inject a socket file descriptor into another process's
-/// fd table; only the kernel can put one there.
-fn process_owns_profile_directory(pid: i64, directory: &std::path::Path) -> bool {
-    let Ok(target) = std::fs::read_link(directory.join("SingletonSocket")) else {
-        return false;
-    };
-    let target = if target.is_absolute() {
-        target
-    } else {
-        directory.join(target)
-    };
-    let Some(inode) = unix_socket_inode(&target) else {
-        return false;
-    };
-    socket_inodes_for_process_tree(pid).is_ok_and(|inodes| inodes.contains(&inode))
-}
-
 fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
     let bytes = std::fs::read(format!("/proc/{pid}/cmdline")).map_err(|_| {
         BrowserRefusal::new(
@@ -587,17 +535,18 @@ fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
         .map(browser_product)
         .unwrap_or(BrowserProduct::Other);
     let mut directories = user_data_dir_arguments(&command_line_arguments(&bytes));
-    // A NUL-delimited command line carries the kernel's own argument
-    // separators, so its switches are authoritative. A packed record has lost
-    // them: ordinary text inside a file name or URL is then indistinguishable
-    // from a real switch, so anything recovered from it is a candidate to be
-    // corroborated rather than a fact to be trusted.
-    let mut candidate_is_unseparated = false;
-    if directories.is_empty() && product == BrowserProduct::Helium {
-        if let Some(packed) = packed_helium_arguments(&bytes) {
-            directories = user_data_dir_arguments(&packed);
-            candidate_is_unseparated = !directories.is_empty();
-        }
+    // A packed record has lost its argument separators, so a
+    // `--user-data-dir` in it cannot be told apart from the same text inside a
+    // file name or URL. Refuse rather than guess the profile.
+    if directories.is_empty()
+        && product == BrowserProduct::Helium
+        && packed_helium_arguments(&bytes).is_some()
+        && String::from_utf8_lossy(&bytes).contains("--user-data-dir")
+    {
+        return Err(BrowserRefusal::new(
+            BrowserRefusalCode::BrowserBindingAmbiguous,
+            "the browser's command line has no argument separators, so its --user-data-dir cannot be distinguished from ordinary argument text",
+        ));
     }
     directories.sort();
     directories.dedup();
@@ -628,12 +577,6 @@ fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
         })?;
         cwd.join(path)
     };
-    if candidate_is_unseparated && !process_owns_profile_directory(pid, &path) {
-        return Err(BrowserRefusal::new(
-            BrowserRefusalCode::BrowserBindingAmbiguous,
-            "the browser's command line has no argument separators, so a --user-data-dir value read from it could not be distinguished from ordinary argument text and the process does not own that directory's SingletonSocket",
-        ));
-    }
     Ok(Some(path))
 }
 
@@ -1966,97 +1909,11 @@ mod tests {
                 "--remote-debugging-port=0"
             ]
         );
-        assert_eq!(
-            user_data_dir_arguments(&packed),
-            [PathBuf::from("/tmp/helium profile")]
-        );
-        // The separated form resolves through the same shared extractor.
-        assert_eq!(
-            user_data_dir_arguments(
-                &packed_helium_arguments(
-                    b"/opt/helium-browser-bin/helium --user-data-dir /tmp/helium profile --no-first-run\0"
-                )
-                .expect("packed Helium argv")
-            ),
-            [PathBuf::from("/tmp/helium profile")]
-        );
         // NUL-delimited records are handled by the ordinary parser instead.
         assert!(
             packed_helium_arguments(b"/opt/helium-browser-bin/helium\0--no-first-run\0").is_none()
         );
         assert!(packed_helium_arguments(b"/opt/helium-browser-bin/helium\0").is_none());
-    }
-
-    /// Serializes the `fork` inside `FakeHeliumProcess::spawn` against the
-    /// window in which a test holds a listening socket open and measures its
-    /// liveness.
-    ///
-    /// `Command::spawn` is fork plus exec, and the fork duplicates every
-    /// descriptor its thread can see. A sibling fork landing inside that
-    /// window lends this test's listener to a child for the moment between
-    /// `fork` and the child's `exec`, so the kernel keeps the socket alive for
-    /// several milliseconds past this test's own `drop`. That is a property of
-    /// running these tests concurrently in one process, not of the ownership
-    /// check under test, so the two are serialized rather than papered over
-    /// with a sleep.
-    static FORK_EXCLUSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    fn exclude_concurrent_forks() -> std::sync::MutexGuard<'static, ()> {
-        FORK_EXCLUSION
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    #[test]
-    fn unix_socket_inode_resolves_only_a_live_kernel_listener() {
-        // Held for the listener's whole lifetime so no sibling test can fork
-        // this descriptor into a child that outlives `drop(listener)`.
-        let _fork_exclusion = exclude_concurrent_forks();
-        let directory = tempfile::tempdir().expect("temporary socket directory");
-        let sock_path = directory.path().join("probe.sock");
-        let listener =
-            std::os::unix::net::UnixListener::bind(&sock_path).expect("bind probe socket");
-        assert!(unix_socket_inode(&sock_path).is_some_and(|inode| inode > 0));
-
-        // Dropping the listener closes its only fd. The bind path remains a
-        // socket special file on disk (Rust's UnixListener never unlinks on
-        // drop), but the live kernel object -- and its /proc/net/unix line
-        // -- is gone. A path that merely exists on disk must not resolve.
-        drop(listener);
-        assert!(sock_path.exists());
-        assert!(unix_socket_inode(&sock_path).is_none());
-
-        assert!(unix_socket_inode(&directory.path().join("never-bound.sock")).is_none());
-    }
-
-    #[test]
-    fn process_owns_profile_directory_requires_this_exact_process_to_hold_the_socket() {
-        let pid = i64::from(std::process::id());
-
-        // No SingletonSocket symlink at all.
-        let bare = tempfile::tempdir().expect("bare candidate directory");
-        assert!(!process_owns_profile_directory(pid, bare.path()));
-
-        // A SingletonSocket symlink present, but its target names no live
-        // kernel socket (nothing currently holds it open).
-        let stale_root = tempfile::tempdir().expect("stale socket directory");
-        let stale_sock = stale_root.path().join("SingletonSocket");
-        drop(std::os::unix::net::UnixListener::bind(&stale_sock).expect("bind then drop"));
-        let stale_candidate = tempfile::tempdir().expect("stale candidate directory");
-        std::os::unix::fs::symlink(&stale_sock, stale_candidate.path().join("SingletonSocket"))
-            .expect("symlink stale SingletonSocket");
-        assert!(!process_owns_profile_directory(pid, stale_candidate.path()));
-
-        // A SingletonSocket symlink resolving to a socket this exact process
-        // genuinely holds open -- the only case that must corroborate.
-        let owned_root = tempfile::tempdir().expect("owned socket directory");
-        let owned_sock = owned_root.path().join("SingletonSocket");
-        let _listener =
-            std::os::unix::net::UnixListener::bind(&owned_sock).expect("bind owned socket");
-        let profile = tempfile::tempdir().expect("real candidate directory");
-        std::os::unix::fs::symlink(&owned_sock, profile.path().join("SingletonSocket"))
-            .expect("symlink real SingletonSocket");
-        assert!(process_owns_profile_directory(pid, profile.path()));
     }
 
     /// A disposable stand-in for `/opt/helium-browser-bin/helium`: a real
@@ -2089,9 +1946,6 @@ mod tests {
         ) -> Self {
             use std::os::unix::fs::PermissionsExt;
             use std::os::unix::process::CommandExt;
-            // No sibling test may be measuring socket liveness across this
-            // fork; see `FORK_EXCLUSION`.
-            let _fork_exclusion = exclude_concurrent_forks();
             let executable_directory =
                 tempfile::tempdir().expect("temporary fake-helium executable directory");
             let executable = executable_directory.path().join("helium");
@@ -2171,8 +2025,6 @@ mod tests {
         let cwd = std::fs::read_link(format!("/proc/{}/cwd", process.pid()))
             .expect("fake Helium process cwd");
         assert_eq!(cwd, attacker_dir.path());
-        // And no real SingletonSocket exists there.
-        assert!(!attacker_dir.path().join("SingletonSocket").exists());
 
         let outcome = user_data_dir_for_pid(process.pid());
         assert!(
@@ -2185,12 +2037,10 @@ mod tests {
     }
 
     #[test]
-    fn user_data_dir_for_pid_corroborates_a_real_owned_singleton_socket() {
-        // The legitimate counterpart: a real `--user-data-dir` switch naming
-        // a profile directory with a space in its path, an unrelated
-        // working directory, and a SingletonSocket this exact process
-        // genuinely owns (mirroring Chromium's real process-singleton
-        // mechanism). This must attach.
+    fn user_data_dir_for_pid_refuses_a_packed_profile_even_with_an_owned_singleton_socket() {
+        // A SingletonSocket symlink anyone can plant may name the browser's
+        // real singleton socket, so even a socket the process holds does not
+        // prove that a packed `--user-data-dir` is its profile.
         let profile_root = tempfile::tempdir().expect("profile root");
         let profile = profile_root.path().join("profile with space");
         std::fs::create_dir_all(&profile).expect("create spaced profile directory");
@@ -2199,53 +2049,17 @@ mod tests {
         let listener =
             std::os::unix::net::UnixListener::bind(&singleton_sock).expect("bind singleton");
         std::os::unix::fs::symlink(&singleton_sock, profile.join("SingletonSocket"))
-            .expect("symlink real SingletonSocket into the profile");
+            .expect("symlink SingletonSocket into the profile");
         let stdout = unsafe {
             use std::os::fd::{FromRawFd, IntoRawFd};
             std::process::Stdio::from_raw_fd(listener.into_raw_fd())
         };
-
         let unrelated_cwd = tempfile::tempdir().expect("unrelated working directory");
         let packed = format!(
             "/opt/helium-browser-bin/helium --user-data-dir={}",
             profile.display()
         );
         let process = FakeHeliumProcess::spawn(&packed, unrelated_cwd.path(), stdout);
-
-        let cwd = std::fs::read_link(format!("/proc/{}/cwd", process.pid()))
-            .expect("fake Helium process cwd");
-        assert_ne!(cwd, profile, "the profile match must not depend on cwd");
-
-        assert_eq!(
-            user_data_dir_for_pid(process.pid()).expect("resolve the owned profile directory"),
-            Some(profile)
-        );
-    }
-
-    #[test]
-    fn user_data_dir_for_pid_refuses_a_singleton_socket_owned_by_a_different_process() {
-        // A directory can carry a real, live SingletonSocket -- just not one
-        // the candidate process holds. Planting someone else's socket must
-        // not be enough, mirroring the same ownership discipline the file
-        // already applies to a DevToolsActivePort's TCP listener.
-        let profile_root = tempfile::tempdir().expect("profile root");
-        let profile = profile_root.path().join("profile");
-        std::fs::create_dir_all(&profile).expect("create profile directory");
-        let singleton_root = tempfile::tempdir().expect("singleton socket root");
-        let singleton_sock = singleton_root.path().join("SingletonSocket");
-        // Bound and held by THIS test process (the harness), not by the
-        // fake Helium child spawned below.
-        let _listener_owned_by_harness =
-            std::os::unix::net::UnixListener::bind(&singleton_sock).expect("bind singleton");
-        std::os::unix::fs::symlink(&singleton_sock, profile.join("SingletonSocket"))
-            .expect("symlink real but foreign-owned SingletonSocket");
-
-        let packed = format!(
-            "/opt/helium-browser-bin/helium --user-data-dir={}",
-            profile.display()
-        );
-        let process =
-            FakeHeliumProcess::spawn(&packed, profile_root.path(), std::process::Stdio::null());
 
         let outcome = user_data_dir_for_pid(process.pid());
         assert!(
@@ -2258,27 +2072,18 @@ mod tests {
     }
 
     #[test]
-    fn packed_recovery_survives_leading_positional_arguments() {
-        // Opening a URL or file puts a positional argument before the first
-        // switch. Recovery must still find the profile rather than silently
-        // falling back to the default directory.
-        assert_eq!(
-            user_data_dir_arguments(
-                &packed_helium_arguments(
-                    b"/opt/helium-browser-bin/helium https://example.test --user-data-dir=/tmp/p\0"
-                )
-                .expect("packed Helium argv with a leading positional")
-            ),
-            [PathBuf::from("/tmp/p")]
+    fn user_data_dir_for_pid_uses_the_default_profile_for_a_packed_record_without_one() {
+        let cwd = tempfile::tempdir().expect("working directory");
+        let process = FakeHeliumProcess::spawn(
+            "/opt/helium-browser-bin/helium https://example.test --no-first-run",
+            cwd.path(),
+            std::process::Stdio::null(),
         );
+        let environ = std::fs::read(format!("/proc/{}/environ", process.pid()))
+            .expect("fake Helium process environment");
         assert_eq!(
-            user_data_dir_arguments(
-                &packed_helium_arguments(
-                    b"/opt/helium-browser-bin/helium /home/u/a.html --user-data-dir=/tmp/spaced dir\0"
-                )
-                .expect("packed Helium argv with a leading file positional")
-            ),
-            [PathBuf::from("/tmp/spaced dir")]
+            user_data_dir_for_pid(process.pid()).expect("resolve the default profile"),
+            default_user_data_dir(BrowserProduct::Helium, &environ)
         );
     }
 

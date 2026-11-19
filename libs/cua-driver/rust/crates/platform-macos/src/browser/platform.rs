@@ -866,6 +866,10 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         ))
     }
 
+    fn managed_extension_policy(&self, executable: &str) -> Option<String> {
+        super::managed_policy::managed_extension_policy(executable)
+    }
+
     fn security_prompt_open(&self) -> bool {
         crate::security_prompt::security_prompt_on_screen()
     }

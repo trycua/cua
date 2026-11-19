@@ -620,6 +620,7 @@ fn driver_owned_browser_command(
     executable: &str,
     root: &Path,
     profile: &PreparedProfile,
+    managed_extensions: bool,
 ) -> Result<Command, BrowserRefusal> {
     let under_root = profile.path.parent() == Some(root);
     if !under_root || !profile_matches_marker(&profile.path, &profile.marker) {
@@ -629,7 +630,11 @@ fn driver_owned_browser_command(
              attach to the user's own browser with strategy=existing_profile instead",
         ));
     }
-    Ok(isolated_browser_command(executable, &profile.path))
+    Ok(isolated_browser_command(
+        executable,
+        &profile.path,
+        managed_extensions,
+    ))
 }
 
 /// Consecutive failed isolated launches allowed before the driver backs off.
@@ -752,7 +757,20 @@ fn security_prompt_refusal(already_open: bool) -> BrowserRefusal {
         .with_detail(serde_json::json!({ "reason": reason }))
 }
 
-fn isolated_browser_command(executable: &str, profile: &Path) -> Command {
+/// Switches that keep a driver-owned profile free of extensions and of the
+/// background fetches that install and update them. They also stop Chromium
+/// from installing extensions the administrator forces through managed
+/// policy, and remove one a named profile already has, so a launch whose
+/// browser has such a policy leaves them out (trycua/cua#5501).
+const EXTENSION_AND_BACKGROUND_SWITCHES: [&str; 3] = [
+    "--disable-background-networking",
+    "--disable-component-update",
+    "--disable-extensions",
+];
+
+/// `managed_extensions` is true when the administrator forces extensions on
+/// this browser ([`super::platform::BrowserPlatform::managed_extension_policy`]).
+fn isolated_browser_command(executable: &str, profile: &Path, managed_extensions: bool) -> Command {
     let mut command = Command::new(executable);
     #[cfg(unix)]
     {
@@ -764,10 +782,10 @@ fn isolated_browser_command(executable: &str, profile: &Path) -> Command {
         .arg(format!("--user-data-dir={}", profile.display()))
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
-        .arg("--disable-background-networking")
-        .arg("--disable-component-update")
-        .arg("--disable-default-apps")
-        .arg("--disable-extensions");
+        .arg("--disable-default-apps");
+    if !managed_extensions {
+        command.args(EXTENSION_AND_BACKGROUND_SWITCHES);
+    }
     #[cfg(target_os = "windows")]
     command
         .arg("--window-position=40,40")
@@ -1223,15 +1241,26 @@ impl BrowserEngine {
         if self.platform.security_prompt_open() {
             return Err(security_prompt_refusal(true));
         }
+        let managed_extension_policy = self.platform.managed_extension_policy(&executable);
+        if let Some(source) = &managed_extension_policy {
+            tracing::info!(
+                %source,
+                "managed policy forces browser extensions; the isolated launch keeps extensions on"
+            );
+        }
         let prepared_profile = prepare_profile(profile_request)?;
-        let command =
-            match driver_owned_browser_command(&executable, &profile_root()?, &prepared_profile) {
-                Ok(command) => command,
-                Err(error) => {
-                    cleanup_created_profile(&prepared_profile);
-                    return Err(error);
-                }
-            };
+        let command = match driver_owned_browser_command(
+            &executable,
+            &profile_root()?,
+            &prepared_profile,
+            managed_extension_policy.is_some(),
+        ) {
+            Ok(command) => command,
+            Err(error) => {
+                cleanup_created_profile(&prepared_profile);
+                return Err(error);
+            }
+        };
         let mut child = match self
             .platform
             .spawn_isolated_browser(command, &prepared_profile.path)
@@ -2552,7 +2581,7 @@ mod tests {
     #[test]
     fn isolated_launch_uses_a_deterministic_clean_profile() {
         let profile = Path::new("profile-under-test");
-        let command = isolated_browser_command("chromium-under-test", profile);
+        let command = isolated_browser_command("chromium-under-test", profile, false);
         let args = command
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
@@ -2617,8 +2646,9 @@ mod tests {
             marker: marker.clone(),
         };
 
-        let command = driver_owned_browser_command("chromium-under-test", &root, &profile(&owned))
-            .expect("a marked profile under the root launches");
+        let command =
+            driver_owned_browser_command("chromium-under-test", &root, &profile(&owned), false)
+                .expect("a marked profile under the root launches");
         let args = command_args(&command);
         assert!(args.contains(&format!("--user-data-dir={}", owned.display())));
         assert_eq!(
@@ -2636,9 +2666,13 @@ mod tests {
         fs::create_dir(&outside).unwrap();
         write_profile_marker(&outside, &marker).unwrap();
         for refused in [&unmarked, &outside, &root.join("missing")] {
-            let error =
-                driver_owned_browser_command("chromium-under-test", &root, &profile(refused))
-                    .expect_err("not a driver-owned profile");
+            let error = driver_owned_browser_command(
+                "chromium-under-test",
+                &root,
+                &profile(refused),
+                false,
+            )
+            .expect_err("not a driver-owned profile");
             assert_eq!(error.code, BrowserRefusalCode::BrowserRouteUnavailable);
             assert!(
                 error.message.contains("existing_profile"),

@@ -639,6 +639,25 @@ pub fn resolve_uwp_app_pid(host_pid: u32, frame_hwnd: u64) -> Option<u32> {
     scan.app_pid
 }
 
+/// The packaged app a frame hosts, for capability-manifest identity.
+///
+/// Only the system's own `ApplicationFrameHost.exe` is trusted to host apps,
+/// so another process cannot borrow an app's identity by giving its own
+/// window the frame class and reparenting that app's window under it.
+pub(crate) fn hosted_app_pid(host_pid: u32, frame_hwnd: u64) -> Option<u32> {
+    let host = crate::history::process_executable_path(host_pid)?;
+    let trusted = crate::browser_platform::system_directory_path()
+        .ok()?
+        .join("ApplicationFrameHost.exe");
+    if !host
+        .to_string_lossy()
+        .eq_ignore_ascii_case(&trusted.to_string_lossy())
+    {
+        return None;
+    }
+    resolve_uwp_app_pid(host_pid, frame_hwnd)
+}
+
 #[cfg(test)]
 mod exact_window_tests {
     use super::{

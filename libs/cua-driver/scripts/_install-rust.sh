@@ -590,7 +590,8 @@ prune_old_releases() {
     for p in "${to_prune[@]}"; do
         log "  - ${p##*/}"
     done
-    warn_referenced_release_dirs "$current_link" "${to_prune[@]}"
+    # Subshell: a write to a closed stderr must not stop the prune.
+    ( warn_referenced_release_dirs "$current_link" "${to_prune[@]}" ) || true
     printf '%s\0' "${to_prune[@]}" | xargs -0 rm -rf
 }
 

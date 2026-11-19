@@ -650,11 +650,25 @@ impl ClickTool {
             .opt_f64("y")
             .or_else(|| args.opt_i64("y").map(|i| i as f64));
         let action = args.str_or("action", "press");
-        let element_actions = element_guard.as_ref().map(|guard| {
-            let element = guard.as_ptr();
-            move || unsafe { copy_action_names(element as AXUIElementRef) }
-        });
-        if let Err(error) = validate_click_action(&action, element_actions) {
+        // Only a non-standard name needs the element's live action list, and
+        // that AX read blocks until the target answers, so it runs off the
+        // async worker.
+        let element_actions = match &element_guard {
+            Some(guard) if crate::input::ax_actions::map_action(&action).is_err() => {
+                let guard = guard.clone();
+                match tokio::task::spawn_blocking(move || unsafe {
+                    copy_action_names(guard.as_ptr() as AXUIElementRef)
+                })
+                .await
+                {
+                    Ok(names) => Some(names),
+                    Err(e) => return ToolResult::error(format!("task error: {e}")),
+                }
+            }
+            Some(_) => Some(Vec::new()),
+            None => None,
+        };
+        if let Err(error) = validate_click_action(&action, element_actions.as_deref()) {
             return ToolResult::error(format!("click: {error}"));
         }
         // Surface 5: optional `button` arg, default "left" preserves legacy behaviour.
@@ -2511,15 +2525,12 @@ fn ax_click_structured(
 /// `press_key` and `scroll` use to put the keyboard focus on a point
 /// (`focus_by_pixel`). It sets AXFocused on the element under the point
 /// instead of pressing it.
-fn validate_click_action(
-    action: &str,
-    element_actions: Option<impl FnOnce() -> Vec<String>>,
-) -> anyhow::Result<()> {
+fn validate_click_action(action: &str, element_actions: Option<&[String]>) -> anyhow::Result<()> {
     let known = crate::input::ax_actions::map_action(action).map(|_| ());
     match element_actions {
         None if action == "focus" => Ok(()),
         Some(advertised) if known.is_err() => {
-            crate::ax::actions::wire_name(&advertised(), action).map(|_| ())
+            crate::ax::actions::wire_name(advertised, action).map(|_| ())
         }
         _ => known,
     }
@@ -2533,16 +2544,16 @@ mod tests {
     /// started refusing: background pixel typing into Electron depended on it.
     #[test]
     fn pixel_click_accepts_the_internal_focus_action() {
-        let pixel = None::<fn() -> Vec<String>>;
-        let element = Some(Vec::<String>::new);
+        let pixel = None;
+        let element = Some(&[][..]);
         assert!(validate_click_action("focus", pixel).is_ok());
         assert!(validate_click_action("press", pixel).is_ok());
         assert!(validate_click_action("show_alternate_ui", element).is_ok());
         assert!(validate_click_action("focus", element).is_err());
         assert!(validate_click_action("hover", element).is_err());
         assert!(validate_click_action("hover", pixel).is_err());
-        let paste = || vec!["Name:Paste\nTarget:0x0\nSelector:(null)".to_owned()];
-        assert!(validate_click_action("Paste", Some(paste)).is_ok());
+        let paste = ["Name:Paste\nTarget:0x0\nSelector:(null)".to_owned()];
+        assert!(validate_click_action("Paste", Some(&paste[..])).is_ok());
     }
 
     fn window(window_id: u32) -> crate::window_change_detector::WindowEvent {

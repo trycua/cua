@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 //! Live Hyprland regression for the native cursor overlay's focus contract.
+//! Needs Hyprland 0.48 or later, the first release whose `hyprctl -j layers`
+//! reports each layer's `pid`.
 //!
 //! Run under the shared desktop lock:
 //! `flock /tmp/cua-hyprland-live.lock -c '<cargo test command>'`.
@@ -14,7 +16,7 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -42,6 +44,20 @@ fn hypr_json(query: &str) -> Value {
     serde_json::from_slice(&output.stdout).expect("parse hyprctl JSON")
 }
 
+/// `(major, minor)` from `hyprctl -j version`'s `tag`, such as `v0.56.0`.
+fn hypr_version() -> (u64, u64) {
+    let version = hypr_json("version");
+    let tag = version["tag"].as_str().expect("Hyprland version tag");
+    let mut parts = tag.trim_start_matches('v').split(['.', '-']);
+    let mut next = || {
+        parts
+            .next()
+            .and_then(|part| part.parse().ok())
+            .unwrap_or_else(|| panic!("parse Hyprland version tag {tag:?}"))
+    };
+    (next(), next())
+}
+
 fn hypr_state() -> HyprState {
     let workspace = hypr_json("activeworkspace")["name"]
         .as_str()
@@ -59,9 +75,8 @@ fn hypr_state() -> HyprState {
 
 /// Records focus-related events from Hyprland's event socket until dropped.
 struct FocusEvents {
-    events: Arc<Mutex<Vec<String>>>,
     stop: Arc<AtomicBool>,
-    reader: Option<thread::JoinHandle<()>>,
+    reader: Option<thread::JoinHandle<Result<Vec<String>, String>>>,
 }
 
 impl FocusEvents {
@@ -78,37 +93,42 @@ impl FocusEvents {
         stream
             .set_read_timeout(Some(Duration::from_millis(100)))
             .expect("set event socket timeout");
-        let events = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
         let reader = {
-            let events = Arc::clone(&events);
             let stop = Arc::clone(&stop);
             thread::spawn(move || {
+                let mut events = Vec::new();
                 let mut lines = BufReader::new(stream);
                 let mut line = String::new();
-                while !stop.load(Ordering::Relaxed) {
+                loop {
                     match lines.read_line(&mut line) {
-                        Ok(0) => break,
+                        Ok(0) => return Err("Hyprland closed its event socket".to_owned()),
                         Ok(_) => {
                             let event = line.trim_end();
                             let name = event.split(">>").next().unwrap_or_default();
                             if FOCUS_EVENTS.contains(&name) {
-                                events.lock().unwrap().push(event.to_owned());
+                                events.push(event.to_owned());
                             }
                             line.clear();
                         }
+                        // Stop only once the socket is idle, so events Hyprland
+                        // already sent are read first.
                         Err(error)
                             if matches!(
                                 error.kind(),
                                 ErrorKind::WouldBlock | ErrorKind::TimedOut
-                            ) => {}
-                        Err(_) => break,
+                            ) =>
+                        {
+                            if stop.load(Ordering::Relaxed) {
+                                return Ok(events);
+                            }
+                        }
+                        Err(error) => return Err(format!("read Hyprland event socket: {error}")),
                     }
                 }
             })
         };
         Self {
-            events,
             stop,
             reader: Some(reader),
         }
@@ -116,10 +136,12 @@ impl FocusEvents {
 
     fn finish(mut self) -> Vec<String> {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(reader) = self.reader.take() {
-            let _ = reader.join();
-        }
-        std::mem::take(&mut *self.events.lock().unwrap())
+        self.reader
+            .take()
+            .expect("event reader")
+            .join()
+            .expect("event reader panicked")
+            .unwrap_or_else(|error| panic!("{error}"))
     }
 }
 
@@ -212,6 +234,11 @@ fn native_overlay_never_maps_an_active_hyprland_client() {
     assert!(
         std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some(),
         "live Hyprland session required"
+    );
+    let version = hypr_version();
+    assert!(
+        version >= (0, 48),
+        "Hyprland 0.48 or later required for layer pids, found {version:?}"
     );
 
     let before = hypr_state();

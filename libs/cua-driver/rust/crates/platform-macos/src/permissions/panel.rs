@@ -40,7 +40,7 @@
 //! gate before the cursor overlay starts `NSApp.run()`, and `NSTimer`
 //! callbacks fire on the main run loop.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 
 use objc2::runtime::{AnyObject, Bool, Sel};
@@ -48,7 +48,7 @@ use objc2::{class, msg_send};
 use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
 
 use crate::permissions::gate::MissingPermission;
-use crate::permissions::guide::{self, GuideEffect, GuideMachine, GuideStep};
+use crate::permissions::guide::{self, GuideEffect, GuideMachine, GuideStep, Language, Words};
 use crate::permissions::status::PermissionsStatus;
 
 // ── Public API ──────────────────────────────────────────────────────────
@@ -229,6 +229,43 @@ thread_local! {
     static OUTCOME: RefCell<Option<PanelOutcome>> = const { RefCell::new(None) };
     static SESSION: RefCell<Option<Session>> = const { RefCell::new(None) };
     static TILE_BUNDLE: RefCell<Option<std::path::PathBuf>> = const { RefCell::new(None) };
+    static LANGUAGE: Cell<Language> = const { Cell::new(Language::English) };
+}
+
+/// The language this guide shows its words in.
+fn language() -> Language {
+    LANGUAGE.with(Cell::get)
+}
+
+fn words() -> Words {
+    Words::of(language())
+}
+
+/// The guide's language, from the person's preferred languages as they
+/// order them in System Settings → General → Language & Region.
+unsafe fn preferred_language() -> Language {
+    let mut tags = Vec::new();
+    let languages: *mut AnyObject = msg_send![class!(NSLocale), preferredLanguages];
+    if !languages.is_null() {
+        // Through the enumerator: the array may be a Swift-bridged one whose
+        // `count` is typed `Int`, which `msg_send!`'s type check rejects.
+        let enumerator: *mut AnyObject = msg_send![languages, objectEnumerator];
+        while !enumerator.is_null() {
+            let tag: *mut AnyObject = msg_send![enumerator, nextObject];
+            if tag.is_null() {
+                break;
+            }
+            let utf8: *const std::ffi::c_char = msg_send![tag, UTF8String];
+            if !utf8.is_null() {
+                tags.push(
+                    std::ffi::CStr::from_ptr(utf8)
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+            }
+        }
+    }
+    Language::from_preferred(&tags)
 }
 
 fn ptr(u: usize) -> *mut AnyObject {
@@ -238,6 +275,7 @@ fn ptr(u: usize) -> *mut AnyObject {
 unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOutcome> {
     // AppKit uses Text Input Sources on this thread from here on.
     crate::input::input_source::main_thread_runs_event_loop();
+    LANGUAGE.with(|cell| cell.set(preferred_language()));
     let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
     let _: bool = msg_send![app, setActivationPolicy: 1i64];
     let _: () = msg_send![app, finishLaunching];
@@ -273,7 +311,7 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
     // Floating, so it stays above System Settings while the person works
     // there.
     let _: () = msg_send![window, setLevel: 3i64];
-    let _: () = msg_send![window, setTitle: ns_string(guide::WINDOW_TITLE)];
+    let _: () = msg_send![window, setTitle: ns_string(words().window_title)];
     let target = target_instance();
     let _: () = msg_send![window, setDelegate: target];
 
@@ -306,7 +344,7 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
     let _: () = msg_send![spinner, startAnimation: std::ptr::null::<AnyObject>()];
     let _: () = msg_send![step_view, addSubview: spinner];
     let waiting = label(
-        guide::WAITING_LINE,
+        words().waiting_line,
         13.0,
         false,
         rect(PAD + 24.0, 142.0, CONTENT_W - 24.0, 18.0),
@@ -315,7 +353,7 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
     let _: () = msg_send![step_view, addSubview: waiting];
 
     let open_btn = button(
-        guide::OPEN_SETTINGS_BUTTON,
+        words().open_settings_button,
         rect(PAD, 172.0, 200.0, 32.0),
         objc2::sel!(openSettings:),
         target,
@@ -324,7 +362,7 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
     let _: () = msg_send![step_view, addSubview: open_btn];
 
     let hint = label(
-        guide::DRAG_HINT,
+        words().drag_hint,
         12.0,
         false,
         rect(PAD, 228.0, CONTENT_W, 18.0),
@@ -342,7 +380,7 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
     let _: () = msg_send![step_view, addSubview: note];
 
     let not_now = button(
-        guide::NOT_NOW_BUTTON,
+        words().not_now_button,
         rect(WIN_W - PAD - 110.0, WIN_H - 16.0 - 32.0, 110.0, 32.0),
         objc2::sel!(notNow:),
         target,
@@ -373,7 +411,7 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
     let _: () = msg_send![check, setContentTintColor: green];
     let _: () = msg_send![done_view, addSubview: check];
     let done_title = label(
-        guide::DONE_TITLE,
+        words().done_title,
         17.0,
         true,
         rect(PAD, 184.0, CONTENT_W, 24.0),
@@ -381,7 +419,7 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
     center_text(done_title);
     let _: () = msg_send![done_view, addSubview: done_title];
     let done_why = label(
-        GuideStep::Done.copy().why,
+        GuideStep::Done.copy_in(language()).why,
         13.0,
         false,
         rect(PAD, 214.0, CONTENT_W, 18.0),
@@ -450,13 +488,13 @@ unsafe fn render(views: &Views, step: GuideStep) {
     if done {
         return;
     }
-    let copy = step.copy();
+    let copy = step.copy_in(language());
     let _: () = msg_send![ptr(views.counter), setStringValue: ns_string(copy.counter)];
     let _: () = msg_send![ptr(views.title), setStringValue: ns_string(copy.title)];
     let _: () = msg_send![ptr(views.why), setStringValue: ns_string(copy.why)];
     let _: () = msg_send![ptr(views.how), setStringValue: ns_string(copy.how)];
     let _: () = msg_send![ptr(views.note), setStringValue: ns_string(copy.note)];
-    let _: () = msg_send![ptr(views.window), setTitle: ns_string(guide::WINDOW_TITLE)];
+    let _: () = msg_send![ptr(views.window), setTitle: ns_string(words().window_title)];
 }
 
 // ── Timer, buttons, window close ─────────────────────────────────────────
@@ -658,7 +696,7 @@ unsafe fn drag_tile(frame: NSRect, bundle: Option<&std::path::Path>) -> *mut Any
     let _: () = msg_send![tile, addSubview: icon_view];
 
     let name = label(
-        guide::TILE_NAME,
+        words().tile_name,
         15.0,
         false,
         NSRect {
@@ -687,7 +725,7 @@ unsafe fn drag_tile(frame: NSRect, bundle: Option<&std::path::Path>) -> *mut Any
     let _: () = msg_send![hand, setContentTintColor: secondary];
     let _: () = msg_send![tile, addSubview: hand];
     let drag = label(
-        guide::TILE_DRAG_LABEL,
+        words().tile_drag_label,
         10.0,
         false,
         NSRect {
@@ -706,7 +744,7 @@ unsafe fn drag_tile(frame: NSRect, bundle: Option<&std::path::Path>) -> *mut Any
     let _: () = msg_send![tile, addSubview: drag];
 
     // Tooltip, and the role VoiceOver reads.
-    let _: () = msg_send![tile, setToolTip: ns_string(guide::DRAG_HINT)];
+    let _: () = msg_send![tile, setToolTip: ns_string(words().drag_hint)];
     tile
 }
 

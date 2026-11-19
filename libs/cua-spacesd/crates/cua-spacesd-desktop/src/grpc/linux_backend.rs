@@ -755,23 +755,9 @@ impl DesktopBackend for LinuxBackend {
         // from the desktop's processes, so a11y works without the variable
         // in its own environment.
         let a11y_bus = platform_linux::session_bus::ensure_session_bus_discovered();
-        let encoders = cua_media_codec::probe();
-        let hardware = encoders.iter().find(|encoder| {
-            encoder.status == cua_media_codec::ProbeStatus::Available && encoder.hardware
-        });
-        let mut h264_hw = match hardware {
-            Some(_) => FeatureStatus::yes("h264_hw"),
-            None => FeatureStatus::no(
-                "h264_hw",
-                "no hardware H.264 encoder was found (NVENC, VA-API, QSV, AMF)",
-            ),
-        };
-        if let Some(encoder) = hardware {
-            h264_hw.attributes.push((
-                "encoder".into(),
-                format!("{:?}", encoder.backend).to_lowercase(),
-            ));
-        }
+        let h264_hw = crate::encoder_probe::host_h264_hw(
+            "no hardware H.264 encoder was found (NVENC, VA-API, QSV, AMF)",
+        );
         let audio = self.audio.is_some();
         let no_audio = "no PulseAudio/PipeWire server is reachable";
         vec![

@@ -1913,9 +1913,11 @@ mod tests {
         assert!(blocking_is_per_monitor_v2);
     }
 
+    // Hosts may create the SDK from inside their own Tokio runtime, where
+    // dropping the failed executor would panic instead of returning the error.
     #[cfg(target_os = "windows")]
-    #[test]
-    fn abi_executor_refuses_a_rejected_windows_dpi_initializer() {
+    #[tokio::test]
+    async fn abi_executor_refuses_a_rejected_windows_dpi_initializer() {
         let executor = OnceLock::new();
         let error = initialized_abi_executor(&executor, || {
             build_windows_abi_executor(Arc::new(|| Err("simulated PMv2 rejection".to_owned())))

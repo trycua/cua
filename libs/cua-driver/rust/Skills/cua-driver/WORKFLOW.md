@@ -177,7 +177,7 @@ After two single action calls in a row in one session (not counting reads), the 
 
 When the postcondition is visibly satisfied, stop acting. For media, selection alone is not playback: check the title, playing/pause indicator, and elapsed progress after preroll/buffering. For closure, verify the requested window disappeared. State only what the evidence proves.
 
-Never replay canceled, partial, or unknown actions automatically. An interrupted transport may have delivered input before losing its response. Report the interruption accurately and obtain fresh state before any further action.
+Never replay canceled, partial, or unknown actions automatically. An interrupted transport may have delivered input before losing its response. Report the interruption accurately and obtain fresh state before any further action. Input sent before a timeout or cancellation can still land after that read, so seeing no effect does not prove it did nothing. On Windows and macOS a refusal can also follow partly sent input (a background double-click or drag): leave `foreground_fallback` off for any `run_steps` batch with such a step, and retry by hand only when evidence rules out a duplicate and, for the foreground, the user authorized it.
 
 ## Filesystem outcomes and GUI fallbacks
 

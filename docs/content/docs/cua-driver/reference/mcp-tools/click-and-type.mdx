@@ -47,7 +47,7 @@ Click a target pid. Prefer `element_token` (from get_window_state): it identifie
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="click--macos--action"></span>`action` | `string` |  | AX action: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui. show_alternate_ui reveals hover-only controls on an element that lists it, without the pointer. |
+| <span id="click--macos--action"></span>`action` | `string` |  | AX action: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui; or an element's published custom_actions name or raw envelope. show_alternate_ui reveals hover-only controls on an element that lists it, without the pointer. |
 | <span id="click--macos--button"></span>`button` | `"left" \| "right" \| "middle"` |  | Mouse button. Default left. |
 | <span id="click--macos--capture_id"></span>`capture_id` | `string` |  | Optional capture ID from get_window_state or get_desktop_state. With x,y it is consumed atomically; stale or mismatched captures are refused. |
 | <span id="click--macos--count"></span>`count` | `integer` |  | Click count (pixel path only). Default 1. |

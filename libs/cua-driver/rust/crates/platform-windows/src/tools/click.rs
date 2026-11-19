@@ -1042,13 +1042,11 @@ impl Tool for ClickTool {
                     };
                     background_element_click_result(message, transport, failed_calls)
                 }
-                Ok(Err(error)) if inject => {
-                    crate::input::delivery::background_unavailable_error_with_cause(
-                        hwnd,
-                        EventKind::MouseClick,
-                        error.to_string(),
-                    )
-                }
+                Ok(Err(error)) if inject => crate::input::delivery::background_injection_error(
+                    hwnd,
+                    EventKind::MouseClick,
+                    &error,
+                ),
                 Ok(Err(error)) => ToolResult::error(error.to_string()),
                 Err(error) => ToolResult::error(format!("Task error: {error}")),
             }
@@ -1222,10 +1220,10 @@ impl Tool for ClickTool {
                         "✅ Injected click to pid {pid} at ({sx},{sy}) (background, no foreground swap)."
                     ))
                     .with_structured(json!({ "path": "pixel", "verified": false, "effect": "unverifiable" })),
-                    Ok(Err(error)) => crate::input::delivery::background_unavailable_error_with_cause(
+                    Ok(Err(error)) => crate::input::delivery::background_injection_error(
                         hwnd,
                         EventKind::MouseClick,
-                        error.to_string(),
+                        &error,
                     ),
                     Err(error) => ToolResult::error(format!("Task error: {error}")),
                 };
@@ -1269,10 +1267,10 @@ impl Tool for ClickTool {
                         "✅ Injected click to pid {pid} at ({sx},{sy}) (background, no foreground swap)."
                     ))
                     .with_structured(json!({ "path": "pixel", "verified": false, "effect": "unverifiable" })),
-                    Ok(Err(error)) => crate::input::delivery::background_unavailable_error_with_cause(
+                    Ok(Err(error)) => crate::input::delivery::background_injection_error(
                         hwnd,
                         EventKind::MouseClick,
-                        error.to_string(),
+                        &error,
                     ),
                     Err(error) => ToolResult::error(format!("Task error: {error}")),
                 };

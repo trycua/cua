@@ -57,7 +57,7 @@ impl Tool for DebugWindowInfoTool {
             }
         };
 
-        let outcome = tokio::task::spawn_blocking(move || -> serde_json::Value {
+        let outcome = crate::dpi::spawn_blocking(move || -> serde_json::Value {
             use std::collections::HashSet;
             use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, BOOL, TRUE};
             use windows::Win32::System::Com::{

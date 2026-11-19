@@ -72,7 +72,7 @@ impl Tool for GetDesktopStateTool {
         // Capture the FULL display at native size — no resize. Run the
         // blocking GDI capture off the async runtime.
         let out_file = screenshot_out_file.clone();
-        let res = tokio::task::spawn_blocking(
+        let res = crate::dpi::spawn_blocking(
             move || -> anyhow::Result<(Option<String>, Option<String>, u32, u32, Vec<u8>, (u32, u32), cursor_overlay::capture_exclusion::AgentOverlayCapture)> {
                 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
                 // The agent reads this image, so the Driver's own cursor and

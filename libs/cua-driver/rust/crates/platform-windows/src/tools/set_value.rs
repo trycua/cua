@@ -126,7 +126,7 @@ impl Tool for SetValueTool {
         }
 
         let value_for_task = value.clone();
-        let result = tokio::task::spawn_blocking({
+        let result = crate::dpi::spawn_blocking({
             move || -> anyhow::Result<SetValueRoute> {
                 let value = value_for_task;
                 let _noact = _noact;

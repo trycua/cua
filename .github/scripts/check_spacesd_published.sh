@@ -50,6 +50,13 @@ WAIT_MINUTES="${SPACESD_WAIT_MINUTES:-0}"
 deadline=$(( $(date +%s) + WAIT_MINUTES * 60 ))
 until json="$(gh api "repos/$REPO/releases/tags/$TAG" 2>/dev/null)"; do
   if [ "$(date +%s)" -ge "$deadline" ]; then
+    # Still failing, but say when a re-run is coming: ci-spacesd-pin-recheck.yml
+    # reruns this check on open pull requests once the release publishes.
+    # Release Please's draft is listed as untagged-<hash>, so match its name too.
+    if [ -n "$(gh api --paginate "repos/$REPO/releases?per_page=100" \
+        --jq ".[] | select(.draft and (.tag_name == \"$TAG\" or .name == \"cua-spacesd: v$VERSION\")) | .id" 2>/dev/null)" ]; then
+      fail "release in progress (draft); this check re-runs automatically when $TAG publishes"
+    fi
     fail "$REPO has no published release $TAG (missing, or still a draft)"
   fi
   echo "$TAG is not published yet; checking again in 60 s"

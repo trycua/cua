@@ -1024,16 +1024,17 @@ mod tests {
 
     #[test]
     fn the_host_is_the_app_that_encloses_the_executable() {
+        let root = tempfile::tempdir().unwrap();
+        let host = root.path().join("Host.app");
+        std::fs::create_dir_all(host.join("Contents/Resources/vendor.app/bin")).unwrap();
+        std::fs::write(host.join("Contents/Info.plist"), "").unwrap();
         for exe in [
-            "/Applications/Host.app/Contents/MacOS/cua-driver",
-            "/Applications/Host.app/Contents/Resources/cua-driver",
-            "/Applications/Host.app/Contents/Resources/bin/cua-driver",
+            "Contents/MacOS/cua-driver",
+            "Contents/Resources/cua-driver",
+            "Contents/Resources/bin/cua-driver",
+            "Contents/Resources/vendor.app/bin/cua-driver",
         ] {
-            assert_eq!(
-                enclosing_app(std::path::Path::new(exe)),
-                Some(std::path::PathBuf::from("/Applications/Host.app")),
-                "{exe}"
-            );
+            assert_eq!(enclosing_app(&host.join(exe)), Some(host.clone()), "{exe}");
         }
         assert_eq!(
             enclosing_app(std::path::Path::new("/usr/local/bin/cua-driver")),

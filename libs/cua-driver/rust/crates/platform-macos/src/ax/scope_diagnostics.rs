@@ -20,11 +20,13 @@ use core_foundation::boolean::CFBoolean;
 use core_foundation::number::CFNumber;
 use core_foundation::string::{CFString, CFStringRef};
 use serde::Serialize;
+use std::cell::Cell;
 use std::time::{Duration, Instant};
 
 /// Top-level items whose attributes are read; the rest are only counted.
 pub const ITEM_CAP: usize = 32;
-/// Overall budget. Reads stop once it is spent and the report says `partial`.
+/// Overall budget. No read starts once it is spent, and the report says
+/// `partial`; the read in flight can still take up to its messaging timeout.
 pub const DEADLINE: Duration = Duration::from_millis(1500);
 /// Native AX messaging timeout for every element the probe reads.
 const READ_TIMEOUT_SECONDS: f32 = 0.25;
@@ -155,6 +157,7 @@ pub struct ScopeDiagnostics {
     pub requested_window_id: u32,
     /// `None` when the application element could not be created.
     pub ax_children: Option<AttrRead>,
+    /// Also `None` when the deadline was spent before it was read.
     pub ax_windows: Option<AttrRead>,
     pub items: Vec<ItemReport>,
     pub counts: Counts,
@@ -198,9 +201,39 @@ pub fn focus_matches(window_id: Option<u32>, requested: u32) -> Option<bool> {
     window_id.map(|id| id == requested)
 }
 
+/// The probe's deadline, checked before every native read. Once it has
+/// refused a read it stays spent, so the report can say `partial`.
+pub struct Budget {
+    started: Instant,
+    deadline: Duration,
+    spent: Cell<bool>,
+}
+
+impl Budget {
+    pub fn new(deadline: Duration) -> Self {
+        Self {
+            started: Instant::now(),
+            deadline,
+            spent: Cell::new(false),
+        }
+    }
+
+    /// Whether another read may start.
+    pub fn allows(&self) -> bool {
+        if !self.spent.get() && self.started.elapsed() >= self.deadline {
+            self.spent.set(true);
+        }
+        !self.spent.get()
+    }
+
+    pub fn spent(&self) -> bool {
+        self.spent.get()
+    }
+}
+
 /// Read the diagnostics for `window_id` under `pid`.
 pub fn probe(pid: i32, window_id: u32) -> ScopeDiagnostics {
-    let started = Instant::now();
+    let budget = Budget::new(DEADLINE);
     let mut report = ScopeDiagnostics::new(window_id);
     unsafe {
         let app = AXUIElementCreateApplication(pid);
@@ -209,9 +242,14 @@ pub fn probe(pid: i32, window_id: u32) -> ScopeDiagnostics {
         }
         AXUIElementSetMessagingTimeout(app, READ_TIMEOUT_SECONDS);
         let (children_read, children) = copy_list(app, "AXChildren");
-        let (windows_read, windows) = copy_list(app, "AXWindows");
         report.ax_children = Some(children_read);
-        report.ax_windows = Some(windows_read);
+        let windows = if budget.allows() {
+            let (windows_read, windows) = copy_list(app, "AXWindows");
+            report.ax_windows = Some(windows_read);
+            windows
+        } else {
+            Vec::new()
+        };
 
         let mut union: Vec<(AXUIElementRef, Vec<&'static str>)> = Vec::new();
         for (source, list) in [("ax_children", children), ("ax_windows", windows)] {
@@ -230,23 +268,23 @@ pub fn probe(pid: i32, window_id: u32) -> ScopeDiagnostics {
         }
 
         for (element, sources) in union.iter().take(ITEM_CAP) {
-            if started.elapsed() >= DEADLINE {
-                report.partial = true;
+            if !budget.allows() {
                 break;
             }
-            report.items.push(read_item(app, *element, sources.clone()));
+            report
+                .items
+                .push(read_item(&budget, app, *element, sources.clone()));
         }
         report.counts = count(&report.items, union.len(), window_id);
         for (element, _) in union {
             CFRelease(element as CFTypeRef);
         }
 
-        if started.elapsed() >= DEADLINE {
-            report.partial = true;
-        } else {
-            report.focused_window = Some(read_focus(app, window_id));
+        if budget.allows() {
+            report.focused_window = Some(read_focus(&budget, app, window_id));
         }
         CFRelease(app as CFTypeRef);
+        report.partial = budget.spent();
     }
     report
 }
@@ -348,6 +386,7 @@ unsafe fn read_window_id(element: AXUIElementRef) -> (Option<u32>, Option<AxErro
 }
 
 unsafe fn read_item(
+    budget: &Budget,
     app: AXUIElementRef,
     element: AXUIElementRef,
     sources: Vec<&'static str>,
@@ -356,8 +395,16 @@ unsafe fn read_item(
     let mut pid = 0;
     let pid_err = AXUIElementGetPid(element, &mut pid);
     let (role, role_error) = read_string(element, "AXRole");
-    let (subrole, _) = read_string(element, "AXSubrole");
-    let (window_id, window_id_error) = read_window_id(element);
+    let (subrole, _) = if budget.allows() {
+        read_string(element, "AXSubrole")
+    } else {
+        (None, None)
+    };
+    let (window_id, window_id_error) = if budget.allows() {
+        read_window_id(element)
+    } else {
+        (None, None)
+    };
     ItemReport {
         sources,
         pid: (pid_err == kAXErrorSuccess).then_some(pid),
@@ -371,7 +418,7 @@ unsafe fn read_item(
     }
 }
 
-unsafe fn read_focus(app: AXUIElementRef, requested: u32) -> FocusReport {
+unsafe fn read_focus(budget: &Budget, app: AXUIElementRef, requested: u32) -> FocusReport {
     let (err, value) = copy_value(app, "AXFocusedWindow");
     if err != kAXErrorSuccess {
         return FocusReport::unread(AttrRead::failed(err));
@@ -390,8 +437,16 @@ unsafe fn read_focus(app: AXUIElementRef, requested: u32) -> FocusReport {
     }
     let window = value as AXUIElementRef;
     AXUIElementSetMessagingTimeout(window, READ_TIMEOUT_SECONDS);
-    let (role, role_error) = read_string(window, "AXRole");
-    let (window_id, window_id_error) = read_window_id(window);
+    let (role, role_error) = if budget.allows() {
+        read_string(window, "AXRole")
+    } else {
+        (None, None)
+    };
+    let (window_id, window_id_error) = if budget.allows() {
+        read_window_id(window)
+    } else {
+        (None, None)
+    };
     CFRelease(value);
     FocusReport {
         read,
@@ -423,6 +478,20 @@ mod tests {
                 .is_none()
                 .then(|| AxErrorReport::new(kAXErrorFailure)),
         }
+    }
+
+    /// A spent budget refuses every later read and stays spent, so a read
+    /// skipped mid-item or mid-focus marks the report partial.
+    #[test]
+    fn spent_budget_refuses_every_later_read() {
+        let open = Budget::new(Duration::from_secs(60));
+        assert!(open.allows());
+        assert!(!open.spent());
+
+        let spent = Budget::new(Duration::ZERO);
+        assert!(!spent.allows());
+        assert!(spent.spent());
+        assert!(!spent.allows());
     }
 
     /// The snapshot's single `ax_window_count` hides these cases; the counts

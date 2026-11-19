@@ -575,9 +575,27 @@ fn build_windows_abi_executor(
         });
     let executor = builder.build().map_err(|error| error.to_string())?;
 
-    // Validate both eagerly-created async workers and one blocking worker at
-    // startup. This is NOT a substitute for the per-operation/per-thread gates:
-    // the blocking pool can grow later and a task can migrate between workers.
+    // A host may create the SDK from inside its own Tokio runtime, where
+    // dropping a runtime panics, so a failed executor shuts down in the background.
+    if let Err(error) = validate_windows_abi_executor(&executor, &threads, &thread_ready) {
+        executor.shutdown_background();
+        return Err(error);
+    }
+    Ok(AbiExecutor {
+        runtime: executor,
+        threads,
+    })
+}
+
+// Validate both eagerly-created async workers and one blocking worker at
+// startup. This is NOT a substitute for the per-operation/per-thread gates:
+// the blocking pool can grow later and a task can migrate between workers.
+#[cfg(target_os = "windows")]
+fn validate_windows_abi_executor(
+    executor: &tokio::runtime::Runtime,
+    threads: &platform_windows::dpi::OwnedThreadDpi,
+    thread_ready: &std::sync::mpsc::Receiver<()>,
+) -> Result<(), String> {
     for _ in 0..2 {
         thread_ready
             .recv_timeout(Duration::from_secs(5))
@@ -592,11 +610,7 @@ fn build_windows_abi_executor(
         .recv_timeout(Duration::from_secs(5))
         .map_err(|error| format!("start Cua Driver ABI blocking worker: {error}"))?;
 
-    threads.check()?;
-    Ok(AbiExecutor {
-        runtime: executor,
-        threads,
-    })
+    threads.check()
 }
 
 fn spawn_completion<F>(

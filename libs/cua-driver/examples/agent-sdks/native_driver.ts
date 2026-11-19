@@ -2,6 +2,8 @@
 
 import { randomUUID } from 'node:crypto';
 
+import { resetFixture, waitForSubmission } from './fixture-client.js';
+
 import {
   ActionTarget,
   CuaDriver,
@@ -28,24 +30,8 @@ async function bounded<T>(promise: Promise<T>, label: string): Promise<T> {
   }
 }
 
-async function resetFixture(): Promise<void> {
-  const response = await fetch(`${fixture}/reset`, { method: 'POST' });
-  if (!response.ok) throw new Error(`fixture reset failed: ${response.status}`);
-}
-
-async function waitForSubmission(token: string): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const response = await fetch(`${fixture}/state`);
-    const state = (await response.json()) as { submitted: string | null };
-    if (state.submitted === token) return;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error('the fixture did not observe the submitted value');
-}
-
 const token = `cua-${randomUUID().slice(0, 10)}`;
-await resetFixture();
+await resetFixture(fixture, timeoutMs);
 
 const driver = CuaDriver.create(undefined);
 let mutationOutcomeUnknown = false;
@@ -88,7 +74,7 @@ try {
 
   // A timed-out mutation may still have landed. Observe the independent
   // fixture before considering any retry.
-  await waitForSubmission(token);
+  await waitForSubmission(fixture, token, timeoutMs);
   const after = await bounded(
     driver.getDesktopState(GetDesktopStateInput.new({})),
     'post-action get_desktop_state'

@@ -54,27 +54,17 @@ impl DirectCaptureEvidenceStore {
     }
 
     pub(crate) fn load(&self) -> Option<DirectCaptureVerification> {
-        let record = self.load_record()?;
-        let verified_at =
-            time::OffsetDateTime::from_unix_timestamp(record.verified_at_unix_seconds)
-                .ok()?
-                .format(&time::format_description::well_known::Rfc3339)
-                .ok()?;
-        Some(DirectCaptureVerification {
-            source: record.source,
-            verified_at,
-            bundle_id: record.bundle_id,
-        })
+        self.load_validated().map(|(verification, _)| verification)
     }
 
     /// Whether a valid verification says its probe already raised this
     /// bundle's own consent alert.
     pub(crate) fn records_consent_alert(&self) -> bool {
-        self.load_record()
-            .is_some_and(|record| record.consent_alert_raised)
+        self.load_validated()
+            .is_some_and(|(_, consent_alert_raised)| consent_alert_raised)
     }
 
-    fn load_record(&self) -> Option<PersistedVerification> {
+    fn load_validated(&self) -> Option<(DirectCaptureVerification, bool)> {
         let bytes = std::fs::read(&self.path).ok()?;
         let record: PersistedVerification = serde_json::from_slice(&bytes).ok()?;
         if record.schema_version != SCHEMA_VERSION
@@ -84,7 +74,19 @@ impl DirectCaptureEvidenceStore {
         {
             return None;
         }
-        Some(record)
+        let verified_at =
+            time::OffsetDateTime::from_unix_timestamp(record.verified_at_unix_seconds)
+                .ok()?
+                .format(&time::format_description::well_known::Rfc3339)
+                .ok()?;
+        Some((
+            DirectCaptureVerification {
+                source: record.source,
+                verified_at,
+                bundle_id: record.bundle_id,
+            },
+            record.consent_alert_raised,
+        ))
     }
 
     pub(crate) fn clear(&self) -> Result<(), String> {
@@ -195,6 +197,10 @@ mod tests {
             },
             PersistedVerification {
                 verified_at_unix_seconds: 0,
+                ..valid.clone()
+            },
+            PersistedVerification {
+                verified_at_unix_seconds: i64::MAX,
                 ..valid.clone()
             },
             PersistedVerification {

@@ -299,14 +299,9 @@ impl Tool for ScrollTool {
                         "effect": "unverifiable"
                     }));
                     }
-                    Ok(Ok(Some((false, fronted)))) => {
-                        return ToolResult::error("Native AX scroll did not complete.")
-                            .with_structured(serde_json::json!({
-                                "path": if fronted { "ax_fg" } else { "ax" },
-                                "effect": "unverifiable"
-                            }));
-                    }
-                    Ok(Ok(None)) => {}
+                    // No button, or its first press failed so nothing
+                    // scrolled: fall back to the wheel, which checks geometry.
+                    Ok(Ok(Some((false, _)) | None)) => {}
                     Ok(Err(error)) => {
                         return ToolResult::error(format!("Native AX scroll failed: {error}"));
                     }

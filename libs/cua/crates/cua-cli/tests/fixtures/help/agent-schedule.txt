@@ -1,0 +1,34 @@
+A named agent's schedules: turns the daemon starts with or without the app open
+
+Usage: cua agent schedule [OPTIONS] <COMMAND>
+
+Commands:
+  add      Add a schedule (give one of --every, --daily, --weekly)
+  ls       List schedules [alias: list]
+  rm       Delete a schedule
+  enable   Turn a schedule on
+  disable  Turn a schedule off
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+      --embedded
+          Use an embedded runtime even when a daemon runs
+
+      --daemon <DAEMON>
+          Daemon address (socket path or loopback URL)
+          
+          [env: CUA_DAEMON=]
+
+      --daemon-token <DAEMON_TOKEN>
+          Daemon token (loopback URLs)
+          
+          [env: CUA_DAEMON_TOKEN]
+
+      --state-dir <STATE_DIR>
+          Sandbox state directory (embedded; default ~/.cua/sandboxes)
+
+      --json
+          Print JSON
+
+  -h, --help
+          Print help

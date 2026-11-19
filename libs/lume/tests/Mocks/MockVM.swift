@@ -26,7 +26,7 @@ class MockVM: VM {
         vncPort: Int = 0, vncPassword: String? = nil, recoveryMode: Bool = false,
         usbMassStoragePaths: [Path]? = nil, additionalDiskPaths: [Path]? = nil,
         networkMode: NetworkMode? = nil, clipboard: Bool = false,
-        vncPolicy: VNCPolicy = .enabled
+        vncPolicy: VNCPolicy = .enabled, forwards: [UInt16] = []
     ) async throws {
         mockIsRunning = true
         try await super.run(
@@ -35,12 +35,12 @@ class MockVM: VM {
             usbMassStoragePaths: usbMassStoragePaths,
             additionalDiskPaths: additionalDiskPaths,
             networkMode: networkMode, clipboard: clipboard,
-            vncPolicy: vncPolicy
+            vncPolicy: vncPolicy, forwards: forwards
         )
     }
 
-    override func stop() async throws {
+    override func stop(force: Bool, timeout: TimeInterval) async throws {
         mockIsRunning = false
-        try await super.stop()
+        try await super.stop(force: force, timeout: timeout)
     }
 }

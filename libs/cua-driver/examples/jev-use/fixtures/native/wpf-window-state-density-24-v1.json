@@ -1,0 +1,1590 @@
+{
+ "_fixture": {
+  "sanitized": "Recorded by verify_native.py --capture-dir. Screenshot bytes, tree_markdown, local file paths, and Driver guidance notes removed.",
+  "source": "CuaTestHarness task window with CUA_WPF_TASK_DENSITY=24 (initial), observed by get_window_state: Windows WPF harness (CUA_WPF_TASK_STATE), released Cua Driver 0.30.4 from the canonical install.ps1 on an Azure Windows VM (interactive RDP session)"
+ },
+ "app_name": "CuaTestHarness.Wpf.exe",
+ "capture_id": "capture_12497fdbdc054fbaa016c1545d7d1178_0000000000000000",
+ "element_count": 66,
+ "elements": [
+  {
+   "actions": [
+    "set_value"
+   ],
+   "depth": 1,
+   "element_index": 0,
+   "element_token": "s00000001:0",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 968,
+    "x": 484,
+    "y": 249
+   },
+   "label": "CuaTestHarness WPF Tasks",
+   "role": "TitleBar",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 968,
+    "x": 16,
+    "y": 2
+   },
+   "value": "CuaTestHarness WPF Tasks"
+  },
+  {
+   "actions": [
+    "invoke",
+    "expand"
+   ],
+   "depth": 3,
+   "element_index": 1,
+   "element_token": "s00000001:1",
+   "enabled": true,
+   "frame": {
+    "h": 22,
+    "w": 22,
+    "x": 468,
+    "y": 254
+   },
+   "label": "System",
+   "parent_index": 0,
+   "role": "MenuItem",
+   "screenshot_frame": {
+    "h": 22,
+    "w": 22,
+    "x": 0,
+    "y": 7
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 2,
+   "element_index": 2,
+   "element_token": "s00000001:2",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 47,
+    "x": 1313,
+    "y": 247
+   },
+   "label": "Minimize",
+   "parent_index": 0,
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 30,
+    "w": 47,
+    "x": 845,
+    "y": 0
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 2,
+   "element_index": 3,
+   "element_token": "s00000001:3",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 46,
+    "x": 1360,
+    "y": 247
+   },
+   "label": "Maximize",
+   "parent_index": 0,
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 30,
+    "w": 46,
+    "x": 892,
+    "y": 0
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 2,
+   "element_index": 4,
+   "element_token": "s00000001:4",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 47,
+    "x": 1406,
+    "y": 247
+   },
+   "label": "Close",
+   "parent_index": 0,
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 30,
+    "w": 47,
+    "x": 938,
+    "y": 0
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 5,
+   "element_token": "s00000001:5",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 484,
+    "y": 293
+   },
+   "label": "New folder",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 16,
+    "y": 46
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 6,
+   "element_token": "s00000001:6",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 580,
+    "y": 293
+   },
+   "label": "Refresh",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 112,
+    "y": 46
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 7,
+   "element_token": "s00000001:7",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 676,
+    "y": 293
+   },
+   "label": "Undo",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 208,
+    "y": 46
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 8,
+   "element_token": "s00000001:8",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 772,
+    "y": 293
+   },
+   "label": "Redo",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 304,
+    "y": 46
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 9,
+   "element_token": "s00000001:9",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 868,
+    "y": 293
+   },
+   "label": "Zoom in",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 400,
+    "y": 46
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 10,
+   "element_token": "s00000001:10",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 484,
+    "y": 319
+   },
+   "label": "Zoom out",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 16,
+    "y": 72
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 11,
+   "element_token": "s00000001:11",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 580,
+    "y": 319
+   },
+   "label": "Save draft",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 112,
+    "y": 72
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 12,
+   "element_token": "s00000001:12",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 95,
+    "x": 676,
+    "y": 319
+   },
+   "label": "Increase font size",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 95,
+    "x": 208,
+    "y": 72
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 13,
+   "element_token": "s00000001:13",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 777,
+    "y": 319
+   },
+   "label": "Copy link",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 309,
+    "y": 72
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 14,
+   "element_token": "s00000001:14",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 873,
+    "y": 319
+   },
+   "label": "Duplicate",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 405,
+    "y": 72
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 15,
+   "element_token": "s00000001:15",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 484,
+    "y": 345
+   },
+   "label": "Rename",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 16,
+    "y": 98
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 16,
+   "element_token": "s00000001:16",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 580,
+    "y": 345
+   },
+   "label": "Print preview",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 112,
+    "y": 98
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 17,
+   "element_token": "s00000001:17",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 676,
+    "y": 345
+   },
+   "label": "Export PDF",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 208,
+    "y": 98
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 18,
+   "element_token": "s00000001:18",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 772,
+    "y": 345
+   },
+   "label": "Import",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 304,
+    "y": 98
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 19,
+   "element_token": "s00000001:19",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 868,
+    "y": 345
+   },
+   "label": "Bold",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 400,
+    "y": 98
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 20,
+   "element_token": "s00000001:20",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 484,
+    "y": 371
+   },
+   "label": "Italic",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 16,
+    "y": 124
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 21,
+   "element_token": "s00000001:21",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 580,
+    "y": 371
+   },
+   "label": "Underline",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 112,
+    "y": 124
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 22,
+   "element_token": "s00000001:22",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 676,
+    "y": 371
+   },
+   "label": "Align left",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 208,
+    "y": 124
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 23,
+   "element_token": "s00000001:23",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 772,
+    "y": 371
+   },
+   "label": "Align center",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 304,
+    "y": 124
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 24,
+   "element_token": "s00000001:24",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 868,
+    "y": 371
+   },
+   "label": "Align right",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 400,
+    "y": 124
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 25,
+   "element_token": "s00000001:25",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 484,
+    "y": 397
+   },
+   "label": "Insert table",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 16,
+    "y": 150
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 26,
+   "element_token": "s00000001:26",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 580,
+    "y": 397
+   },
+   "label": "Insert image",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 112,
+    "y": 150
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 27,
+   "element_token": "s00000001:27",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 676,
+    "y": 397
+   },
+   "label": "Spell check",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 208,
+    "y": 150
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 28,
+   "element_token": "s00000001:28",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 772,
+    "y": 397
+   },
+   "label": "Word count",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 304,
+    "y": 150
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 29,
+   "element_token": "s00000001:29",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 868,
+    "y": 397
+   },
+   "label": "Show sidebar",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 400,
+    "y": 150
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 30,
+   "element_token": "s00000001:30",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 484,
+    "y": 423
+   },
+   "label": "Help",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 16,
+    "y": 176
+   }
+  },
+  {
+   "actions": [
+    "set_value",
+    "text",
+    "scroll"
+   ],
+   "depth": 1,
+   "element_index": 31,
+   "element_token": "s00000001:31",
+   "enabled": true,
+   "frame": {
+    "h": 18,
+    "w": 180,
+    "x": 484,
+    "y": 457
+   },
+   "label": "Search",
+   "role": "Edit",
+   "screenshot_frame": {
+    "h": 18,
+    "w": 180,
+    "x": 16,
+    "y": 210
+   }
+  },
+  {
+   "actions": [
+    "set_value",
+    "text",
+    "scroll"
+   ],
+   "depth": 1,
+   "element_index": 32,
+   "element_token": "s00000001:32",
+   "enabled": true,
+   "frame": {
+    "h": 18,
+    "w": 180,
+    "x": 672,
+    "y": 457
+   },
+   "label": "Note title",
+   "role": "Edit",
+   "screenshot_frame": {
+    "h": 18,
+    "w": 180,
+    "x": 204,
+    "y": 210
+   }
+  },
+  {
+   "actions": [
+    "toggle"
+   ],
+   "depth": 1,
+   "element_index": 33,
+   "element_token": "s00000001:33",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 76,
+    "x": 484,
+    "y": 483
+   },
+   "label": "Show ruler",
+   "role": "CheckBox",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 76,
+    "x": 16,
+    "y": 236
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "toggle"
+   ],
+   "depth": 1,
+   "element_index": 34,
+   "element_token": "s00000001:34",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 99,
+    "x": 572,
+    "y": 483
+   },
+   "label": "Show previews",
+   "role": "CheckBox",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 99,
+    "x": 104,
+    "y": 236
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "toggle"
+   ],
+   "depth": 1,
+   "element_index": 35,
+   "element_token": "s00000001:35",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 78,
+    "x": 683,
+    "y": 483
+   },
+   "label": "Word wrap",
+   "role": "CheckBox",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 78,
+    "x": 215,
+    "y": 236
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "toggle"
+   ],
+   "depth": 1,
+   "element_index": 36,
+   "element_token": "s00000001:36",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 74,
+    "x": 773,
+    "y": 483
+   },
+   "label": "Auto-save",
+   "role": "CheckBox",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 74,
+    "x": 305,
+    "y": 236
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "toggle"
+   ],
+   "depth": 1,
+   "element_index": 37,
+   "element_token": "s00000001:37",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 91,
+    "x": 859,
+    "y": 483
+   },
+   "label": "Line numbers",
+   "role": "CheckBox",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 91,
+    "x": 391,
+    "y": 236
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "toggle"
+   ],
+   "depth": 1,
+   "element_index": 38,
+   "element_token": "s00000001:38",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 79,
+    "x": 484,
+    "y": 502
+   },
+   "label": "Dark mode",
+   "role": "CheckBox",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 79,
+    "x": 16,
+    "y": 255
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "toggle"
+   ],
+   "depth": 1,
+   "element_index": 39,
+   "element_token": "s00000001:39",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 113,
+    "x": 575,
+    "y": 502
+   },
+   "label": "Show hidden files",
+   "role": "CheckBox",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 113,
+    "x": 107,
+    "y": 255
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "toggle"
+   ],
+   "depth": 1,
+   "element_index": 40,
+   "element_token": "s00000001:40",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 102,
+    "x": 700,
+    "y": 502
+   },
+   "label": "Sync on startup",
+   "role": "CheckBox",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 102,
+    "x": 232,
+    "y": 255
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "toggle"
+   ],
+   "depth": 1,
+   "element_index": 41,
+   "element_token": "s00000001:41",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 103,
+    "x": 814,
+    "y": 502
+   },
+   "label": "Compact layout",
+   "role": "CheckBox",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 103,
+    "x": 346,
+    "y": 255
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "toggle"
+   ],
+   "depth": 1,
+   "element_index": 42,
+   "element_token": "s00000001:42",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 104,
+    "x": 484,
+    "y": 521
+   },
+   "label": "Show status bar",
+   "role": "CheckBox",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 104,
+    "x": 16,
+    "y": 274
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "toggle"
+   ],
+   "depth": 1,
+   "element_index": 43,
+   "element_token": "s00000001:43",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 145,
+    "x": 600,
+    "y": 521
+   },
+   "label": "Remember window size",
+   "role": "CheckBox",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 145,
+    "x": 132,
+    "y": 274
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "toggle"
+   ],
+   "depth": 1,
+   "element_index": 44,
+   "element_token": "s00000001:44",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 160,
+    "x": 757,
+    "y": 521
+   },
+   "label": "Check spelling as you type",
+   "role": "CheckBox",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 160,
+    "x": 289,
+    "y": 274
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "select"
+   ],
+   "depth": 1,
+   "element_index": 45,
+   "element_token": "s00000001:45",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 45,
+    "x": 484,
+    "y": 548
+   },
+   "label": "Light",
+   "role": "RadioButton",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 45,
+    "x": 16,
+    "y": 301
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "select"
+   ],
+   "depth": 1,
+   "element_index": 46,
+   "element_token": "s00000001:46",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 44,
+    "x": 541,
+    "y": 548
+   },
+   "label": "Dark",
+   "role": "RadioButton",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 44,
+    "x": 73,
+    "y": 301
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "select"
+   ],
+   "depth": 1,
+   "element_index": 47,
+   "element_token": "s00000001:47",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 57,
+    "x": 597,
+    "y": 548
+   },
+   "label": "System",
+   "role": "RadioButton",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 57,
+    "x": 129,
+    "y": 301
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "select"
+   ],
+   "depth": 1,
+   "element_index": 48,
+   "element_token": "s00000001:48",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 37,
+    "x": 484,
+    "y": 571
+   },
+   "label": "List",
+   "role": "RadioButton",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 37,
+    "x": 16,
+    "y": 324
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "select"
+   ],
+   "depth": 1,
+   "element_index": 49,
+   "element_token": "s00000001:49",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 41,
+    "x": 533,
+    "y": 571
+   },
+   "label": "Grid",
+   "role": "RadioButton",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 41,
+    "x": 65,
+    "y": 324
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "select"
+   ],
+   "depth": 1,
+   "element_index": 50,
+   "element_token": "s00000001:50",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 65,
+    "x": 586,
+    "y": 571
+   },
+   "label": "Columns",
+   "role": "RadioButton",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 65,
+    "x": 118,
+    "y": 324
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "select"
+   ],
+   "depth": 1,
+   "element_index": 51,
+   "element_token": "s00000001:51",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 51,
+    "x": 484,
+    "y": 594
+   },
+   "label": "Name",
+   "role": "RadioButton",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 51,
+    "x": 16,
+    "y": 347
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "select"
+   ],
+   "depth": 1,
+   "element_index": 52,
+   "element_token": "s00000001:52",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 44,
+    "x": 547,
+    "y": 594
+   },
+   "label": "Date",
+   "role": "RadioButton",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 44,
+    "x": 79,
+    "y": 347
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "select"
+   ],
+   "depth": 1,
+   "element_index": 53,
+   "element_token": "s00000001:53",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 42,
+    "x": 603,
+    "y": 594
+   },
+   "label": "Kind",
+   "role": "RadioButton",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 42,
+    "x": 135,
+    "y": 347
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "select"
+   ],
+   "depth": 1,
+   "element_index": 54,
+   "element_token": "s00000001:54",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 78,
+    "x": 484,
+    "y": 617
+   },
+   "label": "Small icons",
+   "role": "RadioButton",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 78,
+    "x": 16,
+    "y": 370
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "select"
+   ],
+   "depth": 1,
+   "element_index": 55,
+   "element_token": "s00000001:55",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 94,
+    "x": 574,
+    "y": 617
+   },
+   "label": "Medium icons",
+   "role": "RadioButton",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 94,
+    "x": 106,
+    "y": 370
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "select"
+   ],
+   "depth": 1,
+   "element_index": 56,
+   "element_token": "s00000001:56",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 79,
+    "x": 680,
+    "y": 617
+   },
+   "label": "Large icons",
+   "role": "RadioButton",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 79,
+    "x": 212,
+    "y": 370
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 57,
+   "element_token": "s00000001:57",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 1036,
+    "y": 317
+   },
+   "label": "Increment",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 568,
+    "y": 70
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 58,
+   "element_token": "s00000001:58",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 1134,
+    "y": 317
+   },
+   "label": "Reset",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 666,
+    "y": 70
+   }
+  },
+  {
+   "actions": [
+    "toggle"
+   ],
+   "depth": 1,
+   "element_index": 59,
+   "element_token": "s00000001:59",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 338,
+    "x": 1036,
+    "y": 345
+   },
+   "label": "I agree",
+   "role": "CheckBox",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 338,
+    "x": 568,
+    "y": 98
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "select"
+   ],
+   "depth": 1,
+   "element_index": 60,
+   "element_token": "s00000001:60",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 48,
+    "x": 1036,
+    "y": 368
+   },
+   "label": "Small",
+   "role": "RadioButton",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 48,
+    "x": 568,
+    "y": 121
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "select"
+   ],
+   "depth": 1,
+   "element_index": 61,
+   "element_token": "s00000001:61",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 63,
+    "x": 1096,
+    "y": 368
+   },
+   "label": "Medium",
+   "role": "RadioButton",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 63,
+    "x": 628,
+    "y": 121
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "select"
+   ],
+   "depth": 1,
+   "element_index": 62,
+   "element_token": "s00000001:62",
+   "enabled": true,
+   "frame": {
+    "h": 15,
+    "w": 48,
+    "x": 1171,
+    "y": 368
+   },
+   "label": "Large",
+   "role": "RadioButton",
+   "screenshot_frame": {
+    "h": 15,
+    "w": 48,
+    "x": 703,
+    "y": 121
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "set_value",
+    "text",
+    "scroll"
+   ],
+   "depth": 1,
+   "element_index": 63,
+   "element_token": "s00000001:63",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 240,
+    "x": 1036,
+    "y": 391
+   },
+   "label": "Note",
+   "role": "Edit",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 240,
+    "x": 568,
+    "y": 144
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 64,
+   "element_token": "s00000001:64",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 1276,
+    "y": 391
+   },
+   "label": "Save note",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 808,
+    "y": 144
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 1,
+   "element_index": 65,
+   "element_token": "s00000001:65",
+   "enabled": true,
+   "frame": {
+    "h": 20,
+    "w": 90,
+    "x": 1036,
+    "y": 411
+   },
+   "label": "Exit",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 20,
+    "w": 90,
+    "x": 568,
+    "y": 164
+   }
+  }
+ ],
+ "elements_complete": false,
+ "nodes_pending": 0,
+ "nodes_visited": 127,
+ "pid": 9388,
+ "returned_element_count": 66,
+ "screenshot_height": 531,
+ "screenshot_mime_type": "image/png",
+ "screenshot_width": 984,
+ "snapshot_id": "s00000001",
+ "timeout_ms": 1000,
+ "total_element_count": 66,
+ "truncated": false,
+ "walk_elapsed_ms": 4,
+ "window_bounds": {
+  "height": 533,
+  "width": 986,
+  "x": 467,
+  "y": 246
+ },
+ "window_id": 525386,
+ "window_title": "CuaTestHarness WPF Tasks"
+}

@@ -11,6 +11,7 @@ The submission JSON must contain:
     - circuit_prompt  (used as task description)
     - difficulty
 """
+
 from __future__ import annotations
 
 import argparse
@@ -219,9 +220,7 @@ def package(submission: dict, output_dir: Path) -> None:
     (output_dir / "main.py").write_text(main_py, encoding="utf-8")
 
     # Copy submission.json
-    (output_dir / "submission.json").write_text(
-        json.dumps(submission, indent=2), encoding="utf-8"
-    )
+    (output_dir / "submission.json").write_text(json.dumps(submission, indent=2), encoding="utf-8")
 
     print(f"  → {output_dir}")
 

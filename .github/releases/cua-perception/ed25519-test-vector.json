@@ -1,0 +1,7 @@
+{
+  "source": "RFC 8032 section 7.1 test 1",
+  "algorithm": "Ed25519",
+  "messageHex": "",
+  "publicKeyHex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+  "signatureBase64": "5VZDAMNgrHKQhuLMgG6CioSHfx645dl02HPgZSJJAVVfuIIVkKM7rMYeOXAc+bRr0lv18FlbviRlUUFDjnoQCw=="
+}

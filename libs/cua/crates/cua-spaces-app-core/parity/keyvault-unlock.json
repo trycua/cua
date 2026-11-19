@@ -1,0 +1,205 @@
+{
+  "name": "keyvault-unlock",
+  "about": "Keyvault setup and unlock: Touch ID when the daemon can use the OS key store, a passphrase (twice, with a minimum and a strength hint) when it cannot, as with a development daemon.",
+  "now": 1800000000000,
+  "cases": [
+    {
+      "name": "setup-touch-id",
+      "overview": {
+        "availability": "no_vault",
+        "message": "It keeps the sessions teleport moves, encrypted on this computer.",
+        "status": {
+          "version": "0.1.0",
+          "initialized": false,
+          "unlocked": false,
+          "disabled": false,
+          "caller_first_party": true,
+          "caller_display": "Cua (team YCK386LBJ7, signed id \"com.trycua.spaces.macos\")",
+          "items": 0,
+          "pending": 0,
+          "os_protector_available": true,
+          "passphrase_available": true,
+          "unlock_protectors": []
+        },
+        "serverVerified": true,
+        "items": [],
+        "pending": [],
+        "grants": [],
+        "rules": [],
+        "deliveries": [],
+        "audit": [],
+        "partialErrors": []
+      }
+    },
+    {
+      "name": "setup-passphrase",
+      "overview": {
+        "availability": "no_vault",
+        "message": "It keeps the sessions teleport moves, encrypted on this computer.",
+        "status": {
+          "version": "0.1.0",
+          "initialized": false,
+          "unlocked": false,
+          "disabled": false,
+          "caller_first_party": true,
+          "caller_display": "Cua (team YCK386LBJ7, signed id \"com.trycua.spaces.macos\")",
+          "items": 0,
+          "pending": 0,
+          "os_protector_available": false,
+          "passphrase_available": true,
+          "unlock_protectors": []
+        },
+        "serverVerified": true,
+        "items": [],
+        "pending": [],
+        "grants": [],
+        "rules": [],
+        "deliveries": [],
+        "audit": [],
+        "partialErrors": []
+      }
+    },
+    {
+      "name": "unlock-touch-id",
+      "overview": {
+        "availability": "locked",
+        "message": "Unlock it to see and approve items.",
+        "status": {
+          "version": "0.1.0",
+          "initialized": true,
+          "unlocked": false,
+          "disabled": false,
+          "caller_first_party": true,
+          "caller_display": "Cua (team YCK386LBJ7, signed id \"com.trycua.spaces.macos\")",
+          "items": 0,
+          "pending": 0,
+          "os_protector_available": true,
+          "passphrase_available": true,
+          "unlock_protectors": [
+            "macos-keychain",
+            "recovery"
+          ]
+        },
+        "serverVerified": true,
+        "items": [],
+        "pending": [],
+        "grants": [],
+        "rules": [],
+        "deliveries": [],
+        "audit": [],
+        "partialErrors": []
+      }
+    },
+    {
+      "name": "unlock-passphrase",
+      "overview": {
+        "availability": "locked",
+        "message": "Unlock it to see and approve items.",
+        "status": {
+          "version": "0.1.0",
+          "initialized": true,
+          "unlocked": false,
+          "disabled": false,
+          "caller_first_party": true,
+          "caller_display": "Cua (team YCK386LBJ7, signed id \"com.trycua.spaces.macos\")",
+          "items": 0,
+          "pending": 0,
+          "os_protector_available": false,
+          "passphrase_available": true,
+          "unlock_protectors": [
+            "passphrase",
+            "recovery"
+          ]
+        },
+        "serverVerified": true,
+        "items": [],
+        "pending": [],
+        "grants": [],
+        "rules": [],
+        "deliveries": [],
+        "audit": [],
+        "partialErrors": []
+      }
+    },
+    {
+      "name": "ready",
+      "overview": {
+        "availability": "ready",
+        "status": {
+          "version": "0.1.0",
+          "initialized": true,
+          "unlocked": true,
+          "disabled": false,
+          "caller_first_party": true,
+          "caller_display": "Cua (team YCK386LBJ7, signed id \"com.trycua.spaces.macos\")",
+          "items": 0,
+          "pending": 0,
+          "os_protector_available": false,
+          "passphrase_available": true,
+          "unlock_protectors": [
+            "passphrase",
+            "recovery"
+          ]
+        },
+        "serverVerified": true,
+        "items": [],
+        "pending": [],
+        "grants": [],
+        "rules": [],
+        "deliveries": [],
+        "audit": [],
+        "partialErrors": []
+      }
+    }
+  ],
+  "checks": [
+    {
+      "label": "setup, empty",
+      "mode": "setup",
+      "passphrase": "",
+      "confirm": ""
+    },
+    {
+      "label": "setup, too short",
+      "mode": "setup",
+      "passphrase": "hunter2",
+      "confirm": ""
+    },
+    {
+      "label": "setup, repetitive",
+      "mode": "setup",
+      "passphrase": "aaaaaaaaaaaaaaaa",
+      "confirm": "aaaaaaaaaaaaaaaa"
+    },
+    {
+      "label": "setup, fair, not confirmed",
+      "mode": "setup",
+      "passphrase": "Password1234",
+      "confirm": ""
+    },
+    {
+      "label": "setup, strong, mismatch",
+      "mode": "setup",
+      "passphrase": "orbit lantern pickle harbor",
+      "confirm": "orbit lantern"
+    },
+    {
+      "label": "setup, strong, confirmed",
+      "mode": "setup",
+      "passphrase": "orbit lantern pickle harbor",
+      "confirm": "orbit lantern pickle harbor"
+    },
+    {
+      "label": "unlock, empty",
+      "mode": "unlock",
+      "passphrase": "",
+      "confirm": ""
+    },
+    {
+      "label": "unlock, typed",
+      "mode": "unlock",
+      "passphrase": "x",
+      "confirm": ""
+    }
+  ]
+}

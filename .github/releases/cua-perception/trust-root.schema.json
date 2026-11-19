@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trycua/cua/.github/releases/cua-perception/trust-root.schema.json",
+  "title": "Cua extension signing trust root",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "publisherId",
+    "activeKeyId",
+    "keys",
+    "rotation"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "publisherId": {
+      "const": "cua"
+    },
+    "activeKeyId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "keys": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/key"
+      }
+    },
+    "rotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "minimumOverlapDays",
+        "nextKeyId",
+        "privateKeysStoredInRepository"
+      ],
+      "properties": {
+        "minimumOverlapDays": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "nextKeyId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "privateKeysStoredInRepository": {
+          "const": false
+        }
+      }
+    }
+  },
+  "$defs": {
+    "key": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "keyId",
+        "algorithm",
+        "publicKeyBase64",
+        "status",
+        "validFromUnix",
+        "validUntilUnix",
+        "replaces"
+      ],
+      "properties": {
+        "keyId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "algorithm": {
+          "const": "Ed25519"
+        },
+        "publicKeyBase64": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+/]{43}=$"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "pending",
+            "retired"
+          ]
+        },
+        "validFromUnix": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "validUntilUnix": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "replaces": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

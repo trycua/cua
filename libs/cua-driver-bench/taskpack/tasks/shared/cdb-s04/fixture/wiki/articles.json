@@ -1,0 +1,34 @@
+{
+  "schema": "margin-lantern-manual/1",
+  "articles": [
+    {
+      "id": "MLM-27",
+      "title": "Archive overlay case matching",
+      "summary": "Evidence requirements for linking archive inspector reports.",
+      "sections": [
+        {
+          "slug": "legacy-empty-layers",
+          "title": "Legacy empty layers",
+          "body": "An overlay report matches this diagnostic rule only when all of the following are true: the inspected record is marked legacy, its layers array is empty, the requested view is overlay, and the page displays “No panel selected.” Confirm the request log carries the matching overlay_route correlation and the legacy-empty-layers signature.\n\nA case may be linked as a duplicate only with all three structured references: this wiki section (MLM-27#legacy-empty-layers), the exact reproduction URL from the case, and the matching correlation/signature log reference. Similar wording, a sparse overlay with a valid layer, a different view, or an unrelated empty-state display is insufficient. Leave an unsupported report open and unlinked."
+        },
+        {
+          "slug": "evidence-format",
+          "title": "Evidence field format",
+          "body": "Use the complete section reference, preserve the reproduction URL exactly, and copy the combined correlation:route:signature value from the access log into the log reference field."
+        }
+      ]
+    },
+    {
+      "id": "MLM-12",
+      "title": "Export watermark rotation",
+      "summary": "How scheduled watermark retirement propagates to document exports.",
+      "sections": [
+        {
+          "slug": "cache-window",
+          "title": "Cache window",
+          "body": "Export workers may retain a watermark asset until the documented cache window ends. This article does not apply to archive inspector panels."
+        }
+      ]
+    }
+  ]
+}

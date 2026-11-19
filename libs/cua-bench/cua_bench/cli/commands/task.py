@@ -8,6 +8,7 @@ Usage:
 """
 
 from __future__ import annotations
+from ._help import examples
 
 import json
 import os
@@ -52,15 +53,38 @@ tags = [{tags_toml}]
 
 def register_parser(subparsers):
     """Register the task command parser."""
-    task_parser = subparsers.add_parser("task", help="Inspect and manage task environments")
+    task_parser = subparsers.add_parser(
+        "task",
+        help="Inspect and manage task environments",
+        **examples(
+            ("List the tasks in a directory", "cb task list ./tasks"),
+            ("Inspect one task", "cb task info ./tasks/hello_file_env"),
+        ),
+    )
     task_subparsers = task_parser.add_subparsers(dest="task_command")
 
     # cb task info <path>
-    info_parser = task_subparsers.add_parser("info", help="Show detailed information about a task")
+    info_parser = task_subparsers.add_parser(
+        "info",
+        help="Show detailed information about a task",
+        **examples(
+            (
+                "Inspect a task's variants and lifecycle functions",
+                "cb task info ./tasks/hello_file_env",
+            )
+        ),
+    )
     info_parser.add_argument("path", help="Path to task directory (containing main.py)")
 
     # cb task list [path]
-    list_parser = task_subparsers.add_parser("list", help="List tasks in a directory")
+    list_parser = task_subparsers.add_parser(
+        "list",
+        help="List tasks in a directory",
+        **examples(
+            ("List tasks here", "cb task list"),
+            ("List tasks in a directory", "cb task list ./tasks"),
+        ),
+    )
     list_parser.add_argument(
         "path",
         nargs="?",
@@ -69,7 +93,11 @@ def register_parser(subparsers):
     )
 
     # cb task create [path]
-    create_parser = task_subparsers.add_parser("create", help="Scaffold a new task environment")
+    create_parser = task_subparsers.add_parser(
+        "create",
+        help="Scaffold a new task environment",
+        **examples(("Scaffold a task interactively under ./tasks", "cb task create ./tasks")),
+    )
     create_parser.add_argument(
         "path",
         nargs="?",
@@ -79,7 +107,15 @@ def register_parser(subparsers):
 
     # cb task generate "<prompt>" [output_dir]
     generate_parser = task_subparsers.add_parser(
-        "generate", help="Generate a task from a prompt using Claude"
+        "generate",
+        help="Generate a task from a prompt using Claude",
+        **examples(
+            ("Generate a task", "cb task generate '2048 game'"),
+            (
+                "Generate into a directory without prompts",
+                "cb task generate 'Sort a spreadsheet column' ./tasks/sort_column --no-interaction",
+            ),
+        ),
     )
     generate_parser.add_argument(
         "prompt", help='Natural language description of the task to generate (e.g., "2048 game")'
@@ -87,7 +123,7 @@ def register_parser(subparsers):
     generate_parser.add_argument(
         "output",
         nargs="?",
-        help="Output directory path (optional, auto-generates from prompt if not provided)",
+        help="Output directory (default: named after the prompt)",
     )
     generate_parser.add_argument(
         "--no-interaction",
@@ -150,10 +186,10 @@ def cmd_info(args) -> int:
         os_types = set()
         for task in tasks:
             if hasattr(task, "computer") and task.computer:
-                provider = task.computer.get("provider", "simulated")
-                # Normalize to new names
-                if provider == "webtop":
-                    provider = "simulated"
+                provider = task.computer.get("provider") or "native"
+                # Normalize: `computer` is an alias; simulated/webtop run natively now.
+                if provider in ("webtop", "simulated"):
+                    provider = "simulated (removed: runs on the Linux container)"
                 elif provider == "computer":
                     provider = "native"
                 providers.add(provider)
@@ -166,7 +202,7 @@ def cmd_info(args) -> int:
 
         # Default if no provider specified
         if not providers:
-            providers.add("simulated")
+            providers.add("native")
 
         # Print info
         print(f"\n{BOLD}Task: {task_path.name}{RESET}")
@@ -176,13 +212,13 @@ def cmd_info(args) -> int:
         provider_list = list(providers)
         print(f"\n{CYAN}Provider:{RESET}")
         for p in provider_list:
-            if p == "simulated":
-                print(f"  {GREEN}simulated{RESET} {GREY}(Playwright - fast, no Docker){RESET}")
-                print(f"    {GREY}HTML/CSS desktop simulation in headless browser{RESET}")
-                print(f"    {GREY}Run with: cb interact {task_path.name}{RESET}")
-            elif p == "native":
-                print(f"  {GREEN}native{RESET} {GREY}(Docker/QEMU - real OS){RESET}")
-                print(f"    {GREY}Actual desktop environment with real applications{RESET}")
+            if p.startswith("simulated"):
+                print(f"  {YELLOW}{p}{RESET}")
+                print(
+                    f"    {GREY}Declare provider='native' in the task to silence the warning{RESET}"
+                )
+            else:
+                print(f"  {GREEN}native{RESET} {GREY}(a real OS in a container or VM){RESET}")
                 print(f"    {GREY}Run with: cb run {task_path.name}{RESET}")
 
         # OS types
@@ -212,14 +248,10 @@ def cmd_info(args) -> int:
 
         # Quick commands
         print(f"\n{CYAN}Quick Commands:{RESET}")
-        if "simulated" in providers:
-            print(f"  {GREY}# Interactive mode (browser visible):{RESET}")
-            print(f"  cb interact {args.path} --task-id 0")
-            print(f"  {GREY}# With oracle solution:{RESET}")
-            print(f"  cb interact {args.path} --task-id 0 --oracle")
-        if "native" in providers:
-            print(f"  {GREY}# Run with Docker:{RESET}")
-            print(f"  cb run {args.path} --variant-id 0 --oracle")
+        print(f"  {GREY}# Run the oracle solution (local container):{RESET}")
+        print(f"  cb run {args.path} --variant-id 0 --oracle")
+        print(f"  {GREY}# Open the sandbox and try it yourself:{RESET}")
+        print(f"  cb interact {args.path} --variant-id 0")
 
         print()
         return 0
@@ -272,18 +304,18 @@ def cmd_list(args) -> int:
                 task_list = env.tasks_config_fn()
                 task_count = len(task_list)
                 if task_list and hasattr(task_list[0], "computer") and task_list[0].computer:
-                    provider = task_list[0].computer.get("provider", "simulated")
+                    provider = task_list[0].computer.get("provider") or "native"
                     # Normalize names
                     if provider == "webtop":
                         provider = "simulated"
                     elif provider == "computer":
                         provider = "native"
                 else:
-                    provider = "simulated"
+                    provider = "native"
 
             # Color code provider
             if provider == "simulated":
-                provider_colored = f"{GREEN}{provider}{RESET}"
+                provider_colored = f"{YELLOW}{provider}*{RESET}"
             elif provider == "native":
                 provider_colored = f"{CYAN}{provider}{RESET}"
             else:
@@ -348,7 +380,6 @@ def cmd_create(args) -> int:
     # Prepare files
     pyproject_path = target_path / "pyproject.toml"
     main_py_path = target_path / "main.py"
-    gui_dir_path = target_path / "gui"
 
     pyproject_content = PYPROJECT_TEMPLATE.format(
         project_name=project_name,
@@ -369,13 +400,14 @@ def cmd_create(args) -> int:
     pyproject_path.write_text(pyproject_content, encoding="utf-8")
     main_py_path.write_text(template_main_py, encoding="utf-8")
 
-    # Copy gui directory
-    shutil.copytree(template_root / "gui", gui_dir_path)
-
     print(f"\n{GREEN}✓ Created task at: {BOLD}{target_path}{RESET}")
-    print(f"  {GREY}- {RESET}{pyproject_path.relative_to(Path.cwd())}")
-    print(f"  {GREY}- {RESET}{main_py_path.relative_to(Path.cwd())}")
-    print(f"  {GREY}- {RESET}{gui_dir_path.relative_to(Path.cwd())} (copied)")
+    for created in (pyproject_path, main_py_path):
+        try:
+            created = created.relative_to(Path.cwd())
+        except ValueError:
+            pass
+        print(f"  {GREY}- {RESET}{created}")
+    print(f"\n  Run it: cb run {target_path}")
     return 0
 
 
@@ -441,7 +473,6 @@ def _scaffold_starter(prompt: str, dest_dir: Path, profile: dict) -> SimpleNames
 
     pyproject_path.write_text(pyproject_content, encoding="utf-8")
     main_py_path.write_text(template_main_py, encoding="utf-8")
-    shutil.copytree(template_root / "gui", gui_dir_path)
 
     # Copy CLAUDE.md if present
     claude_md = template_root / "CLAUDE.md"
@@ -458,14 +489,8 @@ def _scaffold_starter(prompt: str, dest_dir: Path, profile: dict) -> SimpleNames
         main_py_rel = main_py_path.relative_to(Path.cwd())
     except ValueError:
         main_py_rel = main_py_path
-    try:
-        gui_dir_rel = gui_dir_path.relative_to(Path.cwd())
-    except ValueError:
-        gui_dir_rel = gui_dir_path
-
     print(f"  {GREY}- {RESET}{pyproject_rel}")
     print(f"  {GREY}- {RESET}{main_py_rel}")
-    print(f"  {GREY}- {RESET}{gui_dir_rel} (copied)")
     return SimpleNamespace(pyproject=pyproject_path, main=main_py_path, gui=gui_dir_path)
 
 

@@ -1,0 +1,21 @@
+id = "kilocode"
+name = "Kilo Code"
+icon = "kilocode"
+tier = "more"
+rank = 240
+kind = "aggregator"
+aliases = ["kilo"]
+wire = "openai-chat"
+base_url = "https://api.kilo.ai/api/gateway"
+base_url_env = "KILOCODE_BASE_URL"
+default_model = ""
+hermes_id = "kilocode"
+key_help = "Create a key at kilo.ai."
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "KILOCODE_API_KEY"
+
+[delivery]
+hermes = ["KILOCODE_API_KEY"]

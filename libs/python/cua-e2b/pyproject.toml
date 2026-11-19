@@ -1,0 +1,43 @@
+[project]
+name = "cua-e2b"
+version = "0.1.0"
+description = "An e2b-compatible `e2b` module that runs sandboxes as Cua Spaces (Linux VMs) on your own machines"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "TryCua", email = "hello@trycua.com" }]
+keywords = ["cua", "e2b", "sandbox", "spaces", "vm", "rl", "agents"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+requires-python = ">=3.10"
+# The cua SDK (UniFFI binding over the Rust cua-sdk crate) does every call:
+# Spaces, checkpoints and forks, cua-spacesd exec and files, port forwards.
+dependencies = ["cua>=0.4.1"]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "pytest-asyncio>=0.21", "hypothesis>=6"]
+
+[project.urls]
+Homepage = "https://github.com/trycua/cua"
+Repository = "https://github.com/trycua/cua"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# Installs the top-level `e2b` module. It conflicts with the real `e2b`
+# package: install one or the other in an environment.
+packages = ["src/e2b"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = ["live: needs a reachable cua daemon or embedded runtime that can boot a Linux VM Space", "perf: timing guard against the committed baseline (tests/perf/baseline.json)"]

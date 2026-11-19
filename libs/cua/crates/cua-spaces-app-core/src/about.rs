@@ -1,0 +1,796 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+//! Settings, About: the app's name and version, its links (acknowledgements,
+//! privacy policy, terms, system status, an issue report), the copyright line, and, where
+//! the app updates itself (the macOS app through Sparkle, Windows and Linux
+//! through electron-updater), the update controls: automatic checks,
+//! automatic installs, the channel (Stable or Nightly), Check Now and the last
+//! check. There are no betas any more: the Nightly channel replaced them, and
+//! an install that chose Beta is on Nightly.
+//!
+//! Also what the first launch after an update does ([`after_launch`]): it
+//! refreshes what cua installed into the coding agents (`cua agents
+//! update`) and restarts the app's own daemon ([`restart_daemon`]), and
+//! says nothing unless that failed ([`refresh_notice`]). The last version
+//! seen lives in the settings file
+//! ([`crate::settings::AppSettings::last_seen_version`]).
+
+use serde::{Deserialize, Serialize};
+
+use crate::settings::SettingsOption;
+
+/// The privacy policy.
+pub const PRIVACY_URL: &str = "https://cua.ai/privacy-policy";
+/// The terms of service.
+pub const TERMS_URL: &str = "https://cua.ai/terms-of-service";
+/// The public status page: whether sign-in, the relay, the Spaces API,
+/// downloads and billing are up.
+pub const STATUS_URL: &str = "https://status.cua.ai";
+/// A new issue from the repository's bug report form.
+pub const ISSUE_URL: &str = "https://github.com/trycua/cua/issues/new";
+/// The copyright line.
+pub const COPYRIGHT: &str = "\u{a9} 2026 Cua AI, Inc. All rights reserved.";
+
+/// The public download page, for going back to Stable by hand: an updater
+/// never installs an older version than the one running.
+pub const DOWNLOAD_URL: &str = "https://spaces.cua.ai/download";
+
+/// The Sparkle appcast of the stable releases, as the release workflow
+/// publishes it (the Mac app's `SUFeedURL`) ...
+const STABLE_FEED_SUFFIX: &str = "/cua-spaces-latest/cua-spaces-appcast.xml";
+/// ... and the nightly appcast next to it (`nightly-cua-spaces.yml`).
+const NIGHTLY_FEED_SUFFIX: &str = "/cua-spaces-nightly/cua-spaces-nightly-appcast.xml";
+
+/// Which builds the updater offers.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateChannel {
+    /// Releases (the default).
+    #[default]
+    Stable,
+    /// A build of main every night (`X.Y.Z-nightly.YYYYMMDD[+sha]`), from
+    /// its own feed. It replaced the Beta channel, so `beta` (an older
+    /// build's word, and what the settings file still stores, see
+    /// [`crate::settings::save`]) reads as Nightly.
+    #[serde(alias = "beta")]
+    Nightly,
+}
+
+impl UpdateChannel {
+    /// The id the channel picker, the bridges and telemetry use.
+    pub fn id(self) -> &'static str {
+        match self {
+            UpdateChannel::Stable => "stable",
+            UpdateChannel::Nightly => "nightly",
+        }
+    }
+
+    /// The channel for an id: `nightly`, or `beta` from before Nightly,
+    /// is Nightly; anything else is Stable.
+    pub fn from_id(id: &str) -> UpdateChannel {
+        match id {
+            "nightly" | "beta" => UpdateChannel::Nightly,
+            _ => UpdateChannel::Stable,
+        }
+    }
+}
+
+/// The Sparkle channels an updater on `channel` may install from (Stable:
+/// none but the default one). Every item of the nightly appcast is on the
+/// `nightly` channel, so an app on Stable installs none of them even if it
+/// read that feed.
+pub fn allowed_channels(channel: UpdateChannel) -> Vec<String> {
+    match channel {
+        UpdateChannel::Stable => vec![],
+        UpdateChannel::Nightly => vec!["nightly".into()],
+    }
+}
+
+/// The nightly appcast next to `stable_feed` (the Mac app's `SUFeedURL`, the
+/// appcast on the rolling `cua-spaces-latest` release); `None` for any other
+/// feed (a fork's or a local build's), which has no nightly.
+pub fn nightly_feed_url(stable_feed: &str) -> Option<String> {
+    let base = stable_feed.strip_suffix(STABLE_FEED_SUFFIX)?;
+    base.starts_with("https://")
+        .then(|| format!("{base}{NIGHTLY_FEED_SUFFIX}"))
+}
+
+/// The appcast a Sparkle updater on `channel` reads: the nightly one for
+/// Nightly, else `None` (the app's own `SUFeedURL`).
+pub fn feed_url(channel: UpdateChannel, stable_feed: &str) -> Option<String> {
+    match channel {
+        UpdateChannel::Nightly => nightly_feed_url(stable_feed),
+        UpdateChannel::Stable => None,
+    }
+}
+
+/// A nightly build's version: `0.21.0-nightly.20261105.42+55e1f5d` (Mac),
+/// `0.21.0-nightly.20261105.42` (Windows, Linux), with `.42` the workflow
+/// run; nightlies before the run number had none.
+pub fn is_nightly_version(version: &str) -> bool {
+    version
+        .split('+')
+        .next()
+        .and_then(|v| v.split_once('-'))
+        .is_some_and(|(_, pre)| pre == "nightly" || pre.starts_with("nightly."))
+}
+
+/// The day a nightly was built, from its version (`nightly.YYYYMMDD`), as
+/// "5 Nov 2026"; `None` for any other version.
+pub fn nightly_build_date(version: &str) -> Option<String> {
+    if !is_nightly_version(version) {
+        return None;
+    }
+    let pre = version.split('+').next()?.split_once('-')?.1;
+    let day = pre.strip_prefix("nightly.")?.split('.').next()?;
+    if day.len() != 8 || !day.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let (y, m, d) = (
+        &day[..4],
+        day[4..6].parse::<usize>().ok()?,
+        day[6..].parse::<u32>().ok()?,
+    );
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let month = MONTHS.get(m.checked_sub(1)?)?;
+    (1..=31).contains(&d).then(|| format!("{d} {month} {y}"))
+}
+
+/// What the About pane shows.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AboutInput {
+    /// `macos`, `linux` or `windows`.
+    pub platform: String,
+    /// The full version (`0.2.0`, `0.2.0-staging.6`).
+    pub version: String,
+    /// The build (the macOS app's `CFBundleVersion`, `0.2.0.123`; may be
+    /// empty).
+    pub build: String,
+    /// This machine for an issue report (`macOS 26.0 (arm64)`).
+    pub os: String,
+    /// The app updates itself (its updater is running).
+    pub updater: bool,
+    /// The updater checks on its own.
+    pub auto_check: bool,
+    /// The updater downloads and installs on its own.
+    pub auto_install: bool,
+    /// The chosen channel.
+    pub channel: UpdateChannel,
+    /// The last check, as the shell formats a date; `None`: never.
+    pub last_check: Option<String>,
+    /// A check is running.
+    pub checking: bool,
+}
+
+/// Which link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AboutLinkId {
+    /// The third-party notices the app bundles.
+    Acknowledgements,
+    /// The privacy policy.
+    Privacy,
+    /// The terms of service.
+    Terms,
+    /// The public status page.
+    Status,
+    /// A new issue.
+    Issue,
+}
+
+/// One link.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AboutLink {
+    /// Which.
+    pub id: AboutLinkId,
+    /// "Privacy Policy".
+    pub label: String,
+    /// What it opens; `None`: the notices the app bundles.
+    pub url: Option<String>,
+}
+
+/// The update controls.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AboutUpdates {
+    /// "Check for and download updates automatically".
+    pub auto_check_label: String,
+    /// Checked.
+    pub auto_check: bool,
+    /// "Install a downloaded update when Cua Spaces quits".
+    pub auto_install_label: String,
+    /// Checked.
+    pub auto_install: bool,
+    /// It can be used (only with automatic checks).
+    pub auto_install_enabled: bool,
+    /// "Updates".
+    pub channel_label: String,
+    /// Stable, Nightly.
+    pub channels: Vec<SettingsOption>,
+    /// What the chosen channel gets, in a line.
+    pub channel_help: String,
+    /// A word about the version running on this channel: a nightly build
+    /// back on Stable stays until the next stable release passes it;
+    /// `None`: nothing to say.
+    pub channel_note: Option<String>,
+    /// "Download Stable": the way back to Stable right now
+    /// ([`DOWNLOAD_URL`]); `None` when no way back is needed.
+    pub download_label: Option<String>,
+    /// Where [`AboutUpdates::download_label`] goes.
+    pub download_url: Option<String>,
+    /// "Check Now" (or "Checking…").
+    pub check_label: String,
+    /// Check Now can be used.
+    pub check_enabled: bool,
+    /// "Last check: …".
+    pub last_check: String,
+}
+
+/// Settings, About.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AboutView {
+    /// "Cua Spaces for macOS".
+    pub title: String,
+    /// "Version 0.2.0 (0.2.0.123)".
+    pub version_line: String,
+    /// Acknowledgements, Privacy Policy, Terms of Service, System Status, Report an Issue.
+    pub links: Vec<AboutLink>,
+    /// "© 2026 Cua AI, Inc. All rights reserved."
+    pub copyright: String,
+    /// The update controls, when the app updates itself.
+    pub updates: Option<AboutUpdates>,
+}
+
+fn platform_name(platform: &str) -> &'static str {
+    match platform {
+        "windows" => "Windows",
+        "linux" => "Linux",
+        _ => "macOS",
+    }
+}
+
+/// `s` for a URL query value (RFC 3986 unreserved characters kept).
+fn query_value(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// "Version 0.2.0 (0.2.0.123)" (no build: "Version 0.2.0"); a nightly:
+/// "Version 0.21.0-nightly.20261105+55e1f5d, built 5 Nov 2026" (its build
+/// number says nothing more).
+pub fn version_line(version: &str, build: &str) -> String {
+    if let Some(day) = nightly_build_date(version) {
+        format!("Version {version}, built {day}")
+    } else if build.is_empty() || build == version {
+        format!("Version {version}")
+    } else {
+        format!("Version {version} ({build})")
+    }
+}
+
+/// The bug report form with the app and this machine filled in.
+pub fn issue_url(input: &AboutInput) -> String {
+    let mut environment = format!(
+        "Cua Spaces for {} {}",
+        platform_name(&input.platform),
+        version_line(&input.version, &input.build).trim_start_matches("Version ")
+    );
+    if !input.os.is_empty() {
+        environment.push('\n');
+        environment.push_str(&input.os);
+    }
+    format!(
+        "{ISSUE_URL}?template=bug.yml&environment={}",
+        query_value(&environment)
+    )
+}
+
+/// What `channel` gets, in plain words.
+fn channel_help(channel: UpdateChannel) -> &'static str {
+    match channel {
+        UpdateChannel::Stable => "Tested releases.",
+        UpdateChannel::Nightly => "Daily builds. May break.",
+    }
+}
+
+/// A prerelease build (a nightly, or a beta from before Nightly) on Stable:
+/// an updater only moves forward, so it stays until a newer stable release,
+/// and the way back right now is a download by hand.
+fn going_back(input: &AboutInput) -> bool {
+    input.channel == UpdateChannel::Stable
+        && input.version.split('+').next().unwrap_or("").contains('-')
+}
+
+/// The note under the picker (see [`AboutUpdates::channel_note`]).
+fn channel_note(input: &AboutInput) -> Option<String> {
+    going_back(input).then(|| {
+        "This build is newer than the latest Stable release, so it stays until the next \
+         Stable release replaces it. To go back now, download Stable and install it."
+            .into()
+    })
+}
+
+/// The About pane for `input`.
+pub fn view(input: &AboutInput) -> AboutView {
+    let link = |id, label: &str, url: Option<String>| AboutLink {
+        id,
+        label: label.into(),
+        url,
+    };
+    let updates = input.updater.then(|| AboutUpdates {
+        auto_check_label: "Check for and download updates automatically".into(),
+        auto_check: input.auto_check,
+        auto_install_label: "Install a downloaded update when Cua Spaces quits".into(),
+        auto_install: input.auto_install,
+        auto_install_enabled: input.auto_check,
+        channel_label: "Updates".into(),
+        channels: [
+            (UpdateChannel::Stable, "Stable"),
+            (UpdateChannel::Nightly, "Nightly"),
+        ]
+        .into_iter()
+        .map(|(c, label)| SettingsOption {
+            id: c.id().into(),
+            label: label.into(),
+            active: c == input.channel,
+        })
+        .collect(),
+        channel_help: channel_help(input.channel).into(),
+        channel_note: channel_note(input),
+        download_label: going_back(input).then(|| "Download Stable".into()),
+        download_url: going_back(input).then(|| DOWNLOAD_URL.into()),
+        check_label: if input.checking {
+            "Checking\u{2026}".into()
+        } else {
+            "Check Now".into()
+        },
+        check_enabled: !input.checking,
+        last_check: format!(
+            "Last check: {}",
+            input.last_check.as_deref().unwrap_or("Never")
+        ),
+    });
+    AboutView {
+        title: format!("Cua Spaces for {}", platform_name(&input.platform)),
+        version_line: version_line(&input.version, &input.build),
+        links: vec![
+            link(AboutLinkId::Acknowledgements, "Acknowledgements", None),
+            link(
+                AboutLinkId::Privacy,
+                "Privacy Policy",
+                Some(PRIVACY_URL.into()),
+            ),
+            link(
+                AboutLinkId::Terms,
+                "Terms of Service",
+                Some(TERMS_URL.into()),
+            ),
+            link(
+                AboutLinkId::Status,
+                "System Status",
+                Some(STATUS_URL.into()),
+            ),
+            link(
+                AboutLinkId::Issue,
+                "Report an Issue\u{2026}",
+                Some(issue_url(input)),
+            ),
+        ],
+        copyright: COPYRIGHT.into(),
+        updates,
+    }
+}
+
+/// A launch: the version last seen and this one.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LaunchInput {
+    /// `AppSettings.last_seen_version` (`None`: never recorded).
+    pub last_seen: Option<String>,
+    /// This version (`0.2.0-staging.6`).
+    pub version: String,
+    /// This build (`0.2.0.123`; may be empty).
+    pub build: String,
+    /// The first run finished (a record-less launch after it is an update
+    /// from a build that kept no record; before it, a fresh install).
+    pub onboarded: bool,
+}
+
+/// What a launch does.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchPlan {
+    /// This launch follows an update: refresh the agents' skills and MCP
+    /// entries (`cua agents update`) and restart the app's own daemon.
+    pub refresh: bool,
+    /// Save as `AppSettings.last_seen_version` (`None`: unchanged).
+    pub save: Option<String>,
+}
+
+/// The version and build as one record ("0.2.0-staging.6 (0.2.0.123)").
+pub fn identity(version: &str, build: &str) -> String {
+    version_line(version, build)
+        .trim_start_matches("Version ")
+        .to_string()
+}
+
+/// What this launch does: refresh after any change of version or build
+/// (an update, or a downgrade), never on a fresh install, never twice.
+pub fn after_launch(input: &LaunchInput) -> LaunchPlan {
+    let current = identity(&input.version, &input.build);
+    match input.last_seen.as_deref() {
+        Some(seen) if seen == current => LaunchPlan {
+            refresh: false,
+            save: None,
+        },
+        Some(_) => LaunchPlan {
+            refresh: true,
+            save: Some(current),
+        },
+        None => LaunchPlan {
+            refresh: input.onboarded,
+            save: Some(current),
+        },
+    }
+}
+
+/// The running daemon, for [`restart_daemon`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct DaemonCheck {
+    /// The running daemon's executable (`None`: no daemon, or unknown).
+    pub daemon_exe: Option<String>,
+    /// This app's bundle (`/Applications/Cua Spaces.app`).
+    pub bundle: String,
+}
+
+/// Restart the daemon after an update only when it is this app's own: its
+/// executable is inside this app's bundle (the bundled `cua`, which the
+/// installed `~/.local/bin/cua` links to). A daemon from another `cua` is
+/// someone else's and keeps running.
+pub fn restart_daemon(check: &DaemonCheck) -> bool {
+    let bundle = check.bundle.trim_end_matches('/');
+    match check.daemon_exe.as_deref() {
+        Some(exe) if !bundle.is_empty() => exe
+            .strip_prefix(bundle)
+            .is_some_and(|rest| rest.starts_with('/')),
+        _ => false,
+    }
+}
+
+/// How the refresh after an update went.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RefreshReport {
+    /// `cua agents update` failed (its words).
+    pub agents_error: Option<String>,
+    /// Restarting the daemon failed (its words).
+    pub daemon_error: Option<String>,
+}
+
+/// The one quiet notice after a refresh, or nothing when it worked.
+pub fn refresh_notice(report: &RefreshReport) -> Option<String> {
+    let detail = |e: &str| {
+        let e = e.trim().trim_end_matches('.');
+        if e.is_empty() {
+            String::new()
+        } else {
+            format!(" ({e})")
+        }
+    };
+    match (
+        report.agents_error.as_deref(),
+        report.daemon_error.as_deref(),
+    ) {
+        (None, None) => None,
+        (Some(a), None) => Some(format!(
+            "Cua Spaces updated, but could not refresh the Cua skills in your AI agents{}. \
+             Run `cua agents update` to try again.",
+            detail(a)
+        )),
+        (None, Some(d)) => Some(format!(
+            "Cua Spaces updated, but could not restart the Cua daemon{}. Quit and reopen \
+             Cua Spaces to use the new version.",
+            detail(d)
+        )),
+        (Some(_), Some(_)) => Some(
+            "Cua Spaces updated, but could not refresh the Cua skills in your AI agents or \
+             restart the Cua daemon. Run `cua agents update`, then quit and reopen Cua Spaces."
+                .into(),
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn input() -> AboutInput {
+        AboutInput {
+            platform: "macos".into(),
+            version: "0.2.0".into(),
+            build: "0.2.0.123".into(),
+            os: "macOS 26.0 (arm64)".into(),
+            updater: true,
+            auto_check: true,
+            auto_install: false,
+            channel: UpdateChannel::Stable,
+            last_check: None,
+            checking: false,
+        }
+    }
+
+    #[test]
+    fn the_pane_names_the_app_and_its_version() {
+        let v = view(&input());
+        assert_eq!(v.title, "Cua Spaces for macOS");
+        assert_eq!(v.version_line, "Version 0.2.0 (0.2.0.123)");
+        assert_eq!(v.copyright, "\u{a9} 2026 Cua AI, Inc. All rights reserved.");
+        let labels: Vec<_> = v.links.iter().map(|l| l.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                "Acknowledgements",
+                "Privacy Policy",
+                "Terms of Service",
+                "System Status",
+                "Report an Issue\u{2026}"
+            ]
+        );
+        assert_eq!(v.links[0].url, None);
+        assert_eq!(
+            v.links[1].url.as_deref(),
+            Some("https://cua.ai/privacy-policy")
+        );
+        assert_eq!(
+            v.links[2].url.as_deref(),
+            Some("https://cua.ai/terms-of-service")
+        );
+        assert_eq!(v.links[3].url.as_deref(), Some("https://status.cua.ai"));
+    }
+
+    #[test]
+    fn the_issue_form_carries_the_app_and_the_os() {
+        assert_eq!(
+            issue_url(&input()),
+            "https://github.com/trycua/cua/issues/new?template=bug.yml&environment=\
+             Cua%20Spaces%20for%20macOS%200.2.0%20%280.2.0.123%29%0AmacOS%2026.0%20%28arm64%29"
+        );
+    }
+
+    #[test]
+    fn update_controls_follow_the_updater() {
+        let u = view(&input()).updates.unwrap();
+        assert!(u.auto_check && !u.auto_install && u.auto_install_enabled);
+        assert_eq!(u.last_check, "Last check: Never");
+        assert_eq!(u.check_label, "Check Now");
+        assert!(u.check_enabled);
+        assert_eq!(
+            u.channels
+                .iter()
+                .filter(|o| o.active)
+                .map(|o| o.id.as_str())
+                .collect::<Vec<_>>(),
+            ["stable"]
+        );
+
+        let mut i = input();
+        i.auto_check = false;
+        i.channel = UpdateChannel::Nightly;
+        i.last_check = Some("9/30/26, 3:04 PM".into());
+        i.checking = true;
+        let u = view(&i).updates.unwrap();
+        assert!(!u.auto_install_enabled);
+        assert_eq!(u.last_check, "Last check: 9/30/26, 3:04 PM");
+        assert_eq!(u.check_label, "Checking\u{2026}");
+        assert!(!u.check_enabled);
+        assert!(u.channels[1].active && !u.channels[0].active);
+
+        i.updater = false;
+        assert!(view(&i).updates.is_none());
+    }
+
+    #[test]
+    fn channels_map_to_sparkle() {
+        assert!(allowed_channels(UpdateChannel::Stable).is_empty());
+        assert_eq!(allowed_channels(UpdateChannel::Nightly), ["nightly"]);
+        assert_eq!(UpdateChannel::from_id("nightly"), UpdateChannel::Nightly);
+        // Beta is gone: whoever chose it is on Nightly.
+        assert_eq!(UpdateChannel::from_id("beta"), UpdateChannel::Nightly);
+        assert_eq!(UpdateChannel::from_id("weekly"), UpdateChannel::Stable);
+        let read = |s: &str| serde_json::from_str::<UpdateChannel>(s).unwrap();
+        assert_eq!(read(r#""beta""#), UpdateChannel::Nightly);
+        assert_eq!(read(r#""nightly""#), UpdateChannel::Nightly);
+        assert_eq!(read(r#""stable""#), UpdateChannel::Stable);
+    }
+
+    #[test]
+    fn nightly_reads_its_own_appcast() {
+        let stable = "https://github.com/trycua/cua/releases/download/cua-spaces-latest/cua-spaces-appcast.xml";
+        let nightly = "https://github.com/trycua/cua/releases/download/cua-spaces-nightly/cua-spaces-nightly-appcast.xml";
+        assert_eq!(nightly_feed_url(stable).as_deref(), Some(nightly));
+        assert_eq!(
+            feed_url(UpdateChannel::Nightly, stable).as_deref(),
+            Some(nightly)
+        );
+        assert_eq!(feed_url(UpdateChannel::Stable, stable), None);
+        assert_eq!(nightly_feed_url("https://example.com/appcast.xml"), None);
+        assert_eq!(
+            nightly_feed_url("http://x/cua-spaces-latest/cua-spaces-appcast.xml"),
+            None
+        );
+    }
+
+    #[test]
+    fn nightly_versions_carry_their_build_day() {
+        // Run number since #6545 (`.N`); earlier nightlies had none.
+        assert!(is_nightly_version("0.21.0-nightly.20261105.42+55e1f5d"));
+        assert!(is_nightly_version("0.21.0-nightly.20261105.42"));
+        assert!(is_nightly_version("0.21.0-nightly.20261105+55e1f5d"));
+        assert!(is_nightly_version("0.21.0-nightly.20261105"));
+        assert!(!is_nightly_version("0.21.0-beta.7"));
+        assert!(!is_nightly_version("0.21.0"));
+        assert!(!is_nightly_version("0.21.0+nightly"));
+        for v in [
+            "0.21.0-nightly.20261105.42+55e1f5d",
+            "0.21.0-nightly.20261105.42",
+            "0.21.0-nightly.20261105+55e1f5d",
+        ] {
+            assert_eq!(nightly_build_date(v).as_deref(), Some("5 Nov 2026"), "{v}");
+        }
+        assert_eq!(
+            nightly_build_date("0.21.0-nightly.20260101").as_deref(),
+            Some("1 Jan 2026")
+        );
+        assert_eq!(nightly_build_date("0.21.0-nightly.20261305"), None);
+        assert_eq!(nightly_build_date("0.21.0-nightly"), None);
+        assert_eq!(nightly_build_date("0.21.0-beta.20261105"), None);
+        assert_eq!(
+            version_line("0.21.0-nightly.20261105.42+55e1f5d", "0.20.0.202611050731"),
+            "Version 0.21.0-nightly.20261105.42+55e1f5d, built 5 Nov 2026"
+        );
+        assert_eq!(
+            version_line("0.20.0", "0.20.0.512"),
+            "Version 0.20.0 (0.20.0.512)"
+        );
+    }
+
+    #[test]
+    fn the_picker_offers_stable_and_nightly_and_explains_the_way_back() {
+        let mut i = input();
+        let u = view(&i).updates.unwrap();
+        let ids: Vec<_> = u.channels.iter().map(|o| o.id.as_str()).collect();
+        assert_eq!(ids, ["stable", "nightly"]);
+        assert_eq!(u.channel_label, "Updates");
+        assert_eq!(u.channel_note, None);
+        assert_eq!(u.download_url, None);
+
+        i.channel = UpdateChannel::Nightly;
+        let u = view(&i).updates.unwrap();
+        assert_eq!(u.channel_help, "Daily builds. May break.");
+        assert_eq!(u.channel_note, None);
+
+        // Back on Stable from a nightly (or an old beta): it stays, and a download goes back now.
+        for version in ["0.21.0-nightly.20261105.42+55e1f5d", "0.21.0-beta.7"] {
+            i.version = version.into();
+            i.channel = UpdateChannel::Stable;
+            let u = view(&i).updates.unwrap();
+            assert!(
+                u.channel_note
+                    .unwrap()
+                    .contains("stays until the next Stable release")
+            );
+            assert_eq!(u.download_label.as_deref(), Some("Download Stable"));
+            assert_eq!(u.download_url.as_deref(), Some(DOWNLOAD_URL));
+        }
+    }
+
+    fn launch(last_seen: Option<&str>, version: &str, build: &str, onboarded: bool) -> LaunchPlan {
+        after_launch(&LaunchInput {
+            last_seen: last_seen.map(Into::into),
+            version: version.into(),
+            build: build.into(),
+            onboarded,
+        })
+    }
+
+    #[test]
+    fn a_launch_after_an_update_refreshes_once() {
+        let plan = launch(
+            Some("0.2.0-staging.5 (0.2.0.105)"),
+            "0.2.0-staging.6",
+            "0.2.0.106",
+            true,
+        );
+        assert!(plan.refresh);
+        assert_eq!(plan.save.as_deref(), Some("0.2.0-staging.6 (0.2.0.106)"));
+        // The next launch of the same build does nothing.
+        let again = launch(plan.save.as_deref(), "0.2.0-staging.6", "0.2.0.106", true);
+        assert_eq!(
+            again,
+            LaunchPlan {
+                refresh: false,
+                save: None
+            }
+        );
+        // A rebuild of the same version is a change too.
+        assert!(launch(Some("0.2.0 (0.2.0.1)"), "0.2.0", "0.2.0.2", true).refresh);
+        // So is a downgrade.
+        assert!(launch(Some("0.3.0 (0.3.0.9)"), "0.2.0", "0.2.0.8", true).refresh);
+    }
+
+    #[test]
+    fn a_fresh_install_records_without_refreshing() {
+        let plan = launch(None, "0.2.0", "0.2.0.1", false);
+        assert!(!plan.refresh);
+        assert_eq!(plan.save.as_deref(), Some("0.2.0 (0.2.0.1)"));
+        // No record after the first run: an update from a build that kept none.
+        assert!(launch(None, "0.2.0", "0.2.0.1", true).refresh);
+    }
+
+    #[test]
+    fn only_the_apps_own_daemon_restarts() {
+        let check = |exe: Option<&str>| {
+            restart_daemon(&DaemonCheck {
+                daemon_exe: exe.map(Into::into),
+                bundle: "/Applications/Cua Spaces.app".into(),
+            })
+        };
+        assert!(check(Some(
+            "/Applications/Cua Spaces.app/Contents/MacOS/cua"
+        )));
+        assert!(!check(Some(
+            "/Applications/Cua Spaces.app.old/Contents/MacOS/cua"
+        )));
+        assert!(!check(Some("/Users/me/.cargo/bin/cua")));
+        assert!(!check(None));
+        assert!(!restart_daemon(&DaemonCheck {
+            daemon_exe: Some("/x/cua".into()),
+            bundle: String::new()
+        }));
+    }
+
+    #[test]
+    fn the_notice_is_silent_unless_something_failed() {
+        assert_eq!(refresh_notice(&RefreshReport::default()), None);
+        let a = refresh_notice(&RefreshReport {
+            agents_error: Some("exit status 1.".into()),
+            daemon_error: None,
+        })
+        .unwrap();
+        assert_eq!(
+            a,
+            "Cua Spaces updated, but could not refresh the Cua skills in your AI agents \
+             (exit status 1). Run `cua agents update` to try again."
+        );
+        assert!(
+            refresh_notice(&RefreshReport {
+                agents_error: None,
+                daemon_error: Some(String::new()),
+            })
+            .unwrap()
+            .contains("restart the Cua daemon. Quit")
+        );
+        assert!(
+            refresh_notice(&RefreshReport {
+                agents_error: Some("a".into()),
+                daemon_error: Some("b".into()),
+            })
+            .unwrap()
+            .contains("or restart the Cua daemon")
+        );
+    }
+}

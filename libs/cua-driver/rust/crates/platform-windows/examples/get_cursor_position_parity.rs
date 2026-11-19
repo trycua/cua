@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Parity check for the `get_cursor_position` MCP tool.
 //!
 //! Drives the live daemon via the named pipe.  Asserts the text response
@@ -7,7 +10,9 @@
 //!
 //! Hard 4-second timeout on every round-trip.
 
+#[cfg(target_os = "windows")]
 use std::io::{Read, Write};
+#[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "windows")]

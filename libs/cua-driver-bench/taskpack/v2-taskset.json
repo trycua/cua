@@ -1,0 +1,295 @@
+{
+  "schema": "cdb-taskset/1",
+  "name": "v2",
+  "description": "Bench v2: the ten core tasks, all public. `os` lists where the task has a launch descriptor or runs today: all ten run on macOS, Linux and Windows. The three multi-app tasks (CDB-G02 to CDB-G04) are pack tasks with Electron apps, LibreOffice and, for CDB-G03, GnuCash; the seven BenchLab tasks (MB-09 to MB-11, IR-01 to IR-04) run in BenchLab and its Linux and Windows ports. `split` is public (in this repository) or heldout (kept out of this repository; such a task would be listed by id and category only).",
+  "limits": {
+    "timeout_s": 360,
+    "max_turns": 45
+  },
+  "seed": "int(sha256(f'{task}:{run_index}').hexdigest()[:8], 16) % 1000000; run_index counts from 0 per task (trial k uses run_index k-1); the same for every setup and for a re-run of a harness-error trial",
+  "tasks": [
+    {
+      "id": "CDB-G02",
+      "category": "multi_app",
+      "split": "public",
+      "set": "v2",
+      "pack_task": "shared/cdb-s02",
+      "title": "Replan a schedule across mail, chat, a calendar and a Calc workbook",
+      "apps": [
+        "Electron mail, chat and calendar apps",
+        "LibreOffice Calc"
+      ],
+      "os": [
+        "macos",
+        "linux",
+        "windows"
+      ],
+      "cross_os_candidate": null,
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
+    },
+    {
+      "id": "CDB-G03",
+      "category": "multi_app",
+      "split": "public",
+      "set": "v2",
+      "pack_task": "shared/cdb-s03",
+      "title": "Review payables across mail, a Calc workbook and a GnuCash book",
+      "apps": [
+        "Electron mail app",
+        "LibreOffice Calc",
+        "GnuCash"
+      ],
+      "os": [
+        "macos",
+        "linux",
+        "windows"
+      ],
+      "cross_os_candidate": null,
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
+    },
+    {
+      "id": "CDB-G04",
+      "category": "multi_app",
+      "split": "public",
+      "set": "v2",
+      "pack_task": "shared/cdb-s04",
+      "title": "Triage duplicate support cases with a tracker, a manual, an archive site and a log",
+      "apps": [
+        "Electron case tracker and manual",
+        "Google Chrome"
+      ],
+      "os": [
+        "macos",
+        "linux",
+        "windows"
+      ],
+      "cross_os_candidate": null,
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [],
+        "evaluator_tools": [
+          "python3",
+          "node"
+        ]
+      }
+    },
+    {
+      "id": "MB-09",
+      "category": "precision",
+      "split": "public",
+      "set": "v2",
+      "pack_task": null,
+      "title": "Reorder a native list by drag and drop",
+      "apps": [
+        "BenchLab"
+      ],
+      "os": [
+        "macos",
+        "linux",
+        "windows"
+      ],
+      "cross_os_candidate": null,
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
+    },
+    {
+      "id": "MB-10",
+      "category": "precision",
+      "split": "public",
+      "set": "v2",
+      "pack_task": null,
+      "title": "Reveal a hover-only toolbar and click one action",
+      "apps": [
+        "BenchLab"
+      ],
+      "os": [
+        "macos",
+        "linux",
+        "windows"
+      ],
+      "cross_os_candidate": null,
+      "conditions": [
+        "foreground"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
+    },
+    {
+      "id": "MB-11",
+      "category": "precision",
+      "split": "public",
+      "set": "v2",
+      "pack_task": null,
+      "title": "Read a native tooltip and type the code it shows",
+      "apps": [
+        "BenchLab"
+      ],
+      "os": [
+        "macos",
+        "linux",
+        "windows"
+      ],
+      "cross_os_candidate": null,
+      "conditions": [
+        "foreground"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
+    },
+    {
+      "id": "IR-01",
+      "category": "interruptions",
+      "split": "public",
+      "set": "v2",
+      "pack_task": null,
+      "title": "Finish a two-step form through a permission-style prompt",
+      "apps": [
+        "BenchLab"
+      ],
+      "os": [
+        "macos",
+        "linux",
+        "windows"
+      ],
+      "cross_os_candidate": null,
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
+    },
+    {
+      "id": "IR-02",
+      "category": "interruptions",
+      "split": "public",
+      "set": "v2",
+      "pack_task": null,
+      "title": "Apply settings while a notification-style banner covers the button",
+      "apps": [
+        "BenchLab"
+      ],
+      "os": [
+        "macos",
+        "linux",
+        "windows"
+      ],
+      "cross_os_candidate": null,
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
+    },
+    {
+      "id": "IR-03",
+      "category": "interruptions",
+      "split": "public",
+      "set": "v2",
+      "pack_task": null,
+      "title": "Edit two notes and keep both changes through a save prompt",
+      "apps": [
+        "BenchLab"
+      ],
+      "os": [
+        "macos",
+        "linux",
+        "windows"
+      ],
+      "cross_os_candidate": null,
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
+    },
+    {
+      "id": "IR-04",
+      "category": "interruptions",
+      "split": "public",
+      "set": "v2",
+      "pack_task": null,
+      "title": "Sign up on a web page while a cookie-consent overlay appears",
+      "apps": [
+        "BenchLab"
+      ],
+      "os": [
+        "macos",
+        "linux",
+        "windows"
+      ],
+      "cross_os_candidate": null,
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
+    }
+  ]
+}

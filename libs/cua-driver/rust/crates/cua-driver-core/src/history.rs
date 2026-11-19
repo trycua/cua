@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Encrypted, metadata-only Computer History.
 //!
 //! History is deliberately separate from trajectory recording.  It accepts
@@ -456,20 +459,11 @@ pub struct HistoryEvent {
     pub data: HistoryEventData,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PersistedState {
     enabled: bool,
     paused: bool,
-}
-
-impl Default for PersistedState {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            paused: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -521,7 +515,9 @@ pub struct PendingHistoryAction {
 
 enum WriterMessage {
     Event {
-        event: HistoryEvent,
+        // Boxed: an event is ~0.5 KiB and the control variants are one
+        // pointer, so every queued Flush/Shutdown would otherwise pay for it.
+        event: Box<HistoryEvent>,
         application_pid: Option<i64>,
         application_window_id: Option<u64>,
     },
@@ -1067,14 +1063,16 @@ impl HistoryManager {
                 writer_loop(
                     &mut store,
                     rx,
-                    thread_health,
-                    thread_dropped_events,
-                    thread_pending_dropped_events,
-                    thread_app_provider,
-                    thread_key_provider,
-                    thread_namespace,
-                    quota_bytes,
-                    retention_days,
+                    WriterContext {
+                        health: thread_health,
+                        dropped_events: thread_dropped_events,
+                        pending_dropped_events: thread_pending_dropped_events,
+                        app_provider: thread_app_provider,
+                        key_provider: thread_key_provider,
+                        namespace: thread_namespace,
+                        quota_bytes,
+                        retention_days,
+                    },
                 )
             })
             .map_err(|_| HistoryError::new(HistoryHealthCategory::WriterStopped))?;
@@ -1100,7 +1098,7 @@ impl HistoryManager {
             .ok_or_else(|| HistoryError::new(HistoryHealthCategory::WriterStopped))?;
         event.data.sequence = self.next_sequence.fetch_add(1, Ordering::Relaxed);
         tx.send(WriterMessage::Event {
-            event,
+            event: Box::new(event),
             application_pid: None,
             application_window_id: None,
         })
@@ -1163,7 +1161,7 @@ impl HistoryManager {
             health.data.sequence = self.next_sequence.fetch_add(1, Ordering::Relaxed);
             if tx
                 .try_send(WriterMessage::Event {
-                    event: health,
+                    event: Box::new(health),
                     application_pid: None,
                     application_window_id: None,
                 })
@@ -1176,7 +1174,7 @@ impl HistoryManager {
         event.data.sequence = self.next_sequence.fetch_add(1, Ordering::Relaxed);
         if matches!(
             tx.try_send(WriterMessage::Event {
-                event,
+                event: Box::new(event),
                 application_pid,
                 application_window_id,
             }),
@@ -1289,7 +1287,7 @@ impl Tool for HistoryStatusTool {
     fn def(&self) -> &ToolDef {
         HISTORY_STATUS_DEF.get_or_init(|| ToolDef {
             name: "history_status".to_owned(),
-            description: "For prompts to continue or revisit recent work, call this first, before broad desktop discovery. Reports whether encrypted local history is admitted, enabled, healthy, paused, or dropping events. If history is absent or access is denied, continue with normal discovery. Returns metadata-only status, never history entries, screen or page content, geometry, or inferred user intent, and does not change history lifecycle state.".to_owned(),
+            description: "Deprecated, removal planned in the release after 26 Nov 2026. Do not call this unless the user asks about Computer History. Reports whether the opt-in encrypted local history is admitted, enabled, healthy, paused, or dropping events. Metadata-only; never returns history entries, screen or page content, geometry, or inferred user intent, and does not change history lifecycle state.".to_owned(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {},
@@ -1327,7 +1325,7 @@ impl Tool for HistoryQueryTool {
     fn def(&self) -> &ToolDef {
         HISTORY_QUERY_DEF.get_or_init(|| ToolDef {
             name: "history_query".to_owned(),
-            description: "After history_status reports ready for a prompt to continue or revisit recent work, make one bounded initial query before broad desktop discovery. Reads metadata-only encrypted local history; it omits screen and page content, geometry, and inferred user intent. Results may enter model context. Requires the existing permission and capability-manifest checks for this exact operation; if history is absent or access is denied, continue with normal discovery. This read does not enable, pause, resume, disable, or delete history.".to_owned(),
+            description: "Deprecated, removal planned in the release after 26 Nov 2026. Do not call this unless the user asks about Computer History. Reads metadata-only encrypted local history (opt-in); omits screen and page content, geometry, and inferred user intent. Results may enter model context. Requires the existing permission and capability-manifest checks for this exact operation. This read does not enable, pause, resume, disable, or delete history.".to_owned(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -1395,9 +1393,8 @@ impl Drop for HistoryManager {
     }
 }
 
-fn writer_loop(
-    store: &mut HistoryStore,
-    rx: mpsc::Receiver<WriterMessage>,
+/// What the writer thread owns besides its store and queue.
+struct WriterContext {
     health: Arc<Mutex<HistoryHealthCategory>>,
     dropped_events: Arc<AtomicU64>,
     pending_dropped_events: Arc<AtomicU64>,
@@ -1406,7 +1403,23 @@ fn writer_loop(
     namespace: String,
     quota_bytes: u64,
     retention_days: u64,
+}
+
+fn writer_loop(
+    store: &mut HistoryStore,
+    rx: mpsc::Receiver<WriterMessage>,
+    context: WriterContext,
 ) {
+    let WriterContext {
+        health,
+        dropped_events,
+        pending_dropped_events,
+        app_provider,
+        key_provider,
+        namespace,
+        quota_bytes,
+        retention_days,
+    } = context;
     let mut terminal_error = None;
     let mut last_maintenance = Instant::now();
     loop {
@@ -2389,6 +2402,7 @@ fn secure_open_lock_file(path: &Path) -> Result<File, HistoryError> {
 fn secure_open_lock_file(path: &Path) -> Result<File, HistoryError> {
     OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(path)
@@ -2486,7 +2500,7 @@ mod tests {
     }
 
     #[test]
-    fn history_tool_descriptions_define_bounded_history_first_consultation() {
+    fn history_tool_descriptions_are_deprecated_and_do_not_ask_for_a_first_call() {
         let temp = tempfile::tempdir().unwrap();
         let manager = HistoryManager::new(
             config(temp.path()),
@@ -2498,18 +2512,12 @@ mod tests {
         let status_description = &status.def().description;
         let query_description = &query.def().description;
 
-        for trigger in ["continue", "recent work"] {
-            assert!(status_description.contains(trigger));
-            assert!(query_description.contains(trigger));
+        for description in [status_description, query_description] {
+            assert!(description.starts_with("Deprecated"));
+            assert!(description.contains("26 Nov 2026"));
+            assert!(!description.contains("call this first"));
+            assert!(!description.contains("before broad desktop discovery"));
         }
-        assert!(
-            query_description.find("history_status")
-                < query_description.find("one bounded initial query")
-        );
-        assert!(
-            query_description.find("one bounded initial query")
-                < query_description.find("broad desktop discovery")
-        );
         for boundary in [
             "metadata-only",
             "screen and page content",
@@ -2519,13 +2527,9 @@ mod tests {
         ] {
             assert!(query_description.contains(boundary), "missing {boundary}");
         }
-        assert!(status_description.contains("never history entries"));
+        assert!(status_description.contains("never returns history entries"));
         assert!(status_description.contains("does not change history lifecycle state"));
         assert!(query_description.contains("does not enable, pause, resume, disable, or delete"));
-        for fallback in ["absent", "access is denied", "normal discovery"] {
-            assert!(status_description.contains(fallback));
-            assert!(query_description.contains(fallback));
-        }
     }
 
     #[test]

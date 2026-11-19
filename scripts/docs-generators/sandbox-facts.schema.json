@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cua.ai/schemas/docs/sandbox-facts.schema.json",
+  "title": "Sandbox documentation deployment facts",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "qualifiedImages", "publishedCandidates"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "qualifiedImages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "image",
+          "os",
+          "distribution",
+          "architecture",
+          "desktop",
+          "kind",
+          "services",
+          "components",
+          "qualification"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+          "image": { "type": "string", "pattern": "@sha256:[0-9a-f]{64}$" },
+          "os": { "type": "string" },
+          "distribution": { "type": "string" },
+          "architecture": { "type": "string" },
+          "desktop": { "type": "string" },
+          "kind": { "type": "string" },
+          "services": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["server", "mcp"],
+            "properties": {
+              "server": { "type": "integer", "minimum": 1, "maximum": 65535 },
+              "mcp": { "type": "integer", "minimum": 1, "maximum": 65535 }
+            }
+          },
+          "components": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["computerServer", "embeddedDriver", "directDriver"],
+            "properties": {
+              "computerServer": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+              "embeddedDriver": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+              "directDriver": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" }
+            }
+          },
+          "qualification": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["boot", "serviceReadiness"],
+            "properties": {
+              "boot": { "const": true },
+              "serviceReadiness": { "const": true }
+            }
+          }
+        }
+      }
+    },
+    "publishedCandidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["os", "distribution", "desktop", "kind", "image", "limits"],
+        "properties": {
+          "os": { "type": "string" },
+          "distribution": { "type": "string" },
+          "desktop": { "type": "string" },
+          "kind": { "type": "string" },
+          "image": { "type": "string" },
+          "limits": { "type": "string" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,2 @@
+{"timestamp":"2026-11-04T08:00:00.000Z","type":"session_meta","payload":{"id":"1a2b3c4d-0000-4000-8000-aaaaaaaaaaaa","cwd":"/tmp/ci","originator":"codex_exec","source":"exec"}}
+{"timestamp":"2026-11-04T08:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"a scripted exec run"}]}}

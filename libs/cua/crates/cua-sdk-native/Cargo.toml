@@ -1,0 +1,38 @@
+[package]
+name = "cua-sdk-native"
+description = "The native library of the cua SDK (libcua_sdk): the cdylib for Python, Node and Kotlin and the staticlib for the Swift XCFramework, built from cua-sdk. Its own crate so cua-sdk is rlib-only and cargo compiles it in parallel with its dependencies and dependents."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+# The file name the bindings load: libcua_sdk.so / .dylib / cua_sdk.dll / .a.
+name = "cua_sdk"
+# cdylib: Python/Node/Kotlin. staticlib: the Swift XCFramework.
+crate-type = ["cdylib", "staticlib"]
+
+# The features of cua-sdk, passed through: `cargo build -p cua-sdk-native
+# --features contrib` builds libcua_sdk with them.
+[features]
+default = ["local", "spaces", "host", "media", "byoc", "aws"]
+local = ["cua-sdk/local"]
+spaces = ["cua-sdk/spaces"]
+host = ["cua-sdk/host"]
+media = ["cua-sdk/media"]
+byoc = ["cua-sdk/byoc"]
+aws = ["cua-sdk/aws"]
+# The browser (wasm32) build's host library: scripts/build-wasm.mjs builds
+# it with `--no-default-features --features web` so the bindings generator
+# reads the web surface.
+web = ["cua-sdk/web"]
+contrib = ["cua-sdk/contrib"]
+contrib-e2b = ["cua-sdk/contrib-e2b"]
+contrib-daytona = ["cua-sdk/contrib-daytona"]
+contrib-modal = ["cua-sdk/contrib-modal"]
+
+[dependencies]
+cua-sdk.workspace = true

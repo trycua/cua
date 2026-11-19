@@ -26,7 +26,9 @@ const MAX_TIMEOUT_MS: u64 = 10_000;
 const DEFAULT_STABLE_SAMPLES: u64 = 2;
 const MAX_STABLE_SAMPLES: u64 = 5;
 const MAX_PREDICATES: usize = 8;
-const POLL_INTERVAL_MS: u64 = 100;
+/// Interval between reads while a check waits for an element or a state:
+/// `expect` here, and `find`, `wait_for` and `expect` in batches.
+pub(crate) const STATE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, Default)]
 pub struct ObservationSnapshot {
@@ -135,34 +137,23 @@ impl ObservationProvider for ToolObservationProvider {
 
         let state = self
             .get_window_state
-            .invoke(json!({
-                "pid": pid,
-                "window_id": window_id,
-                "include_screenshot": include_screenshot,
-                // Internal direct-tool flag: verification must not refresh the
-                // shared action index/token cache.
-                // Registry ingress removes underscore-prefixed arguments before
-                // public dispatch. Direct platform-tool invocation is the
-                // trusted in-process channel for this non-mutating mode.
-                "_observation_only": true,
-            }))
+            .invoke(window_state_observation_args(
+                pid,
+                window_id,
+                include_elements,
+                include_screenshot,
+            ))
             .await;
         if state.is_error == Some(true) {
             return Err(tool_error_text(&state, "get_window_state failed"));
         }
         let structured = state.structured_content.as_ref();
-        let elements = structured
-            .and_then(|value| value.get("elements"))
-            .and_then(Value::as_array)
-            .cloned();
+        let elements = structured.and_then(observed_elements);
         let trusted = structured
             .and_then(|value| value.get("degraded"))
             .and_then(Value::as_bool)
             != Some(true);
-        let complete = structured
-            .and_then(|value| value.get("elements_complete"))
-            .and_then(Value::as_bool)
-            == Some(true);
+        let complete = structured.is_some_and(observed_complete);
         let visual_evidence = state
             .content
             .into_iter()
@@ -179,6 +170,53 @@ impl ObservationProvider for ToolObservationProvider {
             visual_evidence,
         })
     }
+}
+
+/// The search domain of one window read: the addressable `elements`, then the
+/// display-only `observations` of the same walk, each marked `display_only`
+/// so the evaluator prefers an addressable match.
+fn observed_elements(structured: &Value) -> Option<Vec<Value>> {
+    let mut elements = structured.get("elements")?.as_array()?.clone();
+    if let Some(observations) = structured.get("observations").and_then(Value::as_array) {
+        elements.extend(observations.iter().cloned().map(|mut row| {
+            row["display_only"] = Value::Bool(true);
+            row
+        }));
+    }
+    Some(elements)
+}
+
+/// A read proves absence only when its walk was complete, it published
+/// `observations`, and they were not cut at their row cap. A read without
+/// `observations` (an older daemon, the X11 fallback) did not observe the
+/// display-only rows, so it cannot rule them out.
+fn observed_complete(structured: &Value) -> bool {
+    structured.get("elements_complete").and_then(Value::as_bool) == Some(true)
+        && structured.get("observations").is_some_and(Value::is_array)
+        && structured
+            .get("observations_truncated")
+            .and_then(Value::as_bool)
+            != Some(true)
+}
+
+fn window_state_observation_args(
+    pid: i64,
+    window_id: u64,
+    include_elements: bool,
+    include_screenshot: bool,
+) -> Value {
+    json!({
+        "pid": pid,
+        "window_id": window_id,
+        "include_accessibility_tree": include_elements,
+        "include_screenshot": include_screenshot,
+        // Internal direct-tool flag: verification must not refresh the
+        // shared action index/token cache.
+        // Registry ingress removes underscore-prefixed arguments before
+        // public dispatch. Direct platform-tool invocation is the
+        // trusted in-process channel for this non-mutating mode.
+        "_observation_only": true,
+    })
 }
 
 fn tool_error_text(result: &ToolResult, fallback: &str) -> String {
@@ -294,7 +332,7 @@ impl Tool for VerifyStateTool {
                 break outcomes;
             }
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            tokio::time::sleep(remaining.min(Duration::from_millis(POLL_INTERVAL_MS))).await;
+            tokio::time::sleep(remaining.min(STATE_POLL_INTERVAL)).await;
         };
 
         let last_status = aggregate_status(&last_outcomes);
@@ -541,10 +579,23 @@ fn evaluate_element(
             None,
         );
     };
-    let matches: Vec<&Value> = elements
+    let all_matches: Vec<&Value> = elements
         .iter()
         .filter(|element| selector_matches(&predicate.selector, element))
         .collect();
+    // Observations may include display-only rows (static text, read-only
+    // values) next to the addressable controls. A control's visible caption
+    // is usually such a row, so a selector that matches a control keeps
+    // resolving to that control alone; display-only rows are only the target
+    // when no addressable element matches.
+    let (addressable, display_only): (Vec<&Value>, Vec<&Value>) = all_matches
+        .into_iter()
+        .partition(|element| element.get("display_only").and_then(Value::as_bool) != Some(true));
+    let matches = if addressable.is_empty() {
+        display_only
+    } else {
+        addressable
+    };
     if matches.is_empty() {
         let contains_untrusted_region = elements.iter().any(|element| {
             element.get("in_web_content").and_then(Value::as_bool) == Some(true)
@@ -732,6 +783,7 @@ fn project_element(element: &Value) -> Value {
         "value",
         "enabled",
         "selected",
+        "display_only",
         "frame",
     ] {
         if let Some(value) = element.get(key) {
@@ -802,6 +854,135 @@ mod tests {
     }
 
     #[test]
+    fn observation_args_request_only_needed_modalities() {
+        let screenshot_only = window_state_observation_args(42, 7, false, true);
+        assert_eq!(screenshot_only["include_accessibility_tree"], json!(false));
+        assert_eq!(screenshot_only["include_screenshot"], json!(true));
+        assert_eq!(screenshot_only["_observation_only"], json!(true));
+
+        let elements_only = window_state_observation_args(42, 7, true, false);
+        assert_eq!(elements_only["include_accessibility_tree"], json!(true));
+        assert_eq!(elements_only["include_screenshot"], json!(false));
+    }
+
+    fn value_of(role: &str, value: &str) -> StatePredicate {
+        StatePredicate {
+            window: None,
+            element: Some(ElementPredicate {
+                selector: ElementSelector {
+                    role: Some(role.into()),
+                    label_contains: Some(value.into()),
+                },
+                exists: None,
+                value_equals: Some(value.into()),
+                enabled: None,
+                selected: None,
+            }),
+        }
+    }
+
+    /// #2958: Calculator after `4 + 2 =`, as macOS get_window_state publishes
+    /// it. The display text has no action handle, so it is only in
+    /// `observations`.
+    fn calculator_state() -> Value {
+        json!({
+            "elements": [
+                {"element_index": 0, "role": "AXWindow", "label": "Calculator", "depth": 0},
+                {"element_index": 1, "role": "AXButton", "label": "Delete", "depth": 1, "parent_index": 0}
+            ],
+            "observations": [
+                {"role": "AXStaticText", "label": "\u{200e}4\u{200e}+\u{200e}2", "value": "\u{200e}4\u{200e}+\u{200e}2", "depth": 1, "parent_index": 0},
+                {"role": "AXStaticText", "label": "\u{200e}6", "value": "\u{200e}6", "depth": 1, "parent_index": 0}
+            ],
+            "elements_complete": false
+        })
+    }
+
+    fn snapshot_of(state: &Value) -> ObservationSnapshot {
+        ObservationSnapshot {
+            window: Some(window()),
+            elements: observed_elements(state),
+            element_source_trusted: true,
+            elements_complete: false,
+        }
+    }
+
+    #[test]
+    fn display_only_observation_value_is_verifiable() {
+        let snapshot = snapshot_of(&calculator_state());
+        let satisfied = evaluate_predicates(&[value_of("AXStaticText", "\u{200e}6")], &snapshot);
+        assert_eq!(satisfied[0].status, VerificationStatus::Satisfied);
+        let observed = satisfied[0].observed_json.as_deref().unwrap();
+        assert!(observed.contains("\"display_only\":true"));
+        assert!(!observed.contains("element_index"));
+
+        // A unique display row holding another value is a confident no.
+        let mut wrong = value_of("AXStaticText", "+");
+        wrong.element.as_mut().unwrap().value_equals = Some("\u{200e}7".into());
+        let wrong = evaluate_predicates(&[wrong], &snapshot);
+        assert_eq!(wrong[0].status, VerificationStatus::Unsatisfied);
+
+        // The raw value is compared exactly: the bidi mark is part of it.
+        let mut bare = value_of("AXStaticText", "\u{200e}6");
+        bare.element.as_mut().unwrap().value_equals = Some("6".into());
+        let bare = evaluate_predicates(&[bare], &snapshot);
+        assert_eq!(bare[0].status, VerificationStatus::Unsatisfied);
+    }
+
+    #[test]
+    fn two_display_rows_matching_one_selector_are_a_multi_match() {
+        let snapshot = snapshot_of(&calculator_state());
+        let mut role_only = value_of("AXStaticText", "\u{200e}6");
+        role_only.element.as_mut().unwrap().selector.label_contains = None;
+        let outcomes = evaluate_predicates(&[role_only], &snapshot);
+        assert_eq!(outcomes[0].status, VerificationStatus::Unknown);
+        assert_eq!(outcomes[0].unknown_reason, Some(UnknownReason::MultiMatch));
+    }
+
+    #[test]
+    fn truncated_observations_keep_absence_unknown() {
+        let mut state = calculator_state();
+        state["elements_complete"] = json!(true);
+        assert!(observed_complete(&state));
+        state["observations_truncated"] = json!(true);
+        assert!(!observed_complete(&state));
+        let elements = observed_elements(&state).unwrap();
+        assert_eq!(elements.len(), 4);
+        assert!(elements[..2]
+            .iter()
+            .all(|e| e.get("display_only").is_none()));
+        assert!(elements[2..].iter().all(|e| e["display_only"] == true));
+        assert!(observed_elements(&json!({"observations": []})).is_none());
+    }
+
+    #[test]
+    fn missing_observations_keep_absence_unknown() {
+        let mut state = calculator_state();
+        state["elements_complete"] = json!(true);
+        state.as_object_mut().unwrap().remove("observations");
+        assert!(!observed_complete(&state));
+
+        let snapshot = ObservationSnapshot {
+            window: Some(window()),
+            elements: observed_elements(&state),
+            element_source_trusted: true,
+            elements_complete: observed_complete(&state),
+        };
+        let mut result = value_of("AXStaticText", "\u{200e}6");
+        result.element.as_mut().unwrap().value_equals = None;
+        result.element.as_mut().unwrap().exists = Some(true);
+        let outcomes = evaluate_predicates(&[result], &snapshot);
+        assert_eq!(outcomes[0].status, VerificationStatus::Unknown);
+        assert_eq!(
+            outcomes[0].unknown_reason,
+            Some(UnknownReason::ObservationUnavailable)
+        );
+
+        state["observations"] = json!([]);
+        assert!(observed_complete(&state));
+    }
+
+    #[test]
     fn evaluates_window_bounds_with_tolerance() {
         let predicates = vec![StatePredicate {
             window: Some(WindowPredicate {
@@ -845,6 +1026,124 @@ mod tests {
             },
         );
         assert_eq!(outcomes[0].status, VerificationStatus::Satisfied);
+    }
+
+    fn observed(elements: Vec<Value>) -> ObservationSnapshot {
+        ObservationSnapshot {
+            window: Some(window()),
+            elements: Some(elements),
+            element_source_trusted: true,
+            elements_complete: false,
+        }
+    }
+
+    fn labelled(label: &str, value_equals: Option<&str>) -> StatePredicate {
+        StatePredicate {
+            window: None,
+            element: Some(ElementPredicate {
+                selector: ElementSelector {
+                    role: None,
+                    label_contains: Some(label.into()),
+                },
+                exists: Some(true),
+                value_equals: value_equals.map(Into::into),
+                enabled: None,
+                selected: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn label_less_display_text_value_is_readable() {
+        // #4526: a static text with no title exposes its content via AXValue;
+        // the platform reports it as a display-only row labelled by its value.
+        let outcomes = evaluate_predicates(
+            &[labelled("Saved", Some("Saved"))],
+            &observed(vec![json!({
+                "role": "AXStaticText",
+                "label": "Saved",
+                "value": "Saved",
+                "display_only": true,
+                "parent_index": 0
+            })]),
+        );
+        assert_eq!(outcomes[0].status, VerificationStatus::Satisfied);
+    }
+
+    #[test]
+    fn addressable_match_wins_over_its_display_only_caption() {
+        // The slider's caption is a separate display-only row carrying the
+        // same text. It must not turn a value read into a multi-match.
+        let outcomes = evaluate_predicates(
+            &[labelled("Volume", Some("8"))],
+            &observed(vec![
+                json!({
+                    "role": "AXStaticText",
+                    "label": "Volume",
+                    "display_only": true
+                }),
+                json!({
+                    "element_index": 1,
+                    "role": "AXSlider",
+                    "label": "Volume",
+                    "value": "8"
+                }),
+            ]),
+        );
+        assert_eq!(outcomes[0].status, VerificationStatus::Satisfied);
+        assert!(outcomes[0]
+            .observed_json
+            .as_deref()
+            .unwrap()
+            .contains("\"element_index\":1"));
+    }
+
+    #[test]
+    fn display_only_row_satisfies_existence_when_no_control_matches() {
+        let outcomes = evaluate_predicates(
+            &[labelled("Saved", None)],
+            &observed(vec![json!({
+                "role": "AXStaticText",
+                "label": "Saved",
+                "display_only": true
+            })]),
+        );
+        assert_eq!(outcomes[0].status, VerificationStatus::Satisfied);
+    }
+
+    #[test]
+    fn duplicate_display_only_value_is_multi_match() {
+        let caption = json!({
+            "role": "AXStaticText",
+            "label": "Total",
+            "value": "42",
+            "display_only": true
+        });
+        let outcomes = evaluate_predicates(
+            &[labelled("Total", Some("42"))],
+            &observed(vec![caption.clone(), caption]),
+        );
+        assert_eq!(outcomes[0].status, VerificationStatus::Unknown);
+        assert_eq!(outcomes[0].unknown_reason, Some(UnknownReason::MultiMatch));
+    }
+
+    #[test]
+    fn display_only_web_text_stays_untrusted() {
+        let outcomes = evaluate_predicates(
+            &[labelled("Saved", Some("Saved"))],
+            &observed(vec![json!({
+                "role": "AXStaticText",
+                "label": "Saved",
+                "value": "Saved",
+                "display_only": true,
+                "in_web_content": true
+            })]),
+        );
+        assert_eq!(outcomes[0].status, VerificationStatus::Unknown);
+        assert_eq!(
+            outcomes[0].unknown_reason,
+            Some(UnknownReason::UntrustedSource)
+        );
     }
 
     #[test]

@@ -1,0 +1,14 @@
+{
+  "name": "claude-basic-turn",
+  "description": "One prompt, the agent thinking, tool calls, a file edit, and completion. Exercises the working indicator, tool-call rows, the composer and the mode footer.",
+  "cmd": ["claude", "--permission-mode", "acceptEdits"],
+  "steps": [
+    {"wait": 6},
+    {"send": "Read calc.py and add a `multiply` function to it. Keep it short."},
+    {"wait": 1.5},
+    {"key": "enter"},
+    {"expect": "multiply", "timeout": 90},
+    {"wait": 25},
+    {"wait": 20}
+  ]
+}

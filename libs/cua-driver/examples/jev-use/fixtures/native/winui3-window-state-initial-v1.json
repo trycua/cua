@@ -1,0 +1,388 @@
+{
+ "_fixture": {
+  "sanitized": "Recorded by verify_native.py --capture-dir. Screenshot bytes, tree_markdown, local file paths, and Driver guidance notes removed.",
+  "source": "CuaTestHarness task window (initial), observed by get_window_state: Windows WinUI3 harness (CUA_WINUI3_TASK_STATE), released Cua Driver 0.30.4 from the canonical install.ps1 on an Azure Windows VM (interactive RDP session)"
+ },
+ "app_name": "CuaTestHarness.WinUI3.exe",
+ "capture_id": "capture_d6104b2fcbc4479395ee622c870c5d9a_0000000000000000",
+ "element_count": 15,
+ "elements": [
+  {
+   "actions": [
+    "text"
+   ],
+   "depth": 3,
+   "element_index": 0,
+   "element_token": "s00000001:0",
+   "enabled": true,
+   "frame": {
+    "h": 19,
+    "w": 472,
+    "x": 724,
+    "y": 363
+   },
+   "label": "counter=0",
+   "role": "Text",
+   "screenshot_frame": {
+    "h": 19,
+    "w": 472,
+    "x": 16,
+    "y": 46
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 3,
+   "element_index": 1,
+   "element_token": "s00000001:1",
+   "enabled": true,
+   "frame": {
+    "h": 32,
+    "w": 90,
+    "x": 724,
+    "y": 390
+   },
+   "label": "Increment",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 32,
+    "w": 90,
+    "x": 16,
+    "y": 73
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 3,
+   "element_index": 2,
+   "element_token": "s00000001:2",
+   "enabled": true,
+   "frame": {
+    "h": 32,
+    "w": 90,
+    "x": 822,
+    "y": 390
+   },
+   "label": "Reset",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 32,
+    "w": 90,
+    "x": 114,
+    "y": 73
+   }
+  },
+  {
+   "actions": [
+    "toggle"
+   ],
+   "depth": 3,
+   "element_index": 3,
+   "element_token": "s00000001:3",
+   "enabled": true,
+   "frame": {
+    "h": 32,
+    "w": 120,
+    "x": 724,
+    "y": 430
+   },
+   "label": "I agree",
+   "role": "CheckBox",
+   "screenshot_frame": {
+    "h": 32,
+    "w": 120,
+    "x": 16,
+    "y": 113
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "select"
+   ],
+   "depth": 3,
+   "element_index": 4,
+   "element_token": "s00000001:4",
+   "enabled": true,
+   "frame": {
+    "h": 32,
+    "w": 62,
+    "x": 724,
+    "y": 470
+   },
+   "label": "Small",
+   "role": "RadioButton",
+   "screenshot_frame": {
+    "h": 32,
+    "w": 62,
+    "x": 16,
+    "y": 153
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "select"
+   ],
+   "depth": 3,
+   "element_index": 5,
+   "element_token": "s00000001:5",
+   "enabled": true,
+   "frame": {
+    "h": 32,
+    "w": 80,
+    "x": 794,
+    "y": 470
+   },
+   "label": "Medium",
+   "role": "RadioButton",
+   "screenshot_frame": {
+    "h": 32,
+    "w": 80,
+    "x": 86,
+    "y": 153
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "select"
+   ],
+   "depth": 3,
+   "element_index": 6,
+   "element_token": "s00000001:6",
+   "enabled": true,
+   "frame": {
+    "h": 32,
+    "w": 63,
+    "x": 882,
+    "y": 470
+   },
+   "label": "Large",
+   "role": "RadioButton",
+   "screenshot_frame": {
+    "h": 32,
+    "w": 63,
+    "x": 174,
+    "y": 153
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "set_value",
+    "text"
+   ],
+   "depth": 3,
+   "element_index": 7,
+   "element_token": "s00000001:7",
+   "enabled": true,
+   "frame": {
+    "h": 32,
+    "w": 240,
+    "x": 724,
+    "y": 510
+   },
+   "label": "Note",
+   "role": "Edit",
+   "screenshot_frame": {
+    "h": 32,
+    "w": 240,
+    "x": 16,
+    "y": 193
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 3,
+   "element_index": 8,
+   "element_token": "s00000001:8",
+   "enabled": true,
+   "frame": {
+    "h": 32,
+    "w": 90,
+    "x": 972,
+    "y": 510
+   },
+   "label": "Save note",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 32,
+    "w": 90,
+    "x": 264,
+    "y": 193
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 3,
+   "element_index": 9,
+   "element_token": "s00000001:9",
+   "enabled": true,
+   "frame": {
+    "h": 32,
+    "w": 90,
+    "x": 724,
+    "y": 550
+   },
+   "label": "Exit",
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 32,
+    "w": 90,
+    "x": 16,
+    "y": 233
+   }
+  },
+  {
+   "actions": [
+    "set_value"
+   ],
+   "depth": 1,
+   "element_index": 10,
+   "element_token": "s00000001:10",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 488,
+    "x": 724,
+    "y": 319
+   },
+   "label": "CuaTestHarness WinUI3 Tasks",
+   "role": "TitleBar",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 488,
+    "x": 16,
+    "y": 2
+   },
+   "value": "CuaTestHarness WinUI3 Tasks"
+  },
+  {
+   "actions": [
+    "invoke",
+    "expand"
+   ],
+   "depth": 3,
+   "element_index": 11,
+   "element_token": "s00000001:11",
+   "enabled": true,
+   "frame": {
+    "h": 22,
+    "w": 22,
+    "x": 708,
+    "y": 324
+   },
+   "label": "System",
+   "parent_index": 10,
+   "role": "MenuItem",
+   "screenshot_frame": {
+    "h": 22,
+    "w": 22,
+    "x": 0,
+    "y": 7
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 2,
+   "element_index": 12,
+   "element_token": "s00000001:12",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 47,
+    "x": 1073,
+    "y": 317
+   },
+   "label": "Minimize",
+   "parent_index": 10,
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 30,
+    "w": 47,
+    "x": 365,
+    "y": 0
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 2,
+   "element_index": 13,
+   "element_token": "s00000001:13",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 46,
+    "x": 1120,
+    "y": 317
+   },
+   "label": "Maximize",
+   "parent_index": 10,
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 30,
+    "w": 46,
+    "x": 412,
+    "y": 0
+   }
+  },
+  {
+   "actions": [
+    "invoke"
+   ],
+   "depth": 2,
+   "element_index": 14,
+   "element_token": "s00000001:14",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 47,
+    "x": 1166,
+    "y": 317
+   },
+   "label": "Close",
+   "parent_index": 10,
+   "role": "Button",
+   "screenshot_frame": {
+    "h": 30,
+    "w": 47,
+    "x": 458,
+    "y": 0
+   }
+  }
+ ],
+ "elements_complete": false,
+ "nodes_pending": 0,
+ "nodes_visited": 19,
+ "pid": 4092,
+ "returned_element_count": 15,
+ "screenshot_height": 393,
+ "screenshot_mime_type": "image/png",
+ "screenshot_width": 506,
+ "snapshot_id": "s00000001",
+ "timeout_ms": 1000,
+ "total_element_count": 15,
+ "truncated": false,
+ "walk_elapsed_ms": 1,
+ "window_bounds": {
+  "height": 393,
+  "width": 506,
+  "x": 707,
+  "y": 316
+ },
+ "window_id": 131716,
+ "window_title": "CuaTestHarness WinUI3 Tasks"
+}

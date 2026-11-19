@@ -19,12 +19,28 @@ class TestReleaseBumpAuthorization(unittest.TestCase):
         self.assertIn("  authorize:\n", workflow)
         self.assertIn('ACTOR: ${{ github.actor }}', workflow)
         self.assertIn('TRIGGERING_ACTOR: ${{ github.triggering_actor }}', workflow)
-        self.assertIn(
-            '"f-trycua:f-trycua"|'
-            '"r33drichards:r33drichards"|'
-            '"cua-release-bot[bot]:cua-release-bot[bot]")',
-            workflow,
+        # The gate allows exactly the two release owners (each acting for
+        # themselves, never a re-run by someone else) and the release bot.
+        authorize_job = workflow.split("  authorize:\n", 1)[1].split(
+            "  bump-version:\n", 1
+        )[0]
+        allowed = [
+            line.strip()
+            for line in authorize_job.splitlines()
+            if line.strip().startswith('"') and line.strip().endswith(")")
+        ]
+        self.assertEqual(
+            allowed,
+            [
+                '"f-trycua:f-trycua"|'
+                '"ddupont808:ddupont808"|'
+                '"cua-release-bot[bot]:cua-release-bot[bot]")'
+            ],
         )
+        self.assertIn('case "$ACTOR:$TRIGGERING_ACTOR" in', authorize_job)
+        self.assertIn("            *)\n", authorize_job)
+        self.assertIn("              exit 1\n", authorize_job)
+        self.assertNotIn("r33drichards", workflow)
         self.assertIn("  bump-version:\n    needs: authorize\n", workflow)
         self.assertIn(
             "    permissions:\n      contents: write\n    steps:\n",
@@ -42,7 +58,20 @@ class TestReleaseBumpAuthorization(unittest.TestCase):
             workflow,
         )
         self.assertIn("label_was_applied_by_release_owner()", workflow)
-        self.assertIn('.actor.login == "f-trycua"', workflow)
+        # Only the two release owners' label events authorize a release.
+        owner_filters = [
+            line.strip()
+            for line in workflow.splitlines()
+            if ".actor.login ==" in line
+        ]
+        self.assertEqual(
+            owner_filters,
+            [
+                '| .event == "labeled" and (.actor.login == "f-trycua" '
+                'or .actor.login == "ddupont808")'
+            ],
+        )
+        self.assertNotIn("r33drichards", workflow)
         self.assertIn(
             'label_was_applied_by_release_owner "bump:major"', workflow
         )

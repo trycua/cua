@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CUA Fixture Page</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; background: #ffffff; }
+  .band { height: 80px; }
+  #red { background: #ff0000; } #green { background: #00ff00; } #blue { background: #0000ff; }
+  form { padding: 16px; }
+</style>
+</head>
+<body>
+<div class="band" id="red"></div><div class="band" id="green"></div><div class="band" id="blue"></div>
+<form id="f" onsubmit="event.preventDefault(); fetch('/echo', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({q: document.getElementById('q').value})}).then(r => r.text()).then(t => { document.getElementById('out').textContent = t; });">
+  <label for="q">Query</label> <input id="q" name="q" aria-label="Query">
+  <button id="go" type="submit">Go</button>
+  <pre id="out" aria-label="Result"></pre>
+</form>
+</body>
+</html>

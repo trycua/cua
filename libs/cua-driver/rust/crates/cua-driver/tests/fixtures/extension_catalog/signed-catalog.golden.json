@@ -1,0 +1,28 @@
+{
+  "producer": "Python json.dumps(separators) + Node crypto.sign",
+  "payload": {
+    "schema_version": 1,
+    "catalog_version": 7,
+    "expires_unix": 4102444800,
+    "publisher_id": "cua-review-only",
+    "publisher_name": "Cua REVIEW ONLY",
+    "key_id": "review-only-build-override",
+    "extension_id": "cua-perception",
+    "version": "0.1.0",
+    "target": "aarch64-apple-darwin",
+    "archive": "cua-perception-0.1.0-aarch64-apple-darwin.tar.gz",
+    "archive_size": 12345,
+    "archive_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "manifest_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    "license": "AGPL-3.0-or-later",
+    "source": "https://github.com/trycua/cua",
+    "corresponding_source_uri": "https://github.com/trycua/cua/tree/golden",
+    "corresponding_source_revision": "golden-revision",
+    "provenance": "Python canonical JSON plus Node Ed25519 golden vector",
+    "next_key": null
+  },
+  "canonical_payload": "{\"schema_version\":1,\"catalog_version\":7,\"expires_unix\":4102444800,\"publisher_id\":\"cua-review-only\",\"publisher_name\":\"Cua REVIEW ONLY\",\"key_id\":\"review-only-build-override\",\"extension_id\":\"cua-perception\",\"version\":\"0.1.0\",\"target\":\"aarch64-apple-darwin\",\"archive\":\"cua-perception-0.1.0-aarch64-apple-darwin.tar.gz\",\"archive_size\":12345,\"archive_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"manifest_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"license\":\"AGPL-3.0-or-later\",\"source\":\"https://github.com/trycua/cua\",\"corresponding_source_uri\":\"https://github.com/trycua/cua/tree/golden\",\"corresponding_source_revision\":\"golden-revision\",\"provenance\":\"Python canonical JSON plus Node Ed25519 golden vector\",\"next_key\":null}",
+  "public_key_base64": "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=",
+  "signature_algorithm": "ed25519",
+  "signature": "64Zhwa3X7KlzZQ5w1F4Ju9SOqh8NfSKxuyKnx3wb6MsQOAKmHSC/m1eqw5NzkS76RlWmBU5gG4cigxu1CK9hAQ=="
+}

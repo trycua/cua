@@ -1,0 +1,245 @@
+{
+ "_fixture": {
+  "sanitized": "Recorded by verify_native.py --capture-dir. Screenshot bytes, tree_markdown, local file paths, and Driver guidance notes removed.",
+  "source": "CuaTestHarness task window (initial), observed by get_window_state: Linux GTK3 harness (CUA_GTK3_TASK_STATE), released Cua Driver 0.30.2 on GitHub-hosted ubuntu-latest (Xvfb, openbox, AT-SPI), run 36407837325"
+ },
+ "app_name": "Main.py",
+ "bounds_complete": true,
+ "capture_id": "capture_4d841676244945c8afd21a666254f4e1_0000000000000000",
+ "coordinate_frame": "window",
+ "element_count": 9,
+ "elements": [
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 0,
+   "element_token": "s00000001:0",
+   "enabled": true,
+   "frame": {
+    "h": 34,
+    "w": 100,
+    "x": 736,
+    "y": 428
+   },
+   "label": "Increment",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 34,
+    "w": 100,
+    "x": 16,
+    "y": 41
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 1,
+   "element_token": "s00000001:1",
+   "enabled": true,
+   "frame": {
+    "h": 34,
+    "w": 71,
+    "x": 844,
+    "y": 428
+   },
+   "label": "Reset",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 34,
+    "w": 71,
+    "x": 124,
+    "y": 41
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 2,
+   "element_index": 2,
+   "element_token": "s00000001:2",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 448,
+    "x": 736,
+    "y": 470
+   },
+   "label": "I agree",
+   "role": "check box",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 448,
+    "x": 16,
+    "y": 83
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 3,
+   "element_token": "s00000001:3",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 65,
+    "x": 736,
+    "y": 499
+   },
+   "label": "Small",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 65,
+    "x": 16,
+    "y": 112
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 4,
+   "element_token": "s00000001:4",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 81,
+    "x": 813,
+    "y": 499
+   },
+   "label": "Medium",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 81,
+    "x": 93,
+    "y": 112
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 5,
+   "element_token": "s00000001:5",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 64,
+    "x": 906,
+    "y": 499
+   },
+   "label": "Large",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 64,
+    "x": 186,
+    "y": 112
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "activate"
+   ],
+   "depth": 3,
+   "element_index": 6,
+   "element_token": "s00000001:6",
+   "enabled": true,
+   "frame": {
+    "h": 34,
+    "w": 242,
+    "x": 736,
+    "y": 528
+   },
+   "label": "Note",
+   "role": "text",
+   "screenshot_frame": {
+    "h": 34,
+    "w": 242,
+    "x": 16,
+    "y": 141
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 7,
+   "element_token": "s00000001:7",
+   "enabled": true,
+   "frame": {
+    "h": 34,
+    "w": 99,
+    "x": 986,
+    "y": 528
+   },
+   "label": "Save note",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 34,
+    "w": 99,
+    "x": 266,
+    "y": 141
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 2,
+   "element_index": 8,
+   "element_token": "s00000001:8",
+   "enabled": true,
+   "frame": {
+    "h": 34,
+    "w": 59,
+    "x": 736,
+    "y": 570
+   },
+   "label": "Exit",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 34,
+    "w": 59,
+    "x": 16,
+    "y": 183
+   }
+  }
+ ],
+ "elements_complete": true,
+ "nodes_pending": 0,
+ "nodes_visited": 9,
+ "pid": 3801,
+ "returned_element_count": 9,
+ "screenshot_height": 320,
+ "screenshot_mime_type": "image/png",
+ "screenshot_width": 480,
+ "snapshot_id": "s00000001",
+ "timeout_ms": 1000,
+ "total_element_count": 9,
+ "truncated": false,
+ "walk_elapsed_ms": 17,
+ "window_bounds": {
+  "height": 320,
+  "width": 480,
+  "x": 720,
+  "y": 387
+ },
+ "window_id": 6291459,
+ "window_title": "CuaTestHarness GTK3 Tasks"
+}

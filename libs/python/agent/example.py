@@ -5,12 +5,10 @@ Example usage of the agent library with docstring-based tool definitions.
 import asyncio
 import logging
 
-from computer import Computer
-from computer.helpers import sandboxed
 from cua_agent import ComputerAgent
+from cua_sandbox import Sandbox
 
 
-@sandboxed()
 def read_file(location: str) -> str:
     """Read contents of a file
 
@@ -88,11 +86,9 @@ async def main():
     assert os.getenv("CUA_CONTAINER_NAME") is not None, "CUA_CONTAINER_NAME is not set"
     assert os.getenv("CUA_API_KEY") is not None, "CUA_API_KEY is not set"
 
-    async with Computer(
-        os_type="linux",
-        provider_type="cloud",
-        name=os.getenv("CUA_CONTAINER_NAME") or "",
-        api_key=os.getenv("CUA_API_KEY") or "",
+    async with Sandbox.connect(
+        os.getenv("CUA_CONTAINER_NAME") or "",
+        api_key=os.getenv("CUA_API_KEY") or None,
     ) as computer:
         agent = ComputerAgent(
             # Supported models:

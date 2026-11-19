@@ -1,0 +1,21 @@
+[package]
+name = "cua-agent-threads"
+description = "Read-only listing and reading of the coding agents' own recent chats on this computer (Claude Code, Codex, Hermes), for continuing one in Cua."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+# Hermes keeps its sessions in SQLite (`state.db`), opened read-only.
+rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
+
+[dev-dependencies]
+tempfile.workspace = true

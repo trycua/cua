@@ -1,0 +1,560 @@
+/**
+ * Run one native jev-use task against a desktop window (RFC #4268, Phase 1).
+ * Mirrors python/run_native.py: attach to --pid, find the task window, and
+ * loop oracle -> one get_window_state (tree and screenshot) -> closed
+ * candidates -> validated cua.jev_choice_request_v2 -> one element-bound
+ * action -> oracle.
+ */
+import { appendFile, writeFile } from 'node:fs/promises';
+import process from 'node:process';
+import { randomUUID } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
+
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { TypeSafeClient } from '@typesafe-ai/sdk';
+
+import { providerObservation, validateRequest } from './choose_action.js';
+import { parseVisualRegions, validateChoice, VisualObservationError, type Candidate } from './core.js';
+import { driverEnvironment } from './driver_env.js';
+import { chooseBoundedWithTypeSafe, chooseMockForTask } from './jev_adapter.js';
+import { parseWindowState, type NativeObservation } from './native.js';
+import { NoProgressGuard } from './no_progress.js';
+import type { Platform } from './native_roles.js';
+import {
+  NATIVE_TASK_IDS,
+  nativeTask,
+  nativeChoiceRequest,
+  visualFallbackReason,
+  windowStateArguments,
+  checkIntermediateEffect,
+  hasDeclaredStepsRemaining,
+  type NativeTask,
+} from './native_tasks.js';
+import { chooseS1Service, S1ServiceError, s1ServiceUrl } from './s1_service.js';
+import {
+  backgroundRefusalCode,
+  decisionTimingFields,
+  Driver,
+  DriverToolError,
+  supportsCaptureBoundClick,
+} from './run.js';
+import { NativeAccessibilitySource, VisualRegionSource } from './sources.js';
+import type { HistoryEntry, Outcome, TaskSources } from './tasks.js';
+
+const STALE_TOKEN_CODES = new Set(['stale_element_token']);
+const REOBSERVE_TIMEOUT_MS = 5_000;
+
+type Arguments = {
+  task: string;
+  provider: 'mock' | 'live' | 's1';
+  pid: number;
+  stateFile: string;
+  noteText?: string;
+  allowForeground: boolean;
+  platform?: Platform;
+  log?: string;
+};
+
+export function hostPlatform(): Platform {
+  if (process.platform === 'darwin') return 'macos';
+  if (process.platform === 'win32') return 'windows';
+  return 'linux';
+}
+
+export function parseArgs(argv: string[]): Arguments {
+  const result: Partial<Arguments> = { provider: 'mock', allowForeground: false };
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (value === '--task') result.task = argv[++index];
+    else if (value === '--provider') result.provider = argv[++index] as Arguments['provider'];
+    else if (value === '--pid') result.pid = Number(argv[++index]);
+    else if (value === '--state-file') result.stateFile = argv[++index];
+    else if (value === '--note-text') result.noteText = argv[++index];
+    else if (value === '--allow-foreground') result.allowForeground = true;
+    else if (value === '--platform') result.platform = argv[++index] as Platform;
+    else if (value === '--log') result.log = argv[++index];
+    else throw new Error(`unknown argument: ${value}`);
+  }
+  if (!result.task || !NATIVE_TASK_IDS.includes(result.task)) {
+    throw new Error(`--task must be one of ${NATIVE_TASK_IDS.join(', ')}`);
+  }
+  if (result.provider !== 'mock' && result.provider !== 'live' && result.provider !== 's1') {
+    throw new Error('--provider must be mock, live, or s1');
+  }
+  if (!Number.isInteger(result.pid) || (result.pid as number) <= 0) throw new Error('--pid is required');
+  if (!result.stateFile) throw new Error('--state-file is required');
+  if (result.platform && !['macos', 'windows', 'linux'].includes(result.platform)) {
+    throw new Error('--platform must be macos, windows, or linux');
+  }
+  return result as Arguments;
+}
+
+export function isStaleTokenError(error: unknown): boolean {
+  if (error instanceof DriverToolError && error.code) {
+    // Structured codes outrank diagnostic text; a different refusal must
+    // not be turned into stale-token recovery by an incidental message.
+    return STALE_TOKEN_CODES.has(error.code);
+  }
+  return String(error instanceof Error ? error.message : error).includes('element_token is stale');
+}
+
+/** Refuse any action addressed outside the task's one window. */
+export function assertInScope(candidate: Candidate, pid: number, windowId: number): void {
+  if (candidate.tool === null) return;
+  if (candidate.arguments.pid !== pid || candidate.arguments.window_id !== windowId) {
+    throw new Error('candidate addresses a window outside the task scope');
+  }
+}
+
+async function writeEvent(path: string | undefined, event: Record<string, unknown>) {
+  const line = JSON.stringify(event);
+  console.log(line);
+  if (path) await appendFile(path, `${line}\n`, 'utf8');
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function findWindow(driver: Driver, pid: number, title: string) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const windows = ((await driver.call('list_windows', { pid })).windows ?? []) as Record<string, any>[];
+    const match = windows.find((window) => window.title === title && window.is_on_screen !== false);
+    if (match) return match;
+    await sleep(250);
+  }
+  throw new Error(`window ${JSON.stringify(title)} of pid ${pid} did not appear`);
+}
+
+async function observe(
+  driver: Driver,
+  task: NativeTask,
+  pid: number,
+  windowId: number,
+  timeoutMs?: number
+): Promise<NativeObservation> {
+  const read = {
+    pid,
+    window_id: windowId,
+    include_accessibility_tree: true,
+    include_screenshot: true,
+    ...windowStateArguments(task.scope),
+    ...(timeoutMs !== undefined ? { timeout_ms: timeoutMs } : {}),
+  };
+  let payload;
+  try {
+    // The observation needs structured elements, the markdown tree and the
+    // completeness flags; cua-driver 0.35 returns the lean markdown-only
+    // read unless asked for the full response.
+    payload = await driver.call('get_window_state', { ...read, full_output: true });
+  } catch (error) {
+    // Drivers before 0.35 always return the full response and refuse the
+    // unknown argument.
+    if (!(error instanceof DriverToolError && error.message.includes('unknown argument full_output'))) {
+      throw error;
+    }
+    payload = await driver.call('get_window_state', read);
+  }
+  return parseWindowState(payload, pid, windowId);
+}
+
+/** Add the time since `started` to a step phase and return the elapsed milliseconds. */
+function addPhase(phaseTimings: Record<string, number> | undefined, name: string, started: number): number {
+  const elapsedMs = performance.now() - started;
+  if (phaseTimings) phaseTimings[name] = (phaseTimings[name] ?? 0) + elapsedMs;
+  return elapsedMs;
+}
+
+/**
+ * The browser runner's decision-phase fields for one native step.
+ *
+ * `provider_decision_ms` is `decide_ms`. `visual_observe_ms` is the
+ * `parse_visual_regions` phase only: the native screenshot and `capture_id` come
+ * from the same `get_window_state` call that produced the semantic observation,
+ * so that capture is inside `semantic_observe_ms`.
+ */
+function nativeTimingFields(
+  started: number,
+  phaseTimings: Record<string, number>,
+  providerDecisionMs: number
+): Record<string, unknown> {
+  return {
+    ...decisionTimingFields({
+      decisionMs: Math.round((performance.now() - started) * 100) / 100,
+      semanticObserveMs: phaseTimings.semantic_observe_ms ?? 0,
+      visualObserveMs: phaseTimings.visual_observe_ms ?? 0,
+      candidateBuildMs: phaseTimings.candidate_build_ms ?? 0,
+      providerDecisionMs,
+    }),
+    visual_observe_scope: 'parse_only',
+  };
+}
+
+function nativeCount(task: NativeTask, sources: TaskSources): number {
+  return task.plan(sources).candidates.filter((candidate) => candidate.source === 'ax').length;
+}
+
+async function observeStep(
+  driver: Driver,
+  task: NativeTask,
+  pid: number,
+  windowId: number,
+  platform: Platform,
+  foregroundIds: ReadonlySet<string>,
+  phaseTimings?: Record<string, number>
+): Promise<{ sources: TaskSources; record: Record<string, unknown> }> {
+  const started = performance.now();
+  const build = (observation: NativeObservation): TaskSources => ({
+    ax: NativeAccessibilitySource.fromObservation(observation, platform, {
+      redact: task.redactText,
+      textMethod: task.textMethod,
+    }),
+    visualPath: false,
+    foregroundIds,
+  });
+  // `observe_ms` (kept for compatibility) spans this whole function. The
+  // `get_window_state` calls (plus NativeObservation validation) are added to
+  // `semantic_observe_ms`; source construction and the preliminary plan to
+  // `candidate_build_ms`.
+  let phaseStarted = performance.now();
+  const firstObservation = await observe(driver, task, pid, windowId);
+  addPhase(phaseTimings, 'semantic_observe_ms', phaseStarted);
+  phaseStarted = performance.now();
+  let sources = build(firstObservation);
+  let record: Record<string, unknown> = { reobserved: false };
+  const first = sources.ax!.observation;
+  const needsReobserve = first.truncated || (!first.complete && nativeCount(task, sources) === 0);
+  addPhase(phaseTimings, 'candidate_build_ms', phaseStarted);
+  if (needsReobserve) {
+    record = { reobserved: true, reason: first.truncated ? 'truncated' : 'partial_empty' };
+    phaseStarted = performance.now();
+    const second = await observe(driver, task, pid, windowId, REOBSERVE_TIMEOUT_MS);
+    addPhase(phaseTimings, 'semantic_observe_ms', phaseStarted);
+    phaseStarted = performance.now();
+    sources = build(second);
+    addPhase(phaseTimings, 'candidate_build_ms', phaseStarted);
+  }
+  const observation = sources.ax!.observation;
+  Object.assign(record, {
+    snapshot_id: observation.snapshotId ?? null,
+    capture_id: observation.captureId ?? null,
+    elements_complete: observation.complete,
+    truncated: observation.truncated,
+    controls: sources.ax!.controls.length,
+    excluded: sources.ax!.native.excluded,
+    observe_ms: Math.round((performance.now() - started) * 100) / 100,
+  });
+  return { sources, record };
+}
+
+async function maybeVisual(
+  driver: Driver,
+  task: NativeTask,
+  sources: TaskSources,
+  availableTools: ReadonlySet<string>,
+  captureBoundClick: boolean,
+  phaseTimings?: Record<string, number>
+): Promise<{ sources: TaskSources; record: Record<string, unknown> }> {
+  const candidateStarted = performance.now();
+  const reason = visualFallbackReason(sources, task, nativeCount(task, sources));
+  addPhase(phaseTimings, 'candidate_build_ms', candidateStarted);
+  if (!reason) return { sources, record: { status: 'skipped' } };
+  if (!captureBoundClick || !availableTools.has('parse_visual_regions')) {
+    return { sources, record: { status: 'unavailable', reason } };
+  }
+  const observation = sources.ax!.observation;
+  const started = performance.now();
+  try {
+    const result = await driver.call('parse_visual_regions', {
+      capture_id: observation.captureId,
+      options: { kinds: ['text', 'icon'], min_confidence: task.visualMinConfidence, max_regions: 100 },
+    });
+    const visual = parseVisualRegions(result, observation.captureId!, observation.pid, observation.windowId);
+    const visualSources: TaskSources = {
+      ...sources,
+      visual: new VisualRegionSource(visual, 'background', captureBoundClick, task.visualMinConfidence),
+      visualPath: true,
+    };
+    // One measurement feeds both fields, so visual_observe_ms == parse_ms on success.
+    const parseMs = Math.round(addPhase(phaseTimings, 'visual_observe_ms', started) * 100) / 100;
+    return {
+      sources: visualSources,
+      record: { status: 'ok', reason, region_count: visual.regions.length, parse_ms: parseMs },
+    };
+  } catch (error) {
+    if (error instanceof DriverToolError) {
+      // A failed parse still cost time; `parse_ms` is reported only on success.
+      addPhase(phaseTimings, 'visual_observe_ms', started);
+      return { sources, record: { status: 'error', reason, error_code: error.code ?? 'driver_error' } };
+    }
+    if (error instanceof VisualObservationError) {
+      addPhase(phaseTimings, 'visual_observe_ms', started);
+      return { sources, record: { status: 'error', reason, error_code: error.code } };
+    }
+    throw error;
+  }
+}
+
+async function chooseLive(request: Record<string, unknown>) {
+  const validated = validateRequest(request);
+  const criteria = Object.fromEntries(validated.candidates.map(({ id, description }) => [id, description]));
+  const result = await chooseBoundedWithTypeSafe(
+    new TypeSafeClient(),
+    validated.goal,
+    providerObservation(validated),
+    criteria
+  );
+  return { choice: result.selectedId, confidence: result.confidence, probabilities: result.probabilities };
+}
+
+export interface PollResult {
+  readonly outcome: Outcome;
+  readonly status: 'verified' | 'refuted' | 'intermediate_witnessed' | 'continuation' | 'intermediate_timeout';
+  readonly canContinue: boolean;
+}
+
+export async function pollOracle(
+  task: NativeTask,
+  steps: number,
+  candidate?: Candidate | null,
+  preOracle?: Record<string, unknown> | null,
+  history?: readonly HistoryEntry[] | null,
+): Promise<PollResult> {
+  const candidateId = candidate ? candidate.id : null;
+  let outcome: Outcome = 'unknown';
+  let isSupported = false;
+  const hasRemaining = hasDeclaredStepsRemaining(task, history);
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const currentOracle = await task.readOracle();
+    outcome = task.classify(currentOracle, steps);
+    if (outcome === 'verified' || outcome === 'refuted') {
+      return { outcome, status: outcome, canContinue: false };
+    }
+
+    if (hasRemaining && outcome === 'unknown') {
+      const effect = checkIntermediateEffect(task, candidateId, preOracle, currentOracle);
+      if (effect === true) {
+        return { outcome: 'unknown', status: 'intermediate_witnessed', canContinue: true };
+      }
+      if (effect === false) {
+        isSupported = true;
+      }
+    }
+
+    await sleep(100);
+  }
+
+  if (isSupported) {
+    return { outcome, status: 'intermediate_timeout', canContinue: false };
+  }
+  return { outcome, status: 'continuation', canContinue: true };
+}
+
+export async function runTask(args: Arguments, task: NativeTask): Promise<Outcome> {
+  const platform = args.platform ?? hostPlatform();
+  if (args.log) await writeFile(args.log, '', 'utf8');
+  const history: HistoryEntry[] = [];
+  const foregroundIds = new Set<string>();
+  const noProgress = new NoProgressGuard(task.id);
+  const transport = new StdioClientTransport({
+    command: process.env.CUA_DRIVER_BIN ?? 'cua-driver',
+    args: ['mcp'],
+    env: driverEnvironment(),
+  });
+  const client = new Client({ name: 'cua-driver-jev-use-native', version: '0.1.0' });
+  try {
+    await client.connect(transport);
+    const advertised = (await client.listTools()).tools;
+    const availableTools = new Set(advertised.map((tool) => tool.name));
+    const captureBoundClick = supportsCaptureBoundClick(advertised);
+    const driver = new Driver(client, `jev-native-typescript-${randomUUID().slice(0, 8)}`);
+    const window = await findWindow(driver, args.pid, task.scope.windowTitle);
+    const windowId = Number(window.window_id);
+    await writeEvent(args.log, {
+      event: 'start', task: task.id, language: 'typescript', provider: args.provider,
+      platform, pid: args.pid, window_id: windowId,
+    });
+    for (let step = 1; step <= task.maxSteps; step += 1) {
+      const oracleState = await task.readOracle();
+      const current = task.classify(oracleState, step - 1);
+      if (current === 'verified' || current === 'refuted') {
+        await writeEvent(args.log, { event: 'outcome', outcome: current, step: step - 1 });
+        return current;
+      }
+      const stop = noProgress.beforeStep(oracleState);
+      if (stop) {
+        await writeEvent(args.log, {
+          event: 'outcome',
+          outcome: 'abstained',
+          reason: 'no_progress',
+          pattern: stop.pattern,
+          streak: stop.streak,
+          step: step - 1,
+        });
+        return 'abstained';
+      }
+      const started = performance.now();
+      const phaseTimings: Record<string, number> = {};
+      const observed = await observeStep(
+        driver, task, args.pid, windowId, platform, new Set(foregroundIds), phaseTimings
+      );
+      const visual = await maybeVisual(
+        driver, task, observed.sources, availableTools, captureBoundClick, phaseTimings
+      );
+      const sources = visual.sources;
+      const planStarted = performance.now();
+      const plan = task.plan(sources);
+      addPhase(phaseTimings, 'candidate_build_ms', planStarted);
+      const request = nativeChoiceRequest(task, sources, plan, history);
+      validateRequest(request);
+
+      const decideStarted = performance.now();
+      let decision: { choice: string | null; confidence: number; probabilities: Readonly<Record<string, number>> };
+      try {
+        decision =
+          args.provider === 'mock'
+            ? chooseMockForTask(task, sources, plan.candidates, history)
+            : args.provider === 's1'
+              ? await chooseS1Service(request)
+              : await chooseLive(request);
+      } catch (error) {
+        if (!(error instanceof S1ServiceError)) throw error;
+        // A tied or malformed score is not an action; fail closed with a
+        // logged outcome instead of a stack trace.
+        await writeEvent(args.log, {
+          event: 'outcome', outcome: 'unknown', phase: 'decide', step,
+          candidate_count: plan.candidates.length, expected_ids: task.expectedNext(history),
+          error: 'S1ServiceError', reason: error.message.slice(0, 128),
+        });
+        return 'unknown';
+      }
+      // Measurement (#4312): the declared steps due now, and whether the
+      // candidate set offered one. IDs only; no values.
+      const expectedIds = task.expectedNext(history);
+      const offered = new Set(plan.candidates.map((candidate) => candidate.id.replace(/:foreground$/, '')));
+      const baseEvent: Record<string, unknown> = {
+        event: 'step',
+        step,
+        observation: observed.record,
+        visual: visual.record,
+        compose: plan.stats,
+        candidate_count: plan.candidates.length,
+        schema: request.schema,
+        confidence: decision.confidence,
+        probabilities: decision.probabilities,
+        decide_ms: Math.round((performance.now() - decideStarted) * 100) / 100,
+        expected_ids: expectedIds,
+        expected_offered: expectedIds.some((id) => offered.has(id)),
+      };
+      const providerDecisionMs = baseEvent.decide_ms as number;
+      if (!decision.choice) {
+        Object.assign(baseEvent, nativeTimingFields(started, phaseTimings, providerDecisionMs));
+        await writeEvent(args.log, { ...baseEvent, event: 'outcome', outcome: 'abstained' });
+        return 'abstained';
+      }
+      const candidate = validateChoice(decision.choice, plan.candidates, sources.visual?.observation.captureId);
+      assertInScope(candidate, args.pid, windowId);
+      Object.assign(baseEvent, nativeTimingFields(started, phaseTimings, providerDecisionMs));
+      baseEvent.candidate = candidate.id;
+      baseEvent.source = candidate.source ?? null;
+
+      if (candidate.id === 'reobserve') {
+        history.push(task.historyEntry(step, candidate.id));
+        noProgress.note('reobserve', candidate.id);
+        await writeEvent(args.log, {
+          ...baseEvent, tool: null, act_ms: 0, action_ms: 0,
+          total_step_ms: Math.round((performance.now() - started) * 100) / 100,
+        });
+        continue;
+      }
+      if (candidate.id === 'abstain') {
+        await writeEvent(args.log, { ...baseEvent, event: 'outcome', outcome: 'abstained' });
+        return 'abstained';
+      }
+      const preOracle = await task.readOracle();
+      const actStarted = performance.now();
+      try {
+        await driver.call(candidate.tool!, { ...candidate.arguments });
+      } catch (error) {
+        const actMs = Math.round((performance.now() - actStarted) * 100) / 100;
+        if (isStaleTokenError(error)) {
+          history.push(task.historyEntry(step, candidate.id, undefined, { stale: true }));
+          noProgress.note('stale', candidate.id);
+          await writeEvent(args.log, {
+            ...baseEvent, tool: candidate.tool, act_ms: actMs, action_ms: actMs,
+            total_step_ms: Math.round((performance.now() - started) * 100) / 100,
+            action_error: 'stale_element_token',
+          });
+          continue;
+        }
+        const refusal = backgroundRefusalCode(candidate, error);
+        if (refusal) {
+          foregroundIds.add(candidate.id);
+          history.push(task.historyEntry(step, candidate.id, refusal));
+          noProgress.note('refused', candidate.id);
+          await writeEvent(args.log, {
+            ...baseEvent, tool: candidate.tool, act_ms: actMs, action_ms: actMs,
+            total_step_ms: Math.round((performance.now() - started) * 100) / 100,
+            action_error: refusal,
+            escalation: { from: 'background', to: 'foreground', allowed: task.allowForeground },
+          });
+          continue;
+        }
+        await writeEvent(args.log, {
+          ...baseEvent, event: 'outcome', outcome: 'unknown', phase: 'action',
+          error: error instanceof Error ? error.name : 'Error', tool: candidate.tool,
+        });
+        return 'unknown';
+      }
+      const actMs = Math.round((performance.now() - actStarted) * 100) / 100;
+      history.push(task.historyEntry(step, candidate.id, undefined, { outcome: plan.outcomes[candidate.id] }));
+      noProgress.note('performed', candidate.id);
+      await writeEvent(args.log, {
+        ...baseEvent, tool: candidate.tool, act_ms: actMs, action_ms: actMs,
+        total_step_ms: Math.round((performance.now() - started) * 100) / 100,
+        delivery_mode: candidate.arguments.delivery_mode ?? null,
+      });
+      const pollResult = await pollOracle(task, step, candidate, preOracle, history);
+      if (pollResult.outcome === 'verified' || pollResult.outcome === 'refuted') {
+        await writeEvent(args.log, { event: 'outcome', outcome: pollResult.outcome, step });
+        return pollResult.outcome;
+      }
+      if (!pollResult.canContinue) {
+        await writeEvent(args.log, {
+          event: 'outcome',
+          outcome: pollResult.outcome,
+          step,
+          phase: 'verification',
+          reason: pollResult.status,
+        });
+        return pollResult.outcome;
+      }
+    }
+    const outcome = task.classify(await task.readOracle(), task.maxSteps);
+    await writeEvent(args.log, { event: 'outcome', outcome, step: task.maxSteps });
+    return outcome;
+  } finally {
+    await client.close();
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const args = parseArgs(process.argv.slice(2));
+  // Fail before touching the app when the S1 service is not configured.
+  if (args.provider === 's1') s1ServiceUrl();
+  const task = nativeTask(args.task, args.stateFile, {
+    pid: args.pid,
+    noteText: args.noteText,
+    allowForeground: args.allowForeground,
+  });
+  runTask(args, task)
+    .then((outcome) => {
+      process.exitCode = outcome === 'verified' ? 0 : 1;
+    })
+    .catch(async (error: unknown) => {
+      await writeEvent(args.log, {
+        event: 'outcome', outcome: 'unknown', error: error instanceof Error ? error.name : 'Error',
+      });
+      process.exitCode = 1;
+    });
+}

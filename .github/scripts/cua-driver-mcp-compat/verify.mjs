@@ -37,8 +37,14 @@ const PROBE_ENV = {
   DISABLE_AUTOUPDATER: "1",
   NO_COLOR: "1",
 };
-const BIN_DIR = join(HERE, "node_modules", ".bin");
-const CODEX = join(BIN_DIR, process.platform === "win32" ? "codex.cmd" : "codex");
+const CODEX_SCRIPT = join(
+  HERE,
+  "node_modules",
+  "@openai",
+  "codex",
+  "bin",
+  "codex.js",
+);
 
 function claudeBinary() {
   const platform = process.platform === "darwin" ? "darwin" : process.platform;
@@ -217,7 +223,10 @@ async function claudeCodeProbe() {
   const debugFile = join(configDir, "mcp-debug.log");
   const env = { ...PROBE_ENV, CLAUDE_CONFIG_DIR: configDir };
   const version = run(CLAUDE, ["--version"], { env });
-  assert.match(version.stdout, /2\.1\.224/);
+  const pinned = JSON.parse(readFileSync(join(HERE, "package.json"), "utf8")).dependencies[
+    "@anthropic-ai/claude-code"
+  ];
+  assert.equal(version.stdout.trim().split(" ")[0], pinned);
 
   run(
     CLAUDE,
@@ -245,20 +254,21 @@ async function claudeCodeProbe() {
     debug,
     new RegExp(`"name":"${EXPECTED.serverName}","version":"${EXPECTED_VERSION.replaceAll(".", "\\.")}"`),
   );
-  console.log("Claude Code 2.1.224: connected and accepted the complete tool schema set");
+  console.log(`Claude Code ${pinned}: connected and accepted the complete tool schema set`);
 }
 
 async function codexProbe() {
   const codexHome = await mkdtemp(join(tmpdir(), "cua-codex-mcp-"));
   const env = { ...PROBE_ENV, CODEX_HOME: codexHome };
-  const version = run(CODEX, ["--version"], { env });
+  const version = run(process.execPath, [CODEX_SCRIPT, "--version"], { env });
   assert.match(version.stdout, /0\.146\.1/);
 
   const commandConfig = `mcp_servers.cua_driver.command=${JSON.stringify(DRIVER)}`;
   const argsConfig = `mcp_servers.cua_driver.args=${JSON.stringify(DRIVER_ARGS)}`;
   const child = spawn(
-    CODEX,
+    process.execPath,
     [
+      CODEX_SCRIPT,
       "app-server",
       "--listen",
       "stdio://",

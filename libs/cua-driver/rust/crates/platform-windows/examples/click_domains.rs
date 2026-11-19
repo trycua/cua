@@ -1,6 +1,11 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Click the "Domains" hyperlink in Chrome via the daemon pipe.
 
+#[cfg(target_os = "windows")]
 use std::io::{Read, Write};
+#[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "windows")]
@@ -71,7 +76,7 @@ fn main() {
         eprintln!("Tree dump (first 2000 chars):");
         eprintln!(
             "{}",
-            &state_resp
+            state_resp
                 .replace("\\n", "\n")
                 .chars()
                 .take(2000)
@@ -83,11 +88,22 @@ fn main() {
         println!("  candidate #{i}: [{idx}] {}", line.trim());
     }
     let (idx, _) = candidates[0];
-    println!("Using element_index={idx}");
+    let state: serde_json::Value = serde_json::from_str(state_resp.trim()).unwrap();
+    let token = state
+        .pointer("/result/structuredContent/elements")
+        .and_then(|elements| elements.as_array())
+        .and_then(|elements| {
+            elements
+                .iter()
+                .find(|element| element["element_index"] == idx)
+        })
+        .and_then(|element| element["element_token"].as_str())
+        .expect("get_window_state reported no element_token");
+    println!("Using element_token={token}");
 
     let click_req = format!(
-        r#"{{"method":"call","name":"click","args":{{"pid":{},"window_id":{},"element_index":{}}}}}"#,
-        chrome_pid, chrome_wid, idx
+        r#"{{"method":"call","name":"click","args":{{"pid":{},"window_id":{},"element_token":"{}"}}}}"#,
+        chrome_pid, chrome_wid, token
     );
     let click_resp = req(&mut pipe, &click_req);
     println!("Click resp: {}", click_resp.trim());

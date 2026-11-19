@@ -1,0 +1,43 @@
+name: "Flaky job scan"
+
+# Nightly: finds jobs that failed and then passed when the same commit was rerun
+# (any workflow, any event, the last 26 hours) and records them (job summary + a `flaky-jobscan` artifact) through
+# .github/scripts/flaky/flaky.py. "Flaky test issues" turns them into the weekly
+# "Flaky tests this week" issue. To quarantine a job see .github/flaky/quarantine.json
+# (an owner, an issue, a failure-log signature and a 7-day expiry).
+
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: flaky-detect
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    name: scan reruns for flaky jobs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts/flaky
+      - name: Find jobs that passed only on a rerun
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/flaky/flaky.py detect --out "$RUNNER_TEMP/flaky-results" --since-hours 26
+      - name: Write the job summary
+        run: python3 .github/scripts/flaky/flaky.py record --dir "$RUNNER_TEMP/flaky-results"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flaky-jobscan
+          path: ${{ runner.temp }}/flaky-results/
+          if-no-files-found: ignore
+          retention-days: 10

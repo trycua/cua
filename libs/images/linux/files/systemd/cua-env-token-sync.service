@@ -1,0 +1,34 @@
+[Unit]
+Description=cua env token sync (Fleet claim token -> driver-readable copy)
+# Runs only when the claim secrets are mounted (run-cua.mount on KubeVirt).
+After=run-cua.mount
+Before=cua-spacesd.service
+# No ConditionPathIsMountPoint=/run/cua: run-cua.mount is pulled in by udev
+# and can land after this unit is evaluated, which skipped the sync for the
+# whole boot. start-token-sync.sh waits for the mount and idles when this
+# boot is not in await-token mode.
+ConditionPathExists=/usr/local/bin/cua-spacesd
+
+[Service]
+Type=simple
+# Root reads the root-only claim token and writes /run/cua-env/env-token
+# (0600, owned by cua) in a root-owned 0755 directory. systemd
+# LoadCredential= is not used: it reads once at start, while the claim token
+# is empty until a claim binds and changes on rotation/release.
+RuntimeDirectory=cua-env
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+ExecStart=/opt/cua/bin/start-token-sync.sh
+Restart=always
+RestartSec=1
+NoNewPrivileges=yes
+PrivateNetwork=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_READ_SEARCH CAP_FOWNER
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

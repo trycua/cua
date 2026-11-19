@@ -1,0 +1,181 @@
+---
+title: Quickstart
+description: 'Run a Cua Bench registry taskset on a local desktop sandbox, read the score, run it with an agent, then create and score your own task.'
+---
+
+Run a ready-made taskset from the
+[Cua Bench registry](https://cua.ai/cuabench/registry) on your machine, read the
+score, and hand it to an agent. Then create a small task of your own. You need
+no API key until you run an agent.
+
+## Before you start
+
+- Python 3.12 or 3.13 and [uv](https://docs.astral.sh/uv/).
+- A local container runtime: Docker, plus gVisor when installed. Check it with
+  the `cua` CLI:
+
+```bash test="cli-shape" id="cua-runtime-doctor"
+cua runtime doctor
+```
+
+## Install
+
+```bash skip="host-install"
+uv tool install cua-bench
+```
+
+This puts the `cb` command on your `PATH`. `cb --help` lists its command
+groups, including `run`, `interact`, `task` and `trace`.
+
+## Run a registry taskset
+
+List the tasksets, then run one task of `cua-bench-basic` with its oracle. The
+oracle is the task's built-in solution:
+
+```bash test="cli-shape" id="bench-quickstart-run"
+cb dataset list
+cb run cua-bench-basic --task-filter click-button --max-variants 1
+```
+
+`cb` fetches the taskset at its pinned version, starts a Linux desktop sandbox,
+opens the task's app as a window on it, runs the oracle, scores the result
+(`reward=1`) and releases the sandbox. If the oracle fails, the task or your
+setup is broken, not the agent.
+
+## Read the results
+
+```bash test="cli-shape" id="bench-quickstart-results"
+cb run list
+cb run info <run-id>
+```
+
+Each variant's `result.json`, `run.log` and `trajectory.json` land in
+`~/.local/share/cua-bench/runs/<run-id>/`, next to a `summary.json`.
+
+## Run it with an agent
+
+```bash test="cli-shape" id="bench-quickstart-agent"
+cb run cua-bench-basic --agent cua-agent --model anthropic/claude-sonnet-4-20250514 -j 4
+```
+
+This runs every task on your machine. `--on local` is the default, and `--kind`,
+`--runtime`, `--image`, `--cpu` and `--memory` shape the sandboxes.
+
+## Create your own task
+
+A task has variants (the same goal asked in different ways), a setup function,
+an oracle and an evaluator. The same evaluator scores the oracle, you and an
+agent.
+
+### Scaffold it
+
+Create a working directory and scaffold a task in it:
+
+```bash skip="no-runner"
+mkdir cua-bench-tutorial && cd cua-bench-tutorial
+cb task create first-task
+```
+
+Answer the prompts, for example:
+
+```text output
+Author name: Your name
+Author email: you@example.com
+License [MIT]:
+Task description: Write a word to a file
+Task difficulty (easy|medium|hard) [easy]:
+Task category (e.g., grounding, software-engineering) [grounding]:
+Tags (comma-separated): starter,linux
+```
+
+The scaffold is two files:
+
+```text output
+first-task/
+├── main.py
+└── pyproject.toml
+```
+
+`main.py` defines the whole task. The starter has two variants, each asking for
+one word in `/tmp/answer.txt`, and four functions:
+
+```python skip="pseudo"
+@cb.tasks_config(split="train")
+def load(): ...        # the variants and the machine they run on (native Linux)
+
+@cb.setup_task(split="train")
+async def start(task_cfg, session): ...     # remove any old answer
+
+@cb.solve_task(split="train")
+async def solve(task_cfg, session): ...     # the oracle: write the right word
+
+@cb.evaluate_task(split="train")
+async def evaluate(task_cfg, session): ...  # 1.0 if the file holds the word
+```
+
+### Inspect it
+
+```bash skip="no-runner"
+cb task info first-task
+```
+
+![cb task info: a native Linux task with 2 variants and setup, solve and evaluate](/img/cua-bench/cb-task-info.png)
+
+The provider is `native`: a real OS in a container or VM. The check marks mean
+Cua Bench found the setup, solve and evaluate functions.
+
+### Run the oracle
+
+```bash skip="no-runner"
+cb run first-task --variant-id 0 --oracle
+```
+
+`cb run` starts a Linux sandbox, runs the setup, the oracle and the evaluator,
+and releases the sandbox. It reports `reward=1`.
+
+### Solve it yourself
+
+Open the same variant without the oracle:
+
+```bash skip="no-runner"
+cb interact first-task --variant-id 0
+```
+
+`cb interact` sets the task up, prints the sandbox's `Display:` link and opens
+the viewer in your browser. Open a terminal on the sandbox desktop and write the
+answer:
+
+![The task sandbox mid-task: a terminal writing hello to /tmp/answer.txt](/img/cua-bench/cb-interact-desktop.png)
+
+Go back to your terminal and press Enter. Cua Bench evaluates the sandbox and
+releases it:
+
+![cb interact: setup complete, evaluation result 1.0, sandbox released](/img/cua-bench/cb-interact.png)
+
+### Give it to an agent
+
+```bash test="cli-shape" id="first-task-agent"
+cb run first-task --agent cua-agent --model anthropic/claude-sonnet-4-20250514
+```
+
+## Clean up
+
+```bash skip="destructive"
+cd .. && rm -rf cua-bench-tutorial
+```
+
+Run results stay in `~/.local/share/cua-bench/runs`, and `cb` warns when they
+pass 10 GiB (`CUA_BENCH_WARN_SIZE`). Keep fewer with `--keep-runs N`,
+`--max-age DAYS` or `--max-results-size SIZE` on `cb run`, or:
+
+```bash test="cli-shape" id="bench-quickstart-prune"
+cb prune --runs --keep 10
+```
+
+## Next
+
+- [Run a benchmark](/cua-bench/guides/benchmarks): every registry taskset, selection, versions and pass@k.
+- [Write a task](/cua-bench/guides/write-a-task): richer setup, checks and HTML task windows.
+- [Adapter benchmarks](/cua-bench/guides/adapter-benchmarks): OSWorld-Verified and other adapters.
+- [Sandbox images](/cua-sdk/guides/images#every-published-image): the benchmark images and how to start them.
+- [CLI reference](/cua-bench/reference/cli)

@@ -1,0 +1,233 @@
+{
+  "schema_version": 1,
+  "repo": "ghcr.io/trycua/bench-web",
+  "arches": [
+    "amd64",
+    "arm64"
+  ],
+  "series": "1.0",
+  "tag": "{series}-{stamp}",
+  "vars": {
+    "bench_work": "{work}/bench",
+    "python": "python3",
+    "record_ledger": "false"
+  },
+  "steps": [
+    {
+      "id": "spacesd/{arch}",
+      "phase": "prepare",
+      "per_arch": true,
+      "description": "cua-spacesd for the image (cached in dist/; CI builds it in the job)",
+      "unless_exists": "{root}/libs/images/linux/dist/{arch}/cua-spacesd",
+      "run": [
+        "{root}/libs/images/linux/build-spacesd-linux.sh",
+        "{arch}"
+      ],
+      "produces": [
+        "{root}/libs/images/linux/dist/{arch}/cua-spacesd"
+      ]
+    },
+    {
+      "id": "fetch",
+      "phase": "prepare",
+      "env": {
+        "CUA_BENCH_WORK": "{bench_work}"
+      },
+      "description": "download and verify the pinned sources",
+      "run": [
+        "python3",
+        "{root}/scripts/bench-images/bench.py",
+        "fetch",
+        "web"
+      ],
+      "produces": [
+        "{bench_work}/web/sources.json"
+      ]
+    },
+    {
+      "id": "build/{arch}",
+      "phase": "build",
+      "per_arch": true,
+      "requires": [
+        "docker"
+      ],
+      "env": {
+        "CUA_BENCH_WORK": "{bench_work}"
+      },
+      "run": [
+        "{root}/scripts/bench-images/build-docker.sh",
+        "web",
+        "--platform",
+        "linux/{arch}"
+      ]
+    },
+    {
+      "id": "smoke/{arch}/rootfs",
+      "phase": "gate",
+      "per_arch": true,
+      "requires": [
+        "docker"
+      ],
+      "env": {
+        "CUA_BENCH_WORK": "{bench_work}"
+      },
+      "description": "the local build under gVisor (docker without it): cua-spacesd doctor --strict and the benchmark server",
+      "run": [
+        "{python}",
+        "{root}/scripts/bench-images/smoke.py",
+        "web",
+        "--variant",
+        "rootfs",
+        "--evidence",
+        "{evidence}/smoke"
+      ]
+    },
+    {
+      "id": "smoke/{arch}/containerdisk",
+      "phase": "gate",
+      "per_arch": true,
+      "requires": [
+        "accel-{arch}"
+      ],
+      "env": {
+        "CUA_BENCH_WORK": "{bench_work}"
+      },
+      "description": "the local VM disk under QEMU: cua-spacesd doctor --strict and the benchmark server (arm64: hosted runners have no KVM; publish.sh --promote still needs native evidence, committed under evidence/)",
+      "run": [
+        "{python}",
+        "{root}/scripts/bench-images/smoke.py",
+        "web",
+        "--variant",
+        "containerdisk",
+        "--memory-mb",
+        "4096",
+        "--evidence",
+        "{evidence}/smoke"
+      ],
+      "required": [
+        "amd64"
+      ]
+    },
+    {
+      "id": "push/{arch}",
+      "phase": "push",
+      "per_arch": true,
+      "env": {
+        "CUA_BENCH_WORK": "{bench_work}"
+      },
+      "description": "this arch's children as immutable pins",
+      "run": [
+        "bash",
+        "-c",
+        "exec \"$0/scripts/bench-images/publish.sh\" \"$1\" --stamp \"$3\" --arch \"$2\"",
+        "{root}",
+        "web",
+        "{arch}",
+        "{stamp}"
+      ]
+    },
+    {
+      "id": "publish",
+      "phase": "publish",
+      "env": {
+        "CUA_BENCH_WORK": "{bench_work}"
+      },
+      "description": "the indexes (immutable pins); writes libs/images/bench/web/lock.json",
+      "run": [
+        "{root}/scripts/bench-images/publish.sh",
+        "web",
+        "--stamp",
+        "{stamp}",
+        "--indexes-only"
+      ]
+    },
+    {
+      "id": "verify/{arch}/rootfs",
+      "phase": "verify",
+      "per_arch": true,
+      "requires": [
+        "docker"
+      ],
+      "description": "the doctor again, against the staged index from the registry",
+      "run": [
+        "bash",
+        "-c",
+        "exec \"$1\" \"$0/scripts/bench-images/smoke.py\" \"$2\" --variant rootfs --image \"$(jq -r .pinned \"$0/libs/images/bench/$2/lock.json\")\" --evidence \"$3\"",
+        "{root}",
+        "{python}",
+        "web",
+        "{evidence}/verify"
+      ]
+    },
+    {
+      "id": "verify/{arch}/containerdisk",
+      "phase": "verify",
+      "per_arch": true,
+      "requires": [
+        "accel-{arch}"
+      ],
+      "run": [
+        "bash",
+        "-c",
+        "exec \"$1\" \"$0/scripts/bench-images/smoke.py\" \"$2\" --variant containerdisk --memory-mb 4096 --image \"$(jq -r .pinned \"$0/libs/images/bench/$2/lock.json\")\" --evidence \"$3\"",
+        "{root}",
+        "{python}",
+        "web",
+        "{evidence}/verify"
+      ],
+      "required": [
+        "amd64"
+      ],
+      "description": "(arm64: hosted runners have no KVM; cd-bench-images.yml then doctors the staged disk under TCG with scripts/bench-images/doctor-disk.sh)"
+    },
+    {
+      "id": "attest",
+      "phase": "promote",
+      "description": "attach the doctor report of every arch and variant of the staged pins to its child, and record it on the image-doctor ledger with record_ledger=true, before the floating tags move",
+      "run": [
+        "{root}/scripts/bench-images/attest.sh",
+        "web",
+        "--evidence",
+        "{evidence}/verify",
+        "--out",
+        "{evidence}/attest",
+        "--run",
+        "{run_url}",
+        "--record",
+        "{record_ledger}"
+      ],
+      "produces": [
+        "{evidence}/attest/attested.json"
+      ]
+    },
+    {
+      "id": "promote",
+      "phase": "promote",
+      "env": {
+        "CUA_BENCH_EVIDENCE": "{evidence}/verify"
+      },
+      "description": "<ver> and <ver>-disk, only with doctor evidence for every arch and variant",
+      "run": [
+        "{root}/scripts/bench-images/publish.sh",
+        "web",
+        "--stamp",
+        "{stamp}",
+        "--promote"
+      ]
+    },
+    {
+      "id": "catalog",
+      "phase": "promote",
+      "description": "move the catalog digests of the promoted tags and record their sizes (commit libs/images/sandbox-images.json)",
+      "run": [
+        "python3",
+        "{root}/scripts/images/record-image-sizes.py",
+        "--refresh-digest",
+        "--ref",
+        "{repo}:{series}",
+        "--ref",
+        "{repo}:{series}-disk"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+[Unit]
+Description=MiniWoB++ task pages on :7560
+After=network.target
+
+[Service]
+Type=simple
+User=cua
+ExecStart=/usr/bin/python3 -m http.server 7560 --bind 0.0.0.0 --directory /opt/miniwob/html
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

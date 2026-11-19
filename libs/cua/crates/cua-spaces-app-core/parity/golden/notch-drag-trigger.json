@@ -1,0 +1,255 @@
+{
+  "flow": "notch-drag-trigger",
+  "frames": [
+    {
+      "display": "mbp14",
+      "expanded": [
+        436.0,
+        0.0,
+        640.0,
+        219.0
+      ],
+      "frame": [
+        0.0,
+        0.0,
+        1512.0,
+        982.0
+      ],
+      "notch": [
+        660.0,
+        0.0,
+        192.0,
+        32.0
+      ],
+      "portalExpanded": [
+        376.0,
+        0.0,
+        760.0,
+        320.0
+      ],
+      "prompt": [
+        641.0,
+        0.0,
+        230.0,
+        60.0
+      ]
+    },
+    {
+      "display": "external 1920",
+      "expanded": [
+        2152.0,
+        0.0,
+        640.0,
+        212.0
+      ],
+      "frame": [
+        1512.0,
+        0.0,
+        1920.0,
+        1080.0
+      ],
+      "notch": [
+        2352.0,
+        0.0,
+        240.0,
+        25.0
+      ],
+      "portalExpanded": [
+        2092.0,
+        0.0,
+        760.0,
+        300.0
+      ],
+      "prompt": [
+        2333.0,
+        0.0,
+        278.0,
+        53.0
+      ]
+    },
+    {
+      "display": null,
+      "event": "start",
+      "kind": "move",
+      "overlay": [
+        "start"
+      ],
+      "phase": "prompt",
+      "tickAt": null
+    },
+    {
+      "display": null,
+      "event": "cursor",
+      "kind": "move",
+      "overlay": [],
+      "phase": "prompt",
+      "tickAt": 400
+    },
+    {
+      "display": null,
+      "event": "cursor",
+      "kind": "move",
+      "overlay": [],
+      "phase": "prompt",
+      "tickAt": 400
+    },
+    {
+      "display": null,
+      "event": "tick",
+      "kind": "move",
+      "overlay": [],
+      "phase": "prompt",
+      "tickAt": 400
+    },
+    {
+      "display": 0,
+      "event": "tick",
+      "kind": "move",
+      "overlay": [
+        "enter-notch"
+      ],
+      "phase": "expanded",
+      "tickAt": null
+    },
+    {
+      "display": 0,
+      "event": "cursor",
+      "kind": "move",
+      "overlay": [],
+      "phase": "expanded",
+      "tickAt": null
+    },
+    {
+      "display": null,
+      "event": "cursor",
+      "kind": "move",
+      "overlay": [
+        "leave-notch"
+      ],
+      "phase": "prompt",
+      "tickAt": null
+    },
+    {
+      "display": null,
+      "event": "cursor",
+      "kind": "move",
+      "overlay": [],
+      "phase": "prompt",
+      "tickAt": 950
+    },
+    {
+      "display": 0,
+      "event": "cursor",
+      "kind": "move",
+      "overlay": [
+        "enter-notch"
+      ],
+      "phase": "expanded",
+      "tickAt": null
+    },
+    {
+      "display": null,
+      "event": "end",
+      "kind": "pending",
+      "overlay": [
+        "drop"
+      ],
+      "phase": "hidden",
+      "tickAt": null
+    },
+    {
+      "display": null,
+      "event": "start",
+      "kind": "resize",
+      "overlay": [],
+      "phase": "hidden",
+      "tickAt": null
+    },
+    {
+      "display": null,
+      "event": "cursor",
+      "kind": "resize",
+      "overlay": [],
+      "phase": "hidden",
+      "tickAt": null
+    },
+    {
+      "display": null,
+      "event": "tick",
+      "kind": "resize",
+      "overlay": [],
+      "phase": "hidden",
+      "tickAt": null
+    },
+    {
+      "display": null,
+      "event": "end",
+      "kind": "pending",
+      "overlay": [],
+      "phase": "hidden",
+      "tickAt": null
+    },
+    {
+      "display": null,
+      "event": "start",
+      "kind": "pending",
+      "overlay": [],
+      "phase": "hidden",
+      "tickAt": null
+    },
+    {
+      "display": null,
+      "event": "cursor",
+      "kind": "pending",
+      "overlay": [],
+      "phase": "hidden",
+      "tickAt": null
+    },
+    {
+      "display": null,
+      "event": "frame",
+      "kind": "move",
+      "overlay": [
+        "start"
+      ],
+      "phase": "prompt",
+      "tickAt": null
+    },
+    {
+      "display": null,
+      "event": "cursor",
+      "kind": "move",
+      "overlay": [],
+      "phase": "prompt",
+      "tickAt": 2400
+    },
+    {
+      "display": 1,
+      "event": "cursor",
+      "kind": "move",
+      "overlay": [
+        "enter-notch"
+      ],
+      "phase": "expanded",
+      "tickAt": null
+    },
+    {
+      "display": 1,
+      "event": "cursor",
+      "kind": "move",
+      "overlay": [],
+      "phase": "expanded",
+      "tickAt": null
+    },
+    {
+      "display": null,
+      "event": "cancel",
+      "kind": "pending",
+      "overlay": [
+        "cancel"
+      ],
+      "phase": "hidden",
+      "tickAt": null
+    }
+  ]
+}

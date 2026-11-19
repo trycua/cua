@@ -1,0 +1,9 @@
+node_modules
+dist
+test-results
+*.tsbuildinfo
+# Built by scripts/build-core-wasm.mjs
+src/bridge/core/wasm/
+# Written by `pnpm screenshots` and scripts/demo-video.mjs (demo mode).
+docs/screenshots/
+docs/demo/

@@ -1,0 +1,25 @@
+# Interim guard for CVE-2026-98432 (Linux IPv4 use-after-free reachable from a
+# remote TCP SYN that carries Record Route / Timestamp options). Drops every
+# inbound IPv4 packet that has IP options, before it reaches TCP. That covers
+# Record Route, Timestamp, loose and strict source route; nft has no Timestamp
+# matcher, so the rule keys on the header length (more than 20 bytes) instead
+# of on one option. IGMP is left alone: it legitimately carries Router Alert
+# and never reaches TCP.
+#
+# Own table, own name: loading it never touches another table, and a user's
+# later firewall (ufw, Docker, nftables.service without `flush ruleset`) keeps
+# working. The add/delete/define sequence makes reloading idempotent.
+#
+# Remove once the image's kernel is at or above the fixed version of its
+# series (see docs/content/docs/spaces/guides/ip-options-guard.mdx).
+add table ip cua_ipopts
+delete table ip cua_ipopts
+table ip cua_ipopts {
+  chain prerouting {
+    # -450 runs before IP defragmentation (-400) and conntrack (-200/-300),
+    # and ahead of the usual filter chains (0).
+    type filter hook prerouting priority -450; policy accept;
+    ip protocol igmp accept
+    ip hdrlength > 5 counter drop comment "CVE-2026-98432: inbound IPv4 options"
+  }
+}

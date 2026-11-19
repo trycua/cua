@@ -15,6 +15,21 @@ from typing import Any, Dict, Optional
 import httpx
 from cua_sandbox.transport.base import Transport
 
+OSWORLD_SERVER_PORT = 5000
+"""Port the OSWorld Flask control server listens on inside the guest."""
+
+
+def normalize_execute_result(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Shape an OSWorld ``/execute`` (or ``/run_bash_script``) reply like a computer-server result."""
+    returncode = payload.get("returncode")
+    if returncode is None:
+        returncode = 0 if payload.get("status") == "success" else 1
+    return {
+        "stdout": payload.get("output", "") or "",
+        "stderr": payload.get("error", payload.get("message", "")) or "",
+        "returncode": returncode,
+    }
+
 
 class OSWorldTransport(Transport):
     """Transport for VMs running the OSWorld Flask server (pyautogui-based)."""
@@ -42,6 +57,19 @@ class OSWorldTransport(Transport):
 
     async def send(self, action: str, **params: Any) -> Any:
         assert self._client is not None, "Transport not connected"
+        if action == "run_command":
+            # Sandbox.shell.run() speaks the computer-server vocabulary; map it
+            # onto the OSWorld server's /execute (shell=true), which every
+            # OSWorld server generation exposes (the golden image predates
+            # /run_bash_script).
+            timeout = float(params.get("timeout", 30))
+            resp = await self._client.post(
+                "/execute",
+                json={"command": params["command"], "shell": True},
+                timeout=max(self._timeout, timeout + 5),
+            )
+            resp.raise_for_status()
+            return normalize_execute_result(resp.json())
         if action in ("execute", "run_bash_script", "run_python"):
             resp = await self._client.post(f"/{action}", json=params)
             resp.raise_for_status()

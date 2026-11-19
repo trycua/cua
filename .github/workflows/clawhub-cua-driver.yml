@@ -26,12 +26,21 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
   CLAWHUB_CLI_VERSION: "0.23.1"
   CLAWHUB_SKILL_SLUG: "driver"
   SKILL_PATH: "libs/cua-driver/rust/Skills/cua-driver"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   dry-run:
@@ -55,7 +64,7 @@ jobs:
 
           skill_text = Path("libs/cua-driver/rust/Skills/cua-driver/SKILL.md").read_text()
           frontmatter = skill_text.split("---", 2)[1]
-          match = re.search(r"^version:\s*([^\s#]+)", frontmatter, re.MULTILINE)
+          match = re.search(r"^  version:\s*([^\s#]+)", frontmatter, re.MULTILINE)
           if not match:
               raise SystemExit("SKILL.md frontmatter has no version")
           print(match.group(1))
@@ -113,7 +122,7 @@ jobs:
           cargo_version = cargo["workspace"]["package"]["version"]
           skill_text = Path(os.environ["SKILL_PATH"], "SKILL.md").read_text()
           frontmatter = skill_text.split("---", 2)[1]
-          match = re.search(r"^version:\s*([^\s#]+)", frontmatter, re.MULTILINE)
+          match = re.search(r"^  version:\s*([^\s#]+)", frontmatter, re.MULTILINE)
           if not match:
               raise SystemExit("SKILL.md frontmatter has no version")
           skill_version = match.group(1)

@@ -1,0 +1,1724 @@
+//! Typed event builders.
+//!
+//! Every builder takes enums, booleans, numbers, or strings it immediately
+//! classifies into a fixed vocabulary (an image reference becomes its
+//! catalog id or `custom`; a command path becomes a known command or
+//! `other`). No builder copies caller text into a payload: the PII fuzz
+//! test feeds paths, emails, hostnames and titles through each one.
+
+use serde_json::{Map, Value};
+use std::time::Duration;
+
+use crate::schema::{self, event};
+
+/// One event: a declared name and its own properties (the common ones are
+/// added when it is sent).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Event {
+    /// Declared event name.
+    pub name: &'static str,
+    /// Its properties.
+    pub props: Map<String, Value>,
+}
+
+impl Event {
+    fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            props: Map::new(),
+        }
+    }
+
+    fn s(mut self, k: &str, v: &'static str) -> Self {
+        self.props.insert(k.into(), Value::String(v.into()));
+        self
+    }
+
+    fn b(mut self, k: &str, v: bool) -> Self {
+        self.props.insert(k.into(), Value::Bool(v));
+        self
+    }
+
+    fn n(mut self, k: &str, v: u64) -> Self {
+        self.props.insert(k.into(), Value::from(v));
+        self
+    }
+
+    fn owned(mut self, k: &str, v: String) -> Self {
+        self.props.insert(k.into(), Value::String(v));
+        self
+    }
+}
+
+/// Returns the vocabulary entry equal to `value`, else `fallback`.
+pub fn pick(vocab: &'static [&'static str], value: &str, fallback: &'static str) -> &'static str {
+    let v = value.trim();
+    vocab.iter().copied().find(|x| *x == v).unwrap_or(fallback)
+}
+
+// ---------------------------------------------------------------------------
+// Classifiers
+// ---------------------------------------------------------------------------
+
+/// Outcome of an operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    Ok,
+    Error,
+    Cancelled,
+}
+
+impl Outcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Outcome::Ok => "ok",
+            Outcome::Error => "error",
+            Outcome::Cancelled => "cancelled",
+        }
+    }
+
+    /// `ok`, `cancelled`, anything else `error`.
+    pub fn from_word(word: &str) -> Self {
+        match word.trim() {
+            "ok" => Outcome::Ok,
+            "cancelled" => Outcome::Cancelled,
+            _ => Outcome::Error,
+        }
+    }
+}
+
+/// A `CuaError` variant name (`InvalidArgument`) or snake name as an
+/// error kind; anything else is `other`. Never pass the message.
+pub fn error_kind(variant: &str) -> &'static str {
+    let snake: String = {
+        let mut out = String::new();
+        for (i, c) in variant.trim().chars().enumerate() {
+            if c.is_ascii_uppercase() {
+                if i > 0 {
+                    out.push('_');
+                }
+                out.push(c.to_ascii_lowercase());
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    };
+    // A failed create's Local Network cause comes as its subclass word
+    // (`cua_create_failure::create_failure_kind`); its kind is the parent.
+    if matches!(snake.as_str(), "local_network_denied" | "local_network_vpn") {
+        return "local_network";
+    }
+    pick(schema::ERROR_KINDS, &snake, "other")
+}
+
+/// Duration bucket.
+pub fn duration_bucket(d: Duration) -> &'static str {
+    match d.as_millis() {
+        0..=99 => "lt_100ms",
+        100..=999 => "100_999ms",
+        1_000..=4_999 => "1_4s",
+        5_000..=29_999 => "5_29s",
+        30_000..=119_999 => "30_119s",
+        120_000..=599_999 => "2_9m",
+        _ => "gte_10m",
+    }
+}
+
+/// Uptime bucket.
+pub fn uptime_bucket(d: Duration) -> &'static str {
+    match d.as_secs() / 3600 {
+        0 => "lt_1h",
+        1..=5 => "1_5h",
+        6..=23 => "6_23h",
+        24..=167 => "1_6d",
+        _ => "gte_7d",
+    }
+}
+
+/// Count bucket.
+pub fn count_bucket(n: u64) -> &'static str {
+    match n {
+        0 => "0",
+        1 => "1",
+        2..=4 => "2_4",
+        5..=9 => "5_9",
+        10..=49 => "10_49",
+        50..=99 => "50_99",
+        _ => "gte_100",
+    }
+}
+
+/// Location word (`local`, `cloud`, `direct:...`, a provider) as a
+/// location; unknown providers are `other`.
+pub fn location(on: &str) -> &'static str {
+    let word = on
+        .trim()
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    // Cua Cloud has ended: an attempt there reports `other`. `cloud` stays
+    // in the schema for the events recorded before.
+    if word == "cloud" {
+        return "other";
+    }
+    pick(schema::LOCATIONS, &word, "other")
+}
+
+/// Sandbox kind.
+pub fn sandbox_kind(kind: &str) -> &'static str {
+    pick(schema::SANDBOX_KINDS, &kind.to_ascii_lowercase(), "unknown")
+}
+
+/// Runtime; a third-party provider's own runtime is `provider`.
+pub fn runtime(runtime: &str) -> &'static str {
+    let r = runtime.trim().to_ascii_lowercase();
+    if r.is_empty() {
+        return "auto";
+    }
+    match pick(schema::RUNTIMES, &r, "") {
+        "" => "provider",
+        v => v,
+    }
+}
+
+/// Guest OS family.
+pub fn guest_os(os: &str) -> &'static str {
+    let o = os.trim().to_ascii_lowercase();
+    let o = match o.as_str() {
+        "darwin" | "mac" | "osx" => "macos",
+        "win" | "win32" | "win64" => "windows",
+        other => other,
+    };
+    pick(schema::GUEST_OS, o, "unknown")
+}
+
+/// An image reference as its catalog id (`linux:24.04`), `none` when
+/// empty, else `custom`. Aliases (`linux`, `macos:tahoe`) resolve through
+/// `canonical` first if the caller has it.
+pub fn image_id(reference: &str) -> String {
+    let r = reference.trim();
+    if r.is_empty() {
+        return "none".into();
+    }
+    // Drop a digest; keep the tag.
+    let r = r.split('@').next().unwrap_or(r);
+    let short = r
+        .trim_start_matches("docker://")
+        .trim_start_matches("ghcr.io/trycua/");
+    if schema::image_ids().contains(short) {
+        short.to_string()
+    } else {
+        "custom".into()
+    }
+}
+
+/// A teleport catalog id (`vscode`, `chrome`), else `other`. Host bundle
+/// ids and paths of apps outside the public catalog are never sent.
+pub fn teleport_app(id: &str) -> String {
+    let i = id.trim();
+    if schema::teleport_app_ids().contains(i) {
+        i.to_string()
+    } else {
+        "other".into()
+    }
+}
+
+/// A cua-agents harness id, else `other`. The short names a person or an
+/// agent types (`codex`, `claude`: `cua_agents::harness::harness` accepts
+/// them) and ids in another case count as the harness they name; before,
+/// they all reported `other`.
+pub fn harness(id: &str) -> &'static str {
+    let id = id.trim().to_ascii_lowercase();
+    let id = match id.as_str() {
+        "codex" => "openai-codex",
+        "claude" => "claude-code",
+        other => other,
+    };
+    pick(schema::HARNESSES, id, "other")
+}
+
+/// A cua-bench taskset name, else `custom`.
+pub fn taskset(name: &str) -> &'static str {
+    pick(schema::TASKSETS, name, "custom")
+}
+
+/// Success rate in `0.0..=1.0` as a score bucket.
+pub fn score_bucket(rate: Option<f64>) -> &'static str {
+    let Some(r) = rate.filter(|r| r.is_finite()) else {
+        return "none";
+    };
+    let pct = (r.clamp(0.0, 1.0) * 100.0).round() as u64;
+    match pct {
+        0 => "0",
+        1..=24 => "1_24",
+        25..=49 => "25_49",
+        50..=74 => "50_74",
+        75..=99 => "75_99",
+        _ => "100",
+    }
+}
+
+/// Average fps as a bucket.
+pub fn fps_bucket(fps: f64) -> &'static str {
+    match fps {
+        f if !f.is_finite() || f < 10.0 => "lt_10",
+        f if f < 24.0 => "10_23",
+        f if f < 30.0 => "24_29",
+        f if f < 50.0 => "30_49",
+        f if f < 60.0 => "50_59",
+        _ => "gte_60",
+    }
+}
+
+/// Latency in ms as a bucket (`unknown` when not measured).
+pub fn latency_bucket(ms: Option<f64>) -> &'static str {
+    match ms.filter(|m| m.is_finite() && *m >= 0.0) {
+        None => "unknown",
+        Some(m) if m < 16.0 => "lt_16ms",
+        Some(m) if m < 33.0 => "16_32ms",
+        Some(m) if m < 66.0 => "33_65ms",
+        Some(m) if m < 133.0 => "66_132ms",
+        Some(m) if m < 266.0 => "133_265ms",
+        Some(_) => "gte_266ms",
+    }
+}
+
+/// Stream height in pixels as a resolution class.
+pub fn resolution(height: u32) -> &'static str {
+    match height {
+        0 => "unknown",
+        1..=719 => "lt_720p",
+        720..=1079 => "720p",
+        1080..=1439 => "1080p",
+        1440..=2159 => "1440p",
+        _ => "gte_4k",
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Caller kind (teleport)
+// ---------------------------------------------------------------------------
+
+/// Who asked for a teleport. See [`schema::CALLER_KINDS`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallerKind {
+    /// The Cua app or CLI, verified by its code signature.
+    CuaAppSigned,
+    /// A third-party app that embeds the cua SDK (signed by someone else).
+    EmbeddedSdk,
+    /// Ad hoc signed or unsigned code.
+    Unsigned,
+    /// Not verifiable on this platform.
+    Unknown,
+}
+
+impl CallerKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CallerKind::CuaAppSigned => "cua_app_signed",
+            CallerKind::EmbeddedSdk => "embedded_sdk",
+            CallerKind::Unsigned => "unsigned",
+            CallerKind::Unknown => "unknown",
+        }
+    }
+
+    /// What a process knows about itself when no broker verified it: SDK
+    /// surfaces are `embedded_sdk`, anything else `unknown` (a process
+    /// cannot vouch for its own signature here).
+    pub fn self_reported(product: &str) -> Self {
+        if schema::SDK_PRODUCTS.contains(&product) {
+            CallerKind::EmbeddedSdk
+        } else {
+            CallerKind::Unknown
+        }
+    }
+}
+
+/// How the caller kind was determined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallerKindSource {
+    BrokerVerified,
+    SelfReported,
+}
+
+impl CallerKindSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CallerKindSource::BrokerVerified => "broker_verified",
+            CallerKindSource::SelfReported => "self_reported",
+        }
+    }
+}
+
+/// Teleport outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TeleportOutcome {
+    Ok,
+    RequiresCuaApp,
+    ConsentDenied,
+    Forbidden,
+    Locked,
+    Disabled,
+    RateLimited,
+    NotFound,
+    Invalid,
+    Error,
+    Cancelled,
+}
+
+impl TeleportOutcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TeleportOutcome::Ok => "ok",
+            TeleportOutcome::RequiresCuaApp => "requires_cua_app",
+            TeleportOutcome::ConsentDenied => "consent_denied",
+            TeleportOutcome::Forbidden => "forbidden",
+            TeleportOutcome::Locked => "locked",
+            TeleportOutcome::Disabled => "disabled",
+            TeleportOutcome::RateLimited => "rate_limited",
+            TeleportOutcome::NotFound => "not_found",
+            TeleportOutcome::Invalid => "invalid",
+            TeleportOutcome::Error => "error",
+            TeleportOutcome::Cancelled => "cancelled",
+        }
+    }
+}
+
+/// What a teleport is about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TeleportInfo {
+    /// Catalog id (classified with [`teleport_app`]).
+    pub app: String,
+    /// `full`, `install_only`, `unsupported` or `unknown`.
+    pub capability: &'static str,
+    /// `app_only`, `app_with_files`, `app_with_state` or `session`.
+    pub move_kind: &'static str,
+    pub caller_kind: CallerKind,
+    pub caller_kind_source: CallerKindSource,
+    /// `broker` or `sdk`.
+    pub path: &'static str,
+}
+
+impl TeleportInfo {
+    /// Classifies raw inputs.
+    pub fn new(
+        app: &str,
+        capability: &str,
+        move_kind: &str,
+        caller_kind: CallerKind,
+        caller_kind_source: CallerKindSource,
+        path: &str,
+    ) -> Self {
+        Self {
+            app: teleport_app(app),
+            capability: pick(schema::TELEPORT_CAPABILITIES, capability, "unknown"),
+            move_kind: pick(schema::TELEPORT_MOVES, move_kind, "session"),
+            caller_kind,
+            caller_kind_source,
+            path: pick(schema::TELEPORT_PATHS, path, "sdk"),
+        }
+    }
+
+    fn apply(&self, e: Event) -> Event {
+        e.owned("app", self.app.clone())
+            .s("capability", self.capability)
+            .s("move", self.move_kind)
+            .s("caller_kind", self.caller_kind.as_str())
+            .s("caller_kind_source", self.caller_kind_source.as_str())
+            .s("path", self.path)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Builders
+// ---------------------------------------------------------------------------
+
+/// `cua_first_run`.
+pub fn first_run(install_channel: &str) -> Event {
+    Event::new(event::FIRST_RUN).s(
+        "install_channel",
+        pick(schema::INSTALL_CHANNELS, install_channel, "unknown"),
+    )
+}
+
+/// `cua_cli_command`.
+pub fn cli_command(
+    command: &str,
+    outcome: Outcome,
+    error_variant: Option<&str>,
+    elapsed: Duration,
+    json_output: bool,
+    topology: &str,
+) -> Event {
+    Event::new(event::CLI_COMMAND)
+        .s("command", pick(schema::CLI_COMMANDS, command, "other"))
+        .s("outcome", outcome.as_str())
+        .s(
+            "error_kind",
+            error_variant.map(error_kind).unwrap_or("none"),
+        )
+        .s("duration_bucket", duration_bucket(elapsed))
+        .b("json_output", json_output)
+        .s("topology", pick(schema::TOPOLOGIES, topology, "none"))
+}
+
+/// What a sandbox create was.
+#[derive(Debug, Clone, Default)]
+pub struct SandboxCreate<'a> {
+    /// `on` / location word.
+    pub on: &'a str,
+    pub kind: &'a str,
+    pub runtime: &'a str,
+    /// Image reference (classified to a catalog id or `custom`).
+    pub image: &'a str,
+    pub guest_os: &'a str,
+    pub with_overlays: bool,
+    pub with_build: bool,
+}
+
+/// `cua_sandbox_created`.
+pub fn sandbox_created(
+    s: &SandboxCreate<'_>,
+    outcome: Outcome,
+    error_variant: Option<&str>,
+    elapsed: Duration,
+) -> Event {
+    Event::new(event::SANDBOX_CREATED)
+        .s("location", location(s.on))
+        .s("kind", sandbox_kind(s.kind))
+        .s("runtime", runtime(s.runtime))
+        .owned("image", image_id(s.image))
+        .s("guest_os", guest_os(s.guest_os))
+        .s("outcome", outcome.as_str())
+        .s(
+            "error_kind",
+            error_variant.map(error_kind).unwrap_or("none"),
+        )
+        .s("duration_bucket", duration_bucket(elapsed))
+        .b("with_overlays", s.with_overlays)
+        .b("with_build", s.with_build)
+}
+
+/// `cua_sandbox_deleted`.
+pub fn sandbox_deleted(on: &str, outcome: Outcome, error_variant: Option<&str>) -> Event {
+    Event::new(event::SANDBOX_DELETED)
+        .s("location", location(on))
+        .s("outcome", outcome.as_str())
+        .s(
+            "error_kind",
+            error_variant.map(error_kind).unwrap_or("none"),
+        )
+}
+
+/// `cua_api_used` (`api` outside the vocabulary is dropped: returns None).
+pub fn api_used(
+    api: &str,
+    outcome: Outcome,
+    error_variant: Option<&str>,
+    elapsed: Duration,
+) -> Option<Event> {
+    let api = pick(schema::APIS, api, "");
+    (!api.is_empty()).then(|| {
+        Event::new(event::API_USED)
+            .s("api", api)
+            .s("outcome", outcome.as_str())
+            .s(
+                "error_kind",
+                error_variant.map(error_kind).unwrap_or("none"),
+            )
+            .s("duration_bucket", duration_bucket(elapsed))
+    })
+}
+
+/// `cua_teleport_attempted`.
+pub fn teleport_attempted(info: &TeleportInfo) -> Event {
+    info.apply(Event::new(event::TELEPORT_ATTEMPTED))
+}
+
+/// `cua_teleport_completed`.
+pub fn teleport_completed(
+    info: &TeleportInfo,
+    outcome: TeleportOutcome,
+    elapsed: Duration,
+    items: u64,
+) -> Event {
+    info.apply(Event::new(event::TELEPORT_COMPLETED))
+        .s("outcome", outcome.as_str())
+        .s("duration_bucket", duration_bucket(elapsed))
+        .s("item_count", count_bucket(items))
+}
+
+/// A Keyvault consent decision (counts only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConsentDecision {
+    Requested,
+    Approved,
+    Denied,
+    Expired,
+}
+
+/// `cua_keyvault_consent`.
+pub fn keyvault_consent(d: ConsentDecision) -> Event {
+    Event::new(event::KEYVAULT_CONSENT).s(
+        "decision",
+        match d {
+            ConsentDecision::Requested => "requested",
+            ConsentDecision::Approved => "approved",
+            ConsentDecision::Denied => "denied",
+            ConsentDecision::Expired => "expired",
+        },
+    )
+}
+
+/// `cua_spaces_feature_used`; None for a feature outside the vocabulary.
+pub fn spaces_feature_used(feature: &str) -> Option<Event> {
+    let f = pick(schema::FEATURES, feature, "");
+    (!f.is_empty()).then(|| Event::new(event::SPACES_FEATURE_USED).s("feature", f))
+}
+
+/// One stream session's aggregate stats.
+#[derive(Debug, Clone, Default)]
+pub struct StreamStats<'a> {
+    pub transport: &'a str,
+    pub codec: &'a str,
+    /// Hardware decode.
+    pub hw_decode: Option<bool>,
+    pub avg_fps: f64,
+    pub p95_latency_ms: Option<f64>,
+    pub height: u32,
+    pub duration: Duration,
+}
+
+/// `cua_stream_stats`.
+pub fn stream_stats(s: &StreamStats<'_>) -> Event {
+    Event::new(event::STREAM_STATS)
+        .s(
+            "transport",
+            pick(
+                schema::STREAM_TRANSPORTS,
+                &s.transport.to_ascii_lowercase(),
+                "other",
+            ),
+        )
+        .s(
+            "codec",
+            pick(schema::CODECS, &s.codec.to_ascii_lowercase(), "other"),
+        )
+        .s(
+            "decode",
+            match s.hw_decode {
+                Some(true) => "hw",
+                Some(false) => "sw",
+                None => "none",
+            },
+        )
+        .s("fps_bucket", fps_bucket(s.avg_fps))
+        .s("latency_bucket", latency_bucket(s.p95_latency_ms))
+        .s("resolution", resolution(s.height))
+        .s("duration_bucket", duration_bucket(s.duration))
+}
+
+/// `cua_stream_stats` from what a viewer counted over a whole session:
+/// frames received over the session's duration give the fps bucket, the
+/// largest frame height the resolution bucket, `p95_latency_ms` (input to
+/// present, or a control round trip) the latency bucket. None when the stream carried
+/// no video (nothing to measure). Every value is bucketed; raw counts,
+/// sizes and times never leave this function.
+pub fn stream_summary(
+    transport: &str,
+    codec: &str,
+    hw_decode: Option<bool>,
+    frames: u64,
+    height: u32,
+    p95_latency_ms: Option<f64>,
+    duration: Duration,
+) -> Option<Event> {
+    if frames == 0 || duration.is_zero() {
+        return None;
+    }
+    Some(stream_stats(&StreamStats {
+        transport,
+        codec,
+        hw_decode,
+        avg_fps: frames as f64 / duration.as_secs_f64(),
+        p95_latency_ms,
+        height,
+        duration,
+    }))
+}
+
+/// `cua_onboarding_step`; None for a step outside the vocabulary.
+pub fn onboarding_step(step: &str, outcome: Outcome) -> Option<Event> {
+    let s = pick(schema::ONBOARDING_STEPS, step, "");
+    (!s.is_empty()).then(|| {
+        Event::new(event::ONBOARDING_STEP)
+            .s("step", s)
+            .s("outcome", outcome.as_str())
+            .s("onboarding_eligible", "unknown")
+            .s("error_kind", "none")
+            .s("failed_step", "none")
+    })
+}
+
+/// The step a failed sign-in stopped at (`schema::SIGN_IN_STEPS`), from its
+/// fixed kind only (`schema::ERROR_KINDS`, as `cua-spaces-app-core`
+/// `sign_in::error_kind` gives it), never from text: reaching Cua's
+/// sign-in service, confirming in the browser (it never came back, or was
+/// declined), the code exchange the service refused, saving the session on
+/// this computer, or stopped by the person. `unknown` when the kind says
+/// nothing about the step.
+pub fn sign_in_failed_step(error_kind: &str) -> &'static str {
+    match error_kind {
+        "transport" | "http" => "reach_service",
+        "timeout" | "permission_denied" => "confirm_in_browser",
+        "unauthenticated" => "exchange_code",
+        "internal" => "save_session",
+        "cancelled" => "cancelled",
+        _ => "unknown",
+    }
+}
+
+/// `cua_onboarding_step` `signed_in` with outcome `error`: a sign-in that
+/// failed, timed out or was cancelled, as its kind ([`schema::ERROR_KINDS`],
+/// else `other`).
+pub fn sign_in_failed(error_kind: &str) -> Event {
+    Event::new(event::ONBOARDING_STEP)
+        .s("step", "signed_in")
+        .s("outcome", Outcome::Error.as_str())
+        .s("onboarding_eligible", "unknown")
+        .s("error_kind", pick(schema::ERROR_KINDS, error_kind, "other"))
+        .s("failed_step", sign_in_failed_step(error_kind))
+}
+
+/// `cua_onboarding_step` `app_launched`: the app started, with whether its
+/// first run was still to finish (`yes`, `no`; `unknown` when the app
+/// cannot tell).
+pub fn app_launched(onboarding_eligible: Option<bool>) -> Event {
+    Event::new(event::ONBOARDING_STEP)
+        .s("step", "app_launched")
+        .s("outcome", Outcome::Ok.as_str())
+        .s(
+            "onboarding_eligible",
+            match onboarding_eligible {
+                Some(true) => "yes",
+                Some(false) => "no",
+                None => "unknown",
+            },
+        )
+        .s("error_kind", "none")
+        .s("failed_step", "none")
+}
+
+/// Where an agent run was started from ([`schema::AGENT_ENTRIES`]), else
+/// `other`.
+pub fn agent_entry(entry: &str) -> &'static str {
+    pick(schema::AGENT_ENTRIES, entry, "other")
+}
+
+/// `cua_agent_run_started`: a run was started (`Outcome::Ok`) or its start
+/// failed (`Outcome::Error` with the error variant). `on` is a location word
+/// or a Space id (`local:dev`; only the location word before `:` is kept).
+pub fn agent_run_started(
+    harness_id: &str,
+    on: &str,
+    entry: &str,
+    outcome: Outcome,
+    error_variant: Option<&str>,
+) -> Event {
+    Event::new(event::AGENT_RUN_STARTED)
+        .s("harness", harness(harness_id))
+        .s("location", location(on))
+        .s("entry", agent_entry(entry))
+        .s("outcome", outcome.as_str())
+        .s(
+            "error_kind",
+            error_variant.map(error_kind).unwrap_or("none"),
+        )
+}
+
+/// `cua_agent_join_phase`: an agent joining a Space reached `phase`
+/// (one of [`schema::JOIN_PHASES`]) `ms_since_post` after the message that
+/// woke it. `run` is the salted hash of the run (see
+/// [`crate::Telemetry::agent_join_phase`]); `tool` is the installed tool for
+/// `install_done`; `failure` a fixed word for a `failed` phase.
+#[allow(clippy::too_many_arguments)]
+pub fn agent_join_phase(
+    phase: &str,
+    harness_id: &str,
+    runtime_id: &str,
+    cold: bool,
+    ms_since_post: u64,
+    run: &str,
+    tool: &str,
+    failure: &str,
+) -> Option<Event> {
+    let phase = schema::JOIN_PHASES.iter().copied().find(|p| *p == phase)?;
+    Some(
+        Event::new(event::AGENT_JOIN_PHASE)
+            .s("phase", phase)
+            .s("harness", harness(harness_id))
+            .s("runtime", pick(schema::JOIN_RUNTIMES, runtime_id, "other"))
+            .b("cold", cold)
+            .n("ms_since_post", ms_since_post.min(3_600_000))
+            .owned("run", run.to_string())
+            .s("tool", pick(schema::JOIN_TOOLS, tool, "other"))
+            .s("failure", pick(schema::JOIN_FAILURES, failure, "other")),
+    )
+}
+
+/// `cua_agent_run_completed`: a run's first turn ended (or the run failed,
+/// crashed or was stopped first).
+pub fn agent_run_completed(
+    harness_id: &str,
+    on: &str,
+    entry: &str,
+    outcome: Outcome,
+    error_variant: Option<&str>,
+    elapsed: Duration,
+) -> Event {
+    Event::new(event::AGENT_RUN_COMPLETED)
+        .s("harness", harness(harness_id))
+        .s("location", location(on))
+        .s("entry", agent_entry(entry))
+        .s("outcome", outcome.as_str())
+        .s(
+            "error_kind",
+            error_variant.map(error_kind).unwrap_or("none"),
+        )
+        .s("duration_bucket", duration_bucket(elapsed))
+}
+
+/// What `cua_durable_agent` is built from. Every text field is a fixed word
+/// chosen from its vocabulary (anything else becomes the fallback), every
+/// number is bounded; no name, path, address or message is ever taken.
+#[derive(Debug, Clone, Default)]
+pub struct DurableAgent<'a> {
+    /// One of [`schema::DURABLE_PHASES`].
+    pub phase: &'a str,
+    /// A cua-agents harness id.
+    pub harness: &'a str,
+    /// The session's placement word (`auto`, anything else is `host`).
+    pub on: &'a str,
+    pub attempt: u32,
+    pub max_attempts: u32,
+    /// One of [`schema::DURABLE_REASONS`].
+    pub reason: &'a str,
+    /// One of [`schema::DURABLE_ENDS`].
+    pub end: &'a str,
+    /// One of [`schema::DURABLE_FAILURES`].
+    pub failure: &'a str,
+    pub failover: bool,
+    pub machines: u32,
+    pub recovery_time_ms: u64,
+    pub interrupted_calls: u32,
+    /// The salted hash of the session (see [`crate::Telemetry::salted_hash`]).
+    pub session: &'a str,
+}
+
+/// `cua_durable_agent`; None for a phase outside the vocabulary or a
+/// session id that is not a salted hash.
+pub fn durable_agent(d: &DurableAgent<'_>) -> Option<Event> {
+    let phase = schema::DURABLE_PHASES
+        .iter()
+        .copied()
+        .find(|p| *p == d.phase)?;
+    schema::is_salted_hash(d.session).then_some(())?;
+    Some(
+        Event::new(event::DURABLE_AGENT)
+            .s("phase", phase)
+            .s("harness", harness(d.harness))
+            .s(
+                "placement",
+                if matches!(d.on.trim(), "" | "auto") {
+                    "auto"
+                } else {
+                    "host"
+                },
+            )
+            .n("attempt", u64::from(d.attempt.min(100)))
+            .n("max_attempts", u64::from(d.max_attempts.min(100)))
+            .s("reason", pick(schema::DURABLE_REASONS, d.reason, "other"))
+            .s("end", pick(schema::DURABLE_ENDS, d.end, "none"))
+            .s(
+                "failure",
+                pick(schema::DURABLE_FAILURES, d.failure, "other"),
+            )
+            .b("failover", d.failover)
+            .n("machines", u64::from(d.machines.min(1000)))
+            .n("recovery_time_ms", d.recovery_time_ms.min(86_400_000))
+            .n(
+                "interrupted_calls",
+                u64::from(d.interrupted_calls.min(10_000)),
+            )
+            .owned("session", d.session.to_string()),
+    )
+}
+
+/// A fixed cause word for a failed agent run, chosen from its recorded
+/// error text: `no_api_key`, `provider_error`, `timeout`, `user_cancelled`,
+/// else `AgentFailed`. The text is only matched, never kept or sent.
+pub fn agent_failure_cause(error: Option<&str>) -> &'static str {
+    let t = error.unwrap_or_default().to_ascii_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| t.contains(w));
+    if has(&["cancelled", "canceled", "interrupted by user"]) {
+        "user_cancelled"
+    } else if has(&["timed out", "timeout", "deadline"]) {
+        "timeout"
+    } else if has(&[
+        "api key",
+        "api_key",
+        "apikey",
+        "credential",
+        "unauthorized",
+        "authentication",
+        "401",
+        "403",
+        "not logged in",
+        "login required",
+    ]) {
+        "no_api_key"
+    } else if has(&[
+        "rate limit",
+        "429",
+        "overloaded",
+        "quota",
+        "provider",
+        "500",
+        "502",
+        "503",
+        "504",
+        "service unavailable",
+    ]) {
+        "provider_error"
+    } else {
+        "AgentFailed"
+    }
+}
+
+/// How an agent run ended, from its published status (`cua_agents`
+/// `RunStatus::as_str`), the ACP stop reason of its last turn and its
+/// recorded error text (only classified into a cause word). None while it
+/// still runs (or cannot be read).
+pub fn agent_run_end(
+    status: &str,
+    stop_reason: Option<&str>,
+    recorded_error: Option<&str>,
+) -> Option<(Outcome, Option<&'static str>)> {
+    match status.trim() {
+        "idle" if stop_reason.is_some_and(|r| r.trim() == "cancelled") => {
+            Some((Outcome::Cancelled, None))
+        }
+        "idle" if recorded_error.is_some() => {
+            Some((Outcome::Error, Some(agent_failure_cause(recorded_error))))
+        }
+        "idle" => Some((Outcome::Ok, None)),
+        "failed" => Some((Outcome::Error, Some(agent_failure_cause(recorded_error)))),
+        "crashed" => Some((Outcome::Error, Some("AgentCrashed"))),
+        _ => None,
+    }
+}
+
+/// `cua_bench_run_completed`.
+pub fn bench_run_completed(
+    taskset_name: &str,
+    success_rate: Option<f64>,
+    tasks: u64,
+    outcome: Outcome,
+) -> Event {
+    Event::new(event::BENCH_RUN_COMPLETED)
+        .s("taskset", taskset(taskset_name))
+        .s("score_bucket", score_bucket(success_rate))
+        .s("task_count", count_bucket(tasks))
+        .s("outcome", outcome.as_str())
+}
+
+/// `cua_daemon_started`.
+pub fn daemon_started(mode: &str, outcome: Outcome) -> Event {
+    Event::new(event::DAEMON_STARTED)
+        .s("mode", pick(schema::DAEMON_MODES, mode, "background"))
+        .s("outcome", outcome.as_str())
+}
+
+/// `cua_daemon_health`.
+pub fn daemon_health(uptime: Duration, sandboxes: u64) -> Event {
+    Event::new(event::DAEMON_HEALTH)
+        .s("uptime_bucket", uptime_bucket(uptime))
+        .s("sandboxes", count_bucket(sandboxes))
+}
+
+/// `cua_spacesd_health`.
+pub fn spacesd_health(uptime: Duration, imports_failed: u64) -> Event {
+    Event::new(event::SPACESD_HEALTH)
+        .s("uptime_bucket", uptime_bucket(uptime))
+        .s("imports_failed", count_bucket(imports_failed))
+}
+
+/// `cua_spacesd_session_deliveries`.
+pub fn spacesd_session_deliveries(grant_present: bool, count: u64) -> Event {
+    Event::new(event::SPACESD_SESSION_DELIVERIES)
+        .s(
+            "delivery_grant",
+            if grant_present { "present" } else { "absent" },
+        )
+        .n("count", count.min(100_000))
+}
+
+/// Create time bucket ([`schema::CREATE_TIMES`]).
+pub fn create_time_bucket(d: Duration) -> &'static str {
+    match d.as_secs() {
+        0..=4 => "lt_5s",
+        5..=9 => "5_9s",
+        10..=19 => "10_19s",
+        20..=39 => "20_39s",
+        40..=59 => "40_59s",
+        60..=119 => "60_119s",
+        120..=299 => "2_4m",
+        300..=599 => "5_9m",
+        600..=1_799 => "10_29m",
+        _ => "gte_30m",
+    }
+}
+
+/// `cua_app_active` (send it with `Telemetry::capture_active_day`, which
+/// keeps it to one per install per UTC day), with no experiment on.
+pub fn app_active() -> Event {
+    app_active_with(&[], "en")
+}
+
+/// `cua_app_active` with the Spaces app's experiments that are on
+/// (`experiments_on`, [`experiments_set`]) and its interface language
+/// (`ui_locale`, [`ui_locale`]).
+pub fn app_active_with(experiments: &[&str], locale: &str) -> Event {
+    Event::new(event::APP_ACTIVE)
+        .owned("experiments_on", experiments_set(experiments))
+        .s("ui_locale", ui_locale(locale))
+}
+
+/// The interface language in [`schema::UI_LOCALES`] (matched exactly after
+/// trimming); anything else, including an empty value, is `other`.
+pub fn ui_locale(locale: &str) -> &'static str {
+    let l = locale.trim();
+    schema::UI_LOCALES
+        .iter()
+        .copied()
+        .find(|k| *k == l && *k != "other")
+        .unwrap_or("other")
+}
+
+/// The experiments in `ids` that are in [`schema::EXPERIMENTS`], in its
+/// order and once each, joined with `+`; `none` when there are none.
+/// Anything else is dropped.
+pub fn experiments_set(ids: &[&str]) -> String {
+    let on: Vec<&str> = schema::EXPERIMENTS
+        .iter()
+        .copied()
+        .filter(|e| ids.iter().any(|i| i.trim() == *e))
+        .collect();
+    if on.is_empty() {
+        "none".into()
+    } else {
+        on.join("+")
+    }
+}
+
+/// `cua_experiment`: an experiment's switch in the Spaces app's Settings
+/// (`experiment_on` or `experiment_off`); None for an action or experiment
+/// outside the vocabulary.
+pub fn experiment(action: &str, experiment: &str) -> Option<Event> {
+    let a = pick(schema::EXPERIMENT_ACTIONS, action, "");
+    let e = pick(schema::EXPERIMENTS, experiment, "");
+    (!a.is_empty() && !e.is_empty()).then(|| {
+        Event::new(event::EXPERIMENT)
+            .s("action", a)
+            .s("experiment", e)
+    })
+}
+
+/// `cua_onboarding_page`; None for a page or action outside the
+/// vocabulary. An unknown choice is sent as `none`.
+pub fn onboarding_page(page: &str, action: &str, choice: &str) -> Option<Event> {
+    let page = pick(schema::ONBOARDING_PAGES, page, "");
+    let action = pick(schema::PAGE_ACTIONS, action, "");
+    (!page.is_empty() && !action.is_empty()).then(|| {
+        Event::new(event::ONBOARDING_PAGE)
+            .s("page", page)
+            .s("action", action)
+            .s("choice", pick(schema::PAGE_CHOICES, choice, "none"))
+    })
+}
+
+/// One of the first-run funnel events: `step_viewed`, `step_completed`,
+/// `step_failed` (with `reason`) or `skipped` (with `how`, from the same
+/// last argument). On the `ready` step the last argument is the picked
+/// agent, and `step_command_copied` and `step_chat_picked_up` are its two
+/// extra events. None for a step, action or
+/// reason outside the vocabulary. `step_index` and `onboarding_version`
+/// come from the step, so a caller cannot send a wrong one.
+pub fn first_run_step(step: &str, action: &str, reason: &str) -> Option<Event> {
+    let step = pick(schema::FIRST_RUN_STEPS, step, "");
+    let name = match action.trim() {
+        "step_viewed" => event::ONBOARDING_STEP_VIEWED,
+        "step_completed" => event::ONBOARDING_STEP_COMPLETED,
+        "step_failed" => event::ONBOARDING_STEP_FAILED,
+        "step_skipped" => event::ONBOARDING_SKIPPED,
+        // Only the Ready screen has a command to copy and chats to continue.
+        "step_command_copied" if step == "ready" => event::ONBOARDING_COMMAND_COPIED,
+        "step_chat_picked_up" if step == "ready" => event::ONBOARDING_CHAT_PICKED_UP,
+        _ => return None,
+    };
+    let index = schema::FIRST_RUN_STEPS.iter().position(|s| *s == step)?;
+    let mut e = Event::new(name)
+        .s("step", step)
+        .n("step_index", index as u64 + 1)
+        .n("onboarding_version", schema::FIRST_RUN_VERSION);
+    // Viewed, completed, copied and picked up carry the Ready screen's agent
+    // (the last argument); every other screen sends `none`.
+    if !matches!(
+        name,
+        event::ONBOARDING_STEP_FAILED | event::ONBOARDING_SKIPPED
+    ) {
+        let agent = if step == "ready" {
+            pick(schema::FIRST_RUN_AGENTS, reason, "other")
+        } else {
+            "none"
+        };
+        e = e.s("agent", agent);
+    }
+    Some(match name {
+        event::ONBOARDING_STEP_FAILED => e.s(
+            "reason",
+            pick(schema::FIRST_RUN_FAIL_REASONS, reason, "other"),
+        ),
+        event::ONBOARDING_SKIPPED => e.s("how", pick(schema::FIRST_RUN_SKIP_HOWS, reason, "later")),
+        _ => e,
+    })
+}
+
+/// `cua_space_wizard`; None for an action outside the vocabulary.
+pub fn space_wizard(action: &str) -> Option<Event> {
+    let a = pick(schema::WIZARD_ACTIONS, action, "");
+    (!a.is_empty()).then(|| Event::new(event::SPACE_WIZARD).s("action", a))
+}
+
+/// What a finished Space create was.
+#[derive(Debug, Clone, Default)]
+pub struct SpaceCreate<'a> {
+    /// Location word (`local`, `cloud`, `direct:...`).
+    pub on: &'a str,
+    pub guest_os: &'a str,
+    /// `container` or `vm`.
+    pub kind: &'a str,
+    /// The last progress phase (sent only on failure, classified).
+    pub last_phase: &'a str,
+    /// It failed because a phase stopped moving.
+    pub stalled: bool,
+    /// GPU acceleration was turned on.
+    pub gpu: bool,
+    /// The error enum's case name (`InsufficientDisk`); empty when the shell had none.
+    pub error_variant: &'a str,
+    /// The app ran the create a second time by itself (0 or 1; more is 1).
+    pub retry_attempt: u32,
+    /// The finer cause (`schema::ERROR_SUBCLASSES`); empty is `none`.
+    pub error_subclass: &'a str,
+}
+
+/// The step a failed create stopped at (`schema::FAILED_STEPS`), read from
+/// the failure's fixed words only: the specific cause (`error_subclass`,
+/// `error_kind`) first, since it names the step, then the phase. `unknown`
+/// when nothing narrows the phase down (a failure in `preparing` that no
+/// word explains), so reports can rank what still needs a name.
+pub fn failed_step(
+    phase: &str,
+    kind: &str,
+    subclass: &str,
+    guest_os: &str,
+    create_kind: &str,
+) -> &'static str {
+    // A download that failed stays a download, whatever the runtime said.
+    if kind.starts_with("image_pull") {
+        return "pull_image";
+    }
+    // The cause's own step, where one word names it.
+    let by_cause = match subclass {
+        "runtime_start"
+        | "runtime_install_failed"
+        | "runtime_not_signed"
+        | "runtime_unresponsive"
+        | "runtime_too_old"
+        | "runtime_api_error" => Some("start_runtime"),
+        "daemon_unresponsive" => Some("reach_daemon"),
+        "pull_interrupted" => Some("pull_image"),
+        "vm_never_started" => Some("start_vm"),
+        "vm_config_invalid" => Some("configure_vm"),
+        _ => match kind {
+            "runtime_missing"
+            | "vm_runtime_missing"
+            | "runtime_not_running"
+            | "runtime_permission" => Some("start_runtime"),
+            "virtualization_unavailable" | "host_capacity" => Some("check_host"),
+            // The checks before anything starts refuse these in `preparing`.
+            "local_network" | "insufficient_disk" if phase == "preparing" => Some("check_host"),
+            "vm_boot_timeout" => Some("start_vm"),
+            "services_unreachable" | "env" => Some("connect_services"),
+            "invalid_argument" | "invalid_placement" | "unsupported" => Some("configure_vm"),
+            "not_found" => Some("resolve_image"),
+            _ => None,
+        },
+    };
+    if let Some(step) = by_cause {
+        return step;
+    }
+    let vm = create_kind == "vm" || matches!(guest_os, "macos" | "windows");
+    match phase {
+        "pulling" => "pull_image",
+        "creating" if vm => "clone_disk",
+        "creating" => "create_container",
+        "booting" => "start_vm",
+        "waiting_for_services" | "connecting" => "connect_services",
+        _ => "unknown",
+    }
+}
+
+/// `cua_space_create`.
+pub fn space_create(s: &SpaceCreate<'_>, outcome: Outcome, elapsed: Duration) -> Event {
+    let failed_phase = match outcome {
+        Outcome::Ok => "none",
+        _ => match pick(
+            schema::CREATE_PHASES,
+            &s.last_phase.to_ascii_lowercase(),
+            "other",
+        ) {
+            // `none` means success; a failure never reports it.
+            "none" => "other",
+            p => p,
+        },
+    };
+    let error_kind = match outcome {
+        Outcome::Error if s.stalled && s.error_variant.is_empty() => "timeout",
+        // A failure never reports `none`.
+        Outcome::Error => match error_kind(s.error_variant) {
+            "none" => "other",
+            k => k,
+        },
+        _ => "none",
+    };
+    let error_subclass = match outcome {
+        Outcome::Cancelled => "none",
+        _ => pick(schema::ERROR_SUBCLASSES, s.error_subclass, "none"),
+    };
+    let guest = guest_os(s.guest_os);
+    let create_kind = sandbox_kind(s.kind);
+    let step = match outcome {
+        Outcome::Error => failed_step(failed_phase, error_kind, error_subclass, guest, create_kind),
+        _ => "none",
+    };
+    Event::new(event::SPACE_CREATE)
+        .s("location", location(s.on))
+        .s("guest_os", guest)
+        .s("kind", create_kind)
+        .s("outcome", outcome.as_str())
+        .s("error_kind", error_kind)
+        .s("failed_phase", failed_phase)
+        .s("failed_step", step)
+        .b("stalled", s.stalled && outcome == Outcome::Error)
+        .s("time_bucket", create_time_bucket(elapsed))
+        .b("gpu", s.gpu)
+        .n("retry_attempt", u64::from(s.retry_attempt.min(1)))
+        .s("error_subclass", error_subclass)
+}
+
+/// `cua_space_create_started`.
+pub fn space_create_started(on: &str, guest: &str, kind: &str, gpu: bool) -> Event {
+    Event::new(event::SPACE_CREATE_STARTED)
+        .s("location", location(on))
+        .s("guest_os", guest_os(guest))
+        .s("kind", sandbox_kind(kind))
+        .b("gpu", gpu)
+}
+
+/// A Cua Volume setting that was saved.
+#[derive(Debug, Clone, Default)]
+pub struct VolumeSetup<'a> {
+    /// `onboarding` or `settings`.
+    pub surface: &'a str,
+    /// `this_mac`, `s3` or `later`.
+    pub storage: &'a str,
+    pub add_to_finder: bool,
+    /// `volume_mount_status`'s method (`fskit`, `nfs`, `fuse`, `none`).
+    pub mount_method: &'a str,
+}
+
+/// `cua_volume_setup`.
+pub fn volume_setup(v: &VolumeSetup<'_>, outcome: Outcome) -> Event {
+    let method = v.mount_method.trim().to_ascii_lowercase();
+    Event::new(event::VOLUME_SETUP)
+        .s(
+            "surface",
+            pick(schema::VOLUME_SURFACES, v.surface, "settings"),
+        )
+        .s("storage", pick(schema::VOLUME_STORAGE, v.storage, "later"))
+        .b("add_to_finder", v.add_to_finder)
+        .s(
+            "mount_method",
+            if method.is_empty() {
+                "unknown"
+            } else {
+                pick(schema::MOUNT_METHODS, &method, "unknown")
+            },
+        )
+        .s("outcome", outcome.as_str())
+}
+
+/// `cua_persistent_agent`; None for an action outside the vocabulary.
+/// `harness` is classified with [`harness`] (only `create` names one).
+pub fn persistent_agent(
+    action: &str,
+    harness_id: Option<&str>,
+    outcome: Outcome,
+    error_variant: Option<&str>,
+) -> Option<Event> {
+    let a = pick(schema::PERSISTENT_ACTIONS, action, "");
+    (!a.is_empty()).then(|| {
+        Event::new(event::PERSISTENT_AGENT)
+            .s("action", a)
+            .s("harness", harness_id.map(harness).unwrap_or("other"))
+            .s("outcome", outcome.as_str())
+            .s(
+                "error_kind",
+                error_variant.map(error_kind).unwrap_or("none"),
+            )
+    })
+}
+
+/// What a host setup knew about its account and where it stopped.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HostSetupDetail<'a> {
+    /// A Cua account session is stored on this machine.
+    pub signed_in: bool,
+    /// `provided`, `expired`, `missing` or `not_needed`.
+    pub token_state: &'a str,
+    /// The stage a failure stopped at (`token`, `register`, ...).
+    pub failed_stage: Option<&'a str>,
+    /// The HTTP status behind the failure, if a server answered.
+    pub http_status: Option<u16>,
+}
+
+/// `cua_host_setup`. `profile` is the request's (`desktop`, `spare`);
+/// `share_desktop` and `provide_spaces` both on is `both`.
+pub fn host_setup(
+    mode: &str,
+    share_desktop: bool,
+    provide_spaces: bool,
+    outcome: Outcome,
+    error_variant: Option<&str>,
+    detail: &HostSetupDetail<'_>,
+) -> Event {
+    let profile = match (share_desktop, provide_spaces) {
+        (true, true) => "both",
+        (false, true) => "spare",
+        (true, false) => "desktop",
+        (false, false) => "unknown",
+    };
+    Event::new(event::HOST_SETUP)
+        .s(
+            "mode",
+            pick(schema::HOST_MODES, &mode.to_ascii_lowercase(), "unknown"),
+        )
+        .s("profile", profile)
+        .s("outcome", outcome.as_str())
+        .s(
+            "error_kind",
+            error_variant.map(error_kind).unwrap_or("none"),
+        )
+        .b("signed_in", detail.signed_in)
+        .s(
+            "token_state",
+            pick(schema::HOST_TOKEN_STATES, detail.token_state, "missing"),
+        )
+        .s(
+            "failed_stage",
+            detail
+                .failed_stage
+                .map(|st| pick(schema::HOST_SETUP_STAGES, st, "none"))
+                .unwrap_or("none"),
+        )
+        .n(
+            "http_status",
+            detail
+                .http_status
+                .filter(|c| (100..600).contains(c))
+                .map_or(0, u64::from),
+        )
+}
+
+/// `cua_host_space_provided`.
+pub fn host_space_provided(
+    kind: &str,
+    guest: &str,
+    outcome: Outcome,
+    error_variant: Option<&str>,
+) -> Event {
+    Event::new(event::HOST_SPACE_PROVIDED)
+        .s("kind", sandbox_kind(kind))
+        .s("guest_os", guest_os(guest))
+        .s("outcome", outcome.as_str())
+        .s(
+            "error_kind",
+            match (outcome, error_variant.map(error_kind)) {
+                (Outcome::Error, None | Some("none")) => "other",
+                (_, k) => k.unwrap_or("none"),
+            },
+        )
+}
+
+/// A Keyvault action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyvaultAction {
+    Setup,
+    Unlock,
+    Lock,
+    Import,
+    /// A site's sign-in was used in a Space.
+    SiteLogin,
+}
+
+/// How the Keyvault was set up or unlocked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyvaultMethod {
+    /// The OS key store (Touch ID on a Mac).
+    OsKeyStore,
+    Passphrase,
+    RecoveryKey,
+    None,
+}
+
+/// `cua_keyvault_action`.
+pub fn keyvault_action(a: KeyvaultAction, m: KeyvaultMethod, outcome: Outcome) -> Event {
+    Event::new(event::KEYVAULT_ACTION)
+        .s(
+            "action",
+            match a {
+                KeyvaultAction::Setup => "setup",
+                KeyvaultAction::Unlock => "unlock",
+                KeyvaultAction::Lock => "lock",
+                KeyvaultAction::Import => "import",
+                KeyvaultAction::SiteLogin => "site_login",
+            },
+        )
+        .s(
+            "method",
+            match m {
+                KeyvaultMethod::OsKeyStore => "os_key_store",
+                KeyvaultMethod::Passphrase => "passphrase",
+                KeyvaultMethod::RecoveryKey => "recovery_key",
+                KeyvaultMethod::None => "none",
+            },
+        )
+        .s("outcome", outcome.as_str())
+}
+
+/// `cua_share`; None for an action outside the vocabulary. `error_kind`
+/// and `failed_stage` say why and where a failure stopped
+/// ([`schema::SHARE_ERROR_KINDS`], [`schema::SHARE_STAGES`]); both are
+/// `none` when it worked, and a failure with no known kind is `other`.
+pub fn share(
+    action: &str,
+    role: &str,
+    outcome: Outcome,
+    error_kind: &str,
+    failed_stage: &str,
+) -> Option<Event> {
+    let a = pick(schema::SHARE_ACTIONS, action, "");
+    (!a.is_empty()).then(|| {
+        Event::new(event::SHARE)
+            .s("action", a)
+            .s(
+                "role",
+                if a == "unshare" {
+                    "none"
+                } else {
+                    pick(schema::SHARE_ROLES, &role.to_ascii_lowercase(), "none")
+                },
+            )
+            .s("outcome", outcome.as_str())
+            .s(
+                "error_kind",
+                match outcome {
+                    Outcome::Ok => "none",
+                    _ => match pick(schema::SHARE_ERROR_KINDS, error_kind, "other") {
+                        "none" => "other",
+                        k => k,
+                    },
+                },
+            )
+            .s(
+                "failed_stage",
+                match outcome {
+                    Outcome::Ok => "none",
+                    _ => match pick(schema::SHARE_STAGES, failed_stage, "other") {
+                        "none" => "other",
+                        st => st,
+                    },
+                },
+            )
+    })
+}
+
+/// `cua_presence_session`: `participants` is the most people seen at once.
+pub fn presence_session(outcome: Outcome, participants: u64, elapsed: Duration) -> Event {
+    Event::new(event::PRESENCE_SESSION)
+        .s("outcome", outcome.as_str())
+        .s("participants", count_bucket(participants))
+        .s("duration_bucket", duration_bucket(elapsed))
+}
+
+/// `cua_app_update`; None for an action outside the vocabulary. An
+/// unknown channel is `stable`, an unknown trigger `background`.
+pub fn app_update(action: &str, channel: &str, trigger: &str) -> Option<Event> {
+    let a = pick(schema::UPDATE_ACTIONS, action, "");
+    (!a.is_empty()).then(|| {
+        Event::new(event::APP_UPDATE)
+            .s("action", a)
+            .s("channel", pick(schema::UPDATE_CHANNELS, channel, "stable"))
+            .s(
+                "trigger",
+                pick(schema::UPDATE_TRIGGERS, trigger, "background"),
+            )
+    })
+}
+
+/// `cua_device_enroll`; None for a method outside the vocabulary.
+pub fn device_enroll(method: &str, outcome: Outcome) -> Option<Event> {
+    let m = pick(schema::ENROLL_METHODS, method, "");
+    (!m.is_empty()).then(|| {
+        Event::new(event::DEVICE_ENROLL)
+            .s("method", m)
+            .s("outcome", outcome.as_str())
+    })
+}
+
+/// `cua_cloud_link`: `action` on `cloud` linked by `auth`, ending at
+/// `status` (`cloud_connect`'s word; `-` becomes `_`). Words outside the
+/// vocabularies become `other` (cloud), `none` (auth) or `error` (status),
+/// so no identifier can travel in them.
+pub fn cloud_link(
+    action: &str,
+    cloud: &str,
+    auth: &str,
+    status: &str,
+    outcome: Outcome,
+) -> Option<Event> {
+    let action = pick(schema::CLOUD_LINK_ACTIONS, action, "");
+    (!action.is_empty()).then(|| {
+        Event::new(event::CLOUD_LINK)
+            .s("action", action)
+            .s("cloud", pick(schema::CLOUD_LINK_CLOUDS, cloud, "other"))
+            .s("auth", pick(schema::CLOUD_LINK_AUTHS, auth, "none"))
+            .s(
+                "status",
+                pick(
+                    schema::CLOUD_LINK_STATUSES,
+                    &status.replace('-', "_"),
+                    "error",
+                ),
+            )
+            .s("outcome", outcome.as_str())
+    })
+}
+
+/// A plan name as [`schema::PLANS`] has it: `team` is `teams`; anything
+/// else the client does not know (an empty plan, a new one) is `unknown`.
+pub fn plan(plan: &str) -> &'static str {
+    match plan.trim().to_ascii_lowercase().as_str() {
+        "team" => "teams",
+        p => pick(schema::PLANS, p, "unknown"),
+    }
+}
+
+/// `cua_plan_limit_shown`: a plan limit was shown to the person at
+/// `surface` (a [`schema::PLAN_SURFACES`] word, else `other`), for cap
+/// `kind` (else `other`) on `plan` (classified with [`plan`]).
+pub fn plan_limit_shown(surface: &str, kind: &str, plan_name: &str) -> Event {
+    Event::new(event::PLAN_LIMIT_SHOWN)
+        .s("surface", pick(schema::PLAN_SURFACES, surface, "other"))
+        .s(
+            "kind",
+            match pick(schema::LIMIT_KINDS, kind, "other") {
+                "none" => "other",
+                k => k,
+            },
+        )
+        .s("plan", plan(plan_name))
+}
+
+/// `cua_upgrade_link_opened`: the person opened the upgrade or account link
+/// of a limit notice or an upgrade prompt at `surface`; `kind` is the cap
+/// when it came from a limit, `none` otherwise.
+pub fn upgrade_link_opened(surface: &str, kind: &str, plan_name: &str) -> Event {
+    Event::new(event::UPGRADE_LINK_OPENED)
+        .s("surface", pick(schema::PLAN_SURFACES, surface, "other"))
+        .s(
+            "kind",
+            if kind.trim().is_empty() {
+                "none"
+            } else {
+                pick(schema::LIMIT_KINDS, kind, "other")
+            },
+        )
+        .s("plan", plan(plan_name))
+}
+
+/// `cua_installer_step`, as `install.sh` and `install.ps1` send it (they
+/// build the same payload themselves; this builder is the reference the
+/// tests hold them to). None for a step outside [`schema::INSTALLER_STEPS`].
+/// `stage` and `error_kind` are kept only on `installer_failed`.
+pub fn installer_step(
+    step: &str,
+    stage: &str,
+    error_kind: &str,
+    installer: &str,
+    items: &[&str],
+) -> Option<Event> {
+    let s = pick(schema::INSTALLER_STEPS, step, "");
+    if s.is_empty() {
+        return None;
+    }
+    let failed = s == "installer_failed";
+    let kind = if failed {
+        pick(schema::INSTALL_ERROR_KINDS, error_kind, "other")
+    } else {
+        "none"
+    };
+    let outcome = match (failed, kind) {
+        (false, _) => Outcome::Ok,
+        (true, "cancelled") => Outcome::Cancelled,
+        (true, _) => Outcome::Error,
+    };
+    let on: Vec<&str> = schema::INSTALL_ITEMS
+        .iter()
+        .copied()
+        .filter(|i| items.iter().any(|x| x.trim() == *i))
+        .collect();
+    Some(
+        Event::new(event::INSTALLER_STEP)
+            .s("step", s)
+            .s("outcome", outcome.as_str())
+            .s(
+                "install_stage",
+                if failed {
+                    pick(schema::INSTALL_STAGES, stage, "other")
+                } else {
+                    "none"
+                },
+            )
+            .s("error_kind", kind)
+            .s("installer", pick(schema::INSTALLERS, installer, "sh"))
+            .owned(
+                "items",
+                if on.is_empty() {
+                    "none".into()
+                } else {
+                    on.join("+")
+                },
+            ),
+    )
+}
+
+/// The kind of Spaces tool `tool` is, when calling it means an agent used
+/// a Space (it acts inside one); None for tools that only list, create,
+/// share or administer Spaces.
+pub fn space_tool_group(tool: &str) -> Option<&'static str> {
+    Some(match tool {
+        "space_bash" | "computer_shell" => "shell",
+        "space_write"
+        | "upload"
+        | "send_file"
+        | "download"
+        | "computer_file_read"
+        | "computer_file_write"
+        | "computer_file_list" => "files",
+        "list_tools" | "call_tool" => "services",
+        "agent_start" | "agent_message" => "agents",
+        "list_space_windows" | "teleport_app" => "other",
+        t if t.starts_with("computer_") && !t.starts_with("computer_access_") => "computer",
+        _ => return None,
+    })
+}
+
+/// `cua_agent_signin_imported`: Connect copied `harness`'s sign-in into
+/// Keyvault on This Mac (only that it happened, for which agent, and how:
+/// `origin` is the copy's origin, `claude-login-keychain` and so on).
+pub fn agent_signin_imported(harness: &str, origin: Option<&str>) -> Event {
+    let via = match origin {
+        Some("claude-login-keychain") => "claude_login_keychain",
+        Some("claude-login-file") => "claude_login_file",
+        Some("device-code") => "device_code",
+        Some("token") => "token",
+        _ => "other",
+    };
+    Event::new(event::AGENT_SIGNIN_IMPORTED)
+        .s("harness", pick(schema::SIGNIN_HARNESSES, harness, "other"))
+        .s("via", via)
+}
+
+/// `cua_agent_signin_refused`: Connect could not copy `harness`'s sign-in;
+/// `kind` is the refusal kind (`not_signed_in`, `cancelled`, `not_yet`,
+/// `failed`). Never the line, the error or the account.
+pub fn agent_signin_refused(harness: &str, kind: &str) -> Event {
+    Event::new(event::AGENT_SIGNIN_REFUSED)
+        .s("harness", pick(schema::SIGNIN_HARNESSES, harness, "other"))
+        .s("reason", pick(schema::SIGNIN_REFUSALS, kind, "other"))
+}
+
+/// `cua_repo_cache`: what the repo cache did for one clone. Only fixed words
+/// and numbers: `outcome` is `hit`, `miss` or `fallback`, `source` `local` or
+/// `network`, `reason` one of [`schema::REPO_CACHE_REASONS`].
+pub fn repo_cache(
+    outcome: &str,
+    source: &str,
+    bytes_saved: u64,
+    seconds_saved: u64,
+    reason: &str,
+) -> Option<Event> {
+    let outcome = schema::REPO_CACHE_OUTCOMES
+        .iter()
+        .copied()
+        .find(|o| *o == outcome)?;
+    Some(
+        Event::new(event::REPO_CACHE)
+            .s("outcome", outcome)
+            .s(
+                "source",
+                pick(schema::REPO_CACHE_SOURCES, source, "network"),
+            )
+            .n("bytes_saved", bytes_saved.min(1_000_000_000_000))
+            .n("seconds_saved", seconds_saved.min(86_400))
+            .s("reason", pick(schema::REPO_CACHE_REASONS, reason, "other")),
+    )
+}
+
+/// `cua_connection_changed`: a provider was connected, reconnected, removed or
+/// checked. Only fixed words leave: the registry's provider id, the kind of
+/// method, the action and the outcome; never a key, a URL, an account or an
+/// error text.
+pub fn connection_changed(provider: &str, method: &str, action: &str, outcome: &str) -> Event {
+    Event::new(event::CONNECTION_CHANGED)
+        .s(
+            "provider",
+            pick(schema::CONNECTION_PROVIDERS, provider, "other"),
+        )
+        .s("method", pick(schema::CONNECTION_METHODS, method, "other"))
+        .s("action", pick(schema::CONNECTION_ACTIONS, action, "check"))
+        .s(
+            "outcome",
+            pick(schema::CONNECTION_OUTCOMES, outcome, "failed"),
+        )
+}
+
+/// `cua_agent_used_space`: an agent's tool call reached a Space and worked.
+/// None for a tool that does not act inside a Space.
+pub fn agent_used_space(tool: &str) -> Option<Event> {
+    space_tool_group(tool).map(|g| Event::new(event::AGENT_USED_SPACE).s("tool_group", g))
+}

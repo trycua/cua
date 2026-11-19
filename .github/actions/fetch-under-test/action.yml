@@ -1,0 +1,56 @@
+name: "Fetch the Cua code under test"
+description: >-
+  Download the binaries built by the `build` matrix of the same workflow run
+  (build-cua-under-test, one job per component) and expose them with the same
+  outputs and paths as build-cua-under-test. The checkout must be the same
+  commit the build jobs used.
+
+inputs:
+  components:
+    description: "Space separated: cua, cua-spacesd, cua-driver."
+    default: "cua cua-spacesd cua-driver"
+
+outputs:
+  cua:
+    description: "Path of the cua CLI."
+    value: ${{ steps.paths.outputs.cua }}
+  cua-spacesd:
+    description: "Path of cua-spacesd (release)."
+    value: ${{ steps.paths.outputs.cua-spacesd }}
+  cua-driver:
+    description: "Path of cua-driver (release)."
+    value: ${{ steps.paths.outputs.cua-driver }}
+  git-sha:
+    description: "The source revision the binaries embed."
+    value: ${{ steps.paths.outputs.git-sha }}
+
+runs:
+  using: composite
+  steps:
+    - if: contains(inputs.components, 'cua-spacesd')
+      uses: actions/download-artifact@v4
+      with:
+        name: under-test-cua-spacesd
+        path: libs/cua-spacesd/target/release
+    - if: contains(inputs.components, 'cua-driver')
+      uses: actions/download-artifact@v4
+      with:
+        name: under-test-cua-driver
+        path: libs/cua-driver/rust/target/release
+    - if: contains(format(' {0} ', inputs.components), ' cua ')
+      uses: actions/download-artifact@v4
+      with:
+        name: under-test-cua
+        path: libs/cua/target/debug
+    - id: paths
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "git-sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
+        for f in libs/cua/target/debug/cua libs/cua-spacesd/target/release/cua-spacesd libs/cua-driver/rust/target/release/cua-driver; do
+          if [ -f "$f" ]; then chmod +x "$f"; fi
+        done
+        # Unfetched components resolve to a path that does not exist.
+        echo "cua=$PWD/libs/cua/target/debug/cua" >>"$GITHUB_OUTPUT"
+        echo "cua-spacesd=$PWD/libs/cua-spacesd/target/release/cua-spacesd" >>"$GITHUB_OUTPUT"
+        echo "cua-driver=$PWD/libs/cua-driver/rust/target/release/cua-driver" >>"$GITHUB_OUTPUT"

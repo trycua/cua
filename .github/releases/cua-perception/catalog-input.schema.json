@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trycua/cua/.github/releases/cua-perception/catalog-input.schema.json",
+  "title": "Cua extension-manager Ed25519 catalog payload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "catalog_version",
+    "expires_unix",
+    "publisher_id",
+    "publisher_name",
+    "key_id",
+    "extension_id",
+    "version",
+    "target",
+    "archive",
+    "archive_size",
+    "archive_sha256",
+    "manifest_sha256",
+    "license",
+    "source",
+    "corresponding_source_uri",
+    "corresponding_source_revision",
+    "provenance",
+    "next_key"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "catalog_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "expires_unix": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "publisher_id": {
+      "const": "cua"
+    },
+    "publisher_name": {
+      "const": "Cua"
+    },
+    "key_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "extension_id": {
+      "const": "cua-perception"
+    },
+    "version": {
+      "type": "string"
+    },
+    "target": {
+      "type": "string"
+    },
+    "archive": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]+\\.tar\\.gz$"
+    },
+    "archive_size": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "archive_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "manifest_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "license": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1
+    },
+    "corresponding_source_uri": {
+      "type": "string",
+      "minLength": 1
+    },
+    "corresponding_source_revision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "provenance": {
+      "type": "string",
+      "minLength": 1
+    },
+    "next_key": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/publisherKey"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "publisherKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key_id",
+        "public_key_base64",
+        "valid_from_unix",
+        "valid_until_unix"
+      ],
+      "properties": {
+        "key_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "public_key_base64": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+/]{43}=$"
+        },
+        "valid_from_unix": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "valid_until_unix": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

@@ -1,6 +1,44 @@
 import { createContext, useContext, useCallback, type ReactNode } from 'react';
 import type { Model } from '../types';
 
+/** Coarse classification of a failed trajectory (sent instead of the message). */
+export type TrajectoryErrorType =
+  | 'agent_error'
+  | 'timeout'
+  | 'network'
+  | 'http_error'
+  | 'auth'
+  | 'rate_limit'
+  | 'parse_error'
+  | 'unknown';
+
+/** Map an error to a {@link TrajectoryErrorType}; the message itself is never sent. */
+export function classifyTrajectoryError(error: unknown, timedOut = false): TrajectoryErrorType {
+  if (timedOut) return 'timeout';
+  if (!(error instanceof Error)) return 'unknown';
+  const text = `${error.name} ${error.message}`.toLowerCase();
+  if (text.includes('timeout') || text.includes('timed out')) return 'timeout';
+  if (
+    text.includes('401') ||
+    text.includes('403') ||
+    text.includes('unauthorized') ||
+    text.includes('forbidden')
+  )
+    return 'auth';
+  if (text.includes('429') || text.includes('rate limit')) return 'rate_limit';
+  if (text.includes('http') || /\b[45]\d\d\b/.test(text)) return 'http_error';
+  if (text.includes('json') || text.includes('parse') || error.name === 'SyntaxError')
+    return 'parse_error';
+  if (
+    text.includes('network') ||
+    text.includes('fetch') ||
+    text.includes('connect') ||
+    error.name === 'TypeError'
+  )
+    return 'network';
+  return 'unknown';
+}
+
 /**
  * Telemetry function types
  */
@@ -10,16 +48,19 @@ export interface TelemetryFunctions {
     model: Model | undefined;
     isFirstMessage: boolean;
     sandboxType: 'vm' | 'custom';
-    message: string;
   }) => void;
   trackTrajectoryCompleted: (params: {
     model: Model | undefined;
     iterationCount: number;
     durationMs: number;
   }) => void;
-  trackTrajectoryFailed: (params: { model: Model | undefined; errorType: string }) => void;
+  /** errorType is a fixed classification, never a raw error message. */
+  trackTrajectoryFailed: (params: {
+    model: Model | undefined;
+    errorType: TrajectoryErrorType;
+  }) => void;
   trackTrajectoryStopped: (params: { model: Model | undefined }) => void;
-  trackExamplePromptSelected: (params: { promptId: string; promptTitle: string }) => void;
+  trackExamplePromptSelected: (params: { promptId: string }) => void;
   trackTrajectoryExported: (params: { runCount: number }) => void;
   trackTrajectoryReplayed: (params: { runIndex: number }) => void;
 }

@@ -1,0 +1,35 @@
+{
+  "port": 4192,
+  "variants": [
+    {
+      "items": {
+        "tea": 2,
+        "cup": 3
+      },
+      "address": {
+        "name": "Mira Vale",
+        "street": "14 Fern Lane",
+        "city": "Pebble Bay",
+        "postal": "41002"
+      },
+      "card": "4111111111111111",
+      "expiry": "12/29",
+      "cvv": "123"
+    },
+    {
+      "items": {
+        "tea": 4,
+        "cup": 1
+      },
+      "address": {
+        "name": "Oren Brook",
+        "street": "27 Moss Road",
+        "city": "Willow Bend",
+        "postal": "73004"
+      },
+      "card": "5555555555554444",
+      "expiry": "11/30",
+      "cvv": "456"
+    }
+  ]
+}

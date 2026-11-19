@@ -12,6 +12,7 @@
 //! (datagram video, no head-of-line blocking) and falls back to its
 //! WebSocket when the listener does not answer within [`QUIC_ATTACH`].
 
+use std::collections::VecDeque;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -33,6 +34,10 @@ use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest};
 /// How long a QUIC attach may take, through the server's first message,
 /// before the session attaches by its WebSocket instead.
 pub const QUIC_ATTACH: Duration = Duration::from_secs(3);
+
+/// Media held while the session opens: QUIC datagrams can overtake the
+/// greeting on the reliable stream.
+const MAX_EARLY_MEDIA: usize = 256;
 
 /// The Cua Spaces streaming client ([`StreamClient`]).
 #[derive(Debug, Default, Clone, Copy)]
@@ -322,6 +327,8 @@ impl MediaStream {
             let phase = phase.clone();
             tokio::spawn(async move {
                 let mut client = MediaClient::new(1);
+                let mut early: VecDeque<Incoming> = VecDeque::new();
+                let mut replay: VecDeque<Incoming> = VecDeque::new();
                 let mut close = (1006u16, "socket ended".to_string());
                 // Per-hop clock of this open (`stream.open` at debug): the
                 // first packet, the first video access unit, the first keyframe.
@@ -359,7 +366,22 @@ impl MediaStream {
                                 break;
                             }
                         },
-                        incoming = link.recv() => match incoming {
+                        incoming = async {
+                            match replay.pop_front() {
+                                Some(held) => held,
+                                None => link.recv().await,
+                            }
+                        } => match incoming {
+                            held @ (Incoming::Binary(_) | Incoming::Loss)
+                                if matches!(
+                                    client.phase(),
+                                    MediaPhase::Attaching | MediaPhase::Greeted
+                                ) =>
+                            {
+                                if early.len() < MAX_EARLY_MEDIA {
+                                    early.push_back(held);
+                                }
+                            }
                             Incoming::Text(text) => match client.apply_text(text.as_str()) {
                                 Ok(event) => {
                                     let item = match event {
@@ -457,6 +479,9 @@ impl MediaStream {
                     if !seen_packet && client.phase() != MediaPhase::Attaching {
                         seen_packet = true;
                         mark("session_opened");
+                    }
+                    if !early.is_empty() && client.phase() == MediaPhase::Open {
+                        replay.append(&mut early);
                     }
                     for text in outgoing {
                         if !link.send_text(text).await {
@@ -624,8 +649,9 @@ mod tests {
         .unwrap()
     }
 
-    /// A QUIC media listener that greets a client with [`TICKET`] and sends
-    /// one keyframe as datagrams, repeating it until the client goes away.
+    /// A QUIC media listener that takes [`TICKET`], sends a keyframe as
+    /// datagrams before its greeting, then repeats it until the client goes
+    /// away.
     fn serve_quic() -> QuicTarget {
         let identity = QuicIdentity::generate().unwrap();
         let endpoint = quinn::Endpoint::server(
@@ -650,13 +676,20 @@ mod tests {
                     ticket: TICKET.into()
                 })
             );
+            let max = connection.max_datagram_size().unwrap();
+            // Media overtakes the greeting, as datagrams may.
+            for fragment in
+                cua_media_transport::fragment_video_packet_v2(1, true, &keyframe(), max).unwrap()
+            {
+                connection.send_datagram(fragment.into()).unwrap();
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
             for text in greeting() {
                 cua_media_transport::quic::write_message(&mut send, text.as_bytes())
                     .await
                     .unwrap();
             }
-            let max = connection.max_datagram_size().unwrap();
-            for packet_id in 1.. {
+            for packet_id in 2.. {
                 for fragment in
                     cua_media_transport::fragment_video_packet_v2(packet_id, true, &keyframe(), max)
                         .unwrap()

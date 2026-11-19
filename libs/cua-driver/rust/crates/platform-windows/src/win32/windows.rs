@@ -191,7 +191,7 @@ pub(crate) fn window_owner_pid(hwnd: u64) -> Option<u32> {
 struct PostActionForegroundRelation {
     exact_match: bool,
     target_identity_live: bool,
-    target_gone: bool,
+    target_dismissed: bool,
     actual_live: bool,
     actual_visible: bool,
     same_pid: bool,
@@ -205,7 +205,17 @@ fn post_action_foreground_allowed(relation: PostActionForegroundRelation) -> boo
         && relation.same_pid
         && ((relation.target_identity_live
             && (relation.exact_match || relation.ownership_reaches_target))
-            || (relation.target_gone && relation.actual_is_prior_owner))
+            || (relation.target_dismissed && relation.actual_is_prior_owner))
+}
+
+/// A dismissed target is destroyed, or, after a click, is the same window and
+/// now hidden: a common dialog hides itself on OK or Save and is destroyed only
+/// later.
+fn target_dismissed(current_pid: Option<u32>, snapshot_pid: u32, hidden: bool) -> bool {
+    match current_pid {
+        None => true,
+        Some(pid) => pid == snapshot_pid && hidden,
+    }
 }
 
 fn owner_chain_reaches_target(
@@ -263,6 +273,16 @@ pub(crate) fn foreground_matches_target_or_owned_window(
     target: ForegroundTarget,
     actual: u64,
 ) -> bool {
+    foreground_matches(target, actual, false)
+}
+
+/// [`foreground_matches_target_or_owned_window`] after a click, which may also
+/// dismiss the owned modal by hiding it.
+pub(crate) fn foreground_after_click_matches(target: ForegroundTarget, actual: u64) -> bool {
+    foreground_matches(target, actual, true)
+}
+
+fn foreground_matches(target: ForegroundTarget, actual: u64, hidden_dismisses: bool) -> bool {
     let current_target_pid = window_owner_pid(target.hwnd);
     let actual_pid = window_owner_pid(actual);
     let actual_hwnd = HWND(actual as *mut _);
@@ -278,7 +298,11 @@ pub(crate) fn foreground_matches_target_or_owned_window(
     post_action_foreground_allowed(PostActionForegroundRelation {
         exact_match: target.hwnd == actual,
         target_identity_live: current_target_pid == Some(target.pid),
-        target_gone: current_target_pid.is_none(),
+        target_dismissed: target_dismissed(
+            current_target_pid,
+            target.pid,
+            hidden_dismisses && !unsafe { IsWindowVisible(HWND(target.hwnd as *mut _)) }.as_bool(),
+        ),
         actual_live: actual_pid.is_some(),
         actual_visible,
         same_pid: actual_pid == Some(target.pid),
@@ -619,8 +643,8 @@ pub fn resolve_uwp_app_pid(host_pid: u32, frame_hwnd: u64) -> Option<u32> {
 mod exact_window_tests {
     use super::{
         exact_window_from_probe, lookup_window_for_pid_with, merge_top_level_windows,
-        owner_chain_reaches_target, post_action_foreground_allowed, PidWindowLookup,
-        PostActionForegroundRelation, WindowInfo,
+        owner_chain_reaches_target, post_action_foreground_allowed, target_dismissed,
+        PidWindowLookup, PostActionForegroundRelation, WindowInfo,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -712,7 +736,7 @@ mod exact_window_tests {
         PostActionForegroundRelation {
             exact_match,
             target_identity_live: true,
-            target_gone: false,
+            target_dismissed: false,
             actual_live: true,
             actual_visible: true,
             same_pid,
@@ -754,7 +778,7 @@ mod exact_window_tests {
     fn dismissed_owned_modal_may_return_to_its_snapshotted_owner_only() {
         let mut dismissed = relation(false, true, false);
         dismissed.target_identity_live = false;
-        dismissed.target_gone = true;
+        dismissed.target_dismissed = true;
         dismissed.actual_is_prior_owner = true;
         assert!(post_action_foreground_allowed(dismissed));
 
@@ -764,6 +788,14 @@ mod exact_window_tests {
         dismissed.actual_is_prior_owner = true;
         dismissed.same_pid = false;
         assert!(!post_action_foreground_allowed(dismissed));
+    }
+
+    #[test]
+    fn destroyed_or_hidden_same_target_counts_as_dismissed() {
+        assert!(target_dismissed(None, 42, false));
+        assert!(target_dismissed(Some(42), 42, true));
+        assert!(!target_dismissed(Some(42), 42, false));
+        assert!(!target_dismissed(Some(43), 42, true));
     }
 
     #[test]

@@ -1460,14 +1460,14 @@ fn harness_winforms_background_element_key_preserves_focus() {
 
 #[test]
 #[ignore]
-fn harness_winforms_webview_host_background_chord_reaches_native_control() {
+fn harness_winforms_webview_host_background_key_reaches_native_control() {
     let mut case = native_background_case(
         "winforms",
         "press_key",
         Targeting::Ax,
         DriverRoute::PostMessage,
     );
-    case.cell_id = "windows-winforms-webview-host-press-key-chord-ax-background".into();
+    case.cell_id = "windows-winforms-webview-host-press-key-ax-background".into();
     run_native_keyboard_case(case, true, |pid, wid, state_path, driver| {
         assert!(
             platform_windows::input::has_chromium_descendant(wid),
@@ -1477,31 +1477,26 @@ fn harness_winforms_webview_host_background_chord_reaches_native_control() {
         let token = element_token_by_id(&snap, "key-target");
         let (response, passed) = observe_background(driver, pid, wid, |driver| {
             let before = keyboard_fixture_state(state_path);
-            // A chord is what the frame-wide WebView classification refuses;
-            // the native control's own HWND must still take it.
+            // The native control keeps its exact-HWND route although the
+            // frame also hosts a WebView.
             let response = driver.call(
                 "press_key",
                 serde_json::json!({
                     "pid": pid, "window_id": wid, "element_token": token,
-                    "key": "f6", "modifiers": ["ctrl"], "delivery_mode": "background"
+                    "key": "f6", "delivery_mode": "background"
                 }),
             );
             assert!(
                 !response.is_error(),
-                "native background chord in WebView host: {}",
+                "native background key in WebView host: {}",
                 response.text()
             );
             let deadline = Instant::now() + Duration::from_secs(3);
-            loop {
+            let delivered = loop {
                 let state = keyboard_fixture_state(state_path);
-                if state["target_up_by_key"]["F6"] == 1
-                    && state["target_up_by_key"]["ControlKey"] == 1
-                {
-                    println!("webview-host background chord before={before} after={state}");
-                    // The posted chord's own key messages, not GetKeyState,
-                    // are the receipt: both keys reach only the exact control.
-                    assert_eq!(state["target_down_by_key"]["ControlKey"], 1);
-                    assert_eq!(state["target_down_by_key"]["F6"], 1);
+                if state["target_up"] == 1 {
+                    println!("webview-host background key before={before} after={state}");
+                    assert_eq!(state["target_down"], 1);
                     assert_eq!(state["decoy_down"], 0, "key reached the wrong control");
                     assert_eq!(state["last_key"], "F6");
                     assert_eq!(state["focus_changes"], before["focus_changes"]);
@@ -1509,16 +1504,37 @@ fn harness_winforms_webview_host_background_chord_reaches_native_control() {
                     assert_eq!(state["decoy_focused"], before["decoy_focused"]);
                     assert_eq!(
                         state["activations"], before["activations"],
-                        "target activated during background chord"
+                        "target activated during background key"
                     );
-                    break;
+                    break state;
                 }
                 assert!(
                     Instant::now() < deadline,
-                    "chord did not reach exact native control: {state}"
+                    "key did not reach exact native control: {state}"
                 );
                 std::thread::sleep(Duration::from_millis(25));
-            }
+            };
+
+            // Posted modifiers never reach GetKeyState, so the frame's
+            // embedded-WebView chord refusal still applies before any input.
+            let chord = driver.call(
+                "press_key",
+                serde_json::json!({
+                    "pid": pid, "window_id": wid, "element_token": token,
+                    "key": "f6", "modifiers": ["ctrl"], "delivery_mode": "background"
+                }),
+            );
+            assert!(
+                chord.is_error(),
+                "background chord in WebView host unexpectedly succeeded: {}",
+                chord.text()
+            );
+            assert_eq!(chord.structured()["code"], "background_unavailable");
+            assert_eq!(
+                keyboard_fixture_state(state_path),
+                delivered,
+                "refused chord changed keyboard fixture state"
+            );
             response
         });
         assert_eq!(response.structured()["route"], "synthetic_events");

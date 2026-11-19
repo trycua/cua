@@ -233,24 +233,6 @@ impl Tool for PressKeyTool {
             }
         };
 
-        // A background element key on a native control posts to that control's
-        // own HWND, which the frame's embedded-WebView chord rule does not cover.
-        let native_target = if elem_idx.is_some() && delivery == DeliveryMode::Background {
-            tokio::task::spawn_blocking({
-                let admitted = admitted.clone();
-                move || {
-                    admitted
-                        .as_ref()
-                        .filter(|element| is_native_control_element(element, hwnd))
-                        .and_then(|element| element.native_window_handle())
-                }
-            })
-            .await
-            .unwrap_or(None)
-        } else {
-            None
-        };
-
         // Classify known background drops before touching UIA focus. Focusing
         // first made an honest Chromium refusal transiently activate the target.
         let event_kind = if mods.is_empty() {
@@ -258,26 +240,10 @@ impl Tool for PressKeyTool {
         } else {
             EventKind::KeyCombo
         };
-        if delivery == DeliveryMode::Background {
-            let webview_host_only = native_target.is_some()
-                && !crate::input::is_chromium_target_window(hwnd)
-                && crate::input::has_chromium_descendant(hwnd);
-            let drop_target = match native_target {
-                Some(target)
-                    if crate::input::delivery::would_be_silently_dropped(target, event_kind) =>
-                {
-                    Some(target)
-                }
-                _ if !webview_host_only
-                    && crate::input::delivery::would_be_silently_dropped(hwnd, event_kind) =>
-                {
-                    Some(hwnd)
-                }
-                _ => None,
-            };
-            if let Some(target) = drop_target {
-                return crate::input::delivery::background_unavailable_error(target, event_kind);
-            }
+        if delivery == DeliveryMode::Background
+            && crate::input::delivery::would_be_silently_dropped(hwnd, event_kind)
+        {
+            return crate::input::delivery::background_unavailable_error(hwnd, event_kind);
         }
 
         // The px form's focus click already moved the cursor. Otherwise place
@@ -297,8 +263,17 @@ impl Tool for PressKeyTool {
         // cached center.
         let background_webview_focus = elem_idx.is_some()
             && delivery == DeliveryMode::Background
-            && native_target.is_none()
-            && crate::input::has_chromium_descendant(hwnd);
+            && crate::input::has_chromium_descendant(hwnd)
+            && !tokio::task::spawn_blocking({
+                let admitted = admitted.clone();
+                move || {
+                    admitted
+                        .as_ref()
+                        .is_some_and(|element| is_native_control_element(element, hwnd))
+                }
+            })
+            .await
+            .unwrap_or(false);
         // Native controls are addressed directly below; only the existing
         // WebView focus-click route needs an activation guard.
         let mut noact = if background_webview_focus {

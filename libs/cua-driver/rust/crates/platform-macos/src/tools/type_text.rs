@@ -810,6 +810,7 @@ enum TypedProgress {
 fn ax_write_progress(
     error: i32,
     before: Option<&str>,
+    selection: Option<(usize, usize)>,
     text: &str,
     trusted: bool,
     deadline: std::time::Instant,
@@ -819,7 +820,7 @@ fn ax_write_progress(
         return None;
     }
     Some(if error == kAXErrorSuccess && trusted {
-        await_typed_delivery(before, text, deadline, read_after)
+        await_typed_delivery(before, selection, text, deadline, read_after)
     } else {
         TypedProgress::Unverifiable
     })
@@ -888,7 +889,18 @@ fn foreground_settle_ms(pid: i32, frontmost_pid: Option<i32>) -> u64 {
     }
 }
 
-fn typed_progress(before: Option<&str>, after: Option<&str>, text: &str) -> TypedProgress {
+/// Classify one read-back against the value before the write. `selection` is
+/// the UTF-16 selection the text replaces, read just before the write. A
+/// shortfall is counted only against it: from growth alone, `abc` becoming
+/// `aXbc` could be `X` inserted or a selected `bc` replaced by all of `Xbc`.
+/// Without it a shortfall is still reported as `Partial` so the drain keeps
+/// waiting, and [`await_typed_delivery`] makes the final one unverifiable.
+fn typed_progress(
+    before: Option<&str>,
+    selection: Option<(usize, usize)>,
+    after: Option<&str>,
+    text: &str,
+) -> TypedProgress {
     if text.is_empty() {
         return TypedProgress::Complete;
     }
@@ -898,35 +910,49 @@ fn typed_progress(before: Option<&str>, after: Option<&str>, text: &str) -> Type
     if before == after {
         return TypedProgress::Unchanged;
     }
-    let Some(inserted) = after
-        .len()
-        .checked_sub(before.len())
-        .and_then(|n| text.get(..n))
-    else {
+    let replaced =
+        selection.and_then(|(location, length)| split_utf16_range(before, location, length));
+    // What took the selection's place, with the rest of the field untouched.
+    let typed = replaced.as_ref().and_then(|(head, tail)| {
+        after
+            .strip_prefix(head.as_str())?
+            .strip_suffix(tail.as_str())
+    });
+    let inserted = inserted_text(before, after, text);
+    if typed == Some(text) || inserted == Some(text) {
+        return TypedProgress::Complete;
+    }
+    if text.contains(['\n', '\r', '\t']) {
+        // Enter, Tab and Return are not characters a field keeps: they submit,
+        // move focus, or reset the field. A shortfall after them says nothing
+        // about how many characters landed.
         return TypedProgress::Unverifiable;
+    }
+    let shortfall = if replaced.is_some() {
+        typed.filter(|typed| !typed.is_empty() && text.starts_with(typed))
+    } else {
+        inserted
     };
+    shortfall.map_or(TypedProgress::Unverifiable, |typed| {
+        TypedProgress::Partial(typed.chars().count())
+    })
+}
+
+/// The prefix of `text` that `after` shows inserted into `before` at one
+/// place, with the rest of `before` intact.
+fn inserted_text<'a>(before: &str, after: &str, text: &'a str) -> Option<&'a str> {
+    let inserted = text.get(..after.len().checked_sub(before.len())?)?;
     let common_prefix: usize = before
         .chars()
         .zip(after.chars())
         .take_while(|(before, after)| before == after)
         .map(|(character, _)| character.len_utf8())
         .sum();
-    let matches_insertion = after
-        .get(..common_prefix + inserted.len())
-        .and_then(|prefix| prefix.rfind(inserted))
-        .is_some_and(|offset| before[offset..] == after[offset + inserted.len()..]);
-    if !matches_insertion {
-        TypedProgress::Unverifiable
-    } else if inserted == text {
-        TypedProgress::Complete
-    } else if text.contains(['\n', '\r', '\t']) {
-        // Enter, Tab and Return are not characters a field keeps: they submit,
-        // move focus, or reset the field. A shortfall after them says nothing
-        // about how many characters landed.
-        TypedProgress::Unverifiable
-    } else {
-        TypedProgress::Partial(inserted.chars().count())
-    }
+    let offset = after
+        .get(..common_prefix + inserted.len())?
+        .rfind(inserted)?;
+    (!inserted.is_empty() && before[offset..] == after[offset + inserted.len()..])
+        .then_some(inserted)
 }
 
 fn read_axvalue(element_ptr_and_idx: Option<(usize, Option<usize>)>) -> Option<String> {
@@ -1185,6 +1211,9 @@ fn cgevent_type_verified(
     if settle_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
+    // The keystrokes replace whatever is selected once the element is focused.
+    let selection =
+        element_ptr_and_idx.and_then(|(ptr, _)| unsafe { selected_range(ptr as AXUIElementRef) });
     crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)?;
     let batched = delay_ms == 0;
 
@@ -1200,7 +1229,7 @@ fn cgevent_type_verified(
             && target_in_web_area(pid, element_ptr_and_idx, window_id) == Some(false);
         trusted.then(|| read_axvalue(element_ptr_and_idx)).flatten()
     };
-    let progress = await_typed_delivery(before, text, deadline, read_trusted);
+    let progress = await_typed_delivery(before, selection, text, deadline, read_trusted);
     // A batched send that a native field only partly took (an app that reads
     // just the first character of a multi-character event) is finished one
     // paced key at a time from where it stopped. Only a trusted prefix takes
@@ -1211,7 +1240,13 @@ fn cgevent_type_verified(
             let tail: String = text.chars().skip(done).collect();
             crate::input::keyboard::type_text_with_delay(pid, &tail, RETYPE_TAIL_DELAY_MS)?;
             let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
-            return Ok(await_typed_delivery(before, text, deadline, read_trusted));
+            return Ok(await_typed_delivery(
+                before,
+                selection,
+                text,
+                deadline,
+                read_trusted,
+            ));
         }
     }
     Ok(progress)
@@ -1219,6 +1254,7 @@ fn cgevent_type_verified(
 
 fn await_typed_delivery(
     before: Option<&str>,
+    selection: Option<(usize, usize)>,
     text: &str,
     deadline: std::time::Instant,
     mut read_value: impl FnMut() -> Option<String>,
@@ -1229,7 +1265,10 @@ fn await_typed_delivery(
     let started = std::time::Instant::now();
     loop {
         let after = read_value();
-        best = match (typed_progress(before, after.as_deref(), text), best) {
+        best = match (
+            typed_progress(before, selection, after.as_deref(), text),
+            best,
+        ) {
             (TypedProgress::Partial(n), TypedProgress::Partial(m)) => {
                 TypedProgress::Partial(n.max(m))
             }
@@ -1244,7 +1283,10 @@ fn await_typed_delivery(
             || gave_up
             || std::time::Instant::now() >= deadline
         {
-            return best;
+            return match best {
+                TypedProgress::Partial(_) if selection.is_none() => TypedProgress::Unverifiable,
+                best => best,
+            };
         }
         std::thread::sleep(DELIVERY_DRAIN_POLL_INTERVAL);
     }
@@ -1628,19 +1670,27 @@ fn type_text_in_key_window(
         // What a full insert of the line must leave in the field, from the
         // value and selection read just before the write.
         let pre_write = submit_body.and_then(|_| unsafe { copy_string_attr(element, "AXValue") });
-        let expected_after_submit =
-            submit_body
-                .zip(pre_write.as_deref())
-                .and_then(|(body, value)| {
-                    let (location, length) = unsafe { selected_range(element)? };
-                    replace_utf16_range(value, location, length, body)
-                });
+        let selection = unsafe { selected_range(element) };
+        let expected_after_submit = submit_body
+            .zip(pre_write.as_deref())
+            .zip(selection)
+            .and_then(|((body, value), (location, length))| {
+                replace_utf16_range(value, location, length, body)
+            });
         let err = unsafe { set_string_attr(element, "AXSelectedText", ax_text) };
         let trusted = web == Some(false);
         let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
         let read_after = || unsafe { copy_string_attr(element, "AXValue") };
         let progress = match submit_body {
-            None => ax_write_progress(err, before.as_deref(), text, trusted, deadline, read_after),
+            None => ax_write_progress(
+                err,
+                before.as_deref(),
+                selection,
+                text,
+                trusted,
+                deadline,
+                read_after,
+            ),
             Some(_) => ax_submit_progress(
                 err,
                 pre_write.as_deref(),
@@ -1817,6 +1867,14 @@ fn submit_read_back_matches(
 /// `value` with the UTF-16 range `location..location + length` replaced by
 /// `body`, or `None` when the range is outside `value` or splits a character.
 fn replace_utf16_range(value: &str, location: usize, length: usize, body: &str) -> Option<String> {
+    let (head, tail) = split_utf16_range(value, location, length)?;
+    Some(format!("{head}{body}{tail}"))
+}
+
+/// The text of `value` before and after the UTF-16 range
+/// `location..location + length`, or `None` when the range is outside `value`
+/// or splits a character.
+fn split_utf16_range(value: &str, location: usize, length: usize) -> Option<(String, String)> {
     let units: Vec<u16> = value.encode_utf16().collect();
     let end = location.checked_add(length)?;
     if end > units.len() {
@@ -1824,7 +1882,7 @@ fn replace_utf16_range(value: &str, location: usize, length: usize, body: &str) 
     }
     let head = String::from_utf16(&units[..location]).ok()?;
     let tail = String::from_utf16(&units[end..]).ok()?;
-    Some(format!("{head}{body}{tail}"))
+    Some((head, tail))
 }
 
 fn is_text_input_role(role: &str) -> bool {
@@ -1981,7 +2039,8 @@ mod tests {
 
     use super::*;
 
-    /// One AX write outcome with a single read-back sample.
+    /// One AX write outcome with a single read-back sample, typed at the
+    /// end of `before`.
     fn ax_write_once(
         error: i32,
         before: Option<&str>,
@@ -1992,11 +2051,16 @@ mod tests {
         ax_write_progress(
             error,
             before,
+            before.map(caret_at_end),
             text,
             trusted,
             std::time::Instant::now(),
             || after.map(str::to_owned),
         )
+    }
+
+    fn caret_at_end(value: &str) -> (usize, usize) {
+        (value.encode_utf16().count(), 0)
     }
 
     fn public_action(result: &ToolResult) -> Value {
@@ -2118,20 +2182,32 @@ mod tests {
 
     #[test]
     fn native_insertions_with_overlapping_prefixes_publish_exact_progress() {
-        for (before, after, text, effect, count) in [
-            ("a", "aba", "ab", "confirmed", 2),
-            ("ab", "abcab", "abc", "confirmed", 3),
-            ("cat", "catapultcat", "catapult", "confirmed", 8),
-            ("za", "zaba", "ab", "confirmed", 2),
-            ("é", "é🙂é", "é🙂", "confirmed", 2),
-            ("ê", "éê", "é", "confirmed", 1),
-            ("abc", "abcab", "ab", "confirmed", 2),
-            ("aaa", "aaaaa", "aa", "confirmed", 2),
-            ("a", "aba", "abc", "partial", 2),
-            ("a", "aab", "abc", "partial", 2),
+        for (before, selection, after, text, effect, count) in [
+            ("a", (0, 0), "aba", "ab", "confirmed", 2),
+            ("ab", (0, 0), "abcab", "abc", "confirmed", 3),
+            ("cat", (0, 0), "catapultcat", "catapult", "confirmed", 8),
+            ("za", (1, 0), "zaba", "ab", "confirmed", 2),
+            ("é", (0, 0), "é🙂é", "é🙂", "confirmed", 2),
+            ("ê", (0, 0), "éê", "é", "confirmed", 1),
+            ("abc", (3, 0), "abcab", "ab", "confirmed", 2),
+            ("aaa", (1, 0), "aaaaa", "aa", "confirmed", 2),
+            ("a", (0, 0), "aba", "abc", "partial", 2),
+            ("a", (1, 0), "aab", "abc", "partial", 2),
+            // A replaced selection: growth alone would count only `X`.
+            ("abc", (1, 2), "aXbc", "Xbc", "confirmed", 3),
+            ("abc", (1, 2), "aX", "Xbc", "partial", 1),
+            ("hello", (0, 5), "h", "hi", "partial", 1),
         ] {
-            let progress =
-                ax_write_once(kAXErrorSuccess, Some(before), Some(after), text, true).unwrap();
+            let progress = ax_write_progress(
+                kAXErrorSuccess,
+                Some(before),
+                Some(selection),
+                text,
+                true,
+                std::time::Instant::now(),
+                || Some(after.to_owned()),
+            )
+            .unwrap();
             let result = text_result(
                 TypeTextOutcome {
                     detail: String::new(),
@@ -2203,6 +2279,7 @@ mod tests {
         let progress = ax_write_progress(
             kAXErrorSuccess,
             Some(""),
+            Some((0, 0)),
             "marker",
             true,
             std::time::Instant::now() + std::time::Duration::from_secs(1),
@@ -2239,6 +2316,7 @@ mod tests {
         let progress = ax_write_progress(
             kAXErrorSuccess,
             Some(""),
+            Some((0, 0)),
             "marker",
             true,
             std::time::Instant::now() + std::time::Duration::from_millis(50),
@@ -2301,6 +2379,7 @@ mod tests {
         let mut first = true;
         let progress = await_typed_delivery(
             Some(""),
+            Some((0, 0)),
             "marker",
             std::time::Instant::now() + std::time::Duration::from_millis(100),
             || {
@@ -2347,10 +2426,13 @@ mod tests {
             ("ab", "axb", "marker"),
             ("ab", "abmarkerx", "marker"),
         ] {
-            let progress =
-                await_typed_delivery(Some(before), text, std::time::Instant::now(), || {
-                    Some(after.into())
-                });
+            let progress = await_typed_delivery(
+                Some(before),
+                Some(caret_at_end(before)),
+                text,
+                std::time::Instant::now(),
+                || Some(after.into()),
+            );
             let result = text_result(
                 TypeTextOutcome {
                     detail: String::new(),
@@ -2682,33 +2764,52 @@ mod tests {
     #[test]
     fn typed_progress_classifies_readback() {
         use TypedProgress::*;
-        for (before, after, text, expected) in [
+        for (before, selection, after, text, expected) in [
             // Catalyst: can't read AXValue back, so delivery cannot be confirmed.
-            (None, None, "hi", Unverifiable),
-            (Some(""), None, "hi", Unverifiable),
-            (None, Some("h"), "hi", Unverifiable),
-            (Some(""), Some("hi"), "hi", Complete),
-            (Some("ab "), Some("ab hi"), "hi", Complete),
+            (None, None, None, "hi", Unverifiable),
+            (Some(""), Some((0, 0)), None, "hi", Unverifiable),
+            (None, None, Some("h"), "hi", Unverifiable),
+            (Some(""), Some((0, 0)), Some("hi"), "hi", Complete),
+            (Some("ab "), Some((3, 0)), Some("ab hi"), "hi", Complete),
             // Growth that is not exactly the requested insertion proves nothing.
-            (Some("ab"), Some("ab hi"), "hi", Unverifiable),
+            (Some("ab"), Some((2, 0)), Some("ab hi"), "hi", Unverifiable),
             // An observable prefix is partial delivery, never completion.
             (
                 Some(""),
+                Some((0, 0)),
                 Some("BEGINpayload"),
                 "BEGINpayloadEND",
                 Partial(12),
             ),
-            (Some("ab"), Some("ab"), "hi", Unchanged),
-            (None, None, "", Complete),
+            (Some("ab"), Some((2, 0)), Some("ab"), "hi", Unchanged),
+            (None, None, None, "", Complete),
             // A submitted field rewrites itself; the shortfall proves nothing.
-            (Some("A1"), Some("A1xx"), "$Controls.A1\n", Unverifiable),
-            (Some(""), Some("one\ntwo"), "one\ntwo", Complete),
-            (Some(""), Some("ab"), "ab\n", Unverifiable),
+            (
+                Some("A1"),
+                Some((2, 0)),
+                Some("A1xx"),
+                "$Controls.A1\n",
+                Unverifiable,
+            ),
+            (
+                Some(""),
+                Some((0, 0)),
+                Some("one\ntwo"),
+                "one\ntwo",
+                Complete,
+            ),
+            (Some(""), Some((0, 0)), Some("ab"), "ab\n", Unverifiable),
+            // Typing replaces the selection, so the count comes from what took
+            // its place, not from how much the field grew.
+            (Some("abc"), Some((1, 2)), Some("aXbc"), "Xbc", Complete),
+            (Some("abc"), Some((1, 2)), Some("aX"), "Xbc", Partial(1)),
+            (Some("hello"), Some((0, 5)), Some("hi"), "hi", Complete),
+            (Some("abc"), Some((1, 2)), Some("abX"), "Xbc", Unverifiable),
         ] {
             assert_eq!(
-                typed_progress(before, after, text),
+                typed_progress(before, selection, after, text),
                 expected,
-                "before={before:?} after={after:?} text={text:?}"
+                "before={before:?} selection={selection:?} after={after:?} text={text:?}"
             );
         }
     }
@@ -2723,6 +2824,7 @@ mod tests {
         let mut reads = 0;
         let delivery = await_typed_delivery(
             Some(""),
+            Some((0, 0)),
             text,
             std::time::Instant::now() + std::time::Duration::from_secs(1),
             || {
@@ -2738,6 +2840,7 @@ mod tests {
     fn drained_prefix_reports_the_delivered_character_count() {
         let delivery = await_typed_delivery(
             Some(""),
+            Some((0, 0)),
             "BEGIN-payload-END",
             std::time::Instant::now(),
             || Some("BEGIN".to_owned()),
@@ -2745,13 +2848,34 @@ mod tests {
         assert_eq!(delivery, TypedProgress::Partial(5));
     }
 
+    /// Without the pre-write selection, growth cannot tell a partial insert
+    /// from a complete replacement of selected text, so a shortfall is never
+    /// counted or resent; a full replacement read against it confirms.
+    #[test]
+    fn a_shortfall_without_the_selection_is_unverifiable() {
+        let drain = |selection| {
+            await_typed_delivery(
+                Some("abc"),
+                selection,
+                "Xbc",
+                std::time::Instant::now(),
+                || Some("aXbc".to_owned()),
+            )
+        };
+        assert_eq!(drain(None), TypedProgress::Unverifiable);
+        assert_eq!(drain(Some((1, 2))), TypedProgress::Complete);
+    }
+
     #[test]
     fn zero_progress_stops_polling_after_the_give_up_window() {
         let started = std::time::Instant::now();
-        let outcome =
-            await_typed_delivery(Some("abc"), "xyz", started + DELIVERY_DRAIN_TIMEOUT, || {
-                Some("abc".to_string())
-            });
+        let outcome = await_typed_delivery(
+            Some("abc"),
+            Some((3, 0)),
+            "xyz",
+            started + DELIVERY_DRAIN_TIMEOUT,
+            || Some("abc".to_string()),
+        );
         assert_eq!(outcome, TypedProgress::Unchanged);
         assert!(started.elapsed() < DELIVERY_DRAIN_TIMEOUT / 2);
     }
@@ -2767,6 +2891,7 @@ mod tests {
             let mut reads = 0;
             let result = await_typed_delivery(
                 Some(""),
+                Some((0, 0)),
                 "hello",
                 std::time::Instant::now() + std::time::Duration::from_millis(30),
                 || {

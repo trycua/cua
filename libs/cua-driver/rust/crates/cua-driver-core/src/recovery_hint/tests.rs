@@ -495,6 +495,33 @@ fn an_incomplete_type_text_names_how_much_landed() {
 }
 
 #[test]
+fn an_incomplete_type_text_that_is_not_retryable_does_not_invite_the_rest() {
+    let hint = hint_for(
+        "type_text",
+        &window_seed(),
+        true,
+        json!({
+            "code": "type_text_incomplete",
+            "delivered_chars": 12,
+            "requested_chars": 40,
+            "retryable": false,
+        }),
+    );
+    assert_eq!(
+        hint.hint,
+        "Only the first 12 characters landed. Read the field to confirm; do not type the rest \
+         automatically."
+    );
+    assert_eq!(
+        call_value(&hint),
+        json!({
+            "tool": "get_window_state",
+            "arguments": {"pid": 4242, "window_id": 17, "session": "run-1", "since": "latest"},
+        })
+    );
+}
+
+#[test]
 fn an_unattached_browser_names_the_attach_call() {
     let seed = seed(json!({"pid": 659, "window_id": 12, "session": "web"}));
     let hint = hint_for(

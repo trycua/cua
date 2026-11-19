@@ -539,10 +539,12 @@ static RULES: &[Rule] = &[
                 .and_then(Value::as_u64)
                 .map(|n| format!("Only the first {n} characters landed. "))
                 .unwrap_or_default();
-            RecoveryHint::new(format!(
-                "{delivered}Read the field to confirm, then type only the missing rest; do not resend it all."
-            ))
-            .call(c.read_changes())
+            let next = if c.structured.get("retryable") == Some(&Value::Bool(false)) {
+                "Read the field to confirm; do not type the rest automatically."
+            } else {
+                "Read the field to confirm, then type only the missing rest; do not resend it all."
+            };
+            RecoveryHint::new(format!("{delivered}{next}")).call(c.read_changes())
         },
     },
     Rule {

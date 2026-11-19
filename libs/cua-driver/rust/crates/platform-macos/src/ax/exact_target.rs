@@ -16,9 +16,9 @@ use cua_driver_core::background_input::{
 };
 
 use super::bindings::{
-    ax_get_window_id, copy_ax_windows, copy_ax_windows_including, copy_bool_attr, copy_children,
-    copy_element_attr, copy_string_attr, focused_element_of_pid, AXUIElementCreateApplication,
-    AXUIElementRef,
+    attr_is_absent, ax_get_window_id, copy_ax_windows, copy_ax_windows_including, copy_bool_attr,
+    copy_children, copy_children_limited, copy_element_attr, copy_string_attr,
+    focused_element_of_pid, AXUIElementCreateApplication, AXUIElementRef,
 };
 use super::snapshot::RetainedElement;
 use crate::windows::{describe_window, resolve_window_owner, WindowOwner};
@@ -325,12 +325,30 @@ pub unsafe fn in_parentless_menu(element: AXUIElementRef) -> bool {
     .is_some()
 }
 
+/// [`parentless_menu`], kept only when the menu answers both `AXParent` and
+/// `AXWindow` as absent. A failed read of either is not proof the menu names
+/// no window.
+fn detached_menu<E>(
+    item: E,
+    role: impl Fn(&E) -> Option<String>,
+    parent: impl Fn(&E) -> Option<E>,
+    absent: impl Fn(&E, &str) -> bool,
+) -> Option<E> {
+    parentless_menu(item, role, parent)
+        .filter(|menu| absent(menu, "AXParent") && absent(menu, "AXWindow"))
+}
+
+fn is_absent(element: &RetainedElement, attr: &str) -> bool {
+    // SAFETY: a RetainedElement holds a +1 reference on a live element.
+    unsafe { attr_is_absent(element.as_ptr() as AXUIElementRef, attr) }
+}
+
 /// Whether `element` is an item of a menu that names no window (see
-/// [`parentless_menu`]) and that window `window_id`'s own AX subtree lists.
+/// [`detached_menu`]) and that window `window_id`'s own AX subtree lists.
 /// A Mac Catalyst pop-up's menu is reachable only downward: the window's root
 /// group lists it among its children (issue #4619). The search is breadth
-/// first and stops after [`MAX_MENU_SEARCH_NODES`] elements; a menu not found
-/// within that budget stays unproven.
+/// first and reads at most [`MAX_MENU_SEARCH_NODES`] elements; a menu not
+/// found within that budget stays unproven.
 ///
 /// # Safety
 ///
@@ -340,10 +358,11 @@ unsafe fn in_menu_listed_by_window(
     window_id: u32,
     element: AXUIElementRef,
 ) -> bool {
-    let Some(menu) = parentless_menu(
+    let Some(menu) = detached_menu(
         RetainedElement::retain(element as usize),
         role_of,
         parent_of,
+        is_absent,
     ) else {
         return false;
     };
@@ -366,10 +385,10 @@ unsafe fn in_menu_listed_by_window(
     listed
 }
 
-fn children_of(element: &RetainedElement) -> Vec<RetainedElement> {
-    // SAFETY: as in parent_of; copy_children returns +1 references.
+fn children_of(element: &RetainedElement, max: usize) -> Vec<RetainedElement> {
+    // SAFETY: as in parent_of; copy_children_limited returns +1 references.
     unsafe {
-        copy_children(element.as_ptr() as AXUIElementRef)
+        copy_children_limited(element.as_ptr() as AXUIElementRef, max)
             .into_iter()
             .map(|child| {
                 let retained = RetainedElement::retain(child as usize);
@@ -381,12 +400,13 @@ fn children_of(element: &RetainedElement) -> Vec<RetainedElement> {
 }
 
 /// Whether `target` is `root` or one of its descendants, searched breadth
-/// first. At most `max_nodes` elements are taken in; past that the answer is
-/// `false`, never a guess.
+/// first. At most `max_nodes` elements are taken in, and `children` is asked
+/// for no more than the room left; past that the answer is `false`, never a
+/// guess.
 fn subtree_contains<E>(
     root: E,
     target: &E,
-    children: impl Fn(&E) -> Vec<E>,
+    children: impl Fn(&E, usize) -> Vec<E>,
     same: impl Fn(&E, &E) -> bool,
     max_nodes: usize,
 ) -> bool {
@@ -397,7 +417,10 @@ fn subtree_contains<E>(
             return true;
         }
         let room = max_nodes.saturating_sub(taken);
-        let next = children(&node).into_iter().take(room);
+        if room == 0 {
+            continue;
+        }
+        let next = children(&node, room).into_iter().take(room);
         let before = queue.len();
         queue.extend(next);
         taken += queue.len() - before;
@@ -669,8 +692,8 @@ pub fn gather_background_facts(
 #[cfg(test)]
 mod tests {
     use super::{
-        count_competing_keyboard_destinations, parentless_menu, resolve_owning_window,
-        subtree_contains, AxWindowId, AxWindowRecord, WindowServerRow,
+        count_competing_keyboard_destinations, detached_menu, parentless_menu,
+        resolve_owning_window, subtree_contains, AxWindowId, AxWindowRecord, WindowServerRow,
     };
 
     /// A fake AX node: (role, AXParent index, CGWindowID).
@@ -723,9 +746,19 @@ mod tests {
         );
     }
 
-    /// A fake AX tree for the subtree search: each node's children.
+    /// A fake AX tree for the subtree search: each node's children. Panics if
+    /// the search asks for children with no room left for them.
     fn listed(tree: &[&[usize]], target: usize, max_nodes: usize) -> bool {
-        subtree_contains(0, &target, |&i| tree[i].to_vec(), |a, b| a == b, max_nodes)
+        subtree_contains(
+            0,
+            &target,
+            |&i, max| {
+                assert!(max > 0, "children read after the budget is full");
+                tree[i].iter().copied().take(max).collect()
+            },
+            |a, b| a == b,
+            max_nodes,
+        )
     }
 
     #[test]
@@ -742,6 +775,49 @@ mod tests {
         assert!(!listed(tree, 3, 3), "an exhausted budget is not a proof");
         let cycle: &[&[usize]] = &[&[1], &[0]];
         assert!(!listed(cycle, 2, 16), "a cycle ends at the budget");
+        let wide: &[&[usize]] = &[&[1, 2, 3, 4, 5]];
+        let asked = std::cell::Cell::new(0);
+        let found = subtree_contains(
+            0,
+            &5,
+            |&i: &usize, max| {
+                asked.set(asked.get().max(max));
+                wide.get(i)
+                    .map_or(vec![], |c| c.iter().copied().take(max).collect())
+            },
+            |a, b| a == b,
+            3,
+        );
+        assert!(!found, "a child past the budget is never read");
+        assert_eq!(asked.get(), 2, "children are read only up to the room left");
+    }
+
+    #[test]
+    fn a_menu_is_detached_only_when_it_answers_no_parent_and_no_window() {
+        // (role, AXParent, AXParent absent, AXWindow absent)
+        let nodes = [
+            ("AXMenuItem", Some(1), false, false),
+            ("AXMenu", None, true, true),
+            ("AXMenuItem", Some(3), false, false),
+            ("AXMenu", None, true, false),
+            ("AXMenuItem", Some(5), false, false),
+            ("AXMenu", None, false, true),
+        ];
+        let detached = |item: usize| {
+            detached_menu(
+                item,
+                |&i| Some(nodes[i].0.to_owned()),
+                |&i| nodes[i].1,
+                |&i, attr| match attr {
+                    "AXParent" => nodes[i].2,
+                    "AXWindow" => nodes[i].3,
+                    _ => false,
+                },
+            )
+        };
+        assert_eq!(detached(0), Some(1));
+        assert_eq!(detached(2), None, "a menu whose AXWindow read failed");
+        assert_eq!(detached(4), None, "a menu whose AXParent read failed");
     }
 
     #[test]

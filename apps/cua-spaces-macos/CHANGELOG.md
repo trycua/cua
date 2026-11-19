@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.38.17](https://github.com/trycua/cua/compare/cua-spaces-v0.38.16...cua-spaces-v0.38.17) (2026-11-19)
+
+
+### Bug Fixes
+
+* **cua-vmm:** wait for a starting container engine, name and retry its failed pings ([#8241](https://github.com/trycua/cua/issues/8241)) ([fd4e019](https://github.com/trycua/cua/commit/fd4e01991b42350dc8cf0e807c9f211ada44e0bd))
+* **spaces-macos:** bundle cua 0.28.5 in Cua Spaces ([#8232](https://github.com/trycua/cua/issues/8232)) ([1cc9693](https://github.com/trycua/cua/commit/1cc96937190e2a8f490c0b53b47c279120ff13dd))
+
 ## [0.38.16](https://github.com/trycua/cua/compare/cua-spaces-v0.38.15...cua-spaces-v0.38.16) (2026-11-19)
 
 

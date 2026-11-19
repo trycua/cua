@@ -93,6 +93,12 @@ pub mod browser_platform;
 #[cfg(any(target_os = "windows", test))]
 mod browser_isolated_selection;
 
+// Machine policy that forces extensions on an isolated browser; the key
+// choice and policy assembly are cfg-independent so their unit tests run on
+// any host.
+#[cfg(any(target_os = "windows", test))]
+mod browser_managed_policy;
+
 // Pure path normalization and reparse-point resolution for the isolated
 // browser installation check; cfg-independent so its unit tests run on any
 // host.

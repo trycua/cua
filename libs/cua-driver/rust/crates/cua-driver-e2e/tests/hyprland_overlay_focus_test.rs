@@ -1,0 +1,180 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+//! Live Hyprland regression for the native cursor overlay's focus contract:
+//! one `cua-agent-cursor` layer-shell surface per output, no focusable client,
+//! and no workspace or active-window change during cursor activity. Run only
+//! in a disposable native Hyprland desktop.
+#![cfg(target_os = "linux")]
+
+use std::io::{BufRead, BufReader, ErrorKind};
+use std::os::unix::net::UnixStream;
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
+
+use cua_driver_testkit::{Driver, McpDriver};
+use serde_json::{json, Value};
+
+const SESSION: &str = "hyprland-overlay-focus";
+
+/// Hyprland event-socket events that mean focus, workspace or a client moved.
+const FOCUS_EVENTS: &[&str] = &[
+    "activewindow",
+    "activewindowv2",
+    "workspace",
+    "workspacev2",
+    "focusedmon",
+    "focusedmonv2",
+    "openwindow",
+];
+
+fn hypr_json(query: &str) -> Value {
+    let output = Command::new("hyprctl")
+        .args(["-j", query])
+        .output()
+        .unwrap_or_else(|error| panic!("run hyprctl -j {query}: {error}"));
+    assert!(output.status.success(), "hyprctl -j {query} failed");
+    serde_json::from_slice(&output.stdout).expect("parse hyprctl JSON")
+}
+
+/// Records every focus event Hyprland broadcasts until `finish`, so a change
+/// that reverts before the end still fails the test. `finish` drains what is
+/// already queued, and any read error or EOF fails, since focus would then go
+/// unobserved.
+struct FocusEvents {
+    finishing: Arc<AtomicBool>,
+    reader: JoinHandle<Result<Vec<String>, String>>,
+}
+
+impl FocusEvents {
+    fn start() -> Self {
+        let socket = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").expect("XDG_RUNTIME_DIR"))
+            .join("hypr")
+            .join(std::env::var("HYPRLAND_INSTANCE_SIGNATURE").unwrap())
+            .join(".socket2.sock");
+        let stream = UnixStream::connect(&socket).expect("connect to Hyprland event socket");
+        stream
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .expect("set event socket read timeout");
+        let finishing = Arc::new(AtomicBool::new(false));
+        let reader_finishing = Arc::clone(&finishing);
+        let reader = thread::spawn(move || {
+            let mut reader = BufReader::new(stream);
+            let mut events = Vec::new();
+            let mut line = Vec::new();
+            loop {
+                // Read the flag first: once set, a quiet read means the queue
+                // holds nothing that predates `finish`.
+                let finishing = reader_finishing.load(Ordering::SeqCst);
+                match reader.read_until(b'\n', &mut line) {
+                    Ok(0) => return Err("Hyprland closed the event socket".to_owned()),
+                    Ok(_) => {}
+                    Err(error)
+                        if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
+                    {
+                        if finishing {
+                            return Ok(events);
+                        }
+                        continue;
+                    }
+                    Err(error) => return Err(format!("read Hyprland event socket: {error}")),
+                }
+                let event = String::from_utf8_lossy(&line).trim_end().to_owned();
+                line.clear();
+                if event
+                    .split_once(">>")
+                    .is_some_and(|(name, _)| FOCUS_EVENTS.contains(&name))
+                {
+                    events.push(event);
+                }
+            }
+        });
+        Self { finishing, reader }
+    }
+
+    fn finish(self) -> Vec<String> {
+        self.finishing.store(true, Ordering::SeqCst);
+        self.reader
+            .join()
+            .expect("event reader")
+            .unwrap_or_else(|error| panic!("focus events went unobserved: {error}"))
+    }
+}
+
+fn call_ok(driver: &mut McpDriver, tool: &str, args: Value) {
+    let response = driver.call(tool, args);
+    assert!(!response.is_error(), "{tool} failed: {}", response.text());
+}
+
+#[test]
+#[ignore = "requires disposable native Hyprland and exact-candidate Driver"]
+fn native_overlay_never_maps_an_active_hyprland_client() {
+    assert!(std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some());
+    assert_eq!(
+        std::env::var("CUA_DRIVER_RS_ENABLE_WAYLAND").as_deref(),
+        Ok("1")
+    );
+    let events = FocusEvents::start();
+    let mut driver = McpDriver::spawn_named_with_overlay("hyprland-overlay-focus")
+        .expect("exact-candidate Driver is required");
+    let pid = u64::from(driver.daemon_pid().expect("test-owned daemon"));
+
+    call_ok(&mut driver, "start_session", json!({"session": SESSION}));
+    call_ok(
+        &mut driver,
+        "set_agent_cursor_motion",
+        json!({"session": SESSION, "glide_duration_ms": 250, "idle_hide_ms": 0}),
+    );
+    call_ok(
+        &mut driver,
+        "set_agent_cursor_enabled",
+        json!({"session": SESSION, "enabled": true}),
+    );
+    call_ok(
+        &mut driver,
+        "move_cursor",
+        json!({"session": SESSION, "x": 500.0, "y": 500.0}),
+    );
+    std::thread::sleep(Duration::from_secs(1));
+
+    let monitor_count = hypr_json("monitors")
+        .as_array()
+        .expect("Hyprland monitors array")
+        .len();
+    let daemon_clients = hypr_json("clients")
+        .as_array()
+        .expect("Hyprland clients array")
+        .iter()
+        .filter(|client| client["pid"].as_u64() == Some(pid))
+        .cloned()
+        .collect::<Vec<_>>();
+    let overlay_layers = hypr_json("layers")
+        .as_object()
+        .expect("Hyprland layer map")
+        .values()
+        .filter_map(|output| output["levels"].as_object())
+        .flat_map(|levels| levels.values())
+        .flat_map(|level| level.as_array().into_iter().flatten())
+        .filter(|layer| layer["pid"].as_u64() == Some(pid))
+        .filter(|layer| layer["namespace"] == "cua-agent-cursor")
+        .count();
+    drop(driver);
+    let focus_events = events.finish();
+
+    assert!(
+        daemon_clients.is_empty(),
+        "overlay daemon mapped a focusable Hyprland client: {daemon_clients:#?}"
+    );
+    assert!(
+        focus_events.is_empty(),
+        "overlay startup or cursor activity moved Hyprland focus: {focus_events:#?}"
+    );
+    assert_eq!(
+        overlay_layers, monitor_count,
+        "native layer-shell overlay did not map exactly once per enabled output"
+    );
+}

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.5](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.4...cua-spacesd-v0.16.5) (2026-11-19)
+
+
+### Bug Fixes
+
+* **cua-driver:** rank macOS list_windows z_index by live stacking ([#8158](https://github.com/trycua/cua/issues/8158)) ([9d8bb07](https://github.com/trycua/cua/commit/9d8bb07cef136d8d0add2f6282b05d76a7fbd9b1))
+
 ## [0.16.4](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.3...cua-spacesd-v0.16.4) (2026-11-19)
 
 

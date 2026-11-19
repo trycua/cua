@@ -36,7 +36,7 @@ use std::sync::Mutex;
 use std::thread::sleep;
 use std::time::Duration;
 
-use windows::Win32::Foundation::{HANDLE, HWND, POINT, RECT};
+use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, POINT, RECT, WPARAM};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED,
 };
@@ -55,10 +55,14 @@ use windows::Win32::UI::Input::Pointer::{
 use windows::Win32::UI::Shell::{IVirtualDesktopManager, VirtualDesktopManager};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetAncestor, GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowThreadProcessId,
-    IsWindow, LockSetForegroundWindow, SetCursorPos, SetForegroundWindow, SetWindowLongPtrW,
-    WindowFromPoint, GA_ROOT, GWL_EXSTYLE, LSFW_LOCK, LSFW_UNLOCK, PT_PEN, PT_TOUCH,
-    WS_EX_NOACTIVATE,
+    IsWindow, LockSetForegroundWindow, SendMessageTimeoutW, SetCursorPos, SetForegroundWindow,
+    SetWindowLongPtrW, WindowFromPoint, GA_ROOT, GWL_EXSTYLE, LSFW_LOCK, LSFW_UNLOCK, PT_PEN,
+    PT_TOUCH, SMTO_ABORTIFHUNG, SMTO_BLOCK, WM_NULL, WS_EX_NOACTIVATE,
 };
+
+/// How long the foreground window's thread gets to answer before a foreground
+/// swap skips attaching to it.
+const FOREGROUND_ANSWER_MS: u32 = 250;
 
 #[derive(Default)]
 struct ForegroundLockState {
@@ -118,8 +122,11 @@ impl Drop for ForegroundLockGuard {
 /// Bring `target` to the foreground using the AttachThreadInput trick, which
 /// inherits the current foreground thread's FG-lock token so the swap is
 /// honored even on a foreground-locked session without UIAccess (mirrors the
-/// `bring_to_front` tool). Single attach, no retry loop — bounded. Returns
-/// whether `target` actually became foreground.
+/// `bring_to_front` tool). Single attach, no retry loop — bounded. A
+/// foreground window whose thread does not answer within
+/// `FOREGROUND_ANSWER_MS` is not attached to, since attaching to a hung thread
+/// waits until it pumps again. Returns whether `target` actually became
+/// foreground.
 pub(crate) unsafe fn force_foreground_attached(target: HWND) -> bool {
     let cur = GetForegroundWindow();
     if cur == target {
@@ -128,7 +135,7 @@ pub(crate) unsafe fn force_foreground_attached(target: HWND) -> bool {
     let my_tid = GetCurrentThreadId();
     let mut pid = 0u32;
     let cur_tid = GetWindowThreadProcessId(cur, Some(&mut pid));
-    let attached = cur_tid != 0 && cur_tid != my_tid;
+    let attached = cur_tid != 0 && cur_tid != my_tid && answers(cur);
     if attached {
         let _ = AttachThreadInput(my_tid, cur_tid, true);
     }
@@ -137,6 +144,21 @@ pub(crate) unsafe fn force_foreground_attached(target: HWND) -> bool {
         let _ = AttachThreadInput(my_tid, cur_tid, false);
     }
     GetForegroundWindow() == target
+}
+
+fn answers(window: HWND) -> bool {
+    let sent = unsafe {
+        SendMessageTimeoutW(
+            window,
+            WM_NULL,
+            WPARAM(0),
+            LPARAM(0),
+            SMTO_ABORTIFHUNG | SMTO_BLOCK,
+            FOREGROUND_ANSWER_MS,
+            None,
+        )
+    };
+    sent.0 != 0
 }
 
 /// Retry an explicit visible foreground transition after a reserved no-name

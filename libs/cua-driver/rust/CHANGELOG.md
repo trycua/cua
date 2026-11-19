@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.54.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.53.2...cua-driver-rs-v0.54.0) (2026-11-18)
+
+
+### Features
+
+* **cua-driver:** report is_password for Windows Edit elements ([#8124](https://github.com/trycua/cua/issues/8124)) ([959260d](https://github.com/trycua/cua/commit/959260deaed8872abab92efad2ad806b69408b3a))
+
+
+### Bug Fixes
+
+* **cua-driver:** exit the macOS daemon when an update replaces its app ([#8135](https://github.com/trycua/cua/issues/8135)) ([6c17951](https://github.com/trycua/cua/commit/6c17951c22e715836d8f2049f59f3e3dbf71608e))
+* **cua-driver:** fall back to WARP for unusable Windows captures ([#8131](https://github.com/trycua/cua/issues/8131)) ([d6938ef](https://github.com/trycua/cua/commit/d6938ef0e1017716f61c907f15764d1958934f90))
+* **cua-driver:** wait 40 ms after a foreground Windows desktop click and accept a hidden owned dialog ([#8160](https://github.com/trycua/cua/issues/8160)) ([8140722](https://github.com/trycua/cua/commit/814072286ccf5a8b602e2d5b842b8c9d40152cbf))
+
+## [0.53.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.53.1...cua-driver-rs-v0.53.2) (2026-11-18)
+
+
+### Bug Fixes
+
+* **cua-driver:** add started_at_unix_ms to recording session.json ([#8118](https://github.com/trycua/cua/issues/8118)) ([7737d7d](https://github.com/trycua/cua/commit/7737d7db7139cbd2687de6f2d8581bfaa16758aa))
+
 ## [0.53.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.53.0...cua-driver-rs-v0.53.1) (2026-11-18)
 
 

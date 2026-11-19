@@ -31,18 +31,31 @@ pub mod peer {
     use futures_util::{Sink, SinkExt, Stream, StreamExt};
     use std::collections::HashMap;
     use std::sync::Arc;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
     use tokio::net::TcpStream;
     use tokio::sync::mpsc;
 
     /// Serves the peer end of a hotspot channel: dials every `OPEN` with
     /// `dial` and relays bytes, until `source` ends.
-    pub async fn serve_egress<S, K, D, F>(mut source: S, mut sink: K, dial: D)
+    pub async fn serve_egress<S, K, D, F>(source: S, sink: K, dial: D)
     where
         S: Stream<Item = Vec<u8>> + Unpin + Send,
         K: Sink<Vec<u8>> + Unpin + Send + 'static,
         D: Fn(String, u16) -> F + Send + Sync + 'static,
         F: std::future::Future<Output = std::io::Result<TcpStream>> + Send + 'static,
+    {
+        serve_streams(source, sink, dial).await
+    }
+
+    /// [`serve_egress`] for any byte stream, not only TCP: the host serves
+    /// a Space's spawn channel with in-memory streams to its own API.
+    pub async fn serve_streams<S, K, D, F, T>(mut source: S, mut sink: K, dial: D)
+    where
+        S: Stream<Item = Vec<u8>> + Unpin + Send,
+        K: Sink<Vec<u8>> + Unpin + Send + 'static,
+        D: Fn(String, u16) -> F + Send + Sync + 'static,
+        F: std::future::Future<Output = std::io::Result<T>> + Send + 'static,
+        T: AsyncRead + AsyncWrite + Send + 'static,
     {
         let (out_tx, mut out_rx) = mpsc::channel::<Frame>(CHANNEL_DEPTH);
         let writer = tokio::spawn(async move {
@@ -78,7 +91,7 @@ pub mod peer {
                             }
                         };
                         let _ = out.send(Frame::OpenOk { stream }).await;
-                        let (mut r, mut w) = target.into_split();
+                        let (mut r, mut w) = tokio::io::split(target);
                         let mut b = vec![0u8; READ_CHUNK];
                         loop {
                             tokio::select! {

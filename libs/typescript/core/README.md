@@ -1,3 +1,6 @@
+> [!WARNING]
+> **Deprecated:** `@trycua/core` is no longer maintained by Cua and will not receive updates or fixes. Its publishing is switched off. Existing releases stay on npm. Use [`@trycua/cua`](https://cua.ai/docs/cua-sdk/quickstart) instead. See [Migrate from deprecated packages](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended#deprecated-packages).
+
 <div align="center">
 <h1>
   <div class="image-wrapper" style="display: inline-block;">

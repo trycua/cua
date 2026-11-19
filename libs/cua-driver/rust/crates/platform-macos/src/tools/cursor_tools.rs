@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Session-owned agent cursor controls.
 
 use async_trait::async_trait;
@@ -29,8 +32,9 @@ pub(crate) fn resolve_cursor_key(args: &Value) -> String {
 /// `explicit` is the targeted element's screen centre when the action has
 /// one. Without it the cursor reuses its remembered position, then falls back
 /// to the target window's centre, so the first keyboard action of a session
-/// is visible. Anonymous calls keep their existing behavior. Geometry and
-/// overlay failures are observational and never affect the input result.
+/// is visible, and last to the hardware pointer. Anonymous calls keep their
+/// existing behavior. Geometry and overlay failures are observational and
+/// never affect the input result.
 pub(crate) async fn position_keyboard_cursor(
     state: &ToolState,
     args: &Value,
@@ -44,26 +48,27 @@ pub(crate) async fn position_keyboard_cursor(
         .cursor_registry
         .get(&cursor_key)
         .and_then(|cursor| cursor.position.map(|position| (position.x, position.y)));
-    let window_center = match window_id {
-        Some(wid)
-            if cursor_overlay::keyboard_cursor_target(explicit, remembered, None, None)
-                .is_none() =>
-        {
+    let (window_center, pointer) =
+        if cursor_overlay::keyboard_cursor_target(explicit, remembered, None, None).is_none() {
             tokio::task::spawn_blocking(move || {
-                let bounds = crate::windows::window_bounds_by_id(wid)?;
-                (bounds.width > 0.0 && bounds.height > 0.0).then_some((
-                    bounds.x + bounds.width / 2.0,
-                    bounds.y + bounds.height / 2.0,
-                ))
+                let center = window_id
+                    .and_then(crate::windows::window_bounds_by_id)
+                    .and_then(|bounds| {
+                        (bounds.width > 0.0 && bounds.height > 0.0).then_some((
+                            bounds.x + bounds.width / 2.0,
+                            bounds.y + bounds.height / 2.0,
+                        ))
+                    });
+                let pointer = center.is_none().then(pointer_location).flatten();
+                (center, pointer)
             })
             .await
-            .ok()
-            .flatten()
-        }
-        _ => None,
-    };
+            .unwrap_or((None, None))
+        } else {
+            (None, None)
+        };
     let Some((x, y)) =
-        cursor_overlay::keyboard_cursor_target(explicit, remembered, window_center, None)
+        cursor_overlay::keyboard_cursor_target(explicit, remembered, window_center, pointer)
     else {
         return;
     };
@@ -75,6 +80,32 @@ pub(crate) async fn position_keyboard_cursor(
     }
     crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), x, y).await;
     state.cursor_registry.update_position(&cursor_key, x, y);
+}
+
+/// Place a named session's cursor before a desktop-scope keyboard action
+/// (no pid or window_id): the input goes to the frontmost app, so the cursor
+/// goes to that app's focused window.
+pub(crate) async fn position_desktop_keyboard_cursor(state: &ToolState, args: &Value) {
+    if cursor_overlay::named_session_cursor_key(args).is_none() {
+        return;
+    }
+    let window_id = tokio::task::spawn_blocking(|| {
+        let pid = crate::apps::frontmost_pid()?;
+        crate::ax::bindings::focused_window_id_of_pid(pid).map(|window| window.root)
+    })
+    .await
+    .ok()
+    .flatten();
+    position_keyboard_cursor(state, args, window_id, None).await;
+}
+
+/// Current hardware pointer location in global display points.
+pub(crate) fn pointer_location() -> Option<(f64, f64)> {
+    use core_graphics::event::CGEvent;
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState).ok()?;
+    let location = CGEvent::new(source).ok()?.location();
+    Some((location.x, location.y))
 }
 
 fn default_cursor_session() -> String {
@@ -179,6 +210,10 @@ impl Tool for SetAgentCursorMotionTool {
             None,
             number(args.get("turn_radius")),
         );
+        let motion = match motion.with_style_args(&args) {
+            Ok(motion) => motion,
+            Err(message) => return ToolResult::error(message),
+        };
         crate::cursor::overlay::send_command(
             session.clone(),
             cursor_overlay::OverlayCommand::SetMotion(motion.clone()),
@@ -188,17 +223,7 @@ impl Tool for SetAgentCursorMotionTool {
         ))
         .with_structured(serde_json::json!({
             "session": session,
-            "motion": {
-                "start_handle": motion.start_handle,
-                "end_handle": motion.end_handle,
-                "arc_size": motion.arc_size,
-                "arc_flow": motion.arc_flow,
-                "spring": motion.spring,
-                "glide_duration_ms": motion.glide_duration_ms,
-                "dwell_after_click_ms": motion.dwell_after_click_ms,
-                "idle_hide_ms": motion.idle_hide_ms,
-                "turn_radius": motion.turn_radius
-            }
+            "motion": motion.output_json()
         }))
     }
 }
@@ -367,17 +392,7 @@ impl Tool for GetAgentCursorStateTool {
                     "frame": visual.frame(),
                     "preempted_count": visual.preempted_count
                 },
-                "motion": {
-                    "start_handle": motion.start_handle,
-                    "end_handle": motion.end_handle,
-                    "arc_size": motion.arc_size,
-                    "arc_flow": motion.arc_flow,
-                    "spring": motion.spring,
-                    "glide_duration_ms": motion.glide_duration_ms,
-                    "dwell_after_click_ms": motion.dwell_after_click_ms,
-                    "idle_hide_ms": motion.idle_hide_ms,
-                    "turn_radius": motion.turn_radius
-                }
+                "motion": motion.output_json()
             }),
         )
     }

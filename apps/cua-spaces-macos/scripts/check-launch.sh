@@ -73,6 +73,12 @@ for b in sorted(binaries):
             bad.append(f"{os.path.relpath(b, app)} links {d} (outside the bundle and the OS)")
             continue
         found = [c for c in candidates if os.path.isfile(c)]
+        # An @rpath into the OS's Swift runtime (/usr/lib/swift: the
+        # bundled cua-spacesd links it) is in the dyld shared cache, not on
+        # disk.
+        if not found and d.startswith("@rpath/") and any(
+                r.startswith(("/usr/lib/", "/System/Library/")) for r in rpaths):
+            continue
         if not found:
             bad.append(f"{os.path.relpath(b, app)}: {d} resolves to no file (run paths {rpaths})")
         elif not os.path.realpath(found[0]).startswith(app + os.sep):

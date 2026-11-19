@@ -400,3 +400,105 @@ async fn import_session_whole_app_or_named_sites() {
     assert!(o.stdout.contains("Saved 1 item: 1 new"), "{}", o.stdout);
     assert!(!o.stdout.contains("teleported") && !o.stdout.contains("delivered to"));
 }
+
+/// `cua teleport push --url`: the URL is only the destination. The app is read
+/// by the Keyvault's daemon (here the test's broker, with a fake backend), so
+/// the same presence prompt and capture run as for `--sandbox`; the profile
+/// reaches the capture; a refusal is the permission-denied exit code; the
+/// destination is registered for the push only; and a destination that does
+/// not answer fails before anything is read or asked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn push_to_a_url_is_read_and_approved_by_the_daemon_not_the_caller() {
+    let backend = Arc::new(FakeImportBackend::default());
+    let mut r = rig_with_backend(backend.clone() as Arc<dyn Backend>).await;
+    // The app is a fixture Slack profile under this test's own HOME (a temp
+    // dir), so the caller's manifest listing touches nothing real.
+    r.home.set("CUA_ENV_TEST_SANDBOX", "0");
+    let prof = r._short.path().join("Library/Application Support/Slack");
+    std::fs::create_dir_all(&prof).unwrap();
+    std::fs::write(prof.join("Cookies"), b"slack-cookies").unwrap();
+    std::fs::write(prof.join("Preferences"), b"{}").unwrap();
+    let o = with_stdin(
+        &r.home,
+        &["keyvault", "init", "--passphrase-stdin", "--json"],
+        &format!("{PASSPHRASE}\n"),
+    )
+    .await;
+    assert_eq!(o.ok().json()["created"], true);
+    let dest = cua_daemon::fixtures::start_env(Some("t"), None).await;
+    let url = dest.url.clone();
+    let push = |profile: &str| {
+        vec![
+            "teleport",
+            "push",
+            "--app",
+            "slack",
+            "--all",
+            "--url",
+            url.as_str(),
+            "--token",
+            "t",
+            "--profile",
+            profile,
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>()
+    };
+    let run = |args: Vec<String>| {
+        let home = &r.home;
+        async move {
+            let a: Vec<&str> = args.iter().map(String::as_str).collect();
+            home.run(&a).await
+        }
+    };
+
+    // Refused consent: the exact permission-denied code, and the capture
+    // never ran (nothing was read before the prompt was answered).
+    r.presence.set(false);
+    let o = run(push("Profile 1")).await;
+    assert_eq!(o.code, 6, "stdout:\n{}\nstderr:\n{}", o.stdout, o.stderr);
+    assert!(
+        backend.specs.lock().unwrap().is_empty(),
+        "read before consent"
+    );
+    assert!(
+        !r.presence.asked.lock().unwrap().is_empty(),
+        "the daemon asked"
+    );
+
+    // Approved: the daemon's capture ran for the named profile (the fake
+    // backend cannot deliver, so the push itself fails after that).
+    r.presence.set(true);
+    let o = run(push("Profile 1")).await;
+    assert_ne!(o.code, 0);
+    {
+        let specs = backend.specs.lock().unwrap();
+        let last = specs.last().expect("the daemon captured");
+        assert_eq!(last.app, "slack");
+        assert_eq!(last.profile.as_deref(), Some("Profile 1"));
+        assert!(last.whole_app);
+    }
+    // Nothing reached the destination, and this process read nothing itself.
+    assert!(dest.mock.state.teleport_imports().is_empty());
+
+    // A destination that does not answer: fails before any read or prompt.
+    let asked = r.presence.asked.lock().unwrap().len();
+    let captured = backend.specs.lock().unwrap().len();
+    let o = run([
+        "teleport",
+        "push",
+        "--app",
+        "slack",
+        "--all",
+        "--url",
+        "127.0.0.1:1",
+    ]
+    .map(str::to_string)
+    .to_vec())
+    .await;
+    assert_ne!(o.code, 0);
+    assert!(o.stderr.contains("nothing was read"), "{}", o.stderr);
+    assert_eq!(r.presence.asked.lock().unwrap().len(), asked);
+    assert_eq!(backend.specs.lock().unwrap().len(), captured);
+}

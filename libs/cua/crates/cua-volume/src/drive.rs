@@ -158,7 +158,7 @@ impl Drive {
         self.inner.sinks.write().unwrap().push(sink);
     }
 
-    fn notify(&self, change: Change) {
+    pub(crate) fn notify(&self, change: Change) {
         for s in self.inner.sinks.read().unwrap().iter() {
             s.changed(change.clone());
         }
@@ -185,7 +185,90 @@ impl Drive {
         }
     }
 
-    fn log(&self, principal: &str, action: &str, path: &str, detail: &str) {
+    /// Deletes the drive's own bookkeeping in the home of `agent`, an
+    /// agent that no longer exists: the sync manifest, a lease, folder
+    /// markers (every `.cua-` name under `agents/<agent>/`). Its files stay;
+    /// once they are deleted the folder is gone, which the reserved names
+    /// would otherwise prevent. Returns the keys deleted.
+    pub async fn forget_agent_home(&self, agent: &str) -> Result<Vec<String>> {
+        let home = crate::path::agent_home(agent)?;
+        let b = self.backend();
+        let mut gone = vec![];
+        for m in b.list(&home).await? {
+            let Some(rel) = m.key.strip_prefix(&home) else {
+                continue;
+            };
+            if !is_internal(rel) {
+                continue;
+            }
+            match b.delete(&m.key, Condition::None).await {
+                Ok(()) | Err(Error::NotFound(_)) => {}
+                Err(e) => return Err(e),
+            }
+            self.notify(Change::Delete(m.key.clone()));
+            gone.push(m.key);
+        }
+        if !gone.is_empty() {
+            self.log("user", "forget_agent_home", &home, &gone.join(", "));
+        }
+        Ok(gone)
+    }
+
+    /// Moves a Space's folder to the one named after its id: everything
+    /// under `spaces/<from>/` goes to `spaces/<to>/` (both are Space ids as
+    /// [`path::space_folder`] takes them, the second with its uid), the
+    /// grants to the old principal move to the new one, and the old
+    /// objects are deleted once copied. A file the new folder already has
+    /// is left where it is in the old folder, so nothing is overwritten.
+    /// Returns how many files moved. Only the daemon calls it, for the
+    /// user, once per Space.
+    pub async fn migrate_space_folder(&self, from: &str, to: &str) -> Result<usize> {
+        let (old, new) = (path::space_folder(from), path::space_folder(to));
+        if old == new {
+            return Ok(0);
+        }
+        let b = self.backend();
+        let mut moved = 0;
+        for m in b.list(&old).await? {
+            let Some(rel) = m.key.strip_prefix(&old) else {
+                continue;
+            };
+            let dst = format!("{new}{rel}");
+            let internal = is_internal(rel);
+            if b.head(&dst).await?.is_some() {
+                continue;
+            }
+            let meta = b.copy(&m.key, &dst).await?;
+            match b.delete(&m.key, Condition::None).await {
+                Ok(()) | Err(Error::NotFound(_)) => {}
+                Err(e) => return Err(e),
+            }
+            self.notify(Change::Put(meta));
+            self.notify(Change::Delete(m.key));
+            if !internal {
+                moved += 1;
+            }
+        }
+        self.rename_space_principal(from, to)?;
+        // Grants to other principals on the old folder follow it.
+        self.with_json::<Grant, _>("grants.json", |all| {
+            for g in all.iter_mut() {
+                if let Some(rest) = g.prefix.strip_prefix(&old) {
+                    g.prefix = format!("{new}{rest}");
+                }
+            }
+            Ok(())
+        })?;
+        self.log(
+            "user",
+            "migrate_space_folder",
+            &old,
+            &format!("to {new}, {moved} files"),
+        );
+        Ok(moved)
+    }
+
+    pub(crate) fn log(&self, principal: &str, action: &str, path: &str, detail: &str) {
         if let Err(e) = self.inner.audit.append(principal, action, path, detail) {
             // The audit log failing must be loud, but a read should not fail
             // because of it; writes check it themselves.
@@ -262,6 +345,62 @@ impl Drive {
             .presence
             .confirm(&reason)
             .map_err(Error::NotConfirmed)?;
+        self.store_grant(who, key, mode, expires_ms, note)
+    }
+
+    /// A grant the daemon makes by itself while it moves an existing Space
+    /// to a newer layout, so that what the Space could reach before it
+    /// still works: no presence prompt, and it must only keep access, never
+    /// widen it. It is audited like any grant, with its note.
+    pub fn grant_migrated(
+        &self,
+        principal: &str,
+        prefix: &str,
+        mode: Mode,
+        note: &str,
+    ) -> Result<Grant> {
+        let (who, key) = acl::validate_grant(principal, prefix, mode)?;
+        if let Some(g) = self.grants()?.into_iter().find(|g| {
+            g.principal == who.id()
+                && g.prefix == key
+                && g.mode.allows(mode)
+                && !g.revoked
+                && g.note == note
+        }) {
+            return Ok(g);
+        }
+        self.store_grant(who, key, mode, None, note)
+    }
+
+    /// Renames the principal of every grant `space:<from>` to
+    /// `space:<to>` (a Space's folder name gained its id). Returns how many.
+    pub fn rename_space_principal(&self, from: &str, to: &str) -> Result<usize> {
+        let (from, to) = (
+            Principal::Space(from.into()).id(),
+            Principal::Space(to.into()).id(),
+        );
+        let n = self.with_json::<Grant, _>("grants.json", |all| {
+            let mut n = 0;
+            for g in all.iter_mut().filter(|g| g.principal == from) {
+                g.principal = to.clone();
+                n += 1;
+            }
+            Ok(n)
+        })?;
+        if n > 0 {
+            self.log("user", "rename_principal", "", &format!("{from} -> {to}"));
+        }
+        Ok(n)
+    }
+
+    fn store_grant(
+        &self,
+        who: Principal,
+        key: String,
+        mode: Mode,
+        expires_ms: Option<u64>,
+        note: &str,
+    ) -> Result<Grant> {
         let grant = Grant {
             id: new_id(),
             principal: who.id(),
@@ -531,6 +670,8 @@ impl Session {
         }
         // The areas this session always has, even while empty.
         let mut own = vec![];
+        // The folders this Space mounted, even while empty.
+        own.extend(self.ctx.mounts.iter().map(|m| m.prefix.clone()));
         if self.ctx.principal == Principal::User {
             own.extend([
                 path::PUBLIC.to_string(),
@@ -538,12 +679,15 @@ impl Session {
                 path::SPACES.into(),
             ]);
         } else {
-            own.push(path::PUBLIC.to_string());
             if let Principal::Agent(a) = &self.ctx.principal {
                 own.push(format!("{}{a}/", path::AGENTS));
             }
-            if let Some(s) = &self.ctx.space {
+            if let Some(s) = self.ctx.space.as_ref().filter(|_| self.ctx.own_folder) {
                 own.push(path::space_folder(s));
+            }
+            // A grant for public/ shows it even while it is empty.
+            if acl::effective_mode(&self.ctx, path::PUBLIC, &grants, now).is_some() {
+                own.push(path::PUBLIC.to_string());
             }
         }
         for o in own {
@@ -881,6 +1025,41 @@ impl Session {
         Ok(())
     }
 
+    /// Deletes every file under folder `path` (delete markers: history
+    /// stays) and its folder markers. Returns how many files went. The
+    /// session needs write access to the folder; the root and the area
+    /// folders are refused.
+    pub async fn remove_tree(&self, path: &str) -> Result<usize> {
+        let folder = path::folder(path)?;
+        if is_internal(&folder) {
+            return Err(Error::Invalid(format!(
+                "names starting with {INTERNAL_PREFIX} are reserved"
+            )));
+        }
+        if matches!(path::area(&folder), Area::Root) {
+            return Err(Error::Invalid(format!(
+                "{folder:?} is not a folder to remove"
+            )));
+        }
+        self.require(&folder, Mode::ReadWrite, "delete")?;
+        let backend = self.drive.backend();
+        let mut files = 0;
+        for m in backend.list(&folder).await? {
+            let internal = is_internal(&m.key);
+            match backend.delete(&m.key, Condition::None).await {
+                Ok(()) | Err(Error::NotFound(_)) => {}
+                Err(e) => return Err(e),
+            }
+            if !internal {
+                files += 1;
+            }
+            self.drive.notify(Change::Delete(m.key));
+        }
+        self.drive
+            .log(&self.who(), "delete", &folder, &format!("{files} files"));
+        Ok(files)
+    }
+
     /// Copies a file inside the drive (a server-side copy on S3). The
     /// secret scanner runs on the source when the copy lands in an agent
     /// home it was not already in.
@@ -1104,6 +1283,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_removed_agents_home_can_be_deleted_down_to_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let (d, _) = drive(dir.path());
+        let b = d.backend();
+        let user = d.session(Context::user());
+        user.write("agents/gone/notes.md", b"n".to_vec(), Condition::None)
+            .await
+            .unwrap();
+        for k in [
+            "agents/gone/.cua-manifest.json",
+            "agents/gone/.cua-lease",
+            "agents/gone/sub/.cua-keep",
+            "agents/kept/.cua-manifest.json",
+        ] {
+            b.put(k, b"{}".to_vec(), Condition::None).await.unwrap();
+        }
+        // The user cannot touch the reserved names themselves.
+        assert_eq!(
+            user.delete("agents/gone/.cua-manifest.json", Condition::None)
+                .await
+                .unwrap_err()
+                .tag(),
+            "invalid_argument"
+        );
+        let mut gone = d.forget_agent_home("gone").await.unwrap();
+        gone.sort();
+        assert_eq!(
+            gone,
+            [
+                "agents/gone/.cua-lease",
+                "agents/gone/.cua-manifest.json",
+                "agents/gone/sub/.cua-keep"
+            ]
+        );
+        // Its own files stay until the user deletes them; then nothing is left.
+        user.delete("agents/gone/notes.md", Condition::None)
+            .await
+            .unwrap();
+        assert!(b.list("agents/gone/").await.unwrap().is_empty());
+        // Another agent's home is untouched.
+        assert_eq!(b.list("agents/kept/").await.unwrap().len(), 1);
+        assert!(d.forget_agent_home("../x").await.is_err());
+    }
+
+    #[tokio::test]
     async fn listings_show_only_what_the_session_can_reach() {
         let dir = tempfile::tempdir().unwrap();
         let (d, _) = drive(dir.path());
@@ -1139,5 +1363,406 @@ mod tests {
         assert!(hist[0].latest && hist[0].version == m1.version);
         user.restore("public/p.md", &hist[1].version).await.unwrap();
         assert_eq!(user.read("public/p.md", None).await.unwrap().0, b"x");
+    }
+
+    fn mount(prefix: &str, mode: Mode) -> crate::acl::MountAccess {
+        crate::acl::MountAccess {
+            prefix: prefix.into(),
+            mode,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_space_sees_only_the_named_volumes_it_mounted() {
+        let dir = tempfile::tempdir().unwrap();
+        let (d, _) = drive(dir.path());
+        let user = d.session(Context::user());
+        for k in [
+            "volumes/shared/a.txt",
+            "volumes/shared/sub/b.txt",
+            "volumes/secret/s.txt",
+            "volumes/other/o.txt",
+        ] {
+            user.write(k, b"x".to_vec(), Condition::None).await.unwrap();
+        }
+        let ctx = Context::space("local:w").with_mounts(vec![
+            mount("volumes/shared/", Mode::ReadWrite),
+            mount("volumes/other/", Mode::Read),
+        ]);
+        let s = d.session(ctx);
+        let names = |v: Vec<Entry>| v.into_iter().map(|e| e.path).collect::<Vec<_>>();
+        assert_eq!(
+            names(s.ls("").await.unwrap()),
+            ["public/", "spaces/", "volumes/"]
+        );
+        assert_eq!(
+            names(s.ls("volumes/").await.unwrap()),
+            ["volumes/other/", "volumes/shared/"]
+        );
+        assert_eq!(s.read("volumes/shared/a.txt", None).await.unwrap().0, b"x");
+        s.write("volumes/shared/new.txt", b"n".to_vec(), Condition::None)
+            .await
+            .unwrap();
+        assert_eq!(
+            user.read("volumes/shared/new.txt", None).await.unwrap().0,
+            b"n"
+        );
+        // Read-only means read-only.
+        assert_eq!(s.read("volumes/other/o.txt", None).await.unwrap().0, b"x");
+        assert_eq!(
+            s.write("volumes/other/o.txt", b"y".to_vec(), Condition::None)
+                .await
+                .unwrap_err()
+                .tag(),
+            "forbidden"
+        );
+        assert_eq!(
+            s.delete("volumes/other/o.txt", Condition::None)
+                .await
+                .unwrap_err()
+                .tag(),
+            "forbidden"
+        );
+        // A volume it did not mount is invisible and refused.
+        assert_eq!(
+            s.read("volumes/secret/s.txt", None)
+                .await
+                .unwrap_err()
+                .tag(),
+            "forbidden"
+        );
+        assert_eq!(
+            s.ls("volumes/secret/").await.unwrap_err().tag(),
+            "forbidden"
+        );
+        assert_eq!(
+            s.write("volumes/secret/x", b"y".to_vec(), Condition::None)
+                .await
+                .unwrap_err()
+                .tag(),
+            "forbidden"
+        );
+        // A Space without mounts sees none of them, and a mount made by
+        // one Space does not leak to another.
+        let bare = d.session(Context::space("local:v"));
+        assert_eq!(names(bare.ls("").await.unwrap()), ["public/", "spaces/"]);
+        assert_eq!(
+            bare.read("volumes/shared/a.txt", None)
+                .await
+                .unwrap_err()
+                .tag(),
+            "forbidden"
+        );
+        // An agent acting in the Space keeps the mounts of that Space.
+        let ada = d.session(
+            Context::agent("ada", Some("local:w"))
+                .with_mounts(vec![mount("volumes/shared/", Mode::Read)]),
+        );
+        assert!(ada.read("volumes/shared/a.txt", None).await.is_ok());
+        assert!(
+            ada.write("volumes/shared/z", b"y".to_vec(), Condition::None)
+                .await
+                .is_err()
+        );
+        // The user's context never takes mounts.
+        assert!(
+            Context::user()
+                .with_mounts(vec![mount("volumes/x/", Mode::Read)])
+                .mounts
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_mounted_subfolder_grants_only_that_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let (d, _) = drive(dir.path());
+        let user = d.session(Context::user());
+        for k in [
+            "volumes/v/in/a.txt",
+            "volumes/v/out/b.txt",
+            "volumes/v/top.txt",
+        ] {
+            user.write(k, b"x".to_vec(), Condition::None).await.unwrap();
+        }
+        let s = d.session(
+            Context::space("local:w").with_mounts(vec![mount("volumes/v/in/", Mode::ReadWrite)]),
+        );
+        assert!(s.read("volumes/v/in/a.txt", None).await.is_ok());
+        assert!(s.read("volumes/v/out/b.txt", None).await.is_err());
+        assert!(s.read("volumes/v/top.txt", None).await.is_err());
+        let names = |v: Vec<Entry>| v.into_iter().map(|e| e.path).collect::<Vec<_>>();
+        assert_eq!(names(s.ls("volumes/v/").await.unwrap()), ["volumes/v/in/"]);
+    }
+
+    #[tokio::test]
+    async fn removing_a_volume_tree_keeps_history_and_other_volumes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (d, _) = drive(dir.path());
+        let user = d.session(Context::user());
+        user.mkdir("volumes/gone/empty").await.unwrap();
+        for k in [
+            "volumes/gone/a.txt",
+            "volumes/gone/d/b.txt",
+            "volumes/kept/c.txt",
+        ] {
+            user.write(k, b"x".to_vec(), Condition::None).await.unwrap();
+        }
+        assert_eq!(user.remove_tree("volumes/gone/").await.unwrap(), 2);
+        assert!(d.backend().list("volumes/gone/").await.unwrap().is_empty());
+        assert_eq!(d.backend().list("volumes/kept/").await.unwrap().len(), 1);
+        // The deleted file is restorable.
+        assert!(!user.history("volumes/gone/a.txt").await.unwrap().is_empty());
+        // The root and the areas are not a volume.
+        assert!(user.remove_tree("").await.is_err());
+        assert!(user.remove_tree("spaces/").await.is_err());
+        // A Space cannot remove a tree it only reads.
+        let s = d.session(
+            Context::space("local:w").with_mounts(vec![mount("volumes/kept/", Mode::Read)]),
+        );
+        assert_eq!(
+            s.remove_tree("volumes/kept/").await.unwrap_err().tag(),
+            "forbidden"
+        );
+    }
+
+    #[tokio::test]
+    async fn one_space_cannot_read_or_write_anothers_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let (d, _) = drive(dir.path());
+        let a = "local:a--00000001";
+        let b = "local:b--00000002";
+        let sa = d.session(Context::space(a));
+        let sb = d.session(Context::space(b));
+        let ada = d.session(Context::agent("ada", Some(b)));
+        sa.write(
+            "spaces/local-a--00000001/out.txt",
+            b"A".to_vec(),
+            Condition::None,
+        )
+        .await
+        .unwrap();
+        for who in [&sb, &ada] {
+            let e = who
+                .read("spaces/local-a--00000001/out.txt", None)
+                .await
+                .unwrap_err();
+            assert_eq!(e.tag(), "forbidden");
+            let e = who
+                .write("spaces/local-a--00000001/x", b"x".to_vec(), Condition::None)
+                .await
+                .unwrap_err();
+            assert_eq!(e.tag(), "forbidden");
+            assert!(who.ls("spaces/local-a--00000001").await.is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_space_made_again_under_the_same_name_starts_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let (d, _) = drive(dir.path());
+        let first = "local:work--0a0a0a0a";
+        let again = "local:work--0b0b0b0b";
+        let s1 = d.session(Context::space(first));
+        s1.write(
+            "spaces/local-work--0a0a0a0a/secret.txt",
+            b"old".to_vec(),
+            Condition::None,
+        )
+        .await
+        .unwrap();
+        let s2 = d.session(Context::space(again));
+        // Its own folder is empty, and the earlier Space's is out of reach.
+        assert!(
+            s2.ls("spaces/local-work--0b0b0b0b")
+                .await
+                .unwrap_or_default()
+                .is_empty()
+        );
+        assert_eq!(
+            s2.read("spaces/local-work--0a0a0a0a/secret.txt", None)
+                .await
+                .unwrap_err()
+                .tag(),
+            "forbidden"
+        );
+        assert_eq!(
+            s2.read("spaces/local-work--0b0b0b0b/secret.txt", None)
+                .await
+                .unwrap_err()
+                .tag(),
+            "not_found"
+        );
+    }
+
+    #[tokio::test]
+    async fn public_is_refused_without_a_grant_and_opens_read_only_with_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let (d, yes) = drive(dir.path());
+        d.session(Context::user())
+            .write("public/rules.md", b"be kind".to_vec(), Condition::None)
+            .await
+            .unwrap();
+        let id = "local:w--0a0a0a0a";
+        let space = d.session(Context::space(id).isolated());
+        let agent = d.session(Context::agent("ada", Some(id)).isolated());
+        for s in [&space, &agent] {
+            assert_eq!(
+                s.read("public/rules.md", None).await.unwrap_err().tag(),
+                "forbidden"
+            );
+            assert!(!s.ls("").await.unwrap().iter().any(|e| e.name == "public"));
+        }
+        // A request is the way to ask.
+        space
+            .request_access("public/", Mode::Read, "rules")
+            .unwrap();
+        // The user's grant (with presence) is for the Space; its agent has it too.
+        let g = d
+            .grant(
+                &format!("space:{}", path::space_folder_name(id)),
+                "public/",
+                Mode::Read,
+                None,
+                "",
+            )
+            .unwrap();
+        assert_eq!(yes.0.lock().unwrap().len(), 1);
+        for s in [&space, &agent] {
+            assert_eq!(s.read("public/rules.md", None).await.unwrap().0, b"be kind");
+            assert_eq!(
+                s.write("public/rules.md", b"x".to_vec(), Condition::None)
+                    .await
+                    .unwrap_err()
+                    .tag(),
+                "forbidden"
+            );
+        }
+        // Revoking closes it at once.
+        d.revoke(&g.id).unwrap();
+        assert!(space.read("public/rules.md", None).await.is_err());
+        // A Space of the same tree gets it through one `tree:` grant.
+        let root = "local:lead--0c0c0c0c";
+        let kid = d.session(
+            Context::space("local:kid--0d0d0d0d")
+                .with_tree(root)
+                .isolated(),
+        );
+        let stranger = d.session(
+            Context::space("local:x--0e0e0e0e")
+                .with_tree("local:x--0e0e0e0e")
+                .isolated(),
+        );
+        d.grant(
+            &format!("tree:{}", path::space_folder_name(root)),
+            "public/",
+            Mode::Read,
+            None,
+            "",
+        )
+        .unwrap();
+        assert!(kid.read("public/rules.md", None).await.is_ok());
+        assert!(stranger.read("public/rules.md", None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn an_old_space_folder_moves_to_its_id_and_keeps_its_grants_and_public() {
+        let dir = tempfile::tempdir().unwrap();
+        let (d, _) = drive(dir.path());
+        let user = d.session(Context::user());
+        user.write(
+            "spaces/local-work/out.txt",
+            b"kept".to_vec(),
+            Condition::None,
+        )
+        .await
+        .unwrap();
+        user.write(
+            "spaces/local-work/sub/deep.txt",
+            b"deep".to_vec(),
+            Condition::None,
+        )
+        .await
+        .unwrap();
+        user.write(
+            "spaces/local-work-2/other.txt",
+            b"no".to_vec(),
+            Condition::None,
+        )
+        .await
+        .unwrap();
+        user.write("public/rules.md", b"r".to_vec(), Condition::None)
+            .await
+            .unwrap();
+        d.grant("space:local-work", "volumes/data/", Mode::Read, None, "")
+            .unwrap();
+        d.grant("agent:bob", "spaces/local-work/sub/", Mode::Read, None, "")
+            .unwrap();
+        let vid = "local:work--0a0a0a0a";
+        let moved = d.migrate_space_folder("local:work", vid).await.unwrap();
+        assert_eq!(moved, 2);
+        let b = d.backend();
+        assert!(b.list("spaces/local-work/").await.unwrap().is_empty());
+        assert_eq!(
+            b.list("spaces/local-work--0a0a0a0a/").await.unwrap().len(),
+            2
+        );
+        // A Space whose name only starts the same is not touched.
+        assert_eq!(b.list("spaces/local-work-2/").await.unwrap().len(), 1);
+        let space = d.session(Context::space(vid).isolated());
+        assert_eq!(
+            space
+                .read("spaces/local-work--0a0a0a0a/out.txt", None)
+                .await
+                .unwrap()
+                .0,
+            b"kept"
+        );
+        let grants = d.grants().unwrap();
+        assert!(
+            grants
+                .iter()
+                .any(|g| g.principal == "space:local-work--0a0a0a0a")
+        );
+        assert!(
+            grants
+                .iter()
+                .any(|g| g.principal == "agent:bob"
+                    && g.prefix == "spaces/local-work--0a0a0a0a/sub/")
+        );
+        // The daemon's one-time read-only grant keeps public/ readable.
+        assert!(space.read("public/rules.md", None).await.is_err());
+        d.grant_migrated(
+            &format!("space:{}", path::space_folder_name(vid)),
+            "public/",
+            Mode::Read,
+            "kept",
+        )
+        .unwrap();
+        d.grant_migrated(
+            &format!("space:{}", path::space_folder_name(vid)),
+            "public/",
+            Mode::Read,
+            "kept",
+        )
+        .unwrap();
+        assert_eq!(
+            d.grants()
+                .unwrap()
+                .iter()
+                .filter(|g| g.prefix == "public/")
+                .count(),
+            1,
+            "asked twice, granted once"
+        );
+        assert!(space.read("public/rules.md", None).await.is_ok());
+        assert!(
+            space
+                .write("public/rules.md", b"w".to_vec(), Condition::None)
+                .await
+                .is_err()
+        );
+        // Moving again is a no-op.
+        assert_eq!(d.migrate_space_folder("local:work", vid).await.unwrap(), 0);
     }
 }

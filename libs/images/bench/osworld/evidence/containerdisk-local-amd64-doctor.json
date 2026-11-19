@@ -1,19 +1,19 @@
 {
   "schema_version": 1,
-  "producer": "cua-guestd",
-  "started_at": "2026-09-24T08:27:22.286387606+00:00",
-  "guestd": {
-    "version": "0.1.0",
-    "protocol_revision": 3,
-    "git_sha": "4927f16c2029113206abfd23c5adcb937b595fdd",
-    "cua_driver_version": "0.28.2"
+  "producer": "cua-spacesd",
+  "started_at": "2026-10-03T22:20:27.133708237+00:00",
+  "spacesd": {
+    "version": "0.5.2",
+    "protocol_revision": 8,
+    "git_sha": "fe6d89d8049d61e4beab66dbeabc176c216e114f",
+    "cua_driver_version": "0.33.1"
   },
   "image": {
     "name": "bench-osworld",
     "ref": "",
     "variant": "containerdisk",
     "os": "linux",
-    "manifest_sha256": "f69e49a92ebd4020affa170bec5095dc24f523514475c341c91cd6bf9bf4823a",
+    "manifest_sha256": "b79e700e7a3871a786300a4417851aaf7a81c82224429e8be266c870ab49a5dc",
     "manifest_source": "/etc/cua-image/manifest.json"
   },
   "environment": {
@@ -25,12 +25,12 @@
     "os": "Ubuntu 22.04"
   },
   "summary": {
-    "status": "fail",
-    "pass": 71,
-    "warn": 1,
-    "fail": 7,
-    "skip": 10,
-    "duration_ms": 27835,
+    "status": "pass",
+    "pass": 95,
+    "warn": 0,
+    "fail": 0,
+    "skip": 12,
+    "duration_ms": 13603,
     "strict": true
   },
   "checks": [
@@ -49,19 +49,19 @@
       "artifacts": []
     },
     {
-      "id": "meta.guestd.reachable",
+      "id": "meta.spacesd.reachable",
       "group": "meta",
       "status": "pass",
       "severity": "required",
       "claimed_by": [
         "core"
       ],
-      "message": "cua-guestd 0.1.0 (protocol 1.3) answers GetCapabilities over Native",
+      "message": "cua-spacesd 0.5.2 (protocol 1.8) answers GetCapabilities over Native",
       "remediation": "",
       "duration_ms": 0,
       "facts": {
-        "protocol_revision": "3",
-        "version": "0.1.0"
+        "protocol_revision": "8",
+        "version": "0.5.2"
       },
       "artifacts": []
     },
@@ -73,7 +73,7 @@
       "claimed_by": [
         "core"
       ],
-      "message": "server protocol 1.3, doctor built for 1.3",
+      "message": "server protocol 1.8, doctor built for 1.8",
       "remediation": "",
       "duration_ms": 0,
       "facts": {},
@@ -91,23 +91,23 @@
       "remediation": "",
       "duration_ms": 0,
       "facts": {
-        "sha256": "f69e49a92ebd4020affa170bec5095dc24f523514475c341c91cd6bf9bf4823a"
+        "sha256": "b79e700e7a3871a786300a4417851aaf7a81c82224429e8be266c870ab49a5dc"
       },
       "artifacts": []
     },
     {
-      "id": "meta.guestd.pin",
+      "id": "meta.spacesd.pin",
       "group": "meta",
       "status": "pass",
       "severity": "required",
       "claimed_by": [
-        "manifest:guestd"
+        "manifest:spacesd"
       ],
-      "message": "cua-guestd 0.1.0 matches the image manifest",
+      "message": "cua-spacesd 0.5.2 matches the image manifest",
       "remediation": "",
       "duration_ms": 0,
       "facts": {
-        "manifest_version": "0.1.0"
+        "manifest_version": "0.5.2"
       },
       "artifacts": []
     },
@@ -119,10 +119,11 @@
       "claimed_by": [
         "core"
       ],
-      "message": "2 components serving",
+      "message": "3 components serving",
       "remediation": "",
-      "duration_ms": 49,
+      "duration_ms": 5,
       "facts": {
+        "component.desktop": "Serving",
         "component.filesystem": "Serving",
         "component.process": "Serving"
       },
@@ -136,9 +137,9 @@
       "claimed_by": [
         "core"
       ],
-      "message": "/usr/local/bin/cua-guestd --print-config: version 0.1.0, protocol revision 3, listen 0.0.0.0:3211",
+      "message": "/usr/local/bin/cua-spacesd --print-config: version 0.5.2, protocol revision 8, listen 0.0.0.0:3211",
       "remediation": "",
-      "duration_ms": 169,
+      "duration_ms": 13,
       "facts": {
         "listen": "0.0.0.0:3211",
         "token_source": "file:/run/cua/env-token"
@@ -153,11 +154,11 @@
       "claimed_by": [
         "core"
       ],
-      "message": "29 features reported; every unsupported one names its limitation",
+      "message": "36 features reported; every unsupported one names its limitation",
       "remediation": "",
       "duration_ms": 0,
       "facts": {
-        "supported": "a11y,audio.desktop,audio.opus,audio.per_app,audio.uplink,background_input,clipboard.files,clipboard.text,desktop_stream,driver,fs_watch,h264_sw,hotspot,launch_app,presence,pty,quic_media,teleport.chrome,teleport.claude-code,teleport.discord,teleport.firefox,teleport.slack,teleport.steam,teleport.unity-hub,teleport.whatsapp,tunnel.forward,window_stream,windows"
+        "supported": "a11y,audio.desktop,audio.opus,audio.per_app,audio.uplink,background_input,clipboard.files,clipboard.image,clipboard.text,desktop_stream,driver,fs_watch,h264_sw,hotspot,launch_app,presence,presence.cursor_shape,pty,quic_media,relay_attach,teleport.chrome,teleport.claude-code,teleport.discord,teleport.firefox,teleport.notion,teleport.slack,teleport.steam,teleport.unity-hub,teleport.vscode,teleport.whatsapp,teleport.wipe,tunnel.forward,volume.mount,window_stream,windows"
       },
       "artifacts": []
     },
@@ -360,6 +361,20 @@
       "artifacts": []
     },
     {
+      "id": "capabilities.optional.clipboard.image",
+      "group": "capabilities",
+      "status": "pass",
+      "severity": "recommended",
+      "claimed_by": [
+        "feature:clipboard.image"
+      ],
+      "message": "clipboard.image supported",
+      "remediation": "",
+      "duration_ms": 0,
+      "facts": {},
+      "artifacts": []
+    },
+    {
       "id": "capabilities.optional.presence",
       "group": "capabilities",
       "status": "pass",
@@ -374,6 +389,20 @@
       "artifacts": []
     },
     {
+      "id": "capabilities.optional.presence.cursor_shape",
+      "group": "capabilities",
+      "status": "pass",
+      "severity": "recommended",
+      "claimed_by": [
+        "feature:presence.cursor_shape"
+      ],
+      "message": "presence.cursor_shape supported",
+      "remediation": "",
+      "duration_ms": 0,
+      "facts": {},
+      "artifacts": []
+    },
+    {
       "id": "capabilities.optional.hotspot",
       "group": "capabilities",
       "status": "pass",
@@ -382,6 +411,20 @@
         "feature:hotspot"
       ],
       "message": "hotspot supported",
+      "remediation": "",
+      "duration_ms": 0,
+      "facts": {},
+      "artifacts": []
+    },
+    {
+      "id": "capabilities.optional.relay_attach",
+      "group": "capabilities",
+      "status": "pass",
+      "severity": "recommended",
+      "claimed_by": [
+        "feature:relay_attach"
+      ],
+      "message": "relay_attach supported",
       "remediation": "",
       "duration_ms": 0,
       "facts": {},
@@ -458,6 +501,20 @@
       "artifacts": []
     },
     {
+      "id": "capabilities.not_applicable.volume.mount",
+      "group": "capabilities",
+      "status": "skip",
+      "severity": "info",
+      "claimed_by": [],
+      "message": "volume.mount does not apply to this image",
+      "remediation": "",
+      "duration_ms": 0,
+      "facts": {
+        "skip_reason": "not_applicable"
+      },
+      "artifacts": []
+    },
+    {
       "id": "capabilities.unclaimed",
       "group": "capabilities",
       "status": "pass",
@@ -508,13 +565,13 @@
       "status": "pass",
       "severity": "required",
       "claimed_by": [
-        "manifest:guestd"
+        "manifest:spacesd"
       ],
       "message": "tool schemas match the image's pin",
       "remediation": "",
       "duration_ms": 0,
       "facts": {
-        "sha256": "58678b7ac719e7bbda984f7b71bb7e8580be6651bef9172a159c9516e88eaee1"
+        "sha256": "878d7167604a942369fe9982e1922c68f76cb76a0d6256eff84430b1f03c647b"
       },
       "artifacts": []
     },
@@ -526,9 +583,9 @@
       "claimed_by": [
         "feature:driver"
       ],
-      "message": "health_report ok (cua-driver 0.28.2)",
+      "message": "health_report ok (cua-driver 0.33.1)",
       "remediation": "",
-      "duration_ms": 2829,
+      "duration_ms": 661,
       "facts": {
         "check.ax_capability": "pass",
         "check.binary_version": "pass",
@@ -539,7 +596,7 @@
         "check.tcc_accessibility": "skip",
         "check.tcc_screen_recording": "skip",
         "check.wayland_backend": "skip",
-        "driver_version": "0.28.2",
+        "driver_version": "0.33.1",
         "platform": "linux"
       },
       "artifacts": []
@@ -550,9 +607,9 @@
       "status": "pass",
       "severity": "required",
       "claimed_by": [
-        "manifest:guestd"
+        "manifest:spacesd"
       ],
-      "message": "linked cua-driver 0.28.2, image pins 0.28.2",
+      "message": "linked cua-driver 0.33.1, image pins 0.33.1",
       "remediation": "",
       "duration_ms": 0,
       "facts": {},
@@ -564,9 +621,9 @@
       "status": "skip",
       "severity": "info",
       "claimed_by": [],
-      "message": "no standalone cua-driver binary (the registry is linked into cua-guestd)",
+      "message": "no standalone cua-driver binary (the registry is linked into cua-spacesd)",
       "remediation": "",
-      "duration_ms": 2,
+      "duration_ms": 0,
       "facts": {
         "skip_reason": "not_applicable"
       },
@@ -580,11 +637,11 @@
       "claimed_by": [
         "feature:driver"
       ],
-      "message": "serverInfo cua-driver 0.28.2, protocol \"2025-06-18\"",
+      "message": "serverInfo cua-driver 0.33.1, protocol \"2025-06-18\"",
       "remediation": "",
-      "duration_ms": 92,
+      "duration_ms": 1,
       "facts": {
-        "server_version": "0.28.2"
+        "server_version": "0.33.1"
       },
       "artifacts": []
     },
@@ -598,8 +655,27 @@
       ],
       "message": "/mcp and DriverService list the same 59 tools",
       "remediation": "",
-      "duration_ms": 2611,
+      "duration_ms": 186,
       "facts": {},
+      "artifacts": []
+    },
+    {
+      "id": "build.identity",
+      "group": "build",
+      "status": "pass",
+      "severity": "info",
+      "claimed_by": [],
+      "message": "cua-spacesd 0.5.2 (git fe6d89d8049d), cua-driver 0.33.1",
+      "remediation": "",
+      "duration_ms": 0,
+      "facts": {
+        "cua-driver.exe_sha256": "44fe0811315726400120ddba211f9dd9cb261ab7a04b2fda15eddcf3e40ac0dc",
+        "cua-driver.git_sha": "fe6d89d8049d61e4beab66dbeabc176c216e114f",
+        "cua-driver.version": "0.33.1",
+        "cua-spacesd.exe_sha256": "44fe0811315726400120ddba211f9dd9cb261ab7a04b2fda15eddcf3e40ac0dc",
+        "cua-spacesd.git_sha": "fe6d89d8049d61e4beab66dbeabc176c216e114f",
+        "cua-spacesd.version": "0.5.2"
+      },
       "artifacts": []
     },
     {
@@ -610,9 +686,9 @@
       "claimed_by": [
         "core"
       ],
-      "message": "exit Some(0), stdout \"1a0d286c4690b10\"",
+      "message": "exit Some(0), stdout \"1a103dab4940965\"",
       "remediation": "",
-      "duration_ms": 80,
+      "duration_ms": 5,
       "facts": {},
       "artifacts": []
     },
@@ -626,7 +702,7 @@
       ],
       "message": "`exit 7` reported Some(7)",
       "remediation": "",
-      "duration_ms": 35,
+      "duration_ms": 3,
       "facts": {},
       "artifacts": []
     },
@@ -640,7 +716,7 @@
       ],
       "message": "cat echoed \"doctor-stdin\\n\"",
       "remediation": "",
-      "duration_ms": 68,
+      "duration_ms": 5,
       "facts": {},
       "artifacts": []
     },
@@ -654,7 +730,7 @@
       ],
       "message": "stty size after resize to 132x43: \"43 132\"",
       "remediation": "",
-      "duration_ms": 591,
+      "duration_ms": 508,
       "facts": {},
       "artifacts": []
     },
@@ -668,7 +744,7 @@
       ],
       "message": "sleep ended with Some(Term) / exit None",
       "remediation": "",
-      "duration_ms": 47,
+      "duration_ms": 3,
       "facts": {},
       "artifacts": []
     },
@@ -682,7 +758,7 @@
       ],
       "message": "8 MiB in 1 MiB chunks: size 8388608, sha256 matches",
       "remediation": "",
-      "duration_ms": 1315,
+      "duration_ms": 134,
       "facts": {
         "sha256": "bdf23837181f5808331800c1ae2b4f7d7a839536b10d58491471c50dde23833a"
       },
@@ -698,7 +774,7 @@
       ],
       "message": "move, list ([\"moved.bin\"]) and remove",
       "remediation": "",
-      "duration_ms": 74,
+      "duration_ms": 3,
       "facts": {},
       "artifacts": []
     },
@@ -712,7 +788,7 @@
       ],
       "message": "Create event for watched.txt",
       "remediation": "",
-      "duration_ms": 42,
+      "duration_ms": 4,
       "facts": {},
       "artifacts": []
     },
@@ -726,7 +802,7 @@
       ],
       "message": "unauthenticated GET of the signed URL: HTTP 200, 22 bytes",
       "remediation": "",
-      "duration_ms": 56,
+      "duration_ms": 4,
       "facts": {},
       "artifacts": []
     },
@@ -740,10 +816,87 @@
       ],
       "message": "a 4194305 byte chunk was refused (InvalidArgument)",
       "remediation": "",
-      "duration_ms": 159,
+      "duration_ms": 6,
       "facts": {
         "max_chunk_bytes": "4194304"
       },
+      "artifacts": []
+    },
+    {
+      "id": "teleport.manifest",
+      "group": "teleport",
+      "status": "pass",
+      "severity": "recommended",
+      "claimed_by": [
+        "feature:teleport.chrome",
+        "feature:teleport.claude-code",
+        "feature:teleport.discord",
+        "feature:teleport.firefox",
+        "feature:teleport.notion",
+        "feature:teleport.slack",
+        "feature:teleport.steam",
+        "feature:teleport.unity-hub",
+        "feature:teleport.vscode",
+        "feature:teleport.whatsapp"
+      ],
+      "message": "10 provider(s), bundle v1; installed: chrome, firefox, vscode",
+      "remediation": "",
+      "duration_ms": 2,
+      "facts": {
+        "installed": "chrome,firefox,vscode",
+        "providers": "chrome,claude-code,discord,firefox,notion,slack,steam,unity-hub,vscode,whatsapp"
+      },
+      "artifacts": []
+    },
+    {
+      "id": "teleport.import.verify",
+      "group": "teleport",
+      "status": "pass",
+      "severity": "recommended",
+      "claimed_by": [
+        "feature:teleport.chrome",
+        "feature:teleport.claude-code",
+        "feature:teleport.discord",
+        "feature:teleport.firefox",
+        "feature:teleport.notion",
+        "feature:teleport.slack",
+        "feature:teleport.steam",
+        "feature:teleport.unity-hub",
+        "feature:teleport.vscode",
+        "feature:teleport.whatsapp"
+      ],
+      "message": "unknown app FailedPrecondition, duplicate chunk acknowledged, offset mismatch FailedPrecondition, checksum mismatch FailedPrecondition, provider mismatch InvalidArgument (3072 byte probe bundle, app chrome)",
+      "remediation": "",
+      "duration_ms": 2,
+      "facts": {},
+      "artifacts": []
+    },
+    {
+      "id": "teleport.import.fixture",
+      "group": "teleport",
+      "status": "pass",
+      "severity": "recommended",
+      "claimed_by": [
+        "feature:teleport.firefox"
+      ],
+      "message": "imported [\"firefox\"] into a throwaway home (0 faked host effect(s))",
+      "remediation": "",
+      "duration_ms": 1,
+      "facts": {},
+      "artifacts": []
+    },
+    {
+      "id": "teleport.receive_files",
+      "group": "teleport",
+      "status": "pass",
+      "severity": "recommended",
+      "claimed_by": [
+        "feature:teleport.files"
+      ],
+      "message": "3 files received into /home/user/Downloads/cua-doctor-1a103dab4940965 (skip.log ignored, resent chunk duplicate true), conflict renamed to a (1).txt, abort ok, cleanup ok",
+      "remediation": "",
+      "duration_ms": 21,
+      "facts": {},
       "artifacts": []
     },
     {
@@ -768,10 +921,88 @@
       "claimed_by": [
         "feature:tunnel.forward"
       ],
-      "message": "echo through the /tunnel forward to guest port 36113",
+      "message": "echo through the /tunnel forward to guest port 43077",
       "remediation": "",
-      "duration_ms": 90,
+      "duration_ms": 2,
       "facts": {},
+      "artifacts": []
+    },
+    {
+      "id": "tunnel.lifecycle",
+      "group": "tunnel",
+      "status": "pass",
+      "severity": "recommended",
+      "claimed_by": [
+        "feature:tunnel.forward"
+      ],
+      "message": "forward fwd-i_qEE4BPs303 listed on port 38107; foreign host refused; after close: listed false, second close NotFound, socket refused (transport)",
+      "remediation": "",
+      "duration_ms": 2,
+      "facts": {
+        "foreign_host_refused": "true"
+      },
+      "artifacts": []
+    },
+    {
+      "id": "tunnel.tickets",
+      "group": "tunnel",
+      "status": "pass",
+      "severity": "recommended",
+      "claimed_by": [
+        "feature:tunnel.forward"
+      ],
+      "message": "refused: forged /tunnel: Unauthenticated, forged /hotspot: Unauthenticated, tunnel ticket on /hotspot: Unauthenticated",
+      "remediation": "",
+      "duration_ms": 9,
+      "facts": {},
+      "artifacts": []
+    },
+    {
+      "id": "hotspot.status",
+      "group": "hotspot",
+      "status": "pass",
+      "severity": "recommended",
+      "claimed_by": [
+        "feature:hotspot"
+      ],
+      "message": "state stopped",
+      "remediation": "",
+      "duration_ms": 0,
+      "facts": {
+        "state": "stopped"
+      },
+      "artifacts": []
+    },
+    {
+      "id": "hotspot.egress",
+      "group": "hotspot",
+      "status": "pass",
+      "severity": "recommended",
+      "claimed_by": [
+        "feature:hotspot"
+      ],
+      "message": "SOCKS5 127.0.0.1:33323 -> peer -> echo round trip ok; refused destination got reply 0x05; counters out 23 in 23; after stop: stopped, listener closed",
+      "remediation": "",
+      "duration_ms": 3,
+      "facts": {
+        "peer_dials": "1",
+        "peer_principal": "",
+        "peer_refused": "1"
+      },
+      "artifacts": []
+    },
+    {
+      "id": "volume.mount",
+      "group": "volume",
+      "status": "skip",
+      "severity": "info",
+      "claimed_by": [],
+      "message": "the image lists volume.mount as not applicable (claims.features_not_applicable)",
+      "remediation": "",
+      "duration_ms": 0,
+      "facts": {
+        "skip_reason": "not_applicable"
+      },
       "artifacts": []
     },
     {
@@ -784,7 +1015,7 @@
       ],
       "message": "a call without the token is refused with UNAUTHENTICATED",
       "remediation": "",
-      "duration_ms": 33,
+      "duration_ms": 0,
       "facts": {},
       "artifacts": []
     },
@@ -829,7 +1060,7 @@
       ],
       "message": "local contract holds (token from file:/run/cua/env-token)",
       "remediation": "",
-      "duration_ms": 6,
+      "duration_ms": 0,
       "facts": {
         "mode": "local",
         "token_file": "0640 root:user"
@@ -844,9 +1075,9 @@
       "claimed_by": [
         "core"
       ],
-      "message": "the token is in no process argv or environment besides cua-guestd's (environments of other users unreadable)",
+      "message": "the token is in no process argv or environment besides cua-spacesd's (environments of other users unreadable)",
       "remediation": "",
-      "duration_ms": 146,
+      "duration_ms": 3,
       "facts": {
         "scanned_as_root": "false"
       },
@@ -876,19 +1107,19 @@
       "claimed_by": [],
       "message": "NTP synchronized",
       "remediation": "",
-      "duration_ms": 1779,
+      "duration_ms": 10069,
       "facts": {},
       "artifacts": []
     },
     {
       "id": "resources.memory",
       "group": "resources",
-      "status": "fail",
+      "status": "pass",
       "severity": "required",
       "claimed_by": [
         "manifest:resources"
       ],
-      "message": "3905 MiB total, 1135 MiB used (floor 4096 MiB)",
+      "message": "3905 MiB total, 1488 MiB used (floor 3584 MiB)",
       "remediation": "",
       "duration_ms": 0,
       "facts": {
@@ -904,7 +1135,7 @@
       "claimed_by": [
         "core"
       ],
-      "message": "4 logical CPUs, 56% busy, load 4.73",
+      "message": "4 logical CPUs, 15% busy, load 1.12",
       "remediation": "",
       "duration_ms": 0,
       "facts": {
@@ -915,48 +1146,48 @@
     {
       "id": "resources.disk.root",
       "group": "resources",
-      "status": "fail",
+      "status": "pass",
       "severity": "required",
       "claimed_by": [
         "manifest:resources"
       ],
-      "message": "/: 8.0 GiB free of 28.9 GiB, 1632322 inodes free (floor 25.0 GiB)",
+      "message": "/: 7.9 GiB free of 28.9 GiB, 1632233 inodes free (floor 4.0 GiB)",
       "remediation": "",
       "duration_ms": 0,
       "facts": {
-        "free_gib": "7.99"
+        "free_gib": "7.95"
       },
       "artifacts": []
     },
     {
       "id": "resources.disk.tmp",
       "group": "resources",
-      "status": "fail",
+      "status": "pass",
       "severity": "required",
       "claimed_by": [
         "manifest:resources"
       ],
-      "message": "/tmp: 8.0 GiB free of 28.9 GiB, 1632322 inodes free (floor 25.0 GiB)",
+      "message": "/tmp: 7.9 GiB free of 28.9 GiB, 1632233 inodes free (floor 4.0 GiB)",
       "remediation": "",
       "duration_ms": 0,
       "facts": {
-        "free_gib": "7.99"
+        "free_gib": "7.95"
       },
       "artifacts": []
     },
     {
       "id": "resources.disk.home_user",
       "group": "resources",
-      "status": "fail",
+      "status": "pass",
       "severity": "required",
       "claimed_by": [
         "manifest:resources"
       ],
-      "message": "/home/user: 8.0 GiB free of 28.9 GiB, 1632322 inodes free (floor 25.0 GiB)",
+      "message": "/home/user: 7.9 GiB free of 28.9 GiB, 1632233 inodes free (floor 4.0 GiB)",
       "remediation": "",
       "duration_ms": 0,
       "facts": {
-        "free_gib": "7.99"
+        "free_gib": "7.95"
       },
       "artifacts": []
     },
@@ -966,7 +1197,7 @@
       "status": "pass",
       "severity": "info",
       "claimed_by": [],
-      "message": "/dev/shm 1952 MiB (floor 256 MiB)",
+      "message": "/dev/shm 1952 MiB (floor 64 MiB)",
       "remediation": "",
       "duration_ms": 0,
       "facts": {
@@ -996,9 +1227,9 @@
       "claimed_by": [
         "manifest:units"
       ],
-      "message": "active: osworld.service, cua-env-token-sync.service, cua-guestd.service",
+      "message": "active: osworld.service, cua-env-token-sync.service, cua-spacesd.service",
       "remediation": "",
-      "duration_ms": 95,
+      "duration_ms": 3,
       "facts": {
         "method": "systemctl"
       },
@@ -1014,7 +1245,7 @@
       ],
       "message": "no failed cua-* units",
       "remediation": "",
-      "duration_ms": 55,
+      "duration_ms": 2,
       "facts": {},
       "artifacts": []
     },
@@ -1026,9 +1257,9 @@
       "claimed_by": [
         "manifest:units"
       ],
-      "message": "cua-guestd.service is-enabled=enabled, Restart=always",
+      "message": "cua-spacesd.service is-enabled=enabled, Restart=always",
       "remediation": "",
-      "duration_ms": 173,
+      "duration_ms": 6,
       "facts": {},
       "artifacts": []
     },
@@ -1042,35 +1273,57 @@
       ],
       "message": ":5000 (http) GET /screenshot: HTTP/1.1 200 OK",
       "remediation": "",
-      "duration_ms": 1589,
+      "duration_ms": 589,
       "facts": {},
       "artifacts": []
     },
     {
-      "id": "services.chromium-cdp",
-      "group": "services",
-      "status": "fail",
+      "id": "software.apps",
+      "group": "software",
+      "status": "pass",
       "severity": "required",
       "claimed_by": [
-        "manifest:services"
+        "manifest:software"
       ],
-      "message": ":9222 (http) connect: Connection refused (os error 111)",
-      "remediation": "the image claims this service; check its unit/program",
-      "duration_ms": 3,
-      "facts": {},
-      "artifacts": []
-    },
-    {
-      "id": "services.vlc-http",
-      "group": "services",
-      "status": "fail",
-      "severity": "required",
-      "claimed_by": [
-        "manifest:services"
-      ],
-      "message": ":8080 (http) connect: Connection refused (os error 111)",
-      "remediation": "the image claims this service; check its unit/program",
+      "message": "5 claimed apps present: gimp GNU Image Manipulation Program version 2.10.30, google-chrome Google Chrome 130.0.6723.58, libreoffice LibreOffice 7.3.7.2 30(Build:2), python3 Python 3.10.12, thunderbird Thunderbird 115.6.0",
+      "remediation": "",
       "duration_ms": 0,
+      "facts": {
+        "apps.gimp": "GNU Image Manipulation Program version 2.10.30",
+        "apps.google-chrome": "Google Chrome 130.0.6723.58",
+        "apps.libreoffice": "LibreOffice 7.3.7.2 30(Build:2)",
+        "apps.python3": "Python 3.10.12",
+        "apps.thunderbird": "Thunderbird 115.6.0",
+        "claimed": "5",
+        "problems": "0"
+      },
+      "artifacts": []
+    },
+    {
+      "id": "viewer.page",
+      "group": "viewer",
+      "status": "pass",
+      "severity": "required",
+      "claimed_by": [
+        "core"
+      ],
+      "message": "GET /viewer/ and /viewer/viewer.js: HTTP 200 (613 + 257513 bytes, no credentials)",
+      "remediation": "",
+      "duration_ms": 1,
+      "facts": {},
+      "artifacts": []
+    },
+    {
+      "id": "viewer.ticket_scope",
+      "group": "viewer",
+      "status": "pass",
+      "severity": "required",
+      "claimed_by": [
+        "core"
+      ],
+      "message": "a viewer ticket reads its files root and is refused /etc and ProcessService",
+      "remediation": "",
+      "duration_ms": 2,
       "facts": {},
       "artifacts": []
     },
@@ -1082,7 +1335,21 @@
       "claimed_by": [
         "manifest:compat_links"
       ],
-      "message": "/usr/local/bin/cua-env-driver -> /usr/local/bin/cua-guestd",
+      "message": "/usr/local/bin/cua-env-driver -> /usr/local/bin/cua-spacesd",
+      "remediation": "",
+      "duration_ms": 0,
+      "facts": {},
+      "artifacts": []
+    },
+    {
+      "id": "compat.link.cua-guestd",
+      "group": "compat",
+      "status": "pass",
+      "severity": "required",
+      "claimed_by": [
+        "manifest:compat_links"
+      ],
+      "message": "/usr/local/bin/cua-guestd -> /usr/local/bin/cua-spacesd",
       "remediation": "",
       "duration_ms": 0,
       "facts": {},
@@ -1096,7 +1363,21 @@
       "claimed_by": [
         "manifest:compat_links"
       ],
-      "message": "/opt/cua/bin/start-env-driver.sh -> /opt/cua/bin/start-guestd.sh",
+      "message": "/opt/cua/bin/start-env-driver.sh -> /opt/cua/bin/start-spacesd.sh",
+      "remediation": "",
+      "duration_ms": 0,
+      "facts": {},
+      "artifacts": []
+    },
+    {
+      "id": "compat.link.start-guestd.sh",
+      "group": "compat",
+      "status": "pass",
+      "severity": "required",
+      "claimed_by": [
+        "manifest:compat_links"
+      ],
+      "message": "/opt/cua/bin/start-guestd.sh -> /opt/cua/bin/start-spacesd.sh",
       "remediation": "",
       "duration_ms": 0,
       "facts": {},
@@ -1110,7 +1391,21 @@
       "claimed_by": [
         "manifest:compat_links"
       ],
-      "message": "/etc/cua-image/env-driver-source -> /etc/cua-image/guestd-source",
+      "message": "/etc/cua-image/env-driver-source -> /etc/cua-image/spacesd-source",
+      "remediation": "",
+      "duration_ms": 0,
+      "facts": {},
+      "artifacts": []
+    },
+    {
+      "id": "compat.link.guestd-source",
+      "group": "compat",
+      "status": "pass",
+      "severity": "required",
+      "claimed_by": [
+        "manifest:compat_links"
+      ],
+      "message": "/etc/cua-image/guestd-source -> /etc/cua-image/spacesd-source",
       "remediation": "",
       "duration_ms": 0,
       "facts": {},
@@ -1124,9 +1419,9 @@
       "claimed_by": [
         "manifest:compat_links"
       ],
-      "message": "CUA_GUESTD_PORT -> Some(4999), CUA_ENV_PORT -> Some(4998) (want 4999, 4998)",
+      "message": "CUA_SPACESD_PORT=4999 -> Some(4999), CUA_GUESTD_PORT=4997 -> Some(4997), CUA_ENV_PORT=4998 -> Some(4998)",
       "remediation": "",
-      "duration_ms": 411,
+      "duration_ms": 19,
       "facts": {},
       "artifacts": []
     },
@@ -1145,14 +1440,14 @@
       "artifacts": []
     },
     {
-      "id": "annotations.guestd",
+      "id": "annotations.spacesd",
       "group": "annotations",
       "status": "pass",
       "severity": "required",
       "claimed_by": [
         "manifest:annotations"
       ],
-      "message": "ai.cua.guestd=\"true\", ai.cua.env-driver=\"true\"; cua-guestd is running",
+      "message": "ai.cua.spacesd=\"true\", ai.cua.env-driver=\"true\"; cua-spacesd is running",
       "remediation": "",
       "duration_ms": 0,
       "facts": {},
@@ -1262,7 +1557,7 @@
       ],
       "message": "openh264: 30 frames 640x360 -> 57717 bytes, 30 decoded, PSNR 47.5 dB (floor 30)",
       "remediation": "",
-      "duration_ms": 2753,
+      "duration_ms": 87,
       "facts": {
         "hardware": "false",
         "psnr_db": "47.5"
@@ -1272,16 +1567,15 @@
     {
       "id": "stream.media.desktop",
       "group": "stream",
-      "status": "warn",
+      "status": "pass",
       "severity": "recommended",
       "claimed_by": [
         "feature:desktop_stream"
       ],
-      "message": "/media delivered a 1280x720 H.264 keyframe in 427 ms (encoder openh264), luma spread 0",
+      "message": "/media delivered a 1280x720 H.264 keyframe in 14 ms (encoder openh264), luma spread 236",
       "remediation": "",
-      "duration_ms": 1357,
+      "duration_ms": 80,
       "facts": {
-        "downgraded_from": "fail",
         "encoder": "openh264"
       },
       "artifacts": []
@@ -1296,22 +1590,22 @@
       ],
       "message": "QUIC media listener bound on UDP 3212",
       "remediation": "",
-      "duration_ms": 2,
+      "duration_ms": 0,
       "facts": {},
       "artifacts": []
     },
     {
       "id": "screenshot.display",
       "group": "screenshot",
-      "status": "fail",
+      "status": "pass",
       "severity": "required",
       "claimed_by": [
         "manifest:display",
         "feature:desktop_stream"
       ],
-      "message": "1920x1080 PNG at scale 1, 1 distinct colours",
-      "remediation": "a blank or wrongly sized capture means the display or capture backend is broken",
-      "duration_ms": 982,
+      "message": "1920x1080 PNG at scale 1, 4097 distinct colours",
+      "remediation": "",
+      "duration_ms": 74,
       "facts": {
         "height": "1080",
         "width": "1920"
@@ -1319,8 +1613,7 @@
       "artifacts": [
         {
           "name": "screenshot.display.png",
-          "media_type": "image/png",
-          "data": "iVBORw0KGgoAAAANSUhEUgAAB4AAAAQ4CAYAAADo08FDAACm4UlEQVR4Ae3AA6AkWZbG8f937o3IzKdyS2Oubdu2bdu2bdu2bWmMnpZKr54yMyLu+Xa3anqmhztr1a8C5qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv/tCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+A4Kqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqv8LCK666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrvq/gOCqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qr/Cwiuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqqq676v4Dgqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquuuuqq/wsIrrrqqquuuuqqq6666qqrrrrqqquuuuqqq6666qqrrrrqqquu+r+AfwQKNAlyPvolCgAAAABJRU5ErkJggg=="
+          "media_type": "image/png"
         }
       ]
     },
@@ -1350,7 +1643,7 @@
       ],
       "message": "pulseaudio; default sink auto_null (want ), source auto_null.monitor (want )",
       "remediation": "",
-      "duration_ms": 250,
+      "duration_ms": 7,
       "facts": {},
       "artifacts": []
     },
@@ -1362,9 +1655,9 @@
       "claimed_by": [
         "feature:presence"
       ],
-      "message": "joined as p-1837bb54e06b67f9e2aa3651 (roster 0), leave ok",
+      "message": "joined as p-876e379af1f2ef551de01b11 (roster 0), leave ok",
       "remediation": "",
-      "duration_ms": 41,
+      "duration_ms": 0,
       "facts": {},
       "artifacts": []
     }
@@ -1378,7 +1671,7 @@
     "encoder": "openh264",
     "a11y_backend": "atspi",
     "audio_backend": "pulseaudio",
-    "cpu_model": "QEMU TCG CPU version 2.5+",
+    "cpu_model": "INTEL(R) XEON(R) PLATINUM 8573C",
     "cpu_count": 4,
     "memory_mib": 3905,
     "gpu": "none",
@@ -1392,6 +1685,8 @@
       "libreoffice": "LibreOffice 7.3.7.2 30(Build:2)",
       "python3": "Python 3.10.12",
       "thunderbird": "Thunderbird 115.6.0"
-    }
+    },
+    "tool_versions": {},
+    "simulator_runtimes": []
   }
 }

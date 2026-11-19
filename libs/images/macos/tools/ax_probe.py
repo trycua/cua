@@ -20,7 +20,7 @@ with the official MCP Python SDK:
 Element tokens are not used: over /mcp each call runs in its own driver
 runtime scope, so a token from one call is refused by the next.
 
-  uv run --with 'mcp>=1.12,<1.14' python ax_probe.py URL TOKEN_FILE [OUT.json]
+  uv run --with 'mcp>=1.12,<1.14' --with 'pydantic<2.13' python ax_probe.py URL TOKEN_FILE [OUT.json]
 
 Exit 0 on success. Writes a JSON record of every step to OUT.json.
 """
@@ -77,6 +77,13 @@ def normalize(text: str) -> str:
     return "".join(ch for ch in text if ch.isalnum() or ch in ".-")
 
 
+def read(base: dict[str, Any]) -> dict[str, Any]:
+    """get_window_state arguments for `base`. Keys come from `elements` and the
+    display from `tree_markdown`; since cua-driver 0.35 a read returns only
+    the markdown unless asked for both."""
+    return {**base, "tree_format": "both"}
+
+
 def display_text(state: dict[str, Any]) -> str:
     """The window's static texts (Calculator's display), from the tree
     rendering: `elements` lists only actionable nodes."""
@@ -86,8 +93,8 @@ def display_text(state: dict[str, Any]) -> str:
 
 async def run(url: str, token: str, log: list[dict[str, Any]]) -> bool:
     headers = {"Authorization": f"Bearer {token}"}
-    async with streamablehttp_client(url, headers=headers) as (read, write, _):
-        async with ClientSession(read, write) as session:
+    async with streamablehttp_client(url, headers=headers) as (read_stream, write_stream, _):
+        async with ClientSession(read_stream, write_stream) as session:
             await session.initialize()
 
             async def call(name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -121,7 +128,7 @@ async def run(url: str, token: str, log: list[dict[str, Any]]) -> bool:
                     for w in candidates:
                         base = {"pid": pid, "window_id": w["window_id"]}
                         origin = (w.get("bounds", {}).get("x", 0), w.get("bounds", {}).get("y", 0))
-                        state = await call("get_window_state", {**base, "include_screenshot": False})
+                        state = await call("get_window_state", {**read(base), "include_screenshot": False})
                         elements = state.get("elements", [])
                         log[-1]["elements"] = len(elements)
                         if elements:
@@ -141,16 +148,16 @@ async def run(url: str, token: str, log: list[dict[str, Any]]) -> bool:
                     return {"x": f["x"] + f["w"] / 2 - origin[0], "y": f["y"] + f["h"] / 2 - origin[1]}
 
                 clear = find_key(elements, ("All Clear", "Clear", "AC", "C"))
-                state = await call("get_window_state", base)
+                state = await call("get_window_state", read(base))
                 if clear:
                     await call("click", {**base, **target(clear)})
-                    state = await call("get_window_state", base)
+                    state = await call("get_window_state", read(base))
                 for key in ("7", "+", "2", "="):
                     element = find_key(state.get("elements", []), KEYS[key])
                     if element is None:
                         raise RuntimeError(f"no {key!r} key in the AX tree")
                     await call("click", {**base, **target(element)})
-                    state = await call("get_window_state", base)
+                    state = await call("get_window_state", read(base))
                 shown = display_text(state)
                 log.append({"display": shown})
                 calculated = any(normalize(t) == "9" for t in shown.split(" | "))

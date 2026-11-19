@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! AX action dispatch — the preferred click/interaction path for indexed elements.
 
 use crate::ax::bindings::*;
@@ -188,12 +191,27 @@ pub fn capture_nearest_container_selection(element_ptr: usize) -> Option<Selecti
     None
 }
 
+/// The live `AXEnabled` read said the target is disabled, so nothing was sent.
+/// Tools turn this into a structured `element_disabled` refusal.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "refusing {action}: the target reports AXEnabled=false, so the app would ignore it. \
+     Nothing was sent. Snapshot again and act once the element reports enabled"
+)]
+pub struct ElementDisabled {
+    pub action: String,
+}
+
+impl ElementDisabled {
+    pub const CODE: &'static str = "element_disabled";
+}
+
 fn ensure_ax_enabled(enabled: Option<bool>, action: &str) -> anyhow::Result<()> {
     if enabled == Some(false) {
-        anyhow::bail!(
-            "refusing {action}: the target reports AXEnabled=false. \
-             Retry this action with delivery_mode:\"foreground\" or call bring_to_front first"
-        );
+        return Err(ElementDisabled {
+            action: action.to_owned(),
+        }
+        .into());
     }
     Ok(())
 }
@@ -208,9 +226,34 @@ pub fn ensure_ax_action_enabled(element_ptr: usize, action: &str) -> anyhow::Res
     ensure_ax_enabled(enabled, action)
 }
 
+/// How long a read made right after a foreground activation waits for a
+/// control that reports disabled to become enabled.
+const ACTIVATION_ENABLE_SETTLE: std::time::Duration = std::time::Duration::from_millis(750);
+const ACTIVATION_ENABLE_POLL: std::time::Duration = std::time::Duration::from_millis(25);
+
+/// Like [`ensure_ax_action_enabled`], for a read made right after a foreground
+/// activation. The window reports focus before the app has handled its
+/// activation, so a control that is enabled only while the app is active can
+/// still read `AXEnabled=false` for a moment. Re-read until it reports enabled
+/// or the settle window ends, then refuse. A control that stays disabled costs
+/// one settle window before the refusal.
+pub fn ensure_ax_action_enabled_after_activation(
+    element_ptr: usize,
+    action: &str,
+) -> anyhow::Result<()> {
+    let deadline = std::time::Instant::now() + ACTIVATION_ENABLE_SETTLE;
+    loop {
+        let enabled = unsafe { copy_bool_attr(element_ptr as AXUIElementRef, "AXEnabled") };
+        if enabled != Some(false) || std::time::Instant::now() >= deadline {
+            return ensure_ax_enabled(enabled, action);
+        }
+        std::thread::sleep(ACTIVATION_ENABLE_POLL);
+    }
+}
+
 /// Perform an AX action on a cached element.
 pub fn perform_ax_action(element_ptr: usize, action: &str) -> anyhow::Result<()> {
-    let ax_action = map_action(action);
+    let ax_action = map_action(action)?;
     ensure_ax_action_enabled(element_ptr, ax_action)?;
     let err = unsafe { perform_action(element_ptr as AXUIElementRef, ax_action) };
 
@@ -221,16 +264,31 @@ pub fn perform_ax_action(element_ptr: usize, action: &str) -> anyhow::Result<()>
     }
 }
 
-fn map_action(action: &str) -> &'static str {
-    match action.to_lowercase().as_str() {
+/// The AX action named by a tool's `action` argument. Accepts the short
+/// names (`press`, `show_menu`, ...) and the tree's spelling (`showalternateui`,
+/// `AXShowAlternateUI`). An unknown name is an error: falling back to AXPress
+/// would press a control the caller meant only to reveal.
+pub fn map_action(action: &str) -> anyhow::Result<&'static str> {
+    let key: String = action
+        .chars()
+        .filter(|c| *c != '_' && *c != '-')
+        .collect::<String>()
+        .to_lowercase();
+    let key = key.strip_prefix("ax").unwrap_or(&key);
+    Ok(match key {
         "press" | "click" => "AXPress",
-        "show_menu" | "right_click" | "rightclick" => "AXShowMenu",
+        "showmenu" | "rightclick" => "AXShowMenu",
         "pick" => "AXPick",
         "confirm" => "AXConfirm",
         "cancel" => "AXCancel",
         "open" => "AXOpen",
-        _ => "AXPress",
-    }
+        "showalternateui" => "AXShowAlternateUI",
+        "showdefaultui" => "AXShowDefaultUI",
+        _ => anyhow::bail!(
+            "unknown action \"{action}\": use press, show_menu, pick, confirm, cancel, open, \
+             show_alternate_ui or show_default_ui"
+        ),
+    })
 }
 
 /// Set AXFocused=true on an element (for pre-focusing before key press).
@@ -268,27 +326,50 @@ pub fn is_element_focused(pid: i32, element_ptr: usize) -> bool {
     }
 }
 
-/// Set the AXValue of an element (for dropdowns, text fields, etc.).
-pub fn set_ax_value(element_ptr: usize, value: &str) -> anyhow::Result<()> {
-    let err = unsafe { set_string_attr(element_ptr as AXUIElementRef, "AXValue", value) };
-    if err == kAXErrorSuccess {
-        Ok(())
-    } else {
-        anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
-    }
+/// Report whether `element_ptr` holds keyboard focus, by either readback.
+///
+/// The application's `AXFocusedUIElement` is the stronger signal, but for
+/// web content (the Tauri fixture) in a background window it does not name
+/// the DOM control even after the control took focus, so a targeted
+/// background `press_key` was refused although the key would have landed.
+/// Accept the control's own `AXFocused = true` too. A write that AppKit
+/// clobbered reads back `false` either way.
+pub fn element_has_keyboard_focus(pid: i32, element_ptr: usize) -> bool {
+    is_element_focused(pid, element_ptr)
+        || unsafe { copy_bool_attr(element_ptr as AXUIElementRef, "AXFocused") } == Some(true)
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn action_names_accept_the_tree_spelling_and_refuse_unknown_ones() {
+        use super::map_action;
+        assert_eq!(map_action("press").unwrap(), "AXPress");
+        assert_eq!(
+            map_action("show_alternate_ui").unwrap(),
+            "AXShowAlternateUI"
+        );
+        assert_eq!(map_action("showalternateui").unwrap(), "AXShowAlternateUI");
+        assert_eq!(map_action("AXShowDefaultUI").unwrap(), "AXShowDefaultUI");
+        assert_eq!(map_action("right_click").unwrap(), "AXShowMenu");
+        // An unknown name must not fall back to pressing the control.
+        assert!(map_action("hover").is_err());
+    }
+
     use super::*;
 
     #[test]
     fn disabled_elements_are_refused_before_dispatch() {
         let error = ensure_ax_enabled(Some(false), "AXPick").unwrap_err();
+        let disabled = error
+            .downcast_ref::<ElementDisabled>()
+            .expect("a disabled target is a typed refusal");
+        assert_eq!(disabled.action, "AXPick");
         let message = error.to_string();
         assert!(message.contains("AXEnabled=false"));
-        assert!(message.contains("delivery_mode:\"foreground\""));
-        assert!(message.contains("bring_to_front"));
+        // A foreground retry does not enable a disabled control.
+        assert!(!message.contains("foreground"));
+        assert!(!message.contains("bring_to_front"));
     }
 
     #[test]

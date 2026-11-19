@@ -869,10 +869,13 @@ impl DesktopBackend for ToolBackend {
         max_nodes: u32,
     ) -> Result<A11yTree, ProviderError> {
         let native = self.native(window)?;
+        // get_window_state returns compact Markdown by default; this backend
+        // reads the structured `elements` array (with explicit element_tokens).
         let mut arguments = json!({
             "pid": native.pid,
             "window_id": native.window_id,
             "include_screenshot": false,
+            "tree_format": "elements",
         });
         if max_nodes > 0 {
             arguments["max_elements"] = max_nodes.into();
@@ -1037,10 +1040,6 @@ impl DesktopBackend for ToolBackend {
             .unwrap_or(false);
         let audio = self.media.audio.is_some();
         let no_audio = "no audio capture backend is available on this host";
-        let encoders = cua_media_codec::probe();
-        let hardware = encoders.iter().any(|encoder| {
-            encoder.status == cua_media_codec::ProbeStatus::Available && encoder.hardware
-        });
         vec![
             if displays {
                 FeatureStatus::yes("desktop_stream")
@@ -1052,11 +1051,7 @@ impl DesktopBackend for ToolBackend {
             },
             FeatureStatus::yes("window_stream"),
             FeatureStatus::yes("h264_sw"),
-            if hardware {
-                FeatureStatus::yes("h264_hw")
-            } else {
-                FeatureStatus::no("h264_hw", "no hardware H.264 encoder was found")
-            },
+            crate::encoder_probe::host_h264_hw("no hardware H.264 encoder was found"),
             FeatureStatus {
                 limitation:
                     "pointer/key down-up pairs are not available; use click, drag, press or hotkey"
@@ -1469,6 +1464,9 @@ mod tests {
         let (backend, tools) = backend();
         let window = backend.windows().unwrap().remove(0);
         let tree = backend.a11y_tree(&window, 0, 0).unwrap();
+        let (name, arguments) = last_call(&tools);
+        assert_eq!(name, "get_window_state");
+        assert_eq!(arguments["tree_format"], json!("elements"));
         assert_eq!(tree.nodes.len(), 3);
         assert_eq!(tree.nodes[0].role, "button");
         assert_eq!(tree.nodes[1].role, "text_field");

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Detect target processes whose UI toolkit derives pointer-event locations
 //! from the hardware pointer rather than from the delivered event.
 //!
@@ -15,16 +18,51 @@
 //! loaded only from the dyld shared cache is not visible this way; such targets
 //! fall back to the honest "not driver-verified" background result.
 
-/// A UI toolkit known to derive click locations from the hardware pointer.
+/// A UI toolkit that background (PID-routed) mouse events cannot reach at the
+/// requested point.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PointerReadingToolkit {
+    /// Tk derives click locations from the hardware pointer.
     Tk,
+    /// LibreOffice's macOS VCL plug-in (`libvclplug_osxlo.dylib`) drops
+    /// PID-routed mouse events: a background click or right-click on a Calc
+    /// cell leaves the selection where it was (VM check, 8 Oct 2026), and
+    /// the AX press its cells accept does not select them either.
+    Vcl,
+    /// GTK 3's Quartz backend (`libgdk-3.0.dylib`; GnuCash, GIMP 2.10,
+    /// Inkscape 1.x). It drops a mouse-down while `NSApp` is inactive and
+    /// activates the app instead, so a plain background click raises it.
+    /// Left clicks reach it through the AppKit activation route
+    /// (`input::appkit_activation`); other background mouse input is refused.
+    GdkQuartz,
 }
 
 impl PointerReadingToolkit {
     pub fn name(self) -> &'static str {
         match self {
             Self::Tk => "tk",
+            Self::Vcl => "libreoffice-vcl",
+            Self::GdkQuartz => "gtk3-quartz",
+        }
+    }
+
+    /// Why background delivery cannot reach this toolkit, as a clause that
+    /// follows "its <name> toolkit".
+    pub fn why(self) -> &'static str {
+        match self {
+            Self::Tk => {
+                "derives click locations from the hardware pointer, and background delivery \
+                 never moves the pointer, so the click would land wherever the pointer \
+                 currently is"
+            }
+            Self::Vcl => {
+                "ignores background (PID-routed) mouse events, so the click would not reach \
+                 the target and the selection would stay where it is"
+            }
+            Self::GdkQuartz => {
+                "drops a mouse press while the app is inactive and activates the app instead, \
+                 so a background press would raise its window and take the user's focus"
+            }
         }
     }
 }
@@ -40,6 +78,14 @@ pub fn classify_image_path(path: &str) -> Option<PointerReadingToolkit> {
     }
     let file = path.rsplit('/').next().unwrap_or(path);
     let lower = file.to_ascii_lowercase();
+    // LibreOffice's macOS VCL plug-in: `libvclplug_osxlo.dylib`.
+    if lower.starts_with("libvclplug_osx") && lower.ends_with(".dylib") {
+        return Some(PointerReadingToolkit::Vcl);
+    }
+    // GTK 3's GDK library, which carries the Quartz backend on macOS.
+    if lower.starts_with("libgdk-3") && lower.ends_with(".dylib") {
+        return Some(PointerReadingToolkit::GdkQuartz);
+    }
     if lower.starts_with("_tkinter") && lower.ends_with(".so") {
         return Some(PointerReadingToolkit::Tk);
     }
@@ -200,6 +246,43 @@ mod tests {
             "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
             "/usr/lib/python3/_tkinter_helper.py",
             "/Applications/Foo.app/Contents/MacOS/tk8.6",
+        ] {
+            assert_eq!(classify_image_path(path), None, "{path}");
+        }
+    }
+
+    #[test]
+    fn classifies_the_libreoffice_vcl_plugin() {
+        assert_eq!(
+            classify_image_path(
+                "/Applications/LibreOffice.app/Contents/Frameworks/libvclplug_osxlo.dylib"
+            ),
+            Some(PointerReadingToolkit::Vcl)
+        );
+        for path in [
+            "/Applications/LibreOffice.app/Contents/Frameworks/libvcllo.dylib",
+            "/Applications/LibreOffice.app/Contents/Frameworks/libvclplug_osxlo.dylib.bak",
+        ] {
+            assert_eq!(classify_image_path(path), None, "{path}");
+        }
+    }
+
+    #[test]
+    fn classifies_gtk3_gdk_and_not_its_siblings() {
+        for path in [
+            "/Applications/Gnucash.app/Contents/Frameworks/libgdk-3.0.dylib",
+            "/opt/homebrew/Cellar/gtk+3/3.24.43/lib/libgdk-3.0.dylib",
+        ] {
+            assert_eq!(
+                classify_image_path(path),
+                Some(PointerReadingToolkit::GdkQuartz),
+                "{path}"
+            );
+        }
+        for path in [
+            "/Applications/Gnucash.app/Contents/Frameworks/libgdk_pixbuf-2.0.0.dylib",
+            "/Applications/Gnucash.app/Contents/Frameworks/libgtk-3.0.dylib",
+            "/opt/homebrew/lib/libgdk-4.1.dylib",
         ] {
             assert_eq!(classify_image_path(path), None, "{path}");
         }

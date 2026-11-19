@@ -1,0 +1,59 @@
+name: "CI: Bench results and compare links"
+
+# Two cheap guards, on every pull request and on main:
+#
+#   compare links  tests/test_product_compare_links.py: the product (apps,
+#                  CLI and crates, SDKs, what `cua bench` embeds) links to no
+#                  cua.ai compare or benchmark page except
+#                  https://cua.ai/compare/clouds.
+#   bench results  libs/cua/bench/test_bench_result.py: the bench-result v1
+#                  converters on the committed baselines and runs, the
+#                  `cua bench` runner's registry and manifest, and the perf
+#                  guards' own unit tests.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  compare-links:
+    name: compare links
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: The product links only to /compare/clouds
+        run: python3 -m unittest tests.test_product_compare_links -v
+
+  bench-results:
+    name: bench results
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Converters and runner
+        run: python3 -m unittest discover -s libs/cua/bench -p 'test_bench_result.py' -v
+      - name: Perf guards
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pytest
+          for d in fork-fanout fork-batch microvm-fork rollouts; do
+            (cd "libs/cua/bench/$d" && python3 -m pytest -q test_check.py)
+          done
+          python3 libs/cua/bench/channel/check.py --self-test
+      - name: Scripts parse
+        run: |
+          set -euo pipefail
+          for f in libs/cua/bench/*/*.sh; do bash -n "$f"; done

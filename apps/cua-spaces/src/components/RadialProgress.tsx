@@ -24,8 +24,9 @@ export function RadialProgress({
   /** A real 0–1 progress (e.g. bytes sent/total). When set, the pie shows it
    * directly instead of the time-based estimate. */
   fraction?: number;
-  /** Rough time to ~80% for the time-based estimate. Default ~80s (Fleet bind
-   * time); a Local Lume Space is much faster (~17s to running). */
+  /** Rough time to ~80% for the time-based estimate. Default ~80s (a
+   * container or VM image pull and boot); a Local Lume Space is much faster
+   * (~17s to running). */
   estimateMs?: number;
 }) {
   const [progress, setProgress] = useState(0.04);

@@ -1,0 +1,199 @@
+name: "CI: conflict alert"
+
+# A pull request with a merge conflict never gets its CI run, and nobody sees
+# it. This labels it `conflict` and comments once, naming the files and the
+# merged PR that most likely caused it. Agent-opened PRs (the cua-agents app)
+# also get `needs-rebase`, which the loops runner picks up. The labels come off
+# when the conflict is gone. It never reposts while the `conflict` label is on.
+#
+# Runs on every push to main and hourly as a fallback. One GraphQL query reads
+# all open PRs; REST calls happen only for PRs that are newly conflicting.
+# It never checks out or runs pull request code.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: ci-conflict-alert
+  cancel-in-progress: false
+
+jobs:
+  alert:
+    name: label and comment on conflicting PRs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const MARKER = '<!-- ci-conflict-alert -->';
+            const AGENT_LOGINS = new Set(['cua-agents', 'app/cua-agents']);
+            const LABELS = {
+              conflict: ['B60205', 'PR has a merge conflict with its base branch'],
+              'needs-rebase': ['D93F0B', 'Agent PR that must be rebased onto main'],
+            };
+
+            const QUERY = `
+              query($owner: String!, $repo: String!, $after: String) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequests(states: OPEN, first: 100, after: $after) {
+                    pageInfo { hasNextPage endCursor }
+                    nodes {
+                      number
+                      isDraft
+                      baseRefName
+                      headRefOid
+                      mergeable
+                      mergeStateStatus
+                      author { login }
+                      labels(first: 30) { nodes { name } }
+                    }
+                  }
+                }
+              }`;
+
+            // GitHub's API answers 502/503 now and then. Retry with a backoff.
+            async function graphqlRetry(vars) {
+              for (let attempt = 1; ; attempt++) {
+                try {
+                  return await github.graphql(QUERY, vars);
+                } catch (e) {
+                  const transient = !e.status || e.status >= 500;
+                  if (!transient || attempt === 4) throw e;
+                  await new Promise((r) => setTimeout(r, 10000 * attempt));
+                }
+              }
+            }
+
+            async function listOpen() {
+              const out = [];
+              let after = null;
+              for (;;) {
+                const r = await graphqlRetry({ owner, repo, after });
+                const page = r.repository.pullRequests;
+                out.push(...page.nodes);
+                if (!page.pageInfo.hasNextPage) return out;
+                after = page.pageInfo.endCursor;
+              }
+            }
+
+            const isConflict = (p) => p.mergeable === 'CONFLICTING' || p.mergeStateStatus === 'DIRTY';
+
+            // GitHub computes `mergeable` lazily after a push to main: UNKNOWN
+            // means "not computed yet". Wait and re-read once for those.
+            // A GitHub outage is not a conflict-alert failure: the hourly run
+            // re-checks, so warn and stop instead of turning main red.
+            let prs;
+            try {
+              prs = await listOpen();
+              if (prs.some((p) => p.mergeable === 'UNKNOWN')) {
+                await new Promise((r) => setTimeout(r, 45000));
+                prs = await listOpen();
+              }
+            } catch (e) {
+              if (e.status && e.status < 500) throw e;
+              core.warning(`GitHub API unavailable, skipping this run: ${String(e.message).slice(0, 200)}`);
+              return;
+            }
+
+            async function ensureLabels() {
+              for (const [name, [color, description]] of Object.entries(LABELS)) {
+                try {
+                  await github.rest.issues.createLabel({ owner, repo, name, color, description });
+                } catch (e) {
+                  if (e.status !== 422) throw e; // already exists
+                }
+              }
+            }
+
+            // Files both the PR and main changed since their merge base, and the
+            // newest merged PR that touched them. An approximation of the
+            // conflict, good enough to tell the author where to look.
+            async function explain(pr) {
+              const prFiles = (await github.paginate(github.rest.pulls.listFiles, {
+                owner, repo, pull_number: pr.number, per_page: 100,
+              })).map((f) => f.filename);
+              const head = await github.rest.repos.compareCommitsWithBasehead({
+                owner, repo, basehead: `${pr.baseRefName}...${pr.headRefOid}`, per_page: 1,
+              });
+              const base = head.data.merge_base_commit.sha;
+              const main = await github.rest.repos.compareCommitsWithBasehead({
+                owner, repo, basehead: `${base}...${pr.baseRefName}`, per_page: 100,
+              });
+              const mainFiles = new Set((main.data.files || []).map((f) => f.filename));
+              const shared = prFiles.filter((f) => mainFiles.has(f));
+              let culprit = null;
+              if (shared.length) {
+                const commits = [...main.data.commits].reverse().slice(0, 30); // newest first
+                for (const c of commits) {
+                  const full = await github.rest.repos.getCommit({ owner, repo, ref: c.sha });
+                  if (!(full.data.files || []).some((f) => shared.includes(f.filename))) continue;
+                  const assoc = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                    owner, repo, commit_sha: c.sha,
+                  });
+                  culprit = { sha: c.sha, pr: assoc.data[0]?.number ?? null };
+                  break;
+                }
+              }
+              return { shared, culprit };
+            }
+
+            let labelsReady = false;
+            const summary = [];
+            for (const pr of prs) {
+              const names = new Set(pr.labels.nodes.map((l) => l.name));
+              const login = pr.author?.login ?? '';
+              const agent = AGENT_LOGINS.has(login);
+
+              if (isConflict(pr)) {
+                if (!labelsReady) { await ensureLabels(); labelsReady = true; }
+                const wantRebase = agent && !names.has('needs-rebase');
+                if (names.has('conflict')) {
+                  if (wantRebase) {
+                    await github.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: ['needs-rebase'] });
+                  }
+                  continue; // already reported, no repost
+                }
+                const { shared, culprit } = await explain(pr);
+                const files = shared.length
+                  ? shared.slice(0, 20).map((f) => `- \`${f}\``).join('\n') +
+                    (shared.length > 20 ? `\n- and ${shared.length - 20} more` : '')
+                  : '- (could not narrow it down; run `git merge origin/' + pr.baseRefName + '` to see it)';
+                const cause = culprit
+                  ? `Most likely caused by ${culprit.pr ? '#' + culprit.pr : 'commit ' + culprit.sha.slice(0, 10)}, merged into \`${pr.baseRefName}\` after this branch started.`
+                  : `Caused by a change merged into \`${pr.baseRefName}\` after this branch started.`;
+                const body = `${MARKER}\nThis PR has a merge conflict with \`${pr.baseRefName}\`, so CI does not run on it until it is resolved.\n\n${cause}\n\nFiles changed on both sides:\n${files}\n\nRebase or merge \`${pr.baseRefName}\` and push. This comment and the \`conflict\` label go away on their own once the conflict is resolved.`;
+                await github.rest.issues.createComment({ owner, repo, issue_number: pr.number, body });
+                await github.rest.issues.addLabels({
+                  owner, repo, issue_number: pr.number,
+                  labels: agent ? ['conflict', 'needs-rebase'] : ['conflict'],
+                });
+                summary.push(`#${pr.number} conflicting (${shared.length} shared files)`);
+              } else if (pr.mergeable === 'MERGEABLE' && names.has('conflict')) {
+                // We set both labels together, so both come off together.
+                for (const name of ['conflict', 'needs-rebase']) {
+                  if (!names.has(name)) continue;
+                  try {
+                    await github.rest.issues.removeLabel({ owner, repo, issue_number: pr.number, name });
+                  } catch (e) {
+                    if (e.status !== 404) throw e;
+                  }
+                }
+                summary.push(`#${pr.number} resolved`);
+              }
+              // UNKNOWN after the retry: leave as is, the next run re-checks.
+            }
+            core.summary
+              .addHeading('Conflict alert')
+              .addRaw(summary.length ? summary.join('\n\n') : `No changes across ${prs.length} open PRs.`)
+              .write();

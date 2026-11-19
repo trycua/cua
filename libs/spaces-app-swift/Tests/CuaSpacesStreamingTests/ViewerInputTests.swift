@@ -53,6 +53,37 @@ private final class RecordingProvider: SpaceStreamSourceProviding, @unchecked Se
         lock.lock(); sink = frames; sources.append(source); policies.append(policy); lock.unlock()
         return media
     }
+
+    /// Whether the Space's clipboard setting lets a paste send the clipboard.
+    var sendsClipboard = true
+    /// How long the clipboard takes to reach the Space.
+    var clipboardDelay: Duration = .zero
+    private var clipboardTexts: [String] = []
+    private var framesBefore: [Int] = []
+    /// The clipboard texts the Space received, in order.
+    var clipboards: [String] { lock.lock(); defer { lock.unlock() }; return clipboardTexts }
+    /// How many input frames the Space had when each clipboard arrived.
+    var framesAtClipboard: [Int] { lock.lock(); defer { lock.unlock() }; return framesBefore }
+
+    /// A longer delay for one text: a transfer that stalls.
+    var clipboardDelays: [String: Duration] = [:]
+
+    private var startedTexts: [String] = []
+    /// The clipboard texts whose transfer started, in order.
+    var clipboardsStarted: [String] { lock.lock(); defer { lock.unlock() }; return startedTexts }
+    /// Delays for successive transfers of one text, used up in order.
+    var clipboardDelaySequence: [String: [Duration]] = [:]
+
+    func sendClipboard(_ text: String) async throws -> Bool {
+        lock.lock()
+        startedTexts.append(text)
+        let next = clipboardDelaySequence[text]?.isEmpty == false ? clipboardDelaySequence[text]?.removeFirst() : nil
+        lock.unlock()
+        try? await Task.sleep(for: next ?? clipboardDelays[text] ?? clipboardDelay)
+        guard sendsClipboard else { return false }
+        lock.lock(); clipboardTexts.append(text); framesBefore.append(media.sent.count); lock.unlock()
+        return true
+    }
     func joinPresence(name: String, color: String?) async throws -> SpacePresence {
         throw StreamError.noStream("no presence in this test")
     }
@@ -83,6 +114,31 @@ private func offscreenWindow(_ size: CGSize) -> NSWindow {
                           styleMask: [.titled], backing: .buffered, defer: true)
     window.isReleasedWhenClosed = false
     return window
+}
+
+/// A key event for `window`, handed to the view directly.
+@MainActor
+private func key(_ characters: String, _ flags: NSEvent.ModifierFlags, keyCode: UInt16,
+                 in window: NSWindow) -> NSEvent {
+    NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
+                     windowNumber: window.windowNumber, context: nil, characters: characters,
+                     charactersIgnoringModifiers: characters, isARepeat: false, keyCode: keyCode)!
+}
+
+/// The key and text events of each input frame the Space received, as
+/// `key` names and `text:` commits.
+private func typed(in texts: [String]) -> [[String]] {
+    texts.map { text in
+        guard let root = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
+              let message = root["message"] as? [String: Any],
+              let payload = message["payload"] as? [String: Any],
+              let events = payload["events"] as? [[String: Any]] else { return [] }
+        return events.compactMap { e in
+            if let key = e["key"] as? String { return key }
+            if let commit = e["text"] as? String { return "text:\(commit)" }
+            return nil
+        }
+    }
 }
 
 private func pointerEvents(in text: String) -> [[String: Any]] {
@@ -145,6 +201,25 @@ private func pointerEvents(in text: String) -> [[String: Any]] {
 
         let enter = InputEncoder.keyEvents(name: "enter", characters: "\r", modifiers: [], down: true, isRepeat: false)
         if case let .key(key, _, _, _) = enter.first { #expect(key == "enter") } else { Issue.record("\(enter)") }
+    }
+
+    /// A Linux or Windows guest gets ⌘ chords as Control chords (Command
+    /// would arrive as Super); a macOS or unknown guest keeps ⌘.
+    @Test func commandGoesAsControlToALinuxGuest() {
+        #expect(InputEncoder.commandAsControl(guestOS: "linux"))
+        #expect(InputEncoder.commandAsControl(guestOS: "windows"))
+        #expect(!InputEncoder.commandAsControl(guestOS: "macos"))
+        #expect(!InputEncoder.commandAsControl(guestOS: ""))
+        let mapped = InputEncoder.commandAsControl([
+            .key(key: "c", down: true, modifiers: [.command, .shift], repeatKey: false),
+            .key(key: "v", down: true, modifiers: [.command, .control], repeatKey: false),
+        ])
+        guard case let .key(_, _, copy, _) = mapped[0], case let .key(_, _, paste, _) = mapped[1] else {
+            Issue.record("\(mapped)"); return
+        }
+        #expect(copy == [.control, .shift])
+        #expect(paste == [.control])
+        #expect(OfflineStreamSourceProvider().commandAsControl == false)
     }
 
     /// The stream view is the hit-test target inside the app's grouped Form
@@ -233,8 +308,8 @@ private func pointerEvents(in text: String) -> [[String: Any]] {
         await session.stop()
     }
 
-    /// A window the Space can reach only by activating it (Hyprland outside
-    /// its qualified apps) refuses the background session as
+    /// A window the Space can reach only by activating it (an XWayland
+    /// window on Hyprland) refuses the background session as
     /// would-require-activation. The viewer reopens that window with
     /// `allow_activation` and resends the refused click, instead of showing
     /// "Input not delivered" for every click.
@@ -277,6 +352,195 @@ private func pointerEvents(in text: String) -> [[String: Any]] {
         #expect(!session.activatesOnInput)
         #expect(provider.policies.last == "allow_activation")
         await session.stop()
+    }
+
+    /// #7589: ⌘V in the viewer of a Linux Space reached it as Control+V, but
+    /// nothing put this Mac's clipboard on the Space, so the paste inserted
+    /// nothing. The clipboard goes first; a key typed right after waits
+    /// behind the paste.
+    @Test func pasteSendsTheClipboardBeforeTheChord() async throws {
+        let provider = RecordingProvider()
+        provider.clipboardDelay = .milliseconds(50)
+        let session = LiveStreamSession(provider: provider)
+        await session.start()
+        let window = offscreenWindow(CGSize(width: 400, height: 300))
+        let view = LiveStreamInputView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        window.contentView = view
+        defer { window.close() }
+        view.onInput = { [weak session] in session?.send($0) }
+        view.onPaste = { [weak session] in session?.paste($0, text: $1) }
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        pasteboard.setString("copied on the Mac", forType: .string)
+        view.pasteboard = pasteboard
+        #expect(window.makeFirstResponder(view))
+
+        #expect(view.performKeyEquivalent(with: key("v", .command, keyCode: 9, in: window)))
+        view.keyDown(with: key("x", [], keyCode: 7, in: window))
+        await eventually("the paste and the key") { provider.media.sent.count == 2 }
+        #expect(provider.clipboards == ["copied on the Mac"])
+        #expect(provider.framesAtClipboard == [0], "the clipboard reached the Space before any key")
+        #expect(typed(in: provider.media.sent) == [["v", "v"], ["text:x"]])
+        await session.stop()
+    }
+
+    /// A Mac clipboard with no text still goes first, as empty text, so the
+    /// paste inserts nothing instead of what the Space copied before.
+    @Test func anEmptyClipboardStillGoesBeforeTheChord() async throws {
+        let provider = RecordingProvider()
+        let session = LiveStreamSession(provider: provider)
+        await session.start()
+        let window = offscreenWindow(CGSize(width: 400, height: 300))
+        let view = LiveStreamInputView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        window.contentView = view
+        defer { window.close() }
+        view.onPaste = { [weak session] in session?.paste($0, text: $1) }
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        view.pasteboard = pasteboard
+        #expect(window.makeFirstResponder(view))
+
+        #expect(view.performKeyEquivalent(with: key("v", .command, keyCode: 9, in: window)))
+        await eventually("the paste") { provider.media.sent.count == 1 }
+        #expect(provider.clipboards == [""])
+        #expect(provider.framesAtClipboard == [0], "the empty clipboard reached the Space before the chord")
+        await session.stop()
+    }
+
+    /// A second paste while the first's clipboard is on its way pastes its
+    /// own text, not the first's; held input dies with the stream it was
+    /// typed into.
+    @Test func pastesQueueWithTheirOwnTextAndAStopDropsThem() async throws {
+        let v: [InteractiveInputEvent] = [.key(key: "v", down: true, modifiers: [.command], repeatKey: false)]
+        let provider = RecordingProvider()
+        provider.clipboardDelay = .milliseconds(30)
+        let session = LiveStreamSession(provider: provider)
+        await session.start()
+        session.paste(v, text: "first")
+        session.paste(v, text: "second")
+        await eventually("both pastes") { provider.media.sent.count == 2 }
+        #expect(provider.clipboards == ["first", "second"])
+        #expect(provider.framesAtClipboard == [0, 1], "each clipboard went just before its own chord")
+
+        // The first transfer stalls past its wait: its chord goes without
+        // it, the second paste's chord still waits for its own text, and
+        // the late first text is put right after it lands.
+        let stalls = RecordingProvider()
+        stalls.clipboardDelays = ["stalled": .milliseconds(300)]
+        let late = LiveStreamSession(provider: stalls)
+        late.pasteWait = .milliseconds(20)
+        await late.start()
+        late.paste(v, text: "stalled")
+        await eventually("the first chord, after its wait") { stalls.media.sent.count == 1 }
+        late.paste(v, text: "next")
+        await eventually("the second chord") { stalls.media.sent.count == 2 }
+        #expect(stalls.clipboards == ["next"])
+        #expect(stalls.framesAtClipboard == [1], "the second clipboard went before its chord")
+        await eventually("the late text and the newest again") { stalls.clipboards.count == 3 }
+        #expect(stalls.clipboards == ["next", "stalled", "next"])
+        await late.stop()
+
+        // The repair can stall too, past a third paste: it is a transfer
+        // like any other, so its late landing is repaired in turn.
+        let repairs = RecordingProvider()
+        repairs.clipboardDelays = ["stalled": .milliseconds(100)]
+        repairs.clipboardDelaySequence = ["next": [.zero, .milliseconds(400)]]
+        let third = LiveStreamSession(provider: repairs)
+        third.pasteWait = .milliseconds(20)
+        await third.start()
+        third.paste(v, text: "stalled")
+        await eventually("the first chord") { repairs.media.sent.count == 1 }
+        third.paste(v, text: "next")
+        await eventually("the repair starting") { repairs.clipboardsStarted == ["stalled", "next", "next"] }
+        third.paste(v, text: "third")
+        await eventually("the third chord") { repairs.media.sent.count == 3 }
+        await eventually("the late repair and the newest again") { repairs.clipboards.count == 5 }
+        #expect(repairs.clipboards == ["next", "stalled", "third", "next", "third"])
+        await third.stop()
+
+        let slow = RecordingProvider()
+        slow.clipboardDelay = .seconds(30)
+        let stopped = LiveStreamSession(provider: slow)
+        stopped.pasteWait = .milliseconds(50)
+        await stopped.start()
+        stopped.paste(v, text: "late")
+        stopped.send(v)
+        await stopped.stop()
+        await stopped.start()
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(slow.media.sent.isEmpty, "nothing held for the stopped stream reached the new one")
+        await stopped.stop()
+        await session.stop()
+    }
+
+    /// Under `ask` or `off` (or with no clipboard behind the provider)
+    /// nothing is sent, and a clipboard that never arrives does not keep
+    /// the keys: the chord goes after `pasteWait`.
+    @Test func aPasteTheSpaceDoesNotTakeStillSendsTheChord() async throws {
+        #expect(SpaceStreamProvider.pasteSendsClipboard(setting: "viewing"))
+        #expect(SpaceStreamProvider.pasteSendsClipboard(setting: ""))
+        #expect(!SpaceStreamProvider.pasteSendsClipboard(setting: "ask"))
+        #expect(!SpaceStreamProvider.pasteSendsClipboard(setting: "off"))
+        #expect(LiveStreamInputView.isPasteChord(characters: "v", flags: [.command, .shift]))
+        #expect(!LiveStreamInputView.isPasteChord(characters: "v", flags: [.command, .option]))
+        #expect(!LiveStreamInputView.isPasteChord(characters: "c", flags: .command))
+
+        let provider = RecordingProvider()
+        provider.sendsClipboard = false
+        let session = LiveStreamSession(provider: provider)
+        await session.start()
+        session.paste([.key(key: "v", down: true, modifiers: [.command], repeatKey: false)], text: "a")
+        await eventually("the chord") { provider.media.sent.count == 1 }
+        #expect(provider.clipboards.isEmpty)
+
+        provider.sendsClipboard = true
+        provider.clipboardDelay = .seconds(30)
+        session.pasteWait = .milliseconds(20)
+        session.paste([.key(key: "v", down: true, modifiers: [.command], repeatKey: false)], text: "b")
+        await eventually("the chord without the clipboard") { provider.media.sent.count == 2 }
+        await session.stop()
+    }
+
+    /// A Command chord typed while the stream has the keyboard goes to the
+    /// Space (Super on a Linux guest) before the app's own shortcuts: here a
+    /// SwiftUI ⌘N in the same window, which used to take it (#4609).
+    @Test func commandChordReachesTheSpaceBeforeTheAppsShortcuts() throws {
+        _ = NSApplication.shared
+        var shortcutFired = false
+        let session = LiveStreamSession(provider: OfflineStreamSourceProvider())
+        let root = VStack {
+            Button("New Space") { shortcutFired = true }.keyboardShortcut("n", modifiers: .command)
+            LiveStreamView(session: session, isInteractive: true).frame(width: 400, height: 300)
+        }
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 500, height: 400),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let host = NSHostingView(rootView: root)
+        host.frame = CGRect(x: 0, y: 0, width: 500, height: 400)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        defer { window.contentView = nil; window.close() }
+
+        func find(_ v: NSView) -> LiveStreamInputView? {
+            if let s = v as? LiveStreamInputView { return s }
+            for sub in v.subviews { if let f = find(sub) { return f } }
+            return nil
+        }
+        let stream = try #require(find(host))
+        var keys: [String] = []
+        stream.onInput = { events in
+            for case let .key(key, down, modifiers, _) in events {
+                keys.append("\(modifiers.map(\.rawValue).joined(separator: "+"))+\(key) \(down ? "down" : "up")")
+            }
+        }
+        #expect(window.makeFirstResponder(stream))
+        NSApp.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+                                         windowNumber: window.windowNumber, context: nil, characters: "n",
+                                         charactersIgnoringModifiers: "n", isARepeat: false, keyCode: 45)!)
+        #expect(keys == ["command+n down", "command+n up"], "the chord reached the Space")
+        #expect(!shortcutFired, "the app's ⌘N did not run")
     }
 }
 #endif

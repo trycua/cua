@@ -9,7 +9,7 @@ local runs need KVM, and the image comes from `CUA_BENCH_WAA_IMAGE`.
 
 ```bash
 CUA_BENCH_WAA_IMAGE=<registry>/waa-win11@sha256:... cb run tasks/winarena_adapter --agent cua-agent
-cb run tasks/winarena_adapter --on cloud --dry-run    # Fleet KubeVirt, nothing starts
+cb run tasks/winarena_adapter --dry-run              # nothing starts
 ```
 
 `CUA_BENCH_WAA_IMAGE` is a Windows 11 VM image with WAA's applications that you

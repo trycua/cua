@@ -10,7 +10,7 @@ step; nothing waits forever.
 
     suite.py --cua "/Applications/Cua Spaces.app/Contents/MacOS/cua" \
         [--scenarios fresh,linux,volume,conflicts,restart,offline,lowdisk,macos-slim,macos]
-        [--runs 3] [--work ~/projects/.cua-work/reliability] [--mit-cua PATH]
+        [--runs 3] [--work ~/.cache/cua-reliability/reliability] [--mit-cua PATH]
         [--other-cua PATH]
 
 Results go to <work>/results/<stamp>.json and a Markdown matrix to stdout
@@ -703,7 +703,7 @@ class Suite:
     # 7. network off / relay unreachable
     def s_offline(self, run, h, n):
         bad = {"CUA_RELAY_URL": "http://127.0.0.1:9", "CUA_DAEMON_NO_RELAY": None,
-               "CUA_API_URL": "http://127.0.0.1:9", "CUA_FLEET_URL": "http://127.0.0.1:9",
+               "CUA_API_URL": "http://127.0.0.1:9",
                "HTTPS_PROXY": "http://127.0.0.1:9", "https_proxy": "http://127.0.0.1:9",
                "NO_PROXY": "127.0.0.1,localhost,ghcr.io,pkg-containers.githubusercontent.com,*.docker.io,docker.io"}
         h.extra.update({k: v for k, v in bad.items() if v is not None})
@@ -711,7 +711,7 @@ class Suite:
 
         def fake_session():
             # A signed-in session (file store) whose relay and API are
-            # unreachable: the daemon's relay attach and Fleet both fail.
+            # unreachable: the daemon's relay attach fails.
             import base64
             b = lambda d: base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
             tok = f"{b({'alg': 'none'})}.{b({'sub': 'reliability', 'exp': int(time.time()) + 3600})}.x"
@@ -842,7 +842,7 @@ def main():
     ap.add_argument("--teleport-test", help="the e2e_teleport_app test binary (cargo test -p cua-spaces-ext --test e2e_teleport_app --no-run)")
     ap.add_argument("--scenarios", default=",".join(SCENARIOS))
     ap.add_argument("--runs", type=int, default=3)
-    ap.add_argument("--work", default=str(HOME / "projects/.cua-work/reliability"))
+    ap.add_argument("--work", default=str(HOME / ".cache/cua-reliability/reliability"))
     args = ap.parse_args()
     if os.environ.get("CUA_HOME") and pathlib.Path(os.environ["CUA_HOME"]).resolve() == REAL_CUA_HOME.resolve():
         sys.exit("refusing: CUA_HOME is the real ~/.cua")

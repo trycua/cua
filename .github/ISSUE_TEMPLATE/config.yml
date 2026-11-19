@@ -7,5 +7,5 @@ contact_links:
     url: https://discord.com/invite/mVnXXpdE85
     about: Ask questions and get help from the Cua community.
   - name: RFC guidance
-    url: https://github.com/trycua/cua/blob/main/rfcs/README.md
+    url: https://github.com/trycua/cua/blob/main/docs/rfcs/README.md
     about: Check whether a public contract or architecture change needs an RFC.

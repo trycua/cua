@@ -44,6 +44,7 @@ async fn refs_land_on_the_backend_their_variant_needs() {
         .clone();
     let mac = r.lume(&macos_full);
     r.darwin_index("ghcr.io/me/mac:1");
+    r.lume("ghcr.io/trycua/macos:15");
     cua_image::resolve::set_source(Some(Arc::new(r)));
 
     // Short ref: docker.io, pinned, container.
@@ -101,6 +102,21 @@ async fn refs_land_on_the_backend_their_variant_needs() {
     let found = p.image.expect("resolved through the registry");
     assert_eq!(found.variant_ref, macos_full);
     assert_eq!(found.digest, mac);
+    // Pinned by digest: the same image (and so the same cached base VM) as
+    // the tag at that digest, with the digest named once.
+    let p = resolve_placement(&format!("{macos_full}@{mac}"), "macos")
+        .await
+        .unwrap();
+    assert_eq!(p.placement.backend, BackendKind::Lume);
+    assert_eq!(
+        p.placement.image,
+        ImageSource::oci(format!("{macos_full}@{mac}"))
+    );
+    // Digest-only: Lume has no tag to pull, so placement refuses it.
+    let e = resolve_placement(&format!("ghcr.io/trycua/macos@{mac}"), "macos")
+        .await
+        .unwrap_err();
+    assert!(matches!(e, cua_daemon::Error::InvalidArgument(_)), "{e}");
     let e = resolve_placement("ghcr.io/me/mac:1", "linux")
         .await
         .unwrap_err();
@@ -113,5 +129,17 @@ async fn refs_land_on_the_backend_their_variant_needs() {
     assert_eq!(p.placement.backend, BackendKind::Container);
     assert_eq!(p.placement.image, ImageSource::oci("cua-e2e-mcp-probe:1"));
     assert!(p.image.is_none());
+    let spec: cua_sandbox_core::LocalStartSpec = serde_json::from_value(serde_json::json!({
+        "name": "t", "image": "ghcr.io/trycua/macos:15", "os": "macos", "cpus": 1, "memory_mb": 256,
+        "ports": [], "env": {}, "ready_timeout": {"secs": 1, "nanos": 0}, "gpu": "auto"}))
+    .unwrap();
+    let local = cua_daemon::local::VmmLocal::default();
+    let err = cua_sandbox_core::LocalRuntime::start(&local, &spec)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, cua_sandbox_core::RuntimeError::Unsupported { op, .. } if op == "GPU acceleration on macOS Sequoia 15"),
+        "{err:?}"
+    );
     cua_image::resolve::set_source(None);
 }

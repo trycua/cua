@@ -152,10 +152,16 @@ def primary_wire_state(data):
     keyboard_id, keyboard = keyboards[0]
     assert pointer['surface'] == keyboard['surface'], 'primary pointer/keyboard focus differs'
     assert pointer['buttons'] == {272}, 'primary wire does not prove the held left-button grab'
-    assert not keyboard['keys'] and keyboard['modifiers'] == [0, 0, 0, 0], 'primary keyboard is not idle'
+    # A stable locked mask (e.g. a user's Num Lock) is baseline state, not
+    # activity. Held keys and depressed, latched or group state stay refused.
+    # The bit meaning is keymap-defined, so it is retained verbatim, never named.
+    modifiers = keyboard['modifiers']
+    assert not keyboard['keys'] and modifiers is not None and modifiers[0] == modifiers[1] == modifiers[3] == 0 \
+        and 0 <= modifiers[2] < 2**32, 'primary keyboard is not idle'
     assert pointer['position'] is not None and all(math.isfinite(value) for value in pointer['position'])
     return {'pointer': pointer_id, 'keyboard': keyboard_id, 'surface': pointer['surface'],
-            'position': pointer['position'], 'held_button': 272}
+            'position': pointer['position'], 'held_button': 272,
+            'baseline_locked_modifiers': modifiers[2]}
 
 
 def analyze(before, after, journal, wire, intervals, primary_before, primary_after):

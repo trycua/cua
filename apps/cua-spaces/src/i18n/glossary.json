@@ -1,0 +1,43 @@
+{
+  "doNotTranslate": [
+    "Cua Spaces",
+    "Cua Driver",
+    "Cua Volume",
+    "Cua",
+    "Spaces",
+    "Space",
+    "Teams",
+    "Pro",
+    "Free",
+    "macOS",
+    "MCP"
+  ],
+  "tone": "Plain and friendly, like the English: short and direct, no jargon, no slang. Use the polite everyday register (informal tu in es and pt-BR; polite です/ます in ja; 해요 style in ko; plain neutral 您-free wording in zh-Hans). Do not add exclamation marks or words the English does not have.",
+  "terms": {
+    "zh-Hans": {
+      "Sign in": "登录",
+      "Settings": "设置",
+      "Teleport": "传送"
+    },
+    "ko": {
+      "Sign in": "로그인",
+      "Settings": "설정",
+      "Teleport": "텔레포트"
+    },
+    "pt-BR": {
+      "Sign in": "Entrar",
+      "Settings": "Configurações",
+      "Teleport": "Teleportar"
+    },
+    "ja": {
+      "Sign in": "サインイン",
+      "Settings": "設定",
+      "Teleport": "テレポート"
+    },
+    "es": {
+      "Sign in": "Iniciar sesión",
+      "Settings": "Ajustes",
+      "Teleport": "Teletransportar"
+    }
+  }
+}

@@ -10,8 +10,7 @@ import { DriveMountPreview } from "./DriveMountPreview";
 const picture = (c: HTMLElement) => c.querySelector<HTMLElement>(".obp-picture")!;
 const px = (n: number) => `${n}px`;
 const opacity = (e: Element) => Number((e as HTMLElement).style.opacity);
-const arrived = (c: HTMLElement) =>
-  Array.from(c.querySelectorAll('[data-window="finder"] .obdmp-file')).map(opacity);
+const arrived = (c: HTMLElement) => Array.from(c.querySelectorAll('[data-window="finder"] .obdmp-file')).map(opacity);
 
 function reduceMotion(on: boolean) {
   const original = window.matchMedia;
@@ -39,9 +38,11 @@ describe("DriveMountPreview", () => {
     const stage = c.querySelector<HTMLElement>(".obp-stage")!;
     expect(stage.style.width).toBe(px(scene.width));
     // Z-order is document order: the Space, the Finder window, the flight.
-    expect(
-      Array.from(stage.children).map((e) => e.getAttribute("data-window") ?? e.getAttribute("class")),
-    ).toEqual(["space", "finder", "obdmp-file obdmp-flight"]);
+    expect(Array.from(stage.children).map((e) => e.getAttribute("data-window") ?? e.getAttribute("class"))).toEqual([
+      "space",
+      "finder",
+      "obdmp-file obdmp-flight",
+    ]);
     const space = c.querySelector<HTMLElement>('[data-window="space"]')!;
     expect([space.style.left, space.style.top, space.style.width, space.style.height]).toEqual(
       [scene.space.frame.x, scene.space.frame.y, scene.space.frame.width, scene.space.frame.height].map(px),

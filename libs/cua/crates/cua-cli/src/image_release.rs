@@ -26,7 +26,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use cua_sdk::CuaError;
 use serde::{Deserialize, Serialize};
@@ -127,6 +127,10 @@ pub struct StepDef {
     /// Only these arches (per-arch steps).
     #[serde(default)]
     pub arches: Option<Vec<String>>,
+    /// Only these tiers (a tier's own gates, e.g. the docker tier's
+    /// dockerd smoke test); absent: every tier.
+    #[serde(default)]
+    pub tiers: Option<Vec<String>>,
     /// Host capabilities the step needs (`kvm`, `runsc`, `docker`, `linux`,
     /// `macos`, `windows`; `!cap` for its absence). Unmet: the step is skipped.
     #[serde(default)]
@@ -219,6 +223,8 @@ pub struct ReleaseOpts {
     /// arches, or `all`). Jobs that share an evidence directory use distinct
     /// scopes.
     pub scope: Option<String>,
+    /// Host capabilities to use instead of detecting them (tests).
+    pub caps: Option<Caps>,
 }
 
 /// A planned step.
@@ -349,14 +355,14 @@ impl Caps {
             c.insert("kvm".into());
             c.insert(format!("accel-{arch}"));
         }
-        if let Ok(out) = Command::new("docker")
-            .args(["info", "--format", "{{json .Runtimes}}"])
-            .stderr(Stdio::null())
-            .output()
-            && out.status.success()
-        {
+        // `docker info` blocks for as long as the daemon is unresponsive
+        // (Docker Desktop stalls when the disk is full), so it gets a limit.
+        if let Some(out) = stdout_within(
+            Command::new("docker").args(["info", "--format", "{{json .Runtimes}}"]),
+            DOCKER_PROBE_LIMIT,
+        ) {
             c.insert("docker".into());
-            if String::from_utf8_lossy(&out.stdout).contains("\"runsc\"") {
+            if out.contains("\"runsc\"") {
                 c.insert("runsc".into());
             }
         }
@@ -430,6 +436,48 @@ impl Context {
     pub fn evidence(&self) -> PathBuf {
         self.work.join("evidence")
     }
+}
+
+/// How long `docker info` may take before docker counts as unavailable.
+const DOCKER_PROBE_LIMIT: Duration = Duration::from_secs(10);
+
+/// Run `cmd` with no stdin and return its stdout if it exits successfully
+/// within `limit`. A command that runs over is killed and counts as failed.
+fn stdout_within(cmd: &mut Command, limit: Duration) -> Option<String> {
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut out = child.stdout.take()?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    // Not joined: a grandchild that keeps the pipe open must not block us.
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut out, &mut buf);
+        let _ = tx.send(buf);
+    });
+    let deadline = Instant::now() + limit;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    };
+    let buf = rx
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()) + Duration::from_secs(1))
+        .ok()?;
+    status
+        .success()
+        .then(|| String::from_utf8_lossy(&buf).into_owned())
 }
 
 fn git(root: &Path, args: &[&str]) -> Option<String> {
@@ -604,7 +652,13 @@ pub fn phases(o: &ReleaseOpts) -> BTreeSet<Phase> {
 pub fn plan(rel: &ReleaseFile, ctx: &Context) -> Result<Vec<Planned>, CuaError> {
     let mut steps = Vec::new();
     for phase in Phase::ALL {
-        for def in rel.steps.iter().filter(|d| d.phase == phase) {
+        let tier = ctx.vars.get("tier").map(String::as_str).unwrap_or_default();
+        for def in rel.steps.iter().filter(|d| {
+            d.phase == phase
+                && d.tiers
+                    .as_ref()
+                    .is_none_or(|only| only.iter().any(|t| t == tier))
+        }) {
             let arches: Vec<Option<String>> = if def.per_arch {
                 ctx.arches
                     .iter()
@@ -902,7 +956,7 @@ fn summary_md(rows: &[Row], header: &str) -> String {
 /// `cua images release <DIR>`.
 pub fn release(o: &ReleaseOpts) -> Result<Value, CuaError> {
     let rel = ReleaseFile::load(&o.dir)?;
-    let mut caps = Caps::detect();
+    let mut caps = o.caps.clone().unwrap_or_else(Caps::detect);
     caps.apply(&o.assume);
     let ctx = context(&rel, o, caps)?;
     let steps = plan(&rel, &ctx)?;
@@ -1208,6 +1262,36 @@ mod tests {
     }
 
     #[test]
+    fn tier_only_steps_run_on_their_tiers() {
+        let r = rel(&TIERED
+            .replace(
+                r#""tag": "build-{stamp}"}}"#,
+                r#""tag": "build-{stamp}"}, "docker": {"series": "24.04-docker", "tag": "build-docker-{stamp}"}}"#,
+            )
+            .replace(
+                r#"{"id": "promote""#,
+                r#"{"id": "docker/{arch}", "phase": "gate", "per_arch": true, "tiers": ["docker"], "run": ["smoke"]},
+        {"id": "promote""#,
+            ));
+        let ids = |tier: &str| {
+            let o = ReleaseOpts {
+                tier: Some(tier.into()),
+                ..Default::default()
+            };
+            let c = ctx_for(&r, &o, &["linux", "docker", "runsc", "kvm"]);
+            plan(&r, &c)
+                .unwrap()
+                .into_iter()
+                .map(|s| s.id)
+                .collect::<Vec<_>>()
+        };
+        assert!(!ids("slim").iter().any(|i| i.starts_with("docker/")));
+        let docker = ids("docker");
+        assert!(docker.contains(&"docker/amd64".to_string()), "{docker:?}");
+        assert!(docker.contains(&"docker/arm64".to_string()), "{docker:?}");
+    }
+
+    #[test]
     fn tier_is_required_and_checked() {
         let r = rel(TIERED);
         let dir = tempfile::tempdir().unwrap();
@@ -1472,6 +1556,9 @@ mod tests {
             dir: dir.path().into(),
             work: Some(work.clone()),
             stamp: Some("20260926-abcdef1".into()),
+            // No host probe: the steps need no capabilities, and `docker
+            // info` can hang on a stalled daemon.
+            caps: Some(Caps::default()),
             ..Default::default()
         };
         assert!(release(&o).is_err());
@@ -1512,6 +1599,27 @@ mod tests {
             ]
         );
         assert!(work.join("c-ran").exists() && !work.join("b-ran").exists());
+    }
+
+    #[test]
+    fn host_probes_are_bounded() {
+        let t0 = Instant::now();
+        assert_eq!(
+            stdout_within(Command::new("sleep").arg("30"), Duration::from_millis(200)),
+            None
+        );
+        assert!(
+            t0.elapsed() < Duration::from_secs(10),
+            "a stalled probe is killed"
+        );
+        assert_eq!(
+            stdout_within(Command::new("echo").arg("hi"), Duration::from_secs(30)).as_deref(),
+            Some("hi\n")
+        );
+        assert_eq!(
+            stdout_within(&mut Command::new("false"), Duration::from_secs(30)),
+            None
+        );
     }
 
     #[test]

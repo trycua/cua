@@ -98,13 +98,19 @@ enum DetachedVMRunner {
     return childArguments
   }
 
-  static func defaultLogURL(vmName: String) -> URL {
+  /// `<vm>.log` in `~/Library/Logs/lume`, or `~/Library/Logs/lume-local` for
+  /// `lume-local`, so a Local detached run never appends to the released
+  /// Lume's logs.
+  static func defaultLogURL(
+    vmName: String,
+    channel: LumeChannel = .current,
+    userHome: URL = FileManager.default.homeDirectoryForCurrentUser
+  ) -> URL {
     let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
     let safeName = String(
       vmName.unicodeScalars.map { allowed.contains($0) ? Character(String($0)) : "_" }
     )
-    return FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent("Library/Logs/lume", isDirectory: true)
+    return channel.lumeLogDir(userHome: userHome)
       .appendingPathComponent("\(safeName).log")
   }
 

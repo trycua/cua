@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Manual synchronous producer-boundary benchmark.
 //!
 //! Canonical release evidence is collected in the signed Lume candidate:

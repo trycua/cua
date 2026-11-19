@@ -140,6 +140,13 @@ impl Connection {
         Ok(r.get("marked").and_then(Value::as_u64).unwrap_or(0))
     }
 
+    /// `notifications_delete`: these ids, or every notification when `all`.
+    /// Returns how many were deleted.
+    pub fn delete_notifications(&self, ids: &[String], all: bool) -> Result<u64> {
+        let r = self.call_object("notifications_delete", json!({"ids": ids, "all": all}))?;
+        Ok(r.get("deleted").and_then(Value::as_u64).unwrap_or(0))
+    }
+
     /// `computer_access_grant`.
     pub fn allow_computer(&self, agent: &str, machine: &str) -> Result<Record> {
         self.call_object(

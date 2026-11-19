@@ -1,5 +1,5 @@
 // Add Sandbox wizard modal
-// Supports three paths: Local Docker, Cloud Sandbox, Custom URL
+// Supports two paths: Local Docker, Custom URL
 //
 // Sub-components live in sibling files:
 //   SourcePicker.tsx  - Step 1: choose source
@@ -26,21 +26,13 @@ export interface AddSandboxModalProps {
   isOpen: boolean;
   onClose: () => void;
   onAdd?: (computer: ComputerInfo) => void;
-  /** Render prop for cloud VM creation wizard. Injected by cloud website. */
-  renderCloudCreate?: (props: { onCreated: () => void; onCancel: () => void }) => React.ReactNode;
   className?: string;
 }
 
 // Backward-compatible alias
 export type CustomComputerModalProps = AddSandboxModalProps;
 
-export function AddSandboxModal({
-  isOpen,
-  onClose,
-  onAdd,
-  renderCloudCreate,
-  className,
-}: AddSandboxModalProps) {
+export function AddSandboxModal({ isOpen, onClose, onAdd, className }: AddSandboxModalProps) {
   const { adapters, dispatch } = usePlayground();
 
   const [step, setStep] = useState<WizardStep>('source');
@@ -190,23 +182,12 @@ export function AddSandboxModal({
     [adapters, dispatch, onAdd, handleClose]
   );
 
-  const handleCloudCreated = useCallback(async () => {
-    try {
-      const computers = await adapters.computer.listComputers();
-      dispatch({ type: 'SET_COMPUTERS', payload: computers });
-    } catch (err) {
-      console.error('Failed to refresh computers after cloud creation:', err);
-    }
-    handleClose();
-  }, [adapters, dispatch, handleClose]);
-
   const showBackButton = step === 'configure';
 
   const title = (() => {
     if (step === 'source') return 'Add Sandbox';
     if (source === 'local' && !selectedPreset) return 'Choose Sandbox Type';
     if (source === 'local' && selectedPreset) return selectedPreset.name;
-    if (source === 'cloud') return 'Create Cloud Sandbox';
     if (source === 'custom') return 'Custom URL';
     return 'Add Sandbox';
   })();
@@ -216,11 +197,7 @@ export function AddSandboxModal({
       isOpen={isOpen}
       onClose={handleClose}
       showCloseButton={!showBackButton}
-      contentClassName={cn(
-        'max-w-lg p-0',
-        step === 'configure' && source === 'cloud' && 'max-w-2xl',
-        className
-      )}
+      contentClassName={cn('max-w-lg p-0', className)}
     >
       {/* Header */}
       <div className="flex items-center gap-3 border-b border-neutral-200 px-6 py-4 dark:border-neutral-700">
@@ -238,9 +215,7 @@ export function AddSandboxModal({
 
       {/* Content */}
       <div className="overflow-y-auto px-6 py-4" style={{ maxHeight: '70vh' }}>
-        {step === 'source' && (
-          <SourcePicker onSelect={handleSelectSource} hasCloud={!!renderCloudCreate} />
-        )}
+        {step === 'source' && <SourcePicker onSelect={handleSelectSource} />}
 
         {step === 'configure' && source === 'local' && !selectedPreset && (
           <PresetGrid onSelect={handleSelectPreset} />
@@ -267,10 +242,6 @@ export function AddSandboxModal({
             isLoading={isLoading}
             error={error}
           />
-        )}
-
-        {step === 'configure' && source === 'cloud' && renderCloudCreate && (
-          <div>{renderCloudCreate({ onCreated: handleCloudCreated, onCancel: handleClose })}</div>
         )}
 
         {step === 'configure' && source === 'custom' && (

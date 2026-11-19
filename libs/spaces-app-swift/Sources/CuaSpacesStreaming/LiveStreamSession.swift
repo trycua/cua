@@ -42,6 +42,10 @@ public final class LiveStreamSession: ObservableObject {
     @Published public private(set) var windows: [StreamWindow] = []
     @Published public private(set) var source: StreamSource = .desktop
     @Published public private(set) var title: String = ""
+    /// True while a stream that dropped opens again by itself (its Space or
+    /// the local `cua daemon` went away), until its first frame. The status
+    /// says `.connecting` meanwhile, never `.failed`, unless every try fails.
+    @Published public private(set) var isReconnecting = false
     /// True while the PiP window holds this session.
     @Published public var isPoppedOut = false
 
@@ -91,6 +95,10 @@ public final class LiveStreamSession: ObservableObject {
     /// it does on the desktop stream. Reset by a source switch or a stop.
     @Published public private(set) var activatesOnInput = false
     @Published public private(set) var lastFrameDimensions: CGSize = .zero
+    /// When the newest frame arrived from the SDK (`ProcessInfo.systemUptime`,
+    /// s; 0 before the first): the video bench times arrival to presented.
+    /// Not published: it changes every frame and no view draws it.
+    public private(set) var lastFrameReceivedAt: TimeInterval = 0
 
     // MARK: - Internals
 
@@ -113,6 +121,20 @@ public final class LiveStreamSession: ObservableObject {
     /// would-require-activation are resent after the activation reopen.
     private var sentBatches: [(first: UInt64, events: [InteractiveInputEvent])] = []
     private static let resendableBatches = 32
+    /// Input waiting for a paste's clipboard to reach the Space (`paste`).
+    private var heldInput: [HeldInput]?
+    private enum HeldInput {
+        case input([InteractiveInputEvent])
+        case paste([InteractiveInputEvent], String)
+    }
+    /// Clipboard transfers started and the newest one that landed, and its
+    /// text while the stream lasts.
+    private var clipboardStarted: UInt64 = 0
+    private var newestLanded: UInt64 = 0
+    private var newestClipboard: String?
+    private var pasteGeneration: UInt64 = 0
+    /// How long a paste waits for the clipboard before its keys go anyway.
+    var pasteWait: Duration = .seconds(2)
     private var lastKeyframeRequest = Date.distantPast
     /// Bumped by every open, stop and source switch. An `open` that finds it
     /// changed after its `await` was superseded: it closes what it opened and
@@ -123,6 +145,16 @@ public final class LiveStreamSession: ObservableObject {
     /// The open in flight, so a second `start()` joins it instead of opening
     /// a second transport on the same Space.
     private var opening: Task<Void, Never>?
+    /// The reopen of a stream that dropped, while it runs.
+    private var reconnecting: Task<Void, Never>?
+    /// Why the last open failed, while reconnecting (the status stays
+    /// `.connecting` between tries).
+    private var lastOpenFailure: String?
+    /// The wait before each reopen of a stream that dropped; after the last
+    /// try fails, the stream fails (Try again). About half a minute in all:
+    /// the app's supervisor starts a daemon that died again within seconds.
+    var reconnectDelays: [Duration] = [.milliseconds(500), .seconds(1), .seconds(2),
+                                       .seconds(4), .seconds(8), .seconds(15)]
 
     /// Whether this session's frames are actually on screen, and how many of
     /// them have been presented rather than merely decoded.
@@ -132,8 +164,15 @@ public final class LiveStreamSession: ObservableObject {
     /// stream was "working" in that case. This one would not.
     public let presentation = StreamPresentation()
 
-    public init(provider: SpaceStreamSourceProviding) {
+    /// The `stream.open` span of the latest open (see `StreamOpenClock`).
+    public private(set) var openClock = StreamOpenClock()
+
+    /// `source`: what the first open streams (the desktop unless a window is given). Nothing opens
+    /// until `start()`, so a window slot that is paused does not open the desktop on resume.
+    public init(provider: SpaceStreamSourceProviding, source: StreamSource = .desktop) {
         self.provider = provider
+        self.source = source
+        if source != .desktop { title = source.label }
     }
 
     /// Stream a Space directly. This is the call `FRICTION.md` §10 says was
@@ -150,6 +189,19 @@ public final class LiveStreamSession: ObservableObject {
 
     // MARK: - Lifecycle
 
+    /// Stamps a hop of the `stream.open` span that happened before this
+    /// session existed (the click, the resolved source) or after it opened
+    /// (the first painted frame). Logs the span once, at the first paint.
+    public func stampOpen(_ hop: StreamOpenClock.Hop, at time: TimeInterval = ProcessInfo.processInfo.systemUptime,
+                          space: String = "", tier: String = "") {
+        openClock.mark(hop, at: time)
+        if hop == .painted, !openReported {
+            openReported = true
+            openClock.report(space: space, tier: tier)
+        }
+    }
+    private var openReported = false
+
     public func refreshWindows() async {
         do {
             windows = try await provider.availableWindows()
@@ -161,6 +213,8 @@ public final class LiveStreamSession: ObservableObject {
     /// Switch sources without disturbing anything the new source does not need.
     public func select(_ newSource: StreamSource) async {
         guard newSource != source || status == .idle else { return }
+        cancelReconnect()
+        dropHeldInput()
         await teardownTransport()
         if newSource != source { activatesOnInput = false }
         source = newSource
@@ -171,6 +225,8 @@ public final class LiveStreamSession: ObservableObject {
     /// Opens the current source. A start while one is in flight joins it;
     /// a start while streaming does nothing.
     public func start() async {
+        // A stream that dropped is already opening again.
+        if reconnecting != nil { return }
         if let opening {
             await opening.value
             return
@@ -181,6 +237,8 @@ public final class LiveStreamSession: ObservableObject {
     }
 
     public func stop() async {
+        cancelReconnect()
+        dropHeldInput()
         await teardownTransport()
         activatesOnInput = false
         status = .idle
@@ -196,6 +254,11 @@ public final class LiveStreamSession: ObservableObject {
         let generation = generation
         status = .connecting
         frame = nil
+        let carried = openClock
+        openClock = StreamOpenClock()
+        for hop in [StreamOpenClock.Hop.slot, .resolved] { if let t = carried.marks[hop] { openClock.mark(hop, at: t) } }
+        openReported = false
+        openClock.mark(.begun)
         let source = source
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -204,6 +267,52 @@ public final class LiveStreamSession: ObservableObject {
         opening = task
         await task.value
         if self.generation == generation { opening = nil }
+    }
+
+    /// The stream dropped while it was up: open it again, backing off, with
+    /// `isReconnecting` set and the status `.connecting`; `.failed` only
+    /// when every try fails.
+    private func transportLost(_ why: String) {
+        guard reconnecting == nil else { return }
+        guard !reconnectDelays.isEmpty else {
+            status = .failed(why)
+            return
+        }
+        isReconnecting = true
+        status = .connecting
+        frame = nil
+        reconnecting = Task { @MainActor [weak self] in
+            await self?.reconnect(after: why)
+        }
+    }
+
+    private func reconnect(after lost: String) async {
+        var why = lost
+        for delay in reconnectDelays {
+            await teardownTransport()
+            status = .connecting
+            try? await Task.sleep(for: delay)
+            if Task.isCancelled { return }
+            lastOpenFailure = nil
+            await begin()
+            if Task.isCancelled { return }
+            if media != nil, status == .streaming {
+                // Open again; `isReconnecting` lasts until its first frame.
+                reconnecting = nil
+                return
+            }
+            why = lastOpenFailure ?? why
+        }
+        reconnecting = nil
+        isReconnecting = false
+        status = .failed(why)
+    }
+
+    private func cancelReconnect() {
+        reconnecting?.cancel()
+        reconnecting = nil
+        isReconnecting = false
+        lastOpenFailure = nil
     }
 
     private func teardownTransport() async {
@@ -277,7 +386,8 @@ public final class LiveStreamSession: ObservableObject {
             // viewer's participant when it opens the media session, so the
             // Space attributes this viewer's input to its own presence cursor
             // (never an agent's) and draws no agent cursor for it.
-            if let presenceName, presence == nil { await startPresence(presenceName, color: nil) }
+            if let presenceName, presence == nil { await startPresence(presenceName, color: nil, upTo: Self.presenceWait) }
+            openClock.mark(.presence)
             guard self.generation == generation else { return }
             let policy = activatesOnInput ? "allow_activation" : SpaceStreamProvider.inputPolicy(for: source)
             let media = try await provider.openSession(source, policy: policy, frames: relay, audio: nil)
@@ -287,6 +397,7 @@ public final class LiveStreamSession: ObservableObject {
                 _ = try? await media.close()
                 return
             }
+            openClock.mark(.opened)
             self.decoder = decoder
             self.relay = relay
             self.media = media
@@ -311,7 +422,12 @@ public final class LiveStreamSession: ObservableObject {
         } catch {
             relay.detach()
             guard self.generation == generation else { return }
-            status = .failed("\(error)")
+            if isReconnecting {
+                // The reopen loop tries again (or fails with this).
+                lastOpenFailure = "\(error)"
+            } else {
+                status = .failed("\(error)")
+            }
         }
     }
 
@@ -356,9 +472,14 @@ public final class LiveStreamSession: ObservableObject {
         case "error":
             status = .failed("stream \(body["code"] ?? "error"): \(body["message"] ?? "")")
         case "closed":
-            if status == .streaming || status == .connecting {
-                status = .failed("connection closed \(body["reason"] ?? "")")
+            // The transport dropped under a stream that was up (the Space or
+            // the local daemon went away): it opens again by itself.
+            let up: Bool
+            switch status {
+            case .streaming, .connecting, .suspended: up = true
+            case .idle, .failed: up = false
             }
+            if up { transportLost("connection closed \(body["reason"] ?? "")") }
         default:
             break
         }
@@ -374,13 +495,36 @@ public final class LiveStreamSession: ObservableObject {
         await startPresence(name, color: color)
     }
 
+    /// The longest a stream's open waits for presence to join before it opens
+    /// without it (the join goes on behind the open). A join takes a few
+    /// milliseconds; one that does not (a daemon or Space slow to answer) must
+    /// never hold the picture back for its whole timeout.
+    static let presenceWait: Duration = .milliseconds(500)
+
+    /// Joins presence, waiting at most `limit` for it (nil: until it is done).
+    private func startPresence(_ name: String, color: String?, upTo limit: Duration?) async {
+        guard let limit else { return await startPresence(name, color: color) }
+        let gate = ResumeOnce()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            gate.set(continuation)
+            Task { @MainActor [weak self] in
+                await self?.startPresence(name, color: color)
+                gate.resume()
+            }
+            Task {
+                try? await Task.sleep(for: limit)
+                gate.resume()
+            }
+        }
+    }
+
     private func startPresence(_ name: String, color: String?) async {
         // One join at a time: the stream's open and the view may both ask.
         guard presence == nil, !presenceJoining else { return }
         presenceJoining = true
         defer { presenceJoining = false }
         do {
-            let session = try await provider.joinPresence(name: name, color: color)
+            let session = try await provider.joinPresence(name: name, color: color, source: source)
             presence = session
             presenceView = session.view()
             let me = try await session.me()
@@ -500,6 +644,8 @@ public final class LiveStreamSession: ObservableObject {
     private var cursorSend: Task<Void, Never>?
 
     private func ingest(_ buffer: CVPixelBuffer, descriptor: VideoFrameDescriptor, skipped: Int = 0) {
+        lastFrameReceivedAt = descriptor.receivedAt
+        openClock.mark(.decoded)
         frame = buffer
         // Every assignment to a `@Published` property re-renders each view
         // observing the session, equal or not: set only what changed, so a
@@ -516,6 +662,7 @@ public final class LiveStreamSession: ObservableObject {
         let failures = decoder?.decodeFailureCount ?? decodeFailureCount
         if decodeFailureCount != failures { decodeFailureCount = failures }
         if status != .streaming { status = .streaming }
+        if isReconnecting { isReconnecting = false }
     }
 
     private func requestKeyframeThrottled(force: Bool = false) {
@@ -532,8 +679,15 @@ public final class LiveStreamSession: ObservableObject {
     /// `StreamGeometry` (the session never invents one, which keeps the
     /// single-scale rule true across the in-app view and the PiP window).
     /// Desktop and window sources take the same `interactive_input` batches.
+    /// On a Linux or Windows guest ⌘ chords go as Control chords
+    /// (`SpaceStreamSourceProviding.commandAsControl`), whichever view sent them.
     public func send(_ events: [InteractiveInputEvent]) {
-        let batch = events.filter(\.isDispatchable)
+        if heldInput != nil {
+            heldInput?.append(.input(events))
+            return
+        }
+        let mapped = provider.commandAsControl ? InputEncoder.commandAsControl(events) : events
+        let batch = mapped.filter(\.isDispatchable)
         guard !batch.isEmpty, let media, let sessionID else { return }
         guard let text = try? interactiveInputText(
             session: sessionID, firstSequence: nextInputSequence, events: batch) else { return }
@@ -542,6 +696,82 @@ public final class LiveStreamSession: ObservableObject {
         nextInputSequence += UInt64(batch.count)
         inputEventsSent += batch.count
         try? media.sendText(json: text)
+    }
+
+    /// Send a paste chord after putting this Mac's clipboard `text` on the
+    /// Space, empty too: the Space's own clipboard is what its paste inserts.
+    /// Input sent meanwhile, another paste too, waits behind the chord for
+    /// at most `pasteWait`, so a slow or failed transfer still delivers the
+    /// keys, in order.
+    public func paste(_ events: [InteractiveInputEvent], text: String) {
+        if heldInput != nil {
+            heldInput?.append(.paste(events, text))
+            return
+        }
+        beginPaste(events, text: text)
+    }
+
+    private func beginPaste(_ events: [InteractiveInputEvent], text: String) {
+        heldInput = [.input(events)]
+        pasteGeneration &+= 1
+        let generation = pasteGeneration
+        newestClipboard = text
+        Task { @MainActor [weak self] in
+            await self?.transferClipboard(text)
+            self?.releaseHeldInput(generation)
+        }
+        Task { @MainActor [weak self, pasteWait] in
+            try? await Task.sleep(for: pasteWait)
+            self?.releaseHeldInput(generation)
+        }
+    }
+
+    private func releaseHeldInput(_ generation: UInt64) {
+        guard generation == pasteGeneration, var held = heldInput else { return }
+        heldInput = nil
+        while !held.isEmpty {
+            switch held.removeFirst() {
+            case let .input(events):
+                send(events)
+            case let .paste(events, text):
+                beginPaste(events, text: text)
+                if heldInput != nil {
+                    heldInput?.append(contentsOf: held)
+                    return
+                }
+            }
+        }
+    }
+
+    /// Puts `text` on the Space. A transfer that outlived its wait can land
+    /// after a newer one (the call cannot be recalled): the newest text then
+    /// goes again, as a transfer of its own, so however late any of them
+    /// lands the Space ends with the last paste's clipboard.
+    private func transferClipboard(_ text: String) async {
+        clipboardStarted &+= 1
+        let transfer = clipboardStarted
+        _ = try? await provider.sendClipboard(text)
+        clipboardLanded(transfer)
+    }
+
+    private func clipboardLanded(_ transfer: UInt64) {
+        guard transfer < newestLanded, let newest = newestClipboard else {
+            newestLanded = max(newestLanded, transfer)
+            return
+        }
+        clipboardStarted &+= 1
+        let repair = clipboardStarted
+        Task { @MainActor [weak self, provider] in
+            _ = try? await provider.sendClipboard(newest)
+            self?.clipboardLanded(repair)
+        }
+    }
+
+    /// Input held for a paste was meant for the stream that is going away.
+    private func dropHeldInput() {
+        heldInput = nil
+        pasteGeneration &+= 1
+        newestClipboard = nil
     }
 
     /// The Space can reach the streamed window only by activating it: reopen
@@ -674,5 +904,23 @@ final class FrameRelay: FrameSink, @unchecked Sendable {
 
     func onEvent(event: MediaEvent) {
         onEvent(event)
+    }
+}
+
+/// Resumes a continuation once, from whichever of two tasks gets there first.
+private final class ResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func set(_ c: CheckedContinuation<Void, Never>) {
+        lock.lock(); continuation = c; lock.unlock()
+    }
+
+    func resume() {
+        lock.lock()
+        let c = continuation
+        continuation = nil
+        lock.unlock()
+        c?.resume()
     }
 }

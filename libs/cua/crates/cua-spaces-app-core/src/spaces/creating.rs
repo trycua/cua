@@ -19,7 +19,11 @@
 //! still lists it) and [`CreateAction::DeleteFail`] restores it.
 
 use super::scene_for_os;
-use crate::model::{Space, SpaceKind, SpaceOs, SpaceProgress, SpaceProvider, SpaceStatus};
+use crate::model::{
+    CreateFix, CreateFixAction, Space, SpaceKind, SpaceOs, SpaceProgress, SpaceProvider,
+    SpaceStatus,
+};
+use cua_create_failure::retry::{self, Retry, Subclass};
 use serde::{Deserialize, Serialize};
 
 /// Id prefix of a Space that is still being created.
@@ -49,9 +53,6 @@ pub struct PendingCreate {
     pub permille: u32,
     /// Why it failed.
     pub error: Option<String>,
-    /// It failed for want of Cua Cloud credit: the billing page.
-    #[serde(default)]
-    pub credit_url: Option<String>,
     /// The registered Space's id once it finished; the row goes when the
     /// registry lists it.
     pub space_id: Option<String>,
@@ -89,6 +90,35 @@ pub struct PendingCreate {
     /// GPU acceleration was asked for.
     #[serde(default)]
     pub gpu: bool,
+    /// A create on one of your machines: that machine's relay id (the
+    /// `host:<machine>` of the create's `on`). The machine lists the Space
+    /// it is creating as a record of its own, which [`compose`] folds into
+    /// this row.
+    #[serde(default)]
+    pub host: Option<String>,
+    /// That machine's name, for the row and for a failure that names it.
+    #[serde(default)]
+    pub host_name: Option<String>,
+    /// The Space it is a child of (an agent made it): the row nests under it.
+    #[serde(default)]
+    pub parent: Option<String>,
+    /// How many times the app ran this create again by itself: 0, or 1
+    /// after a failure that usually passes ([`fail_decision`]).
+    #[serde(default)]
+    pub attempt: u32,
+    /// The create failed and the app runs it again now: the shell starts
+    /// the same create (same arguments, same pending id) once more. Cleared
+    /// by the new attempt's first progress or its end.
+    #[serde(default)]
+    pub retry_pending: bool,
+    /// The finer cause (`error_subclass` word) of the failure the app
+    /// retried, for the create's final usage event.
+    #[serde(default)]
+    pub retried_subclass: Option<String>,
+    /// It failed the same way as the last create of this image here: the
+    /// fix to show instead of a plain Try again ([`fix_for`]).
+    #[serde(default)]
+    pub fix: Option<CreateFix>,
 }
 
 /// One delete in flight (or done, until the registry drops the Space).
@@ -141,6 +171,26 @@ pub struct CreatesState {
     /// Spaces being turned off or on (or whose last try failed).
     #[serde(default)]
     pub powering: Vec<PendingPower>,
+    /// The same failure in a row, per cause, machine and image (kept when
+    /// the failed row is dismissed; a success there clears it). No error
+    /// text, only the cause word.
+    #[serde(default)]
+    pub streaks: Vec<FailureStreak>,
+}
+
+/// Creates of one image on one machine that failed for the same cause in a
+/// row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FailureStreak {
+    /// The cause word (`insufficient_disk`, `runtime_not_running`, ...).
+    pub kind: String,
+    /// Where: `local`, `cloud`, or `relay:<machine>`.
+    pub place: String,
+    /// The image asked for (empty for the default).
+    pub image: String,
+    /// Failures in a row.
+    pub count: u32,
 }
 
 /// An input to [`reduce`].
@@ -176,6 +226,16 @@ pub enum CreateAction {
         /// GPU acceleration was asked for (the create's `gpu` option).
         #[serde(default)]
         gpu: bool,
+        /// The machine it runs on, when it is one of yours (the create's
+        /// `host:<machine>`): its relay id.
+        #[serde(default)]
+        host: Option<String>,
+        /// That machine's name.
+        #[serde(default)]
+        host_name: Option<String>,
+        /// The Space it is a child of (an agent made it): its id.
+        #[serde(default)]
+        parent: Option<String>,
     },
     /// The SDK reported progress.
     Progress {
@@ -237,6 +297,12 @@ pub enum CreateAction {
         id: String,
         /// Why, one line.
         error: String,
+        /// The error enum's case name, when the shell has one.
+        #[serde(default)]
+        error_variant: String,
+        /// Epoch ms (an automatic retry starts its clock here).
+        #[serde(default)]
+        now: Option<i64>,
     },
     /// Remove a failed row.
     Dismiss {
@@ -293,6 +359,116 @@ pub fn is_powering(state: &CreatesState, id: &str) -> bool {
     state.powering.iter().any(|p| p.id == id && p.in_flight())
 }
 
+/// The pending id an agent's create has: the same for every poll of it.
+pub fn agent_pending_id(key: &str, started_ms: u64) -> String {
+    format!("{PENDING_PREFIX}agent-{key}-{started_ms}")
+}
+
+/// Whether `id` is the pending row of a create an agent asked of this computer.
+pub fn is_agent_pending(id: &str) -> bool {
+    id.starts_with(&format!("{PENDING_PREFIX}agent-"))
+}
+
+/// One create an agent asked of this computer, as the host recorded it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AgentCreate {
+    /// The name the Space is made under (with `started_ms`, the create's identity).
+    pub key: String,
+    pub name: String,
+    /// `macOS`, `Windows`, `Linux` or empty.
+    pub os: String,
+    /// `creating`, `ready` or `failed`.
+    pub state: String,
+    /// The SDK's phase word, while creating.
+    pub phase: String,
+    /// 0 to 100 through the phase, when known.
+    pub percent: Option<u8>,
+    /// The Space's id once it exists.
+    pub space: String,
+    /// Why it failed, in plain words.
+    pub error: String,
+    pub started_ms: u64,
+    /// The Space that asked for it (its id; empty when unknown).
+    pub parent: String,
+}
+
+/// What the pending rows must do to show the creates agents asked for: a
+/// row starts with the create (the same row, page, progress, Cancel and
+/// Remove as a New Space made from the dialog), follows its phase, hands
+/// over to the registry's row when ready and keeps its reason when failed.
+/// Shells run the actions through [`reduce`] on each poll; running them
+/// again changes nothing.
+pub fn agent_actions(state: &CreatesState, creates: &[AgentCreate], now: i64) -> Vec<CreateAction> {
+    let mut out = vec![];
+    for c in creates {
+        let id = agent_pending_id(&c.key, c.started_ms);
+        let known = state.pending.iter().find(|p| p.id == id);
+        let os = match c.os.as_str() {
+            "macOS" => SpaceOs::Macos,
+            "Windows" => SpaceOs::Windows,
+            _ => SpaceOs::Linux,
+        };
+        let start = || CreateAction::Start {
+            parent: (!c.parent.is_empty()).then(|| c.parent.clone()),
+            id: id.clone(),
+            name: c.name.clone(),
+            os,
+            provider: SpaceProvider::Local,
+            now: c.started_ms as i64,
+            image: None,
+            kind: None,
+            host_arch: None,
+            gpu: false,
+            host: None,
+            host_name: None,
+        };
+        match c.state.as_str() {
+            "creating" => {
+                if known.is_none() {
+                    out.push(start());
+                }
+                if !c.phase.is_empty()
+                    && known.is_none_or(|p| p.error.is_none() && p.space_id.is_none())
+                {
+                    out.push(CreateAction::Progress {
+                        id: id.clone(),
+                        phase: c.phase.clone(),
+                        fraction: c.percent.map(|p| f64::from(p) / 100.0),
+                        now: Some(now),
+                        bytes_done: None,
+                        bytes_total: None,
+                        bytes_per_second: None,
+                    });
+                }
+            }
+            "ready" => {
+                if let Some(p) = known
+                    && p.space_id.is_none()
+                    && !c.space.is_empty()
+                {
+                    out.push(CreateAction::Finish {
+                        id: id.clone(),
+                        space_id: c.space.clone(),
+                    });
+                }
+            }
+            "failed" if known.is_none_or(|p| p.error.is_none()) => {
+                if known.is_none() {
+                    out.push(start());
+                }
+                out.push(CreateAction::Fail {
+                    id: id.clone(),
+                    error: c.error.clone(),
+                    error_variant: "AgentCreate".into(),
+                    now: Some(now),
+                });
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 /// Whether `id` is a Space still being created (or one that failed).
 pub fn is_pending(id: &str) -> bool {
     id.starts_with(PENDING_PREFIX)
@@ -308,13 +484,13 @@ pub fn is_deleting(state: &CreatesState, id: &str) -> bool {
 pub fn pending_name(name: &str, os: SpaceOs) -> String {
     let name = name.trim();
     if !name.is_empty() {
-        // As the registry row will show it ("cua-e2e-mac" as "Cua E2e Mac").
+        // As the registry row will show it: as typed.
         return super::display_name(name);
     }
     match os {
         SpaceOs::Macos => "macOS Space".into(),
         SpaceOs::Windows => "Windows Space".into(),
-        SpaceOs::Linux => "New Space".into(),
+        SpaceOs::Linux | SpaceOs::Unknown => "New Space".into(),
     }
 }
 
@@ -331,6 +507,8 @@ pub const PHASES: [&str; 6] = [
 /// The kinds of create, by how long their phases take.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CreateFamily {
+    /// No recognized OS; no timing estimate.
+    Unknown,
     /// A Linux container on this Mac.
     Container,
     /// A Linux VM on this Mac, native (QEMU with HVF).
@@ -342,8 +520,6 @@ pub enum CreateFamily {
     Macos,
     /// A Windows VM (QEMU; emulated on Apple silicon).
     Windows,
-    /// A cloud Space (a Fleet claim).
-    Cloud,
 }
 
 /// What a create usually takes, in seconds per phase of [`PHASES`]: the
@@ -357,23 +533,23 @@ pub enum CreateFamily {
 /// - emulated VM, `omarchy:edge` (amd64 under QEMU TCG): 63 s pulling,
 ///   112 to 119 s waiting for cua-spacesd.
 ///
-/// macOS, Windows and cloud are estimates (not measured). A phase a family
+/// macOS and Windows are estimates (not measured). A phase a family
 /// does not report is 0.
 pub fn expected_seconds(family: CreateFamily) -> [f64; 6] {
     match family {
+        CreateFamily::Unknown => [0.0; 6],
         CreateFamily::Container => [1.0, 15.0, 0.3, 0.2, 3.5, 0.1],
         CreateFamily::Vm => [1.3, 19.0, 0.0, 0.2, 17.0, 0.2],
         CreateFamily::EmulatedVm => [1.4, 63.0, 0.0, 0.2, 115.0, 0.5],
         CreateFamily::Macos => [2.0, 600.0, 10.0, 30.0, 60.0, 3.0],
         CreateFamily::Windows => [2.0, 300.0, 0.0, 1.0, 300.0, 1.0],
-        CreateFamily::Cloud => [2.0, 0.0, 3.0, 20.0, 0.0, 5.0],
     }
 }
 
 /// The create's family.
 pub fn family(p: &PendingCreate) -> CreateFamily {
     match (p.provider, p.os) {
-        (SpaceProvider::Cloud, _) => CreateFamily::Cloud,
+        (_, SpaceOs::Unknown) => CreateFamily::Unknown,
         (_, SpaceOs::Macos) => CreateFamily::Macos,
         (_, SpaceOs::Windows) => CreateFamily::Windows,
         (_, SpaceOs::Linux) => match (p.kind, p.emulated) {
@@ -466,6 +642,61 @@ pub fn transfer_text(
     total: Option<u64>,
     per_second: Option<f64>,
 ) -> Option<String> {
+    transfer_text_with(done, total, per_second, Later::default())
+}
+
+/// What still has to happen after the download [`transfer_text_with`] shows,
+/// so its time left covers the whole create and not only the bytes in
+/// flight (the Linux runtime is followed by the image's download, and every
+/// download by unpacking and starting the Space).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Later {
+    /// Bytes still to download after this transfer.
+    pub bytes: u64,
+    /// Seconds of work that move no bytes after the downloads.
+    pub secs: f64,
+    /// The pace to assume until a rate is measured (a size and pace we
+    /// have measured, as for Linux); none promises no time before a rate.
+    pub pace: Option<f64>,
+}
+
+/// [`Later`] for `p`: the image's download while the runtime is being set
+/// up, then the measured start time ([`crate::wizard::CACHED_START_SECS`]),
+/// plus the runtime's own start while it is being set up.
+pub fn later_for(p: &PendingCreate) -> Later {
+    use crate::wizard::{CACHED_START_SECS, find_image, platform_size};
+    let runtime = setting_up_runtime(p);
+    let bytes = if runtime && p.os == SpaceOs::Linux {
+        p.image
+            .as_deref()
+            .and_then(find_image)
+            .and_then(|i| platform_size(&i, p.arch.as_deref()).map(|s| s.download))
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    // The managed runtime boots its VM before the image can be pulled.
+    let boot = if runtime { RUNTIME_BOOT_SECS } else { 0.0 };
+    Later {
+        bytes,
+        secs: CACHED_START_SECS + boot,
+        pace: (p.os == SpaceOs::Linux).then_some(crate::wizard::FIRST_RUN_BYTES_PER_SEC),
+    }
+}
+
+/// Seconds the built-in Linux runtime's VM takes to boot after its download
+/// (part of the measured 25 Oct 2026 first run, CUA-2281).
+const RUNTIME_BOOT_SECS: f64 = 20.0;
+
+/// [`transfer_text`] with the work after the transfer counted in the time
+/// left. Without a measured rate the first-run pace is used, so a time
+/// left is always shown for a known size and is never short.
+pub fn transfer_text_with(
+    done: Option<u64>,
+    total: Option<u64>,
+    per_second: Option<f64>,
+    later: Later,
+) -> Option<String> {
     let done = done?;
     let total = total.unwrap_or(0);
     // Binary units labeled GB/MB/KB, as the wizard sizes downloads.
@@ -502,11 +733,11 @@ pub fn transfer_text(
         let u = unit(r as u64);
         out.push_str(&format!(" \u{b7} {} {}/s", scaled(r as u64, u, 10.0), u.1));
     }
-    if let (Some(r), true) = (rate, total > 0) {
-        out.push_str(&format!(
-            " \u{b7} {}",
-            time_left(total.saturating_sub(done) as f64 / r)
-        ));
+    // Without a rate nothing is promised, unless a measured pace stands in.
+    let pace = rate.or(later.pace);
+    if let (Some(r), true) = (pace, total > 0) {
+        let secs = (total.saturating_sub(done).saturating_add(later.bytes)) as f64 / r + later.secs;
+        out.push_str(&format!(" \u{b7} {}", time_left(secs)));
     }
     Some(out)
 }
@@ -529,6 +760,21 @@ pub fn time_left(secs: f64) -> String {
     }
 }
 
+/// Where the downloads of a first-time Windows build end in its progress
+/// (0 to 1) and the install begins: `cua_image::windows::build::DOWNLOADS_END`
+/// (a test holds the two to one value).
+pub const WINDOWS_INSTALL_FROM: f64 = 0.45;
+
+/// Whether this create builds its Windows image on this Mac (the catalog's
+/// `local_build` images, `windows:11`): the first one takes a download and an
+/// install, not a pull.
+fn builds_windows_here(p: &PendingCreate) -> bool {
+    p.os == SpaceOs::Windows
+        && p.image
+            .as_deref()
+            .is_some_and(crate::wizard::image_builds_locally)
+}
+
 /// The words for a phase: "Starting…", "Downloading image…", ...
 pub fn phase_label(phase: &str) -> &'static str {
     match phase {
@@ -542,10 +788,48 @@ pub fn phase_label(phase: &str) -> &'static str {
     }
 }
 
+/// The words for the step a create is on, for its kind of Space (the
+/// stages a person sees): a macOS Space says "Downloading macOS (first
+/// time only)…", "Preparing the disk…" (its copy-on-write clone), "Booting
+/// macOS…", then "Starting Cua inside the Space…"; a Linux or Windows VM
+/// the same with its OS, a container "Creating the container…" and
+/// "Starting the container…". A step it has no words of its own for
+/// (preparing, connecting) reads as [`phase_label`].
+pub fn stage_label(p: &PendingCreate) -> String {
+    let vm = matches!(p.os, SpaceOs::Macos | SpaceOs::Windows) || p.kind == Some(SpaceKind::Vm);
+    let container = !vm && p.kind == Some(SpaceKind::Container);
+    let os = match p.os {
+        SpaceOs::Macos => "macOS",
+        SpaceOs::Windows => "Windows",
+        SpaceOs::Linux => "Linux",
+        SpaceOs::Unknown => "",
+    };
+    match p.phase.as_str() {
+        // A Windows image built on this Mac (Windows 11): the first Space
+        // downloads the ISO, installs Windows unattended and seals the disk;
+        // every later one clones it.
+        "pulling" if builds_windows_here(p) => {
+            if p.fraction.is_some_and(|f| f >= WINDOWS_INSTALL_FROM) {
+                "Installing Windows (first time only)\u{2026}".into()
+            } else {
+                "Downloading Windows (first time only)\u{2026}".into()
+            }
+        }
+        // Lume keeps the base image: later macOS Spaces clone it.
+        "pulling" if p.os == SpaceOs::Macos => "Downloading macOS (first time only)\u{2026}".into(),
+        "creating" if vm => "Preparing the disk\u{2026}".into(),
+        "creating" if container => "Creating the container\u{2026}".into(),
+        "booting" if vm && !os.is_empty() => format!("Booting {os}\u{2026}"),
+        "booting" if container => "Starting the container\u{2026}".into(),
+        "waiting_for_services" => "Starting Cua inside the Space\u{2026}".into(),
+        other => phase_label(other).into(),
+    }
+}
+
 /// The end of every stall message ([`stall_error`]): progress that arrives
-/// after it clears the row again.
-pub const STALL_HINT: &str =
-    "Dismiss it and try again; if it happens again, run `cua doctor` in Terminal.";
+/// after it clears the row again. A failure the SDK reported never ends
+/// with it ([`failure_text`]).
+pub const STALL_HINT: &str = "Dismiss it and try again.";
 
 /// How long phase `i` of [`PHASES`] may go without moving (a new phase, or
 /// a new fraction) before the row fails: ten times what it usually takes,
@@ -562,27 +846,672 @@ pub fn stall_limit_secs(family: CreateFamily, i: usize) -> f64 {
     (expected_seconds(family).get(i).copied().unwrap_or(0.0) * 10.0).clamp(floor, 6000.0) + 60.0
 }
 
+/// [`stall_limit_secs`] for `p`. A create on another of your machines (relay
+/// or direct) reports nothing while that machine downloads the image and
+/// boots it (the host's own create is one call), so "preparing" there may
+/// take as long as the family's whole download, not the few seconds it
+/// takes here; otherwise its row failed at "Starting... 1%" while the host
+/// was still pulling.
+fn stall_limit(p: &PendingCreate, i: usize) -> f64 {
+    let elsewhere = matches!(p.provider, SpaceProvider::Relay | SpaceProvider::Direct);
+    if elsewhere && PHASES.get(i) == Some(&"preparing") {
+        let pull = PHASES.iter().position(|ph| *ph == "pulling").unwrap_or(1);
+        return stall_limit_secs(family(p), pull) + stall_limit_secs(family(p), i);
+    }
+    stall_limit_secs(family(p), i)
+}
+
 /// The error of a create stuck in `phase` for `secs`: what stalled, for how
 /// long, and what to do.
 pub fn stall_error(phase: &str, secs: f64) -> String {
-    let what = phase_label(phase).trim_end_matches('\u{2026}');
+    stall_text(phase, secs, None, None)
+}
+
+/// [`stall_error`], naming how far a stopped download got when its bytes
+/// are known.
+fn stall_text(phase: &str, secs: f64, done: Option<u64>, total: Option<u64>) -> String {
     let mins = (secs / 60.0).round().max(1.0) as u64;
-    format!("{what} made no progress for {mins} min. {STALL_HINT}")
+    let what = match phase {
+        "pulling" => match transfer_text(done, total, None) {
+            Some(at) => format!(
+                "The image download stopped at {at}: nothing arrived for {mins} min. \
+                 Check your internet connection."
+            ),
+            None => format!(
+                "The image download made no progress for {mins} min. Check your internet \
+                 connection."
+            ),
+        },
+        "waiting_for_services" => format!(
+            "The Space booted, but its service did not answer for {mins} min. The image is \
+             downloaded now, so another try is usually quick."
+        ),
+        _ => format!(
+            "{} made no progress for {mins} min. If it keeps happening, run `cua doctor` in \
+             Terminal.",
+            phase_label(phase).trim_end_matches('\u{2026}')
+        ),
+    };
+    format!("{what} {STALL_HINT}")
 }
 
 fn is_stalled(p: &PendingCreate) -> bool {
     p.error.as_deref().is_some_and(|e| e.ends_with(STALL_HINT))
 }
 
+/// A `Duration`'s debug form (`120s`, `1.5s`, `250ms`, `0ns`) in seconds.
+fn debug_duration_secs(t: &str) -> Option<f64> {
+    let split = t.find(|c: char| !(c.is_ascii_digit() || c == '.'))?;
+    let (n, unit) = t.split_at(split);
+    let n: f64 = n.parse().ok()?;
+    let scale = match unit {
+        "s" => 1.0,
+        "ms" => 1e-3,
+        "\u{b5}s" | "us" => 1e-6,
+        "ns" => 1e-9,
+        _ => return None,
+    };
+    Some(n * scale)
+}
+
+/// "2 min", "45 s".
+fn short_duration(secs: f64) -> String {
+    if secs >= 90.0 {
+        format!("{} min", (secs / 60.0).round() as u64)
+    } else {
+        format!("{} s", secs.round() as u64)
+    }
+}
+
+/// The first thing that would stop a create of `space` (`linux_container`,
+/// `linux_vm`, `macos_vm`, `windows_vm`), from the `preflight` entry of the
+/// daemon's runtime doctor report (`report_json`), to show before Create:
+/// its plain sentence and the single fix button, when there is one. `None`:
+/// nothing in the way, or the report has no verdict for it (an older
+/// daemon), so Create goes ahead.
+pub fn preflight_issue(
+    report_json: &str,
+    space: &str,
+) -> Option<cua_create_failure::preflight::Issue> {
+    let report: serde_json::Value = serde_json::from_str(report_json).ok()?;
+    let issues = report.get("preflight")?.get(space)?.clone();
+    serde_json::from_value::<Vec<cua_create_failure::preflight::Issue>>(issues)
+        .ok()?
+        .into_iter()
+        .next()
+}
+
+/// The SDK's disk refusal ("not enough disk space to pull ...: it needs
+/// about 30.0 GB and cua keeps 5.0 GB free, but only 12.0 GB is available
+/// on /Users/me/.lume (...)") in plain words, with its numbers when present.
+fn disk_text(raw: &str) -> String {
+    let fix = "Free up space on this Mac (or run `cua cache prune` in Terminal), then try again.";
+    let numbers = (|| {
+        let rest = &raw[raw.find("it needs about ")? + "it needs about ".len()..];
+        let (need, rest) = rest.split_once(" and cua keeps ")?;
+        let (keep, rest) = rest.split_once(" free, but only ")?;
+        let (avail, _) = rest.split_once(" is available")?;
+        Some((need.trim(), keep.trim(), avail.trim()))
+    })();
+    match numbers {
+        Some((need, keep, avail)) => format!(
+            "Not enough disk space: this Space needs about {need}, plus {keep} kept free, and \
+             only {avail} is available. {fix}"
+        ),
+        None => format!("Not enough disk space for this Space. {fix}"),
+    }
+}
+
+/// Who a failure is about: the machine that runs the Space (by name, or
+/// "The Mac running this Space" when the name is not known) when it is
+/// another of yours, else "This Mac". Never this Mac for a create that ran
+/// elsewhere.
+fn machine_subject(provider: Option<SpaceProvider>, host_name: Option<&str>) -> String {
+    match host_name.map(str::trim).filter(|n| !n.is_empty()) {
+        Some(name) => name.to_string(),
+        None if matches!(provider, Some(SpaceProvider::Relay | SpaceProvider::Direct)) => {
+            "The Mac running this Space".into()
+        }
+        None => "This Mac".into(),
+    }
+}
+
+/// What a failed create shows for the SDK's `raw` error, naming the cause
+/// when it is a known one: no disk space, the Space's service not
+/// answering in time (the image is cached now, so a retry is quick), a
+/// relay host that refused the sign-in, GPU acceleration that could not
+/// be turned on. `phase` is where it failed, `provider` where it ran and
+/// `gpu` whether GPU acceleration was asked for, when known. Anything else
+/// is the SDK's words ([`crate::errors::plain_error`]).
+pub fn failure_text(
+    raw: &str,
+    phase: Option<&str>,
+    provider: Option<SpaceProvider>,
+    gpu: bool,
+) -> String {
+    failure_text_on(raw, phase, provider, None, gpu)
+}
+
+/// The cause of a failed create that the app knows how to explain, read
+/// from the SDK's error text ([`failure_cause`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureCause {
+    /// Not enough disk space for the image or the VM.
+    Disk,
+    /// macOS Local Network privacy keeps the app (or a host's service) from
+    /// reaching its new VM.
+    LocalNetwork,
+    /// Local Network access is on, but a VPN or firewall blocks the Mac's
+    /// own VM network.
+    LocalNetworkVpn,
+    /// Apple's two macOS VMs per Mac are already running.
+    VmLimit,
+    /// GPU acceleration was asked for and could not be turned on.
+    Gpu,
+    /// The Space's service, or a relay host, refused the sign-in.
+    Unauthenticated,
+    /// The Space booted but its service did not answer in time.
+    ServiceTimeout,
+    /// The image download did not finish in time.
+    PullTimeout,
+    /// The image download stopped partway: Lume's pull failed or was
+    /// cancelled, or Lume stopped. Another try resumes it.
+    PullStopped,
+    /// Microsoft is limiting Windows downloads from this network (the first
+    /// Windows 11 build downloads its ISO): another request now only extends
+    /// the wait, so the app does not retry by itself.
+    WindowsDownloadLimited,
+    /// The Windows ISO could not be downloaded or checked for another reason
+    /// (Microsoft's service did not answer, the page changed, a bad
+    /// checksum): a disc image downloaded by hand gets past it.
+    WindowsDownloadFailed,
+    /// The VM's runtime is not on this machine (QEMU for a Windows or Linux
+    /// VM on a PC without it): trying again does not help.
+    RuntimeMissing,
+}
+
+impl FailureCause {
+    /// The error enum case name telemetry records for it (`error_kind`
+    /// `insufficient_disk`, `local_network`, `vm_limit`, ...): a fixed word,
+    /// never the message.
+    pub fn variant(self) -> &'static str {
+        match self {
+            Self::Disk => "InsufficientDisk",
+            Self::LocalNetwork => "LocalNetworkDenied",
+            Self::LocalNetworkVpn => "LocalNetworkVpn",
+            Self::VmLimit => "VmLimit",
+            Self::Gpu => "Unsupported",
+            Self::Unauthenticated => "Unauthenticated",
+            Self::ServiceTimeout | Self::PullTimeout => "Timeout",
+            Self::PullStopped | Self::WindowsDownloadLimited | Self::WindowsDownloadFailed => {
+                "ImagePull"
+            }
+            Self::RuntimeMissing => "RuntimeMissing",
+        }
+    }
+}
+
+/// Microsoft's per-network limit on Windows downloads, as the build says it
+/// (`cua_image::windows::msdl::LIMITED`), lowercased.
+const WINDOWS_LIMITED: &str = "microsoft is limiting windows downloads";
+
+/// The build step that gets the Windows ISO (`ImageError::Build`'s step),
+/// as the SDK words it, lowercased.
+const WINDOWS_ISO_STEP: &str = "build failed at windows iso";
+
+/// The page the Windows 11 ARM64 disc image is downloaded from by hand.
+pub const WINDOWS_ARM64_PAGE: &str = "https://www.microsoft.com/software-download/windows11arm64";
+
+/// The way out when Windows can't be downloaded (Microsoft's limit, or the
+/// download failing): choose a disc image downloaded by hand, with Microsoft's
+/// page beside it and Try again after.
+fn windows_download_fix() -> CreateFix {
+    CreateFix {
+        text: "Download the Windows 11 ARM64 disc image from Microsoft, then choose Choose \
+               Windows ISO\u{2026} and pick the file: Cua carries on with it. Or save it in your \
+               Downloads folder and choose Try again."
+            .into(),
+        label: "Choose Windows ISO\u{2026}".into(),
+        action: CreateFixAction::ChooseWindowsIso,
+        value: None,
+        keep_retry: true,
+        link_label: Some("Open Microsoft's download page".into()),
+        link_url: Some(WINDOWS_ARM64_PAGE.into()),
+    }
+}
+
+/// The SDK's words for an image download that stopped partway
+/// (`VmmError::PullStopped`), lowercased.
+const PULL_STOPPED: &str = "the image download stopped before it finished";
+
+/// Which known cause the SDK's `raw` error is, if any. `phase` is where it
+/// failed and `gpu` whether GPU acceleration was asked for, when known.
+pub fn failure_cause(raw: &str, phase: Option<&str>, gpu: bool) -> Option<FailureCause> {
+    let l = crate::errors::plain_error(raw).to_ascii_lowercase();
+    if l.contains(WINDOWS_LIMITED) {
+        return Some(FailureCause::WindowsDownloadLimited);
+    }
+    if l.contains(WINDOWS_ISO_STEP) || l.contains("iso (against the checksum") {
+        return Some(FailureCause::WindowsDownloadFailed);
+    }
+    if l.contains("not enough disk space")
+        || l.contains("insufficient disk")
+        || l.contains("insufficient_disk")
+        || l.contains("no space left on device")
+    {
+        return Some(FailureCause::Disk);
+    }
+    // macOS Local Network privacy: the process that runs the VM (this
+    // app's daemon, or a host's cua-spacesd service) may not reach the
+    // guest on vmnet. The SDK says "Local Network access is not available:
+    // ... cannot reach the VM at 192.168.64.x (No route to host)"; older
+    // ones only the bare `EHOSTUNREACH` to a vmnet address.
+    // The core's fixed sentences (the app's own check, a new daemon):
+    // a VPN or firewall is told apart from missing access.
+    match cua_create_failure::preflight::IssueKind::of_text(&l) {
+        Some(cua_create_failure::preflight::IssueKind::LocalNetworkVpn) => {
+            return Some(FailureCause::LocalNetworkVpn);
+        }
+        Some(cua_create_failure::preflight::IssueKind::LocalNetwork) => {
+            return Some(FailureCause::LocalNetwork);
+        }
+        _ => {}
+    }
+    let vmnet = l.contains("192.168.64.");
+    if l.contains("local network access")
+        || (vmnet && (l.contains("no route to host") || l.contains("os error 65")))
+    {
+        return Some(FailureCause::LocalNetwork);
+    }
+    // Virtualization.framework's `virtualMachineLimitExceeded` ("The number
+    // of virtual machines exceeds the limit"), or Lume's own refusal ("VM
+    // start rejected: host limit of 2 running macOS guests reached"):
+    // Apple's two macOS VMs per Mac.
+    if l.contains("virtualmachinelimitexceeded")
+        || l.contains("running macos guests reached")
+        || ((l.contains("virtual machine") || l.contains("vms"))
+            && l.contains("limit")
+            && (l.contains("exceed") || l.contains("maximum") || l.contains("reached")))
+    {
+        return Some(FailureCause::VmLimit);
+    }
+    if gpu && (l.contains("gpu") || l.contains("paravirtual")) {
+        return Some(FailureCause::Gpu);
+    }
+    if l.contains("unauthenticated") {
+        return Some(FailureCause::Unauthenticated);
+    }
+    if l.contains(PULL_STOPPED) {
+        return Some(FailureCause::PullStopped);
+    }
+    // The SDK's `VmmError::Missing` for QEMU: "QEMU (qemu-system-x86_64,
+    // qemu-img) is not available: ...", or older SDKs' "qemu-img is not
+    // available: ..." after the image was pulled.
+    if l.contains("qemu") && (l.contains("is not available") || l.contains("not found on path")) {
+        return Some(FailureCause::RuntimeMissing);
+    }
+    let timed_out =
+        l.contains("timed out") || l.contains("timeout") || l.contains("not ready after");
+    if l.contains("cua-spacesd did not answer within ") {
+        return Some(FailureCause::ServiceTimeout);
+    }
+    match phase {
+        Some("waiting_for_services") if timed_out => Some(FailureCause::ServiceTimeout),
+        Some("pulling") if timed_out => Some(FailureCause::PullTimeout),
+        _ => None,
+    }
+}
+
+/// The `error_kind` word a failed create records in telemetry: the cause
+/// the SDK's text names (`image_pull_not_found`, `vm_boot_timeout`,
+/// `services_unreachable`, ...; [`cua_create_failure::create_failure_kind`]),
+/// else what the shell sent (`Runtime`, as most are), else `other`. Only
+/// the word leaves the process, never the text.
+pub fn failure_variant<'a>(raw: &str, phase: Option<&str>, gpu: bool, shell: &'a str) -> &'a str {
+    if failure_cause(raw, phase, gpu) == Some(FailureCause::Gpu) {
+        return FailureCause::Gpu.variant();
+    }
+    cua_create_failure::create_failure_kind(
+        &crate::errors::plain_error(raw),
+        phase.unwrap_or(""),
+        shell,
+        true,
+    )
+}
+
+/// What a failed create's error means for what happens next: its cause
+/// word (`error_kind`, snake case), the finer cause, and whether the app
+/// runs it once more by itself ([`cua_create_failure::retry::decide`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FailDecision {
+    /// The cause word ([`failure_variant`], snake case).
+    pub kind: String,
+    /// The finer cause.
+    pub subclass: Subclass,
+    /// [`Retry::Once`] only for a first attempt that failed for a reason
+    /// that usually passes; never while cancelling, or
+    /// on the second attempt.
+    pub retry: Retry,
+}
+
+/// [`FailDecision`] for `p` failing with the SDK's `error` (and the shell's
+/// enum case `error_variant`). One function for the reducer and for
+/// telemetry, so the event a failure sends matches what the row does.
+pub fn fail_decision(p: &PendingCreate, error: &str, error_variant: &str) -> FailDecision {
+    let kind = retry::snake(failure_variant(error, Some(&p.phase), p.gpu, error_variant));
+    let plain = crate::errors::plain_error(error);
+    let subclass = retry::subclass(&kind, &plain);
+    // Another request to Microsoft inside its limit only extends it.
+    let limited = matches!(
+        failure_cause(error, Some(&p.phase), p.gpu),
+        Some(FailureCause::WindowsDownloadLimited | FailureCause::WindowsDownloadFailed)
+    );
+    let retry = if !limited
+        && p.attempt == 0
+        && !p.cancelling
+        && p.space_id.is_none()
+        && !error.trim().is_empty()
+    {
+        retry::decide(&kind, subclass)
+    } else {
+        Retry::Never
+    };
+    FailDecision {
+        kind,
+        subclass,
+        retry,
+    }
+}
+
+/// Where a create runs, for its failure streak: `local`, `cloud`, or
+/// `relay:<machine>` (the machine's relay id; no name, no address).
+fn place_of(p: &PendingCreate) -> String {
+    match &p.host {
+        Some(h) => format!("relay:{h}"),
+        None => p.provider.as_str().into(),
+    }
+}
+
+fn image_of(p: &PendingCreate) -> String {
+    p.image.clone().unwrap_or_default()
+}
+
+/// The most streaks kept (oldest go first).
+const STREAKS_KEPT: usize = 16;
+
+/// Counts a failure of `p` for cause `kind`: the same cause as the last
+/// failure of this image on this machine adds one, another starts again at
+/// one. Returns the count.
+fn note_failure(streaks: &mut Vec<FailureStreak>, p: &PendingCreate, kind: &str) -> u32 {
+    let (place, image) = (place_of(p), image_of(p));
+    let count = match streaks
+        .iter()
+        .position(|s| s.place == place && s.image == image)
+    {
+        Some(i) => {
+            let mut s = streaks.remove(i);
+            s.count = if s.kind == kind { s.count + 1 } else { 1 };
+            s.kind = kind.into();
+            let count = s.count;
+            streaks.push(s);
+            count
+        }
+        None => {
+            streaks.push(FailureStreak {
+                kind: kind.into(),
+                place,
+                image,
+                count: 1,
+            });
+            1
+        }
+    };
+    if streaks.len() > STREAKS_KEPT {
+        streaks.remove(0);
+    }
+    count
+}
+
+/// The help page for a create that will not work.
+pub const TROUBLESHOOT_URL: &str =
+    "https://cua.ai/docs/spaces/guides/troubleshoot#find-your-reason";
+
+/// The fix for a create that failed for cause `kind` twice in a row: one
+/// plain sentence and one button (copy a Terminal command, open the help
+/// page, or open the details). `None` for a cause that has its own way out
+/// on the row (out of credit) or is not a failure (cancelled).
+pub fn fix_for(kind: &str, p: &PendingCreate) -> Option<CreateFix> {
+    let machine = mid_sentence(&machine_subject(Some(p.provider), p.host_name.as_deref()));
+    let elsewhere =
+        matches!(p.provider, SpaceProvider::Relay | SpaceProvider::Direct) || p.host.is_some();
+    let copy = |text: String, command: &str| CreateFix {
+        text,
+        label: format!("Copy {command}"),
+        action: CreateFixAction::CopyCommand,
+        value: Some(command.into()),
+        keep_retry: false,
+        link_label: None,
+        link_url: None,
+    };
+    let help = |text: String| CreateFix {
+        text,
+        label: "How to fix it".into(),
+        action: CreateFixAction::OpenUrl,
+        value: Some(TROUBLESHOOT_URL.into()),
+        keep_retry: false,
+        link_label: None,
+        link_url: None,
+    };
+    let details = |text: String| CreateFix {
+        text,
+        label: "See details".into(),
+        action: CreateFixAction::Details,
+        value: None,
+        keep_retry: false,
+        link_label: None,
+        link_url: None,
+    };
+    let on = if elsewhere { " on that computer" } else { "" };
+    Some(match kind {
+        "cancelled" | "cloud_ended" | "quota_exceeded" => return None,
+        "insufficient_disk" => copy(
+            format!(
+                "It failed twice for the same reason: {} doesn't have enough free disk space. \
+                 Free some up, or run `cua cache prune` in Terminal{on} to remove old images, \
+                 then create it again.",
+                machine
+            ),
+            "cua cache prune",
+        ),
+        "runtime_not_running" => copy(
+            format!(
+                "It failed twice for the same reason: the container engine isn't running{on}. \
+                 Start Docker Desktop (or your engine), then create it again. `cua runtime \
+                 doctor` shows what is missing."
+            ),
+            "cua runtime doctor",
+        ),
+        "runtime_missing" | "vm_runtime_missing" | "runtime_permission" => copy(
+            format!(
+                "It failed twice for the same reason: Cua can't use a container engine or VM \
+                 runtime{on}. Run `cua runtime doctor` in Terminal to see what to install or \
+                 allow."
+            ),
+            "cua runtime doctor",
+        ),
+        "virtualization_unavailable" => help(format!(
+            "It failed twice for the same reason: {} can't run virtual machines. Create a \
+             Linux container Space instead, or turn on hardware virtualization.",
+            machine
+        )),
+        "vm_limit" => help(format!(
+            "It failed twice for the same reason: {} already runs the two macOS VMs Apple \
+             allows. Stop or delete one, then create it again.",
+            machine
+        )),
+        "host_capacity" => help(format!(
+            "It failed twice for the same reason: {} has no room for another VM right now. \
+             Stop or delete a Space you are not using (the message names what is running), or \
+             close other programs, then create it again.",
+            machine
+        )),
+        "local_network" | "local_network_denied" | "local_network_vpn" => help(format!(
+            "It failed twice for the same reason: Cua can't reach the new VM{on}. Turn on \
+             Local Network access for Cua Spaces in System Settings (or turn off a VPN), then \
+             create it again."
+        )),
+        "image_pull_not_found" | "image_pull_auth" => details(
+            "It failed twice for the same reason: this image can't be downloaded. Check its \
+             name, and that you can pull it, then create it again."
+                .into(),
+        ),
+        "out_of_memory" => details(format!(
+            "It failed twice for the same reason: {} doesn't have enough free memory for this \
+             Space. Close apps or stop other Spaces, then create it again.",
+            machine
+        )),
+        _ => copy(
+            format!(
+                "It failed twice for the same reason. Run `cua doctor` in Terminal{on} to \
+                 check what's wrong, or see the details."
+            ),
+            "cua doctor",
+        ),
+    })
+}
+
+/// [`machine_subject`] in the middle of a sentence ("this Mac"); a
+/// machine's own name stays as it is.
+fn mid_sentence(machine: &str) -> String {
+    match machine {
+        "This Mac" => "this Mac".into(),
+        "The Mac running this Space" => "the Mac running this Space".into(),
+        other => other.into(),
+    }
+}
+
+/// [`failure_text`] for a create on one of your machines named `host_name`:
+/// the causes that are about the Mac that runs the Space (Local Network
+/// access, Apple's two macOS VMs) name that machine, not this Mac.
+pub fn failure_text_on(
+    raw: &str,
+    phase: Option<&str>,
+    provider: Option<SpaceProvider>,
+    host_name: Option<&str>,
+    gpu: bool,
+) -> String {
+    let plain = crate::errors::plain_error(raw);
+    let l = plain.to_ascii_lowercase();
+    match failure_cause(raw, phase, gpu) {
+        Some(FailureCause::Disk) => disk_text(&plain),
+        Some(FailureCause::LocalNetwork) => local_network_text(&plain, provider, host_name),
+        Some(FailureCause::LocalNetworkVpn) => vpn_text(provider, host_name),
+        Some(FailureCause::VmLimit) => format!(
+            "{} is already running two macOS VMs, the most Apple's macOS license allows at once. \
+             Stop one, then try again; the image is downloaded now, so it is quicker.",
+            machine_subject(provider, host_name)
+        ),
+        Some(FailureCause::Gpu) => format!(
+            "GPU acceleration could not be turned on here ({plain}). Create the Space again \
+             with GPU acceleration off."
+        ),
+        Some(FailureCause::Unauthenticated) => {
+            if provider == Some(SpaceProvider::Relay) {
+                "Your other Mac did not accept the sign-in: its Cua sign-in may have expired or \
+                 belong to another account. Open Cua Spaces on that Mac, sign in again, then try \
+                 again."
+                    .into()
+            } else {
+                format!(
+                    "The new Space's service did not accept the app's token ({plain}). Try again; \
+                     if it keeps happening, run `cua doctor` in Terminal."
+                )
+            }
+        }
+        Some(FailureCause::ServiceTimeout) => {
+            let spacesd = "cua-spacesd did not answer within ";
+            let within = l.find(spacesd).map(|at| {
+                let token = l[at + spacesd.len()..]
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("");
+                debug_duration_secs(token)
+                    .filter(|s| *s >= 5.0)
+                    .map(|s| format!(" within {}", short_duration(s)))
+            });
+            match within {
+                Some(Some(within)) => format!(
+                    "The Space booted, but its service did not answer{within}. The image is \
+                     downloaded now, so trying again usually works."
+                ),
+                Some(None) => "The Space booted, but the time allowed for creating it ran out \
+                               before its service answered. The image is downloaded now, so \
+                               trying again usually works."
+                    .into(),
+                None => "The Space booted, but its service did not answer in time. The image \
+                         is downloaded now, so trying again usually works."
+                    .into(),
+            }
+        }
+        Some(FailureCause::PullStopped) => {
+            // The SDK's "The image download stopped before it finished
+            // (<cause>). Try again; ..." with its cause.
+            let at = l.find(PULL_STOPPED).unwrap_or(0) + PULL_STOPPED.len();
+            let cause = plain[at..]
+                .trim_start()
+                .strip_prefix('(')
+                .and_then(|r| r.rsplit_once(')'))
+                .map(|(c, _)| c.trim())
+                .filter(|c| !c.is_empty());
+            let cause = cause.map(|c| format!(" ({c})")).unwrap_or_default();
+            let place = match host_name.map(str::trim).filter(|n| !n.is_empty()) {
+                Some(name) => format!(" on {name}"),
+                None if matches!(provider, Some(SpaceProvider::Relay | SpaceProvider::Direct)) => {
+                    " on the Mac running this Space".into()
+                }
+                None => String::new(),
+            };
+            format!(
+                "The image download{place} stopped before it finished{cause}. Try again; it \
+                 picks up where it stopped."
+            )
+        }
+        Some(FailureCause::WindowsDownloadLimited) => {
+            // "... Try again in about 42 minutes, or download ..." names the
+            // time left of the wait.
+            let wait = l
+                .find("try again in ")
+                .map(|at| {
+                    let rest = &plain[at + "try again in ".len()..];
+                    rest.split([',', '.'])
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .to_string()
+                })
+                .filter(|w| !w.is_empty() && w.len() < 30)
+                .unwrap_or_else(|| "about an hour".into());
+            format!(
+                "Microsoft is limiting Windows downloads from your network right now. Try again in \
+                 {wait}, or download the Windows 11 ARM64 disc image yourself and choose it \
+                 here."
+            )
+        }
+        Some(FailureCause::WindowsDownloadFailed) => "Cua couldn't download Windows from \
+             Microsoft. Choose a Windows disc image you downloaded yourself, or try again."
+            .into(),
+        Some(FailureCause::PullTimeout) => "The image download did not finish in the time \
+             allowed. Check your internet connection, then try again."
+            .into(),
+        Some(FailureCause::RuntimeMissing) | None => plain,
+    }
+}
+
 /// The platform a create will run ([`crate::model::run_arch`] over the
 /// catalog's platforms for the image).
-fn running_arch(
-    image: Option<&str>,
-    provider: SpaceProvider,
-    host: Option<&str>,
-) -> Option<String> {
+fn running_arch(image: Option<&str>, host: Option<&str>) -> Option<String> {
     let platforms = image.map(crate::wizard::image_arch).unwrap_or_default();
-    crate::model::run_arch(&platforms, provider != SpaceProvider::Cloud, host)
+    crate::model::run_arch(&platforms, true, host)
 }
 
 /// Advances the pending creates.
@@ -590,6 +1519,7 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
     let mut next = state.clone();
     match action {
         CreateAction::Start {
+            parent,
             id,
             name,
             os,
@@ -599,8 +1529,10 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
             kind,
             host_arch,
             gpu,
+            host: machine,
+            host_name: machine_name,
         } => {
-            if next.pending.iter().any(|p| &p.id == id) {
+            if *os == SpaceOs::Unknown || next.pending.iter().any(|p| &p.id == id) {
                 return next;
             }
             let image = image.clone().filter(|i| !i.trim().is_empty());
@@ -608,7 +1540,7 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                 .or_else(|| image.as_deref().and_then(crate::wizard::image_kind))
                 .or((*os != SpaceOs::Linux).then_some(SpaceKind::Vm));
             let host = host_arch.as_deref();
-            let arch = running_arch(image.as_deref(), *provider, host);
+            let arch = running_arch(image.as_deref(), host);
             let mut p = PendingCreate {
                 id: id.clone(),
                 name: pending_name(name, *os),
@@ -620,14 +1552,8 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                 pulled: false,
                 permille: 0,
                 error: None,
-                credit_url: None,
                 space_id: None,
-                emulated: crate::model::emulation_warning(
-                    *provider != SpaceProvider::Cloud,
-                    host,
-                    arch.as_deref(),
-                )
-                .is_some(),
+                emulated: crate::model::emulation_warning(true, host, arch.as_deref()).is_some(),
                 image,
                 kind,
                 arch,
@@ -637,6 +1563,13 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                 bytes_per_second: None,
                 cancelling: false,
                 gpu: *gpu,
+                host: machine.clone().filter(|h| !h.trim().is_empty()),
+                host_name: machine_name.clone().filter(|h| !h.trim().is_empty()),
+                parent: parent.clone().filter(|h| !h.trim().is_empty()),
+                attempt: 0,
+                retry_pending: false,
+                retried_subclass: None,
+                fix: None,
             };
             p.permille = permille_at(&p, Some(*now));
             next.pending.push(p);
@@ -656,6 +1589,8 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                     && p.space_id.is_none()
                     && !p.cancelling
             }) {
+                // The new attempt is under way.
+                p.retry_pending = false;
                 p.pulled |= phase == "pulling";
                 // Real byte movement counts as progress: a slow download
                 // that still moves never stalls.
@@ -689,6 +1624,17 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                 // Setting up a runtime: its download done, its boot reports
                 // a fraction only (no bytes left to show).
                 if phase == "preparing" && bytes_done.is_none() && fraction.is_some() {
+                    p.bytes_done = None;
+                    p.bytes_total = None;
+                    p.bytes_per_second = None;
+                }
+                // A Windows image built here: past the downloads the bar is the
+                // install's, and the ISO's byte count no longer applies.
+                if phase == "pulling"
+                    && bytes_done.is_none()
+                    && fraction.is_some_and(|f| f >= WINDOWS_INSTALL_FROM)
+                    && builds_windows_here(p)
+                {
                     p.bytes_done = None;
                     p.bytes_total = None;
                     p.bytes_per_second = None;
@@ -733,10 +1679,10 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                 if let (Some(at), Some(i)) =
                     (p.phase_at, PHASES.iter().position(|ph| *ph == p.phase))
                 {
-                    let limit = stall_limit_secs(family(p), i);
+                    let limit = stall_limit(p, i);
                     let stuck = (*now - at) as f64 / 1000.0;
                     if stuck > limit {
-                        p.error = Some(stall_error(&p.phase, stuck));
+                        p.error = Some(stall_text(&p.phase, stuck, p.bytes_done, p.bytes_total));
                     }
                 }
             }
@@ -744,33 +1690,81 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
         CreateAction::Finish { id, space_id } => {
             // A new Space under a deleted one's id is not being deleted.
             next.deleting.retain(|d| &d.id != space_id);
+            let mut worked = None;
             if let Some(p) = next.pending.iter_mut().find(|p| &p.id == id) {
                 p.phase = "ready".into();
                 p.fraction = None;
                 p.permille = 1000;
                 p.error = None;
+                p.retry_pending = false;
+                p.fix = None;
                 p.space_id = Some(space_id.clone());
+                worked = Some((place_of(p), image_of(p)));
+            }
+            // It works there now: earlier failures no longer repeat.
+            if let Some((place, image)) = worked {
+                next.streaks
+                    .retain(|s| !(s.place == place && s.image == image));
             }
         }
-        CreateAction::Fail { id, error } => {
+        CreateAction::Fail {
+            id,
+            error,
+            error_variant,
+            now,
+        } => {
             // A create that ends while being cancelled was cancelled: its
             // row goes, it did not fail.
             if next.pending.iter().any(|p| &p.id == id && p.cancelling) {
                 next.pending.retain(|p| &p.id != id);
                 return next;
             }
-            if let Some(p) = next.pending.iter_mut().find(|p| &p.id == id) {
-                // Out of credit: one plain line, and the billing page (the
-                // page only while the apps show billing).
-                let credit = crate::billing::credit_notice(error);
-                p.credit_url = credit
-                    .as_ref()
-                    .filter(|_| crate::billing::BILLING_SHOWN)
-                    .map(|n| n.url.clone());
-                p.error = Some(match credit {
-                    Some(n) => n.text,
-                    None if error.trim().is_empty() => "Could not create the Space".into(),
-                    None => crate::errors::plain_error(error),
+            let CreatesState {
+                pending, streaks, ..
+            } = &mut next;
+            if let Some(p) = pending.iter_mut().find(|p| &p.id == id) {
+                p.retry_pending = false;
+                let decision = fail_decision(p, error, error_variant);
+                let repeats = note_failure(streaks, p, &decision.kind);
+                if decision.retry == Retry::Once {
+                    // A failure that usually passes: run it once more, by
+                    // itself, and say so ("Retrying…").
+                    p.attempt = 1;
+                    p.retry_pending = true;
+                    p.retried_subclass = Some(decision.subclass.as_str().into());
+                    p.error = None;
+                    p.fix = None;
+                    p.phase = "preparing".into();
+                    p.fraction = None;
+                    p.bytes_done = None;
+                    p.bytes_total = None;
+                    p.bytes_per_second = None;
+                    p.permille = 0;
+                    p.phase_at = *now;
+                    p.permille = permille_at(p, *now);
+                    return next;
+                }
+                // The same failure again: its fix, not a plain Try again.
+                p.fix = if matches!(
+                    failure_cause(error, Some(&p.phase), p.gpu),
+                    Some(
+                        FailureCause::WindowsDownloadLimited | FailureCause::WindowsDownloadFailed
+                    )
+                ) {
+                    Some(windows_download_fix())
+                } else {
+                    (repeats >= 2).then(|| fix_for(&decision.kind, p)).flatten()
+                };
+                p.error = Some(if error.trim().is_empty() {
+                    "Could not create the Space".into()
+                } else {
+                    failure_text_on(
+                        error,
+                        Some(&p.phase),
+                        Some(p.provider),
+                        p.host_name.as_deref(),
+                        p.gpu,
+                    )
                 });
             }
         }
@@ -822,13 +1816,93 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
 
 /// The inline line a failed power action shows: "Could not turn it on:
 /// <why>".
+///
+/// The known causes ([`failure_cause`], as for a failed create) read in
+/// plain words: a Local Network block names the app to turn on, instead of
+/// the SDK's raw error (CUA-1807).
 pub fn power_failed_text(on: bool, error: &str) -> String {
     let what = if on { "turn it on" } else { "turn it off" };
     if error.trim().is_empty() {
-        format!("Could not {what}")
-    } else {
-        format!("Could not {what}: {}", crate::errors::plain_error(error))
+        return format!("Could not {what}");
     }
+    let plain = crate::errors::plain_error(error);
+    let why = match failure_cause(error, None, false) {
+        Some(FailureCause::LocalNetwork) => {
+            let app = local_network_app(&plain).unwrap_or("Cua Spaces (or cua-spacesd)");
+            format!(
+                "Cua can't reach the Space's VM because it doesn't have Local Network access on \
+                 the Mac running it. On that Mac, open System Settings > Privacy & Security > \
+                 Local Network, turn on {app}, then try again."
+            )
+        }
+        Some(FailureCause::LocalNetworkVpn) => "a VPN or firewall on the Mac running it is \
+             blocking that Mac's own network. Turn off the VPN there and try again. If it can't be \
+             turned off, ask whoever manages it to let 192.168.64.0/24 (that Mac's VM network) \
+             skip the VPN."
+            .into(),
+        Some(FailureCause::Disk) => "there isn't enough disk space on the Mac running it. Free \
+             up space there (or run `cua cache prune` in Terminal), then try again."
+            .into(),
+        Some(FailureCause::VmLimit) => "the Mac running it is already running two macOS VMs, \
+             the most Apple's macOS license allows at once. Stop one, then try again."
+            .into(),
+        _ => plain,
+    };
+    format!("Could not {what}: {why}")
+}
+
+/// A failed create blocked by missing Local Network access, on this Mac
+/// (the core's sentence, naming the app to allow) or on the machine
+/// running the Space.
+fn local_network_text(
+    plain: &str,
+    provider: Option<SpaceProvider>,
+    host_name: Option<&str>,
+) -> String {
+    let subject = machine_subject(provider, host_name);
+    if subject == "This Mac" {
+        let app = local_network_app(plain).unwrap_or("Cua Spaces");
+        return cua_create_failure::preflight::local_network_denied(app);
+    }
+    // Another Mac may run the host service rather than the app.
+    let app = local_network_app(plain).unwrap_or("Cua Spaces (or cua-spacesd)");
+    format!(
+        "{subject} can't connect to its new macOS Space. On that Mac, allow {app} in System \
+         Settings \u{203a} Privacy & Security \u{203a} Local Network, then try again."
+    )
+}
+
+/// A failed create whose Mac's VPN or firewall blocks its own VM network.
+fn vpn_text(provider: Option<SpaceProvider>, host_name: Option<&str>) -> String {
+    let subject = machine_subject(provider, host_name);
+    if subject == "This Mac" {
+        return cua_create_failure::preflight::LOCAL_NETWORK_VPN.into();
+    }
+    format!(
+        "A VPN or firewall on {subject} is blocking that Mac's own network, so it can't connect \
+         to its new macOS Space. Turn off the VPN there and try again. If it can't be turned off, ask \
+         whoever manages it to let 192.168.64.0/24 (that Mac's VM network) skip the VPN."
+    )
+}
+
+/// The app the SDK's Local Network error names ("Allow <App> in System
+/// Settings", or an older "Local Network access is not available: <App>
+/// (<path>) cannot reach ..."), when it names one.
+fn local_network_app(plain: &str) -> Option<&str> {
+    if let Some(at) = plain.find("Allow ") {
+        let rest = &plain[at + "Allow ".len()..];
+        if let Some((name, _)) = rest.split_once(" in System Settings") {
+            let name = name.trim();
+            if !name.is_empty() && name != "cua" {
+                return Some(name);
+            }
+        }
+    }
+    const LEAD: &str = "Local Network access is not available: ";
+    let rest = &plain[plain.find(LEAD)? + LEAD.len()..];
+    let (name, _) = rest.split_once(" (")?;
+    let name = name.trim();
+    (!name.is_empty() && name != "cua" && !name.contains("cannot reach")).then_some(name)
 }
 
 /// Drops finished creates whose Space the registry now lists, and finished
@@ -861,6 +1935,7 @@ pub fn settle(state: &CreatesState, registry: &[Space]) -> CreatesState {
             })
             .cloned()
             .collect(),
+        streaks: state.streaks.clone(),
     }
 }
 
@@ -903,13 +1978,18 @@ fn setting_up_runtime(p: &PendingCreate) -> bool {
 pub fn pending_space(p: &PendingCreate) -> Space {
     let failed = p.error.is_some();
     let where_ = match p.provider {
-        SpaceProvider::Cloud => "Cua Cloud",
-        _ => "This Mac",
+        SpaceProvider::Local => "This Mac",
+        // Created on another of your machines: not this Mac.
+        SpaceProvider::Relay | SpaceProvider::Direct => "Another computer",
     };
+    let retrying = !failed && p.attempt > 0 && p.space_id.is_none();
     let label = if failed {
         "Failed".to_string()
     } else if p.cancelling {
         "Cancelling\u{2026}".to_string()
+    } else if retrying && p.phase == "preparing" {
+        // The automatic second try, said plainly while it starts over.
+        "Retrying\u{2026}".to_string()
     } else if setting_up_runtime(p) {
         // Bytes before the image: the runtime cua sets up on first use
         // (the built-in Lume for a macOS Space).
@@ -919,11 +1999,12 @@ pub fn pending_space(p: &PendingCreate) -> Space {
             _ => "Setting up the runtime\u{2026}".to_string(),
         }
     } else {
-        phase_label(&p.phase).to_string()
+        stage_label(p)
     };
     // The catalog's distribution: the right icon and System from the start.
     let distro = p.image.as_deref().and_then(crate::wizard::image_distro);
     Space {
+        hidden: false,
         id: p.id.clone(),
         name: p.name.clone(),
         os: p.os,
@@ -939,7 +2020,6 @@ pub fn pending_space(p: &PendingCreate) -> Space {
         last_used_at: p.started_at,
         started_at: Some(p.started_at),
         scene: scene_for_os(p.os),
-        fleet_id: None,
         size: None,
         region: None,
         provider: Some(p.provider),
@@ -950,12 +2030,20 @@ pub fn pending_space(p: &PendingCreate) -> Space {
             permille: p.permille,
             label,
             error: p.error.clone(),
-            credit_url: p.credit_url.clone(),
             transfer: (!failed && !p.cancelling && (p.phase == "pulling" || setting_up_runtime(p)))
-                .then(|| transfer_text(p.bytes_done, p.bytes_total, p.bytes_per_second))
+                .then(|| {
+                    transfer_text_with(
+                        p.bytes_done,
+                        p.bytes_total,
+                        p.bytes_per_second,
+                        later_for(p),
+                    )
+                })
                 .flatten(),
             cancellable: !failed && !p.cancelling && p.space_id.is_none(),
             cancelling: p.cancelling,
+            retrying,
+            fix: if failed { p.fix.clone() } else { None },
         }),
         os_pretty_name: distro.map(|d| d.name),
         image: p.image.clone(),
@@ -963,21 +2051,63 @@ pub fn pending_space(p: &PendingCreate) -> Space {
         kind: p.kind,
         arch: p.arch.clone(),
         host: None,
-        host_name: None,
+        host_name: p.host_name.clone(),
+        parent: p.parent.clone(),
         power: None,
         cloud: None,
         cloud_place: None,
         cloud_delete: None,
+        access: None,
     }
 }
 
+/// How far a machine's clock may be behind this one's when a record it
+/// lists is compared with the moment a create here started.
+const HOST_CLOCK_SKEW_MS: i64 = 5 * 60_000;
+
+/// Whether `listed` is the record a machine keeps of the Space `p` is
+/// creating there.
+///
+/// A machine lists the Space it creates for you as soon as it takes the
+/// create, before the Space is up, as a record with no OS yet, not
+/// answering ("Stopped, Linux on gamma-4"), under the name the create asked
+/// for (or its own for an unnamed one). While `p` is in flight, or after it
+/// failed, that record is the same Space as `p`'s row: it must not be a
+/// second tile next to it. It is not a record of an older Space: one that
+/// was already there when the create started (when the machine says when it
+/// added it) stays.
+fn is_hosts_record_of(listed: &Space, p: &PendingCreate) -> bool {
+    let Some(host) = p.host.as_deref() else {
+        return false;
+    };
+    // A finished create hands over to the registry's own row of that Space.
+    if p.space_id.is_some()
+        || listed.provider != Some(SpaceProvider::Relay)
+        || listed.host.as_deref() != Some(host)
+    {
+        return false;
+    }
+    if listed
+        .started_at
+        .is_some_and(|at| at < p.started_at - HOST_CLOCK_SKEW_MS)
+    {
+        return false;
+    }
+    // Its name; an unnamed create is named by the machine, so any record
+    // there that is not up yet is the one.
+    let unnamed = p.name == pending_name("", p.os);
+    listed.name == p.name || (unnamed && listed.status == SpaceStatus::Suspended)
+}
+
 /// The registry's Spaces plus a row per pending create (finished creates
-/// the registry already lists are left out, so a Space never shows twice).
-/// A Space being deleted shows Deleting; one whose delete finished is left
-/// out even while the registry still lists it.
+/// the registry already lists are left out, so a Space never shows twice;
+/// nor does the record a machine lists of the Space it is creating for you,
+/// [`is_hosts_record_of`]). A Space being deleted shows Deleting; one whose
+/// delete finished is left out even while the registry still lists it.
 pub fn compose(registry: &[Space], state: &CreatesState) -> Vec<Space> {
     let mut out: Vec<Space> = registry
         .iter()
+        .filter(|s| !state.pending.iter().any(|p| is_hosts_record_of(s, p)))
         .filter_map(|s| match state.deleting.iter().find(|d| d.id == s.id) {
             Some(d) if d.done => None,
             Some(_) => Some(deleting_space(s)),
@@ -997,8 +2127,114 @@ pub fn compose(registry: &[Space], state: &CreatesState) -> Vec<Space> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn time_left_counts_the_downloads_and_starts_after_this_one() {
+        let mb = 1u64 << 20;
+        // 456 MB of runtime nearly done, at 20 MB/s: the bytes alone say
+        // seconds; the image still to come and the starts say minutes.
+        let alone = transfer_text(Some(440 * mb), Some(456 * mb), Some(20.0 * mb as f64)).unwrap();
+        assert!(alone.ends_with("less than a minute"), "{alone}");
+        let later = Later {
+            bytes: 1100 * mb,
+            secs: 26.0,
+            pace: None,
+        };
+        let whole = transfer_text_with(
+            Some(440 * mb),
+            Some(456 * mb),
+            Some(20.0 * mb as f64),
+            later,
+        )
+        .unwrap();
+        assert!(whole.ends_with("about 1 min"), "{whole}");
+        // No rate yet: the first-run pace stands in, never a bare "less than a minute".
+        let blind = transfer_text_with(
+            Some(0),
+            Some(1100 * mb),
+            None,
+            Later {
+                bytes: 0,
+                secs: 26.0,
+                pace: Some(crate::wizard::FIRST_RUN_BYTES_PER_SEC),
+            },
+        )
+        .unwrap();
+        assert!(blind.ends_with("about 3 min"), "{blind}");
+        // A stall message promises no time.
+        assert_eq!(
+            transfer_text(Some(mb), Some(10 * mb), None).unwrap(),
+            "1.0 of 10.0 MB"
+        );
+    }
+
+    #[test]
+    fn preflight_issue_reads_the_daemons_report() {
+        let report = r#"{"preflight":{
+            "linux_container":[{"kind":"engine_missing",
+              "message":"Install Docker Desktop to run Linux computers.",
+              "fix":{"label":"Get Docker","action":{"type":"open_url","value":"https://www.docker.com/products/docker-desktop/"}}}],
+            "linux_vm":[]}}"#;
+        let issue = preflight_issue(report, "linux_container").unwrap();
+        assert_eq!(
+            issue.message,
+            "Install Docker Desktop to run Linux computers."
+        );
+        assert_eq!(issue.fix.unwrap().label, "Get Docker");
+        assert!(preflight_issue(report, "linux_vm").is_none());
+        assert!(preflight_issue(report, "windows_vm").is_none());
+        // An older daemon has no verdict; garbage never blocks a create.
+        assert!(preflight_issue("{}", "linux_vm").is_none());
+        assert!(preflight_issue("not json", "linux_vm").is_none());
+    }
+
+    #[test]
+    fn a_failed_create_with_a_preflight_sentence_keeps_its_cause() {
+        let raw = "Install Docker Desktop to run Linux computers.";
+        assert_eq!(failure_text(raw, Some("preparing"), None, false), raw);
+        assert_eq!(
+            failure_variant(raw, Some("preparing"), false, "Runtime"),
+            "runtime_missing"
+        );
+    }
+
+    /// CUA-1807: Turn on showed the SDK's raw Local Network error.
+    #[test]
+    fn a_failed_turn_on_says_the_known_cause_in_plain_words() {
+        let raw = "local runtime: Local Network access is not available: Cua Spaces \
+                   (/Applications/Cua Spaces.app) cannot reach the VM at 192.168.64.191:3211 \
+                   (No route to host (os error 65)). macOS blocks Cua Spaces's local network \
+                   connections until they are allowed: ...";
+        let t = power_failed_text(true, raw);
+        assert!(
+            t.starts_with("Could not turn it on: Cua can't reach"),
+            "{t}"
+        );
+        assert!(t.contains("turn on Cua Spaces, then try again"), "{t}");
+        assert!(!t.contains("os error"), "{t}");
+        // An older SDK's bare EHOSTUNREACH to a vmnet address.
+        let t = power_failed_text(
+            true,
+            "connect 192.168.64.5:3211: No route to host (os error 65)",
+        );
+        assert!(t.contains("turn on Cua Spaces (or cua-spacesd)"), "{t}");
+        // A bare binary is not an app to turn on.
+        let t = power_failed_text(
+            true,
+            "Local Network access is not available: cua cannot reach the VM at 192.168.64.5:3211",
+        );
+        assert!(t.contains("turn on Cua Spaces (or cua-spacesd)"), "{t}");
+        // Unknown causes stay as they were.
+        assert_eq!(
+            power_failed_text(false, "Docker is not running"),
+            "Could not turn it off: Docker is not running"
+        );
+        assert_eq!(power_failed_text(true, " "), "Could not turn it on");
+        assert!(power_failed_text(true, "No space left on device").contains("disk space"));
+    }
+
     fn start(id: &str, name: &str, os: SpaceOs) -> CreateAction {
         CreateAction::Start {
+            parent: None,
             id: id.into(),
             name: name.into(),
             os,
@@ -1008,7 +2244,231 @@ mod tests {
             kind: None,
             host_arch: None,
             gpu: false,
+            host: None,
+            host_name: None,
         }
+    }
+
+    fn fail(id: &str, error: &str, now: i64) -> CreateAction {
+        CreateAction::Fail {
+            id: id.into(),
+            error: error.into(),
+            error_variant: "Runtime".into(),
+            now: Some(now),
+        }
+    }
+
+    const RUNTIME_DID_NOT_START: &str =
+        "local runtime: the built-in Linux runtime did not start: exiting, status 1";
+    const NO_DISK: &str = "not enough disk space to pull ghcr.io/x/y:1: it needs about 30.0 GB \
+                           and cua keeps 5.0 GB free, but only 12.4 GB is available on /Users/me";
+
+    #[test]
+    fn a_passing_failure_is_retried_once_and_says_so() {
+        let s = reduce(
+            &CreatesState::default(),
+            &start_image("pending:r", "ghcr.io/x/y:1", None),
+        );
+        let s = reduce(&s, &at("pending:r", "pulling", Some(0.4), 2_000));
+        let s = reduce(
+            &s,
+            &fail(
+                "pending:r",
+                "registry: error sending request: connection reset by peer",
+                3_000,
+            ),
+        );
+        let p = &s.pending[0];
+        assert!(p.retry_pending && p.error.is_none());
+        assert_eq!((p.attempt, p.phase.as_str()), (1, "preparing"));
+        assert_eq!(p.phase_at, Some(3_000));
+        let row = pending_space(p);
+        let progress = row.progress.unwrap();
+        assert_eq!(progress.label, "Retrying\u{2026}");
+        assert!(progress.retrying && progress.cancellable && progress.fix.is_none());
+        assert_eq!(row.detail, "This Mac \u{b7} Retrying\u{2026}");
+        // The new attempt's first report clears the request to run it.
+        let s = reduce(&s, &at("pending:r", "preparing", None, 3_100));
+        assert!(!s.pending[0].retry_pending);
+        // A second failure is shown, never retried again.
+        let s = reduce(
+            &s,
+            &fail(
+                "pending:r",
+                "registry: error sending request: connection reset by peer",
+                9_000,
+            ),
+        );
+        let p = &s.pending[0];
+        assert!(!p.retry_pending && p.error.is_some() && p.attempt == 1);
+        assert!(!pending_space(p).progress.unwrap().retrying);
+    }
+
+    #[test]
+    fn a_lasting_failure_is_never_retried() {
+        for error in [
+            NO_DISK,
+            "permission denied on unix:///var/run/docker.sock",
+            "Docker is not running: start Docker Desktop",
+            "container engine: pull ghcr.io/x/y:1: manifest unknown",
+            "something nobody has seen",
+        ] {
+            let s = reduce(
+                &CreatesState::default(),
+                &start_image("pending:d", "ghcr.io/x/y:1", None),
+            );
+            let s = reduce(&s, &fail("pending:d", error, 2_000));
+            let p = &s.pending[0];
+            assert!(
+                !p.retry_pending && p.attempt == 0 && p.error.is_some(),
+                "{error}"
+            );
+        }
+        // Nor one that ends while being cancelled, nor a credit refusal.
+        let s = reduce(
+            &CreatesState::default(),
+            &start_image("pending:c", "ghcr.io/x/y:1", None),
+        );
+        let s = reduce(
+            &s,
+            &CreateAction::CancelStart {
+                id: "pending:c".into(),
+            },
+        );
+        let s = reduce(&s, &fail("pending:c", RUNTIME_DID_NOT_START, 2_000));
+        assert!(s.pending.is_empty());
+    }
+
+    fn by<'a>(s: &'a CreatesState, id: &str) -> &'a PendingCreate {
+        s.pending.iter().find(|p| p.id == id).unwrap()
+    }
+
+    #[test]
+    fn the_same_failure_twice_offers_its_fix_even_after_a_dismiss() {
+        let s = reduce(
+            &CreatesState::default(),
+            &start_image("pending:1", "ghcr.io/x/y:1", None),
+        );
+        let s = reduce(&s, &fail("pending:1", NO_DISK, 2_000));
+        assert!(s.pending[0].fix.is_none());
+        let s = reduce(
+            &s,
+            &CreateAction::Dismiss {
+                id: "pending:1".into(),
+            },
+        );
+        assert_eq!(s.streaks.len(), 1);
+        let s = reduce(&s, &start_image("pending:2", "ghcr.io/x/y:1", None));
+        let s = reduce(&s, &fail("pending:2", NO_DISK, 3_000));
+        let fix = pending_space(&s.pending[0]).progress.unwrap().fix.unwrap();
+        assert_eq!(fix.action, CreateFixAction::CopyCommand);
+        assert_eq!(fix.value.as_deref(), Some("cua cache prune"));
+        assert!(
+            fix.text
+                .contains("this Mac doesn't have enough free disk space"),
+            "{}",
+            fix.text
+        );
+        // Another image, or another cause, starts over.
+        let s = reduce(&s, &start_image("pending:3", "ghcr.io/x/other:1", None));
+        let s = reduce(&s, &fail("pending:3", NO_DISK, 4_000));
+        assert!(by(&s, "pending:3").fix.is_none());
+        let s = reduce(&s, &start_image("pending:4", "ghcr.io/x/y:1", None));
+        let s = reduce(
+            &s,
+            &fail(
+                "pending:4",
+                "Docker is not running: start Docker Desktop",
+                5_000,
+            ),
+        );
+        assert!(by(&s, "pending:4").fix.is_none());
+        let s = reduce(&s, &start_image("pending:5", "ghcr.io/x/y:1", None));
+        let s = reduce(
+            &s,
+            &fail(
+                "pending:5",
+                "Docker is not running: start Docker Desktop",
+                6_000,
+            ),
+        );
+        let fix = by(&s, "pending:5").fix.clone().unwrap();
+        assert_eq!(fix.value.as_deref(), Some("cua runtime doctor"));
+        // A success there clears the count.
+        let s = reduce(&s, &start_image("pending:6", "ghcr.io/x/y:1", None));
+        let s = reduce(
+            &s,
+            &CreateAction::Finish {
+                id: "pending:6".into(),
+                space_id: "local:y".into(),
+            },
+        );
+        assert!(s.streaks.iter().all(|k| k.image != "ghcr.io/x/y:1"));
+        // The count never holds the error text.
+        let json = serde_json::to_string(&s.streaks).unwrap();
+        assert!(
+            !json.contains("/Users/me") && !json.contains("Docker Desktop"),
+            "{json}"
+        );
+    }
+
+    #[test]
+    fn a_passing_failure_that_fails_again_offers_a_fix() {
+        let s = reduce(
+            &CreatesState::default(),
+            &start_image("pending:1", "ghcr.io/x/y:1", None),
+        );
+        let s = reduce(&s, &fail("pending:1", RUNTIME_DID_NOT_START, 2_000));
+        assert!(s.pending[0].retry_pending);
+        let s = reduce(&s, &fail("pending:1", RUNTIME_DID_NOT_START, 3_000));
+        let fix = s.pending[0].fix.clone().unwrap();
+        assert_eq!(fix.value.as_deref(), Some("cua doctor"));
+    }
+
+    #[test]
+    fn every_fix_is_one_sentence_or_two_and_one_button() {
+        let s = reduce(
+            &CreatesState::default(),
+            &start_image("pending:1", "ghcr.io/x/y:1", None),
+        );
+        let p = &s.pending[0];
+        for kind in [
+            "insufficient_disk",
+            "runtime_not_running",
+            "runtime_missing",
+            "vm_runtime_missing",
+            "runtime_permission",
+            "virtualization_unavailable",
+            "vm_limit",
+            "host_capacity",
+            "local_network",
+            "local_network_denied",
+            "local_network_vpn",
+            "image_pull_not_found",
+            "image_pull_auth",
+            "out_of_memory",
+            "runtime",
+            "other",
+        ] {
+            let fix = fix_for(kind, p).unwrap();
+            assert!(
+                fix.text.starts_with("It failed twice for the same reason"),
+                "{kind}"
+            );
+            assert!(
+                !fix.label.is_empty() && !fix.text.contains('\u{2014}'),
+                "{kind}"
+            );
+            match fix.action {
+                CreateFixAction::CopyCommand | CreateFixAction::OpenUrl => {
+                    assert!(fix.value.is_some(), "{kind}")
+                }
+                CreateFixAction::Details | CreateFixAction::ChooseWindowsIso => {
+                    assert!(fix.value.is_none(), "{kind}")
+                }
+            }
+        }
+        assert!(fix_for("cancelled", p).is_none() && fix_for("quota_exceeded", p).is_none());
     }
 
     fn progress(id: &str, phase: &str, fraction: Option<f64>) -> CreateAction {
@@ -1025,6 +2485,7 @@ mod tests {
 
     fn start_image(id: &str, image: &str, kind: Option<SpaceKind>) -> CreateAction {
         CreateAction::Start {
+            parent: None,
             id: id.into(),
             name: String::new(),
             os: SpaceOs::Linux,
@@ -1034,6 +2495,8 @@ mod tests {
             kind,
             host_arch: Some("aarch64".into()),
             gpu: false,
+            host: None,
+            host_name: None,
         }
     }
 
@@ -1059,6 +2522,330 @@ mod tests {
             bytes_total: Some(total),
             bytes_per_second: Some(rate),
         }
+    }
+
+    /// A Windows image built on this Mac says "Downloading Windows" while the
+    /// ISO comes down (with its bytes), then "Installing Windows" with no
+    /// stale byte count, then the ordinary clone and boot words.
+    #[test]
+    fn a_windows_image_built_here_downloads_then_installs() {
+        let image = "ghcr.io/trycua/windows:11";
+        let mut s = reduce(
+            &CreatesState::default(),
+            &CreateAction::Start {
+                id: "pending:w".into(),
+                name: String::new(),
+                os: SpaceOs::Windows,
+                provider: SpaceProvider::Local,
+                now: 1_000,
+                image: Some(image.into()),
+                kind: Some(SpaceKind::Vm),
+                host_arch: Some("aarch64".into()),
+                gpu: false,
+                host: None,
+                host_name: None,
+                parent: None,
+            },
+        );
+        let row = |s: &CreatesState| pending_space(&s.pending[0]).progress.unwrap();
+        s = reduce(&s, &bytes_at("pending:w", 2 << 30, 8 << 30, 1e7, 2_000));
+        assert_eq!(
+            row(&s).label,
+            "Downloading Windows (first time only)\u{2026}"
+        );
+        assert!(row(&s).transfer.is_some());
+        // The install: a fraction past the downloads, no bytes.
+        s = reduce(&s, &at("pending:w", "pulling", Some(0.5), 3_000));
+        let r = row(&s);
+        assert_eq!(r.label, "Installing Windows (first time only)\u{2026}");
+        assert_eq!(r.transfer, None, "the ISO's bytes are not the install's");
+        // Then the Space's own steps.
+        s = reduce(&s, &at("pending:w", "creating", None, 4_000));
+        assert_eq!(row(&s).label, "Preparing the disk\u{2026}");
+        s = reduce(&s, &at("pending:w", "booting", None, 5_000));
+        assert_eq!(row(&s).label, "Booting Windows\u{2026}");
+        // A pulled Windows image (Server 2022) is just a download.
+        let mut pulled = reduce(
+            &CreatesState::default(),
+            &start_image(
+                "pending:p",
+                "ghcr.io/trycua/windows:2022",
+                Some(SpaceKind::Vm),
+            ),
+        );
+        pulled.pending[0].os = SpaceOs::Windows;
+        pulled = reduce(&pulled, &at("pending:p", "pulling", Some(0.9), 2_000));
+        assert_eq!(
+            pending_space(&pulled.pending[0]).progress.unwrap().label,
+            "Downloading image\u{2026}"
+        );
+    }
+
+    #[test]
+    fn microsofts_limit_is_said_in_plain_words_with_its_way_out_and_never_retried() {
+        let raw = "local runtime: build failed at windows iso: Microsoft is limiting Windows downloads from this network (Sentinel marked this request as rejected.) right now. Try again in about 42 minutes, or download the Windows ISO yourself (https://www.microsoft.com/software-download/windows11arm64) and save it in your Downloads folder: Cua finds it. With the command line: cua sb create windows:11 --iso ~/Downloads/<the file>.iso";
+        let text = failure_text(raw, Some("pulling"), Some(SpaceProvider::Local), false);
+        assert_eq!(
+            text,
+            "Microsoft is limiting Windows downloads from your network right now. Try again in about 42 minutes, or download the Windows 11 ARM64 disc image yourself and choose it here."
+        );
+        assert!(!text.contains("Sentinel") && !text.contains("--iso"));
+        let s = reduce(
+            &CreatesState::default(),
+            &start_image(
+                "pending:w",
+                "ghcr.io/trycua/windows:11",
+                Some(SpaceKind::Vm),
+            ),
+        );
+        let failed = reduce(
+            &s,
+            &CreateAction::Fail {
+                id: "pending:w".into(),
+                error: raw.into(),
+                error_variant: "Runtime".into(),
+                now: Some(5_000),
+            },
+        );
+        let p = &failed.pending[0];
+        assert!(!p.retry_pending && p.attempt == 0, "no automatic retry");
+        let fix = p.fix.as_ref().expect("the way out is on the first failure");
+        assert_eq!(fix.label, "Choose Windows ISO\u{2026}");
+        assert_eq!(fix.action, CreateFixAction::ChooseWindowsIso);
+        assert_eq!(
+            fix.link_label.as_deref(),
+            Some("Open Microsoft's download page")
+        );
+        assert_eq!(fix.link_url.as_deref(), Some(WINDOWS_ARM64_PAGE));
+        assert!(fix.keep_retry, "Try again stays beside it");
+    }
+
+    /// Any other failure to get the ISO offers the same way out, at once.
+    #[test]
+    fn a_failed_windows_download_offers_the_iso_picker_on_the_first_failure() {
+        let raw = "local runtime: build failed at windows iso: Microsoft's download service did not answer (timed out)";
+        assert_eq!(
+            failure_cause(raw, Some("pulling"), false),
+            Some(FailureCause::WindowsDownloadFailed)
+        );
+        let text = failure_text(raw, Some("pulling"), Some(SpaceProvider::Local), false);
+        assert!(text.contains("Choose a Windows disc image") && !text.contains("windows iso"));
+        let s = reduce(
+            &CreatesState::default(),
+            &start_image(
+                "pending:w",
+                "ghcr.io/trycua/windows:11",
+                Some(SpaceKind::Vm),
+            ),
+        );
+        let failed = reduce(
+            &s,
+            &CreateAction::Fail {
+                id: "pending:w".into(),
+                error: raw.into(),
+                error_variant: "Runtime".into(),
+                now: Some(5_000),
+            },
+        );
+        let fix = failed.pending[0]
+            .fix
+            .as_ref()
+            .expect("the picker on the first failure");
+        assert_eq!(fix.action, CreateFixAction::ChooseWindowsIso);
+        assert!(fix.keep_retry);
+    }
+
+    /// The bar of a first-time Windows build only moves forward through the
+    /// download and the install, and every report moves it (so the stall watch
+    /// never fails a healthy build).
+    #[test]
+    fn the_windows_build_bar_moves_with_every_report() {
+        let mut s = reduce(
+            &CreatesState::default(),
+            &CreateAction::Start {
+                id: "pending:w".into(),
+                name: String::new(),
+                os: SpaceOs::Windows,
+                provider: SpaceProvider::Local,
+                now: 1_000,
+                image: Some("ghcr.io/trycua/windows:11".into()),
+                kind: Some(SpaceKind::Vm),
+                host_arch: Some("aarch64".into()),
+                gpu: false,
+                host: None,
+                host_name: None,
+                parent: None,
+            },
+        );
+        let mut last = 0;
+        let mut now = 2_000;
+        // ISO bytes from 0.01 to 0.40, drivers to 0.45, then the install to 0.96.
+        let fractions = [
+            0.01, 0.1, 0.25, 0.40, 0.45, 0.46, 0.47, 0.55, 0.7, 0.9, 0.96,
+        ];
+        let mut seen = Vec::new();
+        for f in fractions {
+            now += 20_000;
+            s = reduce(&s, &at("pending:w", "pulling", Some(f), now));
+            let p = &s.pending[0];
+            assert!(p.permille >= last, "{f}: {} < {last}", p.permille);
+            last = p.permille;
+            seen.push((f, p.permille));
+        }
+        // The install's fractions span a visible part of the bar.
+        let at_install = seen.iter().find(|(f, _)| *f == 0.47).unwrap().1;
+        let at_end = seen.last().unwrap().1;
+        assert!(at_end > at_install + 100, "{seen:?}");
+        // The create's own phases follow and never go back.
+        s = reduce(&s, &at("pending:w", "creating", None, now + 1_000));
+        assert!(s.pending[0].permille >= at_end, "{seen:?}");
+    }
+
+    /// The fraction the app tells "downloading" from "installing" by is the
+    /// one the build reports (`cua-image`'s `DOWNLOADS_END`).
+    #[test]
+    fn the_install_fraction_is_the_one_the_build_reports() {
+        let build = include_str!("../../../cua-image/src/windows/build.rs");
+        assert!(
+            build.contains(&format!(
+                "pub const DOWNLOADS_END: f64 = {WINDOWS_INSTALL_FROM};"
+            )),
+            "cua-image's DOWNLOADS_END must equal WINDOWS_INSTALL_FROM ({WINDOWS_INSTALL_FROM})"
+        );
+    }
+
+    /// A create says which step it is on, in the words of its kind of
+    /// Space, with the download's bytes and time left under the bar: the
+    /// same on this Mac and on another of your machines.
+    #[test]
+    fn a_create_names_each_stage_for_its_kind_of_space() {
+        let stages = |os: SpaceOs, kind: Option<SpaceKind>, provider: SpaceProvider| {
+            let mut s = reduce(
+                &CreatesState::default(),
+                &CreateAction::Start {
+                    parent: None,
+                    id: "pending:s".into(),
+                    name: String::new(),
+                    os,
+                    provider,
+                    now: 1_000,
+                    image: None,
+                    kind,
+                    host_arch: None,
+                    gpu: false,
+                    host: (provider == SpaceProvider::Relay).then(|| "mini".into()),
+                    host_name: (provider == SpaceProvider::Relay).then(|| "Mac mini".into()),
+                },
+            );
+            let mut labels = vec![pending_space(&s.pending[0]).progress.unwrap().label];
+            for (i, phase) in PHASES.iter().enumerate().skip(1) {
+                s = reduce(
+                    &s,
+                    &CreateAction::Progress {
+                        id: "pending:s".into(),
+                        phase: (*phase).into(),
+                        fraction: None,
+                        now: Some(2_000 + i as i64),
+                        bytes_done: None,
+                        bytes_total: None,
+                        bytes_per_second: None,
+                    },
+                );
+                labels.push(pending_space(&s.pending[0]).progress.unwrap().label);
+            }
+            labels
+        };
+        let e = |s: &str| s.replace("...", "\u{2026}");
+        let want = |v: [&str; 6]| v.map(e).to_vec();
+        let macos = want([
+            "Starting...",
+            "Downloading macOS (first time only)...",
+            "Preparing the disk...",
+            "Booting macOS...",
+            "Starting Cua inside the Space...",
+            "Connecting...",
+        ]);
+        assert_eq!(stages(SpaceOs::Macos, None, SpaceProvider::Local), macos);
+        // On another of your machines: the same stages.
+        assert_eq!(stages(SpaceOs::Macos, None, SpaceProvider::Relay), macos);
+        assert_eq!(
+            stages(SpaceOs::Linux, Some(SpaceKind::Vm), SpaceProvider::Local),
+            want([
+                "Starting...",
+                "Downloading image...",
+                "Preparing the disk...",
+                "Booting Linux...",
+                "Starting Cua inside the Space...",
+                "Connecting...",
+            ])
+        );
+        assert_eq!(
+            stages(
+                SpaceOs::Linux,
+                Some(SpaceKind::Container),
+                SpaceProvider::Local
+            ),
+            want([
+                "Starting...",
+                "Downloading image...",
+                "Creating the container...",
+                "Starting the container...",
+                "Starting Cua inside the Space...",
+                "Connecting...",
+            ])
+        );
+
+        // The download: bytes, rate and time left under the bar, on the
+        // row of a create on another machine too.
+        let s = reduce(
+            &CreatesState::default(),
+            &CreateAction::Start {
+                parent: None,
+                id: "pending:r".into(),
+                name: String::new(),
+                os: SpaceOs::Macos,
+                provider: SpaceProvider::Relay,
+                now: 1_000,
+                image: None,
+                kind: None,
+                host_arch: None,
+                gpu: false,
+                host: Some("mini".into()),
+                host_name: Some("Mac mini".into()),
+            },
+        );
+        let gb = 1u64 << 30;
+        let s = reduce(
+            &s,
+            &bytes_at(
+                "pending:r",
+                gb * 124 / 10,
+                30 * gb,
+                (85u64 << 20) as f64,
+                5_000,
+            ),
+        );
+        let row = pending_space(&s.pending[0]);
+        let p = row.progress.unwrap();
+        assert_eq!(p.label, e("Downloading macOS (first time only)..."));
+        assert_eq!(
+            p.transfer.as_deref(),
+            Some("12.4 of 30.0 GB \u{b7} 85 MB/s \u{b7} about 4 min")
+        );
+        assert!(p.permille > 10, "past the 1% floor: {}", p.permille);
+        assert_eq!(
+            row.detail,
+            e("Another computer \u{b7} Downloading macOS (first time only)...")
+        );
+    }
+
+    #[test]
+    fn unknown_os_cannot_start_a_create() {
+        let state = CreatesState::default();
+        assert_eq!(
+            reduce(&state, &start("pending:unknown", "", SpaceOs::Unknown)),
+            state
+        );
     }
 
     /// The first macOS create on a Mac without Lume: the built-in Lume's
@@ -1090,7 +2877,7 @@ mod tests {
         let s = reduce(&s, &bytes_at("pending:m", 1 << 30, 20 << 30, 5e7, 3_000));
         assert_eq!(
             pending_space(&s.pending[0]).progress.unwrap().label,
-            "Downloading image\u{2026}"
+            "Downloading macOS (first time only)\u{2026}"
         );
     }
 
@@ -1259,6 +3046,8 @@ mod tests {
             &CreateAction::Fail {
                 id: "pending:c".into(),
                 error: "cancelled: Cancelled local:space-1".into(),
+                error_variant: String::new(),
+                now: None,
             },
         );
         assert!(gone.pending.is_empty());
@@ -1336,7 +3125,7 @@ mod tests {
     #[test]
     fn bands_cover_the_bar_in_order_for_every_family() {
         use CreateFamily::*;
-        for f in [Container, Vm, EmulatedVm, Macos, Windows, Cloud] {
+        for f in [Container, Vm, EmulatedVm, Macos, Windows] {
             for pulled in [true, false] {
                 let b = bands(f, pulled);
                 assert_eq!(b[0].0, 10, "{f:?}");
@@ -1395,6 +3184,8 @@ mod tests {
             &CreateAction::Fail {
                 id: "pending:o".into(),
                 error: "x".into(),
+                error_variant: String::new(),
+                now: None,
             },
         );
         assert_eq!(tick(&failed, 50.0), failed);
@@ -1431,8 +3222,8 @@ mod tests {
             .expect("a stalled phase fails");
         assert_eq!(
             err,
-            "Starting services made no progress for 4 min. Dismiss it and try again; \
-             if it happens again, run `cua doctor` in Terminal."
+            "The Space booted, but its service did not answer for 4 min. The image is \
+             downloaded now, so another try is usually quick. Dismiss it and try again."
         );
         assert_eq!(err, stall_error("waiting_for_services", limit + 1.0));
         // More ticks leave the error alone.
@@ -1456,6 +3247,8 @@ mod tests {
             &CreateAction::Fail {
                 id: "pending:c".into(),
                 error: "boom".into(),
+                error_variant: String::new(),
+                now: None,
             },
         );
         let after = reduce(&failed, &at("pending:c", "connecting", None, 9_000));
@@ -1495,7 +3288,7 @@ mod tests {
             p.pending[0]
                 .error
                 .as_deref()
-                .is_some_and(|e| e.starts_with("Downloading image made no progress")),
+                .is_some_and(|e| e.starts_with("The image download made no progress")),
             "{:?}",
             p.pending[0].error
         );
@@ -1507,7 +3300,6 @@ mod tests {
             CreateFamily::EmulatedVm,
             CreateFamily::Macos,
             CreateFamily::Windows,
-            CreateFamily::Cloud,
         ] {
             for (i, phase) in PHASES.iter().enumerate() {
                 let l = stall_limit_secs(fam, i);
@@ -1572,7 +3364,7 @@ mod tests {
         let s = reduce(&s, &progress("pending:m", "waiting_for_services", None));
         assert_eq!(s.pending[0].permille, band_of(&s.pending[0]).0);
         assert_eq!(pending_name("  ", SpaceOs::Macos), "macOS Space");
-        assert_eq!(pending_name("cua-e2e-mac", SpaceOs::Macos), "Cua E2e Mac");
+        assert_eq!(pending_name("cua-e2e-mac", SpaceOs::Macos), "cua-e2e-mac");
     }
 
     #[test]
@@ -1612,6 +3404,8 @@ mod tests {
             &CreateAction::Fail {
                 id: "pending:1".into(),
                 error: "no local runtime".into(),
+                error_variant: String::new(),
+                now: None,
             },
         );
         let row = &compose(&[], &s)[0];
@@ -1713,54 +3507,701 @@ mod tests {
     }
 
     #[test]
-    fn out_of_credit_is_one_line_and_add_credit_only_while_billing_shows() {
+    fn a_stopped_download_says_how_far_it_got() {
         let s = reduce(
             &CreatesState::default(),
-            &start("pending:1", "demo", SpaceOs::Linux),
+            &start("pending:m", "", SpaceOs::Macos),
         );
         let s = reduce(
             &s,
-            &CreateAction::Fail {
-                id: "pending:1".into(),
-                error: "You're out of Cua Cloud credit. Add credit at https://run.cua.ai/billing"
-                    .into(),
+            &CreateAction::Progress {
+                id: "pending:m".into(),
+                phase: "pulling".into(),
+                fraction: None,
+                now: Some(1_000),
+                bytes_done: Some(4_509_715_660),
+                bytes_total: Some(23_729_694_310),
+                bytes_per_second: Some(1_000_000.0),
             },
         );
-        let space = pending_space(&s.pending[0]);
-        assert_eq!(space.detail, crate::billing::OUT_OF_CREDIT);
-        let notice = crate::spaces::sidebar::detail(&space).credit_notice;
-        if crate::billing::BILLING_SHOWN {
-            let n = notice.expect("notice");
+        let limit_ms = (stall_limit_secs(CreateFamily::Macos, 1) * 1000.0) as i64;
+        let s = reduce(
+            &s,
+            &CreateAction::Tick {
+                now: 1_000 + limit_ms + 1_000,
+            },
+        );
+        let err = s.pending[0].error.clone().unwrap();
+        assert!(
+            err.starts_with("The image download stopped at 4.2 of 22.1 GB: nothing arrived for"),
+            "{err}"
+        );
+        assert!(err.ends_with("Check your internet connection. Dismiss it and try again."));
+        assert!(is_stalled(&s.pending[0]));
+        // Other phases keep `cua doctor` as the last resort.
+        assert_eq!(
+            stall_error("booting", 300.0),
+            "Booting made no progress for 5 min. If it keeps happening, run `cua doctor` in \
+             Terminal. Dismiss it and try again."
+        );
+    }
+
+    #[test]
+    fn a_failure_names_its_cause_when_it_is_known() {
+        let disk = "not enough disk space to pull ghcr.io/trycua/macos:26: it needs about 30.0 GB \
+                    and cua keeps 5.0 GB free, but only 12.4 GB is available on /Users/me/.lume \
+                    (run `cua cache prune` to free space, or lower CUA_DISK_MIN_FREE)";
+        assert_eq!(
+            failure_text(disk, Some("preparing"), Some(SpaceProvider::Local), false),
+            "Not enough disk space: this Space needs about 30.0 GB, plus 5.0 GB kept free, and \
+             only 12.4 GB is available. Free up space on this Mac (or run `cua cache prune` in \
+             Terminal), then try again."
+        );
+        assert_eq!(
+            failure_text("not enough disk space", None, None, false),
+            "Not enough disk space for this Space. Free up space on this Mac (or run `cua cache \
+             prune` in Terminal), then try again."
+        );
+        // The Space's service missed what was left of the budget.
+        let spacesd = |t: &str| {
+            format!(
+                "timed out: sandbox cua-mac-1: cua-spacesd did not answer within {t} \
+                 (connection refused); see `cua sb logs cua-mac-1`"
+            )
+        };
+        assert_eq!(
+            failure_text(&spacesd("120s"), Some("waiting_for_services"), None, false),
+            "The Space booted, but its service did not answer within 2 min. The image is \
+             downloaded now, so trying again usually works."
+        );
+        assert_eq!(
+            failure_text(&spacesd("45.2s"), None, None, false),
+            "The Space booted, but its service did not answer within 45 s. The image is \
+             downloaded now, so trying again usually works."
+        );
+        for spent in ["0ns", "1.2s", "350ms"] {
             assert_eq!(
-                (n.text.as_str(), n.button.as_str(), n.url.as_str()),
-                (
-                    crate::billing::OUT_OF_CREDIT,
-                    "Add credit",
-                    "https://run.cua.ai/billing"
-                )
+                failure_text(&spacesd(spent), Some("waiting_for_services"), None, false),
+                "The Space booted, but the time allowed for creating it ran out before its \
+                 service answered. The image is downloaded now, so trying again usually works.",
+                "{spent}"
             );
-        } else {
-            assert_eq!(notice, None, "no Add credit while the apps hide billing");
         }
-        // Any other failure has no notice.
-        let s = reduce(
-            &s,
-            &CreateAction::Dismiss {
-                id: "pending:1".into(),
-            },
+        assert_eq!(
+            failure_text(
+                "timed out: waiting",
+                Some("waiting_for_services"),
+                None,
+                false
+            ),
+            "The Space booted, but its service did not answer in time. The image is downloaded \
+             now, so trying again usually works."
         );
-        let s = reduce(&s, &start("pending:2", "b", SpaceOs::Linux));
-        let s = reduce(
-            &s,
-            &CreateAction::Fail {
-                id: "pending:2".into(),
-                error: "no local runtime".into(),
-            },
+        assert_eq!(
+            failure_text(
+                "sandbox 'x' was not ready after 600s: pull",
+                Some("pulling"),
+                None,
+                false
+            ),
+            "The image download did not finish in the time allowed. Check your internet \
+             connection, then try again."
+        );
+        // A download that stopped partway says why, also on another Mac.
+        let stopped = "local runtime: [local] The image download stopped before it finished \
+                       (The network connection was lost). Try again; it picks up where it stopped.";
+        assert_eq!(
+            failure_text(stopped, Some("pulling"), Some(SpaceProvider::Local), false),
+            "The image download stopped before it finished (The network connection was lost). \
+             Try again; it picks up where it stopped."
+        );
+        assert_eq!(
+            failure_text_on(
+                "host: create failed: The image download stopped before it finished (Lume \
+                 stopped running). Try again; it picks up where it stopped.",
+                Some("pulling"),
+                Some(SpaceProvider::Relay),
+                Some("Studio"),
+                false
+            ),
+            "The image download on Studio stopped before it finished (Lume stopped running). \
+             Try again; it picks up where it stopped."
+        );
+        assert_eq!(
+            failure_variant(stopped, Some("pulling"), false, "Runtime"),
+            "image_pull"
+        );
+        // QEMU missing on a Windows PC: 0.9.2's after the pull, and the
+        // refusal before it. Not `other` in telemetry, and the SDK's words.
+        for raw in [
+            "local runtime: [local] qemu-img is not available: install QEMU (macOS: `brew \
+             install qemu`; Debian/Ubuntu: `apt install qemu-utils`)",
+            "local runtime: [local] QEMU (qemu-system-x86_64, qemu-img) is not available: \
+             Windows VMs on a Windows PC need QEMU, which Cua does not install for you.",
+        ] {
+            assert_eq!(
+                failure_cause(raw, Some("pulling"), false),
+                Some(FailureCause::RuntimeMissing),
+                "{raw}"
+            );
+            // QEMU is a VM runtime: its own word in telemetry, while the
+            // person still reads the same "runtime missing" message.
+            assert_eq!(
+                failure_variant(raw, Some("pulling"), false, "Other"),
+                "vm_runtime_missing"
+            );
+        }
+        // Local Network privacy on the Mac that runs the VM.
+        let sdk = "Local Network access is not available: cua cannot reach the VM at \
+                   192.168.64.45:3211 (No route to host (os error 65)). macOS blocks an app's \
+                   local network connections until they are allowed";
+        assert_eq!(
+            failure_text(sdk, Some("booting"), Some(SpaceProvider::Relay), false),
+            "The Mac running this Space can't connect to its new macOS Space. On that Mac, allow \
+             Cua Spaces (or cua-spacesd) in System Settings \u{203a} Privacy & Security \u{203a} \
+             Local Network, then try again."
+        );
+        for raw in [
+            sdk,
+            "host: create failed: connect 192.168.64.7:3211: No route to host (os error 65)",
+        ] {
+            assert!(
+                failure_text(raw, None, Some(SpaceProvider::Local), false)
+                    == cua_create_failure::preflight::local_network_denied("Cua Spaces"),
+                "{raw}"
+            );
+        }
+        // A LAN address with no route is not this (a machine is down).
+        let lan = "connect 10.0.0.9:7400: No route to host (os error 65)";
+        assert_eq!(failure_text(lan, None, None, false), lan);
+        // Apple's two-macOS-VM limit, however Lume words it.
+        for raw in [
+            "lume API 500: The number of virtual machines exceeds the limit.",
+            "Error Domain=VZErrorDomain Code=6 virtualMachineLimitExceeded",
+            "booting: the maximum number of VMs has been reached (limit 2)",
+            "lume API 409: VM start rejected: host limit of 2 running macOS guests reached",
+        ] {
+            assert!(
+                failure_text(raw, Some("booting"), Some(SpaceProvider::Local), false)
+                    .starts_with("This Mac is already running two macOS VMs"),
+                "{raw}"
+            );
+        }
+        // A relay host that refused the sign-in.
+        let unauth = "unauthenticated: token rejected";
+        assert!(
+            failure_text(unauth, Some("preparing"), Some(SpaceProvider::Relay), false)
+                .starts_with("Your other Mac did not accept the sign-in")
         );
         assert!(
-            crate::spaces::sidebar::detail(&pending_space(&s.pending[0]))
-                .credit_notice
-                .is_none()
+            failure_text(unauth, None, Some(SpaceProvider::Local), false)
+                .starts_with("The new Space's service did not accept the app's token")
+        );
+        // GPU acceleration, only when it was asked for.
+        let gpu = "invalid request: GPU acceleration: Needs a Mac with Apple silicon";
+        assert_eq!(
+            failure_text(gpu, Some("preparing"), None, true),
+            format!(
+                "GPU acceleration could not be turned on here ({gpu}). Create the Space again \
+                 with GPU acceleration off."
+            )
+        );
+        assert_eq!(failure_text(gpu, None, None, false), gpu);
+        // Anything else is the SDK's words (a dead daemon in plain words).
+        assert_eq!(failure_text(" boom \n", None, None, false), "boom");
+        assert_eq!(
+            failure_text(
+                "transport: Connection refused (os error 61)",
+                None,
+                None,
+                false
+            ),
+            crate::errors::DAEMON_NOT_RUNNING
+        );
+        // None of them reads as a stall (progress would clear it).
+        for raw in [disk, unauth, gpu, &spacesd("0ns")] {
+            assert!(
+                !failure_text(raw, None, None, true).ends_with(STALL_HINT),
+                "{raw}"
+            );
+        }
+        // The row carries it, with where it failed and where it ran.
+        let s = reduce(
+            &CreatesState::default(),
+            &start("pending:w", "", SpaceOs::Macos),
+        );
+        let s = reduce(&s, &progress("pending:w", "waiting_for_services", None));
+        let fail = CreateAction::Fail {
+            id: "pending:w".into(),
+            error: spacesd("0ns"),
+            error_variant: String::new(),
+            now: None,
+        };
+        // A service that did not answer usually passes: the app runs the
+        // create once more by itself first.
+        let s = reduce(&s, &fail);
+        assert!(s.pending[0].retry_pending && s.pending[0].error.is_none());
+        let s = reduce(&s, &progress("pending:w", "waiting_for_services", None));
+        let s = reduce(&s, &fail);
+        assert!(
+            s.pending[0]
+                .error
+                .as_deref()
+                .is_some_and(|e| e.starts_with("The Space booted, but the time allowed"))
+        );
+        assert_eq!(
+            crate::wizard::create_failed_text("not enough disk space"),
+            "Could not create the Space: Not enough disk space for this Space. Free up space on \
+             this Mac (or run `cua cache prune` in Terminal), then try again."
+        );
+    }
+
+    #[test]
+    fn a_create_on_another_machine_waits_for_its_download_and_says_where() {
+        let relay = |os| CreateAction::Start {
+            parent: None,
+            id: "pending:r".into(),
+            name: String::new(),
+            os,
+            provider: SpaceProvider::Relay,
+            now: 0,
+            image: None,
+            kind: None,
+            host_arch: Some("arm64".into()),
+            gpu: false,
+            host: None,
+            host_name: None,
+        };
+        let s = reduce(&CreatesState::default(), &relay(SpaceOs::Macos));
+        assert_eq!(
+            compose(&[], &s)[0].detail,
+            "Another computer \u{b7} Starting\u{2026}"
+        );
+        // The host pulls 22 GB without reporting: no stall at 5 min, nor
+        // at the local preparing limit.
+        let local_limit = stall_limit_secs(CreateFamily::Macos, 0);
+        let s5 = reduce(
+            &s,
+            &CreateAction::Tick {
+                now: ((local_limit + 60.0) * 1000.0) as i64,
+            },
+        );
+        assert_eq!(s5.pending[0].error, None);
+        let limit = stall_limit(&s.pending[0], 0);
+        assert!(limit >= stall_limit_secs(CreateFamily::Macos, 1), "{limit}");
+        let late = reduce(
+            &s,
+            &CreateAction::Tick {
+                now: ((limit + 1.0) * 1000.0) as i64,
+            },
+        );
+        assert!(late.pending[0].error.is_some());
+        // Here, preparing keeps its own limit.
+        let mut here = s.pending[0].clone();
+        here.provider = SpaceProvider::Local;
+        assert_eq!(stall_limit(&here, 0), local_limit);
+    }
+
+    // ---- a machine's record of the Space it is creating ----
+
+    const GAMMA: &str = "96fedb7e1be65c3d31fa18587febde2c";
+    const GAMMA_NAME: &str = "gamma-4 Mac Studio";
+    const SKEW_BASE: i64 = 1_790_000_000_000;
+
+    fn start_on(
+        id: &str,
+        name: &str,
+        os: SpaceOs,
+        provider: SpaceProvider,
+        host: Option<&str>,
+    ) -> CreateAction {
+        CreateAction::Start {
+            parent: None,
+            id: id.into(),
+            name: name.into(),
+            os,
+            provider,
+            now: SKEW_BASE,
+            image: Some("ghcr.io/trycua/macos:26".into()),
+            kind: Some(SpaceKind::Vm),
+            host_arch: Some("arm64".into()),
+            gpu: false,
+            host: host.map(str::to_string),
+            host_name: host.map(|_| GAMMA_NAME.to_string()),
+        }
+    }
+
+    /// A create on gamma-4 through the relay.
+    fn relay_start(id: &str, name: &str, os: SpaceOs) -> CreateAction {
+        start_on(id, name, os, SpaceProvider::Relay, Some(GAMMA))
+    }
+
+    /// The row a machine lists for a Space it is still creating: no OS
+    /// yet, not answering, so it reads "Stopped, Linux on <machine>".
+    fn hosts_record(id: &str, name: &str, host: &str, added_at_ms: Option<i64>) -> Space {
+        let mut s = crate::spaces::row_to_space(
+            &crate::model::SpaceRow {
+                hidden: false,
+                parent: None,
+                id: id.into(),
+                name: name.into(),
+                display_name: None,
+                provider: "relay".into(),
+                spacesd_version: String::new(),
+                features: vec![],
+                added_at: None,
+                os: None,
+                os_name: None,
+                os_pretty_name: None,
+                image: None,
+                image_digest: None,
+                kind: None,
+                arch: None,
+                reachable: false,
+                error: None,
+                host: Some(host.into()),
+                host_name: Some(GAMMA_NAME.into()),
+                power: None,
+                power_state: None,
+                cloud: None,
+                cloud_place: None,
+                cloud_delete: None,
+                stop_reason: None,
+                sharing: None,
+            },
+            SKEW_BASE,
+        );
+        s.started_at = added_at_ms;
+        s
+    }
+
+    fn names(rows: &[Space]) -> Vec<&str> {
+        rows.iter().map(|s| s.name.as_str()).collect()
+    }
+
+    #[test]
+    fn a_relay_create_and_its_machines_record_of_it_are_one_row() {
+        let ghost = hosts_record(
+            "relay:96fe/space-46e0",
+            "e2e-1005-gamma-macos",
+            GAMMA,
+            Some(SKEW_BASE + 9_000),
+        );
+        // Not the create's: another Space on the same machine.
+        let other = registered("relay:96fe/space-9c73");
+        let registry = [other.clone(), ghost.clone()];
+        let s = reduce(
+            &CreatesState::default(),
+            &relay_start("pending:gamma", "e2e-1005-gamma-macos", SpaceOs::Macos),
+        );
+
+        // While it runs: the create's row, once; not "Stopped, Linux".
+        let rows = compose(&registry, &s);
+        assert_eq!(rows.len(), 2, "{:?}", names(&rows));
+        assert_eq!(rows[0].id, other.id);
+        assert_eq!(
+            (rows[1].id.as_str(), rows[1].status, rows[1].os),
+            ("pending:gamma", SpaceStatus::Provisioning, SpaceOs::Macos)
+        );
+        assert_eq!(rows[1].host_name.as_deref(), Some(GAMMA_NAME));
+
+        // The machine could not reach its VM: the row says Failed and names
+        // the machine (not "This Mac"); the record is still not a second
+        // tile.
+        let failed = reduce(
+            &s,
+            &CreateAction::Fail {
+                id: "pending:gamma".into(),
+                error: "Local Network access is not available: cua cannot reach the VM at \
+                        192.168.64.45:3211 (No route to host (os error 65))"
+                    .into(),
+                error_variant: String::new(),
+                now: None,
+            },
+        );
+        let rows = compose(&registry, &failed);
+        assert_eq!(rows.len(), 2, "{:?}", names(&rows));
+        let row = &rows[1];
+        assert_eq!(row.id, "pending:gamma");
+        assert!(
+            row.detail.starts_with(
+                "gamma-4 Mac Studio can't connect to its new macOS Space. On that Mac, allow"
+            ),
+            "{}",
+            row.detail
+        );
+        assert_eq!(
+            row.progress.as_ref().unwrap().error.as_ref(),
+            Some(&row.detail)
+        );
+
+        // Removed from the list: the machine's own record is what is left
+        // (it is a Space there, and can be deleted).
+        let gone = reduce(
+            &failed,
+            &CreateAction::Dismiss {
+                id: "pending:gamma".into(),
+            },
+        );
+        assert_eq!(compose(&registry, &gone).len(), 2);
+        assert!(compose(&registry, &gone).iter().any(|s| s.id == ghost.id));
+
+        // Ready: the pending row hands over to the registry's one row.
+        let done = reduce(
+            &s,
+            &CreateAction::Finish {
+                id: "pending:gamma".into(),
+                space_id: ghost.id.clone(),
+            },
+        );
+        let rows = compose(&registry, &done);
+        assert_eq!(rows.len(), 2, "{:?}", names(&rows));
+        assert_eq!(rows.iter().filter(|r| r.id == ghost.id).count(), 1);
+        assert!(rows.iter().all(|r| !is_pending(&r.id)));
+    }
+
+    #[test]
+    fn an_unnamed_relay_create_hides_the_machines_new_record_of_it() {
+        let s = reduce(
+            &CreatesState::default(),
+            &relay_start("pending:u", "", SpaceOs::Macos),
+        );
+        assert_eq!(s.pending[0].name, "macOS Space");
+        // The machine names the Space itself, and it is not up yet.
+        let ghost = hosts_record(
+            "relay:96fe/space-464e",
+            "space-464e2d931db4b3ec",
+            GAMMA,
+            Some(SKEW_BASE + 8_000),
+        );
+        let rows = compose(std::slice::from_ref(&ghost), &s);
+        assert_eq!(
+            rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            ["pending:u"]
+        );
+
+        // A Space that is up on that machine is somebody else's (or an
+        // older one's): it stays, as does one the machine added before
+        // this create began.
+        let up = registered("relay:96fe/space-up");
+        let mut up = Space {
+            host: Some(GAMMA.into()),
+            provider: Some(SpaceProvider::Relay),
+            ..up
+        };
+        up.status = SpaceStatus::Running;
+        let older = hosts_record(
+            "relay:96fe/space-old",
+            "space-old",
+            GAMMA,
+            Some(SKEW_BASE - 3_600_000),
+        );
+        let rows = compose(&[ghost, up.clone(), older.clone()], &s);
+        let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, [up.id.as_str(), older.id.as_str(), "pending:u"]);
+    }
+
+    #[test]
+    fn a_record_that_is_not_the_creates_stays_listed() {
+        let s = reduce(
+            &CreatesState::default(),
+            &relay_start("pending:n", "dev", SpaceOs::Linux),
+        );
+        // Same name on another machine, or on this one (a local Space): not
+        // this create's.
+        let elsewhere = hosts_record("relay:aaaa/space-1", "dev", "aaaa", Some(SKEW_BASE + 1));
+        let mut here = registered("local:dev");
+        here.name = "dev".into();
+        // Same machine and name, but listed long before this create began:
+        // an older Space of the same name.
+        let older = hosts_record(
+            "relay:96fe/space-2",
+            "dev",
+            GAMMA,
+            Some(SKEW_BASE - 3_600_000),
+        );
+        // Another name on the same machine, not up yet: only an unnamed
+        // create takes those.
+        let other = hosts_record("relay:96fe/space-3", "build", GAMMA, Some(SKEW_BASE + 1));
+        let registry = [
+            elsewhere.clone(),
+            here.clone(),
+            older.clone(),
+            other.clone(),
+        ];
+        let rows = compose(&registry, &s);
+        assert_eq!(rows.len(), 5, "{:?}", names(&rows));
+        assert!(rows.iter().any(|r| r.id == "pending:n"));
+
+        // A create that is not on a machine of yours hides nothing.
+        let local = reduce(
+            &CreatesState::default(),
+            &start_on(
+                "pending:l",
+                "dev",
+                SpaceOs::Linux,
+                SpaceProvider::Local,
+                None,
+            ),
+        );
+        assert_eq!(compose(&registry, &local).len(), 5);
+
+        // A finished create hands over by its Space's id, not by name.
+        let sibling = hosts_record("relay:96fe/space-4", "dev", GAMMA, Some(SKEW_BASE + 5));
+        let done = reduce(
+            &s,
+            &CreateAction::Finish {
+                id: "pending:n".into(),
+                space_id: "relay:96fe/space-5".into(),
+            },
+        );
+        let rows = compose(std::slice::from_ref(&sibling), &done);
+        assert_eq!(rows.iter().filter(|r| r.id == sibling.id).count(), 1);
+    }
+
+    #[test]
+    fn a_failure_on_another_mac_names_that_mac() {
+        let sdk = "Local Network access is not available: cua cannot reach the VM at \
+                   192.168.64.45:3211 (No route to host (os error 65))";
+        // The machine's name when known; else who runs it, never this Mac.
+        assert!(
+            failure_text_on(
+                sdk,
+                None,
+                Some(SpaceProvider::Relay),
+                Some(GAMMA_NAME),
+                false
+            )
+            .starts_with("gamma-4 Mac Studio can't connect to its new macOS Space")
+        );
+        assert!(
+            failure_text_on(sdk, None, Some(SpaceProvider::Relay), None, false)
+                .starts_with("The Mac running this Space can't connect to its new macOS Space")
+        );
+        assert!(
+            failure_text_on(sdk, None, Some(SpaceProvider::Local), None, false)
+                .starts_with("Cua Spaces can't connect to macOS Spaces on this Mac.")
+        );
+        // The toast the wizard shows after a create fails.
+        assert_eq!(
+            crate::wizard::create_failed_text_on(sdk, Some(SpaceProvider::Relay), Some(GAMMA_NAME)),
+            format!(
+                "Could not create the Space: {}",
+                failure_text_on(
+                    sdk,
+                    None,
+                    Some(SpaceProvider::Relay),
+                    Some(GAMMA_NAME),
+                    false
+                )
+            )
+        );
+        assert_eq!(
+            crate::wizard::create_failed_text_on(sdk, None, None),
+            crate::wizard::create_failed_text(sdk)
+        );
+        // Apple's two macOS VMs are the other Mac's too.
+        let limit = "booting: the maximum number of VMs has been reached (limit 2)";
+        assert!(
+            failure_text_on(
+                limit,
+                Some("booting"),
+                Some(SpaceProvider::Relay),
+                Some(GAMMA_NAME),
+                false
+            )
+            .starts_with("gamma-4 Mac Studio is already running two macOS VMs")
+        );
+        assert!(
+            failure_text_on(
+                limit,
+                Some("booting"),
+                Some(SpaceProvider::Local),
+                None,
+                false
+            )
+            .starts_with("This Mac is already running two macOS VMs")
+        );
+    }
+
+    #[test]
+    fn an_agents_create_gets_the_same_pending_row_then_ready_or_failed_and_polling_again_changes_nothing()
+     {
+        let mk = |state: &str, phase: &str, percent: Option<u8>, error: &str| AgentCreate {
+            key: "mac".into(),
+            name: "mac".into(),
+            os: "macOS".into(),
+            state: state.into(),
+            phase: phase.into(),
+            percent,
+            space: if state == "ready" {
+                "local:mac".into()
+            } else {
+                String::new()
+            },
+            error: error.into(),
+            started_ms: 500,
+            parent: "local:home".into(),
+        };
+        let run = |mut st: CreatesState, cs: &[AgentCreate]| {
+            for a in agent_actions(&st.clone(), cs, 900) {
+                st = reduce(&st, &a);
+            }
+            st
+        };
+        let st = run(
+            CreatesState::default(),
+            &[mk("creating", "pulling", Some(40), "")],
+        );
+        assert_eq!(st.pending.len(), 1);
+        assert_eq!(st.pending[0].id, agent_pending_id("mac", 500));
+        assert_eq!(st.pending[0].phase, "pulling");
+        assert!(is_agent_pending(&st.pending[0].id) && is_pending(&st.pending[0].id));
+        // The page of the Space opens mid-create: its row is there, being made, with its progress.
+        let rows = compose(&[], &st);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, agent_pending_id("mac", 500));
+        assert_eq!(rows[0].status, SpaceStatus::Provisioning);
+        // It nests under the Space that asked for it, from the first moment.
+        assert_eq!(rows[0].parent.as_deref(), Some("local:home"));
+        assert!(
+            rows[0]
+                .progress
+                .as_ref()
+                .is_some_and(|p| p.error.is_none() && p.phase == "pulling")
+        );
+        // The same poll again: no second row, no new actions that change it.
+        let again = run(st.clone(), &[mk("creating", "pulling", Some(40), "")]);
+        assert_eq!(again.pending.len(), 1);
+        // It fails: the row stays with the reason.
+        let failed = run(
+            again,
+            &[mk("failed", "", None, "Its network setup did not come up")],
+        );
+        assert_eq!(failed.pending.len(), 1);
+        assert_eq!(
+            failed.pending[0].error.as_deref(),
+            Some("Its network setup did not come up")
+        );
+        assert!(agent_actions(&failed, &[mk("failed", "", None, "x")], 1000).is_empty());
+        // A create that failed before the app looked still shows its row once.
+        let late = run(
+            CreatesState::default(),
+            &[mk("failed", "", None, "No disk space")],
+        );
+        assert_eq!(late.pending[0].error.as_deref(), Some("No disk space"));
+        // Ready hands over to the registry's Space.
+        let st = run(
+            CreatesState::default(),
+            &[mk("creating", "booting", None, "")],
+        );
+        let done = run(st, &[mk("ready", "", None, "")]);
+        assert_eq!(done.pending[0].space_id.as_deref(), Some("local:mac"));
+        // A ready create the app never showed adds no row.
+        assert!(
+            run(CreatesState::default(), &[mk("ready", "", None, "")])
+                .pending
+                .is_empty()
         );
     }
 }

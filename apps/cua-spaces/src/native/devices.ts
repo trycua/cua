@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import type { DevicesInput } from "../model/devices";
+import type { DevicesInput, PairingCode } from "../model/devices";
 import { hasTauri } from "./bridge";
 
 /**
@@ -25,14 +25,20 @@ export interface DevicesBridge {
   /** Vouches for a machine that registered without an enrolled device's
    * proof (S5), after the row's confirmation. */
   confirmMachine(id: string): Promise<void>;
+  /** A one-time link, QR code and install commands that add another
+   * computer to the account (or to `team`): "Add a machine". */
+  createPairingCode(team?: string | null): Promise<PairingCode>;
+  /** The account's pairing codes, newest first (without the codes). */
+  pairingCodes(): Promise<PairingCode[]>;
+  /** Revokes an unused pairing code. */
+  revokePairingCode(id: string): Promise<void>;
   /** A system notification (a device asks for approval). */
   notify(title: string, body: string): Promise<void>;
 }
 
 export function createTauriDevicesBridge(): DevicesBridge {
   const core = import("@tauri-apps/api/core");
-  const invoke = async <T>(command: string, args?: Record<string, unknown>) =>
-    (await core).invoke<T>(command, args);
+  const invoke = async <T>(command: string, args?: Record<string, unknown>) => (await core).invoke<T>(command, args);
   return {
     isNative: true,
     snapshot: () => invoke<DevicesInput>("devices_snapshot"),
@@ -40,10 +46,17 @@ export function createTauriDevicesBridge(): DevicesBridge {
     checkEnrolled: () => invoke<boolean>("devices_check_enrolled"),
     needsPassphrase: () => invoke<boolean>("devices_presence_needs_passphrase"),
     approve: ({ code, deviceId, passphrase }) =>
-      invoke<void>("devices_approve", { code: code ?? null, deviceId: deviceId ?? null, passphrase: passphrase ?? null }),
+      invoke<void>("devices_approve", {
+        code: code ?? null,
+        deviceId: deviceId ?? null,
+        passphrase: passphrase ?? null,
+      }),
     rename: (id, name) => invoke<void>("devices_rename", { id, name }),
     revoke: (id) => invoke<void>("devices_revoke", { id }),
     confirmMachine: (id) => invoke<void>("devices_confirm_machine", { id }),
+    createPairingCode: (team) => invoke<PairingCode>("devices_create_pairing_code", { team: team ?? null }),
+    pairingCodes: () => invoke<PairingCode[]>("devices_pairing_codes"),
+    revokePairingCode: (id) => invoke<void>("devices_revoke_pairing_code", { id }),
     notify: (title, body) => invoke<void>("devices_notify", { title, body }),
   };
 }
@@ -61,6 +74,9 @@ export function createFallbackDevicesBridge(): DevicesBridge {
     rename: unavailable,
     revoke: unavailable,
     confirmMachine: unavailable,
+    createPairingCode: unavailable,
+    pairingCodes: unavailable,
+    revokePairingCode: unavailable,
     notify: async () => {},
   };
 }
@@ -85,6 +101,7 @@ export function createFakeDevicesBridge(
 ): DevicesBridge & { calls: string[]; state: { snapshot: DevicesInput } } {
   const state = { snapshot: options.snapshot ?? { devices: [], audit: [] } };
   const calls: string[] = [];
+  const pairing: PairingCode[] = [];
   let checks = 0;
   return {
     isNative: true,
@@ -134,6 +151,34 @@ export function createFakeDevicesBridge(
         ...state.snapshot,
         machines: (state.snapshot.machines ?? []).map((m) => (m.id === id ? { ...m, confirmed: true } : m)),
       };
+    },
+    createPairingCode: async (team) => {
+      calls.push(`create-pairing-code:${team ?? ""}`);
+      const now = Math.floor(Date.now() / 1000);
+      const code = `K7QM-4XPB-${String(pairing.length + 1).padStart(4, "0")}`;
+      const made: PairingCode = {
+        id: `pc_fake${pairing.length + 1}`,
+        code,
+        url: `https://cua.ai/add/${code}`,
+        installSh: `curl -fsSL https://cua.ai/install.sh | sh -s -- --pair ${code}`,
+        installPowershell: `& ([scriptblock]::Create((irm https://cua.ai/install.ps1))) -Pair ${code}`,
+        state: "active",
+        team: team ?? null,
+        createdAt: now,
+        expiresAt: now + 1800,
+        usedAt: null,
+        machine: null,
+      };
+      pairing.unshift(made);
+      return made;
+    },
+    pairingCodes: async () => {
+      calls.push("pairing-codes");
+      return pairing.map((p) => ({ ...p, code: null, url: null, installSh: null, installPowershell: null }));
+    },
+    revokePairingCode: async (id) => {
+      calls.push(`revoke-pairing-code:${id}`);
+      for (const p of pairing) if (p.id === id) p.state = "revoked";
     },
     notify: async (title, body) => {
       calls.push(`notify:${title}:${body}`);

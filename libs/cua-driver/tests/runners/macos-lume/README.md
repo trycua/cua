@@ -113,7 +113,7 @@ printf '%s  %s\n' "$HOMEBREW_INSTALL_SHA256" "$HOMEBREW_INSTALLER" \
 /bin/bash "$HOMEBREW_INSTALLER"
 
 eval "$(/opt/homebrew/bin/brew shellenv)"
-brew install node ffmpeg jq rust
+brew install node ffmpeg jq rust python-tk
 
 printf '\n%s\n' 'eval "$(/opt/homebrew/bin/brew shellenv)"' \
   >> "$HOME/.zprofile"
@@ -133,7 +133,13 @@ npm --version
 ffmpeg -version | head -1
 ffprobe -version | head -1
 jq --version
+python3 -c 'import tkinter; print(tkinter.Tcl().eval("info patchlevel"))'
 ```
+
+`python3` must resolve to Homebrew's Python with Tk 8.6 or later. Apple's
+Command Line Tools Python ships Tk 8.5.9, which renders the Tk canvas fixture
+too poorly for its OCR row to read the labels. The runner refuses an older or
+missing Tk instead of skipping the Tk rows.
 
 Keep autologin, sleep prevention, and screen-lock prevention enabled. Add only
 the maintainer host's public SSH key to `~/.ssh/authorized_keys`; never copy a
@@ -165,10 +171,17 @@ the VM account so maintainers have only one local credential to enter:
 SIGNING_KEYCHAIN="$HOME/Library/Keychains/cua-driver-signing.keychain-db"
 security create-keychain "$SIGNING_KEYCHAIN"
 security set-keychain-settings "$SIGNING_KEYCHAIN"
-security list-keychains -d user -s "$SIGNING_KEYCHAIN"
+security list-keychains -d user -s "$SIGNING_KEYCHAIN" \
+  "$HOME/Library/Keychains/login.keychain-db"
 security unlock-keychain "$SIGNING_KEYCHAIN"
 export CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN="$SIGNING_KEYCHAIN"
 ```
+
+Keep the login Keychain in the search list. Computer History adds its key to
+the default login Keychain and reads it back through the search list, so a list
+with only the signing keychain fails the history gate with
+`history_key_unavailable`. The acceptance runner refuses such a list before it
+builds.
 
 The first strict local install creates and imports the self-signed identity,
 then stops without replacing the app if the new certificate is not usable yet.
@@ -232,7 +245,15 @@ osascript -e \
 ```
 
 Choose Allow for `Terminal` -> `System Events` and on the CuaDriverLocal
-direct-capture prompt. CuaDriverLocal app enumeration must not ask for System
+direct-capture prompt. Then add Terminal under System Settings > Privacy &
+Security > Accessibility: the `bring_to_front` oracles raise fixture windows and
+read `AXFocusedWindow` through System Events UI scripting, which needs it. The
+switch is saved only after the admin-password dialog accepts the account
+password; until then the runner's `AXRole` probe still fails. A driver can
+answer that dialog only when its daemon runs in unrestricted mode; any other
+mode refuses input to system security and consent prompts with
+`security_prompt_protected`. The
+runner checks both Terminal grants before it builds. CuaDriverLocal app enumeration must not ask for System
 Events. Target-specific Automation prompts may still appear later when a user
 explicitly requests an Apple Events-backed browser or app operation; do not
 pre-grant those in the seed. These are normal macOS consent flows; do not edit
@@ -245,7 +266,7 @@ observes the new grant:
 
 ```bash
 ~/.local/bin/cua-driver-local stop
-open -a CuaDriverLocal
+open /Applications/CuaDriverLocal.app
 ```
 
 Then verify the daemon's own identity and the read-only status contract before
@@ -319,7 +340,7 @@ After seeding, restart `CuaDriverLocal.app` before checking permission status if
 
 ```bash
 ~/.local/bin/cua-driver-local stop
-open -a CuaDriverLocal
+open /Applications/CuaDriverLocal.app
 ```
 
 If the VM sudo password is not the default `lume`, pass it without putting it
@@ -356,6 +377,7 @@ granted and then rerun without prompts:
 
 - `CuaDriverLocal.app`: Accessibility and Screen Recording
 - Terminal controlling System Events
+- Terminal: Accessibility, for System Events UI scripting
 - CuaDriverLocal direct screen capture without the system picker. macOS labels
   this combined consent as screen and system-audio access even though Cua
   Driver's current ScreenCaptureKit recorder does not enable audio capture.
@@ -505,8 +527,9 @@ After a failing full matrix the runner retries only when all of these hold:
 Otherwise it prints why the retry was refused and exits with the matrix's
 failure. Shared web-action cells and the five typed SwiftUI cells are retryable.
 The runner routes a `macos-swiftui-*` selection to the native lane and invokes
-only the test that owns that exact cell. Reproduce other native, capture, or
-embedded-browser failures with a full rerun.
+only the test that owns that exact cell. AppKit supports the explicit single-cell
+mode below, not automatic retries after a full-matrix failure. Reproduce other
+native, capture, or embedded-browser failures with a full rerun.
 
 To rerun just that cell later in the same booted worker after the first run
 already restored standard mode, use `--retry-only`. It reinstalls the exact
@@ -575,6 +598,30 @@ domain in which to start the daemon. The runner records
 place so macOS loads it in standard mode at the next GUI login. This is the only
 deferred restoration case; a live GUI session that cannot return to standard
 mode still fails the run.
+
+## Focused AppKit development
+
+For a native red/green iteration, run one registered AppKit cell from the same
+logged-in guest Terminal and with the same signing prerequisites:
+
+```bash
+libs/cua-driver/tests/runners/macos-lume/run-all.sh \
+  --retry-cell macos-appkit-ax-tree-ax-not-applicable \
+  --retry-harness appkit --retry-only --retry-attempts 1
+```
+
+The single-attempt invocation keeps exact-source installation, the unrestricted
+daemon preflight, native oracles, evidence validation, and standard-daemon
+restoration. It is focused evidence, not full-matrix certification. A failure
+stays a failure; this command does not retry it.
+
+`scripts/ci/macos/appkit-cells.tsv` maps each AppKit cell ID to its exact Rust test
+name, separated by a tab. The full native lane and single-cell selection read the
+same list, and a host-side test fails when an ignored `harness_appkit_*` test is
+missing from it. Add a row there when registering a new AppKit case. Unknown cells
+or a mismatched harness cannot fall back to running the full suite. AppKit
+selection requires `--retry-only`; full-matrix automatic retry eligibility is
+unchanged.
 
 ## Test the runner itself
 

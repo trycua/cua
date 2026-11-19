@@ -148,7 +148,7 @@ pub fn remove(name: &str, out: &mut dyn Write) -> Result<i32, CuaError> {
 }
 
 /// One line from stdin; on a terminal, prompted with echo off.
-fn read_secret(prompt: &str) -> Result<String, CuaError> {
+pub(crate) fn read_secret(prompt: &str) -> Result<String, CuaError> {
     let stdin = std::io::stdin();
     let tty = stdin.is_terminal();
     if tty {

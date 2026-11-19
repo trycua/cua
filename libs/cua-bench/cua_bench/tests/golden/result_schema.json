@@ -32,7 +32,6 @@
   "kind": "str",
   "on": "str",
   "output_dir": "str",
-  "pool": "NoneType",
   "retries": "int",
   "reward": "float",
   "runtime": "NoneType",

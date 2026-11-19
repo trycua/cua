@@ -90,10 +90,11 @@ public struct SpaceScreenView: View {
         .background(.regularMaterial)
     }
 
+    /// The desktop's size ("1280×800"). The decoded-frame count is debug
+    /// detail, not for people: it stays on the session.
     private var dimensionsLabel: String {
         guard session.lastFrameDimensions.width > 0 else { return "—" }
-        return "\(Int(session.lastFrameDimensions.width))x\(Int(session.lastFrameDimensions.height))"
-            + "  ·  \(session.decodedFrameCount) frames"
+        return "\(Int(session.lastFrameDimensions.width))×\(Int(session.lastFrameDimensions.height))"
     }
 
     private var poppedOutPlaceholder: some View {

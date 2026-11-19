@@ -35,28 +35,15 @@ struct LiveDriveTests {
         return false
     }
 
-    @Test func firstRunMountsSettingsShowsItAndTheDrivePageOpensIt() async throws {
+    @Test func settingsMountsShowsItAndTheDrivePageOpensIt() async throws {
         let backend = try LiveSpacesBackend.make()
-        // First run: off by default, ticked, Continue mounts.
-        let o = OnboardingModel(statePath: nil)
-        o.driveTools = backend
-        // The Volume page shows with the Cua Volume experiment on.
-        o.send(.experimentsLoaded(experiments: AppExperiments(cuaVolume: true, yourCloud: false, sharing: false)))
-        o.send(.start)
-        o.send(.signinDone)
-        o.send(.agentsDone(configured: []))
-        o.send(.presentationDone)
-        await o.checkDrive()
-        let card = try #require(o.view.drive)
-        #expect(card.enabled, "the daemon can mount here: \(card.note ?? "")")
-        #expect(!card.checked, "off by default")
-        o.send(.driveToggled(on: true))
-        await o.continueDrive()
-        #expect(o.state.driveError == nil, "\(o.state.driveError ?? "")")
-        #expect(o.view.step == .mode, "mounted, on to the next page")
-
-        // Settings, Storage: the volume and its path; Show in Finder.
+        // Settings, Storage: turning the mount on.
         let s = StorageModel(tools: backend)
+        await s.load()
+        await s.choose("mount", "on")
+        #expect(s.state.error == nil, "\(s.state.error ?? "")")
+
+        // The volume and its path; Show in Finder.
         var revealed: [String] = []
         s.reveal = { revealed.append($0) }
         #expect(await until(20) {

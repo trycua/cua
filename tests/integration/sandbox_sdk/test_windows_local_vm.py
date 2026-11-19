@@ -5,12 +5,10 @@
         screenshot = await sb.screenshot()
 
 Sandbox.ephemeral() auto-selects HyperVRuntime on Windows hosts with Hyper-V,
-or QEMURuntime (bare-metal) as a fallback. Use local=True to run on your machine;
-drop it to run on the Cua cloud instead.
+or QEMURuntime (bare-metal) as a fallback. Use local=True to run on your machine.
 
 Contrast:
     Image.windows()  + local=True  -> Hyper-V or QEMU VM (this file)
-    Image.windows()  + local=False -> Cua cloud Windows VM
 
 Image.windows() is Windows Server 2022 and boots the pinned containerDisk.
 Image.windows("11") is client Windows 11 and installs from an evaluation ISO.

@@ -1,1 +1,1 @@
-`lume serve --mcp` serves these tools over stdio. See [API and MCP](/lume/guides/api-and-mcp) for client setup.
+`lume serve --mcp` serves these tools over stdio. See [Connect an MCP client](/lume/guides/manage-vms#connect-an-mcp-client) for client setup.

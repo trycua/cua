@@ -14,7 +14,7 @@ cua_root="$repo/libs/cua"
 swift_root="$cua_root/swift"
 target_dir="${CARGO_TARGET_DIR:-$cua_root/target}"
 
-(cd "$cua_root" && CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}" cargo build --locked --release -p cua-sdk)
+(cd "$cua_root" && CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}" cargo build --locked --release -p cua-sdk-native)
 
 lib="$target_dir/release/libcua_sdk.a"
 [ -f "$lib" ] || { echo "missing $lib" >&2; exit 1; }

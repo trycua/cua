@@ -11,7 +11,8 @@
 //!   `Space.teleport` uses (`teleport.send`), over [`teleport::AppSessions`].
 //! - [`DriveExtension`]: the Cua Volume tools (`drive_*`) and persistent
 //!   agents (homes in the drive, routines, notifications, pause and resume,
-//!   computer access), with the agent bridge.
+//!   computer access), with the agent bridge; agents as members of a
+//!   Space and each Space's thread ([`thread`]).
 //!
 //! [`register`] adds both to a [`cua_spaces::SpacesBuilder`]; the Cua Spaces
 //! daemon, the Spaces apps and their tests do exactly that.
@@ -25,15 +26,24 @@ use cua_spaces::{Error, Result, SpacesBuilder};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
+mod agent_threads_tools;
 pub mod daemon;
 pub mod drive_runtime;
 pub mod drive_tools;
+pub mod durable_member;
+pub mod hooks;
+pub mod named_volumes;
 pub mod persistent;
 mod persistent_tools;
 pub mod presence_datagrams;
+pub mod push_client;
+pub mod replica_runtime;
+pub mod session_journal;
 pub mod stream;
 pub mod teleport;
 pub mod teleport_app;
+pub mod thread;
+mod thread_tools;
 
 pub use drive_runtime::{SpacesDrive, VolumeInfo};
 pub use persistent::SpacesPersistent;
@@ -77,10 +87,33 @@ pub fn register(
 ) -> SpacesBuilder {
     stream::register();
     presence_datagrams::register();
+    register_budget_alerts();
+    push_client::register();
     builder
         .extension(Arc::new(DriveExtension::new(drive)))
         .extension(Arc::new(TeleportExtension::new(sessions)))
 }
+
+/// A cloud's budget alerts (50, 80 and 100% of its monthly budget) go to
+/// the notifications feed the apps show, as kind `budget`.
+pub fn register_budget_alerts() {
+    cua_sandbox_core::byoc::set_budget_alert_sink(std::sync::Arc::new(|home, alert| {
+        let feed = persistent::notify::Feed::new(&home.join(persistent::DIR));
+        if let Err(e) = feed.post(
+            None,
+            BUDGET_KIND,
+            &alert.title_line(),
+            &alert.body_line(),
+            None,
+            None,
+        ) {
+            tracing::warn!(cloud = %alert.provider, "budget alert not posted: {e}");
+        }
+    }));
+}
+
+/// The notification kind of a cloud budget alert.
+pub const BUDGET_KIND: &str = "budget";
 
 // ------------------------------------------------------------ Cua Volume
 
@@ -89,6 +122,10 @@ pub fn register(
 pub struct DriveExtension {
     drive: cua_volume::Drive,
     live: Arc<tokio::sync::Mutex<persistent::Live>>,
+    /// What working sessions have said so far this turn (the thread's streaming rows).
+    partials: persistent::Partials,
+    owner: Arc<std::sync::RwLock<thread::Author>>,
+    team_admins: Arc<std::sync::RwLock<std::collections::HashSet<String>>>,
     pub(crate) runtime: drive_runtime::DriveRuntime,
 }
 
@@ -98,8 +135,28 @@ impl DriveExtension {
         DriveExtension {
             drive,
             live: Default::default(),
+            partials: Default::default(),
+            owner: Arc::new(std::sync::RwLock::new(thread::Author::owner())),
+            team_admins: Default::default(),
             runtime: Default::default(),
         }
+    }
+
+    /// The identity this machine's own user posts under in Space threads
+    /// (default: `owner`, "Owner").
+    pub fn with_owner(self, owner: thread::Author) -> Self {
+        if let Ok(mut o) = self.owner.write() {
+            *o = owner;
+        }
+        self
+    }
+
+    pub(crate) fn owner(&self) -> Arc<std::sync::RwLock<thread::Author>> {
+        self.owner.clone()
+    }
+
+    pub(crate) fn team_admins(&self) -> Arc<std::sync::RwLock<std::collections::HashSet<String>>> {
+        self.team_admins.clone()
     }
 
     /// Where the drive's S3 keys are kept (the daemon: the credential
@@ -125,6 +182,10 @@ impl DriveExtension {
     pub(crate) fn live(&self) -> Arc<tokio::sync::Mutex<persistent::Live>> {
         self.live.clone()
     }
+
+    pub(crate) fn partials(&self) -> persistent::Partials {
+        self.partials.clone()
+    }
 }
 
 impl SpacesExtension for DriveExtension {
@@ -136,7 +197,15 @@ impl SpacesExtension for DriveExtension {
         drive_tools::DRIVE_TOOLS.contains(&tool)
             || drive_tools::SERVICE_TOOLS.contains(&tool)
             || persistent_tools::TOOLS.contains(&tool)
+            || thread_tools::TOOLS.contains(&tool)
+            || agent_threads_tools::TOOLS.contains(&tool)
+            || persistent::phone::TOOLS.contains(&tool)
+            || tool == cua_spaces::agents::MEMBER_OP
+            || named_volumes::OPS.contains(&tool)
             || tool == "agent_start.home"
+            || tool == cua_spaces::agents::WATCH_OP
+            || tool == cua_spaces::space_jobs::WATCH_OP
+            || tool == cua_spaces::extension::MEMBER_AUTH_OP
     }
 
     fn call_tool<'a>(&'a self, call: ToolCall<'a>) -> BoxFuture<'a, Result<ToolOutcome>> {
@@ -146,14 +215,17 @@ impl SpacesExtension for DriveExtension {
                 tool,
                 args,
                 pinned,
+                caller,
                 ..
             } = call;
             if drive_tools::SERVICE_TOOLS.contains(&tool) {
-                let ctx = drive_tools::host_context(&args)?;
+                let ctx = drive_tools::host_context_for(spaces, &args)?;
                 return Box::pin(drive_tools::service_tool(spaces, ctx, tool, args)).await;
             }
             if drive_tools::DRIVE_TOOLS.contains(&tool) {
-                let ctx = drive_tools::host_context(&args)?;
+                let ctx = drive_tools::host_context_for(spaces, &args)?;
+                let mut args = args;
+                drive_tools::name_principal(spaces, &mut args);
                 let feed = spaces.drive_feed();
                 return drive_tools::drive_tool_synced(
                     &self.drive,
@@ -163,6 +235,47 @@ impl SpacesExtension for DriveExtension {
                     args,
                 )
                 .await;
+            }
+            if tool == cua_spaces::extension::MEMBER_AUTH_OP {
+                let cred: persistent::join::MemberCredential = crate::args(tool, args)?;
+                let caller = spaces.persistent().member_auth(&cred).await?;
+                let cua_spaces::extension::Caller::Member { handle, space } = caller else {
+                    return Err(Error::invalid("not a member"));
+                };
+                return Ok(ToolOutcome::json(
+                    &json!({"handle": handle, "space": space}),
+                ));
+            }
+            if tool == cua_spaces::agents::WATCH_OP {
+                let field = |k: &str| {
+                    args.get(k)
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| Error::invalid(format!("{tool}: `{k}` is required")))
+                };
+                spaces.persistent().watch_run(
+                    field("space")?,
+                    field("run_id")?,
+                    field("agent")?,
+                )?;
+                return Ok(ToolOutcome::json(&json!({"watched": true})));
+            }
+            if tool == cua_spaces::space_jobs::WATCH_OP {
+                let field = |k: &str| {
+                    args.get(k)
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| Error::invalid(format!("{tool}: `{k}` is required")))
+                };
+                let out = spaces.persistent().watch_job(
+                    &caller,
+                    field("space")?,
+                    field("job")?,
+                    args.get("name").and_then(Value::as_str).unwrap_or_default(),
+                    args.get("wake").and_then(Value::as_str),
+                )?;
+                return Ok(ToolOutcome::json(&out));
+            }
+            if named_volumes::OPS.contains(&tool) {
+                return named_volumes::call(spaces, tool, args).await;
             }
             if tool == "agent_start.home" {
                 let space = match pinned {
@@ -177,7 +290,16 @@ impl SpacesExtension for DriveExtension {
                 };
                 return persistent_tools::start_with_home(spaces, &space, args).await;
             }
-            persistent_tools::call(spaces, tool, args).await
+            if agent_threads_tools::TOOLS.contains(&tool) {
+                return agent_threads_tools::call(&caller, tool, args).await;
+            }
+            if thread_tools::TOOLS.contains(&tool) || tool == cua_spaces::agents::MEMBER_OP {
+                return thread_tools::call(spaces, &caller, tool, args).await;
+            }
+            if persistent::phone::TOOLS.contains(&tool) {
+                return persistent::phone::call(spaces, &caller, tool, args).await;
+            }
+            persistent_tools::call(spaces, &caller, tool, args).await
         })
     }
 
@@ -194,6 +316,16 @@ impl SpacesExtension for DriveExtension {
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             self.runtime.detach(space).await;
+        })
+    }
+
+    fn space_deleted<'a>(
+        &'a self,
+        spaces: &'a cua_spaces::Spaces,
+        space: &'a str,
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            spaces.persistent().space_deleted(space).await;
         })
     }
 

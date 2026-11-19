@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use cua_driver_core::authorization::PermissionMode;
 use cua_driver_core::element_token::{token_for, ResolvedElement};
 use cua_driver_core::protocol::ToolResult;
@@ -12,6 +15,36 @@ use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::Notify;
+
+#[test]
+fn background_window_sources_delegate_without_space_queries_or_refiltering() {
+    let source = include_str!("../../platform-macos/src/ax/exact_target.rs");
+    let function = |signature: &str| {
+        let start = source.find(signature).unwrap();
+        &source[start..start + source[start..].find("\n}\n").unwrap()]
+    };
+    let gate = function("pub fn gather_background_facts(");
+    let rows = function("fn ax_mapped_window_rows(");
+    assert!(gate.contains("resolve_window_owner(pid, window_id)"));
+    assert!(gate.contains("ax_mapped_window_rows(&records, ax_target)"));
+    assert!(rows.contains(".filter_map(describe_window)"));
+    for body in [gate, rows] {
+        assert!(!body.contains("windows("));
+        assert!(!body.to_lowercase().contains("space"));
+    }
+
+    let detector = include_str!("../../platform-macos/src/window_change_detector.rs");
+    let start = detector
+        .find("fn host_windows() -> Vec<WindowInfo> {")
+        .unwrap();
+    let body = start + detector[start..].find('{').unwrap() + 1;
+    let end = body + detector[body..].find("\n}\n").unwrap();
+    let body: String = detector[body..end]
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    assert_eq!(body, "windows::visible_windows_without_spaces()");
+}
 
 const PID: i32 = 732_347;
 const WINDOW: u64 = 17;

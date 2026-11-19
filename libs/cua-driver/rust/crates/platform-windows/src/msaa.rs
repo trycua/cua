@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! MSAA (Microsoft Active Accessibility) tree walker.
 //!
 //! Fallback for SAL/VCL window classes (LibreOffice, OpenOffice) where the
@@ -93,6 +96,7 @@ unsafe fn walk_unsafe(hwnd: u64, budget: &mut WalkBudget) -> UiaTreeResult {
                 "- Window <SAL/VCL — MSAA fallback failed (AccessibleObjectFromWindow hr={hr:?})>\n"
             ),
             nodes: Vec::new(),
+            elements_complete: false,
         };
     }
     let root: IAccessible = IAccessible::from_raw(raw_root);
@@ -107,6 +111,7 @@ unsafe fn walk_unsafe(hwnd: u64, budget: &mut WalkBudget) -> UiaTreeResult {
     UiaTreeResult {
         tree_markdown,
         nodes,
+        elements_complete: false,
     }
 }
 
@@ -190,6 +195,7 @@ unsafe fn walk(
                 actions: actions.clone(),
                 enabled: None,
                 selected: None,
+                is_password: None,
                 element_ptr: ptr,
                 center_x,
                 center_y,
@@ -210,6 +216,7 @@ unsafe fn walk(
                 actions: Vec::new(),
                 enabled: None,
                 selected: None,
+                is_password: None,
                 element_ptr: ptr,
                 center_x: 0,
                 center_y: 0,

@@ -3,17 +3,19 @@
 # cua-driver installation has different names and paths and is never touched.
 set -euo pipefail
 
-RESET_TCC=1
+# Opt in with --reset-permissions; the grant belongs to the signed app identity
+# and is kept by default.
+RESET_TCC=0
 FORCE=0
 VALIDATE_ONLY=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --keep-tcc) RESET_TCC=0 ;;
-        --reset-tcc) RESET_TCC=1 ;;
+        --reset-permissions|--reset-tcc) RESET_TCC=1 ;;
         --force) FORCE=1 ;;
         --validate-only) VALIDATE_ONLY=1 ;;
         --help|-h)
-            echo "Usage: $0 [--force] [--keep-tcc] [--validate-only]"
+            echo "Usage: $0 [--force] [--reset-permissions] [--validate-only]"
             exit 0
             ;;
         *) echo "error: unknown option: $1" >&2; exit 2 ;;
@@ -82,27 +84,74 @@ is_local_target() {
     esac
 }
 
-# Stop only local autostart/process identities.
+# Stop only local autostart/process identities. The unit files are removed
+# only after every local daemon is confirmed gone, so a failed stop leaves the
+# install intact for a rerun.
 if [[ "$OS" == "Darwin" && -f "$LAUNCHAGENT" ]]; then
     launchctl unload "$LAUNCHAGENT" 2>/dev/null || true
-    rm -f "$LAUNCHAGENT"
-    log "removed LaunchAgent $LAUNCHAGENT"
 elif [[ "$OS" == "Linux" && -f "$SYSTEMD_UNIT" ]]; then
     if command -v systemctl >/dev/null 2>&1; then
         systemctl --user disable --now cua-driver-local.service 2>/dev/null || true
     fi
-    rm -f "$SYSTEMD_UNIT"
-    log "removed systemd user unit $SYSTEMD_UNIT"
 fi
 # See the note in _install-local-rust.sh: `pkill -x cua-driver-local` never
 # matches on Linux, because `-x` compares against the 15-char truncated
 # `comm` and the name is 16. Match argv[0], anchored so the launcher shells
-# that merely mention the path in their script text are left alone.
-for _daemon_bin in "$CLI_LINK" "$HOME_DIR/packages/current/cua-driver-local"; do
-    [ -n "$_daemon_bin" ] || continue
-    pkill -f "^${_daemon_bin}([[:space:]]|\$)" >/dev/null 2>&1 || true
+# that merely mention the path in their script text are left alone. On macOS
+# the CLI link resolves into the app bundle, and a daemon started from the
+# bundle executable directly carries that path as argv[0].
+LOCAL_DAEMON_BINS=(
+    "$CLI_LINK"
+    "$HOME_DIR/packages/current/cua-driver-local"
+    "$APP_BUNDLE/Contents/MacOS/cua-driver-local"
+)
+daemon_pattern() {
+    # Match the path literally: `.` in CuaDriverLocal.app and any metacharacter
+    # in an overridden home must not widen the match.
+    printf '^%s([[:space:]]|$)' "$(printf '%s' "$1" | sed 's/[][\\.*^$(){}?+|]/\\&/g')"
+}
+# /Applications is shared, so another user's daemon can run from the same
+# bundle path. Only this user's processes belong to this uninstall.
+LOCAL_UID="$(id -u)"
+signal_local_daemons() {
+    local bin
+    for bin in "${LOCAL_DAEMON_BINS[@]}"; do
+        pkill "$@" -U "$LOCAL_UID" -f "$(daemon_pattern "$bin")" >/dev/null 2>&1 || true
+    done
+}
+# pgrep exits 1 for no match. Any other failure means the check did not run,
+# so it counts as a survivor rather than clearing the way to delete files.
+local_daemon_running() {
+    local bin status
+    for bin in "${LOCAL_DAEMON_BINS[@]}"; do
+        status=0
+        pgrep -U "$LOCAL_UID" -f "$(daemon_pattern "$bin")" >/dev/null 2>&1 || status=$?
+        [[ "$status" == "1" ]] || return 0
+    done
+    return 1
+}
+# Stop every local daemon before deleting the executables it runs from, and
+# refuse to report success while one is still alive.
+signal_local_daemons
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    local_daemon_running || break
+    sleep 0.5
 done
-unset _daemon_bin
+if local_daemon_running; then
+    signal_local_daemons -KILL
+    sleep 0.5
+fi
+if local_daemon_running; then
+    echo "error: a cua-driver-local daemon is still running; stop it and rerun $0" >&2
+    exit 1
+fi
+if [[ "$OS" == "Darwin" && -f "$LAUNCHAGENT" ]]; then
+    rm -f "$LAUNCHAGENT"
+    log "removed LaunchAgent $LAUNCHAGENT"
+elif [[ "$OS" == "Linux" && -f "$SYSTEMD_UNIT" ]]; then
+    rm -f "$SYSTEMD_UNIT"
+    log "removed systemd user unit $SYSTEMD_UNIT"
+fi
 
 # Revoke only the local bundle's TCC rows, while LaunchServices can resolve it.
 if [[ "$OS" == "Darwin" && "$RESET_TCC" == "1" ]] && command -v tccutil >/dev/null 2>&1; then
@@ -135,6 +184,9 @@ for skill_link in \
     "$HOME/.agents/skills/cua-driver" \
     "$HOME/.openclaw/skills/cua-driver" \
     "$HOME/.config/opencode/skills/cua-driver" \
+    "$HOME/.gemini/config/skills/cua-driver" \
+    "$HOME/.gemini/antigravity/skills/cua-driver" \
+    "$HOME/.gemini/antigravity-cli/skills/cua-driver" \
     "$HOME/.gemini/skills/cua-driver" \
     "$HOME/.hermes/skills/cua-driver"; do
     if [[ -L "$skill_link" ]]; then
@@ -205,7 +257,7 @@ fi
 # runtime-owned children, and leave any unrelated files in place.
 LOCAL_HOME_MARKER="$HOME_DIR/packages/current/cua-driver-local"
 if [[ -e "$LOCAL_HOME_MARKER" || -L "$LOCAL_HOME_MARKER" ]]; then
-    rm -rf "$HOME_DIR/packages" "$HOME_DIR/skills"
+    rm -rf "$HOME_DIR/packages" "$HOME_DIR/skills" "$HOME_DIR/.release_installed"
     rm -f \
         "$HOME_DIR/.installation_recorded" \
         "$HOME_DIR/.telemetry_enabled" \
@@ -236,4 +288,8 @@ if [[ "$OS" == "Darwin" && -d "$APP_BUNDLE" ]]; then
     log "removed $APP_BUNDLE"
 fi
 
+if local_daemon_running; then
+    echo "error: a cua-driver-local daemon started during uninstall is still running" >&2
+    exit 1
+fi
 log "cua-driver-local uninstalled; release cua-driver was left untouched"

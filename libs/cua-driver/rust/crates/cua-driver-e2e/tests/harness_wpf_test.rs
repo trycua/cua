@@ -1318,6 +1318,7 @@ fn keyboard_fixture_state(path: &std::path::Path) -> serde_json::Value {
 
 fn run_native_keyboard_case(
     case: CaseSpec,
+    with_webview: bool,
     test: impl FnOnce(u32, u64, &std::path::Path, &mut McpDriver) -> Observation,
 ) {
     let label = case.cell_id.clone();
@@ -1326,8 +1327,11 @@ fn run_native_keyboard_case(
         let state_path = state_dir.path().join("keyboard.json");
         let mut driver = McpDriver::spawn_named(&label).expect("source-built driver");
         let mut command = Command::new(harness_exe());
+        command.arg("--winforms-keyboard");
+        if with_webview {
+            command.arg("--with-webview");
+        }
         command
-            .arg("--winforms-keyboard")
             .env("CUA_E2E_FIXTURE_STATE_PATH", &state_path)
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -1337,11 +1341,13 @@ fn run_native_keyboard_case(
         let (wid, _) = driver
             .find_window(pid as i64, "CuaTestHarness WinForms Keyboard")
             .expect("native keyboard window");
-        let deadline = Instant::now() + Duration::from_secs(3);
+        let deadline = Instant::now() + Duration::from_secs(if with_webview { 30 } else { 3 });
         loop {
             if let Ok(body) = std::fs::read(&state_path) {
                 if let Ok(state) = serde_json::from_slice::<serde_json::Value>(&body) {
-                    if state["decoy_focused"] == true {
+                    if state["decoy_focused"] == true
+                        && (!with_webview || state["webview_ready"] == true)
+                    {
                         break;
                     }
                 }
@@ -1366,7 +1372,7 @@ fn harness_winforms_background_element_key_preserves_focus() {
         Targeting::Ax,
         DriverRoute::PostMessage,
     );
-    run_native_keyboard_case(case, |pid, wid, state_path, driver| {
+    run_native_keyboard_case(case, false, |pid, wid, state_path, driver| {
         let snap = snapshot(driver, pid, wid);
         let token = element_token_by_id(&snap, "key-target");
         let (response, passed) = observe_background(driver, pid, wid, |driver| {
@@ -1454,6 +1460,74 @@ fn harness_winforms_background_element_key_preserves_focus() {
 
 #[test]
 #[ignore]
+fn harness_winforms_webview_host_background_chord_reaches_native_control() {
+    let mut case = native_background_case(
+        "winforms",
+        "press_key",
+        Targeting::Ax,
+        DriverRoute::PostMessage,
+    );
+    case.cell_id = "windows-winforms-webview-host-press-key-chord-ax-background".into();
+    run_native_keyboard_case(case, true, |pid, wid, state_path, driver| {
+        assert!(
+            platform_windows::input::has_chromium_descendant(wid),
+            "fixture frame must host a Chromium surface"
+        );
+        let snap = snapshot(driver, pid, wid);
+        let token = element_token_by_id(&snap, "key-target");
+        let (response, passed) = observe_background(driver, pid, wid, |driver| {
+            let before = keyboard_fixture_state(state_path);
+            // A chord is what the frame-wide WebView classification refuses;
+            // the native control's own HWND must still take it.
+            let response = driver.call(
+                "press_key",
+                serde_json::json!({
+                    "pid": pid, "window_id": wid, "element_token": token,
+                    "key": "f6", "modifiers": ["ctrl"], "delivery_mode": "background"
+                }),
+            );
+            assert!(
+                !response.is_error(),
+                "native background chord in WebView host: {}",
+                response.text()
+            );
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                let state = keyboard_fixture_state(state_path);
+                if state["target_up_by_key"]["F6"] == 1
+                    && state["target_up_by_key"]["ControlKey"] == 1
+                {
+                    println!("webview-host background chord before={before} after={state}");
+                    // The posted chord's own key messages, not GetKeyState,
+                    // are the receipt: both keys reach only the exact control.
+                    assert_eq!(state["target_down_by_key"]["ControlKey"], 1);
+                    assert_eq!(state["target_down_by_key"]["F6"], 1);
+                    assert_eq!(state["decoy_down"], 0, "key reached the wrong control");
+                    assert_eq!(state["last_key"], "F6");
+                    assert_eq!(state["focus_changes"], before["focus_changes"]);
+                    assert_eq!(state["target_focused"], before["target_focused"]);
+                    assert_eq!(state["decoy_focused"], before["decoy_focused"]);
+                    assert_eq!(
+                        state["activations"], before["activations"],
+                        "target activated during background chord"
+                    );
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "chord did not reach exact native control: {state}"
+                );
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            response
+        });
+        assert_eq!(response.structured()["route"], "synthetic_events");
+        delivered_with_fixture_state(passed)
+    });
+}
+
+#[test]
+#[ignore]
 fn harness_winforms_background_windowless_key_refuses_without_focus() {
     let mut case = native_background_case(
         "winforms",
@@ -1463,7 +1537,7 @@ fn harness_winforms_background_windowless_key_refuses_without_focus() {
     )
     .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]);
     case.cell_id = "windows-winforms-windowless-press-key-ax-background".into();
-    run_native_keyboard_case(case, |pid, wid, state_path, driver| {
+    run_native_keyboard_case(case, false, |pid, wid, state_path, driver| {
         let snap = snapshot(driver, pid, wid);
         let index = ax::element_index_containing(snap.text(), "\"Key link\"")
             .unwrap_or_else(|| panic!("windowless link not in snapshot: {}", snap.text()));
@@ -1505,7 +1579,7 @@ fn harness_winforms_foreground_element_key_reaches_exact_control() {
         Targeting::Ax,
         DriverRoute::WindowsSendInput,
     );
-    run_native_keyboard_case(case, |pid, wid, state_path, driver| {
+    run_native_keyboard_case(case, false, |pid, wid, state_path, driver| {
         let snap = snapshot(driver, pid, wid);
         let token = element_token_by_id(&snap, "key-target");
         let sentinel = ForegroundSentinel::launch(driver);

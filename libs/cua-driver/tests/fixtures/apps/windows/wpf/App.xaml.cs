@@ -14,7 +14,7 @@ public partial class App : Application
         // harness binary and runner, without changing ordinary WPF launches.
         if (Array.IndexOf(e.Args, "--winforms-keyboard") >= 0)
         {
-            using var form = new WinFormsKeyboardWindow();
+            using var form = new WinFormsKeyboardWindow(Array.IndexOf(e.Args, "--with-webview") >= 0);
             System.Windows.Forms.Application.Run(form);
             Shutdown();
             return;

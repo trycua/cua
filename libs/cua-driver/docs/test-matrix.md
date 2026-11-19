@@ -169,7 +169,7 @@ Windows native harnesses are repo-local applications built from source:
 | Harness | Source test | Coverage |
 | --- | --- | --- |
 | WPF | `harness_wpf_test.rs` | UIA controls, text, keys, pointer actions, scroll, drag, popups, menus, modal windows; foreground single-line and multiline text integrity |
-| WinForms | `harness_wpf_test.rs` (WPF binary's `--winforms-keyboard` mode) | Exact native-control background keys without activation; windowless-link pre-effect refusal; explicit foreground keys to the exact control |
+| WinForms | `harness_wpf_test.rs` (WPF binary's `--winforms-keyboard` mode) | Exact native-control background keys without activation, including a modifier chord in a frame that also hosts WebView2 (`--with-webview`); windowless-link pre-effect refusal; explicit foreground keys to the exact control |
 | WinUI3 | `harness_winui3_test.rs` | XAML controls, text, checkbox/radio, slider, combo, popup; foreground single-line and multiline text integrity |
 | WebView2 | `harness_web_test.rs` | Window discovery, CDP page access, JavaScript, DOM click path |
 | Desktop target | `desktop_scope_windows_test.rs` | Per-call window/desktop modality, full-display capture, screen-absolute click/scroll, and strict rejection |

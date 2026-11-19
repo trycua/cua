@@ -6,6 +6,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Windows.Forms;
+using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.WinForms;
 
 namespace CuaTestHarness.Wpf;
 
@@ -28,19 +30,36 @@ public sealed class WinFormsKeyboardWindow : Form
     private readonly Dictionary<string, int> _targetDownByKey = new();
     private readonly Dictionary<string, int> _targetUpByKey = new();
     private readonly Dictionary<string, int> _decoyDownByKey = new();
+    // With --with-webview the same controls share a frame with a Chromium
+    // surface, so a native control must keep its own exact-HWND route.
+    private readonly WebView2? _webView;
+    private bool _webViewReady;
     private string _lastKey = "";
     private string _lastModifiers = "";
 
-    public WinFormsKeyboardWindow()
+    public WinFormsKeyboardWindow(bool hostWebView)
     {
         Text = "CuaTestHarness WinForms Keyboard";
         Width = 340;
-        Height = 180;
+        Height = hostWebView ? 340 : 180;
         StartPosition = FormStartPosition.CenterScreen;
         Controls.AddRange(new Control[] { _target, _decoy, _link });
+        if (hostWebView)
+        {
+            _webView = new WebView2 { Name = "key-webview", Top = 140, Left = 20, Width = 260, Height = 140 };
+            Controls.Add(_webView);
+        }
         _link.LinkClicked += (_, _) => { _linkClicks++; Publish(); };
         Activated += (_, _) => { _activations++; Publish(); };
-        Shown += (_, _) => { _decoy.Focus(); Publish(); };
+        Shown += async (_, _) =>
+        {
+            if (_webView is not null)
+            {
+                await StartWebView(_webView);
+            }
+            _decoy.Focus();
+            Publish();
+        };
         _target.KeyDown += (_, e) =>
         {
             _targetDown++;
@@ -57,6 +76,20 @@ public sealed class WinFormsKeyboardWindow : Form
         _target.LostFocus += (_, _) => { _focusChanges++; Publish(); };
         _decoy.GotFocus += (_, _) => { _focusChanges++; Publish(); };
         _decoy.LostFocus += (_, _) => { _focusChanges++; Publish(); };
+    }
+
+    private async System.Threading.Tasks.Task StartWebView(WebView2 webView)
+    {
+        // Isolate the browser environment so parallel fixtures never share it.
+        var userData = Path.Combine(
+            Path.GetTempPath(),
+            "CuaTestHarness.WinFormsKeyboard.UserData",
+            Environment.ProcessId.ToString());
+        Directory.CreateDirectory(userData);
+        var env = await CoreWebView2Environment.CreateAsync(userDataFolder: userData);
+        await webView.EnsureCoreWebView2Async(env);
+        webView.NavigateToString("<p>WebView surface</p>");
+        _webViewReady = true;
     }
 
     private static void Count(Dictionary<string, int> receipts, Keys key)
@@ -84,6 +117,7 @@ public sealed class WinFormsKeyboardWindow : Form
             decoy_focused = _decoy.Focused,
             target_text = _target.Text,
             decoy_text = _decoy.Text,
+            webview_ready = _webViewReady,
         };
         var temporaryPath = $"{_statePath}.{Environment.ProcessId}.tmp";
         File.WriteAllText(temporaryPath, JsonSerializer.Serialize(state));

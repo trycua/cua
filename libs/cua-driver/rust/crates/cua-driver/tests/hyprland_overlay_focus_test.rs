@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Live Hyprland regression for the native cursor overlay's focus contract.
 //!
 //! Run under the shared desktop lock:
@@ -12,12 +15,13 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use cua_driver_testkit::IsolatedStateRoot;
 use serde_json::{json, Value};
 
 const SOCKET: &str = "/tmp/cua-overlay-agent.sock";
 const SESSION: &str = "hyprland-overlay-focus";
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct HyprState {
     workspace: String,
     active_window: String,
@@ -63,6 +67,20 @@ fn daemon_call(name: &str, args: Value) -> Value {
     let response: Value = serde_json::from_str(&response).expect("parse daemon response");
     assert_eq!(response["ok"], true, "{name} failed: {response}");
     response
+}
+
+/// Test-owned daemon. Dropping it stops the daemon and restores the
+/// workspace and window focus it started from, including after a panic.
+struct Daemon {
+    child: Child,
+    before: HyprState,
+    _state: IsolatedStateRoot,
+}
+
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        shutdown(&mut self.child, &self.before);
+    }
 }
 
 fn shutdown(child: &mut Child, before: &HyprState) {
@@ -111,8 +129,9 @@ fn native_overlay_never_maps_an_active_hyprland_client() {
     );
 
     let before = hypr_state();
+    let state = IsolatedStateRoot::new().expect("create isolated driver state root");
     let binary = env!("CARGO_BIN_EXE_cua-driver");
-    let mut child = Command::new(binary)
+    let child = Command::new(binary)
         .args([
             "serve",
             "--socket",
@@ -120,6 +139,7 @@ fn native_overlay_never_maps_an_active_hyprland_client() {
             "--no-permissions-gate",
             "--dangerously-bypass-approvals",
         ])
+        .envs(state.env())
         .env("CUA_DRIVER_RS_ENABLE_WAYLAND", "1")
         .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
         .env("CUA_OVERLAY_DEBUG", "1")
@@ -129,11 +149,16 @@ fn native_overlay_never_maps_an_active_hyprland_client() {
         .spawn()
         .expect("start source-built overlay daemon");
     let pid = child.id();
+    let mut daemon = Daemon {
+        child,
+        before: before.clone(),
+        _state: state,
+    };
 
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline && !Path::new(SOCKET).exists() {
         assert!(
-            child.try_wait().unwrap().is_none(),
+            daemon.child.try_wait().unwrap().is_none(),
             "daemon exited during startup"
         );
         thread::sleep(Duration::from_millis(25));
@@ -187,7 +212,7 @@ fn native_overlay_never_maps_an_active_hyprland_client() {
         .filter(|layer| layer["namespace"] == "cua-agent-cursor")
         .count();
 
-    shutdown(&mut child, &before);
+    drop(daemon);
     thread::sleep(Duration::from_millis(200));
 
     assert!(

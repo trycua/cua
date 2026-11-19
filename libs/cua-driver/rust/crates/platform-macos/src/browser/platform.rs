@@ -402,11 +402,19 @@ fn restore_front_app_if_browser_front(previous_pid: i64, browser_pid: i64) -> bo
     crate::apps::reactivate_app(previous)
 }
 
+fn is_helium_bundle(bundle_id: &str) -> bool {
+    let bundle_id = bundle_id.to_ascii_lowercase();
+    bundle_id == "net.imput.helium" || bundle_id.starts_with("net.imput.helium.helper")
+}
+
 pub(crate) fn is_chromium(name: &str, bundle_id: &str) -> bool {
+    if is_helium_bundle(bundle_id) {
+        return true;
+    }
     let value = format!("{name} {bundle_id}").to_ascii_lowercase();
     let products = [
         "chrome", "chromium", "electron", "brave", "edge", "vivaldi", "opera", "arc", "thorium",
-        "iridium", "yandex", "helium",
+        "iridium", "yandex",
     ];
     value
         .split(|ch: char| !ch.is_ascii_alphanumeric())
@@ -414,14 +422,12 @@ pub(crate) fn is_chromium(name: &str, bundle_id: &str) -> bool {
 }
 
 fn browser_product(name: &str, bundle_id: &str) -> BrowserProduct {
+    if is_helium_bundle(bundle_id) {
+        return BrowserProduct::Helium;
+    }
     let name = name.to_ascii_lowercase();
     let bundle_id = bundle_id.to_ascii_lowercase();
-    if bundle_id == "net.imput.helium"
-        || bundle_id.starts_with("net.imput.helium.helper")
-        || name == "helium"
-    {
-        BrowserProduct::Helium
-    } else if bundle_id.starts_with("com.google.chrome") || name == "google chrome" {
+    if bundle_id.starts_with("com.google.chrome") || name == "google chrome" {
         BrowserProduct::GoogleChrome
     } else if bundle_id.starts_with("com.microsoft.edgemac") || name == "microsoft edge" {
         BrowserProduct::MicrosoftEdge
@@ -2340,6 +2346,11 @@ mod tests {
             BrowserProduct::Other
         );
         assert!(!is_chromium("HeliumNotes", "net.example.heliumnotes"));
+        assert_eq!(
+            browser_product("Helium", "com.example.helium"),
+            BrowserProduct::Other
+        );
+        assert!(!is_chromium("Helium", "com.example.helium"));
         let home = PathBuf::from(std::env::var_os("HOME").expect("HOME"));
         assert_eq!(
             default_user_data_dir(BrowserProduct::Helium),

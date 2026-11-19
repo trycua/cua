@@ -182,9 +182,13 @@ impl RuntimeWitnessV0 {
                     probe.tool
                 ));
             }
-            let published_acting = crate::cached_tool_contract(&probe.tool)
-                .is_some_and(|contract| !contract.annotations.read_only);
-            if !probe.read_only || published_acting {
+            let Some(contract) = crate::cached_tool_contract(&probe.tool) else {
+                return Err(format!(
+                    "runtime witness v0 refuses probe {} outside the portable contract",
+                    probe.tool
+                ));
+            };
+            if !probe.read_only || !contract.annotations.read_only {
                 return Err(format!(
                     "runtime witness v0 refuses acting probe {}",
                     probe.tool
@@ -292,10 +296,9 @@ mod tests {
     }
 
     #[test]
-    fn v0_refuses_acting_probes() {
+    fn v0_refuses_probe_flagged_acting() {
         let mut probe = passing_probe();
         probe.read_only = false;
-        probe.tool = "click".into();
         let witness = RuntimeWitnessV0::new(
             "0.14.0",
             None,
@@ -330,6 +333,29 @@ mod tests {
             .validate()
             .unwrap_err()
             .contains("refuses acting probe"));
+    }
+
+    #[test]
+    fn v0_refuses_tool_outside_portable_contract() {
+        let mut probe = passing_probe();
+        probe.tool = "browser_set_input_files".into();
+        let witness = RuntimeWitnessV0::new(
+            "0.14.0",
+            None,
+            Platform::Linux,
+            WitnessRuntimeHost::Daemon,
+            true,
+            WitnessHealthOverall::Unknown,
+            false,
+            vec![probe],
+        );
+        assert_eq!(
+            witness.validate(),
+            Err(
+                "runtime witness v0 refuses probe browser_set_input_files outside the portable contract"
+                    .into()
+            )
+        );
     }
 
     #[test]

@@ -1,0 +1,5 @@
+# Branches that are expected to have no common ancestor with main.
+# Maintained by automation (state and ledger branches); the push watch
+# (.github/scripts/push_watch.py) skips the foreign-history check for them.
+hyprland-plugin-compat
+image-doctor-ledger

@@ -45,6 +45,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && find /var/lib/apt/lists -mindepth 1 -delete
 
+# CUA-1948: the compromised eMudhra intermediates. Ubuntu's ca-certificates >= 20260816ubuntu0.<release>.1 drops the
+# roots they chain to; Debian has not shipped that yet, so disable both roots explicitly (a no-op once they are gone).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && sed -i -E 's#^(mozilla/(emSign_ECC_Root_CA_-_G3|Comodo_AAA_Services_root)\.crt)$#!\1#' /etc/ca-certificates.conf \
+ && update-ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 RUN useradd --create-home --shell /bin/bash --groups sudo cua \
     && echo "cua ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/cua \
     && chmod 0440 /etc/sudoers.d/cua

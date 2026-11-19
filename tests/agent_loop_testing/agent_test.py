@@ -188,7 +188,7 @@ async def test_cua_agent(model_name: str):
 
     except ImportError as e:
         print(f"❌ Import error: {e}")
-        print("💡 Install Cua: pip install -e libs/python/agent -e libs/python/computer")
+        print("💡 Install Cua: pip install -e libs/python/agent")
         return False
     except Exception as e:
         print(f"❌ Test failed: {e}")

@@ -31,6 +31,14 @@ COPY main.py docs_index.py sync_docs_index.py ./
 # Production image
 FROM python:3.12-slim AS runtime
 
+# CUA-1948: the compromised eMudhra intermediates. Ubuntu's ca-certificates >= 20260816ubuntu0.<release>.1 drops the
+# roots they chain to; Debian has not shipped that yet, so disable both roots explicitly (a no-op once they are gone).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && sed -i -E 's#^(mozilla/(emSign_ECC_Root_CA_-_G3|Comodo_AAA_Services_root)\.crt)$#!\1#' /etc/ca-certificates.conf \
+ && update-ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash appuser
 

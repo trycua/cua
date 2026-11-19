@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -9,8 +12,7 @@ use std::{future::Future, path::Path, sync::Arc, time::Duration};
 use super::ToolState;
 use crate::permission_observation::{DirectCaptureEvidenceStore, DirectCaptureVerification};
 use crate::permissions::status::{
-    accessibility_granted, request_accessibility, request_screen_recording,
-    screen_recording_granted,
+    accessibility_granted, current_status, request_next_missing, screen_recording_granted,
 };
 
 /// Private argv sentinel shared by the trusted CLI launcher and the public
@@ -27,14 +29,18 @@ impl CheckPermissionsTool {
     }
 }
 
-/// LaunchServices-hosted permission setup entrypoint. This is deliberately
+/// LaunchServices-hosted permission entrypoint. This is deliberately
 /// not registered as an agent tool or exposed on the daemon socket: the
-/// standalone `permissions grant` command launches the app bundle and macOS
-/// owns the actual approval UI.
-pub async fn request_from_launchservices_host(probe_direct_capture: bool) -> ToolResult {
+/// standalone `permissions grant` / `permissions status` commands launch the
+/// app bundle so the answer (and any macOS prompt) belongs to the app, and
+/// macOS owns the actual approval UI. `prompt: false` only reads.
+pub async fn request_from_launchservices_host(
+    prompt: bool,
+    probe_direct_capture: bool,
+) -> ToolResult {
     let tool = CheckPermissionsTool::new(Arc::new(ToolState::new(false, false, None)));
     tool.invoke(serde_json::json!({
-        "prompt": true,
+        "prompt": prompt,
         "probe_direct_capture": probe_direct_capture,
     }))
     .await
@@ -94,11 +100,17 @@ fn current_direct_capture_evidence_store(source: &Value) -> Option<DirectCapture
 /// documents. `SCShareableContent::get()` does a live query: it only
 /// returns displays when the answering process can genuinely capture. When
 /// it disagrees with the preflight boolean, the preflight one is lying.
+///
+/// Listing content alone does not make macOS ask for its direct-capture
+/// consent (measured on macOS 26.5), so the probe also takes one tiny frame:
+/// the consent then appears during this explicit grant, not over the user's
+/// window during later background work (CUA-1792).
 fn screen_recording_capturable() -> bool {
     use screencapturekit::prelude::SCShareableContent;
-    SCShareableContent::get()
+    let listed = SCShareableContent::get()
         .map(|c| !c.displays().is_empty())
-        .unwrap_or(false)
+        .unwrap_or(false);
+    listed && crate::capture::capture_probe_frame()
 }
 
 const DIRECT_CAPTURE_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -383,15 +395,18 @@ impl Tool for CheckPermissionsTool {
         );
         let probe_direct_capture = args.bool_or("probe_direct_capture", true);
         if should_prompt {
-            let _ = request_accessibility();
-            let _ = request_screen_recording();
+            // One permission per call, Accessibility first. Asking for both
+            // at once made macOS drop the Screen Recording prompt, leaving
+            // Cua Driver out of that list. Callers ask again once
+            // Accessibility is on.
+            let _ = request_next_missing(current_status());
         }
         let accessibility = accessibility_granted();
         let screen_recording = screen_recording_granted();
         // (A) Authoritative live probe — see `screen_recording_capturable`.
-        // SCShareableContent::get() can itself raise Tahoe's separate
-        // private-window-picker bypass consent. A status/read-only call must
-        // therefore never execute it. The explicit grant path opts in with
+        // The probe's capture raises Tahoe's separate private-window-picker
+        // bypass consent. A status/read-only call must therefore never
+        // execute it. The explicit grant path opts in with
         // `prompt:true`, explains the dialog first, and verifies the result.
         let direct_capture_probe =
             if should_probe_direct_capture(should_prompt, screen_recording, probe_direct_capture) {

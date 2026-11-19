@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS agent-cursor overlay — transparent click-through NSWindow.
 //!
 //! ## Architecture
@@ -17,13 +20,13 @@
 //!
 //! All coordinates are **screen points** with the **top-left origin**
 //! (matching `OverlayCommand::MoveTo` and AX element coordinates).  The
-//! NSWindow covers `NSScreen.mainScreen.frame` which AppKit places with
-//! a bottom-left origin, so we flip Y when drawing into the Pixmap.
+//! Each display has a surface with its own backing scale. Global points are
+//! translated to display-local tiles; AppKit frames use a bottom-left origin.
 //!
 //! ## Cross-platform note (2026-05 dedup audit)
 //!
 //! Animation state + render pipeline live in `cursor_overlay::render_state`
-//! (`RenderStateCore`, `tick_swift_constants`, `apply_command_base`,
+//! (`RenderStateCore`, `tick_motion`, `apply_command_base`,
 //! `render_frame`).  macOS uses the hardcoded Swift reference constants
 //! (peakSpeed=900, springK=400, overshoot=0.8) and the sentinel-snap
 //! variants of MoveTo / ClickPulse — see the wrapper around
@@ -31,13 +34,13 @@
 
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use cursor_overlay::{
-    CursorConfig, CursorKey, FocusRect, KeyedOverlayCommand, MotionConfig, MsgOutcome,
-    OverlayCommand, OverlayMsg, RenderEntry, RenderStateCore, ScreenFrame, ZOrderEnforcer,
+    CursorConfig, CursorKey, KeyedOverlayCommand, MotionConfig, MsgOutcome, OverlayCommand,
+    OverlayMsg, RenderEntry, RenderStateCore, ScreenFrame, SurfaceGeometry, ZOrderEnforcer,
 };
 
 // ── Arrival-signal channels (one waiter slot per cursor key) ──────────────
@@ -83,18 +86,50 @@ static CMD_TX: OnceLock<std::sync::mpsc::SyncSender<OverlayMsg>> = OnceLock::new
 // Single-consumer slot; receiver is moved into run_on_main_thread().
 static CMD_RX_CELL: Mutex<Option<std::sync::mpsc::Receiver<OverlayMsg>>> = Mutex::new(None);
 static RENDER: Mutex<Option<RenderMap>> = Mutex::new(None);
-static OVERLAY_WINDOW_ID: AtomicU32 = AtomicU32::new(0);
+static OVERLAY_WINDOW_IDS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+static DISPLAY_LAYOUT: Mutex<Option<super::display_layout::DisplayLayout>> = Mutex::new(None);
+/// True while the render loop that fires arrival signals runs. Only
+/// [`run_on_main_thread`] (through `run_appkit`) starts it: a host that
+/// initializes the overlay but never hands it the main thread has no one to
+/// fire an arrival, so [`animate_cursor_to`] must not wait for one.
+static RENDER_LOOP_RUNNING: AtomicBool = AtomicBool::new(false);
+/// The longest [`animate_cursor_to`] waits for an arrival. A glide across the
+/// largest display at the reference peak speed (900 pt/s) plus the spring
+/// settles well inside it; a stalled render loop must never wedge a tool.
+const ARRIVAL_TIMEOUT: Duration = Duration::from_secs(8);
 
-pub(crate) fn is_overlay_window(window_id: u32) -> bool {
-    window_id != 0 && OVERLAY_WINDOW_ID.load(Ordering::Acquire) == window_id
+/// Set when another window was raised over the overlay's pin target, so the
+/// render loop re-orders the overlay above it even though the target did not
+/// change and no cursor is animating.
+static REPIN_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// Re-order the overlay above its pinned window. Call after raising a window
+/// for input: the raise puts it over the normal-level overlay, and a resting
+/// cursor's parked render loop would otherwise leave it covered.
+pub(crate) fn request_repin() {
+    REPIN_REQUESTED.store(true, Ordering::Release);
+    if let Some(tx) = CMD_TX.get() {
+        let _ = tx.try_send(OverlayMsg::Wake);
+    }
 }
 
-/// CGWindowID of the live overlay window, if one is on screen.
+/// Whether the render loop re-orders the overlay above `pinned` this frame.
+fn should_repin(
+    pinned: Option<u64>,
+    pin_changed: bool,
+    requested: bool,
+    repin_frames: u32,
+) -> bool {
+    pinned.is_some() && (pin_changed || requested || repin_frames >= 60)
+}
+
+pub(crate) fn is_overlay_window(window_id: u32) -> bool {
+    window_id != 0 && OVERLAY_WINDOW_IDS.lock().unwrap().contains(&window_id)
+}
+
+/// Main-display overlay, for the main-display capture exclusion filter.
 pub(crate) fn overlay_window_id() -> Option<u32> {
-    match OVERLAY_WINDOW_ID.load(Ordering::Acquire) {
-        0 => None,
-        window_id => Some(window_id),
-    }
+    OVERLAY_WINDOW_IDS.lock().unwrap().first().copied()
 }
 
 /// Whether the last composed frame could hold visible pixels, and when that
@@ -103,6 +138,10 @@ pub(crate) fn overlay_window_id() -> Option<u32> {
 static OVERLAY_FRAME_PAINTS: AtomicBool = AtomicBool::new(false);
 static OVERLAY_LAST_PAINT: Mutex<Option<Instant>> = Mutex::new(None);
 const OVERLAY_CLEAR_GRACE: Duration = Duration::from_millis(250);
+/// Cursor art and click effects fit within this many points of the anchor.
+const CURSOR_TILE_MARGIN: f64 = 64.0;
+/// The session badge's glow reaches this far past its pill.
+const BADGE_GLOW_PAD: f64 = cursor_overlay::session_badge_extents().above as f64;
 
 fn note_overlay_frame(paints: bool) {
     OVERLAY_FRAME_PAINTS.store(paints, Ordering::Release);
@@ -127,19 +166,176 @@ pub(crate) fn overlay_may_show_pixels() -> bool {
         .is_some_and(|last| last.elapsed() < OVERLAY_CLEAR_GRACE)
 }
 
+/// Negative coordinates are ordinary display positions, never hidden sentinels.
+fn contains(f: ScreenFrame, (x, y): (f64, f64)) -> bool {
+    x >= f.x && x < f.x + f.width && y >= f.y && y < f.y + f.height
+}
+
+#[cfg(test)]
+fn paint_main_screen(pm: &mut tiny_skia::Pixmap, map: &RenderMap, origin: (f64, f64), scale: f32) {
+    paint_surface(pm, map, origin, scale, main_geometry(map).frame);
+}
+
+fn finite_position(pos: (f64, f64)) -> bool {
+    pos.0.is_finite() && pos.1.is_finite()
+}
+
 fn cursor_may_paint(state: &RenderState) -> bool {
-    state.focus_rect.is_some()
-        || (state.core.cfg.enabled
-            && state.core.visible
-            && state.core.idle_alpha > 0.0
-            && state.core.pos.0 > -50.0
-            && state.core.pos.1 > -50.0)
+    state.core.cfg.enabled
+        && state.core.visible
+        && state.core.placed
+        && state.core.idle_alpha > 0.0
+        && finite_position(state.core.pos)
+}
+
+/// Paint cursor art into a display tile at a global top-left origin.
+/// Only the display containing the anchor paints the session badge.
+fn paint_surface(
+    pm: &mut tiny_skia::Pixmap,
+    map: &RenderMap,
+    origin: (f64, f64),
+    backing_scale: f32,
+    frame: ScreenFrame,
+) {
+    for rs in map.cursors.values() {
+        if !finite_position(rs.core.pos) {
+            continue;
+        }
+        cursor_overlay::render_state::paint_cursor_with_badge(
+            pm,
+            &rs.core,
+            origin.0,
+            origin.1,
+            None,
+            backing_scale,
+            contains(frame, rs.core.pos),
+        );
+    }
+}
+
+/// The global region `[left, top, right, bottom]`, in whole points, that
+/// this frame paints: each drawn cursor's tile grown by its motion effects
+/// and focus rect, clamped to the screen. A custom theme may paint past the
+/// tile, so a drawn cursor with one takes the whole screen. `None` when
+/// nothing paints.
+#[cfg(test)]
+fn paint_bounds(map: &RenderMap) -> Option<[f64; 4]> {
+    paint_bounds_for(map, main_geometry(map))
+}
+
+#[cfg(test)]
+fn main_geometry(map: &RenderMap) -> SurfaceGeometry {
+    SurfaceGeometry::new(
+        ScreenFrame::new(0.0, 0.0, map.platform.win_w, map.platform.win_h),
+        map.platform.backing_scale,
+    )
+}
+
+fn paint_bounds_for(map: &RenderMap, geometry: SurfaceGeometry) -> Option<[f64; 4]> {
+    let mut bounds: Option<[f64; 4]> = None;
+    let mut add = |[x0, y0, x1, y1]: [f64; 4]| {
+        if ![x0, y0, x1, y1].iter().all(|v| v.is_finite()) {
+            return;
+        }
+        bounds = Some(match bounds {
+            None => [x0, y0, x1, y1],
+            Some([a, b, c, d]) => [a.min(x0), b.min(y0), c.max(x1), d.max(y1)],
+        });
+    };
+    let f = geometry.frame;
+    let (ox, oy, w, h) = (f.x, f.y, f.width, f.height);
+    let scale = geometry.scale.max(1.0);
+    for rs in map.cursors.values() {
+        let core = &rs.core;
+        if !finite_position(core.pos) || !core.is_revealed() || core.pinned_target_off_workspace {
+            continue;
+        }
+        if core
+            .theme
+            .as_ref()
+            .is_some_and(|theme| theme.id != cursor_overlay::DEFAULT_THEME_ID)
+        {
+            add([ox, oy, ox + w, oy + h]);
+        }
+        add([
+            core.pos.0 - CURSOR_TILE_MARGIN,
+            core.pos.1 - CURSOR_TILE_MARGIN,
+            core.pos.0 + CURSOR_TILE_MARGIN,
+            core.pos.1 + CURSOR_TILE_MARGIN,
+        ]);
+        // The badge is clamped into the screen, so near an edge it shifts
+        // away from the cursor.
+        if contains(f, core.pos) {
+            if let Some(layout) = cursor_overlay::session_badge_layout(core.session_badge_input(
+                (
+                    ((core.pos.0 - ox) * scale) as f32,
+                    ((core.pos.1 - oy) * scale) as f32,
+                ),
+                scale as f32,
+                Some(((w * scale) as f32, (h * scale) as f32)),
+            )) {
+                let rect = layout.rect;
+                add([
+                    ox + f64::from(rect.left()) / scale - BADGE_GLOW_PAD,
+                    oy + f64::from(rect.top()) / scale - BADGE_GLOW_PAD,
+                    ox + f64::from(rect.right()) / scale + BADGE_GLOW_PAD,
+                    oy + f64::from(rect.bottom()) / scale + BADGE_GLOW_PAD,
+                ]);
+            }
+        }
+        if let Some([x, y, w, h]) = core.effect_bounds() {
+            add([x, y, x + w, y + h]);
+        }
+    }
+    let [x0, y0, x1, y1] = bounds?;
+    let left = x0.floor().clamp(ox, ox + w);
+    let top = y0.floor().clamp(oy, oy + h);
+    let right = x1.ceil().clamp(ox, ox + w);
+    let bottom = y1.ceil().clamp(oy, oy + h);
+    (right > left && bottom > top).then_some([left, top, right, bottom])
+}
+
+/// One frame's pixels and where they sit on their display.
+struct PaintTile {
+    /// `[left, top, width, height]` in display-local points.
+    frame: [f64; 4],
+    scale: f64,
+    pixmap: tiny_skia::Pixmap,
+}
+
+/// Paint only the region this frame covers.
+#[cfg(test)]
+fn paint_tile(map: &RenderMap) -> Option<PaintTile> {
+    paint_tile_for(map, main_geometry(map))
+}
+
+fn paint_tile_for(map: &RenderMap, geometry: SurfaceGeometry) -> Option<PaintTile> {
+    let [left, top, right, bottom] = paint_bounds_for(map, geometry)?;
+    let scale = geometry.scale.max(1.0);
+    let mut pixmap = tiny_skia::Pixmap::new(
+        ((right - left) * scale).ceil() as u32,
+        ((bottom - top) * scale).ceil() as u32,
+    )?;
+    paint_surface(&mut pixmap, map, (left, top), scale as f32, geometry.frame);
+    Some(PaintTile {
+        frame: [
+            left - geometry.frame.x,
+            top - geometry.frame.y,
+            right - left,
+            bottom - top,
+        ],
+        scale,
+        pixmap,
+    })
 }
 
 /// Screen-global geometry kept beside the shared keyed render map
 /// ([`cursor_overlay::RenderMap`], which owns the per-session lifecycle:
 /// lazy creation, stable z-order, tombstones, revival, and the default guard).
-/// Written once in `run_appkit`.
+/// Written in `run_appkit`, then refitted by the render loop whenever the
+/// display geometry is supplied separately to each surface. These dimensions
+/// are retained for the full-frame reference renderer in tests.
+#[cfg_attr(not(test), allow(dead_code))]
 struct MacScreen {
     win_w: f64,
     win_h: f64,
@@ -178,7 +374,7 @@ pub fn init(cfg: CursorConfig) {
             MacScreen {
                 win_w: 0.0,
                 win_h: 0.0,
-                backing_scale: 1.0, // overwritten in run_appkit() once the NSScreen is known
+                backing_scale: 1.0,
             },
         ));
     });
@@ -213,18 +409,30 @@ pub fn init(cfg: CursorConfig) {
                         reduced_motion: selection.reduced_motion,
                     },
                 ),
+                CursorEvent::KeyCombo { session, keys } => {
+                    (session, OverlayCommand::ShowKeyCombo(keys))
+                }
+                CursorEvent::SelectMotion { session, motion } => {
+                    (session, OverlayCommand::ApplyMotion(motion))
+                }
             };
             send_command(session, cmd);
         },
     ));
 }
 
+/// Whether commands for `key` reach the renderer: not the empty no-cursor
+/// key (direct platform calls that bypass lifecycle dispatch), and not a
+/// human-origin session, whose client draws the human's own cursor (see
+/// `cua_driver_core::agent_cursor`).
+pub(crate) fn draws_cursor(key: &str) -> bool {
+    !key.is_empty() && !cua_driver_core::agent_cursor::overlay_suppressed(key)
+}
+
 /// Send a keyed command from any thread (MCP tool, etc.).  Non-blocking; drops
 /// if the channel is full (old commands are less important than new ones).
 pub fn send_command(key: CursorKey, cmd: OverlayCommand) {
-    // Empty key is the explicit no-cursor sentinel for direct platform calls
-    // that bypass lifecycle dispatch.
-    if key.is_empty() {
+    if !draws_cursor(&key) {
         return;
     }
     if let Some(tx) = CMD_TX.get() {
@@ -318,20 +526,24 @@ pub fn current_theme_state(
 /// the sentinel and only `ClickPulse` snapped a static arrow, which is easy to
 /// miss. See the AX-no-glide report.
 ///
-/// No-op when the cursor is already on-screen (pos.0 > -50.0) or absent. The
-/// seed is clamped to the main screen frame so it never starts off-display.
+/// No-op when the cursor is already placed or absent. Seed inside the
+/// target display, including displays at negative global coordinates.
 /// Returns true if a seed was applied (i.e. the cursor was at the sentinel and
 /// is now primed to glide).
-fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
+fn seed_start_if_unplaced(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
     let mut guard = RENDER.lock().unwrap();
     let Some(map) = guard.as_mut() else {
         return false;
     };
     // `win_w/h` are 0 until the AppKit window is up; the shared seed then only
     // keeps the start point off negative coordinates.
-    let MacScreen { win_w, win_h, .. } = map.platform;
-    let frame = (win_w > 0.0 && win_h > 0.0).then(|| ScreenFrame::new(0.0, 0.0, win_w, win_h));
-    map.seed_start_if_sentinel(key, target_x, target_y, frame)
+    let frame = DISPLAY_LAYOUT
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|layout| layout.display_at(target_x, target_y))
+        .map(|d| ScreenFrame::new(d.x, d.y, d.width, d.height));
+    map.seed_start_if_unplaced(key, target_x, target_y, frame)
 }
 
 /// Animate the overlay cursor to `(x, y)` and suspend until the Dubins path
@@ -340,27 +552,34 @@ fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool
 /// Mirrors Swift's `AgentCursor.shared.animateAndWait(to:)`.
 /// Returns immediately (no animation) only when the overlay is disabled for
 /// this cursor. A brand-new cursor still at the off-screen sentinel is first
-/// seeded on-screen via [`seed_start_if_sentinel`] so its FIRST action glides
+/// seeded on-screen via [`seed_start_if_unplaced`] so its FIRST action glides
 /// in (it previously snapped silently via `ClickPulse`, invisible on a pure-AX
 /// run).
 pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
+    animate_cursor_to_target(key, x, y, None).await;
+}
+
+/// [`animate_cursor_to`] with the targeted element's screen rect
+/// `[x, y, width, height]` (same space as `x`/`y`), so motion styles can use
+/// Fitts timing and highlight the target. `None` when the action has no
+/// element (pixel coordinates).
+pub async fn animate_cursor_to_target(key: CursorKey, x: f64, y: f64, target: Option<[f64; 4]>) {
     // Empty key is the explicit no-cursor sentinel → nothing to animate.
     if key.is_empty() {
         return;
     }
     // Seed a sentinel cursor on-screen so the MoveTo below glides instead of
-    // being short-circuited. After this the cursor's pos.0 > -50.0, so the
+    // being short-circuited. After this the cursor is placed, so the
     // should-animate check passes on the first action just like later ones.
-    seed_start_if_sentinel(&key, x, y);
+    seed_start_if_unplaced(&key, x, y);
 
-    // Check whether animation should run for THIS cursor. A disabled cursor
-    // never animates; an absent cursor (seed found nothing to prime) is skipped.
+    // An absent cursor (seed found nothing to prime) is skipped.
     let should_animate = {
         let guard = RENDER.lock().unwrap();
-        matches!(
-            guard.as_ref().and_then(|m| m.cursors.get(&key)),
-            Some(rs) if rs.core.cfg.enabled && rs.core.pos.0 > -50.0
-        )
+        guard
+            .as_ref()
+            .and_then(|m| m.cursors.get(&key))
+            .is_some_and(|rs| rs.core.animates())
     };
     if !should_animate {
         return;
@@ -380,11 +599,66 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
             // Arrive pointing upper-left (45°), matching the macOS system-cursor
             // convention and Swift reference (`endAngleDegrees: 45`).
             end_heading_radians: std::f64::consts::FRAC_PI_4,
+            target,
         },
     );
 
     // Await arrival signal (fired from render thread when Dubins path ends).
-    let _ = rx.await;
+    // Without a render loop nothing ever fires it (a daemon whose main
+    // thread never entered `run_on_main_thread`): the command stays queued
+    // for a loop that starts later, and the action proceeds now. Bounded
+    // either way.
+    await_arrival(rx, RENDER_LOOP_RUNNING.load(Ordering::Acquire)).await;
+}
+
+/// Waits for the cursor's arrival signal for as long as the current step's
+/// pacing allows. A step of a batch waits only briefly for the glide (it plays
+/// on), so a chain of actions is not held up by one cursor move per step.
+pub(crate) async fn await_arrival(
+    rx: tokio::sync::oneshot::Receiver<()>,
+    render_loop_running: bool,
+) -> bool {
+    let limit = cua_driver_core::step_pacing::glide_wait_limit(ARRIVAL_TIMEOUT);
+    if limit < ARRIVAL_TIMEOUT {
+        wait_for_arrival_briefly(rx, render_loop_running, limit).await
+    } else {
+        wait_for_arrival(rx, render_loop_running, ARRIVAL_TIMEOUT).await
+    }
+}
+
+/// [`wait_for_arrival`] for a deliberately short wait: the cursor is still
+/// gliding when the limit passes, which is expected and not logged.
+async fn wait_for_arrival_briefly(
+    rx: tokio::sync::oneshot::Receiver<()>,
+    render_loop_running: bool,
+    limit: Duration,
+) -> bool {
+    render_loop_running && tokio::time::timeout(limit, rx).await.is_ok()
+}
+
+/// Waits for `rx` only while a render loop runs, and never longer than
+/// `limit`. Returns whether the arrival came.
+async fn wait_for_arrival(
+    rx: tokio::sync::oneshot::Receiver<()>,
+    render_loop_running: bool,
+    limit: Duration,
+) -> bool {
+    if !render_loop_running {
+        return false;
+    }
+    match tokio::time::timeout(limit, rx).await {
+        Ok(_) => true,
+        Err(_) => {
+            tracing::warn!("cursor overlay: no arrival within {limit:?}; continuing without it");
+            false
+        }
+    }
+}
+
+/// Whether the overlay's render loop runs in this process (it fires the
+/// arrivals [`animate_cursor_to`] waits for).
+pub fn render_loop_running() -> bool {
+    RENDER_LOOP_RUNNING.load(Ordering::Acquire)
 }
 
 /// Block the calling thread (must be the OS main thread) running the AppKit
@@ -444,23 +718,16 @@ pub fn run_on_main_thread() {
 //
 // The platform-agnostic fields + tick + apply_command + render pipeline live
 // in `cursor_overlay::render_state` (2026-05 dedup audit). What stays here
-// is the macOS-specific NSScreen window dimensions and the focus-rect
-// overlay (a macOS-only post-arrival element highlight).
+// is the macOS-specific NSScreen window dimensions.
 
 struct RenderState {
     core: RenderStateCore,
-    /// Focus-highlight rectangle `[x, y, w, h]` in screen coords; None = not shown.
-    focus_rect: Option<[f64; 4]>,
-    /// Fade progress for the focus rect: 0.0 = fully visible, 1.0 = gone.
-    focus_rect_t: f64,
 }
 
 impl RenderEntry for RenderState {
     fn from_config(cfg: CursorConfig) -> Self {
         RenderState {
             core: RenderStateCore::new(cfg),
-            focus_rect: None,
-            focus_rect_t: 1.0,
         }
     }
 
@@ -472,24 +739,11 @@ impl RenderEntry for RenderState {
         &mut self.core
     }
 
-    /// Advance the animation by `dt`.  Uses the Swift reference constants
-    /// (peakSpeed=900, springK=400, overshoot=0.8) — see
-    /// [`RenderStateCore::tick_swift_constants`].  Returns true if an
-    /// arrival signal should be fired (the path just ended).
+    /// Advance the animation by `dt` with the shared trajectory player (see
+    /// [`RenderStateCore::tick_motion`]). Returns true if an arrival signal
+    /// should be fired (the cursor just reached its target).
     fn tick(&mut self, dt: f64) -> bool {
-        let fire_arrival = self.core.tick_swift_constants(dt);
-
-        // Advance focus-rect fade (fades out over ~600ms).  macOS-only —
-        // the shared core has no focus_rect concept.
-        if self.focus_rect.is_some() {
-            self.focus_rect_t = (self.focus_rect_t + dt / 0.6).min(1.0);
-            if self.focus_rect_t >= 1.0 {
-                self.focus_rect = None;
-                self.focus_rect_t = 1.0;
-            }
-        }
-
-        fire_arrival
+        self.core.tick_motion(dt)
     }
 
     fn apply_command(&mut self, cmd: OverlayCommand) -> bool {
@@ -500,11 +754,6 @@ impl RenderEntry for RenderState {
         //   - ClickPulse only updates `self.pos` if the cursor is still at
         //     the sentinel (otherwise the animation already landed it there).
         match cmd {
-            OverlayCommand::ShowFocusRect(rect) => {
-                self.focus_rect = rect;
-                self.focus_rect_t = 0.0; // reset fade to fully visible
-                true
-            }
             OverlayCommand::PinAbove(wid) => {
                 // The overlay window joins every Space, so a target on another
                 // Space would otherwise animate over the user's current one at
@@ -520,64 +769,33 @@ impl RenderEntry for RenderState {
     }
 
     /// The shared predicate (glide, spring, pulse, badge, resting motion,
-    /// idle fade) plus two macOS terms: the focus-rect fade, and the opaque
-    /// idle-hide countdown. The macOS loop parks on a blocking `recv` with no
+    /// idle fade) plus one macOS term: the opaque idle-hide countdown. The macOS loop parks on a blocking `recv` with no
     /// deadline, so a reduced-motion cursor must keep frame ticks through the
     /// countdown for its idle fade to start on time.
     fn needs_frame_tick(&self) -> bool {
         self.core.needs_frame_tick()
-            || self.focus_rect.is_some()
-            || (self.core.motion.idle_hide_ms > 0.0
-                && self.core.visible
-                && self.core.pos.0 >= -100.0
-                && self.core.idle_alpha >= 0.004)
+            || (self.core.motion.idle_hide_ms > 0.0 && self.core.is_revealed())
     }
 }
 
 // ── AppKit / CGImage plumbing ─────────────────────────────────────────────
 
-unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMsg>) {
+#[derive(Clone, Copy)]
+struct DisplaySurface {
+    geometry: SurfaceGeometry,
+    win_ptr: usize,
+    layer_ptr: usize,
+    window_id: u32,
+}
+
+/// AppKit window creation and disposal are confined to its main queue.
+unsafe fn create_surface(
+    d: super::display_layout::DisplayGeometry,
+    primary_height: f64,
+) -> Option<DisplaySurface> {
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send};
-    use objc2_foundation::NSRect;
-
-    // ---- NSApplication ----
-    // Verify main thread (MainThreadMarker is a zero-size compile-time token).
-    let _mtm = objc2_foundation::MainThreadMarker::new()
-        .expect("run_appkit must be called from the main thread");
-
-    let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
-    // NSApplicationActivationPolicyAccessory = 1 (no Dock icon, no menu bar)
-    // setActivationPolicy: returns BOOL (success), not void.
-    let _: bool = msg_send![app, setActivationPolicy: 1i64];
-    // Finish launching without presenting a UI (needed for NSApp.run())
-    let _: () = msg_send![app, finishLaunching];
-
-    // ---- Main screen frame ----
-    let main_screen: *mut AnyObject = msg_send![class!(NSScreen), mainScreen];
-    if main_screen.is_null() {
-        // Headless environment (CI without display) — skip overlay entirely.
-        // The MCP server continues on the background thread.
-        return;
-    }
-    let screen_frame: NSRect = msg_send![main_screen, frame];
-    let win_w = screen_frame.size.width;
-    let win_h = screen_frame.size.height;
-    // NSScreen.backingScaleFactor is the most direct source of truth — it's
-    // what AppKit will use for the layer's native backing surface anyway.
-    // Fall back to the CG estimator (current-mode pixels ÷ points) when
-    // the AppKit call returns a non-positive value, since downstream paint
-    // math divides by this and a 0.0 would zero out the cursor.
-    let mut backing_scale: f64 = msg_send![main_screen, backingScaleFactor];
-    if backing_scale.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
-        use core_graphics::display::CGMainDisplayID;
-        let display_id = CGMainDisplayID();
-        backing_scale = crate::tools::get_screen_size::get_backing_scale(display_id);
-        if backing_scale.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
-            backing_scale = 1.0;
-        }
-    }
-
+    let screen_frame = d.appkit_frame(primary_height);
     // ---- NSWindow: single alloc + initWithContentRect:... ----
     let win: *mut AnyObject = {
         let allocated: *mut AnyObject = msg_send![class!(NSWindow), alloc];
@@ -592,7 +810,7 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         w
     };
     if win.is_null() {
-        return;
+        return None;
     }
 
     let _: () = msg_send![win, setOpaque: false];
@@ -621,54 +839,119 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     let _: () = msg_send![content_view, setWantsLayer: true];
     let layer: *mut AnyObject = msg_send![content_view, layer];
 
-    // Set layer geometry. contentsScale tells Core Animation that the CGImage
-    // we hand to setContents: is already at retina (`backing_scale`×) pixel
-    // density — without this, CA would treat our physical-pixel pixmap as a
-    // 1× asset and bilinear-downsample it back to logical pixels on screen,
-    // re-introducing the blur this pipeline exists to eliminate.
-    let _: () = msg_send![layer, setContentsScale: backing_scale];
-    // kCAGravityTopLeft — the string literal "topLeft"
-    let gravity_ns: *mut AnyObject = msg_send![class!(NSString),
-        stringWithUTF8String: c"topLeft".as_ptr().cast::<u8>()
-    ];
-    let _: () = msg_send![layer, setContentsGravity: gravity_ns];
+    let tile_layer: *mut AnyObject = msg_send![class!(CALayer), new];
+    let _: () = msg_send![layer, addSublayer: tile_layer];
 
-    // ---- Update RenderMap header with screen size (screen-global) ----
-    {
-        let mut guard = RENDER.lock().unwrap();
-        if let Some(m) = guard.as_mut() {
-            m.platform = MacScreen {
-                win_w,
-                win_h,
-                backing_scale,
-            };
-        }
-    }
-
-    let window_number: isize = msg_send![win, windowNumber];
-    OVERLAY_WINDOW_ID.store(u32::try_from(window_number).unwrap_or(0), Ordering::Release);
-
-    // ---- Show the window ----
+    let number: isize = msg_send![win, windowNumber];
+    let _: () = msg_send![tile_layer, release]; // owned by the root layer
     let _: () = msg_send![win, orderFrontRegardless];
+    Some(DisplaySurface {
+        geometry: SurfaceGeometry::new(
+            ScreenFrame::new(d.x, d.y, d.width, d.height),
+            d.backing_scale,
+        ),
+        win_ptr: win as usize,
+        layer_ptr: tile_layer as usize,
+        window_id: u32::try_from(number).ok()?,
+    })
+}
 
-    // ---- Render thread (60 fps) ----
-    let layer_ptr = layer as usize;
-    let win_ptr = win as usize;
+fn on_appkit<T: Send, F: FnOnce() -> T + Send>(work: F) -> T {
+    use std::ffi::c_void;
+    #[link(name = "System", kind = "framework")]
+    extern "C" {
+        static _dispatch_main_q: u8;
+        fn dispatch_sync_f(
+            queue: *const c_void,
+            context: *mut c_void,
+            work: unsafe extern "C" fn(*mut c_void),
+        );
+    }
+    unsafe extern "C" fn invoke<F: FnOnce() -> T, T>(ctx: *mut c_void) {
+        let (work, result) = &mut *(ctx as *mut (Option<F>, Option<T>));
+        *result = Some(work.take().unwrap()());
+    }
+    let mut context = (Some(work), None);
+    unsafe {
+        dispatch_sync_f(
+            &raw const _dispatch_main_q as *const c_void,
+            &mut context as *mut _ as *mut c_void,
+            invoke::<F, T>,
+        );
+    }
+    context.1.unwrap()
+}
+
+unsafe fn dispose_surface(surface: DisplaySurface) {
+    use objc2::msg_send;
+    let win = surface.win_ptr as *mut objc2::runtime::AnyObject;
+    let _: () = msg_send![win, orderOut: std::ptr::null::<objc2::runtime::AnyObject>()];
+    let _: () = msg_send![win, close];
+    let _: () = msg_send![win, release];
+}
+
+unsafe fn rebuild_surfaces(
+    layout: &super::display_layout::DisplayLayout,
+    old: Vec<DisplaySurface>,
+) -> Vec<DisplaySurface> {
+    // Build the replacement before touching the live set. A transient display
+    // reconfiguration or allocation failure must not remove working overlays.
+    let mut surfaces = Vec::new();
+    for d in &layout.displays {
+        let Some(surface) = create_surface(*d, layout.primary_height().unwrap_or(0.0)) else {
+            for surface in surfaces {
+                dispose_surface(surface);
+            }
+            return old;
+        };
+        surfaces.push(surface);
+    }
+    // Main queue is FIFO: pending old-layer presentations finish before disposal.
+    for surface in old {
+        dispose_surface(surface);
+    }
+    *OVERLAY_WINDOW_IDS.lock().unwrap() = surfaces.iter().map(|s| s.window_id).collect();
+    *DISPLAY_LAYOUT.lock().unwrap() = Some(layout.clone());
+    surfaces
+}
+
+unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMsg>) {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+
+    // ---- NSApplication ----
+    // Verify main thread (MainThreadMarker is a zero-size compile-time token).
+    let _mtm = objc2_foundation::MainThreadMarker::new()
+        .expect("run_appkit must be called from the main thread");
+
+    // AppKit uses Text Input Sources on this thread from here on.
+    crate::input::input_source::main_thread_runs_event_loop();
+    let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+    // NSApplicationActivationPolicyProhibited = 2 (no Dock icon, no menu bar, never active)
+    // setActivationPolicy: returns BOOL (success), not void.
+    let _: bool = msg_send![app, setActivationPolicy: 2i64];
+    // Finish launching without presenting a UI (needed for NSApp.run())
+    let _: () = msg_send![app, finishLaunching];
+
+    let Ok(layout) = super::display_layout::active_layout(0) else {
+        return;
+    };
+    let surfaces = rebuild_surfaces(&layout, Vec::new());
+    RENDER_LOOP_RUNNING.store(true, Ordering::Release);
     std::thread::spawn(move || {
-        render_loop(layer_ptr, win_ptr, rx, win_w, win_h);
+        render_loop(surfaces, layout, rx);
+        RENDER_LOOP_RUNNING.store(false, Ordering::Release);
     });
 
     // ---- NSApplication run loop (blocks until process exits) ----
     let _: () = msg_send![app, run];
-    OVERLAY_WINDOW_ID.store(0, Ordering::Release);
+    OVERLAY_WINDOW_IDS.lock().unwrap().clear();
 }
 
 fn render_loop(
-    layer_ptr: usize,
-    win_ptr: usize,
+    mut surfaces: Vec<DisplaySurface>,
+    mut layout: super::display_layout::DisplayLayout,
     rx: std::sync::mpsc::Receiver<OverlayMsg>,
-    _win_w: f64,
-    _win_h: f64,
 ) {
     let target_frame_ms = Duration::from_millis(16); // ~60 fps while pixels can change
     let hover_poll_ms = Duration::from_millis(80);
@@ -679,6 +962,7 @@ fn render_loop(
     // the periodic defensive-repin (every ~60 active frames ≈ 1 s).
     let mut last_pinned: Option<u64> = None;
     let mut repin_frames: u32 = 0;
+    let mut last_display_check = Instant::now();
 
     loop {
         // When no cursor animation/fade is active, block until the MCP side
@@ -693,8 +977,9 @@ fn render_loop(
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
             }
         } else {
-            match rx.recv() {
+            match rx.recv_timeout(Duration::from_millis(250)) {
                 Ok(msg) => (Some(msg), false),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => (None, false),
                 Err(_) => break,
             }
         };
@@ -711,6 +996,20 @@ fn render_loop(
         };
         last_tick = now;
 
+        let mut refit = false;
+        if last_display_check.elapsed() >= Duration::from_millis(250) {
+            last_display_check = now;
+            if let Ok(reading) = super::display_layout::active_layout(layout.generation) {
+                if surfaces.is_empty() || reading != layout {
+                    surfaces = on_appkit(move || unsafe { rebuild_surfaces(&reading, surfaces) });
+                    if let Some(applied) = DISPLAY_LAYOUT.lock().unwrap().clone() {
+                        layout = applied;
+                    }
+                    refit = true;
+                }
+            }
+        }
+
         // ── Phase 1: drain + tick all cursors (one lock acquisition) ──────
         // `pinned_wid` follows the most-recently-updated cursor: a single
         // NSWindow can occupy only one z-band, so the last-active cursor's
@@ -719,8 +1018,6 @@ fn render_loop(
             pinned_wid,
             raise_unpinned,
             arrived,
-            win_w,
-            win_h,
             had_msg,
             hover_changed,
             next_frame_tick_needed,
@@ -788,8 +1085,6 @@ fn render_loop(
                         pinned,
                         raise_unpinned,
                         arrived,
-                        map.platform.win_w,
-                        map.platform.win_h,
                         had_msg,
                         hover_changed,
                         next_frame_tick_needed,
@@ -812,63 +1107,48 @@ fn render_loop(
             repin_frames += 1;
             let pin_changed = pinned_wid != last_pinned;
             last_pinned = pinned_wid;
-            if pinned_wid.is_some() && (pin_changed || repin_frames >= 60) {
-                MacZOrderEnforcer { win_ptr }.reassert(pinned_wid);
+            let requested = REPIN_REQUESTED.swap(false, Ordering::AcqRel);
+            if should_repin(pinned_wid, pin_changed || refit, requested, repin_frames) {
+                for surface in &surfaces {
+                    MacZOrderEnforcer {
+                        win_ptr: surface.win_ptr,
+                    }
+                    .reassert(pinned_wid);
+                }
                 repin_frames = 0;
             } else if raise_unpinned {
                 // A direct move_cursor has no target window to pin against.
                 // Raise the normal-level, click-through overlay without
                 // activating the driver so a later foreground application
                 // cannot cover a standalone session cursor.
-                dispatch_order_front(win_ptr);
+                for surface in &surfaces {
+                    dispatch_order_front(surface.win_ptr);
+                }
                 repin_frames = 0;
             } else if repin_frames >= 60 {
                 repin_frames = 0;
             }
         }
 
-        // ── Phase 2: composite every cursor into ONE pixmap ───────────────
+        // ── Phase 2: composite one tile per display ─────────────────
         // Render only when a command arrived or the previous/next tick can
         // change pixels. A final frame is emitted as animations/fades finish so
         // the layer is left in the completed/cleared state before blocking.
-        if had_msg || hover_changed || frame_tick_needed || next_frame_tick_needed {
-            let pixmap = {
+        if had_msg || refit || hover_changed || frame_tick_needed || next_frame_tick_needed {
+            let tiles = {
                 let guard = RENDER.lock().unwrap();
-                if let Some(map) = guard.as_ref() {
-                    // Allocate the pixmap at the screen's PHYSICAL pixel
-                    // dimensions so the cursor rasterises at retina resolution.
-                    // The cursor's logical coordinates are scaled into pixmap
-                    // pixels inside `paint_cursor` (it multiplies px/py/sizes
-                    // by `backing_scale`).
-                    let scale = map.platform.backing_scale.max(1.0);
-                    let w = (win_w * scale).max(1.0) as u32;
-                    let h = (win_h * scale).max(1.0) as u32;
-                    let mut pm = tiny_skia::Pixmap::new(w.max(1), h.max(1))
-                        .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
-                    let backing_scale_f32 = scale as f32;
-                    note_overlay_frame(map.cursors.values().any(cursor_may_paint));
-                    for (_k, rs) in &map.cursors {
-                        let focus = rs.focus_rect.map(|rect| FocusRect {
-                            rect,
-                            t: rs.focus_rect_t,
-                        });
-                        cursor_overlay::paint_cursor(
-                            &mut pm,
-                            &rs.core,
-                            0.0,
-                            0.0, // macOS uses screen-local coords (no origin offset)
-                            focus,
-                            backing_scale_f32,
-                        );
-                    }
-                    pm
-                } else {
+                let Some(map) = guard.as_ref() else {
                     break;
-                }
+                };
+                note_overlay_frame(map.cursors.values().any(cursor_may_paint));
+                surfaces
+                    .iter()
+                    .map(|surface| (surface.layer_ptr, paint_tile_for(map, surface.geometry)))
+                    .collect::<Vec<_>>()
             };
-
-            // Convert to CGImage and update layer on the main queue.
-            dispatch_set_layer_contents(layer_ptr, pixmap);
+            for (layer, tile) in tiles {
+                dispatch_set_layer_contents(layer, tile);
+            }
         }
 
         frame_tick_needed = next_frame_tick_needed;
@@ -898,22 +1178,24 @@ fn hardware_cursor_position() -> Option<(f64, f64)> {
 fn cursor_is_externally_visible(state: &RenderState) -> bool {
     state.core.cfg.enabled
         && state.core.visible
-        && state.core.pos.0 > -50.0
-        && state.core.pos.1 > -50.0
+        && state.core.placed
+        && finite_position(state.core.pos)
         && state.core.idle_alpha >= 0.004
 }
 
-/// Convert a `tiny_skia::Pixmap` to a `CGImage` and set it as the contents
-/// of the given `CALayer` via `dispatch_async(main_queue, ...)`.
-fn dispatch_set_layer_contents(layer_ptr: usize, pixmap: tiny_skia::Pixmap) {
-    // Build the CGImage from the pixmap bytes.
-    let cg_image_ptr = match pixmap_to_cgimage(&pixmap) {
-        Some(p) => p,
-        None => return,
+/// Place `tile` on the tile `CALayer` via `dispatch_async(main_queue, ...)`;
+/// `None` clears it.
+fn dispatch_set_layer_contents(layer_ptr: usize, tile: Option<PaintTile>) {
+    let (cg_image_ptr, frame, scale) = match tile {
+        Some(tile) => match pixmap_to_cgimage(&tile.pixmap) {
+            Some(p) => (p, tile.frame, tile.scale),
+            None => return,
+        },
+        None => (0, [0.0; 4], 1.0),
     };
 
     // Box the payload for the C callback.
-    let payload = Box::new((layer_ptr, cg_image_ptr));
+    let payload = Box::new((layer_ptr, cg_image_ptr, frame, scale));
 
     // GCD symbols from libdispatch (part of the macOS system library stubs).
     // `dispatch_get_main_queue()` is an inline C function; the underlying
@@ -932,14 +1214,38 @@ fn dispatch_set_layer_contents(layer_ptr: usize, pixmap: tiny_skia::Pixmap) {
     }
 
     unsafe extern "C" fn set_contents_cb(ctx: *mut c_void) {
-        let (layer_ptr, cg_image_ptr): (usize, usize) = *Box::from_raw(ctx as *mut _);
-        let layer = layer_ptr as *mut objc2::runtime::AnyObject;
+        use objc2::runtime::AnyObject;
+        use objc2::{class, msg_send};
+        use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+        let (layer_ptr, cg_image_ptr, [x, top, w, h], scale): (usize, usize, [f64; 4], f64) =
+            *Box::from_raw(ctx as *mut _);
+        let layer = layer_ptr as *mut AnyObject;
+        // A standalone layer animates frame and contents changes by default.
+        let _: () = msg_send![class!(CATransaction), begin];
+        let _: () = msg_send![class!(CATransaction), setDisableActions: true];
+        if cg_image_ptr != 0 {
+            let root: *mut AnyObject = msg_send![layer, superlayer];
+            let flipped: bool = msg_send![root, isGeometryFlipped];
+            let bounds: NSRect = msg_send![root, bounds];
+            let y = if flipped {
+                top
+            } else {
+                bounds.size.height - top - h
+            };
+            let frame = NSRect::new(NSPoint::new(x, y), NSSize::new(w, h));
+            let _: () = msg_send![layer, setContentsScale: scale];
+            let _: () = msg_send![layer, setFrame: frame];
+        }
         // setContents: expects an `id` (type '@'), not a raw void pointer.
         // CGImageRef is toll-free bridged to NSObject, so we cast it to *mut AnyObject.
-        let cg_id = cg_image_ptr as *mut objc2::runtime::AnyObject;
-        let _: () = objc2::msg_send![layer, setContents: cg_id];
-        // Release the CGImage ref we retained in pixmap_to_cgimage.
-        CGImageRelease(cg_image_ptr as *mut c_void);
+        let cg_id = cg_image_ptr as *mut AnyObject;
+        let _: () = msg_send![layer, setContents: cg_id];
+        let _: () = msg_send![class!(CATransaction), commit];
+        if cg_image_ptr != 0 {
+            // Release the CGImage ref we retained in pixmap_to_cgimage.
+            CGImageRelease(cg_image_ptr as *mut c_void);
+        }
     }
 
     extern "C" {
@@ -1201,12 +1507,139 @@ fn pixmap_to_cgimage(pixmap: &tiny_skia::Pixmap) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A raised target window must get the overlay back above it at once,
+    /// even with no pin change and a parked render loop; nothing re-orders
+    /// an overlay that has no pin target.
+    #[test]
+    fn a_requested_repin_reorders_the_overlay_above_its_target() {
+        assert!(should_repin(Some(7), false, true, 0));
+        assert!(should_repin(Some(7), true, false, 0));
+        assert!(should_repin(Some(7), false, false, 60));
+        assert!(!should_repin(Some(7), false, false, 1));
+        assert!(!should_repin(None, false, true, 60));
+    }
+
+    /// A human-origin session (a Cua Spaces viewer's relayed input) never
+    /// reaches the renderer; an agent's session does. The rule itself lives
+    /// in `cua_driver_core::agent_cursor`.
+    #[test]
+    fn human_origin_sessions_draw_no_agent_cursor() {
+        use cua_driver_core::agent_cursor::{set_input_origin, InputOrigin};
+        let human = "overlay-test-human-origin-session";
+        assert!(draws_cursor(human));
+        set_input_origin(human, InputOrigin::Human);
+        assert!(!draws_cursor(human));
+        assert!(draws_cursor("overlay-test-agent-session"));
+        assert!(!draws_cursor(""));
+        set_input_origin(human, InputOrigin::Agent);
+        assert!(draws_cursor(human));
+    }
     use std::collections::HashMap;
 
     // The keyed lifecycle, sentinel seed, and shared frame-tick predicate are
     // covered once in `cursor_overlay::render_map`. These tests cover only the
     // macOS adapter: window ordering, external visibility, and the macOS
     // frame-tick terms layered on the shared predicate.
+
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap()
+    }
+
+    /// cua-spacesd `serve` initialized the overlay (a GUI session) but never
+    /// ran its AppKit loop, and the first animated click waited forever for
+    /// an arrival only the render loop fires, wedging the driver.
+    #[test]
+    fn animate_without_a_render_loop_never_waits() {
+        init(CursorConfig {
+            enabled: true,
+            ..CursorConfig::default()
+        });
+        assert!(!render_loop_running());
+        let done = runtime().block_on(async {
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                animate_cursor_to("session-no-loop".to_owned(), 240.0, 180.0),
+            )
+            .await
+        });
+        assert!(
+            done.is_ok(),
+            "animate_cursor_to waited for a render loop that is not running"
+        );
+    }
+
+    /// A cursor turned off with `set_agent_cursor_enabled(false)` after it was
+    /// shown never registers a glide waiter, so the action does not wait for
+    /// an arrival the hidden cursor never reports (#4276).
+    #[test]
+    fn a_cursor_turned_off_at_runtime_registers_no_glide_wait() {
+        init(CursorConfig {
+            enabled: true,
+            ..CursorConfig::default()
+        });
+        let waits = |key: &str| {
+            ARRIVAL_TX
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|map| map.contains_key(key))
+        };
+        let rt = runtime();
+        for (key, enabled) in [("session-runtime-on", true), ("session-runtime-off", false)] {
+            rt.block_on(animate_cursor_to(key.to_owned(), 240.0, 180.0));
+            assert!(waits(key), "{key}: a shown cursor glides");
+            arrival_cancel(&key.to_owned());
+            // The render loop applies queued commands; none runs in a test.
+            let mut guard = RENDER.lock().unwrap();
+            let map = guard.as_mut().unwrap();
+            map.apply_command(key.to_owned(), OverlayCommand::SetEnabled(enabled));
+            drop(guard);
+            rt.block_on(animate_cursor_to(key.to_owned(), 300.0, 220.0));
+            assert_eq!(waits(key), enabled, "{key}");
+            arrival_cancel(&key.to_owned());
+        }
+    }
+
+    #[test]
+    fn arrival_wait_is_bounded_and_skipped_without_a_loop() {
+        let rt = runtime();
+        let (_tx, rx) = tokio::sync::oneshot::channel::<()>();
+        assert!(!rt.block_on(wait_for_arrival(rx, false, Duration::from_secs(60))));
+        let (_tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let started = Instant::now();
+        assert!(!rt.block_on(wait_for_arrival(rx, true, Duration::from_millis(50))));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        tx.send(()).unwrap();
+        assert!(rt.block_on(wait_for_arrival(rx, true, Duration::from_secs(60))));
+    }
+
+    #[test]
+    fn a_batched_step_waits_for_the_glide_only_up_to_the_batch_cap() {
+        use cua_driver_core::step_pacing::{glide_wait_limit, scope, StepPacing, BATCH_GLIDE_WAIT};
+        let rt = runtime();
+        // The sender stays alive and never fires: the glide is still playing.
+        let (_tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let started = Instant::now();
+        let arrived = rt.block_on(scope(StepPacing::Batched, async {
+            let limit = glide_wait_limit(ARRIVAL_TIMEOUT);
+            assert_eq!(limit, BATCH_GLIDE_WAIT);
+            wait_for_arrival_briefly(rx, true, limit).await
+        }));
+        assert!(!arrived);
+        assert!(started.elapsed() >= BATCH_GLIDE_WAIT);
+        assert!(started.elapsed() < ARRIVAL_TIMEOUT / 4);
+        // A direct call keeps the full arrival limit.
+        assert_eq!(glide_wait_limit(ARRIVAL_TIMEOUT), ARRIVAL_TIMEOUT);
+        // An arrival inside the cap is still seen.
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        tx.send(()).unwrap();
+        assert!(rt.block_on(wait_for_arrival_briefly(rx, true, BATCH_GLIDE_WAIT)));
+    }
 
     fn window(window_id: u32, pid: i32, z_index: usize) -> crate::windows::WindowInfo {
         crate::windows::WindowInfo {
@@ -1242,8 +1675,104 @@ mod tests {
 
     fn placed<'a>(map: &'a mut RenderMap, key: &str) -> &'a mut RenderState {
         let frame = Some(ScreenFrame::new(0.0, 0.0, 100.0, 100.0));
-        assert!(map.seed_start_if_sentinel(key, 60.0, 60.0, frame));
+        assert!(map.seed_start_if_unplaced(key, 60.0, 60.0, frame));
         map.cursors.get_mut(key).unwrap()
+    }
+
+    #[test]
+    fn tiles_render_on_negative_and_lower_displays_at_each_backing_scale() {
+        for (x, y) in [(-400.0, 0.0), (0.0, -300.0), (0.0, 820.0), (1180.0, 0.0)] {
+            for scale in [1.0, 2.0] {
+                let mut map = empty_map();
+                placed(&mut map, "sessA").core.pos = (x + 150.0, y + 150.0);
+                let geometry = SurfaceGeometry::new(ScreenFrame::new(x, y, 400.0, 300.0), scale);
+                let tile = paint_tile_for(&map, geometry).expect("secondary display must paint");
+                assert!(tile.pixmap.pixels().iter().any(|p| p.alpha() > 0));
+                assert!(tile.frame[0] >= 0.0 && tile.frame[1] >= 0.0);
+                assert!(tile.frame[0] + tile.frame[2] <= 400.0);
+                assert_eq!(tile.pixmap.width(), (tile.frame[2] * scale).ceil() as u32);
+                assert_eq!(tile.pixmap.height(), (tile.frame[3] * scale).ceil() as u32);
+            }
+        }
+    }
+
+    #[test]
+    fn cross_display_art_paints_both_sides_and_clears_departed_display() {
+        let mut map = empty_map();
+        placed(&mut map, "sessA").core.pos = (-2.0, 50.0);
+        let left = SurfaceGeometry::new(ScreenFrame::new(-400.0, 0.0, 400.0, 300.0), 2.0);
+        let right = SurfaceGeometry::new(ScreenFrame::new(0.0, 0.0, 400.0, 300.0), 1.0);
+        for geometry in [left, right] {
+            let tile = paint_tile_for(&map, geometry).unwrap();
+            assert!(
+                tile.pixmap.pixels().iter().any(|p| p.alpha() > 0),
+                "cursor crossing seam must not clip"
+            );
+        }
+        map.cursors.get_mut("sessA").unwrap().core.pos = (200.0, 150.0);
+        assert!(paint_tile_for(&map, left).is_none());
+        assert!(paint_tile_for(&map, right).is_some());
+    }
+
+    /// The top-left corner of a tile's painted pixels, in global points.
+    fn painted_origin(tile: &PaintTile, geometry: SurfaceGeometry) -> (f64, f64) {
+        let width = tile.pixmap.width() as usize;
+        let (col, row) = tile
+            .pixmap
+            .pixels()
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.alpha() > 128)
+            .fold((usize::MAX, usize::MAX), |(c, r), (i, _)| {
+                (c.min(i % width), r.min(i / width))
+            });
+        assert_ne!(col, usize::MAX, "tile paints");
+        (
+            geometry.frame.x + tile.frame[0] + col as f64 / tile.scale,
+            geometry.frame.y + tile.frame[1] + row as f64 / tile.scale,
+        )
+    }
+
+    /// trycua/cua#4907: with a 1728x1117 @2x primary and a 5120x1440 @1x
+    /// display at (-4333, -1440), the cursor sits at the same offset from its
+    /// target on either display as on a zero-origin display of that scale,
+    /// and only the display holding the target paints it.
+    #[test]
+    fn cursor_lands_on_target_on_an_upper_left_mixed_scale_display() {
+        let primary = SurfaceGeometry::new(ScreenFrame::new(0.0, 0.0, 1728.0, 1117.0), 2.0);
+        let external =
+            SurfaceGeometry::new(ScreenFrame::new(-4333.0, -1440.0, 5120.0, 1440.0), 1.0);
+        let paint_at = |geometry: SurfaceGeometry, (x, y): (f64, f64)| {
+            let mut map = empty_map();
+            let core = &mut placed(&mut map, "sessA").core;
+            core.pos = cursor_overlay::anchor_for_pointer(x, y, core.heading);
+            let tile = paint_tile_for(&map, geometry);
+            (map, tile)
+        };
+        for (target, owner, other) in [
+            ((800.0, 500.0), primary, external),
+            ((-2000.0, -700.0), external, primary),
+            ((-4000.0, -1400.0), external, primary),
+        ] {
+            let (map, tile) = paint_at(owner, target);
+            assert!(paint_tile_for(&map, other).is_none(), "{target:?}");
+            let tile = tile.expect("the display holding the target paints");
+            assert_eq!(tile.scale, owner.scale);
+            let painted = painted_origin(&tile, owner);
+
+            let reference =
+                SurfaceGeometry::new(ScreenFrame::new(0.0, 0.0, 400.0, 300.0), owner.scale);
+            let (_, ref_tile) = paint_at(reference, (200.0, 150.0));
+            let ref_painted = painted_origin(&ref_tile.unwrap(), reference);
+            let expected = (
+                target.0 + ref_painted.0 - 200.0,
+                target.1 + ref_painted.1 - 150.0,
+            );
+            assert!(
+                (painted.0 - expected.0).abs() <= 0.5 && (painted.1 - expected.1).abs() <= 0.5,
+                "painted at {painted:?}, expected {expected:?} for target {target:?}"
+            );
+        }
     }
 
     #[test]
@@ -1278,9 +1807,156 @@ mod tests {
 
         placed(&mut map, "sessA");
         assert!(cursor_is_externally_visible(&map.cursors["sessA"]));
+        map.cursors.get_mut("sessA").unwrap().core.placed = false;
+        assert!(!cursor_may_paint(&map.cursors["sessA"]));
+        assert!(!cursor_is_externally_visible(&map.cursors["sessA"]));
+        map.cursors.get_mut("sessA").unwrap().core.placed = true;
 
         map.cursors.get_mut("sessA").unwrap().core.cfg.enabled = false;
         assert!(!cursor_is_externally_visible(&map.cursors["sessA"]));
+    }
+
+    #[test]
+    fn a_cursor_left_of_the_main_screen_paints_nothing_there() {
+        let mut map = empty_map();
+        let state = placed(&mut map, "sessA");
+        state.core.session_label = Some("A".to_owned());
+        let painted = |map: &RenderMap| {
+            let mut pm = tiny_skia::Pixmap::new(100, 100).unwrap();
+            paint_main_screen(&mut pm, map, (0.0, 0.0), 1.0);
+            pm.pixels().iter().any(|pixel| pixel.alpha() > 0)
+        };
+        assert!(painted(&map));
+        assert!(cursor_may_paint(&map.cursors["sessA"]));
+
+        // Placed on a display left of the main screen: the label would clamp
+        // its badge into the main-screen pixmap if this cursor were painted.
+        map.cursors.get_mut("sessA").unwrap().core.pos = (-200.0, 30.0);
+        assert!(!painted(&map));
+        assert!(cursor_may_paint(&map.cursors["sessA"]));
+        assert!(cursor_is_externally_visible(&map.cursors["sessA"]));
+    }
+
+    /// Painting at the tile's origin rounds sub-pixel coordinates apart from
+    /// the full-screen paint, which moves an antialiased edge by at most one
+    /// of its 16 coverage samples.
+    const COVERAGE_SAMPLE: u8 = 17;
+
+    fn assert_tile_matches_full_screen(map: &RenderMap) {
+        let scale = map.platform.backing_scale;
+        let mut full = tiny_skia::Pixmap::new(
+            (map.platform.win_w * scale) as u32,
+            (map.platform.win_h * scale) as u32,
+        )
+        .unwrap();
+        paint_main_screen(&mut full, map, (0.0, 0.0), scale as f32);
+        let tile = paint_tile(map);
+        let width = full.width() as usize;
+        for (i, pixel) in full.pixels().iter().enumerate() {
+            let (x, y) = (i % width, i / width);
+            let in_tile = tile.as_ref().and_then(|tile| {
+                let tx = x.checked_sub((tile.frame[0] * scale) as usize)?;
+                let ty = y.checked_sub((tile.frame[1] * scale) as usize)?;
+                (tx < tile.pixmap.width() as usize && ty < tile.pixmap.height() as usize)
+                    .then(|| tile.pixmap.pixels()[ty * tile.pixmap.width() as usize + tx])
+            });
+            match in_tile {
+                Some(tile_pixel) => {
+                    let channels = |p: tiny_skia::PremultipliedColorU8| {
+                        [p.red(), p.green(), p.blue(), p.alpha()]
+                    };
+                    let close = channels(tile_pixel)
+                        .into_iter()
+                        .zip(channels(*pixel))
+                        .all(|(a, b)| a.abs_diff(b) <= COVERAGE_SAMPLE);
+                    assert!(close, "pixel ({x}, {y}): {tile_pixel:?} vs {pixel:?}");
+                }
+                None => assert_eq!(pixel.alpha(), 0, "pixel ({x}, {y}) outside the tile"),
+            }
+        }
+    }
+
+    /// The tile holds every pixel the full-screen paint draws: cursor, badge,
+    /// glide and click effects, also where the screen edge
+    /// clamps the badge.
+    #[test]
+    fn the_tile_holds_every_pixel_of_the_full_screen_paint() {
+        let starts = [(200.0, 150.0), (3.0, 4.0), (397.0, 296.0), (-30.0, 150.0)];
+        let mut badge_frames = 0;
+        let mut effect_frames = 0;
+        for scale in [1.0, 2.0] {
+            for (x, y) in starts {
+                for label in [None, Some("a session with a long name")] {
+                    {
+                        let mut map = RenderMap::new(
+                            CursorConfig::default(),
+                            MacScreen {
+                                win_w: 400.0,
+                                win_h: 300.0,
+                                backing_scale: scale,
+                            },
+                        );
+                        let frame = Some(ScreenFrame::new(0.0, 0.0, 400.0, 300.0));
+                        assert!(map.seed_start_if_unplaced("sessA", x, y, frame));
+                        let cursor = map.cursors.get_mut("sessA").unwrap();
+                        // Every motion effect is opt-in; turn them all on so the
+                        // tile must hold them.
+                        cursor.core.options_override = Some(cursor_overlay::CursorOptions::ALL_ON);
+                        cursor.core.motion.effects = cursor_overlay::MotionEffects {
+                            trail: Some(true),
+                            glow: Some(true),
+                            magnet: Some(true),
+                            ripple: Some(true),
+                            squish: Some(true),
+                        };
+                        if let Some(label) = label {
+                            cursor.core.badge_mode_override =
+                                Some(cursor_overlay::BadgeMode::Verbose);
+                            cursor.apply_command(OverlayCommand::SetSessionLabel(label.to_owned()));
+                        }
+                        cursor.apply_command(OverlayCommand::MoveTo {
+                            x: 400.0 - x,
+                            y: 300.0 - y,
+                            end_heading_radians: 0.0,
+                            target: None,
+                        });
+                        for step in 0..40 {
+                            if step == 20 {
+                                let cursor = map.cursors.get_mut("sessA").unwrap();
+                                let (x, y) = cursor.core.pos;
+                                cursor.apply_command(OverlayCommand::ClickPulse { x, y });
+                            }
+                            map.tick_all(1.0 / 60.0);
+                            if step % 4 == 1 {
+                                badge_frames += usize::from(
+                                    map.cursors["sessA"].core.session_badge_is_visible(),
+                                );
+                                effect_frames += usize::from(
+                                    map.cursors["sessA"].core.effect_bounds().is_some(),
+                                );
+                                assert_tile_matches_full_screen(&map);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(badge_frames > 0, "no frame showed the session badge");
+        assert!(effect_frames > 0, "no frame played a motion effect");
+    }
+
+    #[test]
+    fn a_custom_theme_paints_the_whole_screen() {
+        let mut map = empty_map();
+        placed(&mut map, "sessA");
+        map.platform.win_w = 400.0;
+        map.platform.win_h = 300.0;
+        assert_ne!(paint_bounds(&map), Some([0.0, 0.0, 400.0, 300.0]));
+
+        let mut theme = (*cursor_overlay::embedded_default_theme()).clone();
+        theme.id = "com.example.custom".into();
+        map.cursors.get_mut("sessA").unwrap().core.theme = Some(std::sync::Arc::new(theme));
+        assert_eq!(paint_bounds(&map), Some([0.0, 0.0, 400.0, 300.0]));
     }
 
     #[test]
@@ -1309,6 +1985,10 @@ mod tests {
         let mut map = empty_map();
         let cursor = placed(&mut map, "sessA");
         cursor.core.motion.idle_hide_ms = 20_000.0;
+        // With `cursor.float` off the cursor rests still; the default floats.
+        cursor.core.options_override = Some(cursor_overlay::CursorOptions::NONE);
+        assert!(!cursor.core.has_resting_motion());
+        cursor.core.options_override = Some(cursor_overlay::CursorOptions::default());
         assert!(cursor.core.has_resting_motion());
         assert!(map.needs_frame_tick());
 
@@ -1318,7 +1998,7 @@ mod tests {
     }
 
     #[test]
-    fn focus_rect_and_reduced_motion_countdown_keep_macos_frames() {
+    fn reduced_motion_countdown_keeps_macos_frames() {
         let mut map = empty_map();
         let cursor = placed(&mut map, "sessA");
         cursor.core.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
@@ -1329,12 +2009,10 @@ mod tests {
 
         cursor.core.motion.idle_hide_ms = 0.0;
         assert!(!cursor.needs_frame_tick());
+        // A retired focus-rect command draws nothing and keeps no frames alive.
+        cursor.core.options_override = Some(cursor_overlay::CursorOptions::NONE);
         cursor.apply_command(OverlayCommand::ShowFocusRect(Some([0.0, 0.0, 10.0, 10.0])));
-        assert!(cursor.needs_frame_tick());
-        for _ in 0..60 {
-            cursor.tick(1.0 / 60.0);
-        }
-        assert!(cursor.focus_rect.is_none());
+        assert!(!cursor.needs_frame_tick());
 
         cursor.core.idle_alpha = 0.0;
         assert!(!map.needs_frame_tick(), "a fully hidden cursor must park");

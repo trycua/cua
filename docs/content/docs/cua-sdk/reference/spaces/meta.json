@@ -1,0 +1,26 @@
+{
+  "title": "Spaces",
+  "pages": [
+    "info",
+    "network",
+    "children",
+    "services",
+    "resize",
+    "lifetime",
+    "space",
+    "sharing",
+    "relay-registration",
+    "elastic",
+    "build",
+    "channel",
+    "volume",
+    "presence",
+    "streams",
+    "resources",
+    "list-watch",
+    "agents",
+    "persistent-agents",
+    "default-space",
+    "host"
+  ]
+}

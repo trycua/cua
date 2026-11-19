@@ -1,5 +1,145 @@
 # Changelog
 
+## [0.11.10](https://github.com/trycua/cua/compare/sandbox-v0.11.9...sandbox-v0.11.10) (2026-11-18)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** accept cua-driver 0.54 ([#8162](https://github.com/trycua/cua/issues/8162)) ([d4de173](https://github.com/trycua/cua/commit/d4de1736c29f754ae5b0cf607f8fc227118a0698))
+
+## [0.11.9](https://github.com/trycua/cua/compare/sandbox-v0.11.8...sandbox-v0.11.9) (2026-11-17)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** accept cua-driver 0.53 ([#8042](https://github.com/trycua/cua/issues/8042)) ([fcc16eb](https://github.com/trycua/cua/commit/fcc16ebb629eb20a9f1279421185620ca14aa0e5))
+
+## [0.11.8](https://github.com/trycua/cua/compare/sandbox-v0.11.7...sandbox-v0.11.8) (2026-11-16)
+
+
+### Bug Fixes
+
+* **sandbox:** honor shell timeout on Android ADB transport ([#7981](https://github.com/trycua/cua/issues/7981)) ([bf75fc9](https://github.com/trycua/cua/commit/bf75fc924950f760cdab877ae99e9bb01a865575))
+
+## [0.11.7](https://github.com/trycua/cua/compare/sandbox-v0.11.6...sandbox-v0.11.7) (2026-11-15)
+
+
+### Bug Fixes
+
+* **sandbox:** preserve registry identity for QEMU image layers ([#7865](https://github.com/trycua/cua/issues/7865)) ([2509cba](https://github.com/trycua/cua/commit/2509cba9f3769807c7fb3a5c752de93e5f6697a1))
+
+## [0.11.6](https://github.com/trycua/cua/compare/sandbox-v0.11.5...sandbox-v0.11.6) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** allow cua-driver 0.52 in the driver extra ([#7840](https://github.com/trycua/cua/issues/7840)) ([a7d3173](https://github.com/trycua/cua/commit/a7d317373f80372c0bc93a130c0e22f5383ba61d))
+
+## [0.11.5](https://github.com/trycua/cua/compare/sandbox-v0.11.4...sandbox-v0.11.5) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** allow cua-driver 0.51 ([#7781](https://github.com/trycua/cua/issues/7781)) ([1569bea](https://github.com/trycua/cua/commit/1569bea5977d61d38b5f341bb7632cc809e2f464))
+
+## [0.11.4](https://github.com/trycua/cua/compare/sandbox-v0.11.3...sandbox-v0.11.4) (2026-11-14)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** allow cua-driver 0.50 ([#7767](https://github.com/trycua/cua/issues/7767)) ([e31ab77](https://github.com/trycua/cua/commit/e31ab7705de2806bd22492b70867cb5fb767f224))
+
+## [0.11.3](https://github.com/trycua/cua/compare/sandbox-v0.11.2...sandbox-v0.11.3) (2026-11-14)
+
+
+### Bug Fixes
+
+* **core:** upgrade dnspython and the OpenTelemetry stack (CVE-2026-128089, CVE-2026-126360) ([#7699](https://github.com/trycua/cua/issues/7699)) ([79c4a8d](https://github.com/trycua/cua/commit/79c4a8dd7e0de599cd29739f6c04523aca54835c))
+
+## [0.11.2](https://github.com/trycua/cua/compare/sandbox-v0.11.1...sandbox-v0.11.2) (2026-11-13)
+
+
+### Bug Fixes
+
+* **deps:** upgrade pillow to 13.0.0 and soupsieve to 4.1 (CVE-2026-128066, CVE-2026-128067, CVE-2026-126190) ([#7598](https://github.com/trycua/cua/issues/7598)) ([4d14f88](https://github.com/trycua/cua/commit/4d14f88d9482528ea0e9bdf2c7020d002bcd488d))
+
+## [0.11.1](https://github.com/trycua/cua/compare/sandbox-v0.11.0...sandbox-v0.11.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** let the driver extra install Cua Driver 0.48 and 0.49 ([#7588](https://github.com/trycua/cua/issues/7588)) ([db29132](https://github.com/trycua/cua/commit/db29132bcf91da170cd7fd98fe7129db08d80c91))
+
+## [0.11.0](https://github.com/trycua/cua/compare/sandbox-v0.10.2...sandbox-v0.11.0) (2026-11-13)
+
+
+### Features
+
+* **cua:** Windows 11 on Apple silicon built locally, ISO downloaded automatically (QEMU+HVF); Windows 10, Server 2019 and 2025 from an ISO ([#6631](https://github.com/trycua/cua/issues/6631)) ([49bf362](https://github.com/trycua/cua/commit/49bf362196b9dc8b420e11f771969cd6d61a1f8c))
+
+## [0.10.2](https://github.com/trycua/cua/compare/sandbox-v0.10.1...sandbox-v0.10.2) (2026-11-12)
+
+
+### Bug Fixes
+
+* **sandbox:** unpin cua-driver in the driver extra so installs resolve ([#7464](https://github.com/trycua/cua/issues/7464)) ([934d527](https://github.com/trycua/cua/commit/934d527c41320cd17461367f6fe171175eb2b978))
+
+## [0.10.1](https://github.com/trycua/cua/compare/sandbox-v0.10.0...sandbox-v0.10.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **sandbox:** forward time_to_start to the local runtime's readiness budget ([#7304](https://github.com/trycua/cua/issues/7304)) ([6086a10](https://github.com/trycua/cua/commit/6086a10126945c1079b5069a720436aab32a2bf6))
+
+## [0.10.0](https://github.com/trycua/cua/compare/sandbox-v0.9.1...sandbox-v0.10.0) (2026-11-10)
+
+
+### Features
+
+* compat gateways for E2B and Daytona, Hetzner as your own cloud, the elastic pool, cua share and the public relay ([#5778](https://github.com/trycua/cua/issues/5778)) ([d4f3f80](https://github.com/trycua/cua/commit/d4f3f8063d7b30a3b3bda2b4c05c565a9dfcb460))
+* **spaces:** Secure Spaces, child Spaces, conformance, space jobs and the macOS developer-tools image, behind experiments ([#6306](https://github.com/trycua/cua/issues/6306)) ([4715a72](https://github.com/trycua/cua/commit/4715a723a450610cdf77f688776c1fdd40660149))
+
+
+### Bug Fixes
+
+* **sandbox:** the [driver] extra installs the current cua-driver (0.37.0) (CUA-1902) ([#5533](https://github.com/trycua/cua/issues/5533)) ([34f3279](https://github.com/trycua/cua/commit/34f3279247e0e910e4896ee33c499beafdb7ab9a))
+* **sdk:** delete the Fleet SDK, pools and claims from the Rust SDK, cua-sandbox, Cua Bench and the apps (CUA-1836) ([#5488](https://github.com/trycua/cua/issues/5488)) ([348c47c](https://github.com/trycua/cua/commit/348c47cc30b1d222844480838ccc4acf53f7a511))
+* **security:** distrust the compromised eMudhra intermediates in every Cua client (CUA-1948) ([#5622](https://github.com/trycua/cua/issues/5622)) ([149ea51](https://github.com/trycua/cua/commit/149ea51c613cc840c3760dec822c57b7e65df05a))
+* **spaces:** say computer instead of machine (CUA-1863) ([#5508](https://github.com/trycua/cua/issues/5508)) ([5cbe31c](https://github.com/trycua/cua/commit/5cbe31c7109fa70eb596b6bde3b5964449e8676e))
+
+## [0.9.1](https://github.com/trycua/cua/compare/sandbox-v0.9.0...sandbox-v0.9.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* post-launch CI follow-ups ([#4405](https://github.com/trycua/cua/issues/4405)) ([352507b](https://github.com/trycua/cua/commit/352507b6c03162ab286b21d5ed509125cc3daece))
+* lock the cua SDK checkout at 0.3.1 ([#4593](https://github.com/trycua/cua/issues/4593)) ([fcb386f](https://github.com/trycua/cua/commit/fcb386f4f958d1357af31ccb0056376f06d9db37))
+* **python:** cua-sandbox, cua-bench and the playground no longer depend on Fleet; remove cua-train (CUA-1834) ([#5445](https://github.com/trycua/cua/issues/5445)) ([7733289](https://github.com/trycua/cua/commit/773328941ead1b83a616e8b6c5a5ac4851af7114))
+* **sandbox:** report directory types in file listings ([#5175](https://github.com/trycua/cua/issues/5175)) ([1e53b1c](https://github.com/trycua/cua/commit/1e53b1cef43a650ff35a7299c470963244b84ce0))
+* **sandbox:** roll back partially opened tunnels ([#5174](https://github.com/trycua/cua/issues/5174)) ([ca6a0e2](https://github.com/trycua/cua/commit/ca6a0e21050966e8ed6a3404b7ba2843b1cf6878))
+* stop Cua Cloud (on="cloud") with a clear "Cua Cloud has ended" error (CUA-1854) ([#5415](https://github.com/trycua/cua/issues/5415)) ([5d78ec8](https://github.com/trycua/cua/commit/5d78ec8b7705d942a3d260b276bcce76614a634c))
+
+## [0.9.0](https://github.com/trycua/cua/compare/sandbox-v0.8.0...sandbox-v0.9.0) (2026-10-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* **sandbox:** Sandbox.create runs locally unless local=False; the localhost module and the computer_server, http, local and websocket transports are removed.
+
+### Features
+
+* merge updated sdk from cua-staging ([#4397](https://github.com/trycua/cua/issues/4397)) ([9166817](https://github.com/trycua/cua/commit/9166817485ae53f3966935c13878a8196d79a399))
+* **sandbox:** run on the cua SDK, local by default ([#4413](https://github.com/trycua/cua/issues/4413)) ([203cd1e](https://github.com/trycua/cua/commit/203cd1eebd3cc9f8e4706b7af7ab33e9ec578afe))
+
+### Behaviour changes
+
+* **sandbox:** sandboxes are local by default. `Sandbox.create` / `Sandbox.ephemeral` without `on=`/`local=` follow the user default (`CUA_DEFAULT_ON`, else `cua config set default.on cloud`, else local; the built-in local default shows a one-time notice, hidden by `CUA_QUIET_DEFAULT=1`). Pass `on="cloud"`/`local=False` (or `cloud=CloudOptions(...)`, which implies the cloud) for the cloud. For compatibility, omitting both while passing a cloud-only argument (a Fleet `pool`, `warm`, `max_pool_size`, `claim_ttl`, `claim_spec`, `api_key`, ...) still runs in the cloud with a `DeprecationWarning`. `local=True` together with `cloud=`, or `on=` contradicting `local=`, raises `InvalidArgument`. Without cloud credentials, a cloud that came from the default says how to switch back (`cua config set default.on local`).
+* **sandbox:** `Sandbox.create` / `ephemeral` / `sandbox()` take `on=`, `kind=` (`auto`, `container`, `vm`) and `runtime=` as an engine name (local `gvisor`, `runc`, `qemu`, `lume`; cloud `gvisor`, `kubevirt`), validated by the cua SDK: a combination that does not exist raises `InvalidPlacement` (an `InvalidArgument`) listing the valid values. `CUA_DEFAULT_KIND` / `CUA_DEFAULT_RUNTIME` and `default.kind` / `default.runtime` fill unset values when they fit. A `Runtime` object keeps working as before. `SandboxInfo` gains `kind` and `runtime`; `Sandbox.list(location="local"|"cloud")` is the same filter as `local=`.
+* **sandbox:** `Sandbox.suspend` / `resume` / `restart` on a cloud sandbox raise `Unsupported` (a `NotImplementedError`): Fleet cannot suspend a single sandbox. They no longer scale a pool named after the sandbox. With `local` omitted, these and `connect` / `get_info` / `delete` pick the local sandbox of that name when one exists.
+* **sandbox:** `Sandbox.list()` lists local and cloud sandboxes by default (`local=True` / `local=False` filter; `all=` is deprecated), each row with `location`. The cloud part never fails it (silent without credentials, a warning after 5 s or on error) and reads the OS keychain only when the SDK's session marker says a session is stored (for sessions from before this release, run `cua auth status` once). `Sandbox.resume(name)` of a running cloud sandbox reconnects.
+* **sandbox:** `SandboxInfo.location` says where a sandbox runs.
+* **sandbox:** `Image.from_registry(ref)` is literal: `ubuntu:24.04` is Docker Hub's image, never the canonical Linux alias.
+
 ## [0.8.0](https://github.com/trycua/cua/compare/sandbox-v0.7.0...sandbox-v0.8.0) (2026-09-15)
 
 

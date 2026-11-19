@@ -83,7 +83,25 @@ export function setDefaultAgent(agent: string): void {
   saveSettings(settings);
 }
 
+/** Global Cua opt-outs that override cuabot's own opt-in. */
+function globallyOptedOut(): boolean {
+  const norm = (v: string | undefined) => (v ?? '').trim().toLowerCase();
+  const dnt = norm(process.env.DO_NOT_TRACK);
+  if (dnt !== '' && dnt !== '0') return true;
+  const off = new Set(['0', 'false', 'no', 'off']);
+  if (off.has(norm(process.env.CUA_TELEMETRY))) return true;
+  if (off.has(norm(process.env.CUA_TELEMETRY_ENABLED))) return true;
+  if (['1', 'true', 'yes', 'on'].includes(norm(process.env.CUA_TELEMETRY_DISABLED))) return true;
+  return false;
+}
+
+/**
+ * cuabot telemetry (usage events and prompt sharing) is opt-in: off unless the
+ * user chose "Yes" in onboarding or set CUABOT_TELEMETRY=true. DO_NOT_TRACK and
+ * CUA_TELEMETRY=0 always turn it off.
+ */
 export function getTelemetryEnabled(): boolean {
+  if (globallyOptedOut()) return false;
   const settings = loadSettings();
   const envValue = process.env.CUABOT_TELEMETRY?.toLowerCase() === 'true';
   const envFalse = process.env.CUABOT_TELEMETRY?.toLowerCase() === 'false';

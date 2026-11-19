@@ -1,0 +1,13 @@
+[Unit]
+Description=bench-web Chrome CDP on 0.0.0.0:9222 (socat to 127.0.0.1:9223)
+After=network.target
+
+[Service]
+Type=simple
+User=cua
+ExecStart=/opt/bench-web/start-cdp-proxy.sh
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target

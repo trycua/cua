@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cua Spaces MSI fragment (bundle.windows.wix.fragmentPaths): MDM installs
+  preselect the first-run choice with a public property:
+    msiexec /i "Cua Spaces_x64_en-US.msi" /qn CUA_SPACES_MODE=host
+  The value lands in %ProgramData%\Cua\spaces-install-mode ("[spaces] mode=…"),
+  which the app reads on first launch to preselect its onboarding screen. The
+  app still asks before installing anything; nothing here installs a service.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <Property Id="CUA_SPACES_MODE" Secure="yes" />
+    <DirectoryRef Id="TARGETDIR">
+      <Directory Id="CommonAppDataFolder">
+        <Directory Id="CuaProgramDataDir" Name="Cua" />
+      </Directory>
+    </DirectoryRef>
+    <DirectoryRef Id="CuaProgramDataDir">
+      <Component Id="CuaSpacesInstallMode" Guid="3f0d4c2e-7a51-4b8e-9f3a-2c6f1e8d5b47">
+        <Condition><![CDATA[CUA_SPACES_MODE = "host" OR CUA_SPACES_MODE = "client"]]></Condition>
+        <IniFile Id="CuaSpacesInstallModeIni" Action="addLine" Directory="CuaProgramDataDir"
+                 Name="spaces-install-mode" Section="spaces" Key="mode" Value="[CUA_SPACES_MODE]" />
+        <RegistryValue Root="HKLM" Key="Software\Cua\Spaces" Name="InstallMode"
+                       Type="string" Value="[CUA_SPACES_MODE]" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+</Wix>

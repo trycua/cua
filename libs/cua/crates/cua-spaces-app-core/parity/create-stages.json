@@ -1,0 +1,159 @@
+{
+  "name": "create-stages",
+  "about": "A create names the step it is on in its kind of Space's words, and shows the download's bytes, rate and time left: a first macOS Space on another of your machines (its host downloads the 30 GB base image, then prepares the disk, boots macOS and starts Cua inside it), a Linux VM here, and a container. The row never sits at the 1% floor while the host downloads (CUA-1635).",
+  "now": 1800000000000,
+  "rows": [],
+  "creates": [
+    {
+      "type": "start",
+      "id": "pending:mac",
+      "name": "",
+      "os": "macos",
+      "provider": "relay",
+      "now": 1800000001000,
+      "image": "macos",
+      "host": "mac-mini",
+      "hostName": "Mac mini"
+    },
+    {
+      "type": "progress",
+      "id": "pending:mac",
+      "phase": "preparing",
+      "fraction": null,
+      "now": 1800000001200
+    },
+    {
+      "type": "progress",
+      "id": "pending:mac",
+      "phase": "pulling",
+      "fraction": 0.0,
+      "now": 1800000003000,
+      "bytesDone": 0,
+      "bytesTotal": 32212254720
+    },
+    {
+      "type": "progress",
+      "id": "pending:mac",
+      "phase": "pulling",
+      "fraction": 0.41333333333333333,
+      "now": 1800000150000,
+      "bytesDone": 13314398617,
+      "bytesTotal": 32212254720,
+      "bytesPerSecond": 89128960.0
+    },
+    {
+      "type": "tick",
+      "now": 1800000150500
+    },
+    {
+      "type": "progress",
+      "id": "pending:mac",
+      "phase": "pulling",
+      "fraction": 1.0,
+      "now": 1800000362000,
+      "bytesDone": 32212254720,
+      "bytesTotal": 32212254720,
+      "bytesPerSecond": 89128960.0
+    },
+    {
+      "type": "progress",
+      "id": "pending:mac",
+      "phase": "creating",
+      "fraction": null,
+      "now": 1800000363000
+    },
+    {
+      "type": "progress",
+      "id": "pending:mac",
+      "phase": "booting",
+      "fraction": null,
+      "now": 1800000370000
+    },
+    {
+      "type": "tick",
+      "now": 1800000385000
+    },
+    {
+      "type": "progress",
+      "id": "pending:mac",
+      "phase": "waiting_for_services",
+      "fraction": null,
+      "now": 1800000400000
+    },
+    {
+      "type": "progress",
+      "id": "pending:mac",
+      "phase": "connecting",
+      "fraction": null,
+      "now": 1800000430000
+    },
+    {
+      "type": "start",
+      "id": "pending:vm",
+      "name": "",
+      "os": "linux",
+      "provider": "local",
+      "now": 1800000431000,
+      "image": "ghcr.io/trycua/linux:24.04-slim-disk",
+      "kind": "vm",
+      "hostArch": "aarch64"
+    },
+    {
+      "type": "progress",
+      "id": "pending:vm",
+      "phase": "pulling",
+      "fraction": 0.5,
+      "now": 1800000432000,
+      "bytesDone": 251658240,
+      "bytesTotal": 503316480,
+      "bytesPerSecond": 25165824.0
+    },
+    {
+      "type": "progress",
+      "id": "pending:vm",
+      "phase": "creating",
+      "fraction": null,
+      "now": 1800000445000
+    },
+    {
+      "type": "progress",
+      "id": "pending:vm",
+      "phase": "booting",
+      "fraction": null,
+      "now": 1800000446000
+    },
+    {
+      "type": "start",
+      "id": "pending:box",
+      "name": "box",
+      "os": "linux",
+      "provider": "local",
+      "now": 1800000447000,
+      "image": "ghcr.io/trycua/linux:24.04-slim",
+      "kind": "container",
+      "hostArch": "aarch64"
+    },
+    {
+      "type": "progress",
+      "id": "pending:box",
+      "phase": "creating",
+      "fraction": null,
+      "now": 1800000448000
+    },
+    {
+      "type": "progress",
+      "id": "pending:box",
+      "phase": "booting",
+      "fraction": null,
+      "now": 1800000448500
+    },
+    {
+      "type": "progress",
+      "id": "pending:box",
+      "phase": "waiting_for_services",
+      "fraction": null,
+      "now": 1800000449000
+    }
+  ],
+  "refreshed": []
+}

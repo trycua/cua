@@ -1,8 +1,10 @@
 """Integration tests — runtime scenarios.
 
-    pytest tests/test_runtime.py -v -s
+    CUA_RUN_RUNTIME_TESTS=1 pytest tests/test_runtime.py -v -s
 
-Skips automatically when the required runtime isn't available.
+Opt-in: these start real containers and VMs on this machine, so the whole
+module skips unless ``CUA_RUN_RUNTIME_TESTS=1``. Each test also skips when its
+runtime isn't available.
 """
 
 from __future__ import annotations
@@ -15,14 +17,18 @@ from pathlib import Path
 import pytest
 from cua_sandbox import Image, Sandbox
 
-pytestmark = pytest.mark.asyncio
+RUNTIME_TESTS_ENABLED = os.environ.get("CUA_RUN_RUNTIME_TESTS") == "1"
+
+pytestmark = [
+    pytest.mark.asyncio,
+    pytest.mark.skipif(
+        not RUNTIME_TESTS_ENABLED,
+        reason="starts real VMs/containers; set CUA_RUN_RUNTIME_TESTS=1 to run",
+    ),
+]
 
 IS_WINDOWS = platform.system() == "Windows"
 IS_MACOS = platform.system() == "Darwin"
-
-
-def _has_cua_api_key() -> bool:
-    return bool(os.environ.get("CUA_API_KEY"))
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -540,34 +546,6 @@ async def test_auto_runtime_windows():
         assert screenshot[:4] == b"\x89PNG"
 
 
-# ── 11. Cloud sandboxes (local=False) ────────────────────────────────────────
-
-
-@pytest.mark.skipif(not _has_cua_api_key(), reason="CUA_API_KEY not set")
-async def test_cloud_linux_ephemeral():
-    """Cloud sandbox: Sandbox.ephemeral with linux image (local=False)."""
-    async with Sandbox.ephemeral(
-        Image.linux("ubuntu", "24.04"),
-    ) as sb:
-        result = await sb.shell.run("uname -s")
-        assert result.success
-        assert "Linux" in result.stdout
-
-        screenshot = await sb.screenshot()
-        assert screenshot[:4] == b"\x89PNG"
-
-
-@pytest.mark.skipif(not _has_cua_api_key(), reason="CUA_API_KEY not set")
-async def test_cloud_android_ephemeral():
-    """Cloud sandbox: Sandbox.ephemeral with android image (local=False)."""
-    async with Sandbox.ephemeral(
-        Image.android("14"),
-    ) as sb:
-        screenshot = await sb.screenshot()
-        assert screenshot[:4] == b"\x89PNG"
-        assert len(screenshot) > 1000
-
-
 # ── 12. Sandbox.create (persistent) ─────────────────────────────────────────
 
 
@@ -589,20 +567,5 @@ async def test_create_persistent_linux():
 
         screenshot = await sb.screenshot()
         assert screenshot[:4] == b"\x89PNG"
-    finally:
-        await sb.disconnect()
-
-
-@pytest.mark.skipif(not _has_cua_api_key(), reason="CUA_API_KEY not set")
-async def test_create_persistent_cloud_linux():
-    """Sandbox.create provisions a persistent cloud sandbox."""
-    sb = await Sandbox.create(
-        Image.linux("ubuntu", "24.04"),
-        name="cua-test-create-cloud-linux",
-    )
-    try:
-        result = await sb.shell.run("echo persistent")
-        assert result.success
-        assert "persistent" in result.stdout
     finally:
         await sb.disconnect()

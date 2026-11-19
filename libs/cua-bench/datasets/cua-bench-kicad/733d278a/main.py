@@ -1,4 +1,5 @@
 """Auto-generated cb task for KiCad submission 733d278a-fae9-4489-8b54-87385b83cfca."""
+
 from __future__ import annotations
 
 import asyncio
@@ -15,8 +16,8 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='''Modify the discrete BJT-based H-bridge motor driver shown in the attached schematic to improve switching behavior and reduce motor noise. Add a 100 nF ceramic capacitor across the motor terminals to suppress high-frequency switching spikes and electromagnetic interference (EMI). Add two 10 kΩ pull-down resistors on the two control input lines so the bridge defaults to OFF when the inputs are floating. Keep all existing components and connections unchanged.''',
-            metadata={"difficulty": 'medium', "submission_id": _SUBMISSION_ID},
+            description="""Modify the discrete BJT-based H-bridge motor driver shown in the attached schematic to improve switching behavior and reduce motor noise. Add a 100 nF ceramic capacitor across the motor terminals to suppress high-frequency switching spikes and electromagnetic interference (EMI). Add two 10 kΩ pull-down resistors on the two control input lines so the bridge defaults to OFF when the inputs are floating. Keep all existing components and connections unchanged.""",
+            metadata={"difficulty": "medium", "submission_id": _SUBMISSION_ID},
         )
     ]
 
@@ -36,7 +37,9 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession) -> None:
         await session.write_bytes(remote_path, local_path.read_bytes())
 
     try:
-        await session.apps.kicad.launch(project_path='/home/cua/kicad_project/kicad_motor driver_circuit/kicad_motor driver_circuit.kicad_pro')
+        await session.apps.kicad.launch(
+            project_path="/home/cua/kicad_project/kicad_motor driver_circuit/kicad_motor driver_circuit.kicad_pro"
+        )
     except Exception:
         pass
     await asyncio.sleep(5)

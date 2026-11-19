@@ -1,0 +1,72 @@
+# The Omarchy desktop for a sandbox: omarchy-base.packages without the
+# heavyweight or hardware-bound apps (office, video editing, docker, printing,
+# bluetooth, game streaming). OMARCHY_PACKAGES=full installs the whole list.
+# Session and compositor
+hyprland
+hyprland-guiutils
+hyprpicker
+hyprsunset
+quickshell
+uwsm
+sddm
+xdg-desktop-portal-hyprland
+xdg-desktop-portal-gtk
+xdg-terminal-exec
+xorg-xwayland
+# Audio, keyring, network
+pipewire
+pipewire-pulse
+wireplumber
+pamixer
+gnome-keyring
+libsecret
+networkmanager
+power-profiles-daemon
+udiskie
+# Apps Omarchy starts with
+chromium
+foot
+nautilus
+imv
+mpv
+btop
+fastfetch
+# Shell tools
+bash-completion
+bat
+eza
+fd
+fzf
+git
+gum
+jq
+less
+ripgrep
+starship
+tmux
+zoxide
+curl
+sudo
+socat
+# Screenshots, clipboard, text entry
+grim
+slurp
+wl-clipboard
+wtype
+imagemagick
+# Fonts and themes
+noto-fonts
+noto-fonts-emoji
+ttf-jetbrains-mono-nerd-basic
+woff2-font-awesome
+yaru-icon-theme
+gnome-themes-extra
+# Accessibility and the cua fixtures (GTK3 through PyGObject)
+at-spi2-core
+python
+python-gobject
+python-cairo
+gtk3
+iproute2
+# Cua Volume: cua-spacesd mounts it with FUSE at /volume.
+fuse3

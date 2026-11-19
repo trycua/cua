@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! What the operating system is currently drawing as the pointer.
 //!
 //! This is the *system* cursor — the I-beam over a text field, the resize
@@ -47,6 +50,9 @@ pub enum SystemCursorShape {
     Crosshair,
     /// Busy.
     Wait,
+    /// Working in the background; input is still accepted (arrow plus a
+    /// busy indicator).
+    Progress,
     /// The action is not permitted here.
     NotAllowed,
     /// A resize affordance on the given edge or corner.

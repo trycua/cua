@@ -1,6 +1,9 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Win32 agent-cursor overlay — transparent, click-through layered window.
 //!
-//! Matches the C# reference in CuaDriver.Win/Cursor/AgentCursorOverlay.cs:
+//! Design:
 //!
 //! - Extended style: `WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`
 //! - Spans the virtual screen (all monitors).
@@ -31,12 +34,17 @@
 #![allow(non_snake_case, non_upper_case_globals)]
 
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
+use cua_driver_core::cursor_hook::{self, CursorHookEvent};
+
+#[cfg(target_os = "windows")]
+use cursor_overlay::SurfaceFit;
 use cursor_overlay::{
     CursorConfig, CursorKey, KeyedOverlayCommand, MotionConfig, MsgOutcome, OverlayCommand,
-    OverlayMsg, RenderEntry, RenderStateCore, ScreenFrame, ZOrderEnforcer,
+    OverlayMsg, RenderEntry, RenderStateCore, ScreenFrame, SurfaceGeometry, ZOrderEnforcer,
 };
 
 // ── Global channel ────────────────────────────────────────────────────────
@@ -86,7 +94,9 @@ fn arrival_cancel(key: &CursorKey) {
 // ── Keyed render collection ───────────────────────────────────────────────
 
 /// Virtual-screen geometry and timing kept beside the shared keyed render map
-/// (screen-global, written once in `run_overlay_thread`).
+/// (screen-global, written in `run_overlay_thread`, then refitted by the
+/// WM_TIMER handler when the display layout changes; see
+/// [`cursor_overlay::SurfaceFit`]).
 struct WinScreen {
     /// Virtual screen bounds (Win32 DIPs). `virt_x/y` are subtracted from each
     /// cursor's `core.pos` when rendering so the pixmap is laid out in
@@ -102,6 +112,22 @@ struct WinScreen {
 }
 
 impl WinScreen {
+    /// The geometry the layered surface covers (Win32 DIPs, scale 1).
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    fn geometry(&self) -> Option<SurfaceGeometry> {
+        self.frame().map(|frame| SurfaceGeometry::new(frame, 1.0))
+    }
+
+    /// Cover `geometry`. The next composite recreates the surface at the new
+    /// bounds and its first present moves and resizes the layered window.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    fn refit(&mut self, geometry: SurfaceGeometry) {
+        self.virt_x = geometry.frame.x.round() as i32;
+        self.virt_y = geometry.frame.y.round() as i32;
+        self.virt_w = geometry.frame.width.round() as i32;
+        self.virt_h = geometry.frame.height.round() as i32;
+    }
+
     fn frame(&self) -> Option<ScreenFrame> {
         (self.virt_w > 0 && self.virt_h > 0).then(|| {
             ScreenFrame::new(
@@ -116,15 +142,111 @@ impl WinScreen {
 
 type RenderMap = cursor_overlay::RenderMap<RenderState, WinScreen>;
 
+struct PendingCursorEvent {
+    event: CursorHookEvent,
+    live: Arc<AtomicBool>,
+}
+
 /// Drain one message into the shared map, releasing a removed session's
 /// arrival waiter. Returns the commanded key (also recorded as the map's
 /// `last_active`).
-fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
+fn apply_msg(
+    map: &mut RenderMap,
+    msg: OverlayMsg,
+    events: &mut Vec<PendingCursorEvent>,
+) -> Option<CursorKey> {
+    let before = match &msg {
+        OverlayMsg::Cmd(command) if cursor_hook::cursor_hook_enabled() => {
+            map.cursors.get(&command.key).and_then(cursor_sample)
+        }
+        _ => None,
+    };
+    let press = matches!(
+        &msg,
+        OverlayMsg::Cmd(KeyedOverlayCommand {
+            cmd: OverlayCommand::ClickPulse { .. },
+            ..
+        })
+    );
     let outcome = map.apply_msg(msg);
     if let MsgOutcome::Removed { key, .. } = &outcome {
         arrival_cancel(key);
+        events.retain(|pending| &pending.event.cursor_id != key);
+    }
+    if let Some(key) = outcome.applied_key() {
+        queue_cursor_event(key, &map.cursors[key], before, press, events);
     }
     outcome.applied_key().cloned()
+}
+
+/// Observe the hotspot from the applied render state, never a move's target.
+fn cursor_sample(state: &RenderState) -> Option<(f64, f64, bool)> {
+    if !state.core.placed {
+        return None;
+    }
+    let (x, y) =
+        cursor_overlay::pointer_for_anchor(state.core.pos.0, state.core.pos.1, state.core.heading);
+    (x.is_finite() && y.is_finite()).then_some((
+        x,
+        y,
+        state.core.pressed || state.core.click_t.is_some(),
+    ))
+}
+
+fn queue_cursor_event(
+    key: &str,
+    state: &RenderState,
+    before: Option<(f64, f64, bool)>,
+    press: bool,
+    events: &mut Vec<PendingCursorEvent>,
+) {
+    if !cursor_hook::cursor_hook_enabled()
+        || !state.live.load(Ordering::Acquire)
+        || !draws_cursor(key)
+        || cua_driver_core::session::is_session_ended(key)
+    {
+        return;
+    }
+    if let Some((x, y, pressed)) = cursor_sample(state) {
+        // Consecutive click pulses remain separate press events, even at rest.
+        if press || before != Some((x, y, pressed)) {
+            events.push(PendingCursorEvent {
+                event: CursorHookEvent {
+                    cursor_id: key.to_owned(),
+                    x,
+                    y,
+                    pressed,
+                },
+                live: Arc::clone(&state.live),
+            });
+        }
+    }
+}
+
+fn tick_cursor(
+    key: &str,
+    state: &mut RenderState,
+    dt: f64,
+    events: &mut Vec<PendingCursorEvent>,
+) -> bool {
+    let before = cursor_hook::cursor_hook_enabled()
+        .then(|| cursor_sample(state))
+        .flatten();
+    let arrived = state.tick(dt);
+    queue_cursor_event(key, state, before, false, events);
+    arrived
+}
+
+/// Call embedders after releasing RENDER so a hook may inspect cursor state.
+fn publish_cursor_events(events: Vec<PendingCursorEvent>) {
+    for pending in events {
+        if pending.live.load(Ordering::Acquire)
+            && draws_cursor(&pending.event.cursor_id)
+            && !cua_driver_core::session::is_session_ended(&pending.event.cursor_id)
+        {
+            cursor_hook::push_cursor_event(pending.event);
+        }
+    }
 }
 
 pub fn init(cfg: CursorConfig) {
@@ -178,10 +300,24 @@ pub fn init(cfg: CursorConfig) {
                         reduced_motion: selection.reduced_motion,
                     },
                 ),
+                CursorEvent::KeyCombo { session, keys } => {
+                    (session, OverlayCommand::ShowKeyCombo(keys))
+                }
+                CursorEvent::SelectMotion { session, motion } => {
+                    (session, OverlayCommand::ApplyMotion(motion))
+                }
             };
             send_command(session, cmd);
         },
     ));
+}
+
+/// Whether commands for `key` reach the renderer: not the empty no-cursor
+/// key (direct platform calls that bypass lifecycle dispatch), and not a
+/// human-origin session, whose client draws the human's own cursor (see
+/// `cua_driver_core::agent_cursor`).
+pub(crate) fn draws_cursor(key: &str) -> bool {
+    !key.is_empty() && !cua_driver_core::agent_cursor::overlay_suppressed(key)
 }
 
 /// Send a keyed command from any thread (MCP tool, etc.). Non-blocking; drops
@@ -190,7 +326,7 @@ pub fn init(cfg: CursorConfig) {
 /// Empty key = anonymous (no session declared) → no cursor; the command is
 /// dropped so a cursor-less run never paints. See `tools::resolve_cursor_key`.
 pub fn send_command(key: CursorKey, cmd: OverlayCommand) {
-    if key.is_empty() {
+    if !draws_cursor(&key) {
         return;
     }
     if let Some(tx) = CMD_TX.get() {
@@ -268,17 +404,15 @@ pub fn revive_cursor(key: CursorKey) {
     }
 }
 
+/// Read the render map, treating a poisoned or uninitialised map as absent.
+fn read_render<T>(f: impl FnOnce(&RenderMap) -> T) -> Option<T> {
+    RENDER.lock().ok()?.as_ref().map(f)
+}
+
 /// Returns true if the cursor for `key` is currently enabled/visible. A session
 /// with no own cursor yet falls back to the seeded `"default"` cursor.
 pub fn is_enabled(key: &str) -> bool {
-    RENDER
-        .lock()
-        .ok()
-        .and_then(|g| {
-            g.as_ref()
-                .and_then(|m| m.cursor_or_default(key).map(|rs| rs.core.visible))
-        })
-        .unwrap_or(false)
+    read_render(|map| map.is_enabled(key)).unwrap_or(false)
 }
 
 /// Truthful render acknowledgement for lifecycle inspection. Unlike
@@ -292,12 +426,7 @@ pub fn is_visible_for_session(key: &str) -> bool {
             guard
                 .as_ref()
                 .and_then(|map| map.cursors.get(key))
-                .map(|rs| {
-                    rs.core.cfg.enabled
-                        && rs.core.visible
-                        && rs.core.idle_alpha >= 0.004
-                        && rs.core.pos.0 >= -100.0
-                })
+                .map(|rs| rs.core.cfg.enabled && rs.core.is_revealed())
         })
         .unwrap_or(false)
 }
@@ -305,45 +434,16 @@ pub fn is_visible_for_session(key: &str) -> bool {
 /// Snapshot the current motion config for `key`, falling back to the
 /// `"default"` cursor's motion when that key has no own entry yet.
 pub fn current_motion(key: &str) -> MotionConfig {
-    RENDER
-        .lock()
-        .ok()
-        .and_then(|g| {
-            g.as_ref()
-                .and_then(|m| m.cursor_or_default(key).map(|rs| rs.core.motion.clone()))
-        })
-        .unwrap_or_default()
+    read_render(|map| map.motion(key)).unwrap_or_default()
 }
 
-pub fn current_theme_state(
-    key: &str,
-) -> Option<(
-    String,
-    String,
-    String,
-    Option<String>,
-    cursor_overlay::CursorVisualState,
-)> {
-    let guard = RENDER.lock().ok()?;
-    let map = guard.as_ref()?;
-    let state = map.cursor_or_default(key)?;
-    let (id, version, profile, fallback) = state.core.active_theme_metadata();
-    Some((id, version, profile, fallback, state.core.visual.clone()))
+pub fn current_theme_state(key: &str) -> Option<cursor_overlay::CursorThemeState> {
+    read_render(|map| map.theme_state(key)).flatten()
 }
 
-/// Current screen position of the cursor for `key` (the off-screen sentinel
-/// `(-200, -200)` if it has never been placed). A session with no own cursor
-/// yet reports the sentinel so the click path treats it as first-placement.
-pub fn current_position(key: &str) -> (f64, f64) {
-    RENDER
-        .lock()
-        .ok()
-        .and_then(|g| {
-            g.as_ref()
-                .and_then(|m| m.cursors.get(key))
-                .map(|rs| rs.core.pos)
-        })
-        .unwrap_or((-200.0, -200.0))
+/// Current screen position, or `None` for an absent or unplaced cursor.
+pub fn current_position(key: &str) -> Option<(f64, f64)> {
+    read_render(|map| map.placed_position(key)).flatten()
 }
 
 /// Seed a brand-new (sentinel-positioned) cursor at an on-screen start point
@@ -351,13 +451,13 @@ pub fn current_position(key: &str) -> (f64, f64) {
 /// `MoveTo` glides INTO the target instead of silently snapping. No-op when the
 /// cursor is already on-screen or its session already ended. Returns true if a
 /// seed was applied. Mirrors `platform_macos::cursor::overlay::seed_start_*`.
-fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
+fn seed_start_if_unplaced(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
     let mut guard = RENDER.lock().unwrap();
     let Some(map) = guard.as_mut() else {
         return false;
     };
     let frame = map.platform.frame();
-    map.seed_start_if_sentinel(key, target_x, target_y, frame)
+    map.seed_start_if_unplaced(key, target_x, target_y, frame)
 }
 
 /// Animate the overlay cursor for `key` to `(x, y)` and suspend until the
@@ -369,22 +469,29 @@ fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool
 /// - the cursor for `key` is disabled.
 ///
 /// A brand-new cursor still at the off-screen sentinel is first seeded
-/// on-screen via [`seed_start_if_sentinel`] so its FIRST action glides in.
+/// on-screen via [`seed_start_if_unplaced`] so its FIRST action glides in.
 /// Mirrors `platform_macos::cursor::overlay::animate_cursor_to`.
 pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
+    animate_cursor_to_target(key, x, y, None).await;
+}
+
+/// [`animate_cursor_to`] with the targeted element's screen rect
+/// `[x, y, width, height]` in the same space as `x`/`y`, so motion styles can
+/// use Fitts timing and highlight the target. `None` for pixel actions.
+pub async fn animate_cursor_to_target(key: CursorKey, x: f64, y: f64, target: Option<[f64; 4]>) {
     if key.is_empty() {
         return;
     }
     // Seed a sentinel cursor on-screen so the MoveTo below glides instead of
     // being short-circuited.
-    seed_start_if_sentinel(&key, x, y);
+    seed_start_if_unplaced(&key, x, y);
 
     let should_animate = {
         let guard = RENDER.lock().unwrap();
-        match guard.as_ref().and_then(|m| m.cursors.get(&key)) {
-            Some(rs) if rs.core.cfg.enabled && rs.core.pos.0 > -50.0 => true,
-            _ => false,
-        }
+        guard
+            .as_ref()
+            .and_then(|m| m.cursors.get(&key))
+            .is_some_and(|rs| rs.core.animates())
     };
     if !should_animate {
         return;
@@ -404,6 +511,7 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
             // Arrive pointing upper-left (45°) — same convention as macOS /
             // Swift reference (`endAngleDegrees: 45`).
             end_heading_radians: std::f64::consts::FRAC_PI_4,
+            target,
         },
     );
 
@@ -447,12 +555,51 @@ pub fn run_on_thread() {
 
 struct RenderState {
     core: RenderStateCore,
+    live: Arc<AtomicBool>,
+    _session_end_hook: Option<cua_driver_core::session::SessionEndHookRegistration>,
+}
+
+impl Drop for RenderState {
+    fn drop(&mut self) {
+        self.live.store(false, Ordering::Release);
+    }
 }
 
 impl RenderEntry for RenderState {
     fn from_config(cfg: CursorConfig) -> Self {
+        let live = Arc::new(AtomicBool::new(true));
+        let key = cfg.cursor_id.clone();
+        let session_end_hook = (!key.is_empty() && key != "default").then(|| {
+            let ended = Arc::clone(&live);
+            let session = key.clone();
+            // End callbacks do not acquire RENDER. The entry owns this hook,
+            // and queued samples retain only its lifetime flag after removal.
+            cua_driver_core::session::register_scoped_session_end_hook(move |key| {
+                if key == session {
+                    ended.store(false, Ordering::Release);
+                }
+            })
+        });
+        // Register before checking lifecycle so an end cannot escape both.
+        // Retired runtime keys have no live record after tombstones are freed;
+        // queued commands must not create a new publication lifetime for them.
+        let active = if key.starts_with("__cua_runtime_") {
+            cua_driver_core::session::list_session_snapshots_with_prefix(
+                &key,
+                cua_driver_core::session::DEFAULT_SESSION_IDLE_TTL,
+            )
+            .iter()
+            .any(|session| session.runtime_id == key && !session.ending)
+        } else {
+            !cua_driver_core::session::is_session_ended(&key)
+        };
+        if !active {
+            live.store(false, Ordering::Release);
+        }
         RenderState {
             core: RenderStateCore::new(cfg),
+            live,
+            _session_end_hook: session_end_hook,
         }
     }
 
@@ -487,12 +634,12 @@ impl RenderState {
     /// WM_TIMER handler, which compensates for the 0.05 s motion-dt clamp.
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     fn in_idle_countdown(&self) -> bool {
-        self.core.path.is_none()
-            && self.core.spring.is_none()
+        self.core.trajectory.is_none()
             && self.core.click_t.is_none()
+            && self.core.click_age.is_none()
             && self.core.motion.idle_hide_ms > 0.0
             && self.core.visible
-            && self.core.pos.0 >= -100.0
+            && self.core.placed
             && self.core.idle_alpha >= 1.0
     }
 }
@@ -528,6 +675,8 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
                 virt_h,
                 last_tick: Instant::now(),
             };
+            let applied = map.platform.geometry();
+            SURFACE_FIT.with(|fit| *fit.borrow_mut() = SurfaceFit::new(applied));
         }
     }
 
@@ -578,7 +727,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     }
     let hwnd = hwnd.unwrap();
 
-    // Show without activation (mirrors ShowWithoutActivation in C# ref).
+    // Show without activation.
     unsafe {
         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     }
@@ -602,6 +751,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     let _ = Z_ORDER.set(WinZOrderEnforcer {
         hwnd_isize: hwnd.0 as isize,
     });
+    cursor_hook::declare_cursor_hook_emitter();
 
     // Standard Win32 message loop.
     let mut msg = MSG::default();
@@ -724,6 +874,81 @@ impl DirtyRect {
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 const CURSOR_PAD: i32 = cursor_overlay::session_badge::BADGE_MAX_WIDTH as i32 + 12;
 
+/// Window-local region one cursor paints this frame: the cursor/badge
+/// envelope plus its motion effects (trail, glow, magnet target glow, click
+/// ripple), which `paint_cursor` draws into the same surface and which can
+/// reach far past `CURSOR_PAD`. `composite_dirty` keeps this frame's union in
+/// `PREV_DIRTY`, so the next frame clears and re-presents the area an effect
+/// covered after it shrinks or ends. `None` when the cursor paints nothing.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn cursor_dirty_rect(
+    core: &RenderStateCore,
+    virt_x: i32,
+    virt_y: i32,
+    w: i32,
+    h: i32,
+) -> Option<DirtyRect> {
+    // Mirrors paint_cursor's own visibility early-return.
+    if !core.is_revealed() {
+        return None;
+    }
+    let custom_theme = core
+        .theme
+        .as_deref()
+        .is_some_and(|theme| theme.id != cursor_overlay::DEFAULT_THEME_ID);
+    if custom_theme {
+        return DirtyRect {
+            x0: 0,
+            y0: 0,
+            x1: w,
+            y1: h,
+        }
+        .clamped(w, h);
+    }
+    let cx = (core.pos.0 - f64::from(virt_x)).round() as i32;
+    let cy = (core.pos.1 - f64::from(virt_y)).round() as i32;
+    let cursor = DirtyRect {
+        x0: cx - CURSOR_PAD,
+        y0: cy - CURSOR_PAD,
+        x1: cx + CURSOR_PAD,
+        y1: cy + CURSOR_PAD,
+    }
+    .clamped(w, h);
+    let effect = core
+        .effect_bounds()
+        .and_then(|rect| effect_dirty_rect(rect, virt_x, virt_y, w, h));
+    DirtyRect::union(cursor, effect)
+}
+
+/// Convert a global `[x, y, w, h]` effect rect to a clamped window-local
+/// dirty rect, applying the same virtual-screen origin offset `paint_cursor`
+/// uses, with a pixel of antialiasing slack.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn effect_dirty_rect(
+    [x, y, ew, eh]: [f64; 4],
+    virt_x: i32,
+    virt_y: i32,
+    w: i32,
+    h: i32,
+) -> Option<DirtyRect> {
+    if !(x.is_finite() && y.is_finite() && ew.is_finite() && eh.is_finite())
+        || ew <= 0.0
+        || eh <= 0.0
+    {
+        return None;
+    }
+    // Clamp in f64 before the cast so a far off-screen rect cannot saturate.
+    let local_x = |v: f64| (v - f64::from(virt_x)).clamp(-1.0, f64::from(w) + 1.0);
+    let local_y = |v: f64| (v - f64::from(virt_y)).clamp(-1.0, f64::from(h) + 1.0);
+    DirtyRect {
+        x0: local_x(x).floor() as i32 - 1,
+        y0: local_y(y).floor() as i32 - 1,
+        x1: local_x(x + ew).ceil() as i32 + 1,
+        y1: local_y(y + eh).ceil() as i32 + 1,
+    }
+    .clamped(w, h)
+}
+
 #[cfg(target_os = "windows")]
 struct WinSurface {
     pixmap: tiny_skia::Pixmap,
@@ -832,6 +1057,10 @@ impl Drop for WinSurface {
 
 #[cfg(target_os = "windows")]
 thread_local! {
+    /// The geometry the overlay window was last fitted to. Overlay-thread
+    /// only; seeded in `run_overlay_thread`.
+    static SURFACE_FIT: std::cell::RefCell<SurfaceFit> =
+        std::cell::RefCell::new(SurfaceFit::new(None));
     /// The persistent render surface. Overlay-thread only. `None` while the
     /// loop is parked at the IDLE cadence (freed to keep idle memory flat).
     static SURFACE: std::cell::RefCell<Option<WinSurface>> =
@@ -868,33 +1097,10 @@ fn composite_dirty(map: &RenderMap) -> Option<DirtyRect> {
         // (mirrors paint_cursor's own visibility early-return).
         let mut current: Option<DirtyRect> = None;
         for rs in map.cursors.values() {
-            if !rs.core.visible || rs.core.pos.0 < -100.0 || rs.core.idle_alpha < 0.004 {
-                continue;
-            }
-            let cx = (rs.core.pos.0 - screen.virt_x as f64).round() as i32;
-            let cy = (rs.core.pos.1 - screen.virt_y as f64).round() as i32;
-            let custom_theme = rs
-                .core
-                .theme
-                .as_deref()
-                .is_some_and(|theme| theme.id != cursor_overlay::DEFAULT_THEME_ID);
-            let r = if custom_theme {
-                Some(DirtyRect {
-                    x0: 0,
-                    y0: 0,
-                    x1: w,
-                    y1: h,
-                })
-            } else {
-                DirtyRect {
-                    x0: cx - CURSOR_PAD,
-                    y0: cy - CURSOR_PAD,
-                    x1: cx + CURSOR_PAD,
-                    y1: cy + CURSOR_PAD,
-                }
-                .clamped(w, h)
-            };
-            current = DirtyRect::union(current, r);
+            current = DirtyRect::union(
+                current,
+                cursor_dirty_rect(&rs.core, screen.virt_x, screen.virt_y, w, h),
+            );
         }
 
         let prev = PREV_DIRTY.with(std::cell::Cell::get);
@@ -1002,7 +1208,7 @@ unsafe fn present_surface(hwnd: windows::Win32::Foundation::HWND, dirty: DirtyRe
 // static (issue #1808). `TIMER_PERIOD_MS` is the cadence the timer is currently
 // armed at; the WM_TIMER handler flips it based on `RenderMap::needs_frame_tick`.
 const TIMER_ID: usize = 1;
-const TIMER_MS_ACTIVE: u32 = 8; // ~125 Hz, matches the C# reference render rate
+const TIMER_MS_ACTIVE: u32 = 8; // ~125 Hz render rate
 const TIMER_MS_HOVER: u32 = 80; // low-cost hardware-pointer hover sampling
 const TIMER_MS_IDLE: u32 = 250; // slow heartbeat: drain channel, stay responsive
 /// Current armed timer cadence in ms. Compared against the desired cadence each
@@ -1011,6 +1217,27 @@ static TIMER_PERIOD_MS: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(TIMER_MS_ACTIVE);
 
 // ── Window procedure ──────────────────────────────────────────────────────
+
+/// The live virtual-screen bounds (all monitors) in Win32 DIPs.
+#[cfg(target_os = "windows")]
+fn virtual_screen_geometry() -> Option<SurfaceGeometry> {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+        SM_YVIRTUALSCREEN,
+    };
+    let (x, y, w, h) = unsafe {
+        (
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+            GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN),
+        )
+    };
+    Some(SurfaceGeometry::new(
+        ScreenFrame::new(f64::from(x), f64::from(y), f64::from(w), f64::from(h)),
+        1.0,
+    ))
+}
 
 #[cfg(target_os = "windows")]
 unsafe extern "system" fn wnd_proc(
@@ -1085,6 +1312,7 @@ unsafe extern "system" fn wnd_proc(
             // the slow IDLE cadence below.
             let was_active =
                 TIMER_PERIOD_MS.load(std::sync::atomic::Ordering::Relaxed) == TIMER_MS_ACTIVE;
+            let mut cursor_events = Vec::new();
             let (upload, arrived, pinned_wid, needs_tick, needs_hover_poll) = {
                 let mut guard = RENDER.lock().unwrap();
                 if let Some(map) = guard.as_mut() {
@@ -1095,12 +1323,27 @@ unsafe extern "system" fn wnd_proc(
                         if let Some(ref rx) = *rx_guard {
                             while let Ok(m) = rx.try_recv() {
                                 had_msg = true;
-                                apply_msg(map, m);
+                                apply_msg(map, m, &mut cursor_events);
                             }
                         }
                     }
 
                     let now = Instant::now();
+                    // Follow display-layout changes (resolution, monitor
+                    // attach) so screen-coordinate cursors stay on the pointer.
+                    let refit = SURFACE_FIT.with(|fit| {
+                        let mut fit = fit.borrow_mut();
+                        if !fit.due(now) {
+                            return false;
+                        }
+                        match fit.observe(now, virtual_screen_geometry()) {
+                            Some(geometry) => {
+                                map.platform.refit(geometry);
+                                true
+                            }
+                            None => false,
+                        }
+                    });
                     let real_dt = now.duration_since(map.platform.last_tick).as_secs_f64();
                     // Clamped dt for the motion physics: a large gap between
                     // ticks must not teleport an in-flight glide.
@@ -1110,7 +1353,7 @@ unsafe extern "system" fn wnd_proc(
                     // Tick every cursor; record the ones that just arrived.
                     let mut arrived: Vec<CursorKey> = Vec::new();
                     for (k, rs) in map.cursors.iter_mut() {
-                        if rs.tick(dt) {
+                        if tick_cursor(k, rs, dt, &mut cursor_events) {
                             arrived.push(k.clone());
                         }
                         // Idle-countdown wall-clock catch-up (render-gate fix):
@@ -1149,7 +1392,8 @@ unsafe extern "system" fn wnd_proc(
                     // final settle frame as the previous animation winds down
                     // (`was_active && !needs_tick`). A fully-quiescent idle tick
                     // returns `None` here and does no compositing at all.
-                    let should_render = had_msg || hover_changed || needs_tick || was_active;
+                    let should_render =
+                        had_msg || refit || hover_changed || needs_tick || was_active;
 
                     if !should_render {
                         (None, arrived, None, needs_tick, needs_hover_poll)
@@ -1220,6 +1464,8 @@ unsafe extern "system" fn wnd_proc(
                     }
                 }
             }
+
+            publish_cursor_events(cursor_events);
 
             // Fire arrival oneshots for cursors whose path just ended — unblocks
             // each session's `animate_cursor_to(...).await` so the click action
@@ -1497,6 +1743,41 @@ fn set_capture_excluded(_hwnd_isize: isize, _excluded: bool) -> Result<(), Strin
 mod tests {
     use super::*;
 
+    /// A human-origin session (a Cua Spaces viewer's relayed input) never
+    /// reaches the renderer; an agent's session does. The rule itself lives
+    /// in `cua_driver_core::agent_cursor`.
+    #[test]
+    fn human_origin_sessions_draw_no_agent_cursor() {
+        use cua_driver_core::agent_cursor::{set_input_origin, InputOrigin};
+        let human = "overlay-test-human-origin-session";
+        assert!(draws_cursor(human));
+        set_input_origin(human, InputOrigin::Human);
+        assert!(!draws_cursor(human));
+        assert!(draws_cursor("overlay-test-agent-session"));
+        assert!(!draws_cursor(""));
+        set_input_origin(human, InputOrigin::Agent);
+        assert!(draws_cursor(human));
+    }
+
+    /// Adapter half of the shared surface-fit contract: a refit moves the
+    /// virtual-screen origin and size the composite lays cursors out against.
+    #[test]
+    fn refit_follows_a_reconfigured_virtual_screen() {
+        let mut map = empty_map();
+        let grown = SurfaceGeometry::new(ScreenFrame::new(-1440.0, -120.0, 3360.0, 1200.0), 1.0);
+        map.platform.refit(grown);
+        assert_eq!(map.platform.geometry(), Some(grown));
+        assert_eq!(
+            (
+                map.platform.virt_x,
+                map.platform.virt_y,
+                map.platform.virt_w,
+                map.platform.virt_h
+            ),
+            (-1440, -120, 3360, 1200)
+        );
+    }
+
     fn empty_map() -> RenderMap {
         RenderMap::new(
             CursorConfig::default(),
@@ -1517,6 +1798,7 @@ mod tests {
                 x,
                 y,
                 end_heading_radians: 0.0,
+                target: None,
             },
         })
     }
@@ -1525,11 +1807,264 @@ mod tests {
         for _ in 0..2000 {
             map.tick_all(0.016);
             if map.cursors.values().all(|rs| {
-                rs.core.path.is_none() && rs.core.spring.is_none() && rs.core.click_t.is_none()
+                rs.core.trajectory.is_none()
+                    && rs.core.click_t.is_none()
+                    && rs.core.click_age.is_none()
             }) {
                 break;
             }
         }
+    }
+
+    #[test]
+    fn cursor_hook_observes_applied_motion_press_edges_and_session_boundaries() {
+        use cua_driver_core::agent_cursor::{set_input_origin, InputOrigin};
+        use std::sync::Arc;
+
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&received);
+        assert!(cursor_hook::set_cursor_hook_fn(move |event| {
+            // The observer may inspect the overlay; publication must not hold RENDER.
+            assert!(RENDER.try_lock().is_ok());
+            sink.lock().unwrap().push(event);
+        }));
+        let mut map = empty_map();
+        let mut events = Vec::new();
+        let key = "windows-cursor-hook-agent";
+        let command = |key: &str, cmd| {
+            OverlayMsg::Cmd(KeyedOverlayCommand {
+                key: key.to_owned(),
+                cmd,
+            })
+        };
+
+        // Seed near the first target. MoveTo plans a path; it does not report
+        // the endpoint until the real render state reaches that endpoint.
+        map.seed_start_if_unplaced(key, 80.0, 70.0, map.platform.frame());
+        let state = map.cursors.get_mut(key).unwrap();
+        state.core.visual.reduced_motion = cursor_overlay::ReducedMotion::Off;
+        state.core.motion.glide_duration_ms = 500.0;
+        apply_msg(&mut map, move_msg(key, 80.0, 70.0), &mut events);
+        let start = cursor_sample(&map.cursors[key]).unwrap();
+        assert_ne!((start.0, start.1), (80.0, 70.0));
+        tick_cursor(key, map.cursors.get_mut(key).unwrap(), 0.016, &mut events);
+        let moved = &events.last().unwrap().event;
+        let rendered = cursor_sample(&map.cursors[key]).unwrap();
+        assert_eq!((moved.x, moved.y, moved.pressed), rendered);
+        assert_ne!((moved.x, moved.y), (start.0, start.1));
+        assert_ne!((moved.x, moved.y), (80.0, 70.0));
+
+        apply_msg(
+            &mut map,
+            command(key, OverlayCommand::ClickPulse { x: 80.0, y: 70.0 }),
+            &mut events,
+        );
+        assert!(events.last().unwrap().event.pressed);
+        let presses = events
+            .iter()
+            .filter(|pending| pending.event.pressed)
+            .count();
+        apply_msg(
+            &mut map,
+            command(key, OverlayCommand::ClickPulse { x: 80.0, y: 70.0 }),
+            &mut events,
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|pending| pending.event.pressed)
+                .count(),
+            presses + 1
+        );
+        for _ in 0..200 {
+            tick_cursor(key, map.cursors.get_mut(key).unwrap(), 0.016, &mut events);
+        }
+        assert!(
+            !events.last().unwrap().event.pressed,
+            "click pulse releases"
+        );
+
+        apply_msg(
+            &mut map,
+            command(key, OverlayCommand::SetPressed(true)),
+            &mut events,
+        );
+        assert!(events.last().unwrap().event.pressed);
+        apply_msg(
+            &mut map,
+            command(
+                key,
+                OverlayCommand::SnapTo {
+                    x: -900.0,
+                    y: 200.0,
+                    heading_radians: Some(0.0),
+                },
+            ),
+            &mut events,
+        );
+        assert!(
+            events.last().unwrap().event.pressed,
+            "drag motion keeps the hold"
+        );
+        let hotspot = cursor_overlay::pointer_for_anchor(-900.0, 200.0, 0.0);
+        assert_eq!(
+            (
+                events.last().unwrap().event.x,
+                events.last().unwrap().event.y
+            ),
+            hotspot
+        );
+        apply_msg(
+            &mut map,
+            command(key, OverlayCommand::SetPressed(false)),
+            &mut events,
+        );
+        assert!(!events.last().unwrap().event.pressed);
+        publish_cursor_events(std::mem::take(&mut events));
+        assert!(!received.lock().unwrap().is_empty());
+
+        let human = "windows-cursor-hook-human";
+        set_input_origin(human, InputOrigin::Human);
+        apply_msg(
+            &mut map,
+            command(human, OverlayCommand::ClickPulse { x: 4.0, y: 5.0 }),
+            &mut events,
+        );
+        apply_msg(
+            &mut map,
+            command("", OverlayCommand::ClickPulse { x: 4.0, y: 5.0 }),
+            &mut events,
+        );
+        assert!(events.is_empty());
+        set_input_origin(human, InputOrigin::Agent);
+
+        apply_msg(
+            &mut map,
+            command(key, OverlayCommand::ClickPulse { x: 4.0, y: 5.0 }),
+            &mut events,
+        );
+        assert!(!events.is_empty());
+        apply_msg(&mut map, OverlayMsg::Remove(key.to_owned()), &mut events);
+        assert!(
+            events.is_empty(),
+            "removal discards this frame's queued samples"
+        );
+        apply_msg(
+            &mut map,
+            command(key, OverlayCommand::ClickPulse { x: 4.0, y: 5.0 }),
+            &mut events,
+        );
+        assert!(
+            events.is_empty(),
+            "late commands cannot resurrect a removed cursor"
+        );
+
+        let ending = "windows-cursor-hook-ending";
+        apply_msg(
+            &mut map,
+            command(ending, OverlayCommand::ClickPulse { x: 4.0, y: 5.0 }),
+            &mut events,
+        );
+        assert_eq!(events.len(), 1);
+        cua_driver_core::session::fire_session_end(ending);
+        let count = received.lock().unwrap().len();
+        publish_cursor_events(std::mem::take(&mut events));
+        assert_eq!(
+            received.lock().unwrap().len(),
+            count,
+            "session end wins before publication"
+        );
+        apply_msg(
+            &mut map,
+            command(ending, OverlayCommand::ClickPulse { x: 4.0, y: 5.0 }),
+            &mut events,
+        );
+        assert!(events.is_empty());
+
+        let prefix = "__cua_runtime_windows-cursor-hook-retirement:";
+        let retired = format!("{prefix}named");
+        cua_driver_core::session::activate_session(
+            &retired,
+            Some("named"),
+            prefix,
+            false,
+            cua_driver_core::session::SessionTransport::Daemon,
+            cua_driver_core::session::SessionClientKind::Direct,
+        )
+        .unwrap();
+        apply_msg(
+            &mut map,
+            command(&retired, OverlayCommand::ClickPulse { x: 4.0, y: 5.0 }),
+            &mut events,
+        );
+        assert_eq!(events.len(), 1);
+        cua_driver_core::session::fire_session_end(&retired);
+        assert_eq!(
+            cua_driver_core::session::forget_ended_sessions_with_prefix(prefix),
+            1
+        );
+        let count = received.lock().unwrap().len();
+        publish_cursor_events(std::mem::take(&mut events));
+        assert_eq!(
+            received.lock().unwrap().len(),
+            count,
+            "runtime retirement invalidates samples after core tombstones are forgotten"
+        );
+
+        apply_msg(
+            &mut map,
+            command(&retired, OverlayCommand::ClickPulse { x: 9.0, y: 8.0 }),
+            &mut events,
+        );
+        assert!(
+            events.is_empty(),
+            "retired entries cannot queue new samples"
+        );
+        apply_msg(&mut map, OverlayMsg::Remove(retired.clone()), &mut events);
+        apply_msg(&mut map, OverlayMsg::Revive(retired.clone()), &mut events);
+        apply_msg(
+            &mut map,
+            command(&retired, OverlayCommand::ClickPulse { x: 9.0, y: 8.0 }),
+            &mut events,
+        );
+        assert!(
+            events.is_empty(),
+            "queued commands cannot recreate a retired runtime's publication lifetime"
+        );
+
+        let revived = "windows-cursor-hook-revived";
+        apply_msg(
+            &mut map,
+            command(revived, OverlayCommand::ClickPulse { x: 4.0, y: 5.0 }),
+            &mut events,
+        );
+        let stale = std::mem::take(&mut events);
+        cua_driver_core::session::fire_session_end(revived);
+        assert!(cua_driver_core::session::revive_session(revived));
+        apply_msg(
+            &mut map,
+            OverlayMsg::Remove(revived.to_owned()),
+            &mut events,
+        );
+        apply_msg(
+            &mut map,
+            OverlayMsg::Revive(revived.to_owned()),
+            &mut events,
+        );
+        apply_msg(
+            &mut map,
+            command(revived, OverlayCommand::ClickPulse { x: 9.0, y: 8.0 }),
+            &mut events,
+        );
+        assert_eq!(
+            events.len(),
+            1,
+            "revival creates a new publication lifetime"
+        );
+        publish_cursor_events(stale);
+        assert_eq!(received.lock().unwrap().len(), count);
+        publish_cursor_events(std::mem::take(&mut events));
+        assert_eq!(received.lock().unwrap().len(), count + 1);
     }
 
     #[test]
@@ -1541,13 +2076,66 @@ mod tests {
     }
 
     #[test]
+    fn effect_area_widens_the_dirty_rect_in_window_local_coordinates() {
+        let mut map = empty_map();
+        map.platform.virt_x = -1920;
+        map.platform.virt_w = 3840;
+        map.platform.virt_h = 1080;
+        let core = &mut map.cursors.get_mut("default").unwrap().core;
+        core.pos = (-1000.0, 500.0);
+        core.placed = true;
+        let (vx, vy, w, h) = (-1920, 0, 3840, 1080);
+
+        let cursor_only = cursor_dirty_rect(core, vx, vy, w, h).unwrap();
+        assert_eq!(
+            cursor_only,
+            DirtyRect {
+                x0: 920 - CURSOR_PAD,
+                y0: 500 - CURSOR_PAD,
+                x1: 920 + CURSOR_PAD,
+                y1: 500 + CURSOR_PAD,
+            }
+        );
+
+        // A trail behind the cursor, in global coordinates left of the
+        // primary display, lands at its window-local spot with 1 px slack.
+        assert_eq!(
+            effect_dirty_rect([-1500.0, 100.0, 520.5, 420.0], vx, vy, w, h),
+            Some(DirtyRect {
+                x0: 419,
+                y0: 99,
+                x1: 942,
+                y1: 521,
+            })
+        );
+        // Off-surface, degenerate, and non-finite rects clamp or vanish.
+        assert_eq!(
+            effect_dirty_rect([-5000.0, -50.0, 3200.0, 100.0], vx, vy, w, h),
+            Some(DirtyRect {
+                x0: 0,
+                y0: 0,
+                x1: 121,
+                y1: 51,
+            })
+        );
+        assert_eq!(effect_dirty_rect([0.0, 0.0, 0.0, 10.0], vx, vy, w, h), None);
+        assert_eq!(
+            effect_dirty_rect([f64::NAN, 0.0, 1.0, 1.0], vx, vy, w, h),
+            None
+        );
+
+        core.visible = false;
+        assert_eq!(cursor_dirty_rect(core, vx, vy, w, h), None);
+    }
+
+    #[test]
     fn seed_clamps_into_a_virtual_screen_left_of_the_primary() {
         let mut map = empty_map();
         map.platform.virt_x = -1920;
         map.platform.virt_w = 3840;
         map.platform.virt_h = 1080;
         let frame = map.platform.frame();
-        assert!(map.seed_start_if_sentinel("sessA", -1800.0, 500.0, frame));
+        assert!(map.seed_start_if_unplaced("sessA", -1800.0, 500.0, frame));
         assert_eq!(map.cursors["sessA"].core.pos, (-1918.0, 360.0));
 
         map.platform.virt_w = 0;
@@ -1557,27 +2145,35 @@ mod tests {
     #[test]
     fn removal_through_the_adapter_resolves_no_pin_key() {
         let mut map = empty_map();
+        let mut events = Vec::new();
         assert_eq!(
-            apply_msg(&mut map, move_msg("sessA", 10.0, 10.0)).as_deref(),
+            apply_msg(&mut map, move_msg("sessA", 10.0, 10.0), &mut events).as_deref(),
             Some("sessA")
         );
         assert_eq!(
-            apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned())),
+            apply_msg(
+                &mut map,
+                OverlayMsg::Remove("sessA".to_owned()),
+                &mut events
+            ),
             None
         );
         assert_eq!(map.last_active, None);
     }
 
     // Before the shared predicate, a landed Windows cursor dropped to the IDLE
-    // cadence for the whole idle-hide delay and its resting bob froze.
+    // cadence for the whole idle-hide delay and its resting bob froze. The bob
+    // is `cursor.float`, on by default.
     #[test]
     fn resting_cursor_keeps_the_active_cadence_for_its_bob() {
         let mut map = empty_map();
-        map.seed_start_if_sentinel("sessA", 60.0, 60.0, map.platform.frame());
-        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
+        map.seed_start_if_unplaced("sessA", 60.0, 60.0, map.platform.frame());
+        map.cursors.get_mut("sessA").unwrap().core.options_override =
+            Some(cursor_overlay::CursorOptions::default());
+        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0), &mut Vec::new());
         settle(&mut map);
         let rs = &map.cursors["sessA"];
-        assert!(rs.core.path.is_none() && rs.core.spring.is_none());
+        assert!(rs.core.trajectory.is_none());
         assert_eq!(rs.core.idle_alpha, 1.0);
         assert!(rs.core.has_resting_motion());
         assert!(map.needs_frame_tick(), "the resting bob needs frames");
@@ -1586,14 +2182,14 @@ mod tests {
     #[test]
     fn reduced_motion_countdown_parks_at_idle_cadence_but_fade_ticks() {
         let mut map = empty_map();
-        map.seed_start_if_sentinel("sessA", 60.0, 60.0, map.platform.frame());
+        map.seed_start_if_unplaced("sessA", 60.0, 60.0, map.platform.frame());
         map.cursors
             .get_mut("sessA")
             .unwrap()
             .core
             .visual
             .reduced_motion = cursor_overlay::ReducedMotion::On;
-        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
+        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0), &mut Vec::new());
         for _ in 0..2000 {
             map.tick_all(0.016);
             if !map.needs_frame_tick() {
@@ -1605,10 +2201,16 @@ mod tests {
         // cannot change, so it must NOT demand frame ticks (the render-gate
         // fix), but it must still be ticked for wall-clock accrual.
         let rs = &map.cursors["sessA"];
-        assert!(rs.core.path.is_none() && rs.core.spring.is_none());
+        assert!(rs.core.trajectory.is_none());
         assert_eq!(rs.core.idle_alpha, 1.0);
         assert!(!map.needs_frame_tick());
         assert!(rs.in_idle_countdown());
+        let rs = map.cursors.get_mut("sessA").unwrap();
+        rs.core.pos = (-200.0, -200.0);
+        assert!(rs.in_idle_countdown());
+        rs.core.placed = false;
+        assert!(!rs.in_idle_countdown());
+        rs.core.placed = true;
 
         // The fade animates pixels, so frame ticks return until alpha ~0.
         let rs = map.cursors.get_mut("sessA").unwrap();

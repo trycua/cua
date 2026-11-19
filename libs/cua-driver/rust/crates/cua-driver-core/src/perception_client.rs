@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Bounded, single-use IPC client for the optional perception worker.
 
 pub mod containment;
@@ -23,7 +26,16 @@ const PROTOCOL_VERSION: &str = "cua-perception/1";
 // A default-registry capture expands to four base64 bytes per three PNG bytes.
 // Leave a fixed envelope for the bounded request metadata and capture ID.
 const DEFAULT_MAX_FRAME_BYTES: usize =
-    ((crate::capture_registry::DEFAULT_MAX_CAPTURE_BYTES + 2) / 3) * 4 + 64 * 1024;
+    crate::capture_registry::DEFAULT_MAX_CAPTURE_BYTES.div_ceil(3) * 4 + 64 * 1024;
+
+/// The capture a warm worker parses, passed as one value.
+#[derive(Clone, Copy)]
+struct WarmFrame<'a> {
+    capture_id: &'a str,
+    width: u32,
+    height: u32,
+    png_bytes: &'a [u8],
+}
 
 /// Signed extension identity the launched worker must echo in every result.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -128,7 +140,7 @@ impl PerceptionWorkerConfig {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn with_test_containment(
         mut self,
         containment: containment::ContainmentLimits,
@@ -312,10 +324,12 @@ impl PerceptionClient {
                 .parse_warm(
                     config,
                     policy,
-                    capture_id,
-                    width,
-                    height,
-                    png_bytes,
+                    WarmFrame {
+                        capture_id,
+                        width,
+                        height,
+                        png_bytes,
+                    },
                     cancellation,
                 )
                 .await;
@@ -363,12 +377,15 @@ impl PerceptionClient {
         &self,
         config: &Arc<PerceptionWorkerConfig>,
         policy: WarmWorkerPolicy,
-        capture_id: &str,
-        width: u32,
-        height: u32,
-        png_bytes: &[u8],
+        frame: WarmFrame<'_>,
         cancellation: &PerceptionCancellation,
     ) -> Result<Value, VisualParseError> {
+        let WarmFrame {
+            capture_id,
+            width,
+            height,
+            png_bytes,
+        } = frame;
         let epoch = self.state.cancellation_epoch.load(Ordering::Acquire);
         let mut slot = tokio::select! {
             _ = cancellation.cancelled() => return Err(cancelled_error()),
@@ -450,9 +467,16 @@ pub trait PerceptionClientResolver: Send + Sync + 'static {
     fn fingerprint(&self) -> String;
 
     /// Fully verify the installed extension and build its client. A missing or
-    /// unusable installation yields [`PerceptionClient::unavailable`].
-    fn resolve(&self) -> PerceptionClient;
+    /// unusable installation yields [`PerceptionClient::unavailable`], which is
+    /// kept until the fingerprint changes. [`ResolutionDeferred`] means the
+    /// state could not be read right now and the next request resolves again.
+    fn resolve(&self) -> Result<PerceptionClient, ResolutionDeferred>;
 }
+
+/// The installation could not be inspected now, for example because another
+/// command holds the extension lock without changing the fingerprint.
+#[derive(Debug)]
+pub struct ResolutionDeferred;
 
 /// The perception client a registered `parse_visual_regions` tool uses.
 ///
@@ -589,7 +613,9 @@ impl LivePerceptionClient {
         }
         // The fingerprint is sampled before verification, so a change racing
         // with resolution is observed again by the next request.
-        let client = self.resolver.resolve();
+        let Ok(client) = self.resolver.resolve() else {
+            return PerceptionClient::unavailable();
+        };
         let mut state = self.lock_state();
         if let Some((_, replaced)) = state.current.replace((fingerprint, client.clone())) {
             replaced.state.drop_idle_worker();
@@ -1143,6 +1169,10 @@ fn fixture_python_config_from(
     #[cfg(target_os = "macos")]
     let candidates = [
         "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+        // A Mac with only the Command Line Tools: run their interpreter
+        // directly, since the `/usr/bin/python3` shim needs `xcrun`, which
+        // the sandbox denies.
+        "/Library/Developer/CommandLineTools/usr/bin/python3",
         "/usr/bin/python3",
         "/usr/local/bin/python3",
     ];
@@ -1186,6 +1216,10 @@ fn macos_fixture_executable_candidates(interpreter: &std::path::Path) -> Vec<Pat
         PathBuf::from("/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9"),
         PathBuf::from("/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Python3"),
         PathBuf::from("/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"),
+        PathBuf::from("/Library/Developer/CommandLineTools/usr/bin/python3"),
+        PathBuf::from("/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9"),
+        PathBuf::from("/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Python3"),
+        PathBuf::from("/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"),
     ]
 }
 
@@ -1791,7 +1825,8 @@ write_frame({'protocol':'cua-perception/1','request_id':request['request_id'],'s
             .unwrap();
         let secret = evidence.path().join("credentials");
         std::fs::write(&secret, b"token").unwrap();
-        let socket = evidence.path().join("desktop.sock");
+        let socket_directory = tempfile::tempdir_in("/tmp").unwrap();
+        let socket = socket_directory.path().join("desktop.sock");
         let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
         let targets = serde_json::json!({
             "secret": secret.display().to_string(),
@@ -1925,7 +1960,7 @@ write_frame({'protocol':'cua-perception/1','request_id':request['request_id'],'s
     #[test]
     fn default_frame_limit_covers_the_default_capture_registry_limit() {
         let encoded_capture_bytes =
-            ((crate::capture_registry::DEFAULT_MAX_CAPTURE_BYTES + 2) / 3) * 4;
+            crate::capture_registry::DEFAULT_MAX_CAPTURE_BYTES.div_ceil(3) * 4;
         assert!(DEFAULT_MAX_FRAME_BYTES >= encoded_capture_bytes + 64 * 1024);
     }
 
@@ -2041,8 +2076,8 @@ write_frame({'protocol':'cua-perception/1','request_id':request['request_id'],'s
             self.0.lock().unwrap().0.clone()
         }
 
-        fn resolve(&self) -> PerceptionClient {
-            self.0.lock().unwrap().1.clone()
+        fn resolve(&self) -> Result<PerceptionClient, ResolutionDeferred> {
+            Ok(self.0.lock().unwrap().1.clone())
         }
     }
 

@@ -1,9 +1,9 @@
 # Typed Driver envelopes over MCP
 
-This opt-in candidate implements the [accepted RFC 2512 transport addendum](../../../rfcs/2512-mcp-envelope-carrier.md).
-It is not a released SDK feature or a qualification of an existing Fleet image.
+This opt-in candidate implements the [accepted RFC 2512 transport addendum](../../../docs/rfcs/2512-mcp-envelope-carrier.md).
+It is not a released SDK feature or a qualification of an existing guest image.
 The extension carries the canonical Driver envelopes through an existing MCP
-transport. It does not replace computer-server, add agent tools, or open a port.
+transport. It does not replace cua-spacesd, add agent tools, or open a port.
 
 ## Runtime ownership and opt-in
 
@@ -81,8 +81,8 @@ EOF, output failure, or task cancellation invalidates owned receivers before
 aborting transport work. Closing a proxy stream does not shut down a shared
 daemon. Direct stdio still shuts down its owned runtime. Interrupted native
 effects can outlive the request: cancellation is not rollback, and unknown
-completion remains unknown. Closing the MCP HTTP session is not Fleet claim or
-pool cleanup.
+completion remains unknown. Closing the MCP HTTP session is not guest resource
+cleanup.
 
 ## Verification and release gate
 
@@ -96,7 +96,7 @@ cargo test -p cua-driver --bin cua-driver proxy --locked
 
 Before image enablement, separately prove the generated SDK carrier, real
 Linux/Windows guest effects, concurrent session isolation, cancellation,
-replacement, computer-server compatibility, and owned-resource cleanup. A
+replacement, cua-spacesd compatibility, and owned-resource cleanup. A
 successful wrapper handshake or these headless tests do not prove desktop
 behavior. Keep existing images and connection defaults unchanged until that
 qualification and the separate rollout approval are complete.

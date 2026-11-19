@@ -1,0 +1,38 @@
+[
+  {
+    "arch": "amd64",
+    "lane": "qemu",
+    "variant": "containerdisk",
+    "status": "pass"
+  },
+  {
+    "arch": "amd64",
+    "lane": "qemu-claim-secrets",
+    "variant": "containerdisk",
+    "status": "pass"
+  },
+  {
+    "arch": "amd64",
+    "lane": "runc",
+    "variant": "rootfs",
+    "status": "pass"
+  },
+  {
+    "arch": "amd64",
+    "lane": "runsc",
+    "variant": "rootfs",
+    "status": "pass"
+  },
+  {
+    "arch": "arm64",
+    "lane": "runc",
+    "variant": "rootfs",
+    "status": "pass"
+  },
+  {
+    "arch": "arm64",
+    "lane": "runsc",
+    "variant": "rootfs",
+    "status": "pass"
+  }
+]

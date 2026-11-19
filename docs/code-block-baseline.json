@@ -1,0 +1,5 @@
+{
+ "$comment": "Docs code blocks that predate the disposition rule (see tests/e2e/cua-sdk/docs/extract.py). This list may only shrink: decide a block (test=, skip= or output), then run extract.py --update-baseline.",
+ "count": 0,
+ "blocks": []
+}

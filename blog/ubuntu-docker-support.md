@@ -2,6 +2,8 @@
 
 _Published Aug 26, 2025 by Francesco Bonacci_
 
+> Update, October 2026: Cua Cloud (Fleets) ended on 18 October 2026. This post describes it as it was. See [what changed](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended).
+
 Today we’re shipping **Ubuntu Docker support** in Cua. You get a full Linux desktop inside a Docker container, viewable right in your browser—no VM spin-up, no extra clients. It behaves the same on macOS, Windows, and Linux.
 
 <img src="./assets/docker-ubuntu-support.png" alt="Cua + KasmVNC Ubuntu container desktop">

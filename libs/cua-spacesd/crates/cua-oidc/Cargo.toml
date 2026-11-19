@@ -1,0 +1,47 @@
+[package]
+name = "cua-oidc"
+description = "Cua OIDC issuer: short-lived tokens that a customer's AWS, Google Cloud or Azure account trusts, so no cloud key is ever stored (server only)"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+# Sign with an AWS KMS asymmetric key (the deployed issuer). Off by
+# default so tests and self-hosted issuers (a PKCS#8 key file) need no AWS
+# SDK.
+kms = ["dep:aws-config", "dep:aws-sdk-kms"]
+
+[dependencies]
+async-trait = "0.1"
+axum = "0.8"
+base64.workspace = true
+clap.workspace = true
+data-encoding = "2"
+hex.workspace = true
+hmac.workspace = true
+# Keycloak access-token validation (JWKS), like cua-relay.
+jsonwebtoken = "9"
+native-tls.workspace = true
+postgres-native-tls = "0.5"
+rand.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# RS256 file signing (PKCS#8 RSA) and ES256 device-proof checks.
+ring = "0.17"
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+tokio.workspace = true
+tokio-postgres = "0.7"
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["json"] }
+url.workspace = true
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"], optional = true }
+aws-sdk-kms = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"], optional = true }
+
+[dev-dependencies]
+serde_yaml = "0.9"
+tempfile.workspace = true

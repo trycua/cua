@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Install and run the canonical macOS GUI matrix inside a disposable Lume clone.
 set -euo pipefail
+# macOS shells default to 256 open files, too few for the cua-spaces test binaries (see scripts/ci/tests/test_nofile_limit.py).
+[ "$(ulimit -Sn)" = unlimited ] || [ "$(ulimit -Sn)" -ge 10240 ] || ulimit -Sn 10240 2>/dev/null || ulimit -Sn "$(ulimit -Hn)" 2>/dev/null || true # nofile-limit
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # A copied runner may target a clean, exact source tree during release certification.
@@ -67,7 +69,9 @@ that keeps failing, still fails the run.
 --retry-harness names the harness that owns the retried cell and must match the
 failing row. --retry-attempts bounds the retries (1-3, default 1). --retry-only
 skips the full matrix and runs just the selection, starting and verifying the
-unrestricted worker daemon first.
+unrestricted worker daemon first. AppKit cells require --retry-only and use
+scripts/ci/macos/appkit-cells.tsv; use --retry-attempts 1 for focused development.
+A selected-cell pass is not full-matrix certification.
 EOF
 }
 
@@ -150,7 +154,17 @@ validate_arguments() {
     return 2
   fi
 
-  if [[ "${RETRY_CELL}" == macos-swiftui-* ]]; then
+  if [[ "${RETRY_CELL}" == macos-appkit-* ]]; then
+    if [[ "${RETRY_ONLY}" != 1 || ( -n "${RETRY_HARNESS}" && "${RETRY_HARNESS}" != appkit ) ]]; then
+      echo "AppKit selection requires --retry-only and the appkit harness" >&2
+      return 2
+    fi
+    RETRY_HARNESS=appkit
+    RETRY_INTERNAL_LANE=native
+  elif [[ "${RETRY_HARNESS}" == appkit ]]; then
+    echo "the appkit harness requires a macos-appkit-* retry cell" >&2
+    return 2
+  elif [[ "${RETRY_CELL}" == macos-swiftui-* ]]; then
     if [[ -n "${RETRY_HARNESS}" && "${RETRY_HARNESS}" != swiftui ]]; then
       echo "${RETRY_CELL} belongs to the swiftui harness, not ${RETRY_HARNESS}" >&2
       return 2
@@ -186,6 +200,35 @@ output_contains() {
     return 1
   fi
   [[ "${CAPTURED_OUTPUT}" == *"${needle}"* ]]
+}
+
+require_golden_image_dependencies() {
+  for command_name in cargo codesign ffmpeg ffprobe jq node npm osascript python3 security xcrun; do
+    command -v "${command_name}" >/dev/null 2>&1 || {
+      echo "Missing golden-image dependency: ${command_name}" >&2
+      return 2
+    }
+  done
+}
+
+# The Tk pointer and perception rows skip when python3 has no tkinter, and
+# Apple's Tk 8.5.9 renders the canvas fixture too poorly for OCR. The canonical
+# lane must run them, so require a modern Tk instead of a shrunken matrix.
+require_modern_tk() {
+  local version
+  if ! version="$(python3 -c 'import tkinter; print(tkinter.Tcl().eval("info patchlevel"))' 2>/dev/null)"; then
+    echo "python3 has no usable tkinter; install Homebrew python-tk so the Tk rows run" >&2
+    return 2
+  fi
+  if ! python3 - "${version}" <<'PY'
+import sys
+major, minor = (int(part) for part in sys.argv[1].split(".")[:2])
+raise SystemExit(0 if (major, minor) >= (8, 6) else 1)
+PY
+  then
+    echo "python3 uses Tk ${version}; install Homebrew python-tk (Tk 8.6 or later) and put it first on PATH" >&2
+    return 2
+  fi
 }
 
 run_bounded_command() {
@@ -324,6 +367,25 @@ prepare_keychain() {
   keychain_password=""
 }
 
+# Computer History adds its key to the default (login) Keychain and reads it back
+# through the user search list. A list that omits the login Keychain lets the add
+# succeed while every read-back misses, which the daemon reports as
+# history_key_unavailable.
+require_login_keychain_searchable() {
+  local keychain="$1"
+  local listed
+  if ! listed="$(security list-keychains -d user 2>&1)"; then
+    echo "Could not read the user Keychain search list: ${listed}" >&2
+    return 2
+  fi
+  if [[ "${listed}" != *"\"${keychain}\""* ]]; then
+    echo "The login Keychain is missing from the user Keychain search list, so Computer History cannot read back its key" >&2
+    echo "Keep it searchable next to the signing keychain:" >&2
+    echo "  security list-keychains -d user -s \"${SIGNING_KEYCHAIN}\" \"${keychain}\"" >&2
+    return 2
+  fi
+}
+
 unlock_required_keychains() {
   local provided_password="${CUA_E2E_SIGNING_KEYCHAIN_PASSWORD:-}"
   unset CUA_E2E_SIGNING_KEYCHAIN_PASSWORD
@@ -340,6 +402,7 @@ unlock_required_keychains() {
   prepare_keychain "Login keychain" "${LOGIN_KEYCHAIN}" \
     "${provided_password}" login
   provided_password=""
+  require_login_keychain_searchable "${LOGIN_KEYCHAIN}"
 }
 
 json_string_array() {
@@ -917,12 +980,8 @@ if [[ "${SIP_STATUS}" != *"System Integrity Protection status: disabled."* ]]; t
   exit 2
 fi
 
-for command_name in cargo codesign ffmpeg ffprobe jq node npm osascript python3 security xcrun; do
-  command -v "${command_name}" >/dev/null 2>&1 || {
-    echo "Missing golden-image dependency: ${command_name}" >&2
-    exit 2
-  }
-done
+require_golden_image_dependencies || exit $?
+require_modern_tk || exit $?
 
 if [[ ! -f "${SIGNING_KEYCHAIN}" ]]; then
   echo "Missing golden-image signing keychain: ${SIGNING_KEYCHAIN}" >&2
@@ -998,6 +1057,16 @@ if ! osascript -e \
     'tell application "System Events" to get name of first application process whose frontmost is true' \
     > "${ARTIFACT_DIR}/terminal-system-events.txt"; then
   echo "Terminal cannot control System Events; rebuild the seed and grant the Automation prompt" >&2
+  exit 2
+fi
+echo "[AUTOMATION] Verifying Terminal can read accessibility attributes through System Events"
+# The bring_to_front oracles raise fixture windows and read AXFocusedWindow
+# through System Events UI scripting, which needs Accessibility for Terminal.
+if ! osascript -e \
+    'tell application "System Events" to get value of attribute "AXRole" of (first application process whose frontmost is true)' \
+    > "${ARTIFACT_DIR}/terminal-accessibility.txt" 2>&1; then
+  cat "${ARTIFACT_DIR}/terminal-accessibility.txt" >&2
+  echo "Terminal cannot use System Events UI scripting; grant Terminal Accessibility in the seed" >&2
   exit 2
 fi
 

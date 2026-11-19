@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Shared, serde-friendly value types for the browser-tool surface.
 //!
 //! These types cross the core ↔ platform-adapter boundary, so they are

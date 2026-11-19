@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Fail-closed resolution for actions addressed only by process id.
 
 use std::collections::HashSet;
@@ -7,6 +10,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::element_token::TokenOwner;
 use crate::protocol::ToolResult;
 use crate::tool::{ProtectedResourceOwnership, Tool, ToolDef};
 
@@ -69,6 +73,14 @@ pub type PidFallbackWindowResolver = Arc<dyn Fn(i64) -> Option<u64> + Send + Syn
 /// `(pid, snapshot handle)` -> the window that snapshot was taken of.
 pub type SnapshotWindowResolver = Arc<dyn Fn(i64, &str) -> Option<u64> + Send + Sync + 'static>;
 
+/// Call arguments -> who their `element_token` belonged to, and that process's
+/// current snapshots (see `SnapshotStore::token_owner`), so a stale refusal can
+/// name what is current instead of only saying the token is stale.
+pub type TokenPidResolver = Arc<dyn Fn(&Value) -> TokenOwner + Send + Sync + 'static>;
+/// What the platform knows about why a pid has no window, for the
+/// `window_target_not_found` message. Runs on a blocking thread.
+pub type PidNotFoundNote = Arc<dyn Fn(i64) -> Option<String> + Send + Sync + 'static>;
+
 /// Desktop-frame `x`/`y` of an action, when the call carries them.
 fn desktop_frame_point(args: &Value) -> Option<(f64, f64)> {
     let frame_is_desktop = args.get("coordinate_frame").and_then(Value::as_str) == Some("desktop")
@@ -90,6 +102,8 @@ pub struct PidOnlyWindowTargetGuard {
     point_resolver: Option<DesktopPointWindowResolver>,
     fallback_resolver: Option<PidFallbackWindowResolver>,
     snapshot_resolver: Option<SnapshotWindowResolver>,
+    token_pid_resolver: Option<TokenPidResolver>,
+    not_found_note: Option<PidNotFoundNote>,
 }
 
 impl PidOnlyWindowTargetGuard {
@@ -100,7 +114,24 @@ impl PidOnlyWindowTargetGuard {
             point_resolver: None,
             fallback_resolver: None,
             snapshot_resolver: None,
+            token_pid_resolver: None,
+            not_found_note: None,
         }
+    }
+
+    /// Add what the platform knows about why a pid has no window to the
+    /// `window_target_not_found` message.
+    pub fn with_not_found_note(mut self, note: PidNotFoundNote) -> Self {
+        self.not_found_note = Some(note);
+        self
+    }
+
+    /// Take a missing `pid` from the call's `element_token`, so a token-only
+    /// call reaches the tool with the pid its snapshot was taken of. A stale
+    /// or unknown token is refused as `stale_element_token`.
+    pub fn with_token_pid_resolver(mut self, resolver: TokenPidResolver) -> Self {
+        self.token_pid_resolver = Some(resolver);
+        self
     }
 
     /// Resolve an otherwise ambiguous pid-only call that carries no point
@@ -147,7 +178,7 @@ impl Tool for PidOnlyWindowTargetGuard {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         self.inner.protected_resource_scope(adapter_id, args).await
     }
 
@@ -156,13 +187,20 @@ impl Tool for PidOnlyWindowTargetGuard {
         adapter_id: &str,
         args: &Value,
         approved_scope: &Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), crate::tool::ProtectedResourceScopeError> {
         self.inner
             .validate_protected_resource_scope(adapter_id, args, approved_scope)
             .await
     }
 
     async fn invoke(&self, mut args: Value) -> ToolResult {
+        if let Some(resolver) = &self.token_pid_resolver {
+            if let Err(refusal) =
+                crate::element_token::fill_pid_from_token(&mut args, |args| resolver(args))
+            {
+                return refusal;
+            }
+        }
         // A windowless desktop-scope action needs no pid window. A desktop-
         // scope action that names a pid still resolves that pid's window (the
         // coordinates are desktop-frame, the target is the window).
@@ -211,15 +249,25 @@ impl Tool for PidOnlyWindowTargetGuard {
             }
         };
         match resolve_pid_window_target(candidates) {
-            PidWindowTargetResolution::NotFound => ToolResult::error(format!(
-                "No eligible top-level windows found for pid {pid}."
-            ))
-            .with_structured(serde_json::json!({
-                "code": "window_target_not_found",
-                "effect": "refused",
-                "pid": pid,
-                "candidates": []
-            })),
+            PidWindowTargetResolution::NotFound => {
+                let mut message = format!("No eligible top-level windows found for pid {pid}.");
+                if let Some(note) = self.not_found_note.clone() {
+                    let note = tokio::task::spawn_blocking(move || note(pid))
+                        .await
+                        .ok()
+                        .flatten();
+                    if let Some(note) = note {
+                        message.push(' ');
+                        message.push_str(&note);
+                    }
+                }
+                ToolResult::error(message).with_structured(serde_json::json!({
+                    "code": "window_target_not_found",
+                    "effect": "refused",
+                    "pid": pid,
+                    "candidates": []
+                }))
+            }
             PidWindowTargetResolution::Resolved(candidate) => {
                 if let Some(object) = args.as_object_mut() {
                     object.insert("window_id".to_owned(), candidate.window_id.into());
@@ -290,7 +338,7 @@ impl Tool for PidOnlyWindowTargetGuard {
 }
 
 /// `window_id 7 "Position and Size" (dialog, transient of window 3); window_id 3 "doc - Writer"`
-fn describe_candidates(candidates: &[WindowTargetCandidate]) -> String {
+pub fn describe_candidates(candidates: &[WindowTargetCandidate]) -> String {
     candidates
         .iter()
         .map(|candidate| {
@@ -441,6 +489,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn not_found_refusal_carries_the_platform_note_for_that_pid() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let guard = PidOnlyWindowTargetGuard::new(
+            Box::new(EchoTool {
+                calls: calls.clone(),
+            }),
+            Arc::new(|_| Vec::new()),
+        )
+        .with_not_found_note(Arc::new(|pid| (pid == 42).then(|| "why".to_owned())));
+        let text = |result: &ToolResult| match &result.content[0] {
+            crate::protocol::Content::Text { text, .. } => text.clone(),
+            other => panic!("expected text, got {other:?}"),
+        };
+
+        let noted = guard.invoke(serde_json::json!({"pid": 42})).await;
+        assert_eq!(
+            text(&noted),
+            "No eligible top-level windows found for pid 42. why"
+        );
+        assert_eq!(
+            noted.structured_content.as_ref().expect("structured")["code"],
+            "window_target_not_found"
+        );
+
+        let silent = guard.invoke(serde_json::json!({"pid": 7})).await;
+        assert_eq!(
+            text(&silent),
+            "No eligible top-level windows found for pid 7."
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
     async fn ambiguity_refuses_before_invoking_action_with_recovery_metadata() {
         let calls = Arc::new(AtomicUsize::new(0));
         let guard = PidOnlyWindowTargetGuard::new(
@@ -530,6 +611,45 @@ mod tests {
             assert_eq!(calls.load(Ordering::SeqCst), 1);
             assert_eq!(result.structured_content.unwrap(), expected);
         }
+    }
+
+    #[tokio::test]
+    async fn a_token_only_call_takes_its_pid_from_the_token() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let guard = PidOnlyWindowTargetGuard::new(
+            Box::new(EchoTool {
+                calls: calls.clone(),
+            }),
+            Arc::new(|_| panic!("a token target must not enumerate windows")),
+        )
+        .with_token_pid_resolver(Arc::new(|args| {
+            let live = args["element_token"] == "s00000001:2";
+            TokenOwner {
+                pid: live.then_some(42),
+                current: Vec::new(),
+                live,
+            }
+        }));
+
+        let result = guard
+            .invoke(serde_json::json!({"element_token": "s00000001:2"}))
+            .await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(result.structured_content.unwrap()["pid"], 42);
+
+        let stale = guard
+            .invoke(serde_json::json!({"element_token": "s000000ff:0"}))
+            .await;
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "a stale token never reaches the tool"
+        );
+        assert_eq!(stale.is_error, Some(true));
+        assert_eq!(
+            stale.structured_content.unwrap()["refusal"]["code"],
+            "stale_element_token"
+        );
     }
 
     #[tokio::test]

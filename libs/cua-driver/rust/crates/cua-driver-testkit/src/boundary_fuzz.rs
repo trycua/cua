@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Fuzz target bodies for the transport-free MCP tool-call boundary.
 //!
 //! Each public `fn(&[u8])` here is one libFuzzer target (see `fuzz/`) and is
@@ -25,11 +28,11 @@
 use arbitrary::Unstructured;
 use cua_driver_contract::{
     ClickInput, ClipboardReadInput, ClipboardWriteInput, DragInput, EndSessionInput,
-    EscalateSessionInput, GetAgentCursorStateInput, GetCursorPositionInput, GetDesktopStateInput,
-    GetScreenSizeInput, GetSessionInput, GetSessionStateInput, HotkeyInput, InvokeMenuInput,
-    ListSessionsInput, MoveCursorInput, PressKeyInput, ScrollInput, SetAgentCursorEnabledInput,
-    SetAgentCursorMotionInput, SetAgentCursorThemeInput, SetWindowFrameInput, StartSessionInput,
-    ToolInput, TypeTextInput, VerifyStateInput,
+    GetAgentCursorStateInput, GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput,
+    GetSessionInput, HotkeyInput, InvokeMenuInput, ListSessionsInput, MoveCursorInput,
+    PressKeyInput, ScrollInput, SetAgentCursorEnabledInput, SetAgentCursorMotionInput,
+    SetAgentCursorThemeInput, SetWindowFrameInput, StartSessionInput, ToolInput, TypeTextInput,
+    VerifyStateInput,
 };
 use cua_driver_core::authorization::PermissionMode;
 use cua_driver_core::protocol::{Request, Response, ToolResult};
@@ -44,8 +47,11 @@ use serde_json::{Map, Value};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+/// A fuzz target: its name and the function that consumes one input.
+pub type Target = (&'static str, fn(&[u8]));
+
 /// Every target with its name, in the order the fuzz crate registers them.
-pub const TARGETS: &[(&str, fn(&[u8]))] = &[
+pub const TARGETS: &[Target] = &[
     ("mcp_request", mcp_request),
     ("tool_arguments", tool_arguments),
     ("typed_input_json", typed_input_json),
@@ -470,8 +476,6 @@ macro_rules! typed_inputs {
 
 typed_inputs!(
     StartSessionInput,
-    EscalateSessionInput,
-    GetSessionStateInput,
     GetSessionInput,
     ListSessionsInput,
     SetAgentCursorEnabledInput,
@@ -597,7 +601,9 @@ pub fn registry_invoke(data: &[u8]) {
     let tool = arbitrary_tool_name(&mut u);
     let args = arbitrary_arguments(&mut u);
     let registry = stub_registry();
-    let known = registry.get_def(&tool).is_some() || tool == "type_text_chars";
+    let known = registry.get_def(&tool).is_some()
+        || tool == "type_text_chars"
+        || cua_driver_core::tool::renamed_tool(&tool).is_some();
 
     let result =
         runtime().block_on(registry.invoke_with_context(&tool, args, unrestricted_context()));

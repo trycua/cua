@@ -1,0 +1,14 @@
+{
+  "name": "claude-awaiting-answer",
+  "description": "A turn that stops on a permission question and waits. Exercises the question-awaiting-an-answer element and its options, and leaves the session parked in that state so a golden can be taken there.",
+  "cmd": ["claude"],
+  "steps": [
+    {"wait": 6},
+    {"send": "Run the shell command `uname -a` for me."},
+    {"wait": 1.5},
+    {"key": "enter"},
+    {"expect": "Do you want", "timeout": 60},
+    {"wait": 8},
+    {"wait": 6}
+  ]
+}

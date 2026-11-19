@@ -34,10 +34,14 @@ This approach bridges the gap between fully automated systems and pure manual co
 Launch the human agent interface:
 
 ```bash
-python -m agent.human_tool
+python -m cua_agent.human_tool
 ```
 
 The web UI will show pending completions. Click any completion to take control of the agent and see exactly what it sees.
+
+The server only accepts connections from your own machine, and it protects every request with a random token. It saves the token to `~/.cua/human_tool/token`, so the agent and the web page on the same machine find it on their own. The web page asks for a password the first time you open it: enter the contents of that file.
+
+To use it from another machine, start the server with `--host 0.0.0.0` and set `CUA_HUMAN_TOOL_TOKEN` to the same secret on both sides. Only do this on a network you trust.
 
 ## Usage Examples
 

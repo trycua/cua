@@ -23,6 +23,7 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
+from cua_sandbox._paths import cua_home
 from cua_sandbox.image import Image
 from cua_sandbox.runtime.base import Runtime, RuntimeInfo
 
@@ -30,8 +31,8 @@ logger = logging.getLogger(__name__)
 
 # ── SDK paths ────────────────────────────────────────────────────────────────
 
-_SDK_ROOT = Path.home() / ".cua" / "android-sdk"
-_AVD_HOME = Path.home() / ".cua" / "android-avd"
+_SDK_ROOT = cua_home() / "android-sdk"
+_AVD_HOME = cua_home() / "android-avd"
 _CMDLINE_TOOLS_VERSION = "11076708"  # Latest as of 2024
 
 
@@ -415,10 +416,9 @@ class AndroidEmulatorRuntime(Runtime):
                 builder = layer.get("builder", "pwa2apk")
 
                 if builder == "pwa2apk":
-                    # Import cloud transport's pwa2apk builder (works without a sandbox)
-                    from cua_sandbox.transport.cloud import CloudTransport
+                    from cua_sandbox.builder.pwa2apk import build_pwa2apk
 
-                    apk_path, fingerprint = await CloudTransport._build_pwa2apk(
+                    apk_path, fingerprint = await build_pwa2apk(
                         manifest_url, pkg, ks, ks_alias, ks_pass
                     )
                 else:
@@ -618,7 +618,7 @@ class AndroidEmulatorRuntime(Runtime):
             package_name = ".".join(sanitized) if sanitized else "com.cua.pwa"
 
         cache_key = hashlib.sha256(f"{manifest_url}|{package_name}".encode()).hexdigest()[:12]
-        cache_dir = Path.home() / ".cua" / "cua-sandbox" / "pwa-cache" / cache_key
+        cache_dir = cua_home() / "cua-sandbox" / "pwa-cache" / cache_key
         fingerprint_file = cache_dir / "sha256.fingerprint"
         signed_apk = cache_dir / "app-release-signed.apk"
 
@@ -772,7 +772,7 @@ class AndroidEmulatorRuntime(Runtime):
             import hashlib
             import urllib.request
 
-            cache = Path.home() / ".cua" / "cua-sandbox" / "apk-cache"
+            cache = cua_home() / "cua-sandbox" / "apk-cache"
             cache.mkdir(parents=True, exist_ok=True)
             filename = apk_path.rsplit("/", 1)[-1].split("?")[0]
             url_hash = hashlib.sha256(apk_path.encode()).hexdigest()[:8]

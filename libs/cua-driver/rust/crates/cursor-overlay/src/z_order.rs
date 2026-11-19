@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cross-platform contract for keeping the agent-cursor overlay at z+1 of
 //! the application under test.
 //!

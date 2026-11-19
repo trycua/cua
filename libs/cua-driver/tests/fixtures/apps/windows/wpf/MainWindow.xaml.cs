@@ -20,9 +20,14 @@ public partial class MainWindow : Window
     private int _counter;
     private int _accelCount;
     private int _clickCount;
+    private int _rightClickCount;
     private bool _targetPointerSeen;
     private readonly ScenariosManifest _manifest;
     private readonly string? _fixtureStatePath;
+    private readonly System.Windows.Threading.DispatcherTimer _fixtureStateTimer = new()
+    {
+        Interval = TimeSpan.FromMilliseconds(50)
+    };
 
     public MainWindow()
     {
@@ -32,6 +37,11 @@ public partial class MainWindow : Window
 
         Title = _manifest.Wpf.MainWindow.Title;
         AutomationProperties.SetAutomationId(this, _manifest.Wpf.MainWindow.AutomationId);
+        _fixtureStateTimer.Tick += (_, _) =>
+        {
+            _fixtureStateTimer.Stop();
+            PublishFixtureState();
+        };
 
         CommandBindings.Add(new CommandBinding(AccelCmd, (s, e) =>
         {
@@ -155,11 +165,25 @@ public partial class MainWindow : Window
     private void OnInputChanged(object sender, TextChangedEventArgs e)
     {
         LblInputMirror.Text = $"mirror={TxtInput.Text}";
+        ScheduleFixtureStatePublish();
+    }
+
+    private void OnMultilineInputChanged(object sender, TextChangedEventArgs e)
+    {
+        ScheduleFixtureStatePublish();
+    }
+
+    private void ScheduleFixtureStatePublish()
+    {
+        if (string.IsNullOrWhiteSpace(_fixtureStatePath)) return;
+        _fixtureStateTimer.Stop();
+        _fixtureStateTimer.Start();
     }
 
     private void OnDeferredInputChanged(object sender, TextChangedEventArgs e)
     {
         LblDeferredInputMirror.Text = $"deferred_mirror={TxtDeferredInput.Text}";
+        ScheduleFixtureStatePublish();
     }
 
     private void OnTargetLeftDown(object sender, MouseButtonEventArgs e)
@@ -200,6 +224,7 @@ public partial class MainWindow : Window
 
     private void OnTargetDoubleClick(object sender, MouseButtonEventArgs e)
     {
+        if (e.ChangedButton != MouseButton.Left) return;
         // Belt + suspenders: Button raises MouseDoubleClick separately from
         // the second MouseLeftButtonDown. Capturing both means even
         // back-end implementations that fire only one path still register.
@@ -210,7 +235,8 @@ public partial class MainWindow : Window
 
     private void OnTargetRightDown(object sender, MouseButtonEventArgs e)
     {
-        LblLastAction.Text = "last_action=right_click";
+        _rightClickCount++;
+        LblLastAction.Text = $"last_action=right_click modifiers={Keyboard.Modifiers} right_clicks={_rightClickCount}";
         PublishFixtureState();
     }
 
@@ -224,6 +250,9 @@ public partial class MainWindow : Window
             ["lbl-counter"] = new { text = LblCounter?.Text ?? "counter=0" },
             ["lbl-last-action"] = new { text = LblLastAction?.Text ?? "last_action=none" },
             ["lbl-click-count"] = new { text = LblClickCount?.Text ?? "clicks=0" },
+            ["txt-input"] = new { text = TxtInput?.Text ?? "" },
+            ["txt-deferred-input"] = new { text = TxtDeferredInput?.Text ?? "" },
+            ["txt-multiline-input"] = new { text = TxtMultilineInput?.Text ?? "" },
         };
         try
         {
@@ -247,7 +276,9 @@ public partial class MainWindow : Window
 
     private void OnSliderChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        LblSliderValue.Text = $"slider_value={(int)e.NewValue}";
+        // Keyboard.Modifiers reads live GetKeyState, so a thumb drag with held
+        // keys reports them for each move.
+        LblSliderValue.Text = $"slider_value={(int)e.NewValue} modifiers={Keyboard.Modifiers}";
     }
 
     private void UpdateChkState()

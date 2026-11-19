@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Hosted native-Wayland lifecycle and CPU certification for the layer-shell
 //! cursor overlay. Run inside the repository's isolated Sway session.
 
@@ -132,8 +135,7 @@ fn wayland_overlay_quiesces_and_recovers_after_capture_and_cursor_activity() {
 
     // Exercise the reported trigger class: native compositor capture followed
     // by daemon-owned cursor motion. Call the Linux capture backend directly:
-    // `screenshot` is intentionally denied at the MCP authorization boundary
-    // until that tool has a reviewed risk classification.
+    // the driver registers no standalone `screenshot` tool.
     let capture = platform_linux::wayland::screenshot_display_dispatch()
         .expect("capture native Wayland display before overlay activity");
     assert!(!capture.is_empty(), "native Wayland capture was empty");

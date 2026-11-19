@@ -19,6 +19,7 @@ import { parseVisualRegions, validateChoice, VisualObservationError, type Candid
 import { driverEnvironment } from './driver_env.js';
 import { chooseBoundedWithTypeSafe, chooseMockForTask } from './jev_adapter.js';
 import { parseWindowState, type NativeObservation } from './native.js';
+import { NoProgressGuard } from './no_progress.js';
 import type { Platform } from './native_roles.js';
 import {
   NATIVE_TASK_IDS,
@@ -26,10 +27,18 @@ import {
   nativeChoiceRequest,
   visualFallbackReason,
   windowStateArguments,
+  checkIntermediateEffect,
+  hasDeclaredStepsRemaining,
   type NativeTask,
 } from './native_tasks.js';
 import { chooseS1Service, S1ServiceError, s1ServiceUrl } from './s1_service.js';
-import { backgroundRefusalCode, Driver, DriverToolError, supportsCaptureBoundClick } from './run.js';
+import {
+  backgroundRefusalCode,
+  decisionTimingFields,
+  Driver,
+  DriverToolError,
+  supportsCaptureBoundClick,
+} from './run.js';
 import { NativeAccessibilitySource, VisualRegionSource } from './sources.js';
 import type { HistoryEntry, Outcome, TaskSources } from './tasks.js';
 
@@ -82,7 +91,11 @@ export function parseArgs(argv: string[]): Arguments {
 }
 
 export function isStaleTokenError(error: unknown): boolean {
-  if (error instanceof DriverToolError && error.code && STALE_TOKEN_CODES.has(error.code)) return true;
+  if (error instanceof DriverToolError && error.code) {
+    // Structured codes outrank diagnostic text; a different refusal must
+    // not be turned into stale-token recovery by an incidental message.
+    return STALE_TOKEN_CODES.has(error.code);
+  }
   return String(error instanceof Error ? error.message : error).includes('element_token is stale');
 }
 
@@ -119,15 +132,61 @@ async function observe(
   windowId: number,
   timeoutMs?: number
 ): Promise<NativeObservation> {
-  const payload = await driver.call('get_window_state', {
+  const read = {
     pid,
     window_id: windowId,
     include_accessibility_tree: true,
     include_screenshot: true,
     ...windowStateArguments(task.scope),
     ...(timeoutMs !== undefined ? { timeout_ms: timeoutMs } : {}),
-  });
+  };
+  let payload;
+  try {
+    // The observation needs structured elements, the markdown tree and the
+    // completeness flags; cua-driver 0.35 returns the lean markdown-only
+    // read unless asked for the full response.
+    payload = await driver.call('get_window_state', { ...read, full_output: true });
+  } catch (error) {
+    // Drivers before 0.35 always return the full response and refuse the
+    // unknown argument.
+    if (!(error instanceof DriverToolError && error.message.includes('unknown argument full_output'))) {
+      throw error;
+    }
+    payload = await driver.call('get_window_state', read);
+  }
   return parseWindowState(payload, pid, windowId);
+}
+
+/** Add the time since `started` to a step phase and return the elapsed milliseconds. */
+function addPhase(phaseTimings: Record<string, number> | undefined, name: string, started: number): number {
+  const elapsedMs = performance.now() - started;
+  if (phaseTimings) phaseTimings[name] = (phaseTimings[name] ?? 0) + elapsedMs;
+  return elapsedMs;
+}
+
+/**
+ * The browser runner's decision-phase fields for one native step.
+ *
+ * `provider_decision_ms` is `decide_ms`. `visual_observe_ms` is the
+ * `parse_visual_regions` phase only: the native screenshot and `capture_id` come
+ * from the same `get_window_state` call that produced the semantic observation,
+ * so that capture is inside `semantic_observe_ms`.
+ */
+function nativeTimingFields(
+  started: number,
+  phaseTimings: Record<string, number>,
+  providerDecisionMs: number
+): Record<string, unknown> {
+  return {
+    ...decisionTimingFields({
+      decisionMs: Math.round((performance.now() - started) * 100) / 100,
+      semanticObserveMs: phaseTimings.semantic_observe_ms ?? 0,
+      visualObserveMs: phaseTimings.visual_observe_ms ?? 0,
+      candidateBuildMs: phaseTimings.candidate_build_ms ?? 0,
+      providerDecisionMs,
+    }),
+    visual_observe_scope: 'parse_only',
+  };
 }
 
 function nativeCount(task: NativeTask, sources: TaskSources): number {
@@ -140,7 +199,8 @@ async function observeStep(
   pid: number,
   windowId: number,
   platform: Platform,
-  foregroundIds: ReadonlySet<string>
+  foregroundIds: ReadonlySet<string>,
+  phaseTimings?: Record<string, number>
 ): Promise<{ sources: TaskSources; record: Record<string, unknown> }> {
   const started = performance.now();
   const build = (observation: NativeObservation): TaskSources => ({
@@ -151,12 +211,27 @@ async function observeStep(
     visualPath: false,
     foregroundIds,
   });
-  let sources = build(await observe(driver, task, pid, windowId));
+  // `observe_ms` (kept for compatibility) spans this whole function. The
+  // `get_window_state` calls (plus NativeObservation validation) are added to
+  // `semantic_observe_ms`; source construction and the preliminary plan to
+  // `candidate_build_ms`.
+  let phaseStarted = performance.now();
+  const firstObservation = await observe(driver, task, pid, windowId);
+  addPhase(phaseTimings, 'semantic_observe_ms', phaseStarted);
+  phaseStarted = performance.now();
+  let sources = build(firstObservation);
   let record: Record<string, unknown> = { reobserved: false };
   const first = sources.ax!.observation;
-  if (first.truncated || (!first.complete && nativeCount(task, sources) === 0)) {
+  const needsReobserve = first.truncated || (!first.complete && nativeCount(task, sources) === 0);
+  addPhase(phaseTimings, 'candidate_build_ms', phaseStarted);
+  if (needsReobserve) {
     record = { reobserved: true, reason: first.truncated ? 'truncated' : 'partial_empty' };
-    sources = build(await observe(driver, task, pid, windowId, REOBSERVE_TIMEOUT_MS));
+    phaseStarted = performance.now();
+    const second = await observe(driver, task, pid, windowId, REOBSERVE_TIMEOUT_MS);
+    addPhase(phaseTimings, 'semantic_observe_ms', phaseStarted);
+    phaseStarted = performance.now();
+    sources = build(second);
+    addPhase(phaseTimings, 'candidate_build_ms', phaseStarted);
   }
   const observation = sources.ax!.observation;
   Object.assign(record, {
@@ -176,9 +251,12 @@ async function maybeVisual(
   task: NativeTask,
   sources: TaskSources,
   availableTools: ReadonlySet<string>,
-  captureBoundClick: boolean
+  captureBoundClick: boolean,
+  phaseTimings?: Record<string, number>
 ): Promise<{ sources: TaskSources; record: Record<string, unknown> }> {
+  const candidateStarted = performance.now();
   const reason = visualFallbackReason(sources, task, nativeCount(task, sources));
+  addPhase(phaseTimings, 'candidate_build_ms', candidateStarted);
   if (!reason) return { sources, record: { status: 'skipped' } };
   if (!captureBoundClick || !availableTools.has('parse_visual_regions')) {
     return { sources, record: { status: 'unavailable', reason } };
@@ -191,24 +269,25 @@ async function maybeVisual(
       options: { kinds: ['text', 'icon'], min_confidence: task.visualMinConfidence, max_regions: 100 },
     });
     const visual = parseVisualRegions(result, observation.captureId!, observation.pid, observation.windowId);
+    const visualSources: TaskSources = {
+      ...sources,
+      visual: new VisualRegionSource(visual, 'background', captureBoundClick, task.visualMinConfidence),
+      visualPath: true,
+    };
+    // One measurement feeds both fields, so visual_observe_ms == parse_ms on success.
+    const parseMs = Math.round(addPhase(phaseTimings, 'visual_observe_ms', started) * 100) / 100;
     return {
-      sources: {
-        ...sources,
-        visual: new VisualRegionSource(visual, 'background', captureBoundClick, task.visualMinConfidence),
-        visualPath: true,
-      },
-      record: {
-        status: 'ok',
-        reason,
-        region_count: visual.regions.length,
-        parse_ms: Math.round((performance.now() - started) * 100) / 100,
-      },
+      sources: visualSources,
+      record: { status: 'ok', reason, region_count: visual.regions.length, parse_ms: parseMs },
     };
   } catch (error) {
     if (error instanceof DriverToolError) {
+      // A failed parse still cost time; `parse_ms` is reported only on success.
+      addPhase(phaseTimings, 'visual_observe_ms', started);
       return { sources, record: { status: 'error', reason, error_code: error.code ?? 'driver_error' } };
     }
     if (error instanceof VisualObservationError) {
+      addPhase(phaseTimings, 'visual_observe_ms', started);
       return { sources, record: { status: 'error', reason, error_code: error.code } };
     }
     throw error;
@@ -227,14 +306,48 @@ async function chooseLive(request: Record<string, unknown>) {
   return { choice: result.selectedId, confidence: result.confidence, probabilities: result.probabilities };
 }
 
-async function pollOracle(task: NativeTask, steps: number): Promise<Outcome> {
+export interface PollResult {
+  readonly outcome: Outcome;
+  readonly status: 'verified' | 'refuted' | 'intermediate_witnessed' | 'continuation' | 'intermediate_timeout';
+  readonly canContinue: boolean;
+}
+
+export async function pollOracle(
+  task: NativeTask,
+  steps: number,
+  candidate?: Candidate | null,
+  preOracle?: Record<string, unknown> | null,
+  history?: readonly HistoryEntry[] | null,
+): Promise<PollResult> {
+  const candidateId = candidate ? candidate.id : null;
   let outcome: Outcome = 'unknown';
+  let isSupported = false;
+  const hasRemaining = hasDeclaredStepsRemaining(task, history);
+
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    outcome = task.classify(await task.readOracle(), steps);
-    if (outcome === 'verified' || outcome === 'refuted') return outcome;
+    const currentOracle = await task.readOracle();
+    outcome = task.classify(currentOracle, steps);
+    if (outcome === 'verified' || outcome === 'refuted') {
+      return { outcome, status: outcome, canContinue: false };
+    }
+
+    if (hasRemaining && outcome === 'unknown') {
+      const effect = checkIntermediateEffect(task, candidateId, preOracle, currentOracle);
+      if (effect === true) {
+        return { outcome: 'unknown', status: 'intermediate_witnessed', canContinue: true };
+      }
+      if (effect === false) {
+        isSupported = true;
+      }
+    }
+
     await sleep(100);
   }
-  return outcome;
+
+  if (isSupported) {
+    return { outcome, status: 'intermediate_timeout', canContinue: false };
+  }
+  return { outcome, status: 'continuation', canContinue: true };
 }
 
 export async function runTask(args: Arguments, task: NativeTask): Promise<Outcome> {
@@ -242,6 +355,7 @@ export async function runTask(args: Arguments, task: NativeTask): Promise<Outcom
   if (args.log) await writeFile(args.log, '', 'utf8');
   const history: HistoryEntry[] = [];
   const foregroundIds = new Set<string>();
+  const noProgress = new NoProgressGuard(task.id);
   const transport = new StdioClientTransport({
     command: process.env.CUA_DRIVER_BIN ?? 'cua-driver',
     args: ['mcp'],
@@ -261,15 +375,36 @@ export async function runTask(args: Arguments, task: NativeTask): Promise<Outcom
       platform, pid: args.pid, window_id: windowId,
     });
     for (let step = 1; step <= task.maxSteps; step += 1) {
-      const current = task.classify(await task.readOracle(), step - 1);
+      const oracleState = await task.readOracle();
+      const current = task.classify(oracleState, step - 1);
       if (current === 'verified' || current === 'refuted') {
         await writeEvent(args.log, { event: 'outcome', outcome: current, step: step - 1 });
         return current;
       }
-      const observed = await observeStep(driver, task, args.pid, windowId, platform, new Set(foregroundIds));
-      const visual = await maybeVisual(driver, task, observed.sources, availableTools, captureBoundClick);
+      const stop = noProgress.beforeStep(oracleState);
+      if (stop) {
+        await writeEvent(args.log, {
+          event: 'outcome',
+          outcome: 'abstained',
+          reason: 'no_progress',
+          pattern: stop.pattern,
+          streak: stop.streak,
+          step: step - 1,
+        });
+        return 'abstained';
+      }
+      const started = performance.now();
+      const phaseTimings: Record<string, number> = {};
+      const observed = await observeStep(
+        driver, task, args.pid, windowId, platform, new Set(foregroundIds), phaseTimings
+      );
+      const visual = await maybeVisual(
+        driver, task, observed.sources, availableTools, captureBoundClick, phaseTimings
+      );
       const sources = visual.sources;
+      const planStarted = performance.now();
       const plan = task.plan(sources);
+      addPhase(phaseTimings, 'candidate_build_ms', planStarted);
       const request = nativeChoiceRequest(task, sources, plan, history);
       validateRequest(request);
 
@@ -311,24 +446,32 @@ export async function runTask(args: Arguments, task: NativeTask): Promise<Outcom
         expected_ids: expectedIds,
         expected_offered: expectedIds.some((id) => offered.has(id)),
       };
+      const providerDecisionMs = baseEvent.decide_ms as number;
       if (!decision.choice) {
+        Object.assign(baseEvent, nativeTimingFields(started, phaseTimings, providerDecisionMs));
         await writeEvent(args.log, { ...baseEvent, event: 'outcome', outcome: 'abstained' });
         return 'abstained';
       }
       const candidate = validateChoice(decision.choice, plan.candidates, sources.visual?.observation.captureId);
       assertInScope(candidate, args.pid, windowId);
+      Object.assign(baseEvent, nativeTimingFields(started, phaseTimings, providerDecisionMs));
       baseEvent.candidate = candidate.id;
       baseEvent.source = candidate.source ?? null;
 
       if (candidate.id === 'reobserve') {
         history.push(task.historyEntry(step, candidate.id));
-        await writeEvent(args.log, { ...baseEvent, tool: null, act_ms: 0 });
+        noProgress.note('reobserve', candidate.id);
+        await writeEvent(args.log, {
+          ...baseEvent, tool: null, act_ms: 0, action_ms: 0,
+          total_step_ms: Math.round((performance.now() - started) * 100) / 100,
+        });
         continue;
       }
       if (candidate.id === 'abstain') {
         await writeEvent(args.log, { ...baseEvent, event: 'outcome', outcome: 'abstained' });
         return 'abstained';
       }
+      const preOracle = await task.readOracle();
       const actStarted = performance.now();
       try {
         await driver.call(candidate.tool!, { ...candidate.arguments });
@@ -336,15 +479,23 @@ export async function runTask(args: Arguments, task: NativeTask): Promise<Outcom
         const actMs = Math.round((performance.now() - actStarted) * 100) / 100;
         if (isStaleTokenError(error)) {
           history.push(task.historyEntry(step, candidate.id, undefined, { stale: true }));
-          await writeEvent(args.log, { ...baseEvent, tool: candidate.tool, act_ms: actMs, action_error: 'stale_element_token' });
+          noProgress.note('stale', candidate.id);
+          await writeEvent(args.log, {
+            ...baseEvent, tool: candidate.tool, act_ms: actMs, action_ms: actMs,
+            total_step_ms: Math.round((performance.now() - started) * 100) / 100,
+            action_error: 'stale_element_token',
+          });
           continue;
         }
         const refusal = backgroundRefusalCode(candidate, error);
         if (refusal) {
           foregroundIds.add(candidate.id);
           history.push(task.historyEntry(step, candidate.id, refusal));
+          noProgress.note('refused', candidate.id);
           await writeEvent(args.log, {
-            ...baseEvent, tool: candidate.tool, act_ms: actMs, action_error: refusal,
+            ...baseEvent, tool: candidate.tool, act_ms: actMs, action_ms: actMs,
+            total_step_ms: Math.round((performance.now() - started) * 100) / 100,
+            action_error: refusal,
             escalation: { from: 'background', to: 'foreground', allowed: task.allowForeground },
           });
           continue;
@@ -357,14 +508,26 @@ export async function runTask(args: Arguments, task: NativeTask): Promise<Outcom
       }
       const actMs = Math.round((performance.now() - actStarted) * 100) / 100;
       history.push(task.historyEntry(step, candidate.id, undefined, { outcome: plan.outcomes[candidate.id] }));
+      noProgress.note('performed', candidate.id);
       await writeEvent(args.log, {
-        ...baseEvent, tool: candidate.tool, act_ms: actMs,
+        ...baseEvent, tool: candidate.tool, act_ms: actMs, action_ms: actMs,
+        total_step_ms: Math.round((performance.now() - started) * 100) / 100,
         delivery_mode: candidate.arguments.delivery_mode ?? null,
       });
-      const outcome = await pollOracle(task, step);
-      if (outcome === 'verified' || outcome === 'refuted') {
-        await writeEvent(args.log, { event: 'outcome', outcome, step });
-        return outcome;
+      const pollResult = await pollOracle(task, step, candidate, preOracle, history);
+      if (pollResult.outcome === 'verified' || pollResult.outcome === 'refuted') {
+        await writeEvent(args.log, { event: 'outcome', outcome: pollResult.outcome, step });
+        return pollResult.outcome;
+      }
+      if (!pollResult.canContinue) {
+        await writeEvent(args.log, {
+          event: 'outcome',
+          outcome: pollResult.outcome,
+          step,
+          phase: 'verification',
+          reason: pollResult.status,
+        });
+        return pollResult.outcome;
       }
     }
     const outcome = task.classify(await task.readOracle(), task.maxSteps);

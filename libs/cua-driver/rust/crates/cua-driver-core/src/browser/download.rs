@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Approval-gated downloads for exact browser tab and element capabilities.
 //!
 //! Chromium's download behavior is browser-wide, so this tool enables it only

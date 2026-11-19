@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import sqlite3
 import subprocess
 import time
@@ -24,9 +25,7 @@ RUN_ALL = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/run-all.sh"
 SEED_TCC = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/seed-tcc.sh"
 SEED_TCC_GUEST = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/seed-tcc-guest.sh"
 HARNESS_GUIDE = REPO_ROOT / "libs/cua-driver/docs/test-harnesses-guide.md"
-PUBLIC_LUME_TEST_GUIDE = (
-    REPO_ROOT / "docs/content/docs/how-to-guides/driver/run-tests-in-macos-lume-vm.mdx"
-)
+RUNNER_GUIDE = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/README.md"
 RUN_RUST_E2E = REPO_ROOT / "scripts/ci/macos/run-rust-e2e.sh"
 ELECTRON_BUILD = REPO_ROOT / "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/build.sh"
 ELECTRON_LOCK = (
@@ -60,7 +59,19 @@ def _run(
         text=True,
         env=merged,
         check=False,
+        preexec_fn=_default_signal_dispositions,
     )
+
+
+def _default_signal_dispositions() -> None:
+    """Undo inherited SIG_IGN (nohup, some CI/agent launchers) in the child.
+
+    bash cannot trap a signal that was ignored when it started, so the
+    runner's HUP/INT/TERM traps would silently never fire and the trap tests
+    would depend on how pytest itself was launched.
+    """
+    for sig in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, signal.SIG_DFL)
 
 
 # The runner derives the installed daemon path from HOME on purpose, so tests
@@ -182,6 +193,122 @@ def test_status_match_rejects_the_wrong_mode_and_a_failing_cli(tmp_path: Path) -
         assert expected in completed.stdout
 
 
+def test_golden_image_preflight_requires_python3(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    for command in (
+        "cargo",
+        "codesign",
+        "ffmpeg",
+        "ffprobe",
+        "jq",
+        "node",
+        "npm",
+        "osascript",
+        "security",
+        "xcrun",
+    ):
+        _write_executable(fake_bin / command, "exit 0\n")
+
+    completed = _run(
+        RUN_ALL,
+        'PATH="$TEST_FAKE_BIN"\nrequire_golden_image_dependencies\n',
+        env={"TEST_FAKE_BIN": str(fake_bin)},
+    )
+
+    assert completed.returncode == 2
+    assert completed.stderr == "Missing golden-image dependency: python3\n"
+
+
+def _fake_keychain_list(tmp_path: Path, *keychains: str) -> Path:
+    fake_bin = tmp_path / "bin"
+    listed = "".join(f'    \\"{keychain}\\"\\n' for keychain in keychains)
+    _write_executable(
+        fake_bin / "security",
+        f'[ "$1 $2 $3" = "list-keychains -d user" ] || exit 9\nprintf "{listed}"\n',
+    )
+    return fake_bin
+
+
+def test_login_keychain_must_stay_in_the_user_search_list(tmp_path: Path) -> None:
+    login = "/Users/lume/Library/Keychains/login.keychain-db"
+    signing = "/Users/lume/Library/Keychains/cua-driver-signing.keychain-db"
+    fake_bin = _fake_keychain_list(tmp_path, signing)
+
+    completed = _run(
+        RUN_ALL,
+        'PATH="$TEST_FAKE_BIN:$PATH"\nrequire_login_keychain_searchable "$TEST_LOGIN"\n',
+        env={"TEST_FAKE_BIN": str(fake_bin), "TEST_LOGIN": login},
+    )
+
+    assert completed.returncode == 2
+    assert "missing from the user Keychain search list" in completed.stderr
+    assert f'"{login}"' in completed.stderr
+
+
+def test_searchable_login_keychain_passes_the_history_preflight(tmp_path: Path) -> None:
+    login = "/Users/lume/Library/Keychains/login.keychain-db"
+    signing = "/Users/lume/Library/Keychains/cua-driver-signing.keychain-db"
+    fake_bin = _fake_keychain_list(tmp_path, signing, login)
+
+    completed = _run(
+        RUN_ALL,
+        'PATH="$TEST_FAKE_BIN:$PATH"\nrequire_login_keychain_searchable "$TEST_LOGIN"\n',
+        env={"TEST_FAKE_BIN": str(fake_bin), "TEST_LOGIN": login},
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stderr == ""
+
+
+def test_seed_guide_keeps_the_login_keychain_searchable() -> None:
+    text = RUNNER_GUIDE.read_text(encoding="utf-8")
+    assert 'security list-keychains -d user -s "$SIGNING_KEYCHAIN"\n' not in text
+    assert '"$HOME/Library/Keychains/login.keychain-db"' in text
+
+
+def _fake_python_with_tk(tmp_path: Path, patchlevel: str | None) -> Path:
+    fake_bin = tmp_path / "bin"
+    real = shutil.which("python3")
+    if patchlevel is None:
+        body = 'case "$*" in *tkinter*) exit 1 ;; esac\nexec "$TEST_REAL_PYTHON" "$@"\n'
+    else:
+        body = (
+            f'case "$*" in *tkinter*) echo {patchlevel}; exit 0 ;; esac\n'
+            'exec "$TEST_REAL_PYTHON" "$@"\n'
+        )
+    _write_executable(fake_bin / "python3", body)
+    assert real is not None
+    return fake_bin
+
+
+@pytest.mark.parametrize(
+    ("patchlevel", "message"),
+    [(None, "no usable tkinter"), ("8.5.9", "uses Tk 8.5.9")],
+)
+def test_lume_runner_refuses_missing_or_legacy_tk(
+    tmp_path: Path, patchlevel: str | None, message: str
+) -> None:
+    fake_bin = _fake_python_with_tk(tmp_path, patchlevel)
+    completed = _run(
+        RUN_ALL,
+        'PATH="$TEST_FAKE_BIN:$PATH"\nrequire_modern_tk\n',
+        env={"TEST_FAKE_BIN": str(fake_bin), "TEST_REAL_PYTHON": shutil.which("python3") or ""},
+    )
+    assert completed.returncode == 2
+    assert message in completed.stderr
+
+
+@pytest.mark.parametrize("patchlevel", ["8.6.16", "9.1.0"])
+def test_lume_runner_accepts_modern_tk(tmp_path: Path, patchlevel: str) -> None:
+    fake_bin = _fake_python_with_tk(tmp_path, patchlevel)
+    completed = _run(
+        RUN_ALL,
+        'PATH="$TEST_FAKE_BIN:$PATH"\nrequire_modern_tk\n',
+        env={"TEST_FAKE_BIN": str(fake_bin), "TEST_REAL_PYTHON": shutil.which("python3") or ""},
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
 @pytest.mark.parametrize("script", [RUN_ALL, RUN_RUST_E2E], ids=lambda path: path.name)
 def test_no_permission_mode_check_pipes_into_grep(script: Path) -> None:
     text = script.read_text(encoding="utf-8")
@@ -217,6 +344,37 @@ def _guest_seed_assignment(name: str) -> str:
     match = re.search(rf'^{name}="(?P<body>.*?)"', text, re.DOTALL | re.MULTILINE)
     assert match is not None
     return match.group("body")
+
+
+def test_tcc_guest_seed_waits_for_tccd_lock() -> None:
+    text = SEED_TCC_GUEST.read_text(encoding="utf-8")
+    assert re.search(r'^TCC_SQLITE=\(/usr/bin/sqlite3 -cmd "\.timeout \d+"\)$', text, re.MULTILINE)
+    # Every TCC.db access goes through the busy-timeout invocation.
+    assert re.search(r'sqlite3 "\$\{TCC_DB\}"', text) is None
+    assert _guest_seed_assignment("SQL").lstrip().startswith("BEGIN IMMEDIATE;")
+
+
+@pytest.mark.skipif(shutil.which("sqlite3") is None, reason="needs the sqlite3 CLI")
+def test_tcc_guest_seed_sqlite_invocation_outlasts_a_held_write_lock(tmp_path: Path) -> None:
+    db = tmp_path / "TCC.db"
+    holder = sqlite3.connect(db, isolation_level=None)
+    holder.execute("CREATE TABLE access(service TEXT)")
+    holder.execute("BEGIN IMMEDIATE")
+    holder.execute("INSERT INTO access VALUES ('held')")
+    seed = subprocess.Popen(
+        ["sqlite3", "-cmd", ".timeout 30000", str(db), "BEGIN IMMEDIATE; INSERT INTO access VALUES ('seeded'); COMMIT;"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    time.sleep(1.0)
+    assert seed.poll() is None, "the seed gave up while the lock was held"
+    holder.execute("COMMIT")
+    holder.close()
+    _, stderr = seed.communicate(timeout=30)
+    assert seed.returncode == 0, stderr
+    with sqlite3.connect(db) as conn:
+        assert {row[0] for row in conn.execute("SELECT service FROM access")} == {"held", "seeded"}
 
 
 def test_tcc_guest_seed_sql_executes_against_modern_tcc_schema(tmp_path: Path) -> None:
@@ -436,7 +594,7 @@ def test_tcc_guest_seed_library_mode_fails_closed_when_executed() -> None:
 
 @pytest.mark.parametrize(
     "document",
-    [HARNESS_GUIDE, PUBLIC_LUME_TEST_GUIDE],
+    [HARNESS_GUIDE, RUNNER_GUIDE],
     ids=lambda path: path.name,
 )
 def test_harness_guides_route_automated_tcc_through_guarded_helper(document: Path) -> None:
@@ -845,6 +1003,128 @@ def test_swiftui_retry_cell_and_harness_must_agree(args: list[str]) -> None:
     assert _parse(args)["status"] == "2"
 
 
+APPKIT_CELLS = REPO_ROOT / "scripts/ci/macos/appkit-cells.tsv"
+APPKIT_TESTS = REPO_ROOT / "libs/cua-driver/rust/crates/cua-driver-e2e/tests/harness_appkit_test.rs"
+APPKIT_SNAPSHOT_PUBLICATION = (
+    REPO_ROOT
+    / "libs/cua-driver/rust/crates/cua-driver-e2e/tests/support/appkit_snapshot_publication.rs"
+)
+
+
+def _appkit_rows() -> list[list[str]]:
+    return [line.split("\t") for line in APPKIT_CELLS.read_text(encoding="utf-8").splitlines()]
+
+
+def _ignored_tests(source: Path) -> set[str]:
+    return set(
+        re.findall(r"#\[test\]\s*#\[ignore\]\s*fn (harness_appkit_\w+)", source.read_text())
+    )
+
+
+def test_appkit_manifest_registers_every_ignored_appkit_test_once() -> None:
+    rows = _appkit_rows()
+    assert all(len(row) == 2 for row in rows)
+    cells = [row[0] for row in rows]
+    tests = [row[1] for row in rows]
+    assert all(re.fullmatch(r"macos-appkit-[a-z0-9]+(?:-[a-z0-9]+)*", cell) for cell in cells)
+    assert len(set(cells)) == len(cells)
+    assert len(set(tests)) == len(tests)
+    expected = _ignored_tests(APPKIT_TESTS) | {
+        f"snapshot_publication::{name}" for name in _ignored_tests(APPKIT_SNAPSHOT_PUBLICATION)
+    }
+    assert set(tests) == expected
+
+
+def test_appkit_single_cell_is_routed_to_the_native_lane() -> None:
+    fields = _parse(
+        ["--retry-cell", "macos-appkit-ax-tree-ax-not-applicable", "--retry-only"]
+    )
+    assert fields["status"] == "0"
+    assert fields["harness"] == "appkit"
+    assert fields["lane"] == "native"
+    assert fields["attempts"] == "1"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--retry-cell", "macos-appkit-ax-tree-ax-not-applicable"],
+        [
+            "--retry-cell", "macos-appkit-ax-tree-ax-not-applicable",
+            "--retry-only", "--retry-harness", "swiftui",
+        ],
+        [
+            "--retry-cell", "macos-swiftui-left-click-ax-background",
+            "--retry-only", "--retry-harness", "appkit",
+        ],
+    ],
+)
+def test_appkit_selection_cannot_change_harness_or_retry_a_full_matrix(
+    args: list[str],
+) -> None:
+    assert _parse(args)["status"] == "2"
+
+
+def _dispatch_appkit(tmp_path: Path, harness: str, cell: str) -> list[str]:
+    cargo = tmp_path / "bin/cargo"
+    commands = tmp_path / "commands.txt"
+    _write_executable(cargo, 'printf "%s\\n" "$*" >> "$CUA_TEST_NATIVE_COMMANDS"\n')
+    completed = _run(
+        RUN_RUST_E2E,
+        'ARTIFACT_DIR="$CUA_TEST_ARTIFACTS"\nNATIVE_FILTER_MATCHES=0\nrun_appkit_cells\n'
+        'printf "matches=%s\\n" "$NATIVE_FILTER_MATCHES"\n',
+        env={
+            "PATH": f"{cargo.parent}:{os.environ['PATH']}",
+            "CUA_TEST_NATIVE_COMMANDS": str(commands),
+            "CUA_TEST_ARTIFACTS": str(tmp_path),
+            "CUA_E2E_HARNESS_FILTER": harness,
+            "CUA_E2E_CELL_FILTER": cell,
+        },
+    )
+    assert completed.returncode == 0, completed.stderr
+    calls = commands.read_text().splitlines() if commands.exists() else []
+    assert _fields(completed.stdout)["matches"] == str(len(calls))
+    return calls
+
+
+def _appkit_command(test_name: str) -> str:
+    return (
+        f"test -p cua-driver-e2e --test harness_appkit_test -- --ignored --exact {test_name} "
+        "--nocapture --test-threads=1"
+    )
+
+
+@pytest.mark.parametrize(
+    ("cell", "test_name"),
+    [
+        ("macos-appkit-ax-tree-ax-not-applicable", "harness_appkit_smoke"),
+        (
+            "macos-appkit-snapshot-publication-ax-foreground",
+            "snapshot_publication::harness_appkit_pending_snapshot_cannot_retarget_token",
+        ),
+    ],
+)
+def test_appkit_selection_invokes_only_the_exact_native_test(
+    tmp_path: Path, cell: str, test_name: str
+) -> None:
+    assert _dispatch_appkit(tmp_path, "appkit", cell) == [_appkit_command(test_name)]
+
+
+def test_appkit_full_lane_runs_every_registered_test_in_manifest_order(tmp_path: Path) -> None:
+    expected = [_appkit_command(row[1]) for row in _appkit_rows()]
+    assert _dispatch_appkit(tmp_path, "", "") == expected
+
+
+@pytest.mark.parametrize(
+    ("harness", "cell"),
+    [("appkit", "unknown-cell"), ("swiftui", ""), ("swiftui", "macos-appkit-ax-tree-ax-not-applicable")],
+)
+def test_appkit_dispatch_never_falls_back_on_no_match(
+    tmp_path: Path, harness: str, cell: str
+) -> None:
+    assert _dispatch_appkit(tmp_path, harness, cell) == []
+
+
 def test_native_swiftui_selector_matches_exactly_one_owned_cell() -> None:
     completed = _run(
         RUN_RUST_E2E,
@@ -978,6 +1258,9 @@ def test_required_keychains_unlock_login_without_retaining_password(
     _write_executable(
         fake_security,
         """printf '%s\\n' "$*" >> "$CUA_TEST_SECURITY_LOG"
+if [ "$1" = list-keychains ]; then
+    printf '    "%s"\\n' "$CUA_E2E_SIGNING_KEYCHAIN" "$CUA_E2E_LOGIN_KEYCHAIN"
+fi
 """,
     )
     completed = _run(
@@ -997,6 +1280,7 @@ def test_required_keychains_unlock_login_without_retaining_password(
     assert log.read_text(encoding="utf-8").splitlines() == [
         f"unlock-keychain -p fixture-password {signing_keychain}",
         f"unlock-keychain -p fixture-password {login_keychain}",
+        "list-keychains -d user",
     ]
 
 
@@ -1014,6 +1298,9 @@ def test_required_keychains_accept_already_unlocked_noninteractive_keychains(
     _write_executable(
         fake_security,
         """printf '%s\n' "$*" >> "$CUA_TEST_SECURITY_LOG"
+if [ "$1" = list-keychains ]; then
+    printf '    "%s"\n' "$CUA_E2E_SIGNING_KEYCHAIN" "$CUA_E2E_LOGIN_KEYCHAIN"
+fi
 command="$1"
 shift
 if [ "$command" = find-generic-password ]; then
@@ -1055,7 +1342,7 @@ fi
     probe_binary = codesign_calls[0].rsplit(" ", 1)[1]
     assert codesign_calls[1] == f"--verify --strict {probe_binary}"
     security_calls = security_log.read_text(encoding="utf-8").splitlines()
-    assert len(security_calls) == 3
+    assert len(security_calls) == 4
     assert security_calls[0].startswith("add-generic-password -a cua-driver-keychain-probe -s ")
     service = security_calls[0].split(" -s ", 1)[1].split(" -w ", 1)[0]
     assert security_calls[0].endswith(f" -w {service} {login_keychain}")
@@ -1067,6 +1354,7 @@ fi
         f"delete-generic-password -a cua-driver-keychain-probe -s {service} "
         f"{login_keychain}"
     )
+    assert security_calls[3] == "list-keychains -d user"
 
 
 def test_required_keychains_fail_when_noninteractive_keychain_is_locked(

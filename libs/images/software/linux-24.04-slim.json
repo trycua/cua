@@ -1,0 +1,13 @@
+{
+  "image": "ghcr.io/trycua/linux:24.04-slim",
+  "os": "linux",
+  "version": "24.04",
+  "tier": "slim",
+  "recorded_from": "2026-09-28, container/arm64, published 24.04-slim (sha256:a67d2f0d), doctor report of its arm64 child",
+  "apps": {
+    "chromium": "Chromium 154.0.8037.57",
+    "python3": "Python 3.12.3"
+  },
+  "tools": {},
+  "simulator_runtimes": []
+}

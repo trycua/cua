@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cua.ai/schemas/diagnose-report.v1.json",
+  "title": "cua doctor report, schema version 1",
+  "description": "JSON form of cua.env.v1.DiagnoseReport (diagnose.proto): proto field names, enum values as lowercase short names. Written by `cua-spacesd doctor --format json`, the doctor shim and `cua doctor`. cua-spacesd-client's diagnose tests keep this file in step with the Rust model.",
+  "type": "object",
+  "required": ["schema_version", "spacesd", "image", "environment", "summary", "checks", "fidelity"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "producer": { "type": "string", "description": "\"cua-spacesd\" or \"cua-doctor-shim/<target>\"" },
+    "started_at": { "type": "string", "format": "date-time" },
+    "spacesd": { "oneOf": [{ "$ref": "#/$defs/spacesd" }, { "type": "null" }] },
+    "image": { "$ref": "#/$defs/image" },
+    "environment": { "$ref": "#/$defs/environment" },
+    "summary": { "$ref": "#/$defs/summary" },
+    "checks": { "type": "array", "items": { "$ref": "#/$defs/check" } },
+    "fidelity": { "$ref": "#/$defs/fidelity" }
+  },
+  "$defs": {
+    "status": { "enum": ["pass", "warn", "fail", "skip"] },
+    "severity": { "enum": ["required", "recommended", "info"] },
+    "spacesd": {
+      "type": "object",
+      "required": ["version", "protocol_revision"],
+      "properties": {
+        "version": { "type": "string" },
+        "protocol_revision": { "type": "integer", "minimum": 0 },
+        "git_sha": { "type": "string" },
+        "cua_driver_version": { "type": "string" }
+      }
+    },
+    "image": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "name": { "type": "string" },
+        "ref": { "type": "string" },
+        "variant": { "enum": ["", "rootfs", "containerdisk", "lume"] },
+        "os": { "enum": ["", "linux", "windows", "macos"] },
+        "manifest_sha256": { "type": "string" },
+        "manifest_source": { "type": "string" }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "runtime": { "type": "string" },
+        "runtime_detail": { "type": "string" },
+        "arch": { "type": "string" },
+        "init": { "enum": ["", "systemd", "supervisord", "launchd", "scm", "unknown"] },
+        "display_server": { "type": "string" },
+        "os": { "type": "string" }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["status", "pass", "warn", "fail", "skip", "duration_ms"],
+      "properties": {
+        "status": { "$ref": "#/$defs/status" },
+        "pass": { "type": "integer", "minimum": 0 },
+        "warn": { "type": "integer", "minimum": 0 },
+        "fail": { "type": "integer", "minimum": 0 },
+        "skip": { "type": "integer", "minimum": 0 },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "strict": { "type": "boolean" }
+      }
+    },
+    "check": {
+      "type": "object",
+      "required": ["id", "group", "status", "severity"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9_]+(\\.[A-Za-z0-9_:\\-]+)*$" },
+        "group": { "type": "string" },
+        "status": { "$ref": "#/$defs/status" },
+        "severity": { "$ref": "#/$defs/severity" },
+        "claimed_by": { "type": "array", "items": { "type": "string" } },
+        "message": { "type": "string" },
+        "remediation": { "type": "string" },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "facts": { "type": "object", "additionalProperties": { "type": "string" } },
+        "artifacts": { "type": "array", "items": { "$ref": "#/$defs/artifact" } }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["name", "media_type"],
+      "properties": {
+        "name": { "type": "string" },
+        "media_type": { "type": "string" },
+        "data": { "type": "string", "contentEncoding": "base64" },
+        "path": { "type": "string" }
+      }
+    },
+    "fidelity": {
+      "type": "object",
+      "description": "Every key is always present, so two reports diff key by key (eval parity).",
+      "required": [
+        "display", "fonts_sha256", "tz", "locale", "clock_skew_ms", "encoder", "a11y_backend",
+        "audio_backend", "cpu_model", "cpu_count", "memory_mib", "gpu", "kernel", "runtime",
+        "init", "packages_sha256", "app_versions", "tool_versions", "simulator_runtimes"
+      ],
+      "properties": {
+        "display": { "type": "string" },
+        "fonts_sha256": { "type": "string" },
+        "tz": { "type": "string" },
+        "locale": { "type": "string" },
+        "clock_skew_ms": { "type": "integer" },
+        "encoder": { "type": "string" },
+        "a11y_backend": { "type": "string" },
+        "audio_backend": { "type": "string" },
+        "cpu_model": { "type": "string" },
+        "cpu_count": { "type": "integer", "minimum": 0 },
+        "memory_mib": { "type": "integer", "minimum": 0 },
+        "gpu": { "type": "string" },
+        "kernel": { "type": "string" },
+        "runtime": { "type": "string" },
+        "init": { "type": "string" },
+        "packages_sha256": { "type": "string" },
+        "app_versions": { "type": "object", "additionalProperties": { "type": "string" } },
+        "tool_versions": { "type": "object", "additionalProperties": { "type": "string" } },
+        "simulator_runtimes": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

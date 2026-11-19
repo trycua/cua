@@ -1,0 +1,4268 @@
+//! [`Sandboxes`] (the provider-dispatching manager) and [`Sandbox`].
+
+use crate::{
+    Error, Result,
+    http::{HttpClient, HttpResponse, RequestBody, ServiceEndpoint, StreamingResponse},
+    runtime::{
+        ImageInfo, InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime, LocalStartSpec,
+    },
+    state::{LocalState, SandboxState, StateStore, python_utc_now, registry_image_dict},
+};
+pub use cua_image::{
+    RegistryCredentials,
+    build::{BuildFile, BuildSpec},
+    sidecar::Sidecar,
+    spec::ImageLayer,
+};
+use cua_spacesd_client::{ConnectOptions, SpacesdClient};
+
+use crate::placement::{self, Kind, On, Runtime};
+use crate::refs::SandboxRef;
+
+mod checkpoints;
+mod contrib;
+pub use checkpoints::{CHECKPOINT_DIR, CheckpointRecord};
+
+/// The guest port of `service` in `services`.
+pub(crate) fn service_port(services: &BTreeMap<String, u16>, service: &str) -> Result<u16> {
+    match services.get(service) {
+        Some(p) if *p > 0 => Ok(*p),
+        _ => Err(Error::InvalidArgument(format!(
+            "no service {service:?} with a known port (declared: {:?})",
+            services.keys().collect::<Vec<_>>()
+        ))),
+    }
+}
+use serde_json::{Map, Value};
+use std::{
+    collections::BTreeMap,
+    net::SocketAddr,
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use tokio::net::{TcpListener, TcpStream};
+
+/// How long [`Sandboxes::create`] waits for the cua-spacesd of an image
+/// that declares one to answer `Health`, once the guest's ports answer, when
+/// the caller did not choose the budget ([`CreateOptions::ready_timeout_given`]);
+/// a chosen `ready_timeout` governs that wait too.
+pub const SPACESD_READY_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Default spacesd port.
+pub const ENV_PORT: u16 = 3211;
+
+/// Which provider backs a sandbox.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ProviderKind {
+    /// Local VM or container runtime.
+    Local,
+    /// Direct URL.
+    Direct,
+    /// A third-party platform ([`crate::Provider`]); `runtime_type` names
+    /// which (`e2b`, `daytona`, ...).
+    Contrib,
+}
+
+/// Coarse lifecycle status.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Status {
+    /// Running / bound.
+    Running,
+    /// Paused or scaled to zero.
+    Suspended,
+    /// Stopped.
+    Stopped,
+    /// Starting.
+    Provisioning,
+    /// Unknown (with the provider's word for it).
+    Unknown(String),
+}
+
+impl From<InstanceStatus> for Status {
+    fn from(s: InstanceStatus) -> Self {
+        match s {
+            InstanceStatus::Running => Status::Running,
+            InstanceStatus::Paused => Status::Suspended,
+            InstanceStatus::Stopped => Status::Stopped,
+            InstanceStatus::Provisioning => Status::Provisioning,
+            InstanceStatus::Unknown(u) => Status::Unknown(u),
+        }
+    }
+}
+
+/// A user-declared readiness probe. None is implied: with no probes, a
+/// sandbox is ready as soon as its provider reports it running.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Probe {
+    /// A TCP connect to this guest port succeeds (through a provider's
+    /// proxy: the port's service answers any HTTP status below 500).
+    Tcp(u16),
+    /// `GET path` on this guest port returns 2xx (or `status` when set).
+    Http {
+        /// Guest port.
+        port: u16,
+        /// Path.
+        path: String,
+        /// Exact status to wait for.
+        status: Option<u16>,
+    },
+}
+
+/// How often [`Sandboxes::spawn_stop_watch`] looks for local sandboxes
+/// that stopped on their own.
+pub const STOP_WATCH_EVERY: Duration = Duration::from_secs(15);
+
+/// How long a local resume waits for the probes its create waited for.
+pub const RESUME_READY_TIMEOUT: Duration = Duration::from_secs(180);
+
+/// How long readiness waits for cua-spacesd to apply a token written into
+/// the guest (it follows its token file within about 50 ms).
+const TOKEN_APPLY_GRACE: Duration = Duration::from_secs(5);
+
+/// Probes as the state file keeps them.
+fn probes_to_json(probes: &[Probe]) -> Value {
+    Value::Array(
+        probes
+            .iter()
+            .map(|p| match p {
+                Probe::Tcp(port) => serde_json::json!({"tcp": port}),
+                Probe::Http { port, path, status } => {
+                    serde_json::json!({"http": {"port": port, "path": path, "status": status}})
+                }
+            })
+            .collect(),
+    )
+}
+
+/// [`probes_to_json`] back; entries it does not know are skipped.
+fn probes_from_json(v: Value) -> Vec<Probe> {
+    let port = |v: &Value| v.as_u64().and_then(|p| u16::try_from(p).ok());
+    v.as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|p| {
+                    if let Some(t) = p.get("tcp").and_then(port) {
+                        return Some(Probe::Tcp(t));
+                    }
+                    let h = p.get("http")?;
+                    Some(Probe::Http {
+                        port: h.get("port").and_then(port)?,
+                        path: h.get("path")?.as_str()?.to_string(),
+                        status: h.get("status").and_then(port),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Guest network of a sandbox.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum NetworkMode {
+    /// Outbound network (the default, like a Docker container). Local QEMU
+    /// guests use user-mode NAT with loopback-only port forwards.
+    #[default]
+    Default,
+    /// No outbound network: local QEMU guests only (`restrict=on`); the
+    /// published ports still reach the guest. Containers, Lume and cloud
+    /// sandboxes refuse it ([`Error::Unsupported`]).
+    None,
+}
+
+impl NetworkMode {
+    /// Parses `default` / `none` (case-insensitive; empty = `default`).
+    pub fn parse(s: &str) -> Result<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "" | "default" => Ok(Self::Default),
+            "none" => Ok(Self::None),
+            other => Err(Error::InvalidArgument(format!(
+                "network {other:?}: expected \"default\" or \"none\""
+            ))),
+        }
+    }
+
+    /// The spelling [`NetworkMode::parse`] accepts.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::None => "none",
+        }
+    }
+}
+
+/// Options for [`Sandboxes::create`].
+#[derive(Clone)]
+pub struct CreateOptions {
+    /// Provider.
+    pub provider: ProviderKind,
+    /// Name. `None` = ephemeral (no state file; deleted with the handle).
+    pub name: Option<String>,
+    /// Image reference.
+    pub image: String,
+    /// Guest OS (`linux`, `macos`, `windows`).
+    pub os: String,
+    /// vCPUs.
+    pub cpus: u32,
+    /// Memory (MiB).
+    pub memory_mb: u64,
+    /// Grow a local VM's disk to this many GiB (`None`: the image's size).
+    /// Local containers and provider sandboxes refuse it
+    /// ([`Error::InvalidArgument`]).
+    pub disk_gb: Option<u32>,
+    /// Extra guest ports to publish (local) or expose as `port-<n>`
+    /// services.
+    pub ports: Vec<u16>,
+    /// Named services (name → guest port). `env` defaults to 3211.
+    pub services: BTreeMap<String, u16>,
+    /// Readiness probes.
+    pub wait_for: Vec<Probe>,
+    /// Readiness budget, counted from when the image is present (the image
+    /// download is not counted: it has its own stall detection). A chosen
+    /// budget includes the cua-spacesd wait; otherwise that wait gets
+    /// [`SPACESD_READY_TIMEOUT`] (at most this budget) on top.
+    pub ready_timeout: Duration,
+    /// Whether the caller chose `ready_timeout` (`cua sb create
+    /// --ready-timeout`, the SDK's `ready_timeout_ms`). Chosen, it bounds
+    /// the cua-spacesd wait too; the default budget caps that wait at
+    /// [`SPACESD_READY_TIMEOUT`], so an image that declares cua-spacesd but
+    /// never starts it fails in minutes, not after the whole budget.
+    pub ready_timeout_given: bool,
+    /// Guest environment. Local: the container environment, cloud-init
+    /// (Linux VMs) or `lume ssh` after boot (macOS VMs: `~/.cua/env.sh`
+    /// sourced by shells, plus `launchctl setenv`); Windows VMs have no
+    /// provisioning channel ([`Error::Unsupported`]).
+    pub env: BTreeMap<String, String>,
+    /// The sandbox's command (argv), replacing the image's entrypoint. Local
+    /// containers: ENTRYPOINT (with an empty CMD); local Linux VMs: run by
+    /// cloud-init. macOS guests: [`Error::Unsupported`].
+    pub command: Option<Vec<String>>,
+    /// spacesd token for [`Sandbox::spacesd`].
+    pub env_token: Option<String>,
+    /// Boot firmware for local VMs (`bios` / `efi`); `None` = auto.
+    pub firmware: Option<String>,
+    /// Extra containers next to the sandbox, addressed by name on every
+    /// runtime: the sandbox reaches a sidecar at its name (on its ports) and
+    /// a sidecar reaches the sandbox at `main`; name their ports in
+    /// `services` to reach them from outside. Local containers: extra
+    /// containers in the sandbox's netns (`localhost` works too). Local VMs
+    /// (QEMU/Lume):
+    /// [`Error::Unsupported`]. With sidecars the service names `main`,
+    /// `sidecars` and `sc` are reserved.
+    pub sidecars: Vec<Sidecar>,
+    /// Credentials for a private `image` (and sidecar images on the same
+    /// registry). Used for the pull, the resolver and manifest reads. Never
+    /// logged.
+    pub registry_credentials: Option<RegistryCredentials>,
+    /// Image layers to build on top of `image` (`from` is `image`): a build
+    /// into the local container engine ([`LocalRuntime::build_image`]),
+    /// cached by content hash. VM images take no layers
+    /// ([`Error::UnsupportedImage`]).
+    pub build: Option<BuildSpec>,
+    /// What kind of machine: [`Kind::Auto`] (the default) decides from
+    /// the image (see [`crate::placement`]).
+    pub kind: Kind,
+    /// Which engine: [`Runtime::Auto`] (the default) picks the safest one
+    /// the location offers for the kind (gVisor before runc; QEMU, or Lume
+    /// for macOS). An engine the location does not
+    /// offer for the kind is [`Error::InvalidPlacement`]. A local sandbox
+    /// with sidecars needs `runc` where gVisor would run (separate gVisor
+    /// containers cannot share a network namespace); nothing falls back
+    /// silently.
+    pub runtime: Runtime,
+    /// Deprecated spelling of `runtime` for local containers (`runc` or
+    /// `gvisor`); used when `runtime` is `Auto`.
+    pub container_runtime: Option<String>,
+    /// Guest network: outbound by default; [`NetworkMode::None`] cuts
+    /// egress (local QEMU VMs only; everything else refuses it).
+    pub network: NetworkMode,
+    /// A Space without a desktop: only cua-spacesd runs (see
+    /// `CreateSandboxRequest.headless`).
+    pub headless: bool,
+    /// Whether an image without cua-spacesd gets a static one injected
+    /// (local containers and microVMs). `None`: yes; `Some(false)` runs the
+    /// image as it is.
+    pub spacesd: Option<bool>,
+    /// Egress policy ([`cua_vmm::egress`]): enforced by the host, outside
+    /// the guest, from its first instruction (local runtimes that can;
+    /// everything else refuses a non-empty one).
+    pub egress: cua_vmm::egress::EgressPolicy,
+    /// Network settings ([`cua_vmm::network`]): a preset and the user's
+    /// lists. `None`: what `network` and `egress` say
+    /// ([`cua_vmm::network::NetworkSettings::from_legacy`]).
+    pub network_settings: Option<cua_vmm::network::NetworkSettings>,
+    /// The tree it belongs to (a top-level Space's id); `None`: its own.
+    pub network_tree: Option<String>,
+    /// The process that owns an ephemeral local sandbox (recorded in its
+    /// lease; the sandbox is reaped once that process is gone). `None`:
+    /// this process. A daemon passes its client's pid.
+    pub owner_pid: Option<u32>,
+    /// [`ProviderKind::Contrib`]: the provider's location word (`e2b`).
+    pub contrib: Option<String>,
+    /// Keep a named sandbox whose readiness check fails (its VM or
+    /// container, and its state file) for debugging. `false` (the
+    /// default): a failed create deletes what it made, named or not.
+    /// Ephemeral sandboxes are always deleted.
+    pub keep_on_failure: bool,
+    /// A GPU option of the runtime it runs on (`paravirtual` for a macOS
+    /// VM on Lume, `virgl` for QEMU, `nvidia` for a container, a provider's
+    /// GPU type; `auto` or empty: the runtime's first). `None`: no GPU. See
+    /// [`crate::gpu`] and [`LocalRuntime::gpu_support`].
+    pub gpu: Option<String>,
+    /// Host directories mounted into a local guest
+    /// ([`LocalStartSpec::mounts`]); cloud and provider sandboxes refuse
+    /// them.
+    pub mounts: Vec<cua_vmm::Mount>,
+    /// The name an ephemeral local or contrib sandbox gets (default
+    /// `cua-eph-<hex>`); [`Sandboxes::create_cancellable`] sets it so it
+    /// knows what to clean up.
+    pub ephemeral_name: Option<String>,
+    /// A fork source (a "bake" sandbox): a local QEMU VM's guest RAM is a
+    /// shared file, so its checkpoints take milliseconds and forks of them
+    /// share its pages ([`Sandboxes::checkpoint`], [`Sandboxes::fork`]). It
+    /// never claims a warm-pool member. Other kinds ignore it.
+    pub forkable: bool,
+}
+
+impl std::fmt::Debug for CreateOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CreateOptions")
+            .field("provider", &self.provider)
+            .field("name", &self.name)
+            .field("image", &self.image)
+            .field("os", &self.os)
+            .field("cpus", &self.cpus)
+            .field("memory_mb", &self.memory_mb)
+            .field("disk_gb", &self.disk_gb)
+            .field("ports", &self.ports)
+            .field("services", &self.services)
+            .field("wait_for", &self.wait_for)
+            .field("ready_timeout", &self.ready_timeout)
+            .field("ready_timeout_given", &self.ready_timeout_given)
+            .field("env", &self.env)
+            .field("command", &self.command)
+            .field("env_token", &self.env_token.as_ref().map(|_| "<redacted>"))
+            .field("firmware", &self.firmware)
+            .field("sidecars", &self.sidecars)
+            .field(
+                "registry_credentials",
+                &self.registry_credentials.as_ref().map(|_| "<redacted>"),
+            )
+            .field("build", &self.build)
+            .field("kind", &self.kind)
+            .field("runtime", &self.runtime)
+            .field("container_runtime", &self.container_runtime)
+            .field("network", &self.network)
+            .field("headless", &self.headless)
+            .field("spacesd", &self.spacesd)
+            .field("egress", &self.egress)
+            .field("network_settings", &self.network_settings)
+            .field("network_tree", &self.network_tree)
+            .field("owner_pid", &self.owner_pid)
+            .field("contrib", &self.contrib)
+            .field("keep_on_failure", &self.keep_on_failure)
+            .field("gpu", &self.gpu)
+            .field("mounts", &self.mounts)
+            .field("ephemeral_name", &self.ephemeral_name)
+            .field("forkable", &self.forkable)
+            .finish()
+    }
+}
+
+impl CreateOptions {
+    /// Defaults for `provider` + `image`.
+    pub fn new(provider: ProviderKind, image: impl Into<String>) -> Self {
+        Self {
+            provider,
+            name: None,
+            image: image.into(),
+            os: "linux".into(),
+            cpus: 2,
+            memory_mb: 4096,
+            disk_gb: None,
+            ports: vec![],
+            services: BTreeMap::new(),
+            wait_for: vec![],
+            ready_timeout: Duration::from_secs(600),
+            ready_timeout_given: false,
+            env: BTreeMap::new(),
+            command: None,
+            env_token: None,
+            firmware: None,
+            sidecars: vec![],
+            registry_credentials: None,
+            build: None,
+            kind: Kind::Auto,
+            runtime: Runtime::Auto,
+            container_runtime: None,
+            network: NetworkMode::Default,
+            headless: false,
+            spacesd: None,
+            egress: Default::default(),
+            network_settings: None,
+            network_tree: None,
+            owner_pid: None,
+            contrib: None,
+            keep_on_failure: false,
+            gpu: None,
+            mounts: vec![],
+            ephemeral_name: None,
+            forkable: false,
+        }
+    }
+
+    /// The network settings this create asks for: `network_settings`, else
+    /// what `network` and `egress` say (`internet` when neither says
+    /// anything).
+    pub fn effective_network(&self) -> cua_vmm::network::NetworkSettings {
+        self.network_settings.clone().unwrap_or_else(|| {
+            cua_vmm::network::NetworkSettings::from_legacy(
+                &self.egress,
+                self.network == NetworkMode::None,
+            )
+        })
+    }
+
+    /// Adds a sidecar.
+    pub fn sidecar(mut self, sidecar: Sidecar) -> Self {
+        self.sidecars.push(sidecar);
+        self
+    }
+
+    /// The credentials, scoped to `image`'s registry when unscoped.
+    fn scoped_credentials(&self) -> Option<RegistryCredentials> {
+        self.registry_credentials.clone().map(|c| match c.registry {
+            Some(_) => c,
+            None => {
+                // `container:` / `vm:` / `docker:` / `lume:` pick a local
+                // backend; the registry is the reference's.
+                let image = self.image.trim();
+                let reference = match image.split_once(':') {
+                    Some((p, r))
+                        if ["container", "docker", "vm", "lume"].contains(&p)
+                            && !r.starts_with("//") =>
+                    {
+                        r
+                    }
+                    _ => image,
+                };
+                c.for_registry(cua_image::registry_of(reference))
+            }
+        })
+    }
+
+    /// The location this create runs on (`None` for direct).
+    pub fn on(&self) -> Option<On> {
+        match self.provider {
+            ProviderKind::Local => Some(On::Local),
+            ProviderKind::Direct => None,
+            ProviderKind::Contrib => self.contrib.clone().map(On::Provider),
+        }
+    }
+
+    /// Checks `kind` and `runtime` against the location and folds them
+    /// into the provider options: the older spellings (`container_runtime`,
+    /// an image prefix such as `vm:`) become `runtime` /
+    /// `kind` when those are `auto`, and contradictions are
+    /// [`Error::InvalidPlacement`].
+    pub fn apply_placement(&mut self) -> Result<()> {
+        let Some(on) = self.on() else {
+            if self.kind != Kind::Auto || self.runtime != Runtime::Auto {
+                placement::validate(&On::Direct(String::new()), self.kind, &self.runtime)?;
+            }
+            return Ok(());
+        };
+        if self.runtime == Runtime::Auto
+            && on == On::Local
+            && let Some(r) = self.container_runtime.as_deref().filter(|r| !r.is_empty())
+        {
+            self.runtime = Runtime::parse(r)?;
+        }
+        // A backend prefix on a local image (`vm:`, `container:`, `lume:`)
+        // is an older way to say the kind and runtime.
+        if on == On::Local
+            && let Some((prefix, _)) = local_prefix(&self.image)
+        {
+            let (k, r) = match prefix {
+                "container" | "docker" => (Kind::Container, Runtime::Auto),
+                "lume" => (Kind::Vm, Runtime::Lume),
+                _ => (Kind::Vm, Runtime::Qemu),
+            };
+            if self.kind != Kind::Auto && self.kind != k {
+                return Err(placement::PlacementError::new(
+                    placement::Axis::Kind,
+                    self.kind.as_str(),
+                    format!("the image prefix {prefix}: runs a {k}, not a {}", self.kind),
+                    vec!["auto".into(), k.to_string()],
+                )
+                .into());
+            }
+            self.kind = k;
+            if self.runtime == Runtime::Auto {
+                self.runtime = r;
+            }
+        }
+        let implied = placement::validate(&on, self.kind, &self.runtime)?;
+        if self.kind == Kind::Auto {
+            self.kind = implied;
+        }
+        // A provider's kind asked for by name runs on that kind's first
+        // engine (`--on modal --kind microvm` is Modal's VM runtime).
+        if self.runtime == Runtime::Auto
+            && self.kind != Kind::Auto
+            && matches!(on, On::Provider(_))
+            && let Some(r) = placement::capabilities(&on).runtimes(self.kind).first()
+        {
+            self.runtime = r.clone();
+        }
+        if on == On::Local && matches!(self.runtime, Runtime::Gvisor | Runtime::Runc) {
+            self.container_runtime = Some(self.runtime.to_string());
+        }
+        Ok(())
+    }
+
+    /// Sets the name.
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// Adds a probe.
+    pub fn wait_for(mut self, probe: Probe) -> Self {
+        self.wait_for.push(probe);
+        self
+    }
+
+    /// Adds a service.
+    pub fn service(mut self, name: impl Into<String>, port: u16) -> Self {
+        self.services.insert(name.into(), port);
+        self
+    }
+
+    /// Sets the command (argv).
+    pub fn command<I, S>(mut self, argv: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.command = Some(argv.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Adds a readiness probe on a declared service (see
+    /// [`Self::service_probe`]).
+    pub fn wait_for_service(mut self, service: &str, http_path: Option<&str>) -> Result<Self> {
+        let probe = self.service_probe(service, http_path)?;
+        self.wait_for.push(probe);
+        Ok(self)
+    }
+
+    /// A probe on the guest port of a declared service: TCP, or `GET
+    /// http_path` returning 2xx.
+    pub fn service_probe(&self, service: &str, http_path: Option<&str>) -> Result<Probe> {
+        let port = service_port(&self.all_services(), service)?;
+        Ok(match http_path {
+            None => Probe::Tcp(port),
+            Some(p) => Probe::Http {
+                port,
+                path: if p.starts_with('/') {
+                    p.to_string()
+                } else {
+                    format!("/{p}")
+                },
+                status: None,
+            },
+        })
+    }
+
+    /// The sidecar rules every provider shares: valid,
+    /// unique names other than `main`, and with sidecars the service names
+    /// `main`, `sidecars` and `sc` are reserved.
+    pub fn validate_sidecars(&self) -> Result<()> {
+        if self.sidecars.is_empty() {
+            return Ok(());
+        }
+        cua_image::sidecar::validate_sidecars(&self.sidecars, &[])?;
+        cua_image::sidecar::check_reserved_service_names(self.services.keys(), true)?;
+        Ok(())
+    }
+
+    fn all_services(&self) -> BTreeMap<String, u16> {
+        let mut s = self.services.clone();
+        s.entry("env".into()).or_insert(ENV_PORT);
+        // Sidecar ports are reachable like the sandbox's own.
+        for p in self
+            .ports
+            .iter()
+            .chain(self.sidecars.iter().flat_map(|c| c.ports.iter()))
+        {
+            if !s.values().any(|v| v == p) {
+                s.insert(format!("port-{p}"), *p);
+            }
+        }
+        s
+    }
+}
+
+/// Listing row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SandboxInfo {
+    /// Qualified ref (`local:<name>`, `direct:<host:port>`, `<provider>:<name>`).
+    pub id: String,
+    /// Name.
+    pub name: String,
+    /// Provider.
+    pub provider: ProviderKind,
+    /// `runtime_type` as persisted.
+    pub runtime_type: String,
+    /// Status.
+    pub status: Status,
+    /// Why a local sandbox stopped without being asked to (out of memory,
+    /// killed, exited), until it is started again.
+    pub stop_reason: Option<crate::StopReason>,
+}
+
+// One per sandbox handle; size does not matter here.
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone, Debug)]
+enum Target {
+    Local {
+        backend: String,
+        endpoints: LocalEndpoints,
+    },
+    Direct {
+        endpoint: cua_spacesd_client::Endpoint,
+    },
+    Contrib {
+        provider: ContribHandle,
+        instance: crate::ProviderInstance,
+    },
+}
+
+/// A registered contrib provider (Debug without its internals).
+#[derive(Clone)]
+struct ContribHandle(Arc<dyn crate::Provider>);
+
+impl std::fmt::Debug for ContribHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Provider({})", self.0.name())
+    }
+}
+
+struct Inner {
+    local: Option<Arc<dyn LocalRuntime>>,
+    /// Contrib and cloud providers by location word.
+    providers: BTreeMap<&'static str, Arc<dyn crate::Provider>>,
+    /// Your clouds: connect, test, sweep ([`crate::byoc`]).
+    clouds: Option<Arc<dyn crate::byoc::CloudManager>>,
+    state: StateStore,
+    http: HttpClient,
+}
+
+/// Creates, finds and manages sandboxes across providers. Cheap to clone.
+#[derive(Clone)]
+pub struct Sandboxes {
+    inner: Arc<Inner>,
+}
+
+/// Builder for [`Sandboxes`].
+#[derive(Default)]
+pub struct SandboxesBuilder {
+    local: Option<Arc<dyn LocalRuntime>>,
+    providers: BTreeMap<&'static str, Arc<dyn crate::Provider>>,
+    clouds: Option<Arc<dyn crate::byoc::CloudManager>>,
+    state_dir: Option<PathBuf>,
+}
+
+impl SandboxesBuilder {
+    /// Enables the local provider.
+    pub fn local(mut self, runtime: Arc<dyn LocalRuntime>) -> Self {
+        self.local = Some(runtime);
+        self
+    }
+
+    /// Registers a contrib provider (`--on <name>`); a later one with the
+    /// same name replaces it.
+    pub fn provider(mut self, provider: Arc<dyn crate::Provider>) -> Self {
+        self.providers.insert(provider.name(), provider);
+        self
+    }
+
+    /// The service behind `cua cloud` ([`crate::byoc`]).
+    pub fn clouds(mut self, clouds: Arc<dyn crate::byoc::CloudManager>) -> Self {
+        self.clouds = Some(clouds);
+        self
+    }
+
+    /// Overrides `~/.cua/sandboxes`.
+    pub fn state_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.state_dir = Some(dir.into());
+        self
+    }
+
+    /// Builds.
+    pub fn build(self) -> Sandboxes {
+        Sandboxes {
+            inner: Arc::new(Inner {
+                // External runtime providers sit in front of the local
+                // runtime; with none installed this only forwards.
+                local: self.local.map(|l| {
+                    Arc::new(crate::external::WithExternal::global(l)) as Arc<dyn LocalRuntime>
+                }),
+                providers: self.providers,
+                clouds: self.clouds,
+                state: self.state_dir.map(StateStore::new).unwrap_or_default(),
+                http: HttpClient::new(),
+            }),
+        }
+    }
+}
+
+impl Sandboxes {
+    /// A builder.
+    pub fn builder() -> SandboxesBuilder {
+        SandboxesBuilder::default()
+    }
+
+    /// The state store.
+    pub fn state(&self) -> &StateStore {
+        &self.inner.state
+    }
+
+    /// The registered contrib provider `name`: [`crate::provider::not_built`]
+    /// for a contrib word this build lacks, `InvalidArgument` otherwise.
+    pub fn contrib_provider(&self, name: &str) -> Result<&Arc<dyn crate::Provider>> {
+        self.inner.providers.get(name).ok_or_else(|| {
+            if crate::provider::is_provider_location(name) {
+                crate::provider::not_built(name)
+            } else {
+                Error::InvalidArgument(format!(
+                    "unknown provider {name:?} (contrib providers: {})",
+                    crate::CONTRIB_LOCATIONS.join(", ")
+                ))
+            }
+        })
+    }
+
+    /// Your clouds (`cua cloud`), when this build has them.
+    pub fn clouds(&self) -> Result<&Arc<dyn crate::byoc::CloudManager>> {
+        self.inner
+            .clouds
+            .as_ref()
+            .ok_or_else(crate::byoc::not_built)
+    }
+
+    /// The public provider details a persisted provider sandbox was saved
+    /// with (empty for other sandboxes).
+    pub fn persisted_details(&self, name: &str) -> BTreeMap<String, String> {
+        let Some(SandboxState::Local(l)) = self.inner.state.load(name) else {
+            return BTreeMap::new();
+        };
+        l.extra
+            .get(contrib::DETAILS_KEY)
+            .and_then(Value::as_object)
+            .map(|o| {
+                o.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The persisted cloud sandbox that joined the relay as `machine`: its
+    /// provider word (`aws`) and where it runs, if it is one this home
+    /// created.
+    pub fn cloud_of_relay_machine(&self, machine: &str) -> Option<(String, String)> {
+        self.inner.state.list_all().into_iter().find_map(|s| {
+            let SandboxState::Local(l) = &s;
+            if l.extra
+                .get(crate::byoc::DETAIL_RELAY_MACHINE)
+                .and_then(Value::as_str)
+                != Some(machine)
+            {
+                return None;
+            }
+            let (word, _) = contrib::contrib_of(&s)?;
+            let place = l
+                .extra
+                .get(crate::byoc::DETAIL_PLACE)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            Some((word.to_string(), place))
+        })
+    }
+
+    /// The name of the persisted provider sandbox (`aws`, `gcp`, `hetzner`, `modal`)
+    /// that joined the relay as `machine`, if any.
+    pub fn by_relay_machine(&self, machine: &str) -> Result<Option<String>> {
+        for s in self.inner.state.list_all() {
+            if let SandboxState::Local(l) = &s
+                && contrib::contrib_of(&s).is_some()
+                && l.extra
+                    .get(crate::byoc::DETAIL_RELAY_MACHINE)
+                    .and_then(Value::as_str)
+                    == Some(machine)
+            {
+                return Ok(Some(l.name.clone()));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The contrib providers this build registered, by name.
+    pub fn contrib_providers(&self) -> Vec<Arc<dyn crate::Provider>> {
+        self.inner.providers.values().cloned().collect()
+    }
+
+    /// The idle warm-pool members the local runtime keeps ready
+    /// ([`LocalRuntime::warm_held`]); none without a local runtime.
+    pub async fn warm_held(&self) -> Vec<crate::WarmHeld> {
+        match self.inner.local.as_ref() {
+            Some(rt) => rt.warm_held().await,
+            None => Vec::new(),
+        }
+    }
+
+    /// Frees what the local runtime holds for nobody ([`LocalRuntime::reclaim`]);
+    /// nothing without a local runtime.
+    pub async fn reclaim(&self, need: crate::Shortfall) -> crate::Reclaimed {
+        match self.inner.local.as_ref() {
+            Some(rt) => rt.reclaim(need).await,
+            None => crate::Reclaimed::default(),
+        }
+    }
+
+    fn local(&self) -> Result<&Arc<dyn LocalRuntime>> {
+        self.inner
+            .local
+            .as_ref()
+            .ok_or(Error::ProviderNotConfigured(ProviderKind::Local))
+    }
+
+    /// Creates a sandbox and waits until the provider reports it running
+    /// and every probe in `options.wait_for` passes.
+    pub async fn create(&self, mut options: CreateOptions) -> Result<Sandbox> {
+        use crate::progress::{Phase, Progress, report};
+        let started = Instant::now();
+        // A `pool:<name>` image named a Cua Cloud pool's template to run
+        // locally: Cua Cloud has ended.
+        if options.image.trim().strip_prefix("pool:").is_some() {
+            return Err(Error::CloudEnded);
+        }
+        report(Progress::phase(Phase::Preparing).detail(&options.image));
+        options.apply_placement()?;
+        options.validate_sidecars()?;
+        if options.disk_gb.is_some_and(|g| g > 0) && options.provider != ProviderKind::Local {
+            return Err(Error::InvalidArgument(
+                "disk_gb sizes local VMs only: provider sandboxes boot the image's disk".into(),
+            ));
+        }
+        let options = self.build_image(options).await?;
+        let preexisting = match (&options.provider, options.name.as_deref()) {
+            (ProviderKind::Local, Some(name)) if !name.is_empty() => {
+                self.local_name_in_use(name).await
+            }
+            _ => false,
+        };
+        let checked_ms = started.elapsed().as_millis() as u64;
+        // The readiness budget starts once the image is present (the first
+        // report after the pull): a large download has its own stall
+        // detection and does not use up the time the guest has to boot.
+        let (sandbox, image_ready) = crate::progress::past(Phase::Pulling, async {
+            match options.provider {
+                ProviderKind::Local => self.create_local(&options).await,
+                ProviderKind::Contrib => self.create_contrib(&options).await,
+                ProviderKind::Direct => Err(Error::InvalidArgument(
+                    "direct sandboxes are not created; use Sandboxes::connect_url".into(),
+                )),
+            }
+        })
+        .await;
+        let sandbox = match sandbox {
+            Ok(s) => s,
+            Err(e) => {
+                self.discard_failed_start(&options, preexisting).await;
+                return Err(e);
+            }
+        };
+        let started_ms = started.elapsed().as_millis() as u64;
+        let clock = image_ready.unwrap_or(started);
+        if !options.wait_for.is_empty() {
+            report(Progress::phase(Phase::WaitingForServices));
+        }
+        let mut ready = sandbox
+            .wait_ready(
+                &options.wait_for,
+                readiness_left(options.ready_timeout, clock),
+            )
+            .await;
+        // The image declares cua-spacesd: ready includes it answering
+        // `Health` (bounded), so the first guest call does not race its
+        // start. Images that do not declare it are never waited on.
+        if ready.is_ok() && sandbox.declares_spacesd(&options) {
+            let remaining = readiness_left(options.ready_timeout, clock);
+            report(Progress::phase(Phase::WaitingForServices).detail("cua-spacesd"));
+            let budget = spacesd_budget(&options, remaining);
+            // A microVM may have been restored from a snapshot other Spaces
+            // share: its cua-spacesd regenerates what it holds in memory.
+            ready = if sandbox.restores_shared_memory() {
+                sandbox.wait_new_machine(budget).await
+            } else {
+                sandbox.wait_spacesd(budget).await
+            };
+        }
+        if let Err(e) = ready {
+            // A failed create deletes what it made, unless the caller keeps
+            // it to debug.
+            if preexisting {
+                tracing::warn!(sandbox = %sandbox.id(), "readiness failed; pre-existing sandbox retained");
+            } else if sandbox.ephemeral || !options.keep_on_failure {
+                let id = sandbox.id();
+                if let Err(d) = sandbox.clone().delete().await {
+                    tracing::warn!(sandbox = %id, error = %d, "could not delete a sandbox that failed readiness");
+                }
+            } else {
+                tracing::warn!(sandbox = %sandbox.id(), "sandbox failed readiness and is kept (keep_on_failure)");
+            }
+            return Err(e);
+        }
+        tracing::debug!(
+            sandbox = %sandbox.id(),
+            checked_ms,
+            started_ms,
+            ready_ms = started.elapsed().as_millis() as u64,
+            "create"
+        );
+        Ok(sandbox)
+    }
+
+    /// A local create that failed while starting (the runtime's own
+    /// readiness wait, a boot error) can leave the instance it made: a
+    /// running container, an overlay. A named create deletes it, and its
+    /// record, unless the caller keeps it (`keep_on_failure`) or the name
+    /// was already in use (that instance is not this create's to delete).
+    /// A failed delete is logged and never replaces the create's error.
+    /// An unnamed (ephemeral) create is cleaned up by `create_local`.
+    async fn discard_failed_start(&self, options: &CreateOptions, preexisting: bool) {
+        if options.provider != ProviderKind::Local {
+            return;
+        }
+        let Some(name) = options.name.as_deref().filter(|n| !n.is_empty()) else {
+            return;
+        };
+        if preexisting {
+            tracing::warn!(sandbox = %name, "start failed; pre-existing sandbox retained");
+        } else if options.keep_on_failure {
+            tracing::warn!(sandbox = %name, "sandbox failed to start and is kept (keep_on_failure)");
+        } else if let Err(d) = self.delete_local_instance(name).await {
+            tracing::warn!(sandbox = %name, error = %d, "could not delete a sandbox that failed to start");
+        }
+    }
+
+    /// [`Sandboxes::create`] that stops when `cancel` fires, and when this
+    /// future is dropped (a closed request, a Ctrl-C): the work in flight
+    /// stops (an image download, a boot, a claim) and what this create made
+    /// is deleted: its instance and state, the provider's sandbox. Nothing that existed before is touched: a name that was
+    /// already in use is never deleted. Finished image downloads stay
+    /// cached (a later create resumes from them); partial files do not.
+    /// On cancel it returns [`Error::Cancelled`] once the clean-up is done.
+    pub async fn create_cancellable(
+        &self,
+        mut options: CreateOptions,
+        cancel: crate::CancellationToken,
+    ) -> Result<Sandbox> {
+        let t = Instant::now();
+        let plan = self.discard_plan(&mut options).await;
+        tracing::debug!(ms = t.elapsed().as_millis() as u64, "create: discard plan");
+        let mut guard = DiscardGuard {
+            mgr: self.clone(),
+            plan: Some(plan),
+        };
+        let create = Box::pin(self.create(options));
+        let result = tokio::select! {
+            r = create => r,
+            _ = cancel.cancelled() => {
+                let plan = guard.plan.take().expect("armed");
+                let what = self.discard(plan).await;
+                return Err(Error::Cancelled(what));
+            }
+        };
+        guard.plan = None;
+        result
+    }
+
+    /// [`Sandboxes::create_cancellable`] that [`Sandboxes::cancel_create`]
+    /// can stop by the sandbox's name (a named create; an ephemeral one is
+    /// cancelled by dropping it). A second create of a name that is being
+    /// created is refused.
+    pub async fn create_tracked(&self, options: CreateOptions) -> Result<Sandbox> {
+        let Some(name) = options.name.clone() else {
+            return Box::pin(self.create_cancellable(options, crate::CancellationToken::new()))
+                .await;
+        };
+        let key = (self.inner.state.dir().to_path_buf(), name.clone());
+        let token = crate::CancellationToken::new();
+        let (tx, rx) = tokio::sync::watch::channel(None);
+        {
+            let mut all = CREATING.lock().unwrap_or_else(|e| e.into_inner());
+            all.retain(|c| c.done.borrow().is_none());
+            if all.iter().any(|c| c.key == key) {
+                return Err(Error::InvalidArgument(format!(
+                    "{name} is already being created; wait for it or cancel it"
+                )));
+            }
+            all.push(Creating {
+                key: key.clone(),
+                token: token.clone(),
+                done: rx,
+            });
+        }
+        let result = Box::pin(self.create_cancellable(options, token)).await;
+        let _ = tx.send(Some(match &result {
+            Err(Error::Cancelled(m)) => Some(m.clone()),
+            _ => None,
+        }));
+        CREATING
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|c| c.done.borrow().is_none());
+        result
+    }
+
+    /// Stops the [`Sandboxes::create_tracked`] of `name` running in this
+    /// process and waits until what it made is deleted. `Ok(None)`: no
+    /// create of that name is running (it finished, failed or was
+    /// cancelled already). `Ok(Some(what))`: it was cancelled; `what` says
+    /// what was removed.
+    pub async fn cancel_create(&self, name: &str) -> Result<Option<String>> {
+        let key = (self.inner.state.dir().to_path_buf(), name.to_string());
+        let found = CREATING
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .find(|c| c.key == key && c.done.borrow().is_none())
+            .map(|c| (c.token.clone(), c.done.clone()));
+        let Some((token, mut done)) = found else {
+            return Ok(None);
+        };
+        token.cancel();
+        loop {
+            if let Some(outcome) = done.borrow().clone() {
+                return Ok(Some(
+                    outcome.unwrap_or_else(|| format!("{name} finished before the cancel")),
+                ));
+            }
+            if done.changed().await.is_err() {
+                return Ok(Some(format!("cancelled {name}")));
+            }
+        }
+    }
+
+    /// What a cancelled create of `o` would delete, decided before it
+    /// starts (an ephemeral sandbox gets its name now).
+    async fn discard_plan(&self, o: &mut CreateOptions) -> DiscardPlan {
+        let named = o.name.is_some();
+        if !named && matches!(o.provider, ProviderKind::Local | ProviderKind::Contrib) {
+            o.ephemeral_name
+                .get_or_insert_with(|| format!("cua-eph-{:08x}", rand_u32()));
+        }
+        let name = o.name.clone().or_else(|| o.ephemeral_name.clone());
+        // Only a name nothing used before is ours to delete.
+        let fresh = match (&o.provider, &name) {
+            (ProviderKind::Local, Some(n)) => match self.local() {
+                Ok(rt) => {
+                    self.inner.state.load(n).is_none()
+                        && matches!(rt.status(n).await, Err(crate::RuntimeError::NotFound(_)))
+                }
+                Err(_) => false,
+            },
+            (ProviderKind::Contrib, Some(n)) if named => {
+                match o
+                    .contrib
+                    .as_deref()
+                    .and_then(|w| self.contrib_provider(w).ok())
+                {
+                    Some(p) => p
+                        .list()
+                        .await
+                        .is_ok_and(|all| all.iter().all(|i| &i.name != n)),
+                    None => false,
+                }
+            }
+            (ProviderKind::Contrib, Some(_)) => true,
+            _ => false,
+        };
+        DiscardPlan {
+            provider: o.provider,
+            name,
+            fresh,
+            contrib: o.contrib.clone(),
+        }
+    }
+
+    /// Deletes what a cancelled create made (see [`DiscardPlan`]) once the
+    /// clean-up its drop guards started has finished; says what it did.
+    async fn discard(&self, plan: DiscardPlan) -> String {
+        let settled = crate::cleanup::settle(DISCARD_SETTLE).await;
+        if !settled {
+            tracing::warn!("clean-up of a cancelled create is still running");
+        }
+        let Some(name) = plan.name.clone() else {
+            // An ephemeral create: its drop guards removed what it made.
+            return "nothing was left".into();
+        };
+        if !plan.fresh {
+            return format!("{name} existed before this create and was left as it was");
+        }
+        let removed = match plan.provider {
+            ProviderKind::Local => {
+                let _ = self.inner.state.remove_lease(&name);
+                self.delete_local_instance(&name).await
+            }
+            ProviderKind::Contrib => {
+                let word = plan.contrib.clone().unwrap_or_default();
+                match self.contrib_provider(&word) {
+                    Ok(p) => p.abort_create(&name).await.map(|()| {
+                        let _ = self.inner.state.delete(&name);
+                        true
+                    }),
+                    Err(e) => Err(e),
+                }
+            }
+            ProviderKind::Direct => Ok(false),
+        };
+        match removed {
+            Ok(true) => format!("removed {name}"),
+            Ok(false) => format!("{name} was never made"),
+            Err(e) => {
+                tracing::warn!(sandbox = %name, error = %e, "could not remove a cancelled create");
+                format!("could not remove {name}: {e}")
+            }
+        }
+    }
+
+    /// Image layers: a build into this machine's container engine (cached
+    /// by content hash, `cua-b-<hash>`), after which the sandbox runs the
+    /// built image.
+    async fn build_image(&self, mut o: CreateOptions) -> Result<CreateOptions> {
+        let Some(mut spec) = o.build.take().filter(|b| !b.is_empty()) else {
+            return Ok(o);
+        };
+        match o.provider {
+            ProviderKind::Local => {
+                if spec.from.is_empty() {
+                    spec.from = o.image.clone();
+                }
+                spec.validate()?;
+                let creds = o.scoped_credentials();
+                let built = self
+                    .local()?
+                    .build_image(&spec, creds.as_ref())
+                    .await
+                    .map_err(|e| match e {
+                        crate::RuntimeError::UnsupportedImage(m) => Error::UnsupportedImage(m),
+                        crate::RuntimeError::Unsupported { backend, op } => Error::Unsupported {
+                            provider: ProviderKind::Local,
+                            op: format!("{op} ({backend})"),
+                        },
+                        other => other.into(),
+                    })?;
+                tracing::info!(image = %built, "built image locally");
+                o.registry_credentials = creds;
+                o.image = built;
+                Ok(o)
+            }
+            other => Err(Error::Unsupported {
+                provider: other,
+                op: "image layers".into(),
+            }),
+        }
+    }
+
+    /// What a local create of `o` (after [`CreateOptions::apply_placement`])
+    /// asks the local runtime to start, for a Space named `name` with the
+    /// Spaces token `env_token`. A runtime that keeps warm pools builds the
+    /// shapes it keeps warm on purpose from this, so they match the creates
+    /// that claim them.
+    pub fn local_start_spec(
+        o: &CreateOptions,
+        name: &str,
+        env_token: Option<&str>,
+    ) -> LocalStartSpec {
+        let services = o.all_services();
+        let mut ports: Vec<u16> = services.values().copied().chain(o.ports.clone()).collect();
+        ports.sort_unstable();
+        ports.dedup();
+        LocalStartSpec {
+            ephemeral: o.name.is_none(),
+            // A warm member was started without this start's mounts, and
+            // a fork source starts cold: a pool member's RAM is not a file
+            // its checkpoints could share.
+            warm: (!o.mounts.is_empty() || o.forkable).then_some(false),
+            mounts: o.mounts.clone(),
+            forkable: o.forkable,
+            name: name.to_string(),
+            image: o.image.clone(),
+            os: o.os.clone(),
+            cpus: o.cpus,
+            memory_mb: o.memory_mb,
+            disk_size_gb: o.disk_gb.filter(|g| *g > 0),
+            ports,
+            env: guest_env(o, env_token),
+            command: o.command.clone().filter(|c| !c.is_empty()),
+            ready_timeout: o.ready_timeout,
+            firmware: o.firmware.clone(),
+            sidecars: o.sidecars.clone(),
+            registry_credentials: o.scoped_credentials(),
+            container_runtime: o.container_runtime.clone(),
+            kind: (o.kind != Kind::Auto).then(|| o.kind.to_string()),
+            runtime: (o.runtime != Runtime::Auto).then(|| o.runtime.to_string()),
+            // `none` settings cut the network the way every runtime knows.
+            restrict_network: o.network == NetworkMode::None
+                || o.effective_network().preset == cua_vmm::network::NetworkPreset::None,
+            headless: o.headless,
+            spacesd: o.spacesd,
+            egress: o.egress.clone(),
+            network: Some(o.effective_network()),
+            tree: o.network_tree.clone(),
+            gpu: o.gpu.clone().filter(|g| !g.trim().is_empty()),
+            probes: o
+                .wait_for
+                .iter()
+                .map(|p| match p {
+                    Probe::Tcp(port) => crate::LocalProbe {
+                        port: *port,
+                        http_path: None,
+                    },
+                    // The backend's HTTP check accepts 2xx/3xx; an exact
+                    // status is left to `wait_ready`, the backend waits for
+                    // the port.
+                    Probe::Http { port, path, status } => crate::LocalProbe {
+                        port: *port,
+                        http_path: status
+                            .is_none_or(|s| (200..400).contains(&s))
+                            .then(|| path.clone()),
+                    },
+                })
+                .collect(),
+        }
+    }
+
+    async fn create_local(&self, o: &CreateOptions) -> Result<Sandbox> {
+        let rt = self.local()?;
+        let services = o.all_services();
+        let ephemeral = o.name.is_none();
+        let name = o
+            .name
+            .clone()
+            .or_else(|| o.ephemeral_name.clone())
+            .unwrap_or_else(|| format!("cua-eph-{:08x}", rand_u32()));
+        // A create over a name that already exists (a retry, a second client,
+        // a pool claim that lost the race) must not mint a new token: the
+        // instance keeps the one it was started with, and the record would
+        // otherwise hold a token its cua-spacesd rejects.
+        let recorded = if ephemeral {
+            None
+        } else {
+            match self.inner.state.load(&name) {
+                Some(SandboxState::Local(l)) => l
+                    .extra
+                    .get("env_token")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                _ => None,
+            }
+        };
+        let env_token = local_env_token_keeping(o, recorded);
+        if ephemeral {
+            // Before anything exists: a crash from here on leaves a lease
+            // whose process is gone, and the instance is reaped.
+            self.inner
+                .state
+                .write_lease(&name, o.owner_pid.unwrap_or_else(std::process::id))?;
+        }
+        let spec = Self::local_start_spec(o, &name, env_token.as_deref());
+        let started = rt.start_resolved(&spec).await;
+        if ephemeral && started.is_err() {
+            // A failed start can leave a created instance (overlay, stopped
+            // container) behind: nothing will hold a handle to it.
+            match rt.delete(&name).await {
+                Ok(()) | Err(crate::RuntimeError::NotFound(_)) => {
+                    let _ = self.inner.state.remove_lease(&name);
+                }
+                Err(e) => {
+                    tracing::warn!(sandbox = %name, error = %e, "could not remove a failed ephemeral sandbox; it will be reaped")
+                }
+            }
+        }
+        let (inst, image_info) = started.map_err(|e| match e {
+            crate::RuntimeError::UnsupportedImage(m) => Error::UnsupportedImage(m),
+            crate::RuntimeError::Unsupported { backend, op } => Error::Unsupported {
+                provider: ProviderKind::Local,
+                op: format!("{op} ({backend})"),
+            },
+            other => other.into(),
+        })?;
+        // A policy must be what the runtime enforces, never one it was
+        // handed and ignored: a runtime that does not keep it gets no
+        // sandbox.
+        if !o.egress.is_empty() && rt.egress(&name).await.ok().as_ref() != Some(&o.egress) {
+            let _ = rt.delete(&name).await;
+            if ephemeral {
+                let _ = self.inner.state.remove_lease(&name);
+            }
+            return Err(Error::Unsupported {
+                provider: ProviderKind::Local,
+                op: format!(
+                    "an egress policy (the {} runtime started the sandbox without enforcing it)",
+                    rt.backend()
+                ),
+            });
+        }
+        // The runtime publishes 3211 only for images that carry
+        // cua-spacesd (or when it cannot tell): report `env` only then.
+        let mut services = services;
+        if !o.services.contains_key("env")
+            && let Some(p) = services.get("env")
+            && !inst.endpoints.ports.contains_key(p)
+        {
+            services.remove("env");
+        }
+        if !ephemeral {
+            self.save_local_state(
+                &name,
+                &inst,
+                o,
+                &recorded_os(&o.os, image_info.as_ref()),
+                &services,
+                env_token.as_deref(),
+            )?;
+            if let Some(i) = &image_info {
+                let mut fields = Map::new();
+                fields.insert(IMAGE_INFO_KEY.into(), serde_json::to_value(i)?);
+                self.inner.state.update(&name, fields)?;
+            }
+        }
+        Ok(Sandbox {
+            mgr: self.clone(),
+            name,
+            ephemeral,
+            env_token,
+            bootstrap_token: Default::default(),
+            services,
+            image_info,
+            target: Target::Local {
+                backend: inst.backend,
+                endpoints: inst.endpoints,
+            },
+        })
+    }
+
+    fn save_local_state(
+        &self,
+        name: &str,
+        inst: &LocalInstance,
+        o: &CreateOptions,
+        os: &str,
+        services: &BTreeMap<String, u16>,
+        env_token: Option<&str>,
+    ) -> Result<()> {
+        let (backend, ep) = (inst.backend.as_str(), &inst.endpoints);
+        let api_port = ep
+            .ports
+            .get(&ENV_PORT)
+            .copied()
+            .or_else(|| ep.ports.values().next().copied())
+            .unwrap_or(ENV_PORT);
+        let mut extra = Map::new();
+        extra.insert("services".into(), serde_json::to_value(services)?);
+        // What readiness meant, so a resume waits for it too.
+        if !o.wait_for.is_empty() {
+            extra.insert("ready_probes".into(), probes_to_json(&o.wait_for));
+        }
+        // `connect(name)` from another process needs it; the state file is
+        // owner-only (StateStore writes every file 0600).
+        if let Some(t) = env_token {
+            extra.insert("env_token".into(), Value::String(t.into()));
+        }
+        // Console sources for `cua sb logs`.
+        if let Some(l) = &ep.serial_log {
+            extra.insert("serial_log".into(), Value::String(l.clone()));
+        }
+        if let Some(c) = &ep.container_id {
+            extra.insert("container_id".into(), Value::String(c.clone()));
+        }
+        if let Some(b) = &ep.bulk {
+            extra.insert("bulk".into(), Value::String(b.clone()));
+        }
+        let port_of = |s: &Option<String>| {
+            s.as_deref()
+                .and_then(|a| a.rsplit(':').next())
+                .and_then(|p| p.parse::<u16>().ok())
+        };
+        self.inner.state.save(&SandboxState::Local(LocalState {
+            name: name.into(),
+            runtime_type: backend.into(),
+            image: registry_image_dict(&o.image, os, Some("vm")),
+            host: ep.host.clone(),
+            api_port,
+            exposed_ports: Some(ep.ports.iter().map(|(g, h)| (g.to_string(), *h)).collect()),
+            vnc_port: port_of(&ep.vnc),
+            qmp_port: port_of(&ep.qmp),
+            os_type: Some(os.to_string()),
+            memory_mb: Some(o.memory_mb),
+            cpu_count: Some(o.cpus),
+            status: "running".into(),
+            created_at: python_utc_now(),
+            extra,
+            ..Default::default()
+        }))
+    }
+
+    /// Connects to a reachable machine by URL (`http(s)://host:port`, bare
+    /// `host:port` or a relay URL). No daemon is assumed and nothing is
+    /// probed.
+    pub fn connect_url(&self, url: &str, token: Option<String>) -> Result<Sandbox> {
+        self.connect_url_named(url, token, None)
+    }
+
+    /// [`Self::connect_url`] under a display name (default: the host). The
+    /// ref stays `direct:<host:port>`.
+    pub fn connect_url_named(
+        &self,
+        url: &str,
+        token: Option<String>,
+        name: Option<&str>,
+    ) -> Result<Sandbox> {
+        let endpoint = cua_spacesd_client::Endpoint::parse(url)
+            .map_err(|e| Error::InvalidArgument(e.to_string()))?;
+        Ok(Sandbox {
+            mgr: self.clone(),
+            name: name
+                .filter(|n| !n.is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| endpoint.host().to_string()),
+            ephemeral: true,
+            env_token: token,
+            bootstrap_token: Default::default(),
+            services: [("env".to_string(), endpoint.port())].into(),
+            image_info: None,
+            target: Target::Direct { endpoint },
+        })
+    }
+
+    /// The GPU options on `provider` (a contrib provider: `contrib`, its
+    /// word): each local runtime's ([`LocalRuntime::gpu_support`]), a
+    /// contrib provider's GPU types.
+    pub async fn gpu_support(
+        &self,
+        provider: ProviderKind,
+        contrib: Option<&str>,
+    ) -> Vec<crate::gpu::GpuSupport> {
+        match provider {
+            ProviderKind::Local => match self.local() {
+                Ok(rt) => rt.gpu_support().await,
+                Err(_) => vec![],
+            },
+            ProviderKind::Contrib => contrib
+                .and_then(|w| self.contrib_provider(w).ok())
+                .map(|p| {
+                    let gpus = p.capabilities().gpus;
+                    vec![if gpus.is_empty() {
+                        crate::gpu::GpuSupport::none(
+                            p.name(),
+                            format!("{} offers no GPU sandboxes through cua", p.name()),
+                        )
+                    } else {
+                        crate::gpu::GpuSupport {
+                            runtime: p.name().into(),
+                            options: gpus,
+                            reason: String::new(),
+                        }
+                    }]
+                })
+                .unwrap_or_default(),
+            ProviderKind::Direct => vec![],
+        }
+    }
+
+    /// The spacesd token recorded for the local sandbox `name`, if any: the
+    /// one its guest was started with. A create over an existing name keeps
+    /// it, so the record never holds a token the guest rejects.
+    pub fn recorded_env_token(&self, name: &str) -> Option<String> {
+        match self.inner.state.load(name) {
+            Some(SandboxState::Local(l)) => l
+                .extra
+                .get("env_token")
+                .and_then(Value::as_str)
+                .filter(|t| !t.is_empty())
+                .map(str::to_string),
+            _ => None,
+        }
+    }
+
+    /// Whether `name` is taken locally: a recorded sandbox, or an instance
+    /// the local runtime has.
+    pub async fn local_name_in_use(&self, name: &str) -> bool {
+        if self.inner.state.load(name).is_some() {
+            return true;
+        }
+        match self.local() {
+            Ok(rt) => !matches!(rt.status(name).await, Err(crate::RuntimeError::NotFound(_))),
+            Err(_) => false,
+        }
+    }
+
+    /// Whether `name` is provably gone locally: a local runtime is
+    /// configured, nothing is recorded under it and the runtime answers
+    /// [`crate::RuntimeError::NotFound`]. Any other answer (no runtime, an
+    /// engine that is down) is not proof.
+    pub async fn local_name_gone(&self, name: &str) -> bool {
+        let Ok(rt) = self.local() else {
+            return false;
+        };
+        self.inner.state.load(name).is_none()
+            && matches!(rt.status(name).await, Err(crate::RuntimeError::NotFound(_)))
+    }
+
+    /// Deletes local instance `name` straight through the local runtime,
+    /// whether or not this machine recorded it: an instance whose create
+    /// was cut off (its process died between starting it and recording
+    /// it). `Ok(false)` when the runtime has no such instance.
+    pub async fn delete_local_instance(&self, name: &str) -> Result<bool> {
+        let rt = self.local()?;
+        match rt.status(name).await {
+            Err(crate::RuntimeError::NotFound(_)) => {
+                let _ = self.inner.state.delete(name);
+                Ok(false)
+            }
+            _ => {
+                rt.delete(name).await?;
+                let _ = self.inner.state.delete(name);
+                Ok(true)
+            }
+        }
+    }
+
+    /// Reconnects to a named sandbox from its state file.
+    pub async fn connect(&self, name: &str) -> Result<Sandbox> {
+        let state = self
+            .inner
+            .state
+            .load(name)
+            .ok_or_else(|| Error::NotFound(name.into()))?;
+        match state {
+            s @ SandboxState::Local(_) if contrib::contrib_of(&s).is_some() => {
+                let SandboxState::Local(l) = s;
+                self.connect_contrib(l).await
+            }
+            SandboxState::Local(l) if l.runtime_type == "direct" => {
+                let url = l
+                    .extra
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| Error::InvalidArgument("direct state without url".into()))?;
+                let mut sb = self.connect_url(url, None)?;
+                sb.name = l.name;
+                Ok(sb)
+            }
+            SandboxState::Local(l) => {
+                let rt = self.local()?;
+                let status = rt.status(&l.name).await?;
+                if status != InstanceStatus::Running {
+                    return Err(Error::InvalidArgument(format!(
+                        "sandbox {} is {status:?}; resume it first",
+                        l.name
+                    )));
+                }
+                let endpoints = rt.endpoints(&l.name).await?;
+                let services = l
+                    .extra
+                    .get("services")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_else(|| [("env".to_string(), ENV_PORT)].into());
+                Ok(Sandbox {
+                    mgr: self.clone(),
+                    name: l.name,
+                    ephemeral: false,
+                    env_token: l
+                        .extra
+                        .get("env_token")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    bootstrap_token: Default::default(),
+                    services,
+                    image_info: image_info_of(&l.extra),
+                    target: Target::Local {
+                        backend: l.runtime_type,
+                        endpoints,
+                    },
+                })
+            }
+        }
+    }
+
+    /// Connects to the sandbox a qualified ref names (a bare name is looked
+    /// up with [`Self::resolve_ref`] first): `local:` and a provider's ref
+    /// reattach from their state file, `cloud:` fails with
+    /// [`Error::CloudEnded`], `direct:` reuses a remembered connection to
+    /// that address or connects to it. `relay:` machines are Spaces
+    /// ([`Error::Unsupported`] here).
+    pub async fn connect_ref(&self, wanted: &SandboxRef) -> Result<Sandbox> {
+        let r = match wanted {
+            SandboxRef::Bare { .. } => self.resolve_ref(wanted).await?,
+            other => other.clone(),
+        };
+        match &r {
+            SandboxRef::Local { name } => match self.inner.state.load(name) {
+                Some(s @ SandboxState::Local(_)) if state_ref(&s) == r => self.connect(name).await,
+                Some(_) => Err(Error::NotFound(r.to_string())),
+                None => self.connect(name).await,
+            },
+            SandboxRef::Cloud { .. } => Err(Error::CloudEnded),
+            SandboxRef::Direct { authority } => {
+                let named = self
+                    .inner
+                    .state
+                    .list_all()
+                    .into_iter()
+                    .find(|s| s.runtime_type() == "direct" && state_ref(s) == r);
+                match named {
+                    Some(s) => self.connect(s.name()).await,
+                    None => self.connect_url(&format!("http://{authority}"), None),
+                }
+            }
+            SandboxRef::Contrib { name, .. } => match self.inner.state.load(name) {
+                Some(s) if state_ref(&s) == r => self.connect(name).await,
+                _ => Err(Error::NotFound(r.to_string())),
+            },
+            SandboxRef::Relay { .. } => Err(Error::Unsupported {
+                provider: ProviderKind::Direct,
+                op: format!(
+                    "{r}: relay computers are Spaces; open it with the Spaces API or `cua mcp` \
+                     (space {r})"
+                ),
+            }),
+            SandboxRef::Bare { name } => self.connect(name).await,
+        }
+    }
+
+    /// The qualified refs of every sandbox this machine knows (state files
+    /// and the local runtime's instances).
+    pub async fn known_refs(&self) -> Result<Vec<SandboxRef>> {
+        Ok(self
+            .known_named()
+            .await?
+            .into_iter()
+            .map(|(_, r)| r)
+            .collect())
+    }
+
+    /// [`Self::known_refs`] with each sandbox's display name.
+    async fn known_named(&self) -> Result<Vec<(String, SandboxRef)>> {
+        let mut out: Vec<(String, SandboxRef)> = self
+            .inner
+            .state
+            .list_all()
+            .iter()
+            .map(|s| (s.name().to_string(), state_ref(s)))
+            .collect();
+        if let Some(rt) = &self.inner.local {
+            for i in rt.list().await? {
+                let r = SandboxRef::Local {
+                    name: i.name.clone(),
+                };
+                if !out.iter().any(|(_, k)| *k == r) {
+                    out.push((i.name, r));
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Resolves a ref to a qualified one. A qualified ref comes back as is.
+    /// A bare name is searched across every location: the sandboxes this
+    /// machine knows. It must match exactly one, else
+    /// [`Error::AmbiguousSandbox`] lists the qualified candidates.
+    pub async fn resolve_ref(&self, wanted: &SandboxRef) -> Result<SandboxRef> {
+        self.resolve_ref_among(wanted, vec![]).await
+    }
+
+    /// [`Self::resolve_ref`], also considering `extra` refs (sandboxes a
+    /// caller holds that have no state file, such as ephemeral handles).
+    pub async fn resolve_ref_among(
+        &self,
+        wanted: &SandboxRef,
+        extra: Vec<(String, SandboxRef)>,
+    ) -> Result<SandboxRef> {
+        if wanted.is_qualified() {
+            return Ok(wanted.clone());
+        }
+        let mut known = extra;
+        known.extend(self.known_named().await?);
+        crate::refs::resolve_named(wanted, known)
+    }
+
+    /// Persists a direct connection under `name` so `connect(name)` works.
+    pub fn remember_direct(&self, name: &str, url: &str) -> Result<()> {
+        let endpoint = cua_spacesd_client::Endpoint::parse(url)
+            .map_err(|e| Error::InvalidArgument(e.to_string()))?;
+        let mut extra = Map::new();
+        extra.insert("url".into(), Value::String(url.into()));
+        self.inner.state.save(&SandboxState::Local(LocalState {
+            name: name.into(),
+            runtime_type: "direct".into(),
+            image: Value::Null,
+            host: endpoint.host().into(),
+            api_port: endpoint.port(),
+            status: "running".into(),
+            created_at: python_utc_now(),
+            extra,
+            ..Default::default()
+        }))
+    }
+
+    /// Every known sandbox: state files plus instances the local runtime
+    /// manages.
+    pub async fn list(&self) -> Result<Vec<SandboxInfo>> {
+        let mut out: BTreeMap<String, SandboxInfo> = BTreeMap::new();
+        for s in self.inner.state.list_all() {
+            let provider = provider_of(&s);
+            let id = state_ref(&s).to_string();
+            out.insert(
+                id.clone(),
+                SandboxInfo {
+                    id,
+                    name: s.name().into(),
+                    provider,
+                    runtime_type: s.runtime_type().into(),
+                    status: status_word(s.status()),
+                    stop_reason: s.stop_reason(),
+                },
+            );
+        }
+        if let Some(rt) = &self.inner.local {
+            // Those that stopped on their own since: recorded with why.
+            for (name, reason) in self.note_unasked_stops().await {
+                if let Some(row) = out.get_mut(&format!("local:{name}")) {
+                    row.stop_reason = Some(reason);
+                }
+            }
+            let listed = rt.list().await?;
+            // Local state files the backend listing leaves out (a Lume VM,
+            // or a VM or container that is gone) get their live status: the
+            // recorded one is what the last lifecycle call wrote, and a host
+            // reboot stops a VM without updating it. A definite not-found is
+            // `missing`, so `ls` shows the stale record and `rm` clears it;
+            // an unreachable engine keeps the recorded status.
+            for s in self.inner.state.list_all() {
+                if provider_of(&s) != ProviderKind::Local
+                    || listed.iter().any(|i| i.name == s.name())
+                {
+                    continue;
+                }
+                let Some(row) = out.get_mut(&state_ref(&s).to_string()) else {
+                    continue;
+                };
+                match rt.status_on(s.name(), s.runtime_type()).await {
+                    Ok(live) => row.status = live.into(),
+                    Err(crate::RuntimeError::NotFound(_)) => {
+                        row.status = Status::Unknown(MISSING.into());
+                    }
+                    Err(_) => {}
+                }
+            }
+            for i in listed {
+                // A checkpoint is kept by the local runtime as a stopped entry
+                // but is not a sandbox: `sb checkpoints` lists it, and a client
+                // that predates checkpoints must not offer it for start or delete.
+                if self.is_checkpoint_only(&i.name) {
+                    continue;
+                }
+                let id = format!("local:{}", i.name);
+                // The state file says which runtime ran it (`gvisor`); the
+                // backend listing only knows the backend (`container`).
+                let runtime_type = match out.get(&id) {
+                    Some(known) if !known.runtime_type.is_empty() => known.runtime_type.clone(),
+                    _ => i.backend,
+                };
+                let status: Status = i.status.into();
+                // A reason holds only while it is still stopped.
+                let stop_reason = out
+                    .get(&id)
+                    .and_then(|known| known.stop_reason)
+                    .filter(|_| status == Status::Stopped);
+                out.insert(
+                    id.clone(),
+                    SandboxInfo {
+                        id,
+                        name: i.name,
+                        provider: ProviderKind::Local,
+                        runtime_type,
+                        status,
+                        stop_reason,
+                    },
+                );
+            }
+        }
+        Ok(out.into_values().collect())
+    }
+
+    /// One sandbox's info (live status for local sandboxes).
+    pub async fn get(&self, name: &str) -> Result<SandboxInfo> {
+        let state = self.inner.state.load(name);
+        match &state {
+            Some(s) if contrib::contrib_of(s).is_some() => {
+                let (provider, id) = self.contrib_target(s)?;
+                let status = match provider.get(&id).await {
+                    Ok(i) => i.status,
+                    Err(Error::NotFound(_)) => Status::Unknown("gone".into()),
+                    Err(e) => return Err(e),
+                };
+                Ok(SandboxInfo {
+                    id: state_ref(s).to_string(),
+                    name: name.into(),
+                    provider: ProviderKind::Contrib,
+                    runtime_type: s.runtime_type().into(),
+                    status,
+                    stop_reason: None,
+                })
+            }
+            Some(SandboxState::Local(l)) if l.runtime_type != "direct" => {
+                let status: Status = match self.local()?.status_on(name, &l.runtime_type).await {
+                    Ok(s) => s.into(),
+                    Err(crate::RuntimeError::NotFound(_)) => Status::Unknown(MISSING.into()),
+                    Err(e) => return Err(e.into()),
+                };
+                let stop_reason = match (&status, l.status.as_str()) {
+                    // Recorded as running but stopped: it stopped on its own.
+                    (Status::Stopped, "running") => self.note_stop(name, &l.runtime_type).await,
+                    (Status::Stopped, _) => state.as_ref().and_then(SandboxState::stop_reason),
+                    _ => None,
+                };
+                Ok(SandboxInfo {
+                    id: format!("local:{name}"),
+                    name: name.into(),
+                    provider: ProviderKind::Local,
+                    runtime_type: l.runtime_type.clone(),
+                    status,
+                    stop_reason,
+                })
+            }
+            Some(s) => Ok(SandboxInfo {
+                id: state_ref(s).to_string(),
+                name: name.into(),
+                provider: ProviderKind::Direct,
+                runtime_type: s.runtime_type().into(),
+                status: status_word(s.status()),
+                stop_reason: None,
+            }),
+            None => {
+                if let Some(rt) = &self.inner.local
+                    && let Some(i) = rt.list().await?.into_iter().find(|i| i.name == name)
+                {
+                    return Ok(SandboxInfo {
+                        id: format!("local:{}", i.name),
+                        name: i.name,
+                        provider: ProviderKind::Local,
+                        runtime_type: i.backend,
+                        status: i.status.into(),
+                        stop_reason: None,
+                    });
+                }
+                Err(Error::NotFound(name.into()))
+            }
+        }
+    }
+
+    /// Why the local sandbox `name` stopped without being asked to, as
+    /// recorded ([`Self::note_unasked_stops`]); `None` once it is started
+    /// again. Reads only the state file.
+    pub fn stop_reason(&self, name: &str) -> Option<crate::StopReason> {
+        self.inner.state.load(name)?.stop_reason()
+    }
+
+    /// Finds the local sandboxes recorded as running whose engine says they
+    /// stopped (out of memory, a crash: nobody asked), records each as
+    /// stopped with why, and logs it once. Returns those it recorded. Never
+    /// boots an engine: one that is down answers nothing.
+    pub async fn note_unasked_stops(&self) -> Vec<(String, crate::StopReason)> {
+        let mut out = Vec::new();
+        if self.inner.local.is_none() {
+            return out;
+        }
+        for s in self.inner.state.list_all() {
+            if provider_of(&s) != ProviderKind::Local
+                || s.status() != "running"
+                || s.runtime_type() == "direct"
+            {
+                continue;
+            }
+            if let Some(reason) = self.note_stop(s.name(), s.runtime_type()).await {
+                out.push((s.name().to_string(), reason));
+            }
+        }
+        out
+    }
+
+    /// Repairs the running local sandboxes that lost what they need to be
+    /// reached (a macOS VM whose network gateway ended is restarted behind a
+    /// new one) and records where they listen now; the names of those it
+    /// restarted, whose open connections are stale.
+    pub async fn mend_local(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let Some(rt) = self.inner.local.as_ref() else {
+            return out;
+        };
+        for s in self.inner.state.list_all() {
+            // A stopped record too: the restart that mends a VM is seen as
+            // a stop by the watch ([`Self::note_unasked_stops`]) and its
+            // record says stopped while the VM runs again.
+            if provider_of(&s) != ProviderKind::Local
+                || !matches!(s.status(), "running" | "stopped")
+                || s.runtime_type() == "direct"
+            {
+                continue;
+            }
+            let name = s.name().to_string();
+            match rt.mend(&name, s.runtime_type()).await {
+                Ok(Some(inst)) => {
+                    if let Err(e) = self.record_endpoints(&name, &inst) {
+                        tracing::warn!(sandbox = %name, "recording where it listens now: {e}");
+                    }
+                    if let Err(e) = self.inner.state.set_status(&name, "running") {
+                        tracing::warn!(sandbox = %name, "recording that it runs: {e}");
+                    }
+                    out.push(name);
+                }
+                Ok(None) => {}
+                Err(e) => tracing::warn!(sandbox = %name, "repairing it: {e}"),
+            }
+        }
+        out
+    }
+
+    /// [`Self::note_unasked_stops`] for the one local sandbox `name`, looked
+    /// at now: `Some` (and recorded as stopped) when it was running and its
+    /// engine says it stopped without being asked to. A job's Space is
+    /// watched this way while its command runs.
+    pub async fn unasked_stop(&self, name: &str) -> Option<crate::StopReason> {
+        self.inner.local.as_ref()?;
+        let s = self.inner.state.load(name)?;
+        if provider_of(&s) != ProviderKind::Local || s.status() != "running" {
+            return None;
+        }
+        self.note_stop(name, s.runtime_type()).await
+    }
+
+    /// [`Self::note_unasked_stops`] for one sandbox.
+    async fn note_stop(&self, name: &str, runtime_type: &str) -> Option<crate::StopReason> {
+        let rt = self.inner.local.as_ref()?;
+        let reason = rt.stop_reason(name, runtime_type).await.ok()??;
+        tracing::warn!(
+            sandbox = %name,
+            exit_code = reason.exit_code,
+            out_of_memory = reason.out_of_memory,
+            "{name} stopped without being asked to: {}",
+            reason.words()
+        );
+        if let Err(e) = self.inner.state.record_stop(name, &reason) {
+            tracing::warn!(sandbox = %name, "recording why it stopped: {e}");
+        }
+        Some(reason)
+    }
+
+    /// Runs [`Self::note_unasked_stops`] every [`STOP_WATCH_EVERY`] until
+    /// every handle is dropped (the daemon starts it once), so a Space that
+    /// stops on its own shows as stopped, and why, without anyone listing.
+    pub fn spawn_stop_watch(&self) -> tokio::task::JoinHandle<()> {
+        let weak = Arc::downgrade(&self.inner);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(STOP_WATCH_EVERY).await;
+                let Some(inner) = weak.upgrade() else { return };
+                Sandboxes { inner }.note_unasked_stops().await;
+            }
+        })
+    }
+
+    fn kind_of(&self, name: &str) -> Result<(ProviderKind, SandboxState)> {
+        let s = self
+            .inner
+            .state
+            .load(name)
+            .ok_or_else(|| Error::NotFound(name.into()))?;
+        Ok((provider_of(&s), s))
+    }
+
+    /// Suspends by name (local: pause).
+    pub async fn suspend(&self, name: &str) -> Result<()> {
+        match self.kind_of(name)? {
+            (ProviderKind::Local, _) => {
+                self.local()?.suspend(name).await?;
+                self.inner.state.set_status(name, "suspended")
+            }
+            (ProviderKind::Contrib, s) => {
+                let (provider, id) = self.contrib_target(&s)?;
+                provider.suspend(&id).await?;
+                self.inner.state.set_status(name, "suspended")
+            }
+            (kind, _) => Err(Error::Unsupported {
+                provider: kind,
+                op: "suspend".into(),
+            }),
+        }
+    }
+
+    /// Resumes by name.
+    pub async fn resume(&self, name: &str) -> Result<()> {
+        match self.kind_of(name)? {
+            (ProviderKind::Local, _) => {
+                let inst = self.local()?.resume(name).await?;
+                self.record_endpoints(name, &inst)?;
+                self.inner.state.set_status(name, "running")?;
+                // A resumed VM reports running once it has an address; what
+                // its create waited for (a Space's cua-spacesd: 20 to 40 s
+                // later in a macOS guest) comes after. Resume waits for the
+                // same probes, bounded, so the next call is not a transport
+                // error.
+                let probes = self
+                    .inner
+                    .state
+                    .load_raw(name)
+                    .and_then(|m| m.get("ready_probes").cloned())
+                    .map(probes_from_json)
+                    .unwrap_or_default();
+                if !probes.is_empty() {
+                    let sb = self.connect(name).await?;
+                    sb.wait_ready(&probes, RESUME_READY_TIMEOUT).await?;
+                }
+                Ok(())
+            }
+            (ProviderKind::Contrib, s) => {
+                let (provider, id) = self.contrib_target(&s)?;
+                provider.resume(&id).await?;
+                self.inner.state.set_status(name, "running")
+            }
+            (kind, _) => Err(Error::Unsupported {
+                provider: kind,
+                op: "resume".into(),
+            }),
+        }
+    }
+
+    /// Records where a local instance that booted again listens: a runtime
+    /// may publish its ports on new host ports (a microVM picks them on
+    /// every boot), and connections must not go to the old ones.
+    fn record_endpoints(&self, name: &str, inst: &LocalInstance) -> Result<()> {
+        let ep = &inst.endpoints;
+        if ep.ports.is_empty() {
+            return Ok(());
+        }
+        if let Some(SandboxState::Local(mut l)) = self.inner.state.load(name) {
+            l.host = ep.host.clone();
+            if let Some(port) = ep.ports.get(&ENV_PORT).copied() {
+                l.api_port = port;
+            }
+            l.exposed_ports = Some(ep.ports.iter().map(|(g, h)| (g.to_string(), *h)).collect());
+            self.inner.state.save(&SandboxState::Local(l))?;
+        }
+        Ok(())
+    }
+
+    /// Replaces sandbox `name`'s egress policy ([`cua_vmm::egress`]; empty
+    /// removes it) and says where it is enforced: by the host, outside the
+    /// guest, on local runtimes that can; anything else refuses.
+    pub async fn set_egress(
+        &self,
+        name: &str,
+        policy: &cua_vmm::egress::EgressPolicy,
+    ) -> Result<cua_vmm::egress::Enforcement> {
+        policy.parse().map_err(|e| Error::InvalidArgument(e.0))?;
+        match self.kind_of(name)? {
+            (ProviderKind::Local, _) => Ok(self.local()?.set_egress(name, policy).await?),
+            (kind, _) => Err(Error::Unsupported {
+                provider: kind,
+                op: EGRESS_LOCAL_ONLY.into(),
+            }),
+        }
+    }
+
+    /// Replaces sandbox `name`'s network settings ([`cua_vmm::network`]) on
+    /// its local runtime; says whether they hold now or from its next start.
+    pub async fn set_network(
+        &self,
+        name: &str,
+        settings: &cua_vmm::network::NetworkSettings,
+    ) -> Result<cua_vmm::network::Applied> {
+        settings
+            .validate()
+            .map_err(|e| Error::InvalidArgument(e.0))?;
+        match self.kind_of(name)? {
+            (ProviderKind::Local, _) => Ok(self.local()?.set_network(name, settings).await?),
+            (kind, _) => Err(Error::Unsupported {
+                provider: kind,
+                op: "network settings (they are kept by the machine a sandbox runs on)".into(),
+            }),
+        }
+    }
+
+    /// What sandbox `name` tried to reach and its network rules refused,
+    /// most recent first: counted on its local runtime; empty for a sandbox
+    /// that is not local.
+    pub async fn network_events(&self, name: &str) -> Result<Vec<cua_vmm::egress::NetworkEvent>> {
+        match self.kind_of(name)? {
+            (ProviderKind::Local, _) => Ok(self.local()?.network_events(name).await?),
+            _ => Ok(vec![]),
+        }
+    }
+
+    /// The egress policy kept with sandbox `name` (empty: none, or a
+    /// sandbox that is not local).
+    pub async fn egress(&self, name: &str) -> Result<cua_vmm::egress::EgressPolicy> {
+        match self.kind_of(name)? {
+            (ProviderKind::Local, _) => Ok(self.local()?.egress(name).await?),
+            _ => Ok(Default::default()),
+        }
+    }
+
+    /// Restarts by name (stop + resume locally).
+    pub async fn restart(&self, name: &str) -> Result<()> {
+        match self.kind_of(name)? {
+            (ProviderKind::Local, _) => {
+                let rt = self.local()?;
+                rt.stop(name).await?;
+                let inst = rt.resume(name).await?;
+                self.record_endpoints(name, &inst)?;
+                self.inner.state.set_status(name, "running")?;
+                // Restarted means answering, as a resume and a resize are
+                // waited for: a VM's resume returns while its guest boots.
+                self.wait_recorded_probes(name).await
+            }
+            (kind, _) => Err(Error::Unsupported {
+                provider: kind,
+                op: "restart".into(),
+            }),
+        }
+    }
+
+    /// Gives the local sandbox `name` another shape (vCPUs, memory, a larger
+    /// disk): it stops and boots again from its own disk, and is waited for
+    /// as [`Self::resume`] waits. Its disk is kept; its memory and running
+    /// processes are not. Fleet and contrib sandboxes are refused.
+    pub async fn resize(&self, name: &str, shape: &cua_vmm::Resize) -> Result<()> {
+        match self.kind_of(name)? {
+            (ProviderKind::Local, _) => {
+                let inst = self.local()?.resize(name, shape).await?;
+                self.record_endpoints(name, &inst)?;
+                if let Some(SandboxState::Local(mut l)) = self.inner.state.load(name) {
+                    if let Some(c) = shape.cpus {
+                        l.cpu_count = Some(c);
+                    }
+                    if let Some(m) = shape.memory_mb {
+                        l.memory_mb = Some(m);
+                    }
+                    self.inner.state.save(&SandboxState::Local(l))?;
+                }
+                self.inner.state.set_status(name, "running")?;
+                self.wait_recorded_probes(name).await
+            }
+            (kind, s) => Err(Error::Unsupported {
+                provider: kind,
+                op: format!("resizing {name} ({} cannot be resized)", s.runtime_type()),
+            }),
+        }
+    }
+
+    /// Waits for the ready probes recorded with sandbox `name` (none: it
+    /// answers when its runtime says so).
+    async fn wait_recorded_probes(&self, name: &str) -> Result<()> {
+        let probes = self
+            .inner
+            .state
+            .load_raw(name)
+            .and_then(|m| m.get("ready_probes").cloned())
+            .map(probes_from_json)
+            .unwrap_or_default();
+        if !probes.is_empty() {
+            let sb = self.connect(name).await?;
+            sb.wait_ready(&probes, RESUME_READY_TIMEOUT).await?;
+        }
+        Ok(())
+    }
+
+    /// How the sandbox `name` turns off and on again (`None`: it cannot,
+    /// or there is no such sandbox): a local instance as its runtime says
+    /// ([`LocalRuntime::power_control`]), a contrib one as its provider
+    /// says ([`crate::Provider::power`]). Direct sandboxes cannot. Reads only the state file.
+    pub fn power_control(&self, name: &str) -> Option<crate::PowerControl> {
+        let s = self.inner.state.load(name)?;
+        match provider_of(&s) {
+            ProviderKind::Local => self.inner.local.as_ref()?.power_control(s.runtime_type()),
+            ProviderKind::Contrib => {
+                let (word, _) = contrib::contrib_of(&s)?;
+                self.inner.providers.get(word)?.power()
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether the sandbox `name` is on, as cua last recorded it (`None`:
+    /// not recorded, or no such sandbox). Reads only the state file.
+    pub fn power_state(&self, name: &str) -> Option<crate::PowerState> {
+        let s = self.inner.state.load(name)?;
+        crate::PowerState::parse(s.status())
+    }
+
+    fn power_unsupported(&self, name: &str) -> Error {
+        match self.kind_of(name) {
+            Ok((kind, s)) => Error::Unsupported {
+                provider: kind,
+                op: format!(
+                    "turning {name} off and on ({} cannot suspend or stop it)",
+                    s.runtime_type()
+                ),
+            },
+            Err(e) => e,
+        }
+    }
+
+    /// Turns the sandbox `name` off the way its provider can
+    /// ([`Self::power_control`]): suspends it, keeping its memory, or stops
+    /// it, keeping its disk. Returns the state it is left in.
+    pub async fn power_off(&self, name: &str) -> Result<crate::PowerState> {
+        let Some(control) = self.power_control(name) else {
+            return Err(self.power_unsupported(name));
+        };
+        self.power_off_as(name, control).await
+    }
+
+    /// [`Self::power_off`] with `control` instead of the provider's own:
+    /// a host stops (frees) a container it would otherwise suspend. A
+    /// sandbox with no power control at all is refused.
+    pub async fn power_off_as(
+        &self,
+        name: &str,
+        control: crate::PowerControl,
+    ) -> Result<crate::PowerState> {
+        if self.power_control(name).is_none() {
+            return Err(self.power_unsupported(name));
+        }
+        match control {
+            crate::PowerControl::Suspend => self.suspend(name).await?,
+            crate::PowerControl::Stop => {
+                match self.kind_of(name)? {
+                    (ProviderKind::Local, _) => self.local()?.stop(name).await?,
+                    (ProviderKind::Contrib, s) => {
+                        let (provider, id) = self.contrib_target(&s)?;
+                        provider.stop(&id).await?;
+                    }
+                    _ => return Err(self.power_unsupported(name)),
+                }
+                self.inner.state.set_status(name, "stopped")?;
+            }
+        }
+        Ok(control.off_state())
+    }
+
+    /// Turns the sandbox `name` on again: resumes a suspended one, boots a
+    /// stopped one, and leaves a running one as it is. A local instance is
+    /// waited for as [`Self::resume`] waits (its readiness probes, bounded).
+    pub async fn power_on(&self, name: &str) -> Result<()> {
+        let Some(control) = self.power_control(name) else {
+            return Err(self.power_unsupported(name));
+        };
+        match self.kind_of(name)? {
+            (ProviderKind::Local, s) => {
+                let status = self.local()?.status_on(name, s.runtime_type()).await?;
+                if status == InstanceStatus::Running {
+                    return self.inner.state.set_status(name, "running");
+                }
+                self.resume(name).await
+            }
+            (ProviderKind::Contrib, s) => {
+                let (provider, id) = self.contrib_target(&s)?;
+                match control {
+                    crate::PowerControl::Suspend => provider.resume(&id).await?,
+                    crate::PowerControl::Stop => provider.start(&id).await?,
+                };
+                self.inner.state.set_status(name, "running")
+            }
+            _ => Err(self.power_unsupported(name)),
+        }
+    }
+
+    /// Deletes by name: removes the instance, then the state file.
+    ///
+    /// Idempotent about the backing resource: a state file whose VM or
+    /// container is already gone is removed and the delete
+    /// succeeds. A local instance with no state file (an orphan the local
+    /// runtime still lists) is removed from the runtime.
+    pub async fn delete(&self, name: &str) -> Result<()> {
+        let Some(state) = self.inner.state.load(name) else {
+            // A client that predates checkpoints deletes one as a sandbox
+            // (even a pinned one): refuse and say how.
+            if self.is_checkpoint_only(name) {
+                return Err(Error::InvalidArgument(format!(
+                    "{name} is a checkpoint, not a sandbox; update your cua CLI and use `cua sb \
+                     checkpoints rm {name}`"
+                )));
+            }
+            return match &self.inner.local {
+                Some(rt) => match rt.delete(name).await {
+                    Ok(()) => Ok(()),
+                    Err(crate::RuntimeError::NotFound(_)) => Err(Error::NotFound(name.into())),
+                    Err(e) => Err(e.into()),
+                },
+                None => Err(Error::NotFound(name.into())),
+            };
+        };
+        match (provider_of(&state), state) {
+            (ProviderKind::Local, _) => {
+                match self.local()?.delete(name).await {
+                    Ok(()) | Err(crate::RuntimeError::NotFound(_)) => {}
+                    Err(e) => return Err(e.into()),
+                }
+                // As `Sandbox::delete`: an ephemeral sandbox's lease goes too.
+                self.inner.state.remove_lease(name)?;
+                // A fork no longer holds the checkpoint it started from.
+                self.release_holds(name).await;
+            }
+            (ProviderKind::Contrib, s) => {
+                let (provider, id) = self.contrib_target(&s)?;
+                match provider.delete(&id).await {
+                    Ok(()) | Err(Error::NotFound(_)) => {}
+                    Err(e) => return Err(e),
+                }
+            }
+            _ => {}
+        }
+        self.inner.state.delete(name)
+    }
+
+    /// Extends a provider sandbox's lifetime.
+    pub async fn keep_alive(&self, name: &str, duration: Duration) -> Result<()> {
+        match self.kind_of(name)? {
+            (ProviderKind::Contrib, s) => {
+                let (provider, id) = self.contrib_target(&s)?;
+                provider.keep_alive(&id, duration).await
+            }
+            // A local sandbox gets a lifetime: the cua daemon deletes it
+            // once `duration` from now has passed ([`Self::expired_local`]).
+            (ProviderKind::Local, _) => self.set_local_expiry(name, duration, None),
+            (kind, _) => Err(Error::Unsupported {
+                provider: kind,
+                op: "keep_alive".into(),
+            }),
+        }
+    }
+
+    /// Sets a local sandbox's lifetime to `duration` from now, replacing
+    /// any earlier one (shorter or longer). `on_expire`: what the daemon
+    /// does then, `delete` (default) or `suspend`; `None` keeps the
+    /// sandbox's current choice.
+    pub fn set_local_expiry(
+        &self,
+        name: &str,
+        duration: Duration,
+        on_expire: Option<LocalExpiry>,
+    ) -> Result<()> {
+        let raw = self
+            .inner
+            .state
+            .load_raw(name)
+            .ok_or_else(|| Error::NotFound(name.into()))?;
+        let until = unix_now().saturating_add(duration.as_secs_f64().ceil() as u64);
+        let mut fields = Map::new();
+        fields.insert(EXPIRES_AT_FIELD.into(), Value::from(until));
+        let action = on_expire
+            .or_else(|| {
+                raw.get(ON_EXPIRE_FIELD)
+                    .and_then(Value::as_str)
+                    .and_then(LocalExpiry::parse)
+            })
+            .unwrap_or_default();
+        fields.insert(ON_EXPIRE_FIELD.into(), Value::from(action.as_str()));
+        self.inner.state.update(name, fields)
+    }
+
+    /// When a local sandbox expires ([`Self::set_local_expiry`]), if it has
+    /// a lifetime.
+    pub fn local_expiry(&self, name: &str) -> Option<(std::time::SystemTime, LocalExpiry)> {
+        let raw = self.inner.state.load_raw(name)?;
+        let at = raw.get(EXPIRES_AT_FIELD)?.as_u64()?;
+        let action = raw
+            .get(ON_EXPIRE_FIELD)
+            .and_then(Value::as_str)
+            .and_then(LocalExpiry::parse)
+            .unwrap_or_default();
+        Some((std::time::UNIX_EPOCH + Duration::from_secs(at), action))
+    }
+
+    /// Local sandboxes whose lifetime ended at or before `now` and that are
+    /// not handled yet (a suspended one whose action was `suspend` is
+    /// done), with what to do to each.
+    pub fn expired_local(&self, now: std::time::SystemTime) -> Vec<(String, LocalExpiry)> {
+        self.inner
+            .state
+            .list_all()
+            .into_iter()
+            .filter(|s| provider_of(s) == ProviderKind::Local)
+            .filter_map(|s| {
+                let (at, action) = self.local_expiry(s.name())?;
+                let done = action == LocalExpiry::Suspend && s.status() == "suspended";
+                (at <= now && !done).then(|| (s.name().to_string(), action))
+            })
+            .collect()
+    }
+
+    /// Clears a local sandbox's lifetime (after a `suspend` expiry was
+    /// resumed, for example).
+    pub fn clear_local_expiry(&self, name: &str) -> Result<()> {
+        let Some(mut raw) = self.inner.state.load_raw(name) else {
+            return Ok(());
+        };
+        raw.remove(EXPIRES_AT_FIELD);
+        raw.remove(ON_EXPIRE_FIELD);
+        let state: SandboxState = serde_json::from_value(Value::Object(raw))?;
+        self.inner.state.save(&state)
+    }
+}
+
+/// State-file field: when a local sandbox's lifetime ends (Unix seconds).
+const EXPIRES_AT_FIELD: &str = "expires_at_unix";
+/// State-file field: what happens then (`delete` or `suspend`).
+const ON_EXPIRE_FIELD: &str = "on_expire";
+
+/// What the cua daemon does when a local sandbox's lifetime ends.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LocalExpiry {
+    /// Delete it.
+    #[default]
+    Delete,
+    /// Suspend it (memory kept); it can be resumed.
+    Suspend,
+}
+
+impl LocalExpiry {
+    /// `delete` / `suspend` (also `kill` / `pause`, as e2b names them).
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "" | "delete" | "kill" => Some(Self::Delete),
+            "suspend" | "pause" => Some(Self::Suspend),
+            _ => None,
+        }
+    }
+
+    /// The state-file word.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Delete => "delete",
+            Self::Suspend => "suspend",
+        }
+    }
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+impl SandboxState {
+    /// The qualified ref of this persisted sandbox (`local:`, a provider's,
+    /// or `direct:<host:port>` for a remembered connection).
+    pub fn sandbox_ref(&self) -> SandboxRef {
+        state_ref(self)
+    }
+}
+
+/// The qualified ref of a persisted sandbox.
+fn state_ref(s: &SandboxState) -> SandboxRef {
+    if let Some((provider, _)) = contrib::contrib_of(s) {
+        return SandboxRef::Contrib {
+            provider: provider.to_string(),
+            name: s.name().to_string(),
+        };
+    }
+    match s {
+        SandboxState::Local(l) if l.runtime_type == "direct" => {
+            let authority = l
+                .extra
+                .get("url")
+                .and_then(Value::as_str)
+                .and_then(|u| cua_spacesd_client::Endpoint::parse(u).ok())
+                .map(|e| crate::refs::authority(e.host(), e.port()))
+                .unwrap_or_else(|| crate::refs::authority(&l.host, l.api_port));
+            SandboxRef::Direct { authority }
+        }
+        SandboxState::Local(l) => SandboxRef::Local {
+            name: l.name.clone(),
+        },
+    }
+}
+
+/// The provider of a persisted sandbox.
+fn provider_of(s: &SandboxState) -> ProviderKind {
+    if contrib::contrib_of(s).is_some() {
+        return ProviderKind::Contrib;
+    }
+    match s.runtime_type() {
+        "direct" => ProviderKind::Direct,
+        _ => ProviderKind::Local,
+    }
+}
+
+/// The kind and runtime of a local backend label (`runtime_type`:
+/// `gvisor`, `container`/`docker`/`runc`, `qemu`, `qemu-docker`, `lume`).
+pub fn placement_of_backend(backend: &str) -> (Kind, Runtime) {
+    match backend.trim().to_ascii_lowercase().as_str() {
+        "gvisor" | "runsc" => (Kind::Container, Runtime::Gvisor),
+        "container" | "docker" | "runc" | "managed" => (Kind::Container, Runtime::Runc),
+        "qemu" | "qemu-docker" | "qemu_docker" | "qemu-baremetal" => (Kind::Vm, Runtime::Qemu),
+        "lume" => (Kind::Vm, Runtime::Lume),
+        "firecracker" | "microvm" => (Kind::MicroVm, Runtime::Firecracker),
+        "vz" => (Kind::MicroVm, Runtime::Vz),
+        "containerization" => (Kind::MicroVm, Runtime::Containerization),
+        // An external runtime provider persists its own name.
+        other => match crate::external::Registry::global().get(other) {
+            Some(p) => (p.kind, p.runtime()),
+            None => (Kind::Auto, Runtime::Auto),
+        },
+    }
+}
+
+/// The local backend prefix of an image string (`container:`, `docker:`,
+/// `vm:`, `disk:`, `lume:`) and the reference after it.
+pub(crate) fn local_prefix(image: &str) -> Option<(&str, &str)> {
+    let image = image.trim();
+    match image.split_once(':') {
+        Some((p, r))
+            if ["container", "docker", "vm", "disk", "lume"].contains(&p)
+                && !r.starts_with("//") =>
+        {
+            Some((p, r))
+        }
+        _ => None,
+    }
+}
+
+/// The status word of a local record whose VM or container is gone.
+pub const MISSING: &str = "missing";
+
+fn status_word(s: &str) -> Status {
+    match s {
+        "running" => Status::Running,
+        "suspended" => Status::Suspended,
+        "stopped" => Status::Stopped,
+        other => Status::Unknown(other.into()),
+    }
+}
+
+/// State-file key of the resolved [`ImageInfo`] (additive; older files
+/// have none).
+const IMAGE_INFO_KEY: &str = "image_info";
+
+/// The [`ImageInfo`] a state file recorded, if any.
+/// The guest OS a local sandbox's state records: the one its image resolved
+/// to, else the requested one. A plain registry reference (not an alias such
+/// as `macos`) leaves [`CreateOptions::os`] at its `linux` default, so a macOS
+/// image created by reference (the Spaces app, the SDK) was recorded as
+/// `linux`.
+fn recorded_os(requested: &str, image: Option<&ImageInfo>) -> String {
+    image
+        .map(|i| i.os.trim())
+        .filter(|os| !os.is_empty())
+        .unwrap_or(requested)
+        .to_string()
+}
+
+fn image_info_of(extra: &Map<String, Value>) -> Option<ImageInfo> {
+    extra
+        .get(IMAGE_INFO_KEY)
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+}
+
+fn rand_u32() -> u32 {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() ^ (d.as_secs() as u32))
+        .unwrap_or(0);
+    nanos.wrapping_mul(2_654_435_761) ^ std::process::id()
+}
+
+/// Where a guest port can be reached.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PortTarget {
+    /// Plain TCP.
+    Addr {
+        /// Host.
+        host: String,
+        /// Port.
+        port: u16,
+    },
+    /// HTTP(S) only, through a provider's URL.
+    Url(String),
+}
+
+/// A sandbox handle.
+#[derive(Clone)]
+pub struct Sandbox {
+    mgr: Sandboxes,
+    name: String,
+    ephemeral: bool,
+    env_token: Option<String>,
+    /// Token this process installed on a bootstrap-mode spacesd.
+    bootstrap_token: Arc<std::sync::Mutex<Option<String>>>,
+    /// Logical service → guest port (0 when only the name is known).
+    services: BTreeMap<String, u16>,
+    /// The image as resolved and pinned at create time (`None`: direct,
+    /// or not resolved from a registry).
+    image_info: Option<ImageInfo>,
+    target: Target,
+}
+
+impl std::fmt::Debug for Sandbox {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Sandbox")
+            .field("name", &self.name)
+            .field("provider", &self.provider())
+            .field("ephemeral", &self.ephemeral)
+            .finish()
+    }
+}
+
+impl Sandbox {
+    /// Name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The image this sandbox runs, as resolved and pinned at create time
+    /// (digest and variant). `None` for direct connections and images not
+    /// resolved from a registry.
+    pub fn image_info(&self) -> Option<&ImageInfo> {
+        self.image_info.as_ref()
+    }
+
+    /// Provider.
+    pub fn provider(&self) -> ProviderKind {
+        match self.target {
+            Target::Local { .. } => ProviderKind::Local,
+            Target::Direct { .. } => ProviderKind::Direct,
+            Target::Contrib { .. } => ProviderKind::Contrib,
+        }
+    }
+
+    /// Runtime identifier (`direct`, the provider's name, or the local
+    /// backend name).
+    pub fn runtime_type(&self) -> &str {
+        match &self.target {
+            Target::Local { backend, .. } => backend,
+            Target::Direct { .. } => "direct",
+            Target::Contrib { provider, .. } => provider.0.name(),
+        }
+    }
+
+    /// Whether the sandbox has no state file (and is torn down on delete).
+    pub fn is_ephemeral(&self) -> bool {
+        self.ephemeral
+    }
+
+    /// The qualified ref: `local:<name>`, `direct:<host:port>` or
+    /// `<provider>:<name>`.
+    pub fn id(&self) -> String {
+        self.sandbox_ref().to_string()
+    }
+
+    /// [`Self::id`] as a [`SandboxRef`].
+    pub fn sandbox_ref(&self) -> SandboxRef {
+        match &self.target {
+            Target::Local { .. } => SandboxRef::Local {
+                name: self.name.clone(),
+            },
+            Target::Direct { endpoint } => SandboxRef::Direct {
+                authority: crate::refs::authority(endpoint.host(), endpoint.port()),
+            },
+            Target::Contrib { provider, .. } => SandboxRef::Contrib {
+                provider: provider.0.name().into(),
+                name: self.name.clone(),
+            },
+        }
+    }
+
+    /// Where the sandbox runs: `local`, `direct` (a machine reached by
+    /// address) or a contrib provider (`e2b`).
+    pub fn location(&self) -> &'static str {
+        if let Target::Contrib { provider, .. } = &self.target {
+            return provider.0.name();
+        }
+        self.sandbox_ref()
+            .location()
+            .map(crate::Location::as_str)
+            .unwrap_or("local")
+    }
+
+    /// When the sandbox expires unless kept alive. `None`: no expiry known.
+    pub fn expires_at(&self) -> Option<std::time::SystemTime> {
+        match &self.target {
+            // A provider sandbox that ends itself (your cloud's time limit).
+            Target::Contrib { instance, .. } => instance
+                .details
+                .get("expires")
+                .and_then(|t| humantime::parse_rfc3339(t).ok()),
+            Target::Local { .. } => self.mgr.local_expiry(&self.name).map(|(at, _)| at),
+            _ => None,
+        }
+    }
+
+    /// Provider internals for debugging and advanced use (local: `backend`,
+    /// `container_id`, `host`; direct: `url`).
+    pub fn provider_details(&self) -> BTreeMap<String, String> {
+        let mut d = BTreeMap::new();
+        match &self.target {
+            Target::Local { backend, endpoints } => {
+                d.insert("provider".into(), "local".into());
+                d.insert("backend".into(), backend.clone());
+                d.insert("host".into(), endpoints.host.clone());
+                if let Some(c) = &endpoints.container_id {
+                    d.insert("container_id".into(), c.clone());
+                }
+                if let Some(l) = &endpoints.serial_log {
+                    d.insert("serial_log".into(), l.clone());
+                }
+                if let Some(b) = &endpoints.bulk {
+                    d.insert("bulk".into(), b.clone());
+                }
+                if let Some(v) = &endpoints.vnc {
+                    d.insert("vnc".into(), v.clone());
+                }
+            }
+            Target::Direct { endpoint } => {
+                d.insert("provider".into(), "direct".into());
+                d.insert(
+                    "url".into(),
+                    endpoint.base_url().as_str().trim_end_matches('/').into(),
+                );
+            }
+            Target::Contrib { provider, instance } => {
+                // `_`-prefixed details are the provider's private state
+                // (access tokens), never shown.
+                d.extend(
+                    instance
+                        .details
+                        .iter()
+                        .filter(|(k, _)| !k.starts_with('_'))
+                        .map(|(k, v)| (k.clone(), v.clone())),
+                );
+                d.insert("provider".into(), provider.0.name().into());
+                d.insert("id".into(), instance.id.clone());
+                // The engine this instance runs on when the provider offers a
+                // choice and reported it, else the provider's one.
+                d.entry("runtime".into())
+                    .or_insert_with(|| provider.0.capabilities().runtime.into());
+            }
+        }
+        d
+    }
+
+    /// The kind and runtime this sandbox runs as, when known
+    /// ([`Kind::Auto`] / [`Runtime::Auto`] otherwise).
+    pub fn placement(&self) -> (Kind, Runtime) {
+        match &self.target {
+            Target::Local { backend, .. } => placement_of_backend(backend),
+            Target::Direct { .. } => (Kind::Auto, Runtime::Auto),
+            Target::Contrib { provider, instance } => {
+                let caps = provider.0.capabilities();
+                let kind = match caps.kinds.first() {
+                    Some(crate::RunKind::Container) => Kind::Container,
+                    Some(crate::RunKind::Vm) => Kind::Vm,
+                    None => Kind::Auto,
+                };
+                let runtime = instance
+                    .details
+                    .get("runtime")
+                    .map(String::as_str)
+                    .unwrap_or(caps.runtime);
+                (kind, Runtime::parse(runtime).unwrap_or(Runtime::Auto))
+            }
+        }
+    }
+
+    /// Declared services (name → guest port; 0 when only the name is known).
+    pub fn services(&self) -> &BTreeMap<String, u16> {
+        &self.services
+    }
+
+    /// Every reachable guest port.
+    pub fn ports(&self) -> BTreeMap<u16, PortTarget> {
+        let mut out = BTreeMap::new();
+        match &self.target {
+            Target::Local { endpoints, .. } => {
+                for (g, h) in &endpoints.ports {
+                    out.insert(
+                        *g,
+                        PortTarget::Addr {
+                            host: endpoints.host.clone(),
+                            port: *h,
+                        },
+                    );
+                }
+            }
+            _ => {
+                for p in self.services.values().filter(|p| **p != 0) {
+                    if let Ok(t) = self.port(*p) {
+                        out.insert(*p, t);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Where guest port `port` is reachable.
+    pub fn port(&self, port: u16) -> Result<PortTarget> {
+        match &self.target {
+            Target::Local { endpoints, .. } => endpoints
+                .ports
+                .get(&port)
+                .map(|h| PortTarget::Addr {
+                    host: endpoints.host.clone(),
+                    port: *h,
+                })
+                .ok_or_else(|| {
+                    Error::InvalidArgument(format!("guest port {port} is not published"))
+                }),
+            Target::Direct { endpoint } => Ok(PortTarget::Addr {
+                host: endpoint.host().into(),
+                port,
+            }),
+            Target::Contrib { provider, instance } => {
+                Ok(PortTarget::Url(provider.0.endpoint(instance, port)?.url))
+            }
+        }
+    }
+
+    /// A named service.
+    pub fn service(&self, name: &str) -> Result<Service> {
+        let base = match &self.target {
+            Target::Direct { endpoint } if name == "env" => endpoint
+                .base_url()
+                .as_str()
+                .trim_end_matches('/')
+                .to_string(),
+            _ => {
+                let port = *self.services.get(name).ok_or_else(|| {
+                    Error::InvalidArgument(format!(
+                        "sandbox {} has no service {name:?} (known: {:?})",
+                        self.name,
+                        self.services.keys().collect::<Vec<_>>()
+                    ))
+                })?;
+                match self.port(port)? {
+                    PortTarget::Addr { host, port } => format!("http://{}", host_port(&host, port)),
+                    PortTarget::Url(u) => u,
+                }
+            }
+        };
+        Ok(Service {
+            sandbox: self.clone(),
+            name: name.into(),
+            base_url: base,
+        })
+    }
+
+    /// TCP forwarding.
+    pub fn tunnel(&self) -> Tunnel {
+        Tunnel {
+            sandbox: self.clone(),
+        }
+    }
+
+    /// Connects to cua-spacesd inside the sandbox (the `env` service, or
+    /// guest port 3211). Fails with [`Error::SpacesdNotAvailable`] when no
+    /// driver answers the capabilities probe.
+    pub async fn spacesd(&self) -> Result<SpacesdClient> {
+        self.spacesd_with(ConnectOptionsOverride::default()).await
+    }
+
+    /// [`Sandbox::spacesd`] with a shorter probe timeout (tests, UIs).
+    pub async fn spacesd_with(&self, o: ConnectOptionsOverride) -> Result<SpacesdClient> {
+        let held = self.token();
+        let client = self.env_connect(&o, held.clone()).await?;
+        if matches!(self.target, Target::Direct { .. }) {
+            return Ok(client);
+        }
+        let local = matches!(self.target, Target::Local { .. });
+        // A contrib sandbox whose token was delivered at create is like a
+        // local one (verify it took).
+        let delivered = match &self.target {
+            Target::Contrib { provider, .. } => provider.0.capabilities().env_to_entrypoint,
+            _ => local,
+        };
+        if held.is_some() && !delivered {
+            return Ok(client);
+        }
+        // A driver in bootstrap mode (no token yet, or an image that ignores
+        // the token the SDK delivered)
+        // accepts the first authenticated Init: install the held token (or
+        // a fresh one) so the sandbox is never left open, remember it, and
+        // reconnect with it. The capabilities are cached by the client.
+        match client.capabilities().await {
+            Ok(caps) if !caps.initialized => {}
+            _ => return Ok(client),
+        }
+        let token = held.unwrap_or_else(mint_env_token);
+        // A driver's first token makes it this Space's machine: it renews
+        // its per-machine secrets with fresh entropy. That matters when the
+        // guest was resumed from a memory snapshot other Spaces share (a
+        // macOS Space from its image's warm state is one: its driver waited
+        // for a token in that snapshot); on a cold boot nothing was sealed
+        // with the keys it replaces.
+        client
+            .init(cua_spacesd_client::pb::InitRequest {
+                token: token.clone(),
+                new_machine: true,
+                entropy: (0..64).map(|_| rand::random::<u8>()).collect(),
+                ..Default::default()
+            })
+            .await?;
+        *self.bootstrap_token.lock().unwrap() = Some(token.clone());
+        if !self.ephemeral {
+            let mut m = Map::new();
+            m.insert("env_token".into(), Value::String(token.clone()));
+            let state = self.mgr.state();
+            state.update(&self.name, m)?;
+            state.restrict(&self.name)?;
+        }
+        self.env_connect(&o, Some(token)).await
+    }
+
+    /// Whether this sandbox has no cua-spacesd to reach: it declares no
+    /// `env` service, or its image says it carries none
+    /// ([`ImageInfo::spacesd`], so the port was never published). The
+    /// agentless fallbacks
+    /// ([`Sandbox::guest_exec`], [`Sandbox::guest_screenshot`],
+    /// [`Sandbox::guest_display`]) are for these sandboxes.
+    pub fn lacks_spacesd(&self) -> bool {
+        !self.services.contains_key("env")
+            || self.image_info.as_ref().and_then(|i| i.spacesd) == Some(false)
+    }
+
+    fn agentless_unsupported(&self, op: &str) -> Error {
+        Error::Unsupported {
+            provider: self.provider(),
+            op: format!("{op} without cua-spacesd (local Lume sandboxes only)"),
+        }
+    }
+
+    /// Runs `script` with `/bin/sh -c` in the guest without cua-spacesd
+    /// (local macOS Lume sandboxes: over `lume ssh`), forwarding output to
+    /// `sink` as it arrives, and returns the exit code. Other sandboxes fail
+    /// with [`Error::Unsupported`] (or the runtime's own `Unsupported`).
+    pub async fn guest_exec(
+        &self,
+        script: &str,
+        timeout: Option<Duration>,
+        sink: tokio::sync::mpsc::Sender<crate::GuestOutput>,
+    ) -> Result<i64> {
+        match &self.target {
+            Target::Local { .. } => Ok(self
+                .mgr
+                .local()?
+                .guest_exec(&self.name, script, timeout, sink)
+                .await?),
+            _ => Err(self.agentless_unsupported("exec")),
+        }
+    }
+
+    /// Captures the guest framebuffer as PNG without cua-spacesd (local
+    /// Lume sandboxes: over the VM's VNC endpoint).
+    pub async fn guest_screenshot(&self) -> Result<crate::GuestScreenshot> {
+        match &self.target {
+            Target::Local { .. } => Ok(self.mgr.local()?.guest_screenshot(&self.name).await?),
+            _ => Err(self.agentless_unsupported("screenshots")),
+        }
+    }
+
+    /// The guest display without cua-spacesd (local Lume sandboxes: the
+    /// VM's VNC endpoint, opened with `lume attach`).
+    pub async fn guest_display(&self) -> Result<crate::GuestDisplay> {
+        match &self.target {
+            Target::Local { .. } => Ok(self.mgr.local()?.guest_display(&self.name).await?),
+            _ => Err(self.agentless_unsupported("a display")),
+        }
+    }
+
+    /// The spacesd token this handle holds: the one set at create time or
+    /// installed on a bootstrap-mode spacesd. `None` until one is known.
+    pub fn env_token(&self) -> Option<String> {
+        self.token()
+    }
+
+    fn token(&self) -> Option<String> {
+        self.env_token
+            .clone()
+            .or_else(|| self.bootstrap_token.lock().unwrap().clone())
+    }
+
+    async fn env_connect(
+        &self,
+        o: &ConnectOptionsOverride,
+        token: Option<String>,
+    ) -> Result<SpacesdClient> {
+        let not_available = |reason: String| Error::SpacesdNotAvailable {
+            sandbox: self.name.clone(),
+            reason,
+        };
+        let o_skip_probe = o.skip_probe_when_local;
+        let mut opts = match &self.target {
+            Target::Local { endpoints, .. } => {
+                let port = self.services.get("env").copied().unwrap_or(ENV_PORT);
+                let Some(host_port_n) = endpoints.ports.get(&port) else {
+                    return Err(not_available(format!("guest port {port} is not published")));
+                };
+                let mut o = ConnectOptions::parse(&host_port(&endpoints.host, *host_port_n))
+                    .map_err(|e| not_available(e.to_string()))?;
+                o.token = token.clone();
+                if o_skip_probe {
+                    o.probe = false;
+                }
+                o
+            }
+            Target::Direct { endpoint } => {
+                let mut o = ConnectOptions::new(endpoint.clone());
+                o.token = token.clone();
+                o
+            }
+            Target::Contrib { provider, instance } => {
+                let port = self.services.get("env").copied().unwrap_or(ENV_PORT);
+                if !self.services.contains_key("env") {
+                    return Err(not_available(format!(
+                        "the sandbox exposes no `env` service (services: {:?})",
+                        self.services.keys().collect::<Vec<_>>()
+                    )));
+                }
+                if let Some(o) = provider.0.connect_options(instance, port) {
+                    let mut o = o.map_err(|e| not_available(e.to_string()))?;
+                    o.token = token.clone();
+                    o
+                } else {
+                    let ep = provider
+                        .0
+                        .endpoint(instance, port)
+                        .map_err(|e| not_available(e.to_string()))?;
+                    if !ep.headers.is_empty() {
+                        return Err(not_available(format!(
+                            "{} exposes port {port} only with its own access headers",
+                            provider.0.name()
+                        )));
+                    }
+                    let mut o =
+                        ConnectOptions::parse(&ep.url).map_err(|e| not_available(e.to_string()))?;
+                    o.token = token.clone();
+                    o
+                }
+            }
+        };
+        if let Some(t) = o.probe_timeout {
+            opts.probe_timeout = t;
+            opts.connect_timeout = opts.connect_timeout.min(t);
+        }
+        match SpacesdClient::connect(opts).await {
+            Ok(c) => Ok(c),
+            Err(cua_spacesd_client::Error::SpacesdNotAvailable { reason, .. }) => {
+                Err(not_available(reason))
+            }
+            Err(e @ cua_spacesd_client::Error::Unauthenticated(_)) => Err(Error::Env(e)),
+            Err(e) => Err(not_available(e.to_string())),
+        }
+    }
+
+    /// Whether readiness includes cua-spacesd: the image declares it
+    /// ([`ImageInfo::spacesd`]), the sandbox exposes `env`, and no command
+    /// replaces the image's entrypoint (which may be what starts spacesd).
+    /// A cua-spacesd the runtime injected serves any command.
+    pub fn declares_spacesd(&self, options: &CreateOptions) -> bool {
+        self.image_info.as_ref().and_then(|i| i.spacesd) == Some(true)
+            && self.services.contains_key("env")
+            && (options.command.as_ref().is_none_or(|c| c.is_empty())
+                || self.image_info.as_ref().is_some_and(|i| i.injected))
+    }
+
+    /// Waits until the sandbox's cua-spacesd answers `SystemService.Health`
+    /// (any status: the desktop may still be starting), for at most
+    /// `timeout`. Fails fast when the instance exits.
+    pub async fn wait_spacesd(&self, timeout: Duration) -> Result<()> {
+        let deadline = Instant::now() + timeout;
+        let mut last: String;
+        // A token written into the guest just now (a microVM restored from
+        // a snapshot, a claim's token file) takes the driver a moment to
+        // apply; until then authenticated calls are refused.
+        // A wrong token never heals by waiting: past the grace it is final.
+        let mut token_wait: Option<Instant> = None;
+        let mut refused = |e: cua_spacesd_client::Error| -> Option<Error> {
+            let since = *token_wait.get_or_insert_with(Instant::now);
+            (since.elapsed() >= TOKEN_APPLY_GRACE || Instant::now() >= deadline)
+                .then_some(Error::Env(e))
+        };
+        // 50 ms growing to 250 ms: a guest that is up within a second is
+        // noticed within ~50 ms of it listening, not after a fixed 250 ms.
+        let mut backoff = Duration::from_millis(50);
+        // No route to the guest (macOS: Local Network privacy, or a VPN):
+        // stop with why, a VPN at once, instead of the bare timeout.
+        let mut unreachable = cua_vmm::probe::UnreachableGate::default();
+        loop {
+            let attempt_at = tokio::time::Instant::now();
+            let probe = ConnectOptionsOverride {
+                probe_timeout: Some(Duration::from_secs(3)),
+                skip_probe_when_local: true,
+            };
+            // Without the connect probe the first call is what dials: bound it
+            // by the readiness budget, so a guest that never listens fails
+            // within `timeout`, not after the client's own connect timeout.
+            let left = deadline
+                .saturating_duration_since(Instant::now())
+                .clamp(Duration::from_millis(200), Duration::from_secs(3));
+            let connected = tokio::time::timeout(left, self.spacesd_with(probe))
+                .await
+                .unwrap_or_else(|_| {
+                    Err(Error::Env(cua_spacesd_client::Error::Protocol(format!(
+                        "no connection within {left:?}"
+                    ))))
+                });
+            match connected {
+                Ok(client) => match tokio::time::timeout(left, client.health())
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(cua_spacesd_client::Error::Protocol(format!(
+                            "Health did not answer within {left:?}"
+                        )))
+                    }) {
+                    Ok(_) if self.env_token.is_none() => return Ok(()),
+                    // Any authenticated call proves the token took; listing
+                    // the driver's processes is in-memory (`Metrics` samples
+                    // CPU usage over 200 ms).
+                    Ok(_) => match client.list_processes(false).await {
+                        Err(
+                            e @ (cua_spacesd_client::Error::NotInitialized(_)
+                            | cua_spacesd_client::Error::Unauthenticated(_)),
+                        ) => {
+                            if let Some(e) = refused(e) {
+                                return Err(e);
+                            }
+                            tokio::time::sleep(Duration::from_millis(20)).await;
+                            continue;
+                        }
+                        // Answered with the token: ready.
+                        _ => return Ok(()),
+                    },
+                    Err(e @ cua_spacesd_client::Error::Unauthenticated(_)) => {
+                        if let Some(e) = refused(e) {
+                            return Err(e);
+                        }
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                        continue;
+                    }
+                    Err(e) => last = e.to_string(),
+                },
+                Err(Error::Env(e @ cua_spacesd_client::Error::Unauthenticated(_))) => {
+                    if let Some(e) = refused(e) {
+                        return Err(e);
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    continue;
+                }
+                Err(Error::SpacesdNotAvailable { reason, .. }) => last = reason,
+                Err(e) => last = e.to_string(),
+            }
+            if let Some(why) = self.exited().await {
+                return Err(Error::Runtime(crate::RuntimeError::Other(format!(
+                    "sandbox {} {why} before cua-spacesd answered; see `cua sb logs {}`",
+                    self.name, self.name
+                ))));
+            }
+            // The client's own error often says only that it timed out:
+            // one plain connect tells "no route" (Local Network privacy, a
+            // VPN) from "not listening yet".
+            let no_route = match no_route_target(&last) {
+                Some(addr) => Some(addr),
+                None => self.local_env_unreachable().await,
+            };
+            match no_route {
+                Some(addr) if cfg!(target_os = "macos") => {
+                    let passed = Instant::now() >= deadline;
+                    if let Some(e) = unreachable
+                        .observe(attempt_at, &addr, &"No route to host", passed)
+                        .await
+                    {
+                        return Err(vmm_failure(e));
+                    }
+                }
+                _ => unreachable.reset(),
+            }
+            if Instant::now() >= deadline {
+                return Err(Error::Timeout(format!(
+                    "sandbox {}: cua-spacesd did not answer within {timeout:?} ({last}); \
+                     see `cua sb logs {}`",
+                    self.name, self.name
+                )));
+            }
+            tokio::time::sleep(backoff).await;
+            backoff = (backoff * 2).min(Duration::from_millis(250));
+        }
+    }
+
+    /// The local guest's cua-spacesd address (`ip:port`) when a plain
+    /// connect to it from this process has no route (macOS: Local Network
+    /// privacy or a VPN), else `None`. Only for a guest on this Mac's VM
+    /// network; bounded to a second.
+    async fn local_env_unreachable(&self) -> Option<String> {
+        let Target::Local { endpoints, .. } = &self.target else {
+            return None;
+        };
+        if !endpoints.host.starts_with("192.168.64.") {
+            return None;
+        }
+        let port = self.services.get("env").copied().unwrap_or(ENV_PORT);
+        let addr = host_port(&endpoints.host, *endpoints.ports.get(&port)?);
+        match tokio::time::timeout(Duration::from_secs(1), TcpStream::connect(&addr)).await {
+            Ok(Err(e)) if cua_vmm::probe::is_unreachable(&e) => Some(addr),
+            _ => None,
+        }
+    }
+
+    /// Waits until every probe passes or `timeout` elapses.
+    pub async fn wait_ready(&self, probes: &[Probe], timeout: Duration) -> Result<()> {
+        let deadline = Instant::now() + timeout;
+        for probe in probes {
+            let mut unreachable = cua_vmm::probe::UnreachableGate::default();
+            loop {
+                let now = tokio::time::Instant::now();
+                match self.probe_once(probe).await {
+                    ProbeTry::Passed => break,
+                    ProbeTry::NotYet => unreachable.reset(),
+                    // No route: a VPN or firewall (at once), missing Local
+                    // Network access past the grace, or still none at the
+                    // deadline: say so, as a create does, instead of a bare
+                    // timeout.
+                    ProbeTry::Unreachable { addr, error } => {
+                        let passed = Instant::now() >= deadline;
+                        if let Some(e) = unreachable.observe(now, &addr, &error, passed).await {
+                            return Err(vmm_failure(e));
+                        }
+                    }
+                }
+                // A probe can never pass once the instance is gone: fail
+                // fast instead of waiting out the budget.
+                if let Some(why) = self.exited().await {
+                    return Err(Error::Runtime(crate::RuntimeError::Other(format!(
+                        "sandbox {} {why} before probe {probe:?} passed; see `cua sb logs {}`",
+                        self.name, self.name
+                    ))));
+                }
+                if Instant::now() >= deadline {
+                    return Err(Error::Timeout(format!(
+                        "sandbox {} probe {probe:?} did not pass within {timeout:?}",
+                        self.name
+                    )));
+                }
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+        }
+        Ok(())
+    }
+
+    /// `Some(reason)` when the instance behind this handle has stopped
+    /// (local runtimes and providers).
+    async fn exited(&self) -> Option<String> {
+        if let Target::Contrib { provider, instance } = &self.target {
+            return match provider.0.get(&instance.id).await {
+                Ok(i) if i.status == Status::Stopped => Some("exited".into()),
+                Err(Error::NotFound(_)) => Some("disappeared".into()),
+                _ => None,
+            };
+        }
+        let Target::Local { .. } = &self.target else {
+            return None;
+        };
+        let rt = self.mgr.local().ok()?;
+        match rt.status(&self.name).await {
+            Ok(InstanceStatus::Stopped) => Some("exited".into()),
+            Err(crate::RuntimeError::NotFound(_)) => Some("disappeared".into()),
+            _ => None,
+        }
+    }
+
+    async fn probe_once(&self, probe: &Probe) -> ProbeTry {
+        let per_try = Duration::from_secs(10);
+        if let (Probe::Tcp(guest_port), Target::Local { .. }) = (probe, &self.target) {
+            // Ask the runtime first: a host-side connect through a
+            // container's published port or QEMU slirp succeeds before the
+            // guest listens.
+            if let Ok(rt) = self.mgr.local() {
+                match rt.guest_tcp_listening(&self.name, *guest_port).await {
+                    Ok(Some(listening)) => return listening.into(),
+                    Ok(None) => {}
+                    Err(_) => return ProbeTry::NotYet,
+                }
+            }
+        }
+        if let Target::Contrib { provider, instance } = &self.target {
+            let Ok(ep) = provider.0.endpoint(instance, probe_port(probe)) else {
+                return ProbeTry::NotYet;
+            };
+            let (path, want) = match probe {
+                Probe::Tcp(_) => ("/", None),
+                Probe::Http { path, status, .. } => (path.as_str(), Some(*status)),
+            };
+            let resp = self
+                .mgr
+                .inner
+                .http
+                .request("GET", &ep.url_for(path), &ep.headers, None, per_try)
+                .await;
+            let passed = match (resp, want) {
+                // Through the provider's proxy a TCP probe means the port's
+                // server answers (the proxy's own errors are 5xx).
+                (Ok(r), None) => r.status < 500,
+                (Ok(r), Some(Some(s))) => r.status == s,
+                (Ok(r), Some(None)) => (200..300).contains(&r.status),
+                (Err(_), _) => false,
+            };
+            return passed.into();
+        }
+        let passed = match (probe, self.port(probe_port(probe))) {
+            (Probe::Tcp(_), Ok(PortTarget::Addr { host, port })) => {
+                return tokio::time::timeout(per_try, tcp_try(&host, port))
+                    .await
+                    .unwrap_or(ProbeTry::NotYet);
+            }
+            (Probe::Tcp(_), Ok(PortTarget::Url(url))) => self
+                .http_get(&url, per_try)
+                .await
+                .is_ok_and(|r| r.status < 500),
+            (Probe::Http { path, status, .. }, Ok(target)) => {
+                let base = match target {
+                    PortTarget::Addr { host, port } => format!("http://{}", host_port(&host, port)),
+                    PortTarget::Url(u) => u,
+                };
+                let url = format!("{}{}", base.trim_end_matches('/'), path);
+                match self.http_get(&url, per_try).await {
+                    Ok(r) => match status {
+                        Some(s) => r.status == *s,
+                        None => (200..300).contains(&r.status),
+                    },
+                    Err(_) => false,
+                }
+            }
+            (_, Err(_)) => false,
+        };
+        passed.into()
+    }
+
+    async fn http_get(&self, url: &str, timeout: Duration) -> Result<HttpResponse> {
+        self.mgr
+            .inner
+            .http
+            .request("GET", url, &[], None, timeout)
+            .await
+    }
+
+    /// Status from the provider.
+    pub async fn status(&self) -> Result<Status> {
+        match &self.target {
+            Target::Local { .. } => Ok(self.mgr.local()?.status(&self.name).await?.into()),
+            Target::Contrib { provider, instance } => {
+                Ok(provider.0.get(&instance.id).await?.status)
+            }
+            Target::Direct { .. } => Ok(Status::Running),
+        }
+    }
+
+    /// Suspends (named sandboxes; see [`Sandboxes::suspend`]).
+    pub async fn suspend(&self) -> Result<()> {
+        match &self.target {
+            Target::Contrib { provider, instance } if self.ephemeral => {
+                provider.0.suspend(&instance.id).await
+            }
+            Target::Local { .. } if self.ephemeral => {
+                Ok(self.mgr.local()?.suspend(&self.name).await?)
+            }
+            _ => self.mgr.suspend(&self.name).await,
+        }
+    }
+
+    /// Resumes.
+    pub async fn resume(&self) -> Result<()> {
+        match &self.target {
+            Target::Contrib { provider, instance } if self.ephemeral => {
+                provider.0.resume(&instance.id).await.map(|_| ())
+            }
+            Target::Local { .. } if self.ephemeral => {
+                self.mgr.local()?.resume(&self.name).await?;
+                Ok(())
+            }
+            _ => self.mgr.resume(&self.name).await,
+        }
+    }
+
+    /// Restarts.
+    pub async fn restart(&self) -> Result<()> {
+        match &self.target {
+            Target::Contrib { provider, .. } => {
+                Err(crate::provider::unsupported(provider.0.name(), "restart"))
+            }
+            Target::Local { .. } if self.ephemeral => {
+                let rt = self.mgr.local()?;
+                rt.stop(&self.name).await?;
+                rt.resume(&self.name).await?;
+                Ok(())
+            }
+            _ => self.mgr.restart(&self.name).await,
+        }
+    }
+
+    /// Gives the sandbox another shape ([`Sandboxes::resize`]).
+    pub async fn resize(&self, shape: &cua_vmm::Resize) -> Result<()> {
+        match &self.target {
+            Target::Contrib { provider, .. } => {
+                Err(crate::provider::unsupported(provider.0.name(), "resize"))
+            }
+            Target::Local { .. } if self.ephemeral => {
+                self.mgr.local()?.resize(&self.name, shape).await?;
+                Ok(())
+            }
+            _ => self.mgr.resize(&self.name, shape).await,
+        }
+    }
+
+    /// Extends the sandbox's lifetime (providers that expire sandboxes).
+    pub async fn keep_alive(&self, duration: Duration) -> Result<()> {
+        match &self.target {
+            Target::Contrib { provider, instance } => {
+                provider.0.keep_alive(&instance.id, duration).await
+            }
+            Target::Local { .. } => self.mgr.set_local_expiry(&self.name, duration, None),
+            _ => Err(Error::Unsupported {
+                provider: self.provider(),
+                op: "keep_alive".into(),
+            }),
+        }
+    }
+
+    /// Deletes: removes the instance, and the state file.
+    pub async fn delete(self) -> Result<()> {
+        match &self.target {
+            Target::Local { .. } => {
+                match self.mgr.local()?.delete(&self.name).await {
+                    Ok(()) | Err(crate::RuntimeError::NotFound(_)) => {}
+                    Err(e) => return Err(e.into()),
+                }
+                self.mgr.inner.state.delete(&self.name)?;
+                self.mgr.inner.state.remove_lease(&self.name)?;
+                self.mgr.release_holds(&self.name).await;
+            }
+            Target::Direct { .. } => {
+                if !self.ephemeral {
+                    self.mgr.inner.state.delete(&self.name)?;
+                }
+            }
+            Target::Contrib { provider, instance } => {
+                provider.0.delete(&instance.id).await?;
+                if !self.ephemeral {
+                    self.mgr.inner.state.delete(&self.name)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Overrides for [`Sandbox::env_with`].
+#[derive(Clone, Debug, Default)]
+pub struct ConnectOptionsOverride {
+    /// Probe timeout.
+    pub probe_timeout: Option<Duration>,
+    /// Skip the `GetCapabilities` transport probe for a local sandbox
+    /// (its endpoint is always native gRPC): readiness waits poll
+    /// `Health` themselves, so a probe per attempt only adds latency.
+    pub skip_probe_when_local: bool,
+}
+
+/// One readiness probe attempt ([`Sandbox::wait_ready`]).
+#[derive(Debug)]
+enum ProbeTry {
+    Passed,
+    /// Refused, timed out, closed at once, or a bad status.
+    NotYet,
+    /// No route to the guest ([`cua_vmm::probe::is_unreachable`]): on
+    /// macOS, Local Network privacy blocks this process.
+    Unreachable {
+        addr: String,
+        error: std::io::Error,
+    },
+}
+
+impl From<bool> for ProbeTry {
+    fn from(passed: bool) -> Self {
+        if passed { Self::Passed } else { Self::NotYet }
+    }
+}
+
+/// What a connect error says ([`ProbeTry::Unreachable`] or not yet).
+fn connect_failed(addr: String, error: std::io::Error) -> ProbeTry {
+    if cua_vmm::probe::is_unreachable(&error) {
+        ProbeTry::Unreachable { addr, error }
+    } else {
+        ProbeTry::NotYet
+    }
+}
+
+/// The error for a guest still unroutable from this process: the one a
+/// create gives ([`cua_vmm::probe::unreachable_error`]), which names Local
+/// Network access on macOS.
+fn vmm_failure(e: cua_vmm::VmmError) -> Error {
+    Error::Runtime(crate::RuntimeError::Other(e.to_string()))
+}
+
+/// The guest address a cua-spacesd connect failure had no route to
+/// (`ip:port` from "nothing answered at http://192.168.64.7:3211/ ...: No
+/// route to host"), when it says so.
+fn no_route_target(reason: &str) -> Option<String> {
+    let l = reason.to_ascii_lowercase();
+    if !(l.contains("no route to host")
+        || l.contains("os error 65")
+        || l.contains("network is unreachable"))
+    {
+        return None;
+    }
+    let at = reason.find("://")? + 3;
+    let rest = &reason[at..];
+    let end = rest
+        .find(|c: char| c == '/' || c.is_whitespace() || c == ')')
+        .unwrap_or(rest.len());
+    Some(rest[..end].to_string()).filter(|a| !a.is_empty())
+}
+
+/// Connects, then requires the peer to send data or hold the connection
+/// open for 400 ms: a forwarder with nothing behind it accepts and then
+/// closes straight away.
+async fn tcp_try(host: &str, port: u16) -> ProbeTry {
+    use tokio::io::AsyncReadExt;
+    let mut s = match TcpStream::connect((host, port)).await {
+        Ok(s) => s,
+        Err(e) => return connect_failed(host_port(host, port), e),
+    };
+    let mut buf = [0u8; 64];
+    match tokio::time::timeout(Duration::from_millis(400), s.read(&mut buf)).await {
+        Err(_) => ProbeTry::Passed,
+        Ok(Ok(n)) => (n > 0).into(),
+        Ok(Err(_)) => ProbeTry::NotYet,
+    }
+}
+
+fn probe_port(p: &Probe) -> u16 {
+    match p {
+        Probe::Tcp(p) => *p,
+        Probe::Http { port, .. } => *port,
+    }
+}
+
+fn host_port(host: &str, port: u16) -> String {
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
+/// A named service of a sandbox.
+#[derive(Clone, Debug)]
+pub struct Service {
+    sandbox: Sandbox,
+    name: String,
+    base_url: String,
+}
+
+impl Service {
+    /// Name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Base URL (a provider's URL may need the headers of [`Self::endpoint`]).
+    pub fn url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// An HTTP request to `path` on the service.
+    pub async fn request(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<Vec<u8>>,
+        timeout: Duration,
+    ) -> Result<HttpResponse> {
+        self.request_with_headers(method, path, &[], body, timeout)
+            .await
+    }
+
+    /// Where this service is reachable from this process: the base URL and
+    /// the headers every request needs (a provider's access headers; locally
+    /// and direct, none). Any HTTP client
+    /// (an MCP SDK, a browser, curl) can use it as is.
+    pub async fn endpoint(&self) -> Result<ServiceEndpoint> {
+        let mut endpoint = match &self.sandbox.target {
+            Target::Contrib { provider, instance } => {
+                let port =
+                    *self.sandbox.services.get(&self.name).ok_or_else(|| {
+                        Error::InvalidArgument(format!("no service {:?}", self.name))
+                    })?;
+                let ep = provider.0.endpoint(instance, port)?;
+                ServiceEndpoint {
+                    url: ep.url.trim_end_matches('/').to_string(),
+                    headers: ep.headers,
+                }
+            }
+            _ => ServiceEndpoint {
+                url: self.base_url.trim_end_matches('/').to_string(),
+                headers: vec![],
+            },
+        };
+        // The `env` service is cua-spacesd, which requires its token (also
+        // for its HTTP side channels such as `/mcp`). The alternate header
+        // passes a gateway that owns `authorization`.
+        if self.name == "env"
+            && let Some(token) = self.sandbox.token()
+        {
+            endpoint.headers.push((
+                cua_spacesd_client::transport::ENV_TOKEN_HEADER.into(),
+                format!("Bearer {token}"),
+            ));
+        }
+        Ok(endpoint)
+    }
+
+    /// A protocol-transparent request: any method, the caller's headers
+    /// (hop-by-hop ones dropped) and a streamed body. Returns when the
+    /// response head arrives (`head_timeout`), with the body streaming, so
+    /// SSE and long-lived responses pass through as the service sends them.
+    pub async fn open(
+        &self,
+        method: &str,
+        path: &str,
+        headers: &[(String, String)],
+        body: RequestBody,
+        head_timeout: Option<Duration>,
+    ) -> Result<StreamingResponse> {
+        let endpoint = self.endpoint().await?;
+        crate::http::open(&endpoint, method, path, headers, body, head_timeout).await
+    }
+
+    /// [`Self::request`] with caller headers. A provider's access headers
+    /// are attached here (a caller cannot replace them).
+    pub async fn request_with_headers(
+        &self,
+        method: &str,
+        path: &str,
+        headers: &[(String, String)],
+        body: Option<Vec<u8>>,
+        timeout: Duration,
+    ) -> Result<HttpResponse> {
+        let fut = async {
+            let resp = self
+                .open(
+                    method,
+                    path,
+                    headers,
+                    crate::http::full(body.unwrap_or_default()),
+                    None,
+                )
+                .await?;
+            crate::http::collect(resp).await
+        };
+        tokio::time::timeout(timeout, fut)
+            .await
+            .map_err(|_| Error::Timeout(format!("{method} {path} on service {}", self.name)))?
+    }
+}
+
+/// TCP forwarding for a sandbox.
+#[derive(Clone, Debug)]
+pub struct Tunnel {
+    sandbox: Sandbox,
+}
+
+/// How a [`Forward`] reaches the guest port.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ForwardVia {
+    /// A host-side TCP proxy to a published port (local runtimes).
+    Tcp,
+    /// The spacesd's `/tunnel` WebSocket (direct sandboxes whose driver
+    /// advertises `tunnel.forward`).
+    EnvTunnel,
+    /// A loopback HTTP proxy to a provider's URL for the port, which
+    /// attaches the provider's access headers: HTTP (streaming included)
+    /// and WebSocket upgrades, for images without cua-spacesd.
+    GatewayProxy,
+}
+
+/// An active forward. Dropping it stops the local listener.
+#[derive(Debug)]
+pub struct Forward {
+    /// Guest port.
+    pub guest_port: u16,
+    /// Local loopback address accepting connections.
+    pub local_addr: Option<SocketAddr>,
+    /// URL to use: `http://<local_addr>`.
+    pub url: Option<String>,
+    /// How the port is reached.
+    pub via: ForwardVia,
+    task: Option<tokio::task::JoinHandle<()>>,
+    tunnel: Option<cua_spacesd_client::TcpForward>,
+    proxy: Option<crate::proxy::HttpProxy>,
+}
+
+impl Forward {
+    /// Stops the listener and, for an env tunnel, revokes the driver-side
+    /// forward.
+    pub async fn close(mut self) -> Result<()> {
+        if let Some(t) = self.task.take() {
+            t.abort();
+        }
+        if let Some(p) = self.proxy.take() {
+            p.close();
+        }
+        if let Some(tunnel) = self.tunnel.take() {
+            tunnel.close().await?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Forward {
+    fn drop(&mut self) {
+        if let Some(t) = self.task.take() {
+            t.abort();
+        }
+    }
+}
+
+impl Tunnel {
+    /// Forwards a loopback port to guest `port`.
+    ///
+    /// - Local runtimes: a TCP proxy to the published port; a port not
+    ///   published at create rides the spacesd's `/tunnel` when the image
+    ///   has one offering `tunnel.forward`, else [`Error::InvalidArgument`]
+    ///   saying how to publish it.
+    /// - Direct: a TCP listener whose connections ride the spacesd's
+    ///   `/tunnel` WebSocket, when the driver advertises `tunnel.forward`;
+    ///   without it: [`Error::Unsupported`].
+    pub async fn forward(&self, port: u16) -> Result<Forward> {
+        if port == 0 {
+            return Err(Error::InvalidArgument("guest port must be 1-65535".into()));
+        }
+        match &self.sandbox.target {
+            Target::Local { endpoints, .. } if !endpoints.ports.contains_key(&port) => {
+                self.forward_unpublished(port).await
+            }
+            Target::Local { .. } => self.forward_tcp(port).await,
+            Target::Direct { .. } => {
+                let env = self.sandbox.spacesd().await?;
+                self.forward_env(&env, port).await
+            }
+            Target::Contrib { provider, instance } => {
+                // The spacesd tunnel reaches any guest port; without it, a
+                // loopback proxy to the provider's URL for the port (HTTP and
+                // WebSocket, with the provider's access headers).
+                if self.sandbox.services.contains_key("env") {
+                    let probe = ConnectOptionsOverride {
+                        probe_timeout: Some(Duration::from_secs(15)),
+                        ..Default::default()
+                    };
+                    match self.sandbox.spacesd_with(probe).await {
+                        Ok(env) => match self.forward_env(&env, port).await {
+                            Err(Error::Unsupported { .. }) => {}
+                            other => return other,
+                        },
+                        Err(e) => tracing::debug!(error = %e, "no spacesd; using the provider URL"),
+                    }
+                }
+                let ep = provider.0.endpoint(instance, port)?;
+                self.forward_proxy(port, ep).await
+            }
+        }
+    }
+
+    /// A local sandbox's guest port that was not published at create time:
+    /// the guest's cua-spacesd tunnels it when the image has one that
+    /// offers `tunnel.forward`; otherwise the error says how to publish it.
+    async fn forward_unpublished(&self, port: u16) -> Result<Forward> {
+        let probe = ConnectOptionsOverride {
+            probe_timeout: Some(Duration::from_secs(15)),
+            ..Default::default()
+        };
+        let why = match self.sandbox.spacesd_with(probe).await {
+            Ok(env) => match self.forward_env(&env, port).await {
+                Err(Error::Unsupported { op, .. }) => format!("its cua-spacesd has no {op}"),
+                other => return other,
+            },
+            Err(Error::SpacesdNotAvailable { reason, .. }) => {
+                format!("no cua-spacesd to tunnel through ({reason})")
+            }
+            Err(e) => format!("its cua-spacesd did not answer ({e})"),
+        };
+        Err(Error::InvalidArgument(unpublished_port_message(
+            &self.sandbox.name,
+            port,
+            &why,
+        )))
+    }
+
+    /// A loopback HTTP proxy to a provider's URL for a guest port, adding
+    /// its access headers to every request.
+    async fn forward_proxy(&self, port: u16, ep: ServiceEndpoint) -> Result<Forward> {
+        let router = move |pq: &str| -> crate::proxy::RouteFuture {
+            let route = crate::proxy::ProxyRoute {
+                url: crate::proxy::join_url(&ep.url, pq),
+                headers: ep.headers.clone(),
+            };
+            Box::pin(async move { crate::proxy::RouteDecision::Forward(route) })
+        };
+        let proxy =
+            crate::proxy::HttpProxy::start(SocketAddr::from(([127, 0, 0, 1], 0)), Arc::new(router))
+                .await?;
+        let local = proxy.local_addr();
+        Ok(Forward {
+            guest_port: port,
+            local_addr: Some(local),
+            url: Some(format!("http://{local}")),
+            via: ForwardVia::GatewayProxy,
+            task: None,
+            tunnel: None,
+            proxy: Some(proxy),
+        })
+    }
+
+    async fn forward_env(&self, env: &SpacesdClient, port: u16) -> Result<Forward> {
+        match env
+            .forward_tcp(cua_spacesd_client::ForwardOptions::new(port))
+            .await
+        {
+            Ok(tunnel) => {
+                let local = tunnel.local_addr();
+                Ok(Forward {
+                    guest_port: port,
+                    local_addr: Some(local),
+                    url: Some(format!("http://{local}")),
+                    via: ForwardVia::EnvTunnel,
+                    task: None,
+                    tunnel: Some(tunnel),
+                    proxy: None,
+                })
+            }
+            Err(cua_spacesd_client::Error::FeatureUnsupported { details, .. }) => {
+                Err(Error::Unsupported {
+                    provider: self.sandbox.provider(),
+                    op: format!("TCP port forwarding ({})", details.message),
+                })
+            }
+            Err(e) => Err(Error::Env(e)),
+        }
+    }
+
+    async fn forward_tcp(&self, port: u16) -> Result<Forward> {
+        match self.sandbox.port(port)? {
+            PortTarget::Url(_) => Err(Error::Unsupported {
+                provider: self.sandbox.provider(),
+                op: "TCP forwarding to a URL-only port".into(),
+            }),
+            PortTarget::Addr {
+                host,
+                port: target_port,
+            } => {
+                let listener = TcpListener::bind("127.0.0.1:0").await?;
+                let local = listener.local_addr()?;
+                let target = host_port(&host, target_port);
+                let task = tokio::spawn(async move {
+                    while let Ok((mut inbound, _)) = listener.accept().await {
+                        let target = target.clone();
+                        tokio::spawn(async move {
+                            if let Ok(mut outbound) = TcpStream::connect(&target).await {
+                                let _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound)
+                                    .await;
+                            }
+                        });
+                    }
+                });
+                Ok(Forward {
+                    guest_port: port,
+                    local_addr: Some(local),
+                    url: Some(format!("http://{local}")),
+                    via: ForwardVia::Tcp,
+                    task: Some(task),
+                    tunnel: None,
+                    proxy: None,
+                })
+            }
+        }
+    }
+}
+
+/// Why a local sandbox's unpublished guest port cannot be forwarded, and
+/// how to publish it.
+fn unpublished_port_message(name: &str, port: u16, why: &str) -> String {
+    format!(
+        "guest port {port} of sandbox {name} was not published when it was created, and \
+         {why}; publish it by creating the sandbox with `--port {port}` \
+         (`cua sb create IMAGE --name {name} --port {port}`; SDK: `ports=[{port}]`)"
+    )
+}
+
+/// What is left of a `ready_timeout` budget that started at `clock`.
+fn readiness_left(ready_timeout: Duration, clock: Instant) -> Duration {
+    ready_timeout.saturating_sub(clock.elapsed())
+}
+
+/// How long create waits for cua-spacesd once the guest's ports answer,
+/// given `remaining` of the readiness budget: all of it when the caller
+/// chose the budget, else [`SPACESD_READY_TIMEOUT`] (never more than the
+/// whole budget) however much is left, so a slow boot does not leave the
+/// daemon no time to answer.
+fn spacesd_budget(options: &CreateOptions, remaining: Duration) -> Duration {
+    if options.ready_timeout_given {
+        remaining
+    } else {
+        SPACESD_READY_TIMEOUT.min(options.ready_timeout)
+    }
+}
+
+/// The guest environment for a local start: `o.env` plus `CUA_ENV_TOKEN`
+/// (see [`local_env_token`]), so the token the client will present is the one the
+/// guest's spacesd is started with (cua-vmm delivers it through cloud-init
+/// for Linux VMs, the Lume setup share for macOS guests and the container
+/// environment for containers). An explicit
+/// `CUA_ENV_TOKEN` in `o.env` wins.
+fn guest_env(o: &CreateOptions, token: Option<&str>) -> BTreeMap<String, String> {
+    let mut env = o.env.clone();
+    if let Some(token) = token.filter(|t| !t.is_empty()) {
+        env.entry("CUA_ENV_TOKEN".into())
+            .or_insert_with(|| token.to_string());
+    }
+    env
+}
+
+/// A tracked create ([`Sandboxes::create_tracked`]).
+struct Creating {
+    /// (state dir, name).
+    key: (PathBuf, String),
+    token: crate::CancellationToken,
+    /// `Some(Some(what))` once cancelled, `Some(None)` once it ended
+    /// otherwise.
+    done: tokio::sync::watch::Receiver<Option<Option<String>>>,
+}
+
+static CREATING: std::sync::Mutex<Vec<Creating>> = std::sync::Mutex::new(Vec::new());
+
+/// Why a sandbox that is not local takes no egress policy.
+pub const EGRESS_LOCAL_ONLY: &str = "an egress policy (it is enforced by the host the sandbox runs \
+     on, outside the guest: local runtimes and your machines only; a cloud sandbox has no such \
+     point under cua's control)";
+
+/// How long a cancelled create waits for its drop guards' clean-up.
+const DISCARD_SETTLE: Duration = Duration::from_secs(90);
+
+/// What a cancelled create deletes.
+#[derive(Debug, Clone)]
+struct DiscardPlan {
+    provider: ProviderKind,
+    /// The sandbox's name, when known before it exists.
+    name: Option<String>,
+    /// Nothing had that name before (so it is this create's to delete).
+    fresh: bool,
+    /// The contrib provider's word.
+    contrib: Option<String>,
+}
+
+/// Runs a create's discard when its future is dropped before it finished.
+struct DiscardGuard {
+    mgr: Sandboxes,
+    plan: Option<DiscardPlan>,
+}
+
+impl Drop for DiscardGuard {
+    fn drop(&mut self) {
+        if let Some(plan) = self.plan.take() {
+            let mgr = self.mgr.clone();
+            // Spawned, not awaited: the guards it waits on are spawned too.
+            if let Ok(rt) = tokio::runtime::Handle::try_current() {
+                rt.spawn(async move {
+                    let what = mgr.discard(plan).await;
+                    tracing::info!(what, "a dropped create was cleaned up");
+                });
+            }
+        }
+    }
+}
+
+/// A fresh per-sandbox spacesd token (128 random bits, hex).
+pub(crate) fn mint_env_token() -> String {
+    format!("{:032x}", rand::random::<u128>())
+}
+
+/// The spacesd token of a new local sandbox: `CUA_ENV_TOKEN` in
+/// `o.env` (it is what the guest gets), else `o.env_token`, else a fresh
+/// one for guests the local backends deliver it to: containers (their
+/// environment), Linux VMs (cloud-init: `/run/cua/env-token`, root `0600`)
+/// and macOS VMs (the Lume setup share).
+/// Windows VMs have no delivery channel: `None` (a driver there starts in
+/// bootstrap mode and [`Sandbox::spacesd`] installs a token with `Init`).
+/// [`local_env_token`], except that without a token the caller gave, the
+/// `recorded` one of an existing sandbox of that name is kept.
+fn local_env_token_keeping(o: &CreateOptions, recorded: Option<String>) -> Option<String> {
+    let given = o
+        .env
+        .get("CUA_SPACESD_TOKEN")
+        .or_else(|| o.env.get("CUA_ENV_TOKEN"))
+        .or(o.env_token.as_ref())
+        .is_some_and(|t| !t.is_empty());
+    match recorded.filter(|t| !t.is_empty()) {
+        Some(t) if !given => Some(t),
+        _ => local_env_token(o),
+    }
+}
+
+fn local_env_token(o: &CreateOptions) -> Option<String> {
+    let given = o
+        .env
+        .get("CUA_SPACESD_TOKEN")
+        .or_else(|| o.env.get("CUA_ENV_TOKEN"))
+        .or(o.env_token.as_ref())
+        .filter(|t| !t.is_empty())
+        .cloned();
+    given.or_else(|| (!o.os.eq_ignore_ascii_case("windows")).then(mint_env_token))
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::*;
+    use std::io::{Error as IoError, ErrorKind};
+
+    #[test]
+    fn a_create_over_an_existing_name_keeps_the_recorded_token() {
+        let mut o = CreateOptions::new(ProviderKind::Local, "linux");
+        // No recorded token: one is minted.
+        assert!(local_env_token_keeping(&o, None).is_some());
+        // Recorded and none given: kept, so the record still matches the guest.
+        assert_eq!(
+            local_env_token_keeping(&o, Some("recorded-token".into())).as_deref(),
+            Some("recorded-token")
+        );
+        // A token the caller gave wins.
+        o.env_token = Some("given-token".into());
+        assert_eq!(
+            local_env_token_keeping(&o, Some("recorded-token".into())).as_deref(),
+            Some("given-token")
+        );
+    }
+
+    #[test]
+    fn no_route_to_the_guest_is_unreachable_not_not_yet() {
+        let addr = || "192.168.64.5:3211".to_string();
+        for kind in [ErrorKind::HostUnreachable, ErrorKind::NetworkUnreachable] {
+            assert!(matches!(
+                connect_failed(addr(), IoError::from(kind)),
+                ProbeTry::Unreachable { .. }
+            ));
+        }
+        for kind in [ErrorKind::ConnectionRefused, ErrorKind::TimedOut] {
+            assert!(matches!(
+                connect_failed(addr(), IoError::from(kind)),
+                ProbeTry::NotYet
+            ));
+        }
+    }
+
+    #[test]
+    fn an_unreachable_guest_fails_with_the_create_error() {
+        let error = IoError::from(ErrorKind::HostUnreachable);
+        let text = vmm_failure(cua_vmm::probe::unreachable_error(
+            "192.168.64.5:3211",
+            &error,
+        ))
+        .to_string();
+        let want = if cfg!(target_os = "macos") {
+            "Local Network access is not available"
+        } else {
+            "a network route to the guest is not available"
+        };
+        assert!(text.starts_with(want), "{text}");
+        assert!(text.contains("192.168.64.5:3211"), "{text}");
+    }
+
+    #[test]
+    fn a_spacesd_connect_with_no_route_names_its_guest() {
+        let reason = "nothing answered at http://192.168.64.236:3211/ (it may still be starting; \
+                      retry in a few seconds): gRPC: tcp connect error (No route to host (os \
+                      error 65)); gRPC-Web: client error (Connect) (No route to host (os error 65))";
+        assert_eq!(
+            no_route_target(reason).as_deref(),
+            Some("192.168.64.236:3211")
+        );
+        assert_eq!(
+            no_route_target("nothing answered at http://192.168.64.2:3211/: connection refused"),
+            None
+        );
+        assert_eq!(no_route_target("No route to host"), None);
+    }
+
+    #[tokio::test]
+    async fn a_listener_that_holds_the_connection_passes_and_a_closed_port_does_not() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hold = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            drop(s);
+        });
+        assert!(matches!(tcp_try("127.0.0.1", port).await, ProbeTry::Passed));
+        hold.await.unwrap();
+        // Nothing listens there now: refused, which is "not yet".
+        assert!(matches!(tcp_try("127.0.0.1", port).await, ProbeTry::NotYet));
+    }
+}
+
+#[cfg(test)]
+mod placement_tests {
+    use super::*;
+
+    fn opts(provider: ProviderKind, image: &str) -> CreateOptions {
+        CreateOptions::new(provider, image)
+    }
+
+    #[test]
+    fn an_unpublished_port_says_how_to_publish_it() {
+        let m = unpublished_port_message("dev", 8080, "no cua-spacesd to tunnel through");
+        assert!(
+            m.contains("guest port 8080 of sandbox dev was not published"),
+            "{m}"
+        );
+        assert!(m.contains("--port 8080"), "{m}");
+        assert!(m.contains("no cua-spacesd"), "{m}");
+    }
+
+    #[test]
+    fn a_chosen_ready_timeout_governs_the_spacesd_wait() {
+        let mut o = opts(ProviderKind::Local, "macos:26");
+        let left = Duration::from_secs(500);
+        assert_eq!(spacesd_budget(&o, left), SPACESD_READY_TIMEOUT);
+        o.ready_timeout = Duration::from_secs(900);
+        o.ready_timeout_given = true;
+        assert_eq!(spacesd_budget(&o, left), left);
+    }
+
+    #[test]
+    fn the_default_spacesd_wait_is_never_cut_short_by_a_slow_boot() {
+        let o = opts(ProviderKind::Local, "macos:26");
+        for left in [Duration::ZERO, Duration::from_secs(30)] {
+            assert_eq!(spacesd_budget(&o, left), SPACESD_READY_TIMEOUT);
+        }
+        // A budget shorter than the spacesd wait still bounds it.
+        let mut o = o;
+        o.ready_timeout = Duration::from_secs(2);
+        assert_eq!(spacesd_budget(&o, Duration::ZERO), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn the_readiness_budget_counts_from_its_clock() {
+        let budget = Duration::from_secs(600);
+        // The clock that starts once the image is present leaves nearly
+        // all of it.
+        let left = readiness_left(budget, Instant::now());
+        assert!(left > Duration::from_secs(590), "{left:?}");
+        // A clock that started 9 minutes earlier (the old start, before a
+        // macOS image pull) leaves about a minute.
+        if let Some(before_pull) = Instant::now().checked_sub(Duration::from_secs(540)) {
+            let left = readiness_left(budget, before_pull);
+            assert!(left <= Duration::from_secs(60), "{left:?}");
+        }
+        // Spent: nothing, never negative.
+        if let Some(long_ago) = Instant::now().checked_sub(Duration::from_secs(900)) {
+            assert_eq!(readiness_left(budget, long_ago), Duration::ZERO);
+        }
+    }
+
+    #[test]
+    fn kind_and_runtime_fold_into_the_provider_options() {
+        let mut o = opts(ProviderKind::Local, "python:3.12-slim");
+        o.runtime = Runtime::Runc;
+        o.apply_placement().unwrap();
+        assert_eq!(o.kind, Kind::Container);
+        assert_eq!(o.container_runtime.as_deref(), Some("runc"));
+    }
+
+    #[test]
+    fn older_spellings_still_work() {
+        let mut o = opts(ProviderKind::Local, "python:3.12-slim");
+        o.container_runtime = Some("gvisor".into());
+        o.apply_placement().unwrap();
+        assert_eq!(
+            (o.kind, o.runtime.clone()),
+            (Kind::Container, Runtime::Gvisor)
+        );
+
+        let mut o = opts(ProviderKind::Local, "vm:ghcr.io/trycua/linux:24.04-disk");
+        o.apply_placement().unwrap();
+        assert_eq!((o.kind, o.runtime.clone()), (Kind::Vm, Runtime::Qemu));
+
+        let mut o = opts(ProviderKind::Local, "lume:ghcr.io/trycua/macos:26");
+        o.apply_placement().unwrap();
+        assert_eq!((o.kind, o.runtime.clone()), (Kind::Vm, Runtime::Lume));
+    }
+
+    #[test]
+    fn contradictions_are_invalid_placements() {
+        let mut o = opts(ProviderKind::Local, "vm:img");
+        o.kind = Kind::Container;
+        assert!(matches!(
+            o.apply_placement(),
+            Err(Error::InvalidPlacement(_))
+        ));
+
+        let mut o = opts(ProviderKind::Local, "img");
+        o.kind = Kind::Container;
+        o.runtime = Runtime::Lume;
+        assert!(matches!(
+            o.apply_placement(),
+            Err(Error::InvalidPlacement(_))
+        ));
+
+        let mut o = opts(ProviderKind::Direct, "");
+        o.kind = Kind::Vm;
+        assert!(matches!(
+            o.apply_placement(),
+            Err(Error::InvalidPlacement(_))
+        ));
+    }
+
+    #[test]
+    fn backend_labels_map_to_kind_and_runtime() {
+        assert_eq!(
+            placement_of_backend("gvisor"),
+            (Kind::Container, Runtime::Gvisor)
+        );
+        assert_eq!(
+            placement_of_backend("container"),
+            (Kind::Container, Runtime::Runc)
+        );
+        assert_eq!(
+            placement_of_backend("qemu-docker"),
+            (Kind::Vm, Runtime::Qemu)
+        );
+        assert_eq!(placement_of_backend("lume"), (Kind::Vm, Runtime::Lume));
+        assert_eq!(placement_of_backend("moon"), (Kind::Auto, Runtime::Auto));
+    }
+}

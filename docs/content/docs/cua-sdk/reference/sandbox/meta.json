@@ -1,0 +1,9 @@
+{
+  "title": "Sandbox",
+  "pages": [
+    "lifecycle",
+    "checkpoints",
+    "fork-batch",
+    "bake"
+  ]
+}

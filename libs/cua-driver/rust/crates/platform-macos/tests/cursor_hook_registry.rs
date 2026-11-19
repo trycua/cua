@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! The cursor hook must obey the registry's write-boundary resurrection guard.
 //!
 //! `CursorRegistry` refuses to create or touch a cursor whose id is empty or
@@ -17,6 +20,9 @@
 //! One test binary, one `#[test]`: `set_cursor_hook_fn` is a process-wide
 //! one-shot, so the registration and the assertions must share a process and
 //! must not race.
+
+// `platform_macos::cursor` only exists on macOS.
+#![cfg(target_os = "macos")]
 
 use cua_driver_core::cursor_hook::{set_cursor_hook_fn, CursorHookEvent};
 use platform_macos::cursor::state::CursorRegistry;

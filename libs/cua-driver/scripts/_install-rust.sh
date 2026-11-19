@@ -22,6 +22,29 @@
 #                        instead of ~/.local/bin
 #   --no-modify-path     skip auto-appending an `export PATH=...` line
 #   --channel <name>     persist and install the latest stable or nightly release
+#   --require-signature  fail unless the archive's Sigstore bundle verifies
+#                        with cosign (needs cosign on PATH)
+#   --no-connect         do not connect Claude Code, Codex and Cursor to Cua
+#                        Driver (and skip the permission guide); same as
+#                        CUA_DRIVER_NO_CONNECT=1
+#   --no-test            do not run `cua-driver test` at the end; same as
+#                        CUA_DRIVER_NO_TEST=1
+#
+# After installing, this script runs `cua-driver connect` (connects every
+# supported agent found on the computer, installs the skill pack), then on
+# macOS, when run from a terminal outside CI, `cua-driver permissions grant`
+# (opens the permission guide and waits), then `cua-driver test`. Each step
+# is skipped when the installed binary does not have it yet, and a failing
+# step never fails the install. Run it as
+# `/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"` so the
+# terminal stays attached; with `curl ... | bash` there is no terminal for
+# the permission guide and that step is skipped.
+#
+# Every download is checked against the release's SHA256SUMS (or the older
+# checksums.txt); releases from CHECKSUMS_REQUIRED_FROM on must publish one.
+# Releases that publish SHA256SUMS, and every release from
+# SIGSTORE_REQUIRED_FROM on, must publish a Sigstore bundle per asset too
+# (verified whenever cosign is installed).
 #
 # Env overrides:
 #   CUA_DRIVER_RS_VERSION=0.1.2          pin a stable release
@@ -40,6 +63,14 @@
 #                                        and is reconciled here; a stale
 #                                        ~/.cua-driver-rs is swept post-install.
 #   CUA_DRIVER_RS_NO_MODIFY_PATH=1       same as --no-modify-path
+#   CUA_DRIVER_RS_REQUIRE_SIGNATURE=1    same as --require-signature
+#   CUA_DRIVER_RS_DOWNLOAD_BASE_URL=URL  download release assets from
+#                                        URL/<tag>/<asset> instead of
+#                                        https://github.com/trycua/cua/releases/download,
+#                                        for a mirror closer to you when GitHub
+#                                        is slow or unreachable. The mirror
+#                                        must serve SHA256SUMS and the Sigstore
+#                                        bundles too; the usual checks apply.
 #   CUA_DRIVER_RS_KEEP_VERSIONS=N        keep the N most recent per-version
 #                                        release dirs after install; older
 #                                        ones are deleted (default 5; set 0
@@ -110,9 +141,13 @@ if [[ "$_cua_install_common_loaded" == "0" ]]; then
     printf 'warning: could not load _install-common.sh (on-disk + network); daemon kill skipped\n' >&2
     stop_cua_driver_daemons() { :; }
     show_cua_driver_daemon_survivors() { :; }
+    unregister_other_cua_driver_copies() { :; }
+    cua_driver_lsregister_path() { return 1; }
 fi
 
 REPO="trycua/cua"
+RELEASE_DOWNLOAD_BASE="${CUA_DRIVER_RS_DOWNLOAD_BASE_URL:-https://github.com/$REPO/releases/download}"
+RELEASE_DOWNLOAD_BASE="${RELEASE_DOWNLOAD_BASE%/}"
 BINARY_NAME="cua-driver"
 TAG_PREFIX="cua-driver-rs-v"
 NIGHTLY_TAG_PREFIX="nightly-cua-driver-rs-v"
@@ -131,6 +166,8 @@ HOME_DIR="${CUA_DRIVER_RS_HOME:-$HOME/.cua-driver}"
 # install is staged so a single rooted home (~/.cua-driver) is left behind.
 LEGACY_HOME_DIR="$HOME/.cua-driver-rs"
 NO_MODIFY_PATH="${CUA_DRIVER_RS_NO_MODIFY_PATH:-0}"
+NO_CONNECT="${CUA_DRIVER_NO_CONNECT:-0}"
+NO_TEST="${CUA_DRIVER_NO_TEST:-0}"
 # Post-install GC: how many per-version release dirs to retain. Validated
 # below as a non-negative integer; 0 means "never GC". The dir that
 # `current` resolves to is always preserved regardless of cutoff.
@@ -138,6 +175,7 @@ KEEP_VERSIONS_DEFAULT=5
 KEEP_VERSIONS="${CUA_DRIVER_RS_KEEP_VERSIONS:-$KEEP_VERSIONS_DEFAULT}"
 CHANNEL_ARG=""
 CHANNEL_EXPLICIT=0
+REQUIRE_SIGNATURE="${CUA_DRIVER_RS_REQUIRE_SIGNATURE:-0}"
 
 # macOS-only: name and install location of the .app bundle that wraps
 # the bare binary so the TCC auto-relaunch path in `cua-driver mcp` has
@@ -159,6 +197,9 @@ while [[ $# -gt 0 ]]; do
             [[ -n "${2:-}" ]] || { printf 'error: --channel requires stable or nightly\n' >&2; exit 2; }
             CHANNEL_ARG="$2"; CHANNEL_EXPLICIT=1; shift 2 ;;
         --channel=*) CHANNEL_ARG="${1#*=}"; CHANNEL_EXPLICIT=1; shift ;;
+        --require-signature) REQUIRE_SIGNATURE=1; shift ;;
+        --no-connect) NO_CONNECT=1; shift ;;
+        --no-test) NO_TEST=1; shift ;;
         *) shift ;;
     esac
 done
@@ -177,6 +218,32 @@ TMP_DIR=$(mktemp -d)
 
 log() { printf '==> %s\n' "$*"; }
 err() { printf 'error: %s\n' "$*" >&2; }
+
+print_path_hint() {
+    log "WARNING: $BIN_DIR is not on PATH."
+    echo "Add it for your shell with:"
+    local run_prefix=""
+    case "${SHELL:-}" in
+        */fish)
+            printf '  fish_add_path "%s"\n' "$BIN_DIR"
+            ;;
+        */nu|*/nushell)
+            printf '  $env.PATH = ($env.PATH | prepend "%s")\n' "$BIN_DIR"
+            run_prefix="^"
+            ;;
+        *)
+            echo "POSIX-compatible shells:"
+            printf '  export PATH="%s:$PATH"\n' "$BIN_DIR"
+            ;;
+    esac
+    echo "Or run the installed binary directly:"
+    printf '  %s"%s" --version\n' "$run_prefix" "$BIN_LINK"
+}
+
+# The integer "version" of a GNOME helper metadata.json, or nothing.
+helper_metadata_version() {
+    sed -n 's/.*"version"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$1" 2>/dev/null | head -n 1 || true
+}
 
 # Return the source form of an app's designated code-signing requirement.
 macos_designated_requirement() {
@@ -313,8 +380,22 @@ release_install_lock() {
 # Combine TMP_DIR cleanup with lock release in a single trap so neither
 # clobbers the other. INT/TERM also re-raise via $? so the user-visible
 # exit code reflects the signal.
+# The release archive is unpacked into $TMP_DIR, which includes a CuaDriver.app
+# that is deleted on exit. Make sure LaunchServices never keeps that dead copy:
+# a registered temp copy can later be what `open -a CuaDriver` or a permission
+# row resolves to.
+forget_staged_macos_app() {
+    [[ "$(uname -s 2>/dev/null)" == "Darwin" && -n "${SRC_APP:-}" && -d "$SRC_APP" ]] || return 0
+    local lsregister
+    lsregister="$(cua_driver_lsregister_path 2>/dev/null || true)"
+    if [[ -x "$lsregister" ]]; then
+        "$lsregister" -u "$SRC_APP" >/dev/null 2>&1 || true
+    fi
+}
+
 cleanup_on_exit() {
     restore_macos_app_backup_on_exit
+    forget_staged_macos_app
     rm -rf "$TMP_DIR" 2>/dev/null || true
     release_install_lock
 }
@@ -615,7 +696,7 @@ done
 # asset — see the recovery at the download step below.
 #
 # ~~~ BAKED_VERSION: auto-updated after release publication — do not edit ~~~
-CUA_DRIVER_RS_BAKED_VERSION="0.30.4" # published-installer-version
+CUA_DRIVER_RS_BAKED_VERSION="0.54.0" # published-installer-version
 # ~~~ END_BAKED_VERSION ~~~
 #
 # Withdrawn releases (for example, a macOS archive published unsigned) are
@@ -658,6 +739,8 @@ extract_published_release_versions() {
     # harnesses that predate persistent channel selection.
     local selected_channel="${SELECTED_CHANNEL:-stable}"
     local selected_tag_prefix="${SELECTED_TAG_PREFIX:-$TAG_PREFIX}"
+    # The nightly date is eight spelled-out digits: mawk 1.3.4 20200120 (the
+    # awk on Debian 12 and Ubuntu 22.04) does not support {n} intervals.
     awk -v prefix="$selected_tag_prefix" -v channel="$selected_channel" '
         /"tag_name"[[:space:]]*:/ {
             tag = $0
@@ -671,7 +754,7 @@ extract_published_release_versions() {
                 if (index(version, prefix) == 1) {
                     version = substr(version, length(prefix) + 1)
                     if ((channel == "stable" && version ~ /^[0-9]+\.[0-9]+\.[0-9]+$/) ||
-                        (channel == "nightly" && version ~ /^[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*$/)) {
+                        (channel == "nightly" && version ~ /^[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]\.[1-9][0-9]*$/)) {
                         print version
                     }
                 }
@@ -852,8 +935,8 @@ version_is_at_least() {
 # macOS — fetch the directory tarball (cua-driver-rs-vN-darwin-universal.tar.gz).
 #   The directory layout includes `CuaDriver.app/` alongside the bare
 #   binary, which we need to install into /Applications so the TCC
-#   auto-relaunch path in `cua-driver-rs mcp` can resolve
-#   `com.trycua.driver` via `open -n -g -a CuaDriver`. The
+#   auto-relaunch path in `cua-driver-rs mcp` can launch the installed
+#   `com.trycua.driver` app by its exact path. The
 #   directory variant carries the same universal binary as the
 #   bare-binary tarball, so users on both Apple Silicon and Intel
 #   get a working install from one download.
@@ -867,46 +950,173 @@ release_tarball_name() {
     esac
 }
 
-# Fetches one release tarball into $TMP_DIR. A confirmed HTTP 404 returns 44;
-# every other failure is retried at the same URL with bounded backoff, then
-# returns 1. This distinction is load-bearing: only a missing baked asset may
-# trigger release fallback. A timeout, TLS failure, rate limit, or server error
-# must never silently install an older version.
-download_release_tarball() {
-    local version="$1" tarball url partial http_code curl_status attempt retryable
-    tarball="$(release_tarball_name "$version")"
-    url="https://github.com/$REPO/releases/download/${TAG}/$tarball"
-    partial="$TMP_DIR/$tarball.partial"
-    log "downloading $url"
-    for attempt in 1 2 3; do
-        http_code=""
-        curl_status=0
-        http_code="$(
+# Fetches one release asset URL ($1) to $2. A confirmed HTTP 404 returns 44 at
+# once. A curl failure, 408, 429 or 5xx is retried at the same URL after each
+# delay in turn; any other failure, or the last retry failing, returns 1.
+# RELEASE_HTTP_CODE, RELEASE_CURL_STATUS and RELEASE_ATTEMPTS describe the last
+# attempt.
+fetch_release_url() {
+    local url="$1" dest="$2" partial="$2.partial" delay
+    # GitHub's release CDN has answered 504 for minutes at a time, so the
+    # retries span two minutes rather than a few seconds.
+    local delays=(5 10 15 30 30 30)
+    RELEASE_ATTEMPTS=0
+    while :; do
+        RELEASE_ATTEMPTS=$((RELEASE_ATTEMPTS + 1))
+        RELEASE_HTTP_CODE=""
+        RELEASE_CURL_STATUS=0
+        RELEASE_HTTP_CODE="$(
             curl -sSL -o "$partial" -w '%{http_code}' "$url"
-        )" || curl_status=$?
-        if (( curl_status == 0 )) && [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
-            mv "$partial" "$TMP_DIR/$tarball"
+        )" || RELEASE_CURL_STATUS=$?
+        if (( RELEASE_CURL_STATUS == 0 )) && [[ "$RELEASE_HTTP_CODE" =~ ^2[0-9][0-9]$ ]]; then
+            mv "$partial" "$dest"
             return 0
         fi
         rm -f "$partial" 2>/dev/null || true
-        if [[ "$http_code" == "404" ]]; then
-            return 44
+        [[ "$RELEASE_HTTP_CODE" == "404" ]] && return 44
+        if (( RELEASE_CURL_STATUS == 0 )) \
+            && [[ "$RELEASE_HTTP_CODE" != "408" && "$RELEASE_HTTP_CODE" != "429" ]] \
+            && [[ ! "$RELEASE_HTTP_CODE" =~ ^5[0-9][0-9]$ ]]; then
+            return 1
         fi
-        retryable=0
-        if (( curl_status != 0 )) \
-            || [[ "$http_code" == "408" || "$http_code" == "429" ]] \
-            || [[ "$http_code" =~ ^5[0-9][0-9]$ ]]; then
-            retryable=1
-        fi
-        if (( retryable == 1 && attempt < 3 )); then
-            err "download attempt $attempt failed (HTTP ${http_code:-unknown}, curl exit $curl_status); retrying the same release"
-            sleep "$attempt"
-            continue
-        fi
-        break
+        (( RELEASE_ATTEMPTS > ${#delays[@]} )) && return 1
+        delay="${delays[$((RELEASE_ATTEMPTS - 1))]}"
+        err "download attempt $RELEASE_ATTEMPTS of $((${#delays[@]} + 1)) failed (HTTP ${RELEASE_HTTP_CODE:-unknown}, curl exit $RELEASE_CURL_STATUS); retrying $url in ${delay}s"
+        sleep "$delay"
     done
-    err "download failed after $attempt attempt(s) (HTTP ${http_code:-unknown}, curl exit $curl_status); refusing to fall back to an older release"
+}
+
+# Fetches one release tarball into $TMP_DIR. A confirmed HTTP 404 returns 44;
+# every other failure returns 1 after fetch_release_url's retries. This
+# distinction is load-bearing: only a missing baked asset may trigger release
+# fallback. A timeout, TLS failure, rate limit, or server error must never
+# silently install an older version.
+download_release_tarball() {
+    local version="$1" tarball url status=0
+    tarball="$(release_tarball_name "$version")"
+    url="$RELEASE_DOWNLOAD_BASE/${TAG}/$tarball"
+    log "downloading $url"
+    fetch_release_url "$url" "$TMP_DIR/$tarball" || status=$?
+    (( status == 0 || status == 44 )) && return "$status"
+    err "download failed after $RELEASE_ATTEMPTS attempt(s) (HTTP ${RELEASE_HTTP_CODE:-unknown}, curl exit $RELEASE_CURL_STATUS); refusing to fall back to an older release"
     return 1
+}
+
+# --- Release integrity --------------------------------------------------
+#
+# Stable releases from CHECKSUMS_REQUIRED_FROM on publish a checksum file:
+# SHA256SUMS, or (0.31.0, from the older release workflow) checksums.txt,
+# the same "<sha256>  <asset>" lines inside a Markdown fence. The release
+# workflow that publishes SHA256SUMS also publishes a keyless Sigstore bundle
+# (<asset>.sigstore.json) per asset, issued to that workflow at that exact
+# tag, so a stable release with SHA256SUMS must have one. A release cut by the
+# older workflow (checksums.txt only) needs none until SIGSTORE_REQUIRED_FROM,
+# the first version that can only come from the signing workflow; keying the
+# requirement on the next patch instead would refuse a patch release cut
+# before the signing workflow landed on main. A missing checksum file or
+# bundle for such a release fails the install. Older releases and nightlies
+# predate them: they are checked when the files exist and otherwise install
+# with a warning.
+CHECKSUMS_REQUIRED_FROM="0.31.0"
+SIGSTORE_REQUIRED_FROM="0.32.0"
+COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"
+
+# Fetches one small release asset (SHA256SUMS, a bundle) to $2.
+# 0 = fetched, 44 = HTTP 404, 1 = any other failure (after retries).
+fetch_release_file() {
+    local url="$RELEASE_DOWNLOAD_BASE/${TAG}/$1" status=0
+    fetch_release_url "$url" "$2" || status=$?
+    (( status == 0 || status == 44 )) && return "$status"
+    err "could not download $url after $RELEASE_ATTEMPTS attempt(s) (HTTP ${RELEASE_HTTP_CODE:-unknown}, curl exit $RELEASE_CURL_STATUS)"
+    return 1
+}
+
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    else
+        return 1
+    fi
+}
+
+verify_release_tarball() {
+    local version="$1" tarball="$2" required=0 signed_required=0 status sums_name expected actual bundle
+    if [[ "$TAG" == "$TAG_PREFIX"* ]] && version_is_at_least "$version" "$CHECKSUMS_REQUIRED_FROM"; then
+        required=1
+    fi
+    if [[ "$TAG" == "$TAG_PREFIX"* ]] && version_is_at_least "$version" "$SIGSTORE_REQUIRED_FROM"; then
+        signed_required=1
+    fi
+
+    # SHA256SUMS, else the older release workflow's checksums.txt.
+    for sums_name in SHA256SUMS checksums.txt; do
+        status=0
+        fetch_release_file "$sums_name" "$TMP_DIR/$sums_name" || status=$?
+        (( status == 44 )) || break
+    done
+    if (( status == 0 )) && [[ "$sums_name" == SHA256SUMS && "$TAG" == "$TAG_PREFIX"* ]]; then
+        signed_required=1
+    fi
+    if (( status == 0 )); then
+        expected="$(awk -v f="$tarball" '$2 == f || $2 == "*" f { print $1; exit }' "$TMP_DIR/$sums_name")"
+        if [[ -z "$expected" && "$sums_name" == checksums.txt && $required == 0 ]]; then
+            printf "warning: %s is not listed in %s's checksums.txt; installing it without a checksum check\n" "$tarball" "$TAG" >&2
+        elif [[ -z "$expected" ]]; then
+            err "$tarball is not listed in $TAG's $sums_name; refusing to install it"
+            exit 1
+        else
+            if ! actual="$(sha256_of "$TMP_DIR/$tarball")"; then
+                err "sha256sum or shasum is required to verify $tarball"
+                exit 1
+            fi
+            if [[ "$actual" != "$expected" ]]; then
+                err "$tarball does not match $TAG's $sums_name (expected $expected, got $actual); refusing to install it"
+                exit 1
+            fi
+            log "verified $tarball against $sums_name"
+        fi
+    elif (( status == 44 && required == 0 )); then
+        printf 'warning: %s predates published SHA256SUMS; installing %s without a checksum check\n' "$TAG" "$tarball" >&2
+    elif (( status == 44 )); then
+        err "$TAG has no SHA256SUMS; releases from $CHECKSUMS_REQUIRED_FROM on must publish one. Refusing to install."
+        exit 1
+    else
+        exit 1
+    fi
+
+    bundle="$TMP_DIR/$tarball.sigstore.json"
+    status=0
+    fetch_release_file "$tarball.sigstore.json" "$bundle" || status=$?
+    if (( status == 0 )); then
+        if command -v cosign >/dev/null 2>&1; then
+            if ! cosign verify-blob --bundle "$bundle" \
+                --certificate-identity "https://github.com/$REPO/.github/workflows/cd-rust-cua-driver.yml@refs/tags/$TAG" \
+                --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
+                "$TMP_DIR/$tarball" >/dev/null 2>&1; then
+                err "the Sigstore signature of $tarball did not verify for $TAG; refusing to install it"
+                exit 1
+            fi
+            log "verified the Sigstore signature of $tarball"
+        elif [[ "$REQUIRE_SIGNATURE" == "1" ]]; then
+            err "--require-signature needs cosign on PATH to verify $tarball"
+            exit 1
+        else
+            printf 'warning: %s is signed, but cosign is not installed; verified its sha256 only (install cosign, or pass --require-signature to insist)\n' "$tarball" >&2
+        fi
+    elif (( status == 44 )); then
+        if [[ "$REQUIRE_SIGNATURE" == "1" ]]; then
+            err "$TAG publishes no Sigstore bundle for $tarball; --require-signature cannot be met"
+            exit 1
+        fi
+        if (( signed_required == 1 )); then
+            err "$TAG has no Sigstore bundle for $tarball; releases that publish SHA256SUMS, and every release from $SIGSTORE_REQUIRED_FROM on, must publish one. Refusing to install."
+            exit 1
+        fi
+    else
+        exit 1
+    fi
 }
 
 DOWNLOAD_STATUS=0
@@ -947,6 +1157,7 @@ if (( DOWNLOAD_STATUS != 0 )); then
     fi
 fi
 TARBALL="$(release_tarball_name "$VERSION")"
+verify_release_tarball "$VERSION" "$TARBALL"
 
 log "extracting"
 tar -xzf "$TMP_DIR/$TARBALL" -C "$TMP_DIR"
@@ -957,7 +1168,8 @@ tar -xzf "$TMP_DIR/$TARBALL" -C "$TMP_DIR"
 #       ├── cua-driver           (bare universal binary)
 #       ├── CuaDriver.app/     (minimal bundle; copy of the same binary
 #       │                         lives at Contents/MacOS/cua-driver)
-#       └── LICENSE
+#       ├── LICENSE
+#       └── THIRD_PARTY_NOTICES.md
 #   Linux bare-runtime tarball expands to:
 #     cua-driver and libcua_driver_sdk.so at the archive root. The installer
 #     consumes the CLI; SDK packaging consumes the colocated library.
@@ -1075,7 +1287,7 @@ fi
 # $HOME_DIR/packages/releases/<v>/ + current symlink layout used on
 # Linux. Reason: /Applications/CuaDriver.app placement is the
 # anchor for both TCC attribution (cdhash + bundle id) and
-# LaunchServices' `open -a CuaDriver` discovery — symlinking the
+# LaunchServices' bundle-id discovery — symlinking the
 # .app from /Applications to a versioned dir under $HOME_DIR breaks
 # both. The asymmetry is deliberate; rollback on macOS = reinstall
 # an older release tag.
@@ -1210,8 +1422,9 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
         exit 1
     fi
 
-    # Register synchronously so both `open -a CuaDriver` and `tccutil reset`
-    # resolve the replacement bundle rather than a stale LaunchServices entry.
+    # Register synchronously so both `permissions grant` (which launches the
+    # bundle by its exact path) and `tccutil reset` resolve the replacement
+    # bundle rather than a stale LaunchServices entry.
     LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
     if [[ -x "$LSREGISTER" ]] \
        && "$LSREGISTER" -f "$APP_DEST" >/dev/null 2>&1; then
@@ -1250,6 +1463,10 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
     rm -rf "$MACOS_APP_BACKUP" || true
     ln -sf "$APP_BINARY" "$BIN_LINK"
     log "symlinked $BIN_LINK -> $APP_BINARY"
+    # Other copies of the app (an old release in ~/Downloads, the Trash, a
+    # benchmark folder) make macOS open the wrong app and label the permission
+    # rows with the wrong name. Forget them; their files stay where they are.
+    unregister_other_cua_driver_copies "$APP_DEST" || true
     if ! macos_reset_tcc_after_requirement_change "$REQUIREMENT_COMPATIBILITY"; then
         exit 1
     fi
@@ -1282,10 +1499,18 @@ else
 
         INSTALLED_WAYLAND_HELPER="${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/winrects@cua"
         if [[ -d "$INSTALLED_WAYLAND_HELPER" ]]; then
-            cp "$SRC_WAYLAND_HELPER/winrects@cua/metadata.json" \
-                "$SRC_WAYLAND_HELPER/winrects@cua/extension.js" \
-                "$INSTALLED_WAYLAND_HELPER/"
-            log "updated installed GNOME helper; reload the GNOME session to activate it"
+            # The helper's API is additive and shared with other apps that
+            # bundle it, so never replace a newer installed helper.
+            BUNDLED_HELPER_VERSION=$(helper_metadata_version "$SRC_WAYLAND_HELPER/winrects@cua/metadata.json")
+            INSTALLED_HELPER_VERSION=$(helper_metadata_version "$INSTALLED_WAYLAND_HELPER/metadata.json")
+            if (( ${INSTALLED_HELPER_VERSION:-0} > ${BUNDLED_HELPER_VERSION:-0} )); then
+                log "kept installed GNOME helper v$INSTALLED_HELPER_VERSION (newer than bundled v${BUNDLED_HELPER_VERSION:-?})"
+            else
+                cp "$SRC_WAYLAND_HELPER/winrects@cua/metadata.json" \
+                    "$SRC_WAYLAND_HELPER/winrects@cua/extension.js" \
+                    "$INSTALLED_WAYLAND_HELPER/"
+                log "updated installed GNOME helper; reload the GNOME session to activate it"
+            fi
         fi
     fi
     log "installed $VERSIONED_DIR/$BINARY_NAME (version $VERSION, target $TARGET)"
@@ -1314,6 +1539,21 @@ else
     rm -f "$BIN_LINK"
     ln -s "$CURRENT_LINK/$BINARY_NAME" "$BIN_LINK"
     log "symlinked $BIN_LINK -> $CURRENT_LINK/$BINARY_NAME"
+    if command -v kwin_wayland >/dev/null 2>&1; then
+        # Ask the installed driver: the switch survives updates, so a user who
+        # turned it on must not read that it is off.
+        KWIN_STATUS="$("$CURRENT_LINK/$BINARY_NAME" kwin-capture status 2>/dev/null || true)"
+        case "$KWIN_STATUS" in
+            "kwin window capture: on"*|"kwin window capture: override-portal-deny"*)
+                while IFS= read -r line; do
+                    [[ -n "$line" ]] && log "$line"
+                done <<<"$KWIN_STATUS"
+                ;;
+            *)
+                log "KWin window capture is off; \`cua-driver kwin-capture on\` turns it on"
+                ;;
+        esac
+    fi
 
     # Post-install GC of old per-version release dirs. Runs AFTER the
     # atomic `current` swap above so the about-to-be-active version is
@@ -1389,21 +1629,20 @@ CUA_DRIVER_RELEASE_VERSION="$VERSION" \
 disown 2>/dev/null || true
 
 # Auto-extend PATH for users whose shell doesn't already include BIN_DIR.
-if [[ "$NO_MODIFY_PATH" != "1" ]] && [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
+if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     SHELL_RC=""
     case "${SHELL:-}" in
         */zsh)  SHELL_RC="$HOME/.zshrc"  ;;
         */bash) SHELL_RC="$HOME/.bashrc" ;;
     esac
-    if [[ -n "$SHELL_RC" ]]; then
+    if [[ "$NO_MODIFY_PATH" != "1" ]] && [[ -n "$SHELL_RC" ]]; then
         {
             printf '\n# Added by cua-driver-rs installer — see https://github.com/trycua/cua\n'
             printf 'export PATH="%s:$PATH"\n' "$BIN_DIR"
         } >> "$SHELL_RC"
         log "appended PATH update to $SHELL_RC — open a new shell or run \`source $SHELL_RC\`"
-    else
-        log "WARNING: $BIN_DIR is not on PATH; add it manually."
     fi
+    print_path_hint
 fi
 
 echo ""
@@ -1431,6 +1670,50 @@ if [[ "${REPLACED_SWIFT:-0}" == "1" ]]; then
     echo ""
 fi
 
+# Connect the user's agents, grant permissions and run the self-test, so one
+# paste leaves Cua Driver ready to use. Every call uses the absolute path
+# ($BIN_DIR may not be on this shell's PATH yet) and is guarded so an older
+# binary without `connect` / `test` falls back to the hints below. A failing
+# step never fails the install.
+driver_has_command() {
+    # `--help` prints one "Subcommands:" line; older binaries do not list the
+    # new ones (and exit 0 for any argument, so the exit code says nothing).
+    "$BIN_LINK" --help 2>&1 | grep -E "^Subcommands:.*(: |, )$1(,|\$)" >/dev/null 2>&1
+}
+
+CONNECTED_AGENT=""
+if [[ "$NO_CONNECT" != "1" ]] && driver_has_command connect; then
+    CONNECT_OUT="$("$BIN_LINK" connect 2>/dev/null)" && CONNECT_RC=0 || CONNECT_RC=$?
+    [[ -n "$CONNECT_OUT" ]] && printf '%s\n' "$CONNECT_OUT"
+    if [[ "$CONNECT_RC" == "0" ]]; then
+        for _agent in "Claude Code" "Codex" "Cursor"; do
+            if printf '%s\n' "$CONNECT_OUT" | grep -E "^$_agent: (already )?connected\$" >/dev/null; then
+                CONNECTED_AGENT="$_agent"
+                break
+            fi
+        done
+    fi
+fi
+
+# The permission guide needs a person at a terminal: stdin and stdout attached
+# and no CI. `curl ... | bash` has no terminal on stdin, so it skips this.
+if [[ "$NO_CONNECT" != "1" && "$(uname -s)" == "Darwin" && -t 0 && -t 1 && -z "${CI:-}" ]]; then
+    echo ""
+    echo "Next, turn on the two switches Cua Driver needs. A guide window will help."
+    "$BIN_LINK" permissions grant || echo "Permissions are not finished. Run later: $BIN_LINK permissions grant"
+fi
+
+if [[ "$NO_TEST" != "1" ]] && driver_has_command test; then
+    echo ""
+    "$BIN_LINK" test || echo "The test did not pass. Run it again later: $BIN_LINK test"
+fi
+
+if [[ -n "$CONNECTED_AGENT" ]]; then
+    echo ""
+    echo "Done. Ask $CONNECTED_AGENT (restart it first if it is open): \"Use Cua Driver to open TextEdit and write a haiku.\""
+    exit 0
+fi
+
 # Unified post-install hints come from a single shared text file so the
 # 4 Rust installers (this script + install.ps1 + install-local.sh +
 # install-local.ps1) never drift. The .txt holds the OS-agnostic bulk
@@ -1445,17 +1728,11 @@ else
     # Network fetch failed — print a one-line essentials fallback so the
     # user always gets enough to recover, even if hint-text fetching is
     # blocked. Skip everything else.
-    echo "Next steps: $BIN_LINK --version  |  $BIN_LINK mcp-config  |  $BIN_LINK skills install"
+    echo "Next steps: $BIN_LINK permissions grant  |  $BIN_LINK connect  |  $BIN_LINK list-tools"
     echo "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver/rust"
 fi
 
 case "$(uname -s)" in
-    Darwin)
-        echo ""
-        echo "macOS TCC: grant Accessibility + Screen Recording on first run:"
-        echo "  open -n -g -a CuaDriver --args serve"
-        echo "  $BIN_LINK check_permissions"
-        ;;
     Linux)
         echo ""
         echo "Auto-start at logon (optional):"

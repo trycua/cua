@@ -88,14 +88,12 @@ async def get_history(session, config: Dict[str, Any]) -> Optional[List[Dict]]:
         conn = sqlite3.connect(str(local_path))
         cursor = conn.cursor()
 
-        cursor.execute(
-            f"""
+        cursor.execute(f"""
             SELECT url, title, visit_count, last_visit_time
             FROM urls
             ORDER BY last_visit_time DESC
             LIMIT {limit}
-        """
-        )
+        """)
 
         rows = cursor.fetchall()
         conn.close()
@@ -155,12 +153,10 @@ async def get_cookie_data(session, config: Dict[str, Any]) -> Optional[List[Dict
                 (f"%{domain_filter}%",),
             )
         else:
-            cursor.execute(
-                """
+            cursor.execute("""
                 SELECT host_key, name, path, expires_utc, is_secure
                 FROM cookies
-            """
-            )
+            """)
 
         rows = cursor.fetchall()
         conn.close()

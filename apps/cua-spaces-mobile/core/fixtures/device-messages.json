@@ -1,0 +1,6 @@
+{
+  "about": "The device messages the relay checks, from cua-host::device (register_message, session_message, member_message). Read by core/tests/device_known_answers.rs and by the TypeScript relay client's test.",
+  "register": "cua-device-register/v1\n{device}\n{ts}",
+  "session": "cua-device-session/v1\n{device}\n{ts}",
+  "member": "cua-space-member/v1\n{member}\n{ts}"
+}

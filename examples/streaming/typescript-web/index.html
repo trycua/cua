@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>cua streaming (browser)</title>
+  <script type="importmap">{"imports": {"@ubjs/core": "/ubjs-core/index.js"}}</script>
+  <style>
+    :root { color-scheme: light dark; font: 14px system-ui, sans-serif; }
+    body { margin: 16px; background: Canvas; color: CanvasText; }
+    form { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin-bottom: 12px; }
+    label { display: flex; flex-direction: column; gap: 2px; }
+    input { font: inherit; padding: 4px 6px; min-width: 0; }
+    canvas { max-width: 100%; border: 1px solid GrayText; background: #000; display: block; }
+    pre { white-space: pre-wrap; font: 12px ui-monospace, monospace; max-height: 40vh; overflow: auto; }
+  </style>
+</head>
+<body>
+  <form id="form">
+    <label>env URL <input id="env" value="http://127.0.0.1:33211" size="28"></label>
+    <label>token <input id="token" type="password" size="28"></label>
+    <label>seconds <input id="seconds" type="number" value="5" min="1" max="120" size="4"></label>
+    <button id="run" type="submit">Run scenario</button>
+  </form>
+  <canvas id="video" width="640" height="360"></canvas>
+  <p id="downloads"></p>
+  <pre id="log"></pre>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

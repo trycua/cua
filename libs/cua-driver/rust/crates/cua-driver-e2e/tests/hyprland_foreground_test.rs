@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Supplemental native Hyprland foreground safety regression.
 //!
 //! Requires the exact-candidate Driver/plugin, GTK3/PyGObject, hyprctl, and a
@@ -8,6 +11,9 @@
 //! The grab case additionally requires cc, pkg-config, wayland-scanner,
 //! libwayland-client development files, and CUA_TEST_VIRTUAL_POINTER_XML pointing
 //! to the source wlr-virtual-pointer-unstable-v1.xml protocol.
+
+// Native Linux (Hyprland) test only.
+#![cfg(target_os = "linux")]
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -206,7 +212,6 @@ fn foreground_drag_focus_loss_does_not_release_into_same_client_sibling() {
 }
 
 fn native_preflight() {
-    assert!(cfg!(target_os = "linux"), "native Linux test only");
     assert!(std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some());
     assert_eq!(
         std::env::var("CUA_DRIVER_RS_ENABLE_WAYLAND").as_deref(),

@@ -1,0 +1,10 @@
+{
+  "settings.this_machine.sharing_label": "공유",
+  "settings.cloud.clouds_label": "클라우드",
+  "settings.cloud.sign_in_found": "로그인 정보를 찾았어요",
+  "settings.cloud.touches_label": "Cua가 접근하는 항목",
+  "settings.cloud.checks_label": "확인 항목",
+  "settings.accessibility.enable_window_drag": "시스템 설정 → 개인정보 보호 및 보안 → 손쉬운 사용에서 창 드래그를 켜세요",
+  "settings.language.label": "언어",
+  "settings.language.system_default": "시스템 기본값"
+}

@@ -1,0 +1,86 @@
+{
+  "name": "macos-m2max-qemu",
+  "route_prefix": "local",
+  "metrics": {
+    "rpc_health_ms": {
+      "p50": 0.554,
+      "p95": 0.619
+    },
+    "exec_run_ms": {
+      "p50": 1.24,
+      "p95": 1.35
+    },
+    "exec_sh_ms": {
+      "p50": 1.292,
+      "p95": 1.453
+    },
+    "upload_1MiB_ms": {
+      "p50": 4.022,
+      "p95": 6.733,
+      "MiBps_p50": 248.645
+    },
+    "download_1MiB_ms": {
+      "p50": 6.095,
+      "p95": 6.399,
+      "MiBps_p50": 164.071
+    },
+    "upload_4MiB_ms": {
+      "p50": 7.735,
+      "p95": 8.06,
+      "MiBps_p50": 517.138
+    },
+    "download_4MiB_ms": {
+      "p50": 7.512,
+      "p95": 8.129,
+      "MiBps_p50": 532.505
+    },
+    "upload_16MiB_ms": {
+      "p50": 28.336,
+      "MiBps_p50": 564.649
+    },
+    "download_16MiB_ms": {
+      "p50": 26.094,
+      "MiBps_p50": 613.162
+    },
+    "upload_100MiB_ms": {
+      "p50": 159.983,
+      "MiBps_p50": 625.065
+    },
+    "download_100MiB_ms": {
+      "p50": 103.862,
+      "MiBps_p50": 962.814
+    },
+    "upload_512MiB_ms": {
+      "p50": 800.97,
+      "MiBps_p50": 639.225
+    },
+    "download_512MiB_ms": {
+      "p50": 394.787,
+      "MiBps_p50": 1296.902
+    },
+    "stream_stdout": {
+      "MiBps": 229.989
+    },
+    "forward": {
+      "MiBps": 228.982
+    }
+  },
+  "setup": "Mac Studio M2 Max, QEMU/HVF Linux VM Space (2 vCPU, 2 GiB), same host, through the cua daemon, with the bulk lane (the VM's second disk, `bulk.img`) carrying files of 2 MiB and more; this branch's cua-spacesd overlaid and the image's udev rule applied. Measured 2026-10-20 (run 2 of two; exec p50 varied 0.79-1.24 ms between runs, hence the 1.5x allowance). Without the lane, the same build does 360 MiB/s up and 241 MiB/s down for 100 MiB (CUA_BULK_LANE=off); the user-mode network is the ceiling (raw slirp TCP 257-371 MiB/s). p95 is kept only for the metrics with 20 or more samples.",
+  "targets": {
+    "exec_run_ms.p50": {
+      "max": 2.0
+    },
+    "upload_100MiB_ms.MiBps_p50": {
+      "min": 477.0
+    },
+    "download_100MiB_ms.MiBps_p50": {
+      "min": 477.0
+    },
+    "upload_512MiB_ms.MiBps_p50": {
+      "min": 477.0
+    },
+    "download_512MiB_ms.MiBps_p50": {
+      "min": 477.0
+    }
+  }
+}

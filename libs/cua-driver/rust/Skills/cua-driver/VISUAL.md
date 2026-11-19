@@ -1,5 +1,7 @@
 # Optional visual-region parsing
 
+> **Frozen: no new work.** This capability is in maintenance only. It is not part of the default agent workflow; use it only when the user explicitly asks for visual-region parsing or `jev-use`.
+
 Use `parse_visual_regions` when a current Cua Driver screenshot contains useful
 text or icons that accessibility and typed browser state do not expose. The
 tool returns model-neutral observations. It does not decide that a region is
@@ -121,5 +123,5 @@ An external chooser, including a `jev-use` recipe, receives a bounded table of
 opaque action IDs rather than open-ended Driver tool access. The caller keeps
 provider setup and credentials outside Driver, validates one returned ID, and
 dispatches the complete prebuilt action unchanged. See [Use jev-use with visual
-regions](https://cua.ai/docs/how-to-guides/driver/use-jev-use-with-visual-regions);
+regions](https://cua.ai/docs/cua-driver/guides/visual-regions);
 do not add provider SDK logic or credentials to this skill.

@@ -1,0 +1,9 @@
+{
+  "errors.viewer.stream_unreachable": "无法连接到桌面画面。",
+  "errors.viewer.agent_open_failed": "无法打开 {agent}:{reason}",
+  "errors.viewer.stop_hotspot_failed": "无法停止共享",
+  "errors.spaces.create_failed": "无法创建 Space",
+  "errors.spaces.refresh_failed": "无法刷新 Spaces。之前加载的行可能已过期。",
+  "errors.spaces.load_failed": "无法加载 Spaces。请再刷新一次。",
+  "errors.settings.sign_in_start_failed": "无法开始登录"
+}

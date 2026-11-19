@@ -8,18 +8,24 @@
 
 #![cfg(target_os = "linux")]
 
-use std::io::{BufRead, BufReader, Write};
+use std::collections::BTreeMap;
+use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::os::unix::net::UnixStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use cua_driver_testkit::IsolatedStateRoot;
 use serde_json::{json, Value};
 
-const SOCKET: &str = "/tmp/cua-overlay-agent.sock";
 const SESSION: &str = "hyprland-overlay-focus";
+const IO_TIMEOUT: Duration = Duration::from_secs(10);
+/// Hyprland events that mean a window was mapped, focused or a workspace
+/// switched.
+const FOCUS_EVENTS: &[&str] = &["openwindow", "activewindowv2", "workspacev2"];
 
 #[derive(Clone, Debug)]
 struct HyprState {
@@ -51,8 +57,91 @@ fn hypr_state() -> HyprState {
     }
 }
 
-fn daemon_call(name: &str, args: Value) -> Value {
-    let mut stream = UnixStream::connect(SOCKET).expect("connect to test-owned daemon");
+/// Records focus-related events from Hyprland's event socket until dropped.
+struct FocusEvents {
+    events: Arc<Mutex<Vec<String>>>,
+    stop: Arc<AtomicBool>,
+    reader: Option<thread::JoinHandle<()>>,
+}
+
+impl FocusEvents {
+    fn subscribe() -> Self {
+        let runtime = std::env::var_os("XDG_RUNTIME_DIR").expect("XDG_RUNTIME_DIR");
+        let signature =
+            std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").expect("HYPRLAND_INSTANCE_SIGNATURE");
+        let path = PathBuf::from(runtime)
+            .join("hypr")
+            .join(signature)
+            .join(".socket2.sock");
+        let stream = UnixStream::connect(&path)
+            .unwrap_or_else(|error| panic!("connect to {}: {error}", path.display()));
+        stream
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .expect("set event socket timeout");
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let reader = {
+            let events = Arc::clone(&events);
+            let stop = Arc::clone(&stop);
+            thread::spawn(move || {
+                let mut lines = BufReader::new(stream);
+                let mut line = String::new();
+                while !stop.load(Ordering::Relaxed) {
+                    match lines.read_line(&mut line) {
+                        Ok(0) => break,
+                        Ok(_) => {
+                            let event = line.trim_end();
+                            let name = event.split(">>").next().unwrap_or_default();
+                            if FOCUS_EVENTS.contains(&name) {
+                                events.lock().unwrap().push(event.to_owned());
+                            }
+                            line.clear();
+                        }
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                ErrorKind::WouldBlock | ErrorKind::TimedOut
+                            ) => {}
+                        Err(_) => break,
+                    }
+                }
+            })
+        };
+        Self {
+            events,
+            stop,
+            reader: Some(reader),
+        }
+    }
+
+    fn finish(mut self) -> Vec<String> {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(reader) = self.reader.take() {
+            let _ = reader.join();
+        }
+        std::mem::take(&mut *self.events.lock().unwrap())
+    }
+}
+
+impl Drop for FocusEvents {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+fn connect(socket: &Path) -> UnixStream {
+    let stream = UnixStream::connect(socket).expect("connect to test-owned daemon");
+    stream
+        .set_read_timeout(Some(IO_TIMEOUT))
+        .expect("set daemon read timeout");
+    stream
+        .set_write_timeout(Some(IO_TIMEOUT))
+        .expect("set daemon write timeout");
+    stream
+}
+
+fn daemon_call(socket: &Path, name: &str, args: Value) -> Value {
+    let mut stream = connect(socket);
     writeln!(
         stream,
         "{}",
@@ -70,25 +159,26 @@ fn daemon_call(name: &str, args: Value) -> Value {
 }
 
 /// Test-owned daemon. Dropping it stops the daemon and restores the
-/// workspace and window focus it started from, including after a panic.
+/// workspace and window focus it started from, including after a panic. Its
+/// socket lives in the isolated state root, which is removed with it.
 struct Daemon {
     child: Child,
+    socket: PathBuf,
     before: HyprState,
     _state: IsolatedStateRoot,
 }
 
 impl Drop for Daemon {
     fn drop(&mut self) {
-        shutdown(&mut self.child, &self.before);
+        shutdown(&mut self.child, &self.socket, &self.before);
     }
 }
 
-fn shutdown(child: &mut Child, before: &HyprState) {
-    if Path::new(SOCKET).exists() {
-        if let Ok(mut stream) = UnixStream::connect(SOCKET) {
-            let _ = stream.write_all(b"{\"method\":\"shutdown\"}\n");
-            let _ = stream.flush();
-        }
+fn shutdown(child: &mut Child, socket: &Path, before: &HyprState) {
+    if let Ok(mut stream) = UnixStream::connect(socket) {
+        let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
+        let _ = stream.write_all(b"{\"method\":\"shutdown\"}\n");
+        let _ = stream.flush();
     }
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
@@ -123,22 +213,16 @@ fn native_overlay_never_maps_an_active_hyprland_client() {
         std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some(),
         "live Hyprland session required"
     );
-    assert!(
-        !Path::new(SOCKET).exists(),
-        "refusing to reuse occupied daemon socket {SOCKET}"
-    );
 
     let before = hypr_state();
+    let focus_events = FocusEvents::subscribe();
     let state = IsolatedStateRoot::new().expect("create isolated driver state root");
+    let socket = state.path().join("agent.sock");
     let binary = env!("CARGO_BIN_EXE_cua-driver");
     let child = Command::new(binary)
-        .args([
-            "serve",
-            "--socket",
-            SOCKET,
-            "--no-permissions-gate",
-            "--dangerously-bypass-approvals",
-        ])
+        .args(["serve", "--socket"])
+        .arg(&socket)
+        .args(["--no-permissions-gate", "--dangerously-bypass-approvals"])
         .envs(state.env())
         .env("CUA_DRIVER_RS_ENABLE_WAYLAND", "1")
         .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
@@ -151,23 +235,25 @@ fn native_overlay_never_maps_an_active_hyprland_client() {
     let pid = child.id();
     let mut daemon = Daemon {
         child,
+        socket: socket.clone(),
         before: before.clone(),
         _state: state,
     };
 
     let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline && !Path::new(SOCKET).exists() {
+    while Instant::now() < deadline && !socket.exists() {
         assert!(
             daemon.child.try_wait().unwrap().is_none(),
             "daemon exited during startup"
         );
         thread::sleep(Duration::from_millis(25));
     }
-    assert!(Path::new(SOCKET).exists(), "daemon socket was not created");
+    assert!(socket.exists(), "daemon socket was not created");
 
     // Declare the explicit session the cursor calls below select.
-    daemon_call("start_session", json!({"session": SESSION}));
+    daemon_call(&socket, "start_session", json!({"session": SESSION}));
     daemon_call(
+        &socket,
         "set_agent_cursor_motion",
         json!({
             "session": SESSION,
@@ -176,20 +262,28 @@ fn native_overlay_never_maps_an_active_hyprland_client() {
         }),
     );
     daemon_call(
+        &socket,
         "set_agent_cursor_enabled",
         json!({"session": SESSION, "enabled": true}),
     );
     daemon_call(
+        &socket,
         "move_cursor",
         json!({"session": SESSION, "x": 500.0, "y": 500.0}),
     );
     thread::sleep(Duration::from_secs(1));
 
     let after = hypr_state();
-    let monitor_count = hypr_json("monitors")
+    // `hyprctl monitors` lists only enabled outputs.
+    let mut layers_per_output = hypr_json("monitors")
         .as_array()
         .expect("Hyprland monitors array")
-        .len();
+        .iter()
+        .map(|monitor| {
+            let name = monitor["name"].as_str().expect("monitor name").to_owned();
+            (name, 0usize)
+        })
+        .collect::<BTreeMap<_, _>>();
     let daemon_clients = hypr_json("clients")
         .as_array()
         .expect("Hyprland clients array")
@@ -197,23 +291,22 @@ fn native_overlay_never_maps_an_active_hyprland_client() {
         .filter(|client| client["pid"].as_u64() == Some(u64::from(pid)))
         .cloned()
         .collect::<Vec<_>>();
-    let overlay_layers = hypr_json("layers")
-        .as_object()
-        .expect("Hyprland layer map")
-        .values()
-        .flat_map(|output| {
-            output["levels"]
-                .as_object()
-                .into_iter()
-                .flat_map(|levels| levels.values())
-        })
-        .flat_map(|level| level.as_array().into_iter().flatten())
-        .filter(|layer| layer["pid"].as_u64() == Some(u64::from(pid)))
-        .filter(|layer| layer["namespace"] == "cua-agent-cursor")
-        .count();
+    for (output, layers) in hypr_json("layers").as_object().expect("Hyprland layer map") {
+        let count = layers["levels"]
+            .as_object()
+            .into_iter()
+            .flat_map(|levels| levels.values())
+            .flat_map(|level| level.as_array().into_iter().flatten())
+            .filter(|layer| layer["pid"].as_u64() == Some(u64::from(pid)))
+            .filter(|layer| layer["namespace"] == "cua-agent-cursor")
+            .count();
+        if count > 0 {
+            *layers_per_output.entry(output.clone()).or_default() += count;
+        }
+    }
 
+    let focus_events = focus_events.finish();
     drop(daemon);
-    thread::sleep(Duration::from_millis(200));
 
     assert!(
         daemon_clients.is_empty(),
@@ -228,12 +321,13 @@ fn native_overlay_never_maps_an_active_hyprland_client() {
         "overlay startup changed the active Hyprland client"
     );
 
-    assert_eq!(
-        overlay_layers, monitor_count,
-        "native layer-shell overlay did not map exactly once per enabled output"
+    assert!(
+        focus_events.is_empty(),
+        "overlay activity mapped a window or moved focus: {focus_events:#?}"
     );
     assert!(
-        !Path::new(SOCKET).exists(),
-        "test-owned daemon socket remained after shutdown"
+        layers_per_output.values().all(|&count| count == 1),
+        "native layer-shell overlay did not map exactly once per enabled output: \
+         {layers_per_output:#?}"
     );
 }

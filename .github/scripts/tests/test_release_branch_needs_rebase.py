@@ -78,3 +78,35 @@ def test_conflict_triggers_rebase(tmp_path, monkeypatch):
 
 def test_unknown_branch_keeps_old_behavior():
     assert mod.decide(CONFIG, "feature/x", "main", "HEAD")[0] == "rebase"
+
+
+def test_branch_rewriting_another_components_manifest_entry_triggers_rebase(tmp_path, monkeypatch):
+    import json
+
+    run(tmp_path, "init", "-q", "-b", "main")
+    manifest = {"libs/lume": "1.0.0", "libs/cua-driver": "2.0.0"}
+    commit(tmp_path, ".release-please-manifest.json", json.dumps(manifest))
+    run(tmp_path, "checkout", "-q", "-b", "release")
+    manifest.update({"libs/lume": "1.1.0", "libs/cua-driver": "1.9.0"})
+    commit(tmp_path, ".release-please-manifest.json", json.dumps(manifest))
+    run(tmp_path, "checkout", "-q", "main")
+    commit(tmp_path, "docs/readme.md", "unrelated\n")
+    monkeypatch.chdir(tmp_path)
+    action, reason = mod.decide(CONFIG, BRANCH, "main", "release")
+    assert action == "rebase"
+    assert "libs/cua-driver" in reason
+
+
+def test_branch_changing_only_its_own_manifest_entry_keeps(tmp_path, monkeypatch):
+    import json
+
+    run(tmp_path, "init", "-q", "-b", "main")
+    manifest = {"libs/lume": "1.0.0", "libs/cua-driver": "2.0.0"}
+    commit(tmp_path, ".release-please-manifest.json", json.dumps(manifest))
+    run(tmp_path, "checkout", "-q", "-b", "release")
+    manifest["libs/lume"] = "1.1.0"
+    commit(tmp_path, ".release-please-manifest.json", json.dumps(manifest))
+    run(tmp_path, "checkout", "-q", "main")
+    commit(tmp_path, "docs/readme.md", "unrelated\n")
+    monkeypatch.chdir(tmp_path)
+    assert mod.decide(CONFIG, BRANCH, "main", "release")[0] == "keep"

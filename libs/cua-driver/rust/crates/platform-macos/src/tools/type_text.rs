@@ -1239,9 +1239,24 @@ fn cgevent_type_verified(
     // just the first character of a multi-character event) is finished one
     // paced key at a time from where it stopped. Only a trusted prefix takes
     // this branch: an unchanged or unverifiable field may still publish the
-    // first send, so typing it again could duplicate text.
+    // first send, so typing it again could duplicate text. The rest goes out
+    // only while a fresh read shows the field holding exactly that prefix with
+    // a collapsed caret right after it; a field that moved or widened the
+    // selection would have the rest replace what landed.
     if let (true, TypedProgress::Partial(done)) = (batched, progress) {
-        if done > 0 && done < text.chars().count() {
+        let resumes = before.zip(selection).is_some_and(|(before, selection)| {
+            let current = element_ptr_and_idx
+                .and_then(|(ptr, _)| unsafe { selected_range(ptr as AXUIElementRef) });
+            tail_resumes_at_caret(
+                before,
+                selection,
+                text,
+                done,
+                read_trusted().as_deref(),
+                current,
+            )
+        });
+        if resumes && done > 0 && done < text.chars().count() {
             let tail: String = text.chars().skip(done).collect();
             crate::input::keyboard::type_text_with_delay(pid, &tail, RETYPE_TAIL_DELAY_MS)?;
             let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
@@ -1255,6 +1270,26 @@ fn cgevent_type_verified(
         }
     }
     Ok(progress)
+}
+
+/// Whether `value` and `current` selection show the first `done` characters
+/// of `text` in place of `selection` in `before`, with the caret collapsed
+/// right after them, so the rest of `text` typed now continues the insert.
+fn tail_resumes_at_caret(
+    before: &str,
+    selection: (usize, usize),
+    text: &str,
+    done: usize,
+    value: Option<&str>,
+    current: Option<(usize, usize)>,
+) -> bool {
+    let (location, length) = selection;
+    let Some((head, tail)) = split_utf16_range(before, location, length) else {
+        return false;
+    };
+    let typed: String = text.chars().take(done).collect();
+    value == Some(format!("{head}{typed}{tail}").as_str())
+        && current == Some((location + typed.encode_utf16().count(), 0))
 }
 
 fn await_typed_delivery(
@@ -2881,6 +2916,36 @@ mod tests {
                 "{before:?} {selection:?}"
             );
         }
+    }
+
+    #[test]
+    fn the_rest_is_typed_only_at_a_collapsed_caret_after_the_delivered_prefix() {
+        let resumes = |value: &str, current| {
+            tail_resumes_at_caret("XYZ:a", (4, 0), "XYZ", 1, Some(value), current)
+        };
+        assert!(resumes("XYZ:Xa", Some((5, 0))));
+        // A field that selected what landed would have the rest replace it.
+        assert!(!resumes("XYZ:Xa", Some((4, 1))));
+        assert!(!resumes("XYZ:Xa", Some((6, 0))));
+        assert!(!resumes("XYZ:Xa", None));
+        assert!(!resumes("XYZ:XYa", Some((6, 0))));
+        assert!(!tail_resumes_at_caret(
+            "🙂a",
+            (1, 0),
+            "XYZ",
+            1,
+            Some("🙂Xa"),
+            Some((2, 0))
+        ));
+        // The caret counts UTF-16 units of what landed.
+        assert!(tail_resumes_at_caret(
+            "ab",
+            (1, 0),
+            "🙂é",
+            1,
+            Some("a🙂b"),
+            Some((3, 0))
+        ));
     }
 
     #[test]

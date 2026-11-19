@@ -101,6 +101,10 @@ impl FocusEvents {
                 let mut lines = BufReader::new(stream);
                 let mut line = String::new();
                 loop {
+                    // Sample the stop flag before reading: a timeout on a read
+                    // that began after stop was set means everything Hyprland
+                    // sent before then has been read.
+                    let stopping = stop.load(Ordering::Relaxed);
                     match lines.read_line(&mut line) {
                         Ok(0) => return Err("Hyprland closed its event socket".to_owned()),
                         Ok(_) => {
@@ -111,15 +115,13 @@ impl FocusEvents {
                             }
                             line.clear();
                         }
-                        // Stop only once the socket is idle, so events Hyprland
-                        // already sent are read first.
                         Err(error)
                             if matches!(
                                 error.kind(),
                                 ErrorKind::WouldBlock | ErrorKind::TimedOut
                             ) =>
                         {
-                            if stop.load(Ordering::Relaxed) {
+                            if stopping {
                                 return Ok(events);
                             }
                         }

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.5](https://github.com/trycua/cua/compare/cua-sdk-v0.28.4...cua-sdk-v0.28.5) (2026-11-19)
+
+
+### Bug Fixes
+
+* **spaces:** deliver agent messages once ([#8218](https://github.com/trycua/cua/issues/8218)) ([a88ded9](https://github.com/trycua/cua/commit/a88ded951c5e66285bc788b75fddc1c1cdff5eb0))
+
 ## [0.28.4](https://github.com/trycua/cua/compare/cua-sdk-v0.28.3...cua-sdk-v0.28.4) (2026-11-19)
 
 

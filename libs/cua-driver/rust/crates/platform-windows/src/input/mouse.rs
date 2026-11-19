@@ -749,11 +749,15 @@ fn send_click_synthesized_mods_impl(
             }
         }
 
-        // Let the target process mouse-up before any background-route restore.
+        // Let the target process mouse-up before any cursor or z-order restore.
         // Retained-mode frameworks establish capture/focus on mouse-down and can
         // lose the click if the real cursor is warped away while those queued
-        // messages are still being dispatched.
-        sleep(Duration::from_millis(if activate { 120 } else { 40 }));
+        // messages are still being dispatched. A desktop click restores nothing.
+        sleep(Duration::from_millis(if mode == ClickMode::Window {
+            120
+        } else {
+            40
+        }));
         if !was_topmost && !activate {
             let _ = SetWindowPos(
                 target,
@@ -798,7 +802,7 @@ fn send_click_synthesized_mods_impl(
         }
         if activate {
             let actual = GetForegroundWindow();
-            if !crate::win32::foreground_matches_target_or_owned_window(
+            if !crate::win32::foreground_after_click_matches(
                 foreground_target.expect("foreground target captured before input"),
                 actual.0 as usize as u64,
             ) {

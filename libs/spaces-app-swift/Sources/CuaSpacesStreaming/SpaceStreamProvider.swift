@@ -81,9 +81,12 @@ public final class SpaceStreamProvider: SpaceStreamSourceProviding, @unchecked S
     /// Through the Space's cua-spacesd (`ComputerService.SetClipboard`), on
     /// whichever route the Space is reached by. Only under `viewing`: `ask`
     /// needs a prompt this viewer does not have, and `off` moves nothing.
+    /// The setting is read on each paste, not from the handle's
+    /// connection-time info: it can change while a viewer stays open.
     public func sendClipboard(_ text: String) async throws -> Bool {
         let native = try await handle()
-        guard Self.pasteSendsClipboard(setting: native.info().clipboard) else { return false }
+        guard let setting = try await space.clipboardSetting(),
+              Self.pasteSendsClipboard(setting: setting) else { return false }
         _ = try await native.spacesd().setClipboard(text: text)
         return true
     }

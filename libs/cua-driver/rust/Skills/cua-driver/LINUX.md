@@ -25,9 +25,7 @@ route and independently verify the application.
 
 `delivery_mode:"foreground"` is a user-visible takeover. Never select it automatically.
 Use explicitly authorized `delivery_mode:"foreground"` only after evidence
-that the chosen background route is unavailable or ineffective, under
-[No blind retry](WORKFLOW.md#no-blind-retry): a background refusal can follow
-input that already landed. Target-specific
+that the chosen background route is unavailable or ineffective. Target-specific
 activation and restoration depend on the compositor adapter. If activation
 cannot be proven, accept the refusal instead of sending keys to whatever is focused.
 
@@ -245,11 +243,9 @@ uinput, escalate to `delivery_mode:"foreground"`. The AT-SPI path only fires
 a control under the point: when the hit test finds nothing deeper than the
 application's own frame or window (Chromium page content before its AT-SPI
 tree is populated), no action is fired. Chromium/Electron targets without a
-real focus-free pointer return `background_unavailable`, and an AT-SPI action
-under the point may already have run. When foreground input is authorized,
-read the window again and click from that capture with
-`delivery_mode:"foreground"` only if it shows no effect
-([No blind retry](WORKFLOW.md#no-blind-retry)). (`type_text` in the
+real focus-free pointer return `background_unavailable` before the capture is
+consumed, so retry the same capture-bound click with
+`delivery_mode:"foreground"` when foreground input is authorized. (`type_text` in the
 `background` rung is focus-dependent for non-editable widgets; that's the one
 genuine background limitation, and `foreground` is the documented escalation.)
 
@@ -326,8 +322,7 @@ occluded surface. Background AX actions can still deliver through AT-SPI, and
 a PX left click can deliver when hit-testing resolves to an actionable AT-SPI
 control. Other focus-bound background pointer and keyboard shapes return an
 exact `background_unavailable` result. They do not report success after a
-silent drop. On GNOME, `background_unavailable` can also come after input has
-landed; see [GNOME/Mutter](#gnomemutter).
+silent drop.
 
 Outside an explicitly enabled, qualified compositor-owned background route,
 raw Wayland input requires explicitly authorized `delivery_mode:"foreground"`.
@@ -342,9 +337,9 @@ raw background PX possible on a standard compositor.
 - **Shell attestation.** The driver uses the WinRects helper only when its
   bus owner also owns `org.gnome.Shell` and runs a root-owned `gnome-shell`
   image that no other user can write.
-- **Helper API and window capture.** Window screenshots use the helper's
-  `CaptureWindow` (API 9 or later), which captures the window's own content
-  even when another window covers it. With an older helper, the window image
+- **Helper API and window capture.** Standard window screenshots use the
+  helper's `CaptureWindow` on API 9 or later, which captures the window's own
+  content even when another window covers it. With an older helper, the window image
   is a crop of the Shell stage and shows whatever covers the window. Shell
   loads a new helper version only at the next login, so check the version in
   memory rather than the files on disk:
@@ -359,24 +354,20 @@ raw background PX possible on a standard compositor.
   actions refuse with `window_scope_unproven` before any input, and a
   background pixel click returns `background_unavailable`. Read that exact
   window again after its other windows (often a menu or popover) close, or
-  use an authorized foreground pixel click. Without the helper, a
-  single-window application still works through the AT-SPI window list's own
-  window handle.
-- **Results that can follow delivered input.** A background `type_text` with
-  an element token writes through AT-SPI; if that write errors or runs out of
-  time, the result is `background_unavailable` and the text may already be in
-  the field, or still arrive after a later read. A background pixel `click`
-  fires the AT-SPI action under the point; an error there also ends as
-  `background_unavailable`. A foreground action that reports "the input was
-  sent, but the prior focus could not be restored" sent its input, and focus
-  may still be on the target. Read fresh state before any retry ([No blind retry](WORKFLOW.md#no-blind-retry)).
+  use an authorized foreground pixel click. Without the helper, an
+  application with one AT-SPI top-level can still use the window handle from
+  the AT-SPI window list for semantic reads and actions.
+- **Focus after a foreground action.** When a foreground action reports "the
+  input was sent, but the prior focus could not be restored", focus may still
+  be on the target. Read fresh state before any retry.
 - **Shell prompts.** Polkit authentication and keyring prompts are drawn by
   the Shell, not by an application window, so the helper's window list does
   not include them. While one is open, its input grab blocks ordinary pointer
   and keyboard delivery to application windows; it does not prove that an
-  AT-SPI action had no effect. Find it with `get_desktop_state` (pass
-  `screenshot_out_file` to keep the full display image out of the response),
-  and act on it only with a desktop target and the user's approval.
+  AT-SPI action had no effect. When full-display capture is authorized, find
+  it with `get_desktop_state` (pass `screenshot_out_file` to write the PNG to
+  disk), and leave it to the user or trusted host under the
+  [permission-prompt rule](SKILL.md#rules).
 
 ### Hyprland input v3 source candidate
 

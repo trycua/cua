@@ -1,0 +1,54 @@
+name: "CI: cua-spacesd pin recheck"
+
+# "cua-spacesd pin is published" (ci-release-spacesd-pin.yml) runs when a Release Please PR opens,
+# often while the cua-spacesd release it pins is still a draft being built. It fails then and used
+# to stay red after the release published, until someone reran it (#8155, #8174). This reruns the
+# failed check on every open pull request when a cua-spacesd release publishes.
+#
+# Two triggers, because cd-cua-spacesd.yml publishes with the workflow GITHUB_TOKEN, and events
+# caused by that token never start workflows: `release: published` covers a release published by
+# hand or by an app token, and `workflow_run` on the CD run covers the usual path. Either one is
+# enough; a second rerun finds nothing failed and does nothing.
+#
+# Runs from the default branch, never checks out pull request code. Its only write is the rerun of
+# failed jobs, hence `actions: write`.
+
+on:
+  release:
+    types: [published]
+  workflow_run:
+    workflows: ["CD: cua-spacesd"]
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  recheck:
+    name: Rerun failed spacesd pin checks
+    if: >-
+      github.repository == 'trycua/cua'
+      && (
+        (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'cua-spacesd-v'))
+        || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/spacesd_pin_recheck.py
+            .github/scripts/ci_gate_recheck.py
+          sparse-checkout-cone-mode: false
+      - name: Rerun failed pin checks on open pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || 'cua-spacesd-v' }}
+        run: python3 .github/scripts/spacesd_pin_recheck.py --tag "$TAG"

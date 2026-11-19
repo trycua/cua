@@ -2528,7 +2528,13 @@ jobs:
               exit 1
             }
           fi
-          gh release upload cua-spaces-latest electron-feed/*.yml --clobber --repo "$GITHUB_REPOSITORY"
+          # Out-of-order finishes must not move a feed back: a late 0.38.12 run
+          # once replaced 0.38.13's latest.yml. Skip any feed the published one
+          # outranks (logged), upload the rest.
+          python3 .github/scripts/feed_monotonic.py select electron-feed electron-feed-publish --repo "$GITHUB_REPOSITORY"
+          if compgen -G "electron-feed-publish/*.yml" >/dev/null; then
+            gh release upload cua-spaces-latest electron-feed-publish/*.yml --clobber --repo "$GITHUB_REPOSITORY"
+          fi
       # The macOS updater's feed, once the release it names is published.
       # Beta items come from prereleases, so this runs for them too (apps on
       # Stable never see them).

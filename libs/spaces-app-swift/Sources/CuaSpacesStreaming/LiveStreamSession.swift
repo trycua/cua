@@ -712,7 +712,7 @@ public final class LiveStreamSession: ObservableObject {
     }
 
     private func beginPaste(_ events: [InteractiveInputEvent], text: String?) {
-        guard let text, !text.isEmpty else { return send(events) }
+        guard let text else { return send(events) }
         heldInput = [.input(events)]
         pasteGeneration &+= 1
         let generation = pasteGeneration

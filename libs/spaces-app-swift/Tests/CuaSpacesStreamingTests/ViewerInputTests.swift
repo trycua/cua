@@ -381,6 +381,20 @@ private func pointerEvents(in text: String) -> [[String: Any]] {
         await session.stop()
     }
 
+    /// An empty Mac clipboard still goes first, so the paste inserts
+    /// nothing instead of what the Space copied before.
+    @Test func anEmptyClipboardStillGoesBeforeTheChord() async throws {
+        let v: [InteractiveInputEvent] = [.key(key: "v", down: true, modifiers: [.command], repeatKey: false)]
+        let provider = RecordingProvider()
+        let session = LiveStreamSession(provider: provider)
+        await session.start()
+        session.paste(v, text: "")
+        await eventually("the paste") { provider.media.sent.count == 1 }
+        #expect(provider.clipboards == [""])
+        #expect(provider.framesAtClipboard == [0], "the empty clipboard reached the Space before the chord")
+        await session.stop()
+    }
+
     /// A second paste while the first's clipboard is on its way pastes its
     /// own text, not the first's; held input dies with the stream it was
     /// typed into.

@@ -33,16 +33,26 @@ python3.12 -m venv .venv
 .venv/bin/python native_driver.py
 ```
 
-TypeScript:
+TypeScript (Node.js 22):
 
 ```bash
-npm install
+npm ci
+npm run typecheck
 npm run native
 ```
 
+The lockfile pins the published Driver SDK used by these examples. CI checks
+this installation before checking the examples against a separately built
+candidate SDK.
+
 Grant Screen Recording and Accessibility/Input permission to the importing
 Python or Node process. Keep the fixture browser window focused when the native
-example starts.
+example starts. On macOS, the native TypeScript example runs the Driver inside
+Node; permissions granted to a separate CuaDriver app do not establish permission
+for this process. Enable the required permissions for the host running Node in
+System Settings → Privacy & Security; the embedded Driver does not request
+permissions on the host's behalf. The in-process runtime does not draw the agent
+cursor on macOS.
 
 ## Claude Agent SDK: native or MCP
 

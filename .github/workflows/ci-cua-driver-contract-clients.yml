@@ -493,15 +493,22 @@ jobs:
           python -m unittest tests.test_fixture_server -v
           python -c "import claude_agent_sdk, openai_codex, cua_driver"
 
-      - name: Install agent SDK example dependencies
+      - name: Install published agent SDK example dependencies
+        working-directory: libs/cua-driver/examples/agent-sdks
+        run: npm ci
+
+      - name: Check TypeScript examples against the published SDK
+        working-directory: libs/cua-driver/examples/agent-sdks
+        run: npm run typecheck
+
+      - name: Install candidate SDK for TypeScript examples
         working-directory: libs/cua-driver/examples/agent-sdks
         run: |
-          npm ci
           VERSION=$(node -p "require('../../typescript/package.json').version")
           npm install --no-save \
             "/tmp/cua-driver-npm/trycua-cua-driver-$VERSION.tgz"
 
-      - name: Check TypeScript agent SDK example
+      - name: Check TypeScript examples against the candidate SDK
         working-directory: libs/cua-driver/examples/agent-sdks
         run: npm run typecheck
 

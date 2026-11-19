@@ -68,11 +68,11 @@ public struct LiveStreamView: NSViewRepresentable {
 /// once off one decode.
 public final class LiveStreamInputView: NSView {
     public var onInput: (([InteractiveInputEvent]) -> Void)?
-    /// A paste chord with this Mac's clipboard text (``isPasteChord``);
-    /// without it a paste goes to `onInput` like any chord.
-    public var onPaste: (([InteractiveInputEvent], String?) -> Void)?
-    /// This Mac's clipboard text (a test sets its own).
-    public var pasteboardText: () -> String? = { NSPasteboard.general.string(forType: .string) }
+    /// A paste chord with this Mac's clipboard text (``isPasteChord``), empty
+    /// when it holds none; without it a paste goes to `onInput` like any chord.
+    public var onPaste: (([InteractiveInputEvent], String) -> Void)?
+    /// This Mac's clipboard (a test sets its own).
+    public var pasteboard: NSPasteboard = .general
     /// Called when SwiftUI tears this view down, so the presentation count
     /// falls back to zero (§18).
     public var onDetach: (() -> Void)?
@@ -380,7 +380,7 @@ public final class LiveStreamInputView: NSView {
     private func sendChord(_ event: NSEvent) {
         let chord = encoder.keyEvents(for: event, down: true) + encoder.keyEvents(for: event, down: false)
         if let onPaste, Self.isPasteChord(characters: event.charactersIgnoringModifiers, flags: event.modifierFlags) {
-            onPaste(chord, pasteboardText())
+            onPaste(chord, pasteboard.string(forType: .string) ?? "")
         } else {
             onInput?(chord)
         }

@@ -369,7 +369,11 @@ private func pointerEvents(in text: String) -> [[String: Any]] {
         defer { window.close() }
         view.onInput = { [weak session] in session?.send($0) }
         view.onPaste = { [weak session] in session?.paste($0, text: $1) }
-        view.pasteboardText = { "copied on the Mac" }
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        pasteboard.setString("copied on the Mac", forType: .string)
+        view.pasteboard = pasteboard
         #expect(window.makeFirstResponder(view))
 
         #expect(view.performKeyEquivalent(with: key("v", .command, keyCode: 9, in: window)))
@@ -381,14 +385,24 @@ private func pointerEvents(in text: String) -> [[String: Any]] {
         await session.stop()
     }
 
-    /// An empty Mac clipboard still goes first, so the paste inserts
-    /// nothing instead of what the Space copied before.
+    /// A Mac clipboard with no text still goes first, as empty text, so the
+    /// paste inserts nothing instead of what the Space copied before.
     @Test func anEmptyClipboardStillGoesBeforeTheChord() async throws {
-        let v: [InteractiveInputEvent] = [.key(key: "v", down: true, modifiers: [.command], repeatKey: false)]
         let provider = RecordingProvider()
         let session = LiveStreamSession(provider: provider)
         await session.start()
-        session.paste(v, text: "")
+        let window = offscreenWindow(CGSize(width: 400, height: 300))
+        let view = LiveStreamInputView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        window.contentView = view
+        defer { window.close() }
+        view.onPaste = { [weak session] in session?.paste($0, text: $1) }
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        view.pasteboard = pasteboard
+        #expect(window.makeFirstResponder(view))
+
+        #expect(view.performKeyEquivalent(with: key("v", .command, keyCode: 9, in: window)))
         await eventually("the paste") { provider.media.sent.count == 1 }
         #expect(provider.clipboards == [""])
         #expect(provider.framesAtClipboard == [0], "the empty clipboard reached the Space before the chord")

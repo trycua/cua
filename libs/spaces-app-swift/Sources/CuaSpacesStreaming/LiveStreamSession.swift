@@ -125,7 +125,7 @@ public final class LiveStreamSession: ObservableObject {
     private var heldInput: [HeldInput]?
     private enum HeldInput {
         case input([InteractiveInputEvent])
-        case paste([InteractiveInputEvent], String?)
+        case paste([InteractiveInputEvent], String)
     }
     /// Clipboard transfers started and the newest one that landed, and its
     /// text while the stream lasts.
@@ -699,11 +699,11 @@ public final class LiveStreamSession: ObservableObject {
     }
 
     /// Send a paste chord after putting this Mac's clipboard `text` on the
-    /// Space: the Space's own clipboard is what its paste inserts.
+    /// Space, empty too: the Space's own clipboard is what its paste inserts.
     /// Input sent meanwhile, another paste too, waits behind the chord for
     /// at most `pasteWait`, so a slow or failed transfer still delivers the
     /// keys, in order.
-    public func paste(_ events: [InteractiveInputEvent], text: String?) {
+    public func paste(_ events: [InteractiveInputEvent], text: String) {
         if heldInput != nil {
             heldInput?.append(.paste(events, text))
             return
@@ -711,8 +711,7 @@ public final class LiveStreamSession: ObservableObject {
         beginPaste(events, text: text)
     }
 
-    private func beginPaste(_ events: [InteractiveInputEvent], text: String?) {
-        guard let text else { return send(events) }
+    private func beginPaste(_ events: [InteractiveInputEvent], text: String) {
         heldInput = [.input(events)]
         pasteGeneration &+= 1
         let generation = pasteGeneration

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.16.3](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.2...cua-spacesd-v0.16.3) (2026-11-18)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** probe hardware encoders off the GetCapabilities path ([#8161](https://github.com/trycua/cua/issues/8161)) ([9346cab](https://github.com/trycua/cua/commit/9346cabc2e0614a2ec9d9b629ab0db39b44db4bb))
+
+## [0.16.2](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.1...cua-spacesd-v0.16.2) (2026-11-18)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** send desktop Super chords through the desktop scope ([#8143](https://github.com/trycua/cua/issues/8143)) ([d9dcb1e](https://github.com/trycua/cua/commit/d9dcb1ee770fce99b531a85d4989d81ade098639)), closes [#5344](https://github.com/trycua/cua/issues/5344)
+
 ## [0.16.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.0...cua-spacesd-v0.16.1) (2026-11-13)
 
 

@@ -166,7 +166,7 @@ pub(crate) fn resolve_onscreen_point_with_scroll(
             let Ok(is_offscreen) =
                 crate::uia::windows_enum::element_is_offscreen_bounded(hwnd, retained)
             else {
-                return Err(element_not_visible_refusal(format!(
+                return Err(app_unresponsive_refusal(format!(
                     "Element [{idx}] did not answer whether it is on screen (its app took over \
                      2 s, or has not returned an earlier UI Automation call), so {action_verb} \
                      was refused before any input. Retry once the app responds."
@@ -175,9 +175,11 @@ pub(crate) fn resolve_onscreen_point_with_scroll(
             if trust_cached && is_offscreen != Some(true) {
                 return Ok((cx, cy));
             }
-            if let Ok(Some((nx, ny))) =
-                crate::uia::windows_enum::scroll_into_view_bounded(hwnd, retained)
-            {
+            let scrolled = crate::uia::windows_enum::scroll_into_view_bounded(hwnd, retained);
+            if let Some(refusal) = unanswered_scroll_refusal(&scrolled, idx, action_verb) {
+                return Err(refusal);
+            }
+            if let Ok(Some((nx, ny))) = scrolled {
                 if crate::input::point_in_window_bounds(hwnd, nx, ny) {
                     return Ok((nx, ny));
                 }
@@ -206,13 +208,27 @@ pub(crate) fn resolve_onscreen_point_with_scroll(
     })))
 }
 
-pub(crate) fn element_not_visible_refusal(message: String) -> ToolResult {
+fn unanswered_scroll_refusal(
+    scrolled: &Result<Option<(i32, i32)>, ()>,
+    idx: usize,
+    action_verb: &str,
+) -> Option<ToolResult> {
+    scrolled.is_err().then(|| {
+        app_unresponsive_refusal(format!(
+            "Element [{idx}] did not answer whether it scrolled into view within 4 s (its app \
+             took longer, or has not returned an earlier UI Automation call), so {action_verb} \
+             was refused before any input. Retry once the app responds."
+        ))
+    })
+}
+
+pub(crate) fn app_unresponsive_refusal(message: String) -> ToolResult {
     ToolResult::error(message.clone()).with_structured(json!({
         "status": "refused",
-        "code": "element_not_visible",
+        "code": "app_unresponsive",
         "effect": "refused",
         "refusal": {
-            "code": "element_not_visible",
+            "code": "app_unresponsive",
             "message": message,
         }
     }))
@@ -257,7 +273,7 @@ fn is_enabled_refusal(
     tool: &str,
 ) -> Option<ToolResult> {
     match read {
-        Err(()) => Some(element_not_visible_refusal(format!(
+        Err(()) => Some(app_unresponsive_refusal(format!(
             "Element did not answer whether it is enabled (its app took over 2 s, or has not \
              returned an earlier UI Automation call), so the {tool} was refused before any \
              input. Retry once the app responds."
@@ -1620,7 +1636,7 @@ mod is_enabled_refusal_tests {
         for refuse_disabled in [true, false] {
             assert_eq!(
                 code(is_enabled_refusal(Err(()), refuse_disabled, 1, "click")).as_deref(),
-                Some("element_not_visible")
+                Some("app_unresponsive")
             );
             assert_eq!(
                 code(is_enabled_refusal(Ok(None), refuse_disabled, 1, "click")),
@@ -1646,6 +1662,26 @@ mod is_enabled_refusal_tests {
         );
     }
 
+    #[test]
+    fn only_an_unanswered_scroll_into_view_refuses_with_app_unresponsive() {
+        assert_eq!(
+            code(super::unanswered_scroll_refusal(&Err(()), 3, "clicking")).as_deref(),
+            Some("app_unresponsive")
+        );
+        assert_eq!(
+            code(super::unanswered_scroll_refusal(&Ok(None), 3, "clicking")),
+            None
+        );
+        assert_eq!(
+            code(super::unanswered_scroll_refusal(
+                &Ok(Some((1, 2))),
+                3,
+                "clicking"
+            )),
+            None
+        );
+    }
+
     #[tokio::test]
     #[ignore = "needs a live UIA root (interactive desktop); drives the per-process gate"]
     async fn a_busy_is_enabled_read_refuses_before_any_input() {
@@ -1658,7 +1694,7 @@ mod is_enabled_refusal_tests {
         release.send(()).unwrap();
         assert_eq!(
             code(refusal).as_deref(),
-            Some("element_not_visible"),
+            Some("app_unresponsive"),
             "a busy IsEnabled read refuses the action"
         );
     }

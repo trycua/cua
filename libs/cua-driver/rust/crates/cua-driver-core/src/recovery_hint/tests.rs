@@ -169,6 +169,7 @@ fn the_table_covers_every_code_agents_hit_most() {
         "browser_wrong_target_refused",
         "browser_route_unavailable",
         "stale_element_token",
+        "app_unresponsive",
         "element_not_visible",
         "element_bounds_unavailable",
         "target_changed",
@@ -330,6 +331,28 @@ fn a_stale_element_token_asks_for_a_fresh_read_of_the_same_window() {
         hint.hint,
         "That element_token comes from an older read. Read the window again for fresh tokens, then act \
          with the new one."
+    );
+    assert_eq!(
+        call_value(&hint),
+        json!({
+            "tool": "get_window_state",
+            "arguments": {"pid": 4242, "window_id": 17, "session": "run-1"},
+        })
+    );
+}
+
+#[test]
+fn an_unresponsive_app_waits_then_reads_the_same_window_again() {
+    let hint = hint_for(
+        "click",
+        &window_seed(),
+        true,
+        json!({"code": "app_unresponsive", "effect": "refused"}),
+    );
+    assert_eq!(
+        hint.hint,
+        "The app did not answer UI Automation in time, so nothing was sent. Wait until it responds, \
+         then read the window again and retry."
     );
     assert_eq!(
         call_value(&hint),

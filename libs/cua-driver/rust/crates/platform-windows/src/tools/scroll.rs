@@ -443,7 +443,7 @@ mod element_refusal_tests {
                 .structured_content
                 .as_ref()
                 .map(|value| value["code"].clone()),
-            Some(serde_json::json!("element_not_visible")),
+            Some(serde_json::json!("app_unresponsive")),
             "{result:?}"
         );
     }

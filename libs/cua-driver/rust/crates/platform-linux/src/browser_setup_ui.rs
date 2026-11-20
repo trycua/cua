@@ -583,7 +583,10 @@ impl SetupInput {
     /// and the keys go wherever the focus is when they are sent.
     fn before_dispatch_to(&self, pid: u32, window_id: u64) -> anyhow::Result<()> {
         self.before_dispatch()?;
-        target_keyboard_focused(pid, window_id)
+        target_keyboard_focused(pid, window_id)?;
+        // The read-back is compositor IPC: a cancellation or session end
+        // that arrived meanwhile still stops the keys.
+        self.check()
     }
 
     fn type_setup_url(&self, pid: u32, window_id: u64, url: &str) -> anyhow::Result<()> {
@@ -1081,6 +1084,7 @@ fn trusted_setup_navigation(
             .map_err(|error| anyhow::anyhow!(error.message))?;
         if setup_page_proven(&tree.nodes, descriptor, true) {
             handle.trusted_setup_navigation = true;
+            handle.reports_document_uri = document_is_setup_page(&tree.nodes, descriptor).is_some();
             return Ok(());
         }
         if Instant::now() >= deadline {
@@ -1164,6 +1168,9 @@ pub struct SetupUiHandle {
     owned_setup_tab: Option<ObjectRef>,
     trusted_setup_navigation: bool,
     input_delivery_unknown: bool,
+    /// The setup page was proven by its document URI, so cleanup can and
+    /// must re-read that URI before closing the tab.
+    reports_document_uri: bool,
     armed: bool,
     enabling: bool,
     enable_attempted: bool,
@@ -1273,9 +1280,10 @@ impl SetupUiHandle {
 
     /// [`Self::owned_input`] for the closing shortcut: the guard also
     /// re-reads the setup document's URI, so a tab the person navigated
-    /// elsewhere while cleanup waited is never closed. A browser whose
-    /// document reports no URI is held to the selection check alone, after
-    /// the page proof that precedes this input.
+    /// elsewhere while cleanup waited is never closed, and a failed read
+    /// refuses. Only a browser that never reported a document URI is held
+    /// to the selection check alone, after the page proof that precedes
+    /// this input.
     fn owned_close_input(&self, document: Option<ObjectRef>) -> anyhow::Result<SetupInput> {
         let mut input = self.owned_input()?;
         let Some(document) = document else {
@@ -1327,8 +1335,14 @@ impl SetupUiHandle {
                 let result = window_scoped_tree(handle.pid, handle.window_id)
                     .and_then(|tree| {
                         handle.require_owned_setup_page(&tree)?;
-                        *setup_document.borrow_mut() =
-                            setup_document_object(&tree.nodes, handle.descriptor);
+                        let document = setup_document_object(&tree.nodes, handle.descriptor);
+                        if handle.reports_document_uri && document.is_none() {
+                            return Err(BrowserRefusal::new(
+                                BrowserRefusalCode::BrowserWrongTargetRefused,
+                                "the setup document's URI could not be read again before cleanup",
+                            ));
+                        }
+                        *setup_document.borrow_mut() = document;
                         Ok(())
                     })
                     .map_err(|error| anyhow::anyhow!(error.message))
@@ -1700,6 +1714,7 @@ fn set_remote_debugging(
         owned_setup_tab: None,
         trusted_setup_navigation: false,
         input_delivery_unknown: false,
+        reports_document_uri: false,
         armed: true,
         enabling: desired_enabled,
         enable_attempted: false,
@@ -1979,6 +1994,7 @@ mod tests {
             owned_setup_tab: None,
             trusted_setup_navigation: false,
             input_delivery_unknown: false,
+            reports_document_uri: false,
             armed: false,
             enabling: true,
             enable_attempted: false,
@@ -2454,6 +2470,7 @@ mod tests {
             owned_setup_tab: None,
             trusted_setup_navigation: false,
             input_delivery_unknown: false,
+            reports_document_uri: false,
             armed: false,
             enabling: true,
             enable_attempted: false,

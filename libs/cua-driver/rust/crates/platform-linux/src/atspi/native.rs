@@ -4797,8 +4797,8 @@ pub fn element_selected_ref(object_ref: &ObjectRef) -> Result<bool> {
 }
 
 /// The Document "URI" a snapshot-cached document reports right now, or
-/// `None` when it reports none: no tree re-walk. A navigation either changes
-/// it or retires the object, which errors.
+/// `None` when it reports an empty one: no tree re-walk. A navigation
+/// either changes it or retires the object, and a failed read errors.
 pub fn document_uri_ref(object_ref: &ObjectRef) -> Result<Option<String>> {
     bounded_for(
         REF_ACTION_BUDGET,
@@ -4821,7 +4821,7 @@ pub fn document_uri_ref(object_ref: &ObjectRef) -> Result<Option<String>> {
             };
             match call(document.get_attribute_value("URI")).await {
                 Some(Ok(uri)) => Ok(Some(uri).filter(|uri| !uri.trim().is_empty())),
-                Some(Err(_)) => Ok(None),
+                Some(Err(error)) => Err(anyhow!("cached document URI unreadable: {error}")),
                 None => Err(anyhow!("cached element did not answer in time")),
             }
         },

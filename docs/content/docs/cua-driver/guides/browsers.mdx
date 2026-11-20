@@ -91,13 +91,13 @@ browser_prepare({
 Without a `pid`, the driver launches the first browser it finds, in the order
 Chrome, Edge, Brave (on Linux: Chrome, Chromium, Edge, Brave), from a system
 install a standard user cannot modify. You cannot choose the browser, so Brave
-starts only when neither Chrome nor Edge is installed. On macOS and Windows the
-install must carry its vendor's signature: Brave from `/Applications` on macOS,
-or from an all-users install under Program Files on Windows. On Linux the binary
-and its folders must be owned by root and writable by no one else: Brave from
-its own package under `/opt/brave.com`. Brave's default Windows installer
-installs per user, and Snap and Flatpak installs are not covered; the driver
-refuses those.
+starts only when no earlier browser in that order passes these checks. On macOS
+and Windows the install must carry its vendor's signature: Brave from
+`/Applications` on macOS, or from an all-users install under Program Files on
+Windows. On Linux the binary and its folders must be owned by root and writable
+by no one else: Brave from its own package under `/opt/brave.com`. Brave's
+default Windows installer installs per user, and Snap and Flatpak installs are
+not covered; the driver refuses those.
 
 Bind the window of the returned `prepared_pid`. An `isolated_new` profile is
 deleted when the session ends; use `{"mode": "isolated_named", "name": "research"}`

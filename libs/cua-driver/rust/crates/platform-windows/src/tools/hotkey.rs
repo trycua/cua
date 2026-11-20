@@ -343,7 +343,7 @@ impl Tool for HotkeyTool {
         } else {
             EventKind::Keystroke
         };
-        if delivery == DeliveryMode::Background
+        if delivery.is_background()
             && (px_focus || crate::input::delivery::would_be_silently_dropped(hwnd, event_kind))
         {
             // macOS-aligned: a `background` hotkey never fronts. This combo would

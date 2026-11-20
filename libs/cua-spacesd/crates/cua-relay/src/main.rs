@@ -9,6 +9,12 @@ use std::time::Duration;
 use clap::Parser;
 use cua_relay::server::{Relay, RelayConfig};
 
+// jemalloc, not the system allocator: see the comment in Cargo.toml and
+// `cua_relay::process_memory`.
+#[cfg(unix)]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 /// Reverse-tunnel relay for cua-spacesd.
 #[derive(Parser, Debug)]
 #[command(name = "cua-relay", version, about)]
@@ -109,9 +115,10 @@ struct Args {
     machine_window_bytes: usize,
     /// Largest number of concurrent client streams across every computer at
     /// once (S7): the relay-wide memory budget, enforced with
-    /// backpressure. Tune to the deployed pod's memory limit.
-    #[arg(long, env = "CUA_RELAY_MAX_GLOBAL_STREAMS", default_value_t = 4096)]
-    max_global_streams: u64,
+    /// backpressure. Unset: derived from the container's memory limit
+    /// (cgroup), or 4096 without one.
+    #[arg(long, env = "CUA_RELAY_MAX_GLOBAL_STREAMS")]
+    max_global_streams: Option<u64>,
     /// Seconds without a heartbeat before a computer is dropped.
     #[arg(long, env = "CUA_RELAY_IDLE_SECS", default_value_t = 90)]
     idle_secs: u64,
@@ -225,6 +232,12 @@ struct Args {
     /// exiting (computers and clients reconnect on their own).
     #[arg(long, env = "CUA_RELAY_SHUTDOWN_GRACE_SECS", default_value_t = 10)]
     shutdown_grace_secs: u64,
+    /// Seconds after SIGTERM to keep machine tunnels open for client
+    /// streams still running (connection draining), refusing new tunnels
+    /// meanwhile; then the tunnels close cleanly and the relay exits. The
+    /// hard stop is this plus the shutdown grace. 0: close at once.
+    #[arg(long, env = "CUA_RELAY_DRAIN_SECS", default_value_t = 0)]
+    drain_secs: u64,
     /// The mesh coordinator and encrypted relay (`on` / `off`). Off unless
     /// set: a relay serves the mesh only when its deployment opts in.
     #[arg(long, env = "CUA_RELAY_MESH", default_value = "off")]
@@ -369,12 +382,16 @@ async fn shutdown_signal() {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Fixes the boot identity (`x-cua-relay-boot`) at process start.
+    let _ = cua_relay::route_marker::boot();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
+    #[cfg(unix)]
+    cua_relay::process_memory::use_jemalloc();
     let args = Args::parse();
     if args.stun_only {
         let addr = args
@@ -626,6 +643,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         approval_phones_only,
         push.as_ref().map(|p| p.phone_clients()),
     )?;
+    let memory_limit = cua_relay::process_memory::cgroup_memory_limit();
+    let max_global_streams =
+        cua_relay::process_memory::resolve_stream_budget(args.max_global_streams, memory_limit);
+    tracing::info!(
+        max_global_streams,
+        memory_limit_mib = memory_limit.map(|b| b >> 20),
+        explicit = args.max_global_streams.is_some(),
+        "client stream budget"
+    );
     let relay = Relay::try_new(RelayConfig {
         tcp_shares,
         push,
@@ -634,7 +660,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         join_rate_per_sec: args.join_rate_per_sec,
         join_burst: args.join_burst,
         max_streams_per_machine: args.max_streams_per_machine,
-        max_global_streams: args.max_global_streams,
+        max_global_streams,
         machine_max_streams: args.machine_max_streams,
         machine_window_bytes: args.machine_window_bytes,
         machine_idle_timeout: Duration::from_secs(args.idle_secs.max(5)),
@@ -672,6 +698,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         meter,
         #[cfg(feature = "hosted")]
         org_access,
+        drain: Duration::from_secs(args.drain_secs),
         reconnect_grace: Duration::from_secs(args.reconnect_grace_secs),
         share_web,
         analytics_key_file: args.analytics_key_file,
@@ -704,7 +731,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     });
     // Long-lived streams (gRPC, tunnels) would hold a graceful shutdown
     // open indefinitely: bound it.
-    let grace = Duration::from_secs(args.shutdown_grace_secs);
+    // The drain runs inside the shutdown, so the hard stop leaves it its time
+    // first; the grace then covers the requests still open after it.
+    let grace = Duration::from_secs(args.shutdown_grace_secs.saturating_add(args.drain_secs));
     tokio::select! {
         served = serve => served?,
         _ = async {

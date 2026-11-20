@@ -64,8 +64,23 @@ fn skylight_available() -> bool {
     crate::input::skylight::is_available()
 }
 
+/// Stamp `event` with the current time. A created event's timestamp (integer
+/// field 58) is 0 and the per-pid routes deliver it unchanged, so AppKit and
+/// Chromium would read the event as posted at boot (#7292). The unit is
+/// nanoseconds of `CLOCK_UPTIME_RAW`, the clock `NSEvent.timestamp` reports in
+/// seconds.
+fn stamp_post_time(event: &CGEvent) {
+    unsafe {
+        CGEventSetTimestamp(
+            event.as_ptr() as *mut std::ffi::c_void,
+            clock_gettime_nsec_np(libc::CLOCK_UPTIME_RAW),
+        );
+    }
+}
+
 /// Hand one stamped event to its transport.
 fn dispatch_mouse_event(route: PostRoute, pid: i32, event: &CGEvent) {
+    stamp_post_time(event);
     #[cfg(test)]
     if post_sink::record(route, event) {
         return;
@@ -1773,6 +1788,8 @@ pub fn scroll_wheel_at_xy(
         // f40 = target pid (Chromium synthetic-event filter).
         crate::input::skylight::set_integer_field(event_ptr, 40, pid as i64);
 
+        stamp_post_time(&event);
+
         // Belt+suspenders post: SkyLight reaches backgrounded Chromium/Catalyst;
         // the public path lands on AppKit/WKWebView. Mouse-class → no auth envelope.
         crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false);
@@ -1800,6 +1817,10 @@ extern "C" {
     /// ABI-identical to passing the struct by value — the same trick the
     /// SkyLight bridge uses for `CGEventSetWindowLocation`.
     fn CGEventSetLocation(event: *mut std::ffi::c_void, x: f64, y: f64);
+
+    fn CGEventSetTimestamp(event: *mut std::ffi::c_void, timestamp: u64);
+
+    fn clock_gettime_nsec_np(clock_id: libc::clockid_t) -> u64;
 }
 
 fn parse_modifier_flags(modifiers: &[&str]) -> CGEventFlags {
@@ -2014,11 +2035,14 @@ mod tests {
 
     /// Integer field 58 is the event timestamp. A click-group ID written there
     /// made Chromium read the click as older than the page and crash the
-    /// renderer on a same-document navigation (#7292). Every window-addressed
-    /// pointer path leaves the timestamp for the window server to fill at post.
+    /// renderer on a same-document navigation (#7292), and an unset timestamp
+    /// reaches the app as 0. Every window-addressed pointer path stamps the
+    /// time of each post.
     #[test]
-    fn window_addressed_pointer_events_leave_the_timestamp_unset() {
+    fn window_addressed_pointer_events_carry_the_post_time() {
+        let uptime = || unsafe { clock_gettime_nsec_np(libc::CLOCK_UPTIME_RAW) };
         let capture = Capture::start(true);
+        let before = uptime();
         click_at_xy_chromium(1, 100.0, 100.0, 10.0, 10.0, 7, 2, &[]).unwrap();
         click_at_xy_with_window_local(
             1,
@@ -2048,12 +2072,17 @@ mod tests {
             || false,
         )
         .unwrap();
+        let after = uptime();
         let timestamps = capture.timestamps();
         assert_eq!(timestamps.len(), capture.posted().len());
         assert!(timestamps.len() > 20, "every path posted: {timestamps:?}");
         assert!(
-            timestamps.iter().all(|timestamp| *timestamp == 0),
-            "posted timestamps: {timestamps:?}"
+            timestamps.first() >= Some(&before) && timestamps.last() <= Some(&after),
+            "posted timestamps {timestamps:?} fall outside {before}..={after}"
+        );
+        assert!(
+            timestamps.windows(2).all(|pair| pair[0] <= pair[1]),
+            "posted timestamps run backwards: {timestamps:?}"
         );
     }
 

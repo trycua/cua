@@ -263,6 +263,9 @@ const GATEWAY_HOST_IP: &str = "10.0.3.2";
 const GATEWAY_MAC: &str = "5a:94:ef:e4:0c:de";
 /// The address the gateway's DHCP gives the guest (by its MAC).
 const GUEST_IP: &str = "10.0.3.15";
+/// The login account of cua's macOS images (the one `lume ssh` uses).
+const MACOS_GUEST_USER: &str = "lume";
+const MACOS_GUEST_PASSWORD: &str = "lume";
 
 /// Whether a VM with `settings` runs behind a gateway: under the secure
 /// default, unless the user chose No protection.
@@ -1143,9 +1146,9 @@ impl LumeRuntime {
             None if vm.os == "macOS" || vm.os == "macos" => Some(SshEndpoint {
                 host: ip.clone(),
                 port: 22,
-                user: "lume".into(),
+                user: MACOS_GUEST_USER.into(),
                 private_key: None,
-                password: Some("lume".into()),
+                password: Some(MACOS_GUEST_PASSWORD.into()),
             }),
             None => None,
         };
@@ -1243,6 +1246,21 @@ impl LumeRuntime {
         std::fs::read(self.gateway_file(name))
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
+    }
+
+    /// Guest commands in the macOS VM `name` when it runs behind its
+    /// gateway: an SSH login to the gateway's loopback forward of the
+    /// guest's port 22, as the image's `lume` account. `lume ssh` cannot
+    /// serve such a VM: it looks the guest up in vmnet's DHCP leases (the
+    /// gateway hands out its own), and the guest's address is not
+    /// reachable from the host anyway. `None` for a VM on Apple's NAT,
+    /// which keeps using `lume ssh`.
+    fn gateway_ssh(&self, name: &str) -> Option<crate::exec::SshExec> {
+        let port = *self.load_gateway(name)?.ports.get(&22)?;
+        Some(
+            crate::exec::SshExec::new("127.0.0.1", port, MACOS_GUEST_USER)
+                .password(MACOS_GUEST_PASSWORD),
+        )
     }
 
     /// `ep` as the host reaches a VM behind its gateway: on loopback,
@@ -2537,13 +2555,14 @@ impl LumeRuntime {
         ));
         let vm = self.wait_for_ip(&spec.name).await?;
         if macos_booted {
-            let exec = self.lume()?.map(|l| lume_ssh_prefix(&l, &spec.name));
-            self.sync_macos_env(
-                &spec.name,
-                &spec.env,
-                exec.as_ref().map(|e| e as &dyn GuestExec),
-            )
-            .await?;
+            let exec: Option<Box<dyn GuestExec>> = match self.gateway_ssh(&spec.name) {
+                Some(ssh) => Some(Box::new(ssh)),
+                None => self
+                    .lume()?
+                    .map(|l| Box::new(lume_ssh_prefix(&l, &spec.name)) as Box<dyn GuestExec>),
+            };
+            self.sync_macos_env(&spec.name, &spec.env, exec.as_deref())
+                .await?;
         }
         // Remember the published guest ports: a later process reattaching
         // by name (`endpoints`) must still see e.g. cua-spacesd's 3211.
@@ -3275,6 +3294,9 @@ impl Runtime for LumeRuntime {
             .await?
             .ok_or_else(|| VmmError::NotFound(name.into()))?;
         if vm.os.eq_ignore_ascii_case("macos") {
+            if let Some(ssh) = self.gateway_ssh(name) {
+                return Ok(Some(Arc::new(ssh)));
+            }
             let lume = self
                 .lume()?
                 .ok_or_else(|| VmmError::missing("lume", "needed for `lume ssh`"))?;
@@ -4412,6 +4434,42 @@ mod tests {
             },
         );
         assert_eq!(ep.addr(3211).as_deref(), Some("127.0.0.1:50211"));
+    }
+
+    #[test]
+    fn a_macos_guest_behind_its_gateway_runs_commands_over_the_ssh_forward() {
+        let dir = tempfile::tempdir().unwrap();
+        let rt = LumeRuntime::new(LumeConfig {
+            root: dir.path().to_path_buf(),
+            ..LumeConfig::default()
+        });
+        // On Apple's NAT (no gateway): `lume ssh` stays the guest channel.
+        assert!(rt.gateway_ssh("m").is_none());
+        // A gateway without an SSH forward: nothing to log in to.
+        std::fs::create_dir_all(dir.path().join("m")).unwrap();
+        let only_spacesd = LumeGateway {
+            network: "gateway:/x".into(),
+            ports: [(3211, 50211)].into(),
+        };
+        std::fs::write(
+            rt.gateway_file("m"),
+            serde_json::to_vec(&only_spacesd).unwrap(),
+        )
+        .unwrap();
+        assert!(rt.gateway_ssh("m").is_none());
+        // Behind the gateway the guest is reached only on the host's
+        // loopback forward of its port 22, with the image's password login
+        // (`lume ssh` finds no address there: #8262).
+        let gw = LumeGateway {
+            network: "gateway:/x".into(),
+            ports: [(22, 50022), (3211, 50211)].into(),
+        };
+        std::fs::write(rt.gateway_file("m"), serde_json::to_vec(&gw).unwrap()).unwrap();
+        let ssh = rt.gateway_ssh("m").unwrap();
+        assert_eq!((ssh.host.as_str(), ssh.port), ("127.0.0.1", 50022));
+        assert_eq!(ssh.user, "lume");
+        assert_eq!(ssh.password.as_deref(), Some("lume"));
+        assert!(ssh.private_key.is_none());
     }
 
     #[tokio::test]

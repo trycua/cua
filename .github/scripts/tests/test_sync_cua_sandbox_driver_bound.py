@@ -25,7 +25,8 @@ def test_raises_the_bound_everywhere(tmp_path: Path, capsys) -> None:
     assert capsys.readouterr().out.split() == list(FILES)
     for rel in FILES:
         text = (tmp_path / rel).read_text()
-        assert ">=0.37.0,<0.56" in text and "<0.55" not in text
+        # Built from parts so this file never holds a literal copy of the live bound.
+        assert f">=0.37.0,<0.{55 + 1}" in text and f"<0.{55}" not in text
 
 
 def test_in_range_version_changes_nothing(tmp_path: Path, capsys) -> None:
@@ -67,7 +68,12 @@ def test_file_list_matches_the_real_repository() -> None:
     tracked = subprocess.run(
         ["git", "grep", "-l", "-F", spec], cwd=REPO, capture_output=True, text=True
     ).stdout.split()
-    ignored = {"libs/python/cua-sandbox/tests/test_driver_dependency.py"}
+    # This test and the generator describe the bound; they are not files it rewrites.
+    ignored = {
+        "libs/python/cua-sandbox/tests/test_driver_dependency.py",
+        Path(__file__).resolve().relative_to(REPO).as_posix(),
+        Path(sync.__file__).resolve().relative_to(REPO).as_posix(),
+    }
     unlisted = set(tracked) - set(FILES) - ignored
     assert not unlisted, f"add to FILES in sync_cua_sandbox_driver_bound.py: {sorted(unlisted)}"
     for rel in FILES:

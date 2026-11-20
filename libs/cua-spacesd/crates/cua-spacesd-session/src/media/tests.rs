@@ -35,6 +35,8 @@ struct FakeCapture {
     bitrate: AtomicU64,
     /// Last `set_paused` value (0 never called, 1 paused, 2 resumed).
     paused: AtomicU64,
+    /// Runs inside the next `stop`, as a native capture drains its callbacks.
+    on_stop: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl FakeCapture {
@@ -70,7 +72,12 @@ impl CaptureLease for FakeLease {
         self.0.keyframe_requests.fetch_add(1, Ordering::SeqCst);
     }
 
-    fn stop(&self) {}
+    fn stop(&self) {
+        let on_stop = self.0.on_stop.lock().unwrap().take();
+        if let Some(on_stop) = on_stop {
+            on_stop();
+        }
+    }
 
     fn set_target_bitrate_kbps(&self, kbps: u32) {
         self.0.bitrate.store(u64::from(kbps), Ordering::SeqCst);
@@ -1314,6 +1321,36 @@ async fn close_is_terminal_and_emitted_exactly_once() {
     assert!(
         drain(&viewer).is_empty(),
         "a drain after close terminates empty"
+    );
+}
+
+/// #5376: a native lease's `stop` waits for an in-flight capture callback,
+/// and that callback can reach the session's capture lease (an H.264 viewer
+/// asking for a keyframe). Teardown must not hold the lease lock while it
+/// stops, or the two wait on each other forever.
+#[tokio::test]
+async fn closing_does_not_hold_the_capture_lease_while_it_stops() {
+    let fixture = fixture();
+    let opened = open(&fixture, params(display())).await;
+    let session = opened.session.clone();
+    let (callback_done, callback_returned) = std::sync::mpsc::channel();
+    let (stop_done, stop_returned) = std::sync::mpsc::channel();
+    *fixture.capture.on_stop.lock().unwrap() = Some(Box::new(move || {
+        std::thread::spawn(move || {
+            session.request_keyframe_now();
+            let _ = callback_done.send(());
+        });
+        let _ = stop_done.send(
+            callback_returned
+                .recv_timeout(Duration::from_secs(2))
+                .is_ok(),
+        );
+    }));
+    fixture.runtime.close(opened.session.id(), 4404);
+    assert_eq!(
+        stop_returned.recv_timeout(Duration::from_secs(5)),
+        Ok(true),
+        "a capture callback blocked on the lease lock while the lease stopped"
     );
 }
 

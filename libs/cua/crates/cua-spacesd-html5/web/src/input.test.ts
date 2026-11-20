@@ -71,6 +71,42 @@ describe("keyboard mapping", () => {
     ]);
   });
 
+  it("forgets the held Cmd keys when the viewer loses focus", () => {
+    const surface = document.createElement("div");
+    const sent: InteractiveInputEvent[] = [];
+    const input = new InputController({ surface, screen: () => surface, emit: (e) => sent.push(e), keyOptions: () => ({ metaAsControl: true }) });
+    const press = (type: string, init: KeyboardEventInit) => input.textarea.dispatchEvent(new KeyboardEvent(type, { cancelable: true, ...init }));
+    press("keydown", { key: "Meta", code: "MetaLeft", metaKey: true });
+    input.textarea.dispatchEvent(new FocusEvent("blur"));
+    sent.length = 0;
+    press("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
+    press("keydown", { key: "Enter", code: "Enter", metaKey: true });
+    expect(sent.map((e) => (e.kind === "key" ? `${[...e.modifiers, e.key].join("+")}:${e.state}` : e.kind))).toEqual([
+      "meta:down",
+      "command+enter:down",
+    ]);
+    input.dispose();
+  });
+
+  it("sends the right Cmd+V to the guest as Super+V, not as a paste", () => {
+    const surface = document.createElement("div");
+    const sent: InteractiveInputEvent[] = [];
+    const pasted: ClipboardEvent[] = [];
+    const input = new InputController({
+      surface,
+      screen: () => surface,
+      emit: (e) => sent.push(e),
+      keyOptions: () => ({ metaAsControl: true }),
+      onPaste: (e) => void pasted.push(e),
+    });
+    const press = (type: string, init: KeyboardEventInit) => input.textarea.dispatchEvent(new KeyboardEvent(type, { cancelable: true, ...init }));
+    press("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
+    expect(press("keydown", { key: "v", code: "KeyV", metaKey: true })).toBe(false);
+    expect(sent.at(-1)).toMatchObject({ key: "v", state: "down", modifiers: ["command"] });
+    input.dispose();
+    expect(pasted).toEqual([]);
+  });
+
   it("treats AltGr and IME composition as text", () => {
     const altGr = key({ key: "@", code: "KeyQ", ctrlKey: true, altKey: true, getModifierState: (m) => m === "AltGraph" });
     expect(mapKey(altGr, "down", opts)).toBeNull();

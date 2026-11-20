@@ -510,6 +510,10 @@ private func pointerEvents(in text: String) -> [[String: Any]] {
         #expect(LiveStreamInputView.isPasteChord(characters: "v", flags: [.command, .shift]))
         #expect(!LiveStreamInputView.isPasteChord(characters: "v", flags: [.command, .option]))
         #expect(!LiveStreamInputView.isPasteChord(characters: "c", flags: .command))
+        let rightCommand = NSEvent.ModifierFlags(rawValue: NSEvent.ModifierFlags.command.rawValue | 0x10)
+        let leftCommand = NSEvent.ModifierFlags(rawValue: NSEvent.ModifierFlags.command.rawValue | 0x08)
+        #expect(LiveStreamInputView.isPasteChord(characters: "v", flags: leftCommand))
+        #expect(!LiveStreamInputView.isPasteChord(characters: "v", flags: rightCommand))
 
         let provider = RecordingProvider()
         provider.sendsClipboard = false

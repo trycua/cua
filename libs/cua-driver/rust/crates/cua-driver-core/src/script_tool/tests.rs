@@ -916,7 +916,7 @@ fn a_long_role_name_target_leaves_the_recovery_call_in_the_summary() {
         "target": {"element": format!("[2] button \"{}\"", "Apply ".repeat(40))},
     });
     let summary = super::summarize(&value);
-    assert!(summary.chars().count() <= 301, "{}", summary.chars().count());
+    assert!(summary.chars().count() <= super::SUMMARY_TEXT_LIMIT);
     assert!(summary.ends_with(look), "{summary}");
     assert!(summary.starts_with("on [2] button \"Apply"), "{summary}");
 }

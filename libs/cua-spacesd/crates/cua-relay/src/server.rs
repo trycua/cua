@@ -1201,7 +1201,7 @@ impl Relay {
                 // relay that replaces this one (CUA-1774).
                 handle.drain().await.log();
                 // Keep the last minutes of usage and of mesh `last_seen`
-            // across a restart.
+                // across a restart.
                 handle.meter.persist(true);
                 handle.mesh.flush_last_seen();
             }

@@ -154,32 +154,35 @@ mod megapixel_cap_tests {
 /// window's top-left pixel, and the X11 pixels per frame unit. Chromium under
 /// a device scale reports its AT-SPI extents in DIPs while its X11 window, and
 /// the capture of it, are in device pixels; its top-level frame is then the
-/// X11 window rectangle divided by that scale. Only a window-scoped tree's own
-/// top-level frame (the shallowest) can show the scale: an application-wide
-/// tree may hold other windows' frames. Otherwise the window origin and 1.
+/// X11 window rectangle divided by that scale. A window-scoped tree's own
+/// frame is its shallowest top-level one; an application-wide tree offers
+/// every top-level frame, and one that matches the window in pixels wins.
+/// With no match, frames are in pixels from the window origin.
 fn atspi_frame_space(
     window: (i32, i32, i32, i32),
     elements: &[Value],
     window_scoped: bool,
 ) -> ((f64, f64), f64) {
     let (wx, wy, ww, wh) = window;
-    let top_level = window_scoped
-        .then(|| {
-            elements
-                .iter()
-                .filter(|entry| {
-                    entry["role"].as_str().is_some_and(|role| {
-                        matches!(
-                            role.to_ascii_lowercase().as_str(),
-                            "frame" | "window" | "dialog"
-                        )
-                    }) && entry.get("frame").is_some()
-                })
-                .min_by_key(|entry| entry["depth"].as_u64().unwrap_or(u64::MAX))
-        })
-        .flatten();
-    let scale = top_level
-        .and_then(|entry| {
+    let top_levels = elements.iter().filter(|entry| {
+        entry["role"].as_str().is_some_and(|role| {
+            matches!(
+                role.to_ascii_lowercase().as_str(),
+                "frame" | "window" | "dialog"
+            )
+        }) && entry.get("frame").is_some()
+    });
+    let candidates: Vec<&Value> = if window_scoped {
+        top_levels
+            .min_by_key(|entry| entry["depth"].as_u64().unwrap_or(u64::MAX))
+            .into_iter()
+            .collect()
+    } else {
+        top_levels.collect()
+    };
+    let matched = candidates
+        .into_iter()
+        .filter_map(|entry| {
             let frame = &entry["frame"];
             let [x, y, w, h] = ["x", "y", "w", "h"].map(|key| frame[key].as_f64());
             let (x, y, w, h) = (x?, y?, w?, h?);
@@ -190,10 +193,13 @@ fn atspi_frame_space(
             // A frame unit spans `scale` pixels, so rounding moves each edge
             // by less than one unit.
             let fits = |frame: f64, window: i32| (frame * scale - f64::from(window)).abs() <= scale;
-            (scale > 1.0 && fits(h, wh) && fits(x, wx) && fits(y, wy)).then_some(scale)
+            (scale >= 1.0 && fits(h, wh) && fits(x, wx) && fits(y, wy)).then_some(((x, y), scale))
         })
-        .unwrap_or(1.0);
-    ((f64::from(wx) / scale, f64::from(wy) / scale), scale)
+        .min_by(|a, b| a.1.total_cmp(&b.1));
+    match matched {
+        Some((origin, scale)) if scale > 1.0 => (origin, scale),
+        _ => ((f64::from(wx), f64::from(wy)), 1.0),
+    }
 }
 
 #[cfg(test)]
@@ -277,6 +283,31 @@ mod atspi_frame_space_tests {
         assert_eq!(
             frames((0, 0, 1920, 1080), other_window_first, false)[1],
             json!({"x": 0, "y": 0, "w": 1920, "h": 1080})
+        );
+    }
+
+    #[test]
+    fn an_application_wide_tree_finds_the_scaled_window_frame() {
+        // Two DPR-2 windows: the walk could not scope DIP extents to the
+        // X11 window, so it offers both frames.
+        let elements = vec![
+            json!({"role": "frame", "depth": 0, "frame": {"x": 0, "y": 0, "w": 400, "h": 300}}),
+            json!({"role": "frame", "depth": 0, "frame": {"x": 520, "y": 220, "w": 920, "h": 680}}),
+        ];
+        assert_eq!(
+            frames((1040, 440, 1840, 1360), elements, false)[1],
+            json!({"x": 0, "y": 0, "w": 1840, "h": 1360})
+        );
+    }
+
+    #[test]
+    fn an_odd_pixel_origin_maps_the_frame_to_the_capture_origin() {
+        let elements = vec![
+            json!({"role": "frame", "depth": 0, "frame": {"x": 520, "y": 220, "w": 920, "h": 680}}),
+        ];
+        assert_eq!(
+            frames((1041, 441, 1840, 1360), elements, true)[0],
+            json!({"x": 0, "y": 0, "w": 1840, "h": 1360})
         );
     }
 }

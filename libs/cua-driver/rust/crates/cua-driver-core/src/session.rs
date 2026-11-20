@@ -2594,7 +2594,10 @@ mod tests {
         // A late call from the closed transport resurrects nothing, and its
         // own unnamed id is never released.
         assert!(!recreates_on_next_call(label, owner_a));
-        assert_eq!(begin(label, owner_a).err(), Some(DispatchRefusal::Ended));
+        assert_eq!(
+            begin(label, owner_a).err(),
+            Some(DispatchRefusal::TransportClosed)
+        );
         assert_eq!(begin(owner_a, owner_b).err(), Some(DispatchRefusal::Ended));
         assert_eq!(
             start(ended_label, owner_a),

@@ -9,7 +9,8 @@ pub mod installed_apps;
 pub mod windows;
 
 pub use apps::{
-    list_descendants, list_processes, process_app_user_model_id, related_processes, ProcessInfo,
+    list_descendants, list_processes, process_package_identity, related_processes, PackageIdentity,
+    ProcessInfo,
 };
 pub use installed_apps::{list_installed_apps, InstalledApp};
 pub(crate) use windows::{

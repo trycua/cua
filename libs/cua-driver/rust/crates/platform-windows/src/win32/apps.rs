@@ -46,20 +46,40 @@ pub fn list_processes() -> Vec<ProcessInfo> {
     result
 }
 
-/// Read the Application User Model ID (`{PackageFamilyName}!{AppId}`) of
-/// `pid` from its process token. `None` for an unpackaged (classic Win32)
-/// process, or a packaged one that was not activated as an application.
-/// Unlike the executable name, this cannot be claimed by an unpackaged
-/// process.
-pub fn process_app_user_model_id(pid: u32) -> Option<String> {
+/// Package identity Windows attests for a running process. Both fields are
+/// `None` for an unpackaged (classic Win32) process.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PackageIdentity {
+    /// Package family name, e.g. `Microsoft.WindowsNotepad_8wekyb3d8bbwe`.
+    pub family_name: Option<String>,
+    /// Application User Model ID, `{PackageFamilyName}!{AppId}`. `None` for a
+    /// packaged process that was not activated as an application.
+    pub app_user_model_id: Option<String>,
+}
+
+/// Read the package identity of `pid` from its process token. Unlike the
+/// executable name, this cannot be claimed by an unpackaged process.
+pub fn process_package_identity(pid: u32) -> PackageIdentity {
     use windows::core::PWSTR;
     use windows::Win32::Foundation::ERROR_SUCCESS;
-    use windows::Win32::Storage::Packaging::Appx::GetApplicationUserModelId;
+    use windows::Win32::Storage::Packaging::Appx::{
+        GetApplicationUserModelId, GetPackageFamilyName,
+    };
     use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
 
     unsafe {
-        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+            return PackageIdentity::default();
+        };
+        // PACKAGE_FAMILY_NAME_MAX_LENGTH is 64 and
         // APPLICATION_USER_MODEL_ID_MAX_LENGTH is 130 (plus the terminator).
+        let mut family = [0_u16; 128];
+        let mut family_len = family.len() as u32;
+        let family_name =
+            (GetPackageFamilyName(process, &mut family_len, PWSTR(family.as_mut_ptr()))
+                == ERROR_SUCCESS)
+                .then(|| decode_wstr(&family))
+                .filter(|value| !value.is_empty());
         let mut aumid = [0_u16; 256];
         let mut aumid_len = aumid.len() as u32;
         let app_user_model_id =
@@ -68,7 +88,10 @@ pub fn process_app_user_model_id(pid: u32) -> Option<String> {
                 .then(|| decode_wstr(&aumid))
                 .filter(|value| !value.is_empty());
         let _ = CloseHandle(process);
-        app_user_model_id
+        PackageIdentity {
+            family_name,
+            app_user_model_id,
+        }
     }
 }
 
@@ -103,7 +126,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unpackaged_test_process_has_no_app_user_model_id() {
-        assert_eq!(process_app_user_model_id(std::process::id()), None);
+    fn unpackaged_test_process_has_no_package_identity() {
+        assert_eq!(
+            process_package_identity(std::process::id()),
+            PackageIdentity::default()
+        );
     }
 }

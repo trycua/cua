@@ -38,8 +38,8 @@ windows = { version = "0.58", features = [
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Diagnostics_Debug",
     "Win32_System_Kernel",
-    # GetApplicationUserModelId: the OS-attested app identity list_apps
-    # uses to match running packaged apps.
+    # GetApplicationUserModelId / GetPackageFamilyName: the OS-attested
+    # package identity list_apps uses to match running packaged apps.
     "Win32_Storage_Packaging_Appx",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Dwm",

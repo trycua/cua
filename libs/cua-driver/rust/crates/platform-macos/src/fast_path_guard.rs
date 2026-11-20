@@ -187,7 +187,7 @@ unsafe fn hit_test(pid: i32, x: f64, y: f64) -> Option<AXUIElementRef> {
 }
 
 /// Whether `hit` is `target` or a descendant within a few ancestors.
-unsafe fn is_self_or_ancestor(hit: AXUIElementRef, target: AXUIElementRef) -> bool {
+pub(crate) unsafe fn is_self_or_ancestor(hit: AXUIElementRef, target: AXUIElementRef) -> bool {
     let mut current = hit;
     let mut owned: Vec<AXUIElementRef> = Vec::new();
     let mut found = false;

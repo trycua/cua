@@ -80,7 +80,11 @@ spec:
             periodSeconds: 20
           resources:
             requests: { cpu: 100m, memory: 64Mi }
-            limits: { memory: 512Mi }
+            # The relay sizes its client stream budget to this limit (half of
+            # it, 768 KiB per stream: 4Gi gives 2730 streams); it logs the
+            # result as "client stream budget". Size it for your load, or
+            # set CUA_RELAY_MAX_GLOBAL_STREAMS.
+            limits: { memory: 4Gi }
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false

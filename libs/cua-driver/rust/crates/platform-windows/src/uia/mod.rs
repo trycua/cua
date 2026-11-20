@@ -499,8 +499,10 @@ unsafe fn walk_tree_unsafe(
                 );
 
                 if fallback_nodes.iter().any(|n| n.element_index.is_some()) {
-                    nodes = fallback_nodes;
+                    release_walk_nodes(std::mem::replace(&mut nodes, fallback_nodes));
                     lines = fallback_lines;
+                } else {
+                    release_walk_nodes(fallback_nodes);
                 }
             }
         }

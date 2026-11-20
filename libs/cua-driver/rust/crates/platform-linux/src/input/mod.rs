@@ -4054,7 +4054,7 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
     let (conn, _) = connect_x11_for_input()?;
     let window = xid as u32;
     let root = conn.setup().roots[0].root;
-    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mapping = keyboard_mapping(&conn)?;
     let client = RefCell::new(TextClient::new(&conn, Some(window)));
     type_text_in_spare_batches(
         text,
@@ -4138,7 +4138,7 @@ pub fn send_type_text_xtest_paced(text: &str, pacing: TypePacing) -> Result<()> 
     use x11rb::protocol::xtest::ConnectionExt as _;
     let sent = std::cell::Cell::new(0usize);
     let (conn, _) = connect_x11_for_input()?;
-    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mapping = keyboard_mapping(&conn)?;
     // Shift keycode (modifier index 0) for shifted characters.
     let modmap = conn.get_modifier_mapping()?.reply()?;
     let kpm = modmap.keycodes_per_modifier() as usize;
@@ -4206,7 +4206,7 @@ pub fn send_type_text_xtest_paced(text: &str, pacing: TypePacing) -> Result<()> 
 pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (conn, _) = connect_x11_for_input()?;
-    let mut mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mut mapping = keyboard_mapping(&conn)?;
 
     // Resolve modifier keycodes first. Keep any spare-keycode remap guards alive
     // until after the events are delivered (drop at end of fn).
@@ -4326,7 +4326,7 @@ pub fn send_click_xtest_desktop_with_modifiers(
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (conn, screen_num) = connect_x11_for_input()?;
     let root = conn.setup().roots[screen_num].root;
-    let mut mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mut mapping = keyboard_mapping(&conn)?;
     let mut guards = Vec::new();
     let mut modifier_keycodes = Vec::new();
     for modifier in modifiers {
@@ -4436,7 +4436,7 @@ pub fn send_drag_xtest_desktop_with_modifiers(
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (conn, screen_num) = connect_x11_for_input()?;
     let root = conn.setup().roots[screen_num].root;
-    let mut mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mut mapping = keyboard_mapping(&conn)?;
     let mut guards = Vec::new();
     let mut modifier_keycodes = Vec::new();
     for modifier in modifiers {
@@ -4561,7 +4561,7 @@ fn send_key_to_target(
     // `keycode_for_keysym` instead borrows a spare keycode and hands back a guard
     // that restores the original mapping once the event has been delivered.
     let keysym = key_name_to_keysym(key)?;
-    let mut mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mut mapping = keyboard_mapping(&conn)?;
     let (keycode, remap_guard) = keycode_for_keysym(&conn, &mut mapping, keysym, key)?;
 
     // XSendEvent's state mask describes modifiers for one key event, but does
@@ -4938,7 +4938,7 @@ mod spare_keycode_restore_tests {
         });
 
         let (conn, _) = RustConnection::connect(Some(&display)).unwrap();
-        let mapping = conn.get_keyboard_mapping(8, 248).unwrap().reply().unwrap();
+        let mapping = keyboard_mapping(&conn).unwrap();
         let client = RefCell::new(TextClient::new(&conn, None));
         type_text_in_spare_batches(
             TEXT,
@@ -5454,6 +5454,14 @@ impl Drop for BorrowedKeycodes<'_> {
     fn drop(&mut self) {
         self.restore();
     }
+}
+
+/// The keyboard map, keycodes 8..=255: the range `char_to_keycode_shift`
+/// and the spare-keycode remap index from.
+pub(crate) fn keyboard_mapping(
+    conn: &RustConnection,
+) -> Result<GetKeyboardMappingReply, x11rb::errors::ReplyError> {
+    Ok(conn.get_keyboard_mapping(8, 248)?.reply()?)
 }
 
 /// Whether a text may borrow `keycode`: every keysym slot is NoSymbol (0) — i.e.

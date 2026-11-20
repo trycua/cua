@@ -1030,8 +1030,10 @@ impl ContainerRuntime {
     }
 
     /// Removes container `name`'s rules from the engine host and forgets
-    /// its policy (the container is gone).
-    pub(crate) async fn unpolice(&self, name: &str) {
+    /// its policy (the container is gone). Its resolv.conf is removed only
+    /// when it was given one (`resolv`): the removal goes through the helper,
+    /// which must not be started for a file that was never written.
+    pub(crate) async fn unpolice(&self, name: &str, resolv: bool) {
         if let Some(t) = kept(name).and_then(|k| k.table)
             && let family = self.engine_bridge_family().await
             && let Err(e) = self
@@ -1040,7 +1042,8 @@ impl ContainerRuntime {
         {
             tracing::warn!(container = name, error = %e, "could not remove a deleted container's egress rules");
         }
-        if file_name_ok(name)
+        if resolv
+            && file_name_ok(name)
             && let Err(e) = self.engine_sh(REMOVE_RESOLV, &[name]).await
         {
             tracing::debug!(container = name, error = %e, "could not remove a deleted container's resolv.conf");

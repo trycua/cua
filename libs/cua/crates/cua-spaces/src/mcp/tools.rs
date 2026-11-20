@@ -14,6 +14,7 @@ use std::time::Duration;
 const MAX_CREATE_COUNT: u32 = 8;
 /// How long a tool that takes an app name waits for that app's window: `launch_app` answers when
 /// the process starts, a moment before its window exists.
+#[cfg(feature = "spaces-stream")]
 const APP_WINDOW_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 pub(super) fn args<T: DeserializeOwned>(tool: &str, value: Value) -> Result<T> {
@@ -295,6 +296,8 @@ async fn dispatch(
                 kind,
                 runtime: runtime.clone(),
                 name,
+                cpus: a.cpus,
+                memory_mb: a.memory_mb,
                 timeout: a.timeout.map(Duration::from_secs),
                 wait: a.wait,
                 reuse: a.reuse.unwrap_or(false),

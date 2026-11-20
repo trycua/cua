@@ -220,7 +220,7 @@ export function loadSourceFacts(): SourceFacts {
     read('libs/cua-driver/hyprland-plugin/packaging/release/profiles/omarchy-stable-20260910.json')
   ) as { source?: { driver_version?: string } };
   return {
-    sandboxDriverVersion: capture(sandboxProject, /"cua-driver==([^"]+)"/, 'Sandbox Driver pin'),
+    sandboxDriverVersion: capture(sandboxProject, /"cua-driver([^"]+)"/, 'Sandbox Driver range'),
     qualifiedDirectDriverVersion: string(
       profile.source?.driver_version,
       'Omarchy release profile Driver version',
@@ -288,7 +288,7 @@ export function renderEvidence(source: SourceFacts): string {
 - \`cua-image\` source (\`canonical.rs\`): the canonical image references.
 - \`cua\` source: public Python exports.
 - \`cua-sandbox[driver]\` maps direct Driver use to \`cua-driver\`
-  ${source.sandboxDriverVersion}. This client mapping is not the Driver version inside a particular
+  \`${source.sandboxDriverVersion}\`. This client mapping is not the Driver version inside a particular
   published or deployment-qualified guest image.`;
 }
 
@@ -339,7 +339,7 @@ export type SandboxImageList = {
 
 export const IMAGE_LIST_PATH = 'libs/images/sandbox-images.json';
 
-const OPTIONAL_IMAGE_FIELDS = ['guide', 'lock', 'benchmarks', 'sdk', 'digest', 'sizes', 'tier', 'gpu', 'derived_from'];
+const OPTIONAL_IMAGE_FIELDS = ['guide', 'lock', 'benchmarks', 'sdk', 'digest', 'sizes', 'tier', 'gpu', 'derived_from', 'local_build'];
 
 /** The tag suffix each tier puts before `-disk`: `<os-version>[-<tier>][-disk]`. */
 const TIER_SUFFIX: Record<string, string> = { slim: '-slim', full: '', xcode: '-xcode', docker: '-docker' };

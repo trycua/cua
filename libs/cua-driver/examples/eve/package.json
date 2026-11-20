@@ -11,9 +11,9 @@
   },
   "dependencies": {
     "@trycua/cua-driver": "0.30.2",
-    "ai": "7.0.118",
-    "eve": "0.69.0",
-    "zod": "4.1.12"
+    "ai": "7.0.177",
+    "eve": "1.1.0",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/node": "24.19.0",

@@ -8,7 +8,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -37,7 +37,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -102,7 +102,7 @@
       "type": "integer"
      },
      "query": {
-      "description": "Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count.",
+      "description": "Optional case-insensitive substring; `a|b` matches either. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count. A query that matches nothing says `0 of N elements match`.",
       "type": "string"
      },
      "screenshot_out_file": {
@@ -110,7 +110,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "since": {
@@ -125,7 +125,7 @@
       "type": "integer"
      },
      "tree_format": {
-      "description": "Which tree representation to return. Default \"markdown\": the compact `tree_markdown` only, where a row `[N]` is addressed with element_token `<snapshot_id>:N`. \"elements\": the structured `elements` array only (per-element element_token, frame, parent_index, value). \"both\": the two together, as before; roughly doubles the size.",
+      "description": "Which tree representation to return. Default \"markdown\": the compact `tree_markdown` only, where a row `[N]` is addressed with element_token `<snapshot_id>:N`. \"elements\": the structured `elements` array only (per-element element_token, frame, parent_index, value), plus `observations`: display-only rows such as static text, with role, label, value and frame but no element_token, for reading and verify_state only. \"both\": the two together, as before; roughly doubles the size.",
       "enum": [
        "markdown",
        "elements",
@@ -256,7 +256,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session. This\nfield never selects capture modality or authorization.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. This field never selects capture modality or authorization.",
       "type": "string"
      },
      "stable_samples": {
@@ -315,7 +315,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "urls": {
@@ -343,7 +343,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -367,7 +367,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "window_id": {
@@ -401,7 +401,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it.",
       "type": "string"
      },
      "width": {
@@ -437,13 +437,21 @@
    "read_only": false
   },
   {
-   "description": "Resolve an exact application-menu path one live native level at a time and invoke its final item through accessibility APIs. Missing, ambiguous, disabled, or structurally mismatched segments fail closed; this tool never falls back to pixels. Menu paths and refusals: `get_guide({topic:\"menus\"})`.",
+   "description": "Resolve an exact application-menu path one live native level at a time and normally invoke its final item through accessibility APIs. Missing, ambiguous, structurally mismatched, and other disabled segments fail closed; this tool never falls back to pixels. On macOS, a disabled Save (⌘S) in a background document window with a known document path is saved through the app’s scripting interface using Apple Events instead, without activating the app. This requires per-app Automation consent and may show macOS’s first-use consent prompt; denied permission refuses the save. Menu paths and refusals: `get_guide({topic:\"menus\"})`.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
     "additionalProperties": false,
     "description": "Exact, immediate-child application menu path to resolve and invoke through\nthe operating system's accessibility API. Path labels are matched after\ntrimming surrounding whitespace and otherwise remain case-sensitive. On\nmacOS, three periods in a label also match the ellipsis character that\nnative menu titles use (`Save As...` finds `Save As…`).",
     "properties": {
+     "delivery_mode": {
+      "description": "`background` (default) never takes the user's keyboard or pointer and refuses with\n`background_unavailable` when the item can only be reached by opening a menu. `foreground`\nis the explicit escalation that may activate the window and open menus. Linux honors it;\nmacOS and Windows accept it and keep their existing menu behavior.",
+      "enum": [
+       "background",
+       "foreground"
+      ],
+      "type": "string"
+     },
      "path": {
       "description": "Menu labels from the top-level menu to the item, e.g. `[\"File\", \"Save As...\"]`\n(1 to 16 labels).",
       "items": {
@@ -461,7 +469,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it.",
       "type": "string"
      },
      "window_id": {
@@ -528,7 +536,7 @@
       "type": "string"
      },
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -557,7 +565,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "target": {
@@ -565,11 +573,9 @@
       "description": "Exact window (kind \"window\", with pid and window_id) or desktop (kind \"desktop\", with display_id). \"primary\" is the portable desktop target.",
       "properties": {
        "display_id": {
-        "description": "Display id. Required when kind is desktop; use \"primary\".",
         "type": "string"
        },
        "kind": {
-        "description": "window requires pid and window_id; desktop requires display_id.",
         "enum": [
          "window",
          "desktop"
@@ -577,12 +583,10 @@
         "type": "string"
        },
        "pid": {
-        "description": "Process id. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        },
        "window_id": {
-        "description": "Window id from list_windows. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        }
@@ -640,7 +644,7 @@
       "type": "string"
      },
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -653,7 +657,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "window_id": {
@@ -704,7 +708,7 @@
       "type": "string"
      },
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -724,7 +728,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "window_id": {
@@ -822,7 +826,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "steps": {
@@ -836,11 +840,9 @@
       "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
       "properties": {
        "display_id": {
-        "description": "Display id. Required when kind is desktop; use \"primary\".",
         "type": "string"
        },
        "kind": {
-        "description": "window requires pid and window_id; desktop requires display_id.",
         "enum": [
          "window",
          "desktop"
@@ -848,12 +850,10 @@
         "type": "string"
        },
        "pid": {
-        "description": "Process id. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        },
        "window_id": {
-        "description": "Window id from list_windows. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        }
@@ -924,7 +924,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. When both are present, session takes precedence over cursor_id.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. When both are present, session takes precedence over cursor_id.",
       "type": "string"
      },
      "window_id": {
@@ -977,7 +977,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. When both are present, session takes precedence over cursor_id.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. When both are present, session takes precedence over cursor_id.",
       "type": "string"
      },
      "steps": {
@@ -1036,7 +1036,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. When both are present, session takes precedence over cursor_id.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. When both are present, session takes precedence over cursor_id.",
       "type": "string"
      },
      "window_id": {
@@ -1153,7 +1153,7 @@
       "type": "array"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -1196,7 +1196,7 @@
       "type": "string"
      },
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -1214,7 +1214,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "target": {
@@ -1222,11 +1222,9 @@
       "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
       "properties": {
        "display_id": {
-        "description": "Display id. Required when kind is desktop; use \"primary\".",
         "type": "string"
        },
        "kind": {
-        "description": "window requires pid and window_id; desktop requires display_id.",
         "enum": [
          "window",
          "desktop"
@@ -1234,12 +1232,10 @@
         "type": "string"
        },
        "pid": {
-        "description": "Process id. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        },
        "window_id": {
-        "description": "Window id from list_windows. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        }
@@ -1299,7 +1295,7 @@
       "type": "string"
      },
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -1328,7 +1324,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "target": {
@@ -1336,11 +1332,9 @@
       "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
       "properties": {
        "display_id": {
-        "description": "Display id. Required when kind is desktop; use \"primary\".",
         "type": "string"
        },
        "kind": {
-        "description": "window requires pid and window_id; desktop requires display_id.",
         "enum": [
          "window",
          "desktop"
@@ -1348,12 +1342,10 @@
         "type": "string"
        },
        "pid": {
-        "description": "Process id. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        },
        "window_id": {
-        "description": "Window id from list_windows. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        }
@@ -1401,7 +1393,7 @@
       "type": "string"
      },
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -1427,7 +1419,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "target": {
@@ -1435,11 +1427,9 @@
       "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
       "properties": {
        "display_id": {
-        "description": "Display id. Required when kind is desktop; use \"primary\".",
         "type": "string"
        },
        "kind": {
-        "description": "window requires pid and window_id; desktop requires display_id.",
         "enum": [
          "window",
          "desktop"
@@ -1447,12 +1437,10 @@
         "type": "string"
        },
        "pid": {
-        "description": "Process id. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        },
        "window_id": {
-        "description": "Window id from list_windows. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        }
@@ -1500,7 +1488,7 @@
       "type": "string"
      },
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -1509,7 +1497,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "value": {
@@ -1582,7 +1570,7 @@
       "type": "string"
      },
      "element_token": {
-      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of snapshot s0000002a is \"s0000002a:11\".",
       "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
@@ -1600,7 +1588,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "target": {
@@ -1608,11 +1596,9 @@
       "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
       "properties": {
        "display_id": {
-        "description": "Display id. Required when kind is desktop; use \"primary\".",
         "type": "string"
        },
        "kind": {
-        "description": "window requires pid and window_id; desktop requires display_id.",
         "enum": [
          "window",
          "desktop"
@@ -1620,12 +1606,10 @@
         "type": "string"
        },
        "pid": {
-        "description": "Process id. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        },
        "window_id": {
-        "description": "Window id from list_windows. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        }
@@ -1669,7 +1653,7 @@
       "type": "boolean"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it.",
       "type": "string"
      }
     },
@@ -1695,7 +1679,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it.",
       "type": "string"
      },
      "text": {
@@ -1717,7 +1701,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -1743,7 +1727,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -1760,7 +1744,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -1790,7 +1774,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "target": {
@@ -1798,11 +1782,9 @@
       "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
       "properties": {
        "display_id": {
-        "description": "Display id. Required when kind is desktop; use \"primary\".",
         "type": "string"
        },
        "kind": {
-        "description": "window requires pid and window_id; desktop requires display_id.",
         "enum": [
          "window",
          "desktop"
@@ -1810,12 +1792,10 @@
         "type": "string"
        },
        "pid": {
-        "description": "Process id. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        },
        "window_id": {
-        "description": "Window id from list_windows. Required when kind is window.",
         "minimum": 0,
         "type": "integer"
        }
@@ -2071,7 +2051,7 @@
       "type": "boolean"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -2095,7 +2075,7 @@
       "type": "array"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "skip": {
@@ -2119,7 +2099,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -2129,7 +2109,7 @@
    "read_only": true
   },
   {
-   "description": "Update cua-driver-rs configuration. capture_mode / max_image_dimension take effect immediately.\n\nPass each setting as its own field: `{\"capture_mode\": \"som\", \"max_image_dimension\": 0}`.\n\nThe experimental_pip keys persist to ~/.cua-driver/config.json and apply on next daemon restart (the PiP backend is initialised once at startup; Linux ships only the trait stub today — see issue #1729).\n\n`cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n\n`cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge for every cursor at once.\n\n`cursor.float` (float at rest and while moving) and `cursor.halo` (soft glow) are `on` (default), `off` or `default`; `cursor.marks` (action marks) is `on`, `off` (default) or `default`; `cursor.rotate` is `heading` (default), `lean`, `off` or `default`. All apply to every cursor at once.",
+   "description": "Update cua-driver-rs configuration. capture_mode / max_image_dimension take effect immediately.\n\nPass each setting as its own field: `{\"capture_mode\": \"som\", \"max_image_dimension\": 0}`.\n\n`cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n\n`cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge for every cursor at once.\n\n`cursor.float` (float at rest and while moving) and `cursor.halo` (soft glow) are `on` (default), `off` or `default`; `cursor.rotate` is `heading` (default), `lean`, `off` or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -2172,7 +2152,7 @@
       "type": "string"
      },
      "cursor.marks": {
-      "description": "Agent cursor action marks: the small cue next to the arrow for observe, click, type, keys, scroll, drag, apps, files, recording and system calls, plus the focus box around a clicked element on macOS. off (default): a plain arrow. Applies immediately to every cursor.",
+      "description": "Retired and ignored: the agent cursor never draws action marks, so it is always a plain arrow whatever the agent does. Still accepted so existing configs and callers keep working.",
       "enum": [
        "on",
        "off",
@@ -2268,14 +2248,6 @@
       ],
       "type": "string"
      },
-     "experimental_pip": {
-      "description": "Enable the experimental PiP preview window (applies next restart; Linux backend stubbed).",
-      "type": "boolean"
-     },
-     "experimental_pip_geometry": {
-      "description": "PiP window size + optional position in `WxH` or `WxH+X+Y` form.",
-      "type": "string"
-     },
      "fast_path": {
       "description": "Experimental fast path (default off). shadow: check cached targets at act time and report would-refuse verdicts; guard: refuse an action whose target changed since it was read (target_changed); on: guard, plus a small delta in each action result and tree-only re-reads. Runtime only, not saved; env CUA_DRIVER_FAST_PATH seeds it at start.",
       "enum": [
@@ -2291,7 +2263,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -2301,14 +2273,14 @@
    "read_only": false
   },
   {
-   "description": "Return a lightweight snapshot of the desktop: running processes and on-screen visible windows with their bounds and owner pid.\n\nFor the full AT-SPI subtree of a single window (with interactive element indices you can click by), use get_window_state instead — this is a fast discovery read.",
+   "description": "DEPRECATED, removed in the first release after 26 Nov 2026. Instead: list_windows and list_apps for what is open, and get_window_state for one window's accessibility tree. Return a lightweight snapshot of the desktop: running processes and on-screen visible windows with their bounds and owner pid.\n\nFor the full AT-SPI subtree of a single window (with interactive element indices you can click by), use get_window_state instead — this is a fast discovery read.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -2329,7 +2301,7 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "window_id": {
@@ -2366,7 +2338,7 @@
    "read_only": true
   },
   {
-   "description": "Legacy browser compatibility tool. Prefer get_browser_state and the typed browser_* tools for exact targeting, endpoint ownership, and consent. Read-only get_text and query_dom remain available by default. Mutating actions require the daemon operator to set CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1 before daemon startup (restart the daemon after changing it); this escape hatch does not provide the typed browser surface's exact binding or existing-profile grant guarantees. Supports Chrome, Brave, Edge, Safari (via AppleScript on macOS), Electron apps (via CDP), Chromium/Firefox on Windows (via UIA for read; CDP for execute_javascript when --remote-debugging-port is set), and WKWebView/Tauri/AT-SPI fallbacks.\n\nActions:\n- execute_javascript: Run JS and return the result.\n- get_text: Extract visible text from the page. On macOS, structuredContent.source identifies javascript, cdp, or ax_fallback; a successful AX fallback preserves the triggering error and truncation state in structuredContent.\n- query_dom: Find elements matching a CSS selector, with the same macOS fallback metadata contract as get_text.\n- click_element: Click a CSS-selected element AND animate the agent cursor to its on-screen center first (so the user sees what the agent is doing). Prefer over `execute_javascript('el.click()')` whenever you want visible cursor feedback.\n- insert_text: Insert `text` at whatever currently holds DOM focus in one native operation (CDP Input.insertText) — no synthesized key events, but more durable than a one-shot execute_javascript write since rich-text editors already have to treat it like an IME commit. Try this before type_keystrokes on a contenteditable that discarded an execute_javascript write. Click/focus the target field first.\n- type_keystrokes: Type `text` via real per-character keystroke events into whatever currently holds DOM focus. Slower than insert_text but the most durable rung — use it when insert_text also gets discarded, or the editor's own keydown/keyup handlers need to see real keys. Click/focus the target field first.\n- enable_javascript_apple_events: macOS-only — patch the browser's Preferences to allow JS from Apple Events (Chrome/Brave/Edge, requires user confirmation and a browser restart).",
+   "description": "Read-only legacy browser compatibility tool: read a page's text or query its DOM. Prefer get_browser_state and the typed browser_* tools for exact targeting, endpoint ownership, and consent; use this tool to read Safari and Firefox pages, which the typed tools do not cover. It cannot run JavaScript, click, or type: those page actions were removed, so act with the browser_* tools. Supports Chrome, Brave, Edge, Safari (via AppleScript on macOS), Electron apps (via CDP), Chromium/Firefox on Windows (via UIA), and WKWebView/Tauri/AT-SPI fallbacks.\n\nActions:\n- get_text: Extract visible text from the page. On macOS, structuredContent.source identifies javascript, cdp, or ax_fallback; a successful AX fallback preserves the triggering error and truncation state in structuredContent.\n- query_dom: Find elements matching a CSS selector, with the same macOS fallback metadata contract as get_text.",
    "destructive": false,
    "idempotent": false,
    "input_schema": {
@@ -2375,13 +2347,8 @@
      "action": {
       "description": "Action to perform.",
       "enum": [
-       "execute_javascript",
        "get_text",
-       "query_dom",
-       "click_element",
-       "insert_text",
-       "type_keystrokes",
-       "enable_javascript_apple_events"
+       "query_dom"
       ],
       "type": "string"
      },
@@ -2392,47 +2359,17 @@
       },
       "type": "array"
      },
-     "bundle_id": {
-      "description": "Bundle ID of the browser. Required for enable_javascript_apple_events (macOS only).",
-      "type": "string"
-     },
-     "cdp_port": {
-      "description": "Optional, for execute_javascript/insert_text/type_keystrokes: use this exact CDP port instead of auto-discovering one from pid. Needed when the port was opened via the browser's own remote-debugging toggle rather than a launch-time flag, since that path may not answer the auto-discovery probe.",
-      "maximum": 65535,
-      "minimum": 1,
-      "type": "integer"
-     },
      "css_selector": {
       "description": "CSS selector for query_dom (e.g. 'a', 'button', 'input', 'h1'-'h6', 'p', 'img', 'select', '*').",
-      "type": "string"
-     },
-     "javascript": {
-      "description": "JavaScript to execute. Required for execute_javascript.",
       "type": "string"
      },
      "pid": {
       "description": "Target process ID.",
       "type": "integer"
      },
-     "selector": {
-      "description": "CSS selector for click_element (e.g. 'button.submit', '#login a').",
-      "type": "string"
-     },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
-     },
-     "target_url_contains": {
-      "description": "Optional, for execute_javascript/insert_text/type_keystrokes: require exactly one browser tab whose URL contains this substring. Use this on a multi-tab browser — there's no built-in link between window_id and which tab a CDP call reaches.",
-      "type": "string"
-     },
-     "text": {
-      "description": "Text to insert or type. Required for insert_text and type_keystrokes. The target field must already have DOM focus (click/focus it first).",
-      "type": "string"
-     },
-     "user_has_confirmed_enabling": {
-      "description": "Must be true to proceed with enable_javascript_apple_events. This will quit and relaunch the browser.",
-      "type": "boolean"
      },
      "window_id": {
       "description": "Target window ID from list_windows.",
@@ -2476,7 +2413,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "snapshot_format": {
@@ -2551,7 +2488,7 @@
       "type": "object"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "strategy": {
@@ -2589,7 +2526,7 @@
     "additionalProperties": true,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "tab_id": {
@@ -2613,6 +2550,44 @@
     "type": "object"
    },
    "name": "browser_navigate",
+   "read_only": false
+  },
+  {
+   "description": "Apply or clear the standard prefers-reduced-motion media emulation for one exactly-bound driver-owned browser tab. This is an explicit experimental performance/accessibility policy: it does not inject CSS, freeze timers, video, canvas, or WebGL, and refuses existing user profiles in v0.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "mode": {
+      "description": "reduce emulates prefers-reduced-motion: reduce; default clears the emulated media-feature override.",
+      "enum": [
+       "reduce",
+       "default"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "type": "string"
+     },
+     "tab_id": {
+      "description": "Opaque tab id from get_browser_state (session-scoped).",
+      "type": "string"
+     },
+     "target_id": {
+      "description": "Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).",
+      "type": "string"
+     }
+    },
+    "required": [
+     "target_id",
+     "tab_id",
+     "mode"
+    ],
+    "type": "object"
+   },
+   "name": "browser_motion_policy",
    "read_only": false
   },
   {
@@ -2644,7 +2619,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "tab_id": {
@@ -2674,7 +2649,7 @@
    "read_only": false
   },
   {
-   "description": "Type text into an exactly-bound tab via the Input domain. mode=\"insert_text\" (default) uses Input.insertText; mode=\"keystrokes\" dispatches per-character key events. Both insert at the caret, so typing into a field that already holds text appends to it; pass replace=true to set the field instead, or to clear it by typing an empty string. Pass a ref to an editable element from the latest snapshot. A ref is required; heuristic bindings are refused.",
+   "description": "Type text into an exactly-bound tab via the Input domain. mode=\"insert_text\" (default) uses Input.insertText; mode=\"keystrokes\" dispatches per-character key events. Both insert at the caret, so typing into a field that already holds text appends to it; pass replace=true to set the field instead, or to clear it by typing an empty string. On a single-line input, a trailing newline is pressed as a real Enter (key, code, keyCode 13) after the text and the result reports enter_pressed; a textarea or contenteditable keeps it as content. Pass a ref to an editable element from the latest snapshot. A ref is required; heuristic bindings are refused.",
    "destructive": false,
    "idempotent": false,
    "input_schema": {
@@ -2697,7 +2672,7 @@
       "type": "boolean"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "tab_id": {
@@ -2709,7 +2684,7 @@
       "type": "string"
      },
      "text": {
-      "description": "Text to type.",
+      "description": "Text to type. End it with \\n to press Enter after the text on a single-line input.",
       "type": "string"
      }
     },
@@ -2740,7 +2715,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "tab_id": {
@@ -2800,7 +2775,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "tab_id": {
@@ -2844,7 +2819,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
      },
      "tab_id": {
@@ -3000,7 +2975,7 @@
    "read_only": false
   },
   {
-   "description": "Start trajectory recording for the calling session. Each action-tool invocation (click, right_click, scroll, type_text, press_key, hotkey, set_value) from that session writes a turn folder under `output_dir`. Without `session`, every call on the same connection is recorded, including named-session calls. Other connections and session lifecycle calls (`start_session` / `end_session`) are not recorded. CLI recordings started with `cua-driver recording start` are daemon-wide.\n\nEach turn folder holds:\n\n- `before_state.json` / `after_state.json` — application AX/UIA/AT-SPI state immediately before and after the action.\n- `before.png` / `after.png` — target-window screenshots immediately before and after the action.\n- `evidence.json` — capture status and a stable classification when an expected artifact could not be captured.\n- `app_state.json` — post-action AX/UIA snapshot for the target pid.\n- `screenshot.png` — compatibility alias of `after.png`.\n- `action.json` — tool name, full input arguments, result summary, result-error flag, pid, click point (when applicable), ISO-8601 timestamp.\n- `click.png` — for dispatched click-family actions only, `before.png` with a red marker at the click point. A call refused before target resolution is explicitly not applicable instead.\n\nThe per-turn accessibility walk is bounded like `get_window_state`: `state_timeout_ms` (default 1000) caps each before/after walk, a walk that runs out of budget records the PARTIAL tree, and `evidence.json` carries `truncated`, `truncation_reason`, `nodes_visited`, `nodes_pending` and `timeout_ms` for that phase. A provider that stops answering is abandoned after the budget plus a short grace and the phase is classified `state_capture_timeout`. Actions refused before dispatch (for example an unknown or expired `capture_id`) skip the state walk; their state is classified `not_applicable` / `action_refused_before_dispatch`. Pass `include_accessibility_tree: false` to record screenshots and actions without state.\n\nPass `redact_values` with any secret the session will type (for example a password): each occurrence in a turn's text files is replaced with `[redacted]`, and such turns are not replayed.\n\nTurn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn numbering restarts at 1 each time recording is (re-)started.\n\n**Video is off by default.** Pass `record_video: true` to also capture the main display to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of the session. The recording is torn down automatically when the MCP client disconnects.\n\n**macOS uses native ScreenCaptureKit** (daemon-owned SCStream + SCRecordingOutput) under the daemon's Screen Recording grant, with no ffmpeg subprocess. Requires macOS 15.0+. On macOS 26 (Tahoe), the first direct capture can also show a one-time consent asking to let Cua Driver bypass the system private window picker and directly access your screen and audio; choose Allow, or run `cua-driver permissions grant` beforehand to answer it up front. The recorder captures screen video only and does not enable system-audio capture.\n\n**Windows + Linux X11 use an ffmpeg subprocess** (`gdigrab` / `x11grab` + libx264). Requires ffmpeg on PATH (winget install Gyan.FFmpeg / apt install ffmpeg); when ffmpeg is missing or fails on startup the per-turn capture (screenshots + action.json) still runs and the session's `last_error` field carries the diagnostic.\n\n**Linux Wayland routes by compositor**: GNOME uses the trusted Shell helper's frames, wlroots compositors use `wf-recorder`, and compositors without wlr-screencopy (KDE/KWin) record the monitor the user grants through the xdg-desktop-portal ScreenCast (one consent dialog per install; requires a build with the `portal-capture` feature and ffmpeg on PATH). Unsupported combinations report the exact limitation in `last_error`.\n\nState persists for the life of the daemon; a restart resets to disabled with no on-disk state. Call `stop_recording` to disable + finalize the mp4.",
+   "description": "Start trajectory recording for the calling session. Each action-tool invocation (click, right_click, scroll, type_text, press_key, hotkey, set_value) from that session writes a turn folder under `output_dir`. Without `session`, every call on the same connection is recorded, including named-session calls. Other connections and session lifecycle calls (`start_session` / `end_session`) are not recorded. CLI recordings started with `cua-driver recording start` are daemon-wide.\n\nEach turn folder holds:\n\n- `before_state.json` / `after_state.json` — application AX/UIA/AT-SPI state immediately before and after the action.\n- `before.png` / `after.png` — target-window screenshots immediately before and after the action.\n- `evidence.json` — capture status and a stable classification when an expected artifact could not be captured.\n- `app_state.json` — post-action AX/UIA snapshot for the target pid.\n- `screenshot.png` — compatibility alias of `after.png`.\n- `action.json` — tool name, full input arguments, result summary, result-error flag, pid, click point (when applicable), ISO-8601 timestamp.\n- `click.png` — for dispatched click-family actions only, `before.png` with a red marker at the click point. A call refused before target resolution is explicitly not applicable instead.\n\nThe per-turn accessibility walk is bounded like `get_window_state`: `state_timeout_ms` (default 1000) caps each before/after walk, a walk that runs out of budget records the PARTIAL tree, and `evidence.json` carries `truncated`, `truncation_reason`, `nodes_visited`, `nodes_pending` and `timeout_ms` for that phase. A provider that stops answering is abandoned after the budget plus a short grace and the phase is classified `state_capture_timeout`. Actions refused before dispatch (for example an unknown or expired `capture_id`) skip the state walk; their state is classified `not_applicable` / `action_refused_before_dispatch`. Pass `include_accessibility_tree: false` to record screenshots and actions without state.\n\nPass `redact_values` with any secret the session will type (for example a password): each occurrence in a turn's text files is replaced with `[redacted]`, and such turns are not replayed.\n\nTurn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn numbering restarts at 1 each time recording is (re-)started.\n\n`<output_dir>/session.json` describes the whole recording: `schema_version`, `started_at_unix_ms` (the wall-clock start in Unix epoch milliseconds, unchanged when recording stops), `video` and `cursor`. `started_at_monotonic_ms` holds the same value for older readers; it is not a monotonic clock reading.\n\n**Video is off by default.** Pass `record_video: true` to also capture the main display to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of the session. The recording is torn down automatically when the MCP client disconnects.\n\n**macOS uses native ScreenCaptureKit** (daemon-owned SCStream + SCRecordingOutput) under the daemon's Screen Recording grant, with no ffmpeg subprocess. Requires macOS 15.0+. On macOS 26 (Tahoe), the first direct capture can also show a one-time consent asking to let Cua Driver bypass the system private window picker and directly access your screen and audio; choose Allow, or run `cua-driver permissions grant` beforehand to answer it up front. The recorder captures screen video only and does not enable system-audio capture.\n\n**Windows + Linux X11 use an ffmpeg subprocess** (`gdigrab` / `x11grab` + libx264). Requires ffmpeg on PATH (winget install Gyan.FFmpeg / apt install ffmpeg); when ffmpeg is missing or fails on startup the per-turn capture (screenshots + action.json) still runs and the session's `last_error` field carries the diagnostic.\n\n**Linux Wayland routes by compositor**: GNOME uses the trusted Shell helper's frames, wlroots compositors use `wf-recorder`, and compositors without wlr-screencopy (KDE/KWin) record the monitor the user grants through the xdg-desktop-portal ScreenCast (one consent dialog per install; requires a build with the `portal-capture` feature and ffmpeg on PATH). Unsupported combinations report the exact limitation in `last_error`.\n\nState persists for the life of the daemon; a restart resets to disabled with no on-disk state. Call `stop_recording` to disable + finalize the mp4.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -3030,7 +3005,7 @@
       "type": "array"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "state_timeout_ms": {
@@ -3057,7 +3032,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -3074,7 +3049,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -3084,7 +3059,7 @@
    "read_only": true
   },
   {
-   "description": "Replay a recorded trajectory by re-invoking every turn's tool call in lexical order. `dir` must point at a directory previously written by `start_recording`. Each `turn-NNNNN/` is parsed for `action.json`, and the recorded tool is called with its recorded `arguments` via the same dispatch path an MCP / CLI call uses.\n\nCaveats:\n- Element-token actions (`click({pid, element_token})` etc.) will fail because element tokens are per-snapshot and don't survive across sessions. Pixel clicks (`click({pid, x, y})`) and all keyboard tools replay cleanly. Failures are reported but don't stop replay unless `stop_on_error` is true.\n- `get_window_state` and other read-only tools are NOT currently recorded, so replays do not re-populate the per-(pid, window_id) element cache.\n- If recording is ENABLED while replay runs, the replay itself is recorded into the currently configured output directory.  That's deliberate: recording a replay against a new build and diffing the two trajectories is the regression-test workflow.",
+   "description": "DEPRECATED, removed in the first release after 26 Nov 2026. Instead: call the recorded steps yourself with run_steps (replay clicks blindly from old coordinates; keep start_recording for recording). Replay a recorded trajectory by re-invoking every turn's tool call in lexical order. `dir` must point at a directory previously written by `start_recording`. Each `turn-NNNNN/` is parsed for `action.json`, and the recorded tool is called with its recorded `arguments` via the same dispatch path an MCP / CLI call uses.\n\nCaveats:\n- Element-token actions (`click({pid, element_token})` etc.) will fail because element tokens are per-snapshot and don't survive across sessions. Pixel clicks (`click({pid, x, y})`) and all keyboard tools replay cleanly. Failures are reported but don't stop replay unless `stop_on_error` is true.\n- `get_window_state` and other read-only tools are NOT currently recorded, so replays do not re-populate the per-(pid, window_id) element cache.\n- If recording is ENABLED while replay runs, the replay itself is recorded into the currently configured output directory.  That's deliberate: recording a replay against a new build and diffing the two trajectories is the regression-test workflow.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -3101,7 +3076,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "stop_on_error": {
@@ -3118,7 +3093,7 @@
    "read_only": false
   },
   {
-   "description": "Install the ffmpeg binary used by start_recording's video capture (Linux/Windows; macOS records natively and needs no ffmpeg). Two-step and confirmed: called without `confirm` it only REPORTS the exact install command for this platform's package manager; pass `confirm: true` to actually run it. No-op if ffmpeg is already on PATH. ffmpeg is run as a separate process, never linked into the driver.",
+   "description": "DEPRECATED, removed in the first release after 26 Nov 2026. Instead: install ffmpeg with your package manager (brew install ffmpeg, winget install Gyan.FFmpeg, or apt/dnf/pacman install ffmpeg). Install the ffmpeg binary used by start_recording's video capture (Linux/Windows; macOS records natively and needs no ffmpeg). Two-step and confirmed: called without `confirm` it only REPORTS the exact install command for this platform's package manager; pass `confirm: true` to actually run it. No-op if ffmpeg is already on PATH. ffmpeg is run as a separate process, never linked into the driver.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -3129,7 +3104,7 @@
       "type": "boolean"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -3310,43 +3285,6 @@
    "read_only": false
   },
   {
-   "description": "Deprecated compatibility tool for legacy capture-scope sessions. New callers select window or desktop modality on each action. No deescalate_session tool exists.",
-   "destructive": false,
-   "idempotent": false,
-   "input_schema": {
-    "additionalProperties": true,
-    "properties": {
-     "detail": {
-      "description": "Optional bounded diagnostic detail. Never use secrets or page content.",
-      "maxLength": 200,
-      "type": "string"
-     },
-     "reason": {
-      "description": "Why the window-scoped attempt failed and desktop capture is needed.",
-      "enum": [
-       "ax_tree_pixel_mismatch",
-       "background_delivery_failed",
-       "foreground_ineffective",
-       "no_window_target",
-       "other"
-      ],
-      "type": "string"
-     },
-     "session": {
-      "description": "Public label of the legacy capture-scope session to escalate.",
-      "type": "string"
-     }
-    },
-    "required": [
-     "session",
-     "reason"
-    ],
-    "type": "object"
-   },
-   "name": "escalate_session",
-   "read_only": false
-  },
-  {
    "description": "Read content-free lifecycle, cursor, recording, and idle status for one session visible to this authenticated transport. Omit `session` to inspect its implicit session.",
    "destructive": false,
    "idempotent": true,
@@ -3388,24 +3326,6 @@
    "read_only": true
   },
   {
-   "description": "Deprecated compatibility alias that reads a live legacy session's capture policy. Use get_session for lifecycle state.",
-   "destructive": false,
-   "idempotent": true,
-   "input_schema": {
-    "additionalProperties": true,
-    "properties": {
-     "session": {
-      "description": "Optional public label. When omitted, inspect the caller's attached\nimplicit session.",
-      "type": "string"
-     }
-    },
-    "required": [],
-    "type": "object"
-   },
-   "name": "get_session_state",
-   "read_only": true
-  },
-  {
    "description": "End one visible lifecycle session and run its cursor, recording, configuration, and other cleanup hooks exactly once. Omit `session` to end the authenticated transport's implicit session. Idempotent.",
    "destructive": true,
    "idempotent": true,
@@ -3431,7 +3351,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "topic": {
@@ -3482,11 +3402,11 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "steps": {
-      "description": "Ordered actions. Execution stops at the first failing step. Each step is {tool, args} or {<tool>: args}, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check.",
+      "description": "Ordered actions. Execution stops at the first failing step. Each step is {tool, args}, {tool, <argument fields beside tool>} or {<tool>: args}, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check.",
       "items": {
        "additionalProperties": true,
        "properties": {
@@ -3572,7 +3492,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "timeout_ms": {
@@ -3598,7 +3518,7 @@
     "additionalProperties": false,
     "properties": {
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -3626,7 +3546,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },
@@ -3685,7 +3605,7 @@
       "type": "object"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      }
     },

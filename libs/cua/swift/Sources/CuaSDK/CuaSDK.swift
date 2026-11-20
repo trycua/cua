@@ -989,10 +989,14 @@ public protocol AgentSetupProtocol: AnyObject, Sendable {
      * Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
      * (`server`, default this channel's cua), and with `sign_in` the
      * agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
-     * sign-in it already has, read from where Claude Code keeps it). JSON:
-     * one result per agent.
+     * sign-in it already has, read from where Claude Code keeps it). With
+     * `driver`, the `cua-driver` entry the host app wants (the Cua Driver it
+     * carries, by absolute path) is written too; `driver_permissions_granted`
+     * says whether Screen Recording and Accessibility are on for it (None:
+     * unknown). Each part asked for is reported on its own (`parts`), so
+     * one can be retried by asking for it alone. JSON: one result per agent.
      */
-    func connectJson(agents: [String], server: AgentMcpServer?, skills: Bool, mcp: Bool, signIn: Bool) async throws  -> String
+    func connectJson(agents: [String], server: AgentMcpServer?, skills: Bool, mcp: Bool, signIn: Bool, driver: AgentMcpServer?, driverPermissionsGranted: Bool?) async throws  -> String
 
     /**
      * Whether each agent is really connected (CONTRACT §4: `{agents,
@@ -1174,16 +1178,20 @@ open func configureMcp(agents: [String], server: AgentMcpServer?)async throws  -
      * Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
      * (`server`, default this channel's cua), and with `sign_in` the
      * agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
-     * sign-in it already has, read from where Claude Code keeps it). JSON:
-     * one result per agent.
+     * sign-in it already has, read from where Claude Code keeps it). With
+     * `driver`, the `cua-driver` entry the host app wants (the Cua Driver it
+     * carries, by absolute path) is written too; `driver_permissions_granted`
+     * says whether Screen Recording and Accessibility are on for it (None:
+     * unknown). Each part asked for is reported on its own (`parts`), so
+     * one can be retried by asking for it alone. JSON: one result per agent.
      */
-open func connectJson(agents: [String], server: AgentMcpServer?, skills: Bool, mcp: Bool, signIn: Bool)async throws  -> String  {
+open func connectJson(agents: [String], server: AgentMcpServer?, skills: Bool, mcp: Bool, signIn: Bool, driver: AgentMcpServer?, driverPermissionsGranted: Bool?)async throws  -> String  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_cua_sdk_fn_method_agentsetup_connect_json(
                     self.uniffiCloneHandle(),
-                    FfiConverterSequenceString.lower(agents),FfiConverterOptionTypeAgentMcpServer.lower(server),FfiConverterBool.lower(skills),FfiConverterBool.lower(mcp),FfiConverterBool.lower(signIn)
+                    FfiConverterSequenceString.lower(agents),FfiConverterOptionTypeAgentMcpServer.lower(server),FfiConverterBool.lower(skills),FfiConverterBool.lower(mcp),FfiConverterBool.lower(signIn),FfiConverterOptionTypeAgentMcpServer.lower(driver),FfiConverterOptionBool.lower(driverPermissionsGranted)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
@@ -11763,6 +11771,12 @@ public protocol SpacesProtocol: AnyObject, Sendable {
     func notificationsAck(ids: [String]) async throws  -> UInt64
 
     /**
+     * Deletes notifications: these ids, or every one when `all` (an empty
+     * `ids` without `all` deletes nothing). Returns how many were deleted.
+     */
+    func notificationsDelete(ids: [String], all: Bool) async throws  -> UInt64
+
+    /**
      * Posts a notification to the Cua app. Returns its id.
      */
     func notifyUser(title: String, body: String?, agent: String?) async throws  -> String
@@ -12905,6 +12919,27 @@ open func notificationsAck(ids: [String])async throws  -> UInt64  {
                 uniffi_cua_sdk_fn_method_spaces_notifications_ack(
                     self.uniffiCloneHandle(),
                     FfiConverterSequenceString.lower(ids)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_u64,
+            completeFunc: ffi_cua_sdk_rust_future_complete_u64,
+            freeFunc: ffi_cua_sdk_rust_future_free_u64,
+            liftFunc: FfiConverterUInt64.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Deletes notifications: these ids, or every one when `all` (an empty
+     * `ids` without `all` deletes nothing). Returns how many were deleted.
+     */
+open func notificationsDelete(ids: [String], all: Bool)async throws  -> UInt64  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_notifications_delete(
+                    self.uniffiCloneHandle(),
+                    FfiConverterSequenceString.lower(ids),FfiConverterBool.lower(all)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_u64,
@@ -54659,7 +54694,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() != 53713) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 21138) {
+    if (uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 1379) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_agentsetup_connection_status_json() != 47692) {
@@ -55596,6 +55631,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_notifications_ack() != 64477) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_notifications_delete() != 26912) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_notify_user() != 48805) {

@@ -13,12 +13,15 @@ use std::sync::{
     Arc,
 };
 
-use windows::core::Interface;
+use windows::core::{IUnknown, Interface};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, IUIAutomationTextPattern, SupportedTextSelection_Single,
+    IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern, SupportedTextSelection_Single,
     TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start, TextUnit_Character,
-    UIA_DocumentControlTypeId, UIA_TextPatternId, UIA_ValuePatternId,
+    UIA_BackgroundColorAttributeId, UIA_DocumentControlTypeId, UIA_FontNameAttributeId,
+    UIA_FontSizeAttributeId, UIA_FontWeightAttributeId, UIA_ForegroundColorAttributeId,
+    UIA_IsItalicAttributeId, UIA_StrikethroughStyleAttributeId, UIA_StyleIdAttributeId,
+    UIA_TextPatternId, UIA_UnderlineStyleAttributeId, UIA_ValuePatternId, UIA_TEXTATTRIBUTE_ID,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetAncestor, GetForegroundWindow, IsWindow, GA_ROOT,
@@ -34,6 +37,21 @@ pub(crate) enum FocusedDocumentTypeOutcome {
 }
 
 const MAX_TYPED_DOCUMENT_UNITS: i32 = 1 << 20;
+
+/// Formatting that SetValue would flatten when it differs across the document.
+const FORMAT_ATTRIBUTES: [UIA_TEXTATTRIBUTE_ID; 9] = [
+    UIA_FontNameAttributeId,
+    UIA_FontSizeAttributeId,
+    UIA_FontWeightAttributeId,
+    UIA_IsItalicAttributeId,
+    UIA_UnderlineStyleAttributeId,
+    UIA_StrikethroughStyleAttributeId,
+    UIA_ForegroundColorAttributeId,
+    UIA_BackgroundColorAttributeId,
+    UIA_StyleIdAttributeId,
+];
+
+const OBJECT_REPLACEMENT: char = '\u{fffc}';
 
 static PENDING_WRITE: AtomicBool = AtomicBool::new(false);
 
@@ -83,9 +101,7 @@ fn try_type_focused_document_append_unbounded(
         CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
     };
     use windows::Win32::System::Threading::GetCurrentThreadId;
-    use windows::Win32::UI::Accessibility::{
-        CUIAutomation, IUIAutomation, IUIAutomationValuePattern,
-    };
+    use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomationValuePattern};
 
     let thread_id = unsafe { GetCurrentThreadId() };
     let coinit = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
@@ -151,6 +167,13 @@ fn try_type_focused_document_append_unbounded(
             return not_applicable("value_unavailable");
         };
         let initial_value = initial_value.to_string();
+        // SetValue rewrites the whole document as plain text, so content it
+        // cannot carry back must keep the key route.
+        if initial_value.contains(OBJECT_REPLACEMENT)
+            || !document_is_plain_text(&uia, &text_pattern)
+        {
+            return not_applicable("document_has_rich_content");
+        }
         let single_text_selection = unsafe { text_pattern.SupportedTextSelection() }
             .is_ok_and(|selection| selection == SupportedTextSelection_Single);
         let document_matches = unsafe { text_pattern.DocumentRange() }
@@ -398,6 +421,30 @@ fn focused_document_matches_target(
         && crate::win32::windows::window_owner_pid(element_hwnd.0 as usize as u64)
             == Some(target_pid)
         && unsafe { GetAncestor(element_hwnd, GA_ROOT) } == target
+}
+
+/// True when the document range has no embedded objects and no formatting
+/// attribute that varies across it.
+fn document_is_plain_text(uia: &IUIAutomation, text_pattern: &IUIAutomationTextPattern) -> bool {
+    let Ok(document) = (unsafe { text_pattern.DocumentRange() }) else {
+        return false;
+    };
+    if !unsafe { document.GetChildren() }
+        .and_then(|children| unsafe { children.Length() })
+        .is_ok_and(|count| count == 0)
+    {
+        return false;
+    }
+    let Ok(mixed) = (unsafe { uia.ReservedMixedAttributeValue() }) else {
+        return false;
+    };
+    FORMAT_ATTRIBUTES.iter().all(|&attribute| {
+        unsafe { document.GetAttributeValue(attribute) }.is_ok_and(|value| {
+            IUnknown::try_from(&value)
+                .ok()
+                .is_none_or(|value| value != mixed)
+        })
+    })
 }
 
 fn exact_foreground_target(target: HWND, expected_pid: Option<u32>) -> bool {

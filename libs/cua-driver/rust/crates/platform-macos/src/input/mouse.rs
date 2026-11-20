@@ -64,23 +64,17 @@ fn skylight_available() -> bool {
     crate::input::skylight::is_available()
 }
 
-/// Stamp `event` with the current time. A created event's timestamp (integer
-/// field 58) is 0 and the per-pid routes deliver it unchanged, so AppKit and
-/// Chromium would read the event as posted at boot (#7292). The unit is
-/// nanoseconds of `CLOCK_UPTIME_RAW`, the clock `NSEvent.timestamp` reports in
-/// seconds.
-fn stamp_post_time(event: &CGEvent) {
-    unsafe {
-        CGEventSetTimestamp(
-            event.as_ptr() as *mut std::ffi::c_void,
-            clock_gettime_nsec_np(libc::CLOCK_UPTIME_RAW),
-        );
-    }
+/// The current time as a CGEvent timestamp (integer field 58): nanoseconds of
+/// `CLOCK_UPTIME_RAW`, the clock `NSEvent.timestamp` reports in seconds. A
+/// gesture's events all carry the time it started. A value from another clock
+/// reads as a click from just after boot, older than the page, and Chromium's
+/// soft-navigation check crashes the renderer on it (#7292).
+pub(super) fn gesture_timestamp() -> i64 {
+    unsafe { clock_gettime_nsec_np(libc::CLOCK_UPTIME_RAW) as i64 }
 }
 
 /// Hand one stamped event to its transport.
 fn dispatch_mouse_event(route: PostRoute, pid: i32, event: &CGEvent) {
-    stamp_post_time(event);
     #[cfg(test)]
     if post_sink::record(route, event) {
         return;
@@ -461,12 +455,24 @@ fn click_at_xy_inner(
     let point = CGPoint::new(x, y);
     let flags = parse_modifier_flags(modifiers);
 
+    // One timestamp (f58) for every event of the gesture when window_id is
+    // known, so WindowServer / Chromium take the pairs as one gesture.
+    let gesture_time: Option<i64> = wid.map(|_| gesture_timestamp());
+
     super::keyboard::with_pid_modifier_keys(pid, modifiers, || {
         // Prime the target window's cursor-tracking state with a leading
         // mouseMoved so an AppKit NSButton / NSView hit-tests the down at the
         // right point. Without it the synthetic mouseDown on a backgrounded
         // AppKit control is silently ignored.
-        post_mouse_moved_primer(pid, &source, point, window_local, wid, post_mode);
+        post_mouse_moved_primer(
+            pid,
+            &source,
+            point,
+            window_local,
+            wid,
+            gesture_time,
+            post_mode,
+        );
         std::thread::sleep(cua_driver_core::input_pacing::mouse_primer_settle());
 
         for pair_index in 0..count {
@@ -481,7 +487,17 @@ fn click_at_xy_inner(
             .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(down) failed"))?;
             set_explicit_flags(&down, flags);
 
-            post_mouse_event_with_mode(pid, &down, window_local, wid, click_state, 0, 3, post_mode);
+            post_mouse_event_with_mode(
+                pid,
+                &down,
+                window_local,
+                wid,
+                gesture_time,
+                click_state,
+                0,
+                3,
+                post_mode,
+            );
             // 28 ms down→up gap: an NSButton's mouseDown enters a modal
             // tracking loop that polls for the matching mouseUp; too tight a
             // gap can race the loop's first poll and the click is dropped.
@@ -496,7 +512,17 @@ fn click_at_xy_inner(
             .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(up) failed"))?;
             set_explicit_flags(&up, flags);
 
-            post_mouse_event_with_mode(pid, &up, window_local, wid, click_state, 0, 3, post_mode);
+            post_mouse_event_with_mode(
+                pid,
+                &up,
+                window_local,
+                wid,
+                gesture_time,
+                click_state,
+                0,
+                3,
+                post_mode,
+            );
 
             if count > 1 {
                 std::thread::sleep(cua_driver_core::input_pacing::multi_click_gap());
@@ -548,6 +574,7 @@ pub fn prepare_background_pixel_click(pid: i32, wid: u32) -> bool {
 ///  - f7  = 3  (NSEventSubtypeTouch)
 ///  - f40 = target pid   (Chromium synthetic-event filter)
 ///  - f51 / f91 / f92 = CGWindowID (window routing)
+///  - f58 = one timestamp across all events (the gesture's start time)
 ///  - `CGEventSetWindowLocation` per-event (window-local point on macOS 27+,
 ///    screen point before; see `window_location_is_window_local`)
 ///
@@ -706,6 +733,10 @@ pub fn click_at_xy_chromium(
     let flags = parse_modifier_flags(modifiers);
     let window_id = wid as i64;
 
+    // All events share one timestamp (field 58) so WindowServer / Chromium
+    // treat the sequence as one gesture.
+    let gesture_time = gesture_timestamp();
+
     // Stamp required fields onto a CGEvent.  All captured values are Copy so
     // this closure is Fn (callable multiple times).
     let stamp = |event: &CGEvent, step: &ChromiumClickRouteStep| {
@@ -723,6 +754,7 @@ pub fn click_at_xy_chromium(
             set(91, window_id); // kCGMouseEventWindowUnderMousePointer
             set(92, window_id); // kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent
         }
+        set(58, gesture_time); // event timestamp, shared by the gesture
         crate::input::skylight::set_window_location(
             ptr,
             step.skylight_window_location.0,
@@ -960,8 +992,8 @@ impl BackgroundDragStep {
 /// This is the background click route stretched over a gesture: every event
 /// is posted to the process (SkyLight `SLEventPostToPid`, or the public
 /// per-pid API only when the SPI is absent), carries the exact window in the
-/// routing fields (f51/f91/f92) and the target pid (f40), and is stamped
-/// with its own location: window-local on macOS 27+,
+/// routing fields (f51/f91/f92), the target pid (f40) and one timestamp
+/// (f58), and is stamped with its own location: window-local on macOS 27+,
 /// using `window_origin` (the window's screen origin), the screen point
 /// before. The hardware pointer is never
 /// warped and nothing is posted to the global HID tap, so the user's pointer,
@@ -1022,6 +1054,7 @@ where
             2,
         ),
     };
+    let gesture_time = gesture_timestamp();
     let route = post_route(MousePostMode::SkyLightPreferred, skylight_available());
     let window_id = wid as i64;
 
@@ -1068,6 +1101,7 @@ where
             set(51, window_id);
             set(91, window_id);
             set(92, window_id);
+            set(58, gesture_time);
             let stamped = BackgroundDragStep { point, ..step };
             let (stamp_x, stamp_y) = stamped.window_location(stamp_origin);
             crate::input::skylight::set_window_location(ptr, stamp_x, stamp_y);
@@ -1125,6 +1159,7 @@ fn post_drag_mouse_event(
     button: CGMouseButton,
     window_local: Option<(f64, f64)>,
     wid: Option<u32>,
+    gesture_time: Option<i64>,
     click_state: i64,
     button_number: i64,
     subtype: i64,
@@ -1141,6 +1176,7 @@ fn post_drag_mouse_event(
         &event,
         window_local,
         wid,
+        gesture_time,
         click_state,
         button_number,
         subtype,
@@ -1192,6 +1228,7 @@ where
             2,
         ),
     };
+    let gesture_time = wid.map(|_| gesture_timestamp());
     let steps = steps.max(1);
     let step_delay_ms = if steps > 1 {
         duration_ms / steps as u64
@@ -1242,6 +1279,7 @@ where
                 event_button,
                 local,
                 wid,
+                gesture_time,
                 click_state,
                 event_button_number,
                 subtype,
@@ -1537,12 +1575,15 @@ fn right_click_at_xy_inner(
     let point = CGPoint::new(x, y);
     let flags = parse_modifier_flags(modifiers);
 
+    let gesture_time: Option<i64> = wid.map(|_| gesture_timestamp());
+
     post_mouse_moved_primer(
         pid,
         &source,
         point,
         window_local,
         wid,
+        gesture_time,
         MousePostMode::SkyLightPreferred,
     );
     std::thread::sleep(cua_driver_core::input_pacing::mouse_primer_settle());
@@ -1555,6 +1596,7 @@ fn right_click_at_xy_inner(
         &down,
         window_local,
         wid,
+        gesture_time,
         1,
         button_number,
         3,
@@ -1570,6 +1612,7 @@ fn right_click_at_xy_inner(
         &up,
         window_local,
         wid,
+        gesture_time,
         1,
         button_number,
         3,
@@ -1597,6 +1640,7 @@ fn right_click_at_xy_inner(
 /// - f3  = `button_number`  (kCGMouseEventButtonNumber: 0=left, 1=right, 2=middle)
 /// - f7  = 3                (kCGMouseEventSubtype = NSEventSubtypeTouch)
 /// - f51 = window_id        (windowNumber, NSEvent bridge equivalent)
+/// - f58 = gesture_time     (event timestamp, shared across pairs)
 /// - f91 = window_id        (kCGMouseEventWindowUnderMousePointer)
 /// - f92 = window_id        (kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent)
 ///
@@ -1610,6 +1654,7 @@ pub(super) fn post_mouse_event(
     event: &CGEvent,
     window_local: Option<(f64, f64)>,
     wid: Option<u32>,
+    gesture_time: Option<i64>,
     click_state: i64,
     button_number: i64,
     subtype: i64,
@@ -1619,6 +1664,7 @@ pub(super) fn post_mouse_event(
         event,
         window_local,
         wid,
+        gesture_time,
         click_state,
         button_number,
         subtype,
@@ -1632,6 +1678,7 @@ fn post_mouse_event_with_mode(
     event: &CGEvent,
     window_local: Option<(f64, f64)>,
     wid: Option<u32>,
+    gesture_time: Option<i64>,
     click_state: i64,
     button_number: i64,
     subtype: i64,
@@ -1645,7 +1692,7 @@ fn post_mouse_event_with_mode(
     }
 
     // Chromium / AppKit window-routing fields — stamp when window_id is known.
-    if let Some(wid) = wid {
+    if let (Some(wid), Some(time)) = (wid, gesture_time) {
         let window_id = wid as i64;
         let set = |f: u32, v: i64| {
             crate::input::skylight::set_integer_field(event_ptr, f, v);
@@ -1654,6 +1701,7 @@ fn post_mouse_event_with_mode(
         set(3, button_number); // kCGMouseEventButtonNumber (0=left, 1=right, 2=middle)
         set(7, subtype); // kCGMouseEventSubtype (touch for clicks, normal for drags)
         set(51, window_id); // windowNumber
+        set(58, time); // event timestamp, shared by the gesture
         set(91, window_id); // kCGMouseEventWindowUnderMousePointer
         set(92, window_id); // kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent
     }
@@ -1681,6 +1729,7 @@ fn post_mouse_moved_primer(
     point: CGPoint,
     window_local: Option<(f64, f64)>,
     wid: Option<u32>,
+    gesture_time: Option<i64>,
     mode: MousePostMode,
 ) {
     if let Ok(mv) = CGEvent::new_mouse_event(
@@ -1689,7 +1738,7 @@ fn post_mouse_moved_primer(
         point,
         CGMouseButton::Left,
     ) {
-        post_mouse_event_with_mode(pid, &mv, window_local, wid, 0, 0, 3, mode);
+        post_mouse_event_with_mode(pid, &mv, window_local, wid, gesture_time, 0, 0, 3, mode);
     }
 }
 
@@ -1749,6 +1798,7 @@ pub fn scroll_wheel_at_xy(
         CGPoint::new(screen_x, screen_y),
         window_local,
         wid,
+        Some(gesture_timestamp()),
         MousePostMode::Both,
     );
     std::thread::sleep(cua_driver_core::input_pacing::mouse_primer_settle());
@@ -1788,8 +1838,6 @@ pub fn scroll_wheel_at_xy(
         // f40 = target pid (Chromium synthetic-event filter).
         crate::input::skylight::set_integer_field(event_ptr, 40, pid as i64);
 
-        stamp_post_time(&event);
-
         // Belt+suspenders post: SkyLight reaches backgrounded Chromium/Catalyst;
         // the public path lands on AppKit/WKWebView. Mouse-class → no auth envelope.
         crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false);
@@ -1818,8 +1866,6 @@ extern "C" {
     /// SkyLight bridge uses for `CGEventSetWindowLocation`.
     fn CGEventSetLocation(event: *mut std::ffi::c_void, x: f64, y: f64);
 
-    fn CGEventSetTimestamp(event: *mut std::ffi::c_void, timestamp: u64);
-
     fn clock_gettime_nsec_np(clock_id: libc::clockid_t) -> u64;
 }
 
@@ -1847,7 +1893,6 @@ fn parse_modifier_flags(modifiers: &[&str]) -> CGEventFlags {
 mod post_sink {
     use super::PostRoute;
     use core_graphics::event::{CGEvent, EventField};
-    use foreign_types::ForeignType;
     use std::cell::RefCell;
 
     pub(super) const MODIFIER_MASK: u64 = 0x0002_0000 // shift
@@ -1881,9 +1926,7 @@ mod post_sink {
         warps: usize,
         /// Modifier flags carried by each posted event, parallel to `posted`.
         modifiers: Vec<u64>,
-        window_routing: Vec<[i64; 3]>,
-        /// `CGEventGetTimestamp` of each posted event, parallel to `posted`.
-        timestamps: Vec<u64>,
+        window_routing: Vec<[i64; 4]>,
         locations: Vec<(f64, f64)>,
     }
 
@@ -1904,7 +1947,6 @@ mod post_sink {
                     warps: 0,
                     modifiers: Vec::new(),
                     window_routing: Vec::new(),
-                    timestamps: Vec::new(),
                     locations: Vec::new(),
                 });
             });
@@ -1934,12 +1976,8 @@ mod post_sink {
             })
         }
 
-        pub(super) fn window_routing(&self) -> Vec<[i64; 3]> {
+        pub(super) fn window_routing(&self) -> Vec<[i64; 4]> {
             STATE.with(|state| state.borrow().as_ref().unwrap().window_routing.clone())
-        }
-
-        pub(super) fn timestamps(&self) -> Vec<u64> {
-            STATE.with(|state| state.borrow().as_ref().unwrap().timestamps.clone())
         }
 
         /// Each posted event's screen location.
@@ -1972,10 +2010,6 @@ mod post_sink {
         }
     }
 
-    extern "C" {
-        fn CGEventGetTimestamp(event: *mut std::ffi::c_void) -> u64;
-    }
-
     pub(super) fn skylight_override() -> Option<bool> {
         STATE.with(|state| {
             state
@@ -2002,10 +2036,7 @@ mod post_sink {
                 .push(event.get_flags().bits() & MODIFIER_MASK);
             state
                 .window_routing
-                .push([51, 91, 92].map(|field| event.get_integer_value_field(field)));
-            state
-                .timestamps
-                .push(unsafe { CGEventGetTimestamp(event.as_ptr().cast()) });
+                .push([51, 91, 92, 58].map(|field| event.get_integer_value_field(field)));
             let location = event.location();
             state.locations.push((location.x, location.y));
             true
@@ -2022,7 +2053,14 @@ mod tests {
     fn background_middle_click_preserves_exact_window_routing() {
         let capture = Capture::start(true);
         middle_click_at_xy_with_window_local(1, 100.0, 100.0, 10.0, 10.0, 7, &[]).unwrap();
-        assert_eq!(capture.window_routing(), [[7, 7, 7]; 3]);
+        let routing = capture.window_routing();
+        assert_eq!(routing.len(), 3);
+        for fields in &routing {
+            assert_eq!(&fields[..3], &[7, 7, 7]);
+            assert_ne!(fields[3], 0, "window stamps require a gesture timestamp");
+        }
+        assert_eq!(routing[0][3], routing[1][3]);
+        assert_eq!(routing[1][3], routing[2][3]);
         assert_eq!(
             capture.posted(),
             [
@@ -2033,16 +2071,14 @@ mod tests {
         );
     }
 
-    /// Integer field 58 is the event timestamp. A click-group ID written there
-    /// made Chromium read the click as older than the page and crash the
-    /// renderer on a same-document navigation (#7292), and an unset timestamp
-    /// reaches the app as 0. Every window-addressed pointer path stamps the
-    /// time of each post.
+    /// Integer field 58 is the event timestamp. A sub-second wall-clock value
+    /// there made Chromium read the click as older than the page and crash the
+    /// renderer on a same-document navigation (#7292). Every window-addressed
+    /// pointer path stamps the time the gesture started, shared by its events.
     #[test]
-    fn window_addressed_pointer_events_carry_the_post_time() {
-        let uptime = || unsafe { clock_gettime_nsec_np(libc::CLOCK_UPTIME_RAW) };
+    fn window_addressed_pointer_gestures_carry_their_start_time() {
         let capture = Capture::start(true);
-        let before = uptime();
+        let before = gesture_timestamp();
         click_at_xy_chromium(1, 100.0, 100.0, 10.0, 10.0, 7, 2, &[]).unwrap();
         click_at_xy_with_window_local(
             1,
@@ -2057,7 +2093,6 @@ mod tests {
         )
         .unwrap();
         right_click_at_xy_with_window_local(1, 100.0, 100.0, 10.0, 10.0, 7, &[]).unwrap();
-        middle_click_at_xy_with_window_local(1, 100.0, 100.0, 10.0, 10.0, 7, &[]).unwrap();
         drag_at_xy_background(
             1,
             (100.0, 100.0),
@@ -2072,18 +2107,21 @@ mod tests {
             || false,
         )
         .unwrap();
-        let after = uptime();
-        let timestamps = capture.timestamps();
-        assert_eq!(timestamps.len(), capture.posted().len());
-        assert!(timestamps.len() > 20, "every path posted: {timestamps:?}");
+        let after = gesture_timestamp();
+        let times: Vec<i64> = capture.window_routing().iter().map(|f| f[3]).collect();
+        assert!(times.len() > 15, "every path posted: {times:?}");
         assert!(
-            timestamps.first() >= Some(&before) && timestamps.last() <= Some(&after),
-            "posted timestamps {timestamps:?} fall outside {before}..={after}"
+            times.iter().all(|time| (before..=after).contains(time)),
+            "gesture timestamps {times:?} fall outside {before}..={after}"
         );
-        assert!(
-            timestamps.windows(2).all(|pair| pair[0] <= pair[1]),
-            "posted timestamps run backwards: {timestamps:?}"
-        );
+        // Chromium click (7 events), foreground click (3), right click (3),
+        // then the drag: each gesture shares one timestamp.
+        for gesture in [&times[..7], &times[7..10], &times[10..13], &times[13..]] {
+            assert!(
+                gesture.iter().all(|time| *time == gesture[0]),
+                "one gesture, one timestamp: {times:?}"
+            );
+        }
     }
 
     #[test]
@@ -2104,7 +2142,7 @@ mod tests {
     fn window_less_middle_click_keeps_window_routing_unset() {
         let capture = Capture::start(true);
         middle_click_at_xy(1, 100.0, 100.0, &[]).unwrap();
-        assert_eq!(capture.window_routing(), [[0; 3]; 3]);
+        assert_eq!(capture.window_routing(), [[0; 4]; 3]);
         assert_eq!(
             capture.posted(),
             [
@@ -2565,13 +2603,16 @@ mod tests {
                 .all(|posted| posted.route == PostRoute::SkyLight),
             "a background drag never reaches the HID tap or a second transport"
         );
-        assert!(
-            capture
-                .window_routing()
-                .iter()
-                .all(|fields| *fields == [7, 7, 7]),
-            "every event names the exact window"
-        );
+        let routing = capture.window_routing();
+        let gesture = routing[0][3];
+        for fields in routing {
+            assert_eq!(
+                &fields[..3],
+                &[7, 7, 7],
+                "every event names the exact window"
+            );
+            assert_eq!(fields[3], gesture, "every event carries one gesture ID");
+        }
         assert!(capture
             .modifiers()
             .iter()

@@ -5,13 +5,19 @@
 # exposure to C apps), so there's no compile step. Electron and Tauri are
 # shared cross-platform harnesses built from apps/cross-platform/.
 #
+# wayland-presentation is a raw Wayland client built from source: it owns its
+# own wl_surface so each fixture content commit has its own measurable
+# wp_presentation feedback.
+#
 # Runtime deps (NOT installed here): python3-gi, gir1.2-gtk-3.0,
 # gir1.2-gtk-4.0, at-spi2-core,
-# Node.js/npm for Electron, Rust + WebKitGTK build deps for Tauri.
+# Node.js/npm for Electron, Rust + WebKitGTK build deps for Tauri,
+# Rust + libwayland-dev for wayland-presentation.
 #
 # Usage:
 #   ./linux.sh
-#   ./linux.sh --skip gtk3       # skip one target (gtk3|gtk4|electron|tauri)
+#   ./linux.sh --skip gtk3       # skip one target
+#                                # (gtk3|gtk4|electron|tauri|wayland-presentation)
 #   ./linux.sh --only electron,gtk3,gtk4
 #   ./linux.sh --clean
 set -euo pipefail
@@ -24,7 +30,7 @@ GTK3_SRC="$HARNESS_DIR/apps/linux/gtk3"
 GTK4_STAGE="$TEST_APPS_DIR/harness-gtk4"
 GTK4_SRC="$HARNESS_DIR/apps/linux/gtk4"
 SKIP="none"
-ONLY=",gtk3,gtk4,electron,tauri,"
+ONLY=",gtk3,gtk4,electron,tauri,wayland-presentation,"
 CLEAN=0
 
 while [[ $# -gt 0 ]]; do
@@ -42,14 +48,14 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         *)
-            echo "Usage: $0 [--skip gtk3|gtk4|electron|tauri] [--only comma-separated-targets] [--clean]" >&2
+            echo "Usage: $0 [--skip gtk3|gtk4|electron|tauri|wayland-presentation] [--only comma-separated-targets] [--clean]" >&2
             exit 2
             ;;
     esac
 done
 
 if [[ "$CLEAN" == "1" ]]; then
-    rm -rf "$TEST_APPS_DIR/harness-gtk3" "$TEST_APPS_DIR/harness-gtk4" "$TEST_APPS_DIR/harness-electron" "$TEST_APPS_DIR/harness-tauri"
+    rm -rf "$TEST_APPS_DIR/harness-gtk3" "$TEST_APPS_DIR/harness-gtk4" "$TEST_APPS_DIR/harness-electron" "$TEST_APPS_DIR/harness-tauri" "$TEST_APPS_DIR/harness-wayland-presentation"
 fi
 
 if [[ "$SKIP" != "gtk3" && "$ONLY" == *",gtk3,"* ]]; then
@@ -108,4 +114,8 @@ fi
 
 if [[ "$SKIP" != "tauri" && "$ONLY" == *",tauri,"* ]]; then
     "$HARNESS_DIR/apps/cross-platform/tauri/build.sh"
+fi
+
+if [[ "$SKIP" != "wayland-presentation" && "$ONLY" == *",wayland-presentation,"* ]]; then
+    "$HARNESS_DIR/apps/linux/wayland-presentation/build.sh"
 fi

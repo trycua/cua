@@ -81,6 +81,7 @@ describe("keyboard mapping", () => {
     const sent: InteractiveInputEvent[] = [];
     let landed = () => {};
     let pastes = 0;
+    let copies = 0;
     const surface = document.createElement("div");
     const controller = new InputController({
       surface,
@@ -91,6 +92,7 @@ describe("keyboard mapping", () => {
         pastes++;
         return new Promise<void>((resolve) => (landed = resolve));
       },
+      onCopyShortcut: () => void copies++,
     });
     const press = (type: string, init: KeyboardEventInit) =>
       controller.textarea.dispatchEvent(new KeyboardEvent(type, { ...init, cancelable: true }));
@@ -103,13 +105,23 @@ describe("keyboard mapping", () => {
     // A second paste meanwhile waits for the same clipboard, whole: Chromium
     // may send no key-up for a key pressed with ⌘ held.
     expect(press("keydown", { key: "v", code: "KeyV", metaKey: true })).toBe(false);
+    // Other keys go at once, as before: a copy reaches the guest before its poll.
+    press("keydown", { key: "c", code: "KeyC", metaKey: true });
+    expect(copies).toBe(1);
+    press("keyup", { key: "c", code: "KeyC", metaKey: true });
     press("keyup", { key: "Meta", code: "MetaLeft", metaKey: true });
-    expect(sent.map((e) => (e.kind === "key" ? `${e.key} ${e.state}` : e.kind))).toEqual(["meta down", "meta up", "control down"]);
+    expect(sent.map((e) => (e.kind === "key" ? `${e.key} ${e.state}` : e.kind))).toEqual([
+      "meta down",
+      "meta up",
+      "control down",
+      "c down",
+      "c up",
+    ]);
     landed();
     await new Promise((resolve) => setTimeout(resolve, 0));
     controller.dispose();
     expect(pastes).toBe(1);
-    expect(sent.map((e) => (e.kind === "key" ? [e.key, e.state, e.modifiers] : e.kind)).slice(3)).toEqual([
+    expect(sent.map((e) => (e.kind === "key" ? [e.key, e.state, e.modifiers] : e.kind)).slice(5)).toEqual([
       ["v", "down", ["control"]],
       ["v", "up", ["control"]],
       ["v", "down", ["control"]],
@@ -137,7 +149,10 @@ describe("keyboard mapping", () => {
       press("keydown", { key: "v", code: "KeyV", metaKey: true });
       controller.textarea.dispatchEvent(new Event("paste"));
       press("keyup", { key: "Meta", code: "MetaLeft" });
-      vi.advanceTimersByTime(1999);
+      vi.advanceTimersByTime(1000);
+      // Another `paste` (the context menu) does not restart the wait.
+      controller.textarea.dispatchEvent(new Event("paste"));
+      vi.advanceTimersByTime(999);
       expect(sent.map((e) => (e.kind === "key" ? `${e.key} ${e.state}` : e.kind))).toEqual(["control down"]);
       vi.advanceTimersByTime(1);
       expect(sent.map((e) => (e.kind === "key" ? `${e.key} ${e.state}` : e.kind))).toEqual([

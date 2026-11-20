@@ -215,7 +215,7 @@ export class InputController {
   private readonly touches = new Map<number, Touch>();
   private longPress: number | null = null;
   private touchMode: "none" | "pointer" | "scroll" | "longpress" = "none";
-  private pendingPaste: { resolve: () => void; timer: number; after: InteractiveInputEvent[] } | null = null;
+  private pendingPaste: { resolve: () => void; timer: number; armed: boolean; after: InteractiveInputEvent[] } | null = null;
   private readonly heldKeys = new Map<string, InteractiveInputEvent>();
   private readonly commands = new CommandKeys(() => this.options.keyOptions().metaAsControl);
   enabled = true;
@@ -238,6 +238,7 @@ export class InputController {
   }
 
   dispose(): void {
+    this.pendingPaste?.resolve();
     this.releaseAll();
     for (const off of this.off.splice(0)) off();
     this.textarea.remove();
@@ -249,7 +250,7 @@ export class InputController {
       if (event.kind === "key") this.send({ ...event, state: "up", repeat: false });
     }
     this.heldKeys.clear();
-    for (const event of this.commands.release()) this.send(event);
+    this.sendCommands(this.commands.release());
   }
 
   private keyOptions(superKey: boolean): KeyMapOptions {
@@ -257,13 +258,15 @@ export class InputController {
     return superKey ? { ...options, metaAsControl: false } : options;
   }
 
+  /** The guest's ⌘ keys, behind a held paste chord so they reach the guest
+   * after it: Super restored before Control+V would turn it into Super+Control+V. */
+  private sendCommands(events: InteractiveInputEvent[]): void {
+    if (this.pendingPaste) this.pendingPaste.after.push(...events);
+    else for (const event of events) this.send(event);
+  }
+
   private send(event: InteractiveInputEvent): void {
     if (!this.enabled) return;
-    if (this.pendingPaste) {
-      // Behind the held paste chord, so the guest gets the keys in order.
-      this.pendingPaste.after.push(event);
-      return;
-    }
     this.options.emit(event);
     this.options.onAction?.(event);
   }
@@ -287,7 +290,7 @@ export class InputController {
     const textarea = this.textarea;
 
     this.on(textarea, "keydown", (event) => {
-      for (const command of this.commands.key(event, "down")) this.send(command);
+      this.sendCommands(this.commands.key(event, "down"));
       if (CommandKeys.isCommand(event.code)) return event.preventDefault();
       // The right ⌘ alone is the guest's Super, never Control.
       const superKey = this.commands.isSuper;
@@ -300,8 +303,7 @@ export class InputController {
         // Queued whole behind the paste waiting for the clipboard, whose host
         // clipboard is the one this paste would send.
         event.preventDefault();
-        this.send(mapped);
-        this.send({ ...mapped, state: "up", repeat: false });
+        this.pendingPaste.after.push(mapped, { ...mapped, state: "up", repeat: false });
         return;
       }
       if (isPaste) {
@@ -324,7 +326,7 @@ export class InputController {
       }
     });
     this.on(textarea, "keyup", (event) => {
-      for (const command of this.commands.key(event, "up")) this.send(command);
+      this.sendCommands(this.commands.key(event, "up"));
       if (CommandKeys.isCommand(event.code)) return event.preventDefault();
       // Release exactly what went down for this physical key, even if the
       // modifiers changed in between (Ctrl released before C).
@@ -443,7 +445,7 @@ export class InputController {
   private holdForPaste(keyEvent: InteractiveInputEvent): void {
     // Up to 300 ms for the `paste` event (none comes when the host clipboard
     // is empty or the engine withholds it); the keys go out either way,
-    // followed by any input sent meanwhile.
+    // followed by the ⌘ changes and pastes held behind them.
     const after: InteractiveInputEvent[] = [];
     const release = () => {
       if (this.pendingPaste?.after !== after) return;
@@ -456,14 +458,15 @@ export class InputController {
       for (const event of after) this.send(event);
     };
     const timer = window.setTimeout(release, 300);
-    this.pendingPaste = { resolve: release, timer, after };
+    this.pendingPaste = { resolve: release, timer, armed: false, after };
   }
 
   private async pasted(event: ClipboardEvent): Promise<void> {
     const pending = this.pendingPaste;
-    if (pending) {
+    if (pending && !pending.armed) {
       // At most PASTE_WAIT_MS for the clipboard to reach the guest, so a
       // slow or failed transfer still delivers the keys.
+      pending.armed = true;
       window.clearTimeout(pending.timer);
       pending.timer = window.setTimeout(pending.resolve, PASTE_WAIT_MS);
     }

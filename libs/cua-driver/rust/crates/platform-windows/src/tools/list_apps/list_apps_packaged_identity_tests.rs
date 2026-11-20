@@ -96,3 +96,15 @@ fn desktop_entries_are_never_package_matches() {
     let identity = package(Some(NOTEPAD), Some(&format!("{NOTEPAD}!App")));
     assert_eq!(packaged_installed_match(&identity, &apps), None);
 }
+
+#[test]
+fn aumid_match_uses_the_manifest_application_id_not_app() {
+    const PAINT: &str = "Contoso.Paint_8wekyb3d8bbwe";
+    let apps = vec![app(
+        "uwp",
+        PAINT,
+        &format!(r"shell:appsFolder\{PAINT}!Editor"),
+    )];
+    let identity = package(Some(PAINT), Some(&format!("{PAINT}!Editor")));
+    assert_eq!(packaged_installed_match(&identity, &apps), Some(0));
+}

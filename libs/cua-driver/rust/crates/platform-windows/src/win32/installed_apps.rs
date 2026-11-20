@@ -470,15 +470,30 @@ fn read_uwp_application_id(pkg: &windows::ApplicationModel::Package) -> Option<S
     }
     let manifest = std::path::Path::new(&base).join("AppxManifest.xml");
     let xml = std::fs::read_to_string(manifest).ok()?;
+    first_application_id(&xml)
+}
 
-    // Look for the first <Application ... Id="..."> start tag.
-    let app_pos = xml.find("<Application")?;
+/// The `Id` of the first `<Application>` element in an AppxManifest. The
+/// enclosing `<Applications>` element shares the prefix and has no `Id`, so
+/// the tag name must end where the prefix does.
+fn first_application_id(xml: &str) -> Option<String> {
+    const TAG: &str = "<Application";
+    let app_pos = xml.match_indices(TAG).map(|(pos, _)| pos).find(|&pos| {
+        xml[pos + TAG.len()..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_whitespace() || c == '>' || c == '/')
+    })?;
     let tail = &xml[app_pos..];
     let tag_end = tail.find('>')?;
     let start_tag = &tail[..tag_end];
 
     let id_key = "Id=\"";
-    let id_pos = start_tag.find(id_key)? + id_key.len();
+    let id_pos = start_tag
+        .match_indices(id_key)
+        .map(|(pos, _)| pos)
+        .find(|&pos| start_tag[..pos].ends_with(char::is_whitespace))?
+        + id_key.len();
     let rest = &start_tag[id_pos..];
     let id_end = rest.find('"')?;
     let app_id = rest[..id_end].trim();
@@ -589,6 +604,24 @@ mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
     use std::time::Instant;
+
+    #[test]
+    fn first_application_id_skips_the_applications_wrapper() {
+        let manifest = r#"<Package><Applications>
+            <Application uap10:HostId="Host" Id="Editor" Executable="editor.exe" EntryPoint="Windows.FullTrustApplication">
+            </Application>
+            <Application Id="Viewer" Executable="viewer.exe"/>
+        </Applications></Package>"#;
+        assert_eq!(first_application_id(manifest).as_deref(), Some("Editor"));
+    }
+
+    #[test]
+    fn first_application_id_is_none_without_an_application_element() {
+        assert_eq!(
+            first_application_id("<Package><Applications/></Package>"),
+            None
+        );
+    }
 
     #[test]
     fn shortcut_environment_target_resolves_without_changing_arguments() {

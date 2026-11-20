@@ -201,41 +201,12 @@ fn action_record(confirmed: bool, foreground: bool) -> ActionExecutionRecord {
     record.build().expect("press_key record is valid")
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("the addressed element did not acquire keyboard focus; no key was dispatched")]
-struct KeyFocusUnconfirmed;
-
-fn with_confirmed_key_focus<T>(
-    target: Option<usize>,
-    mut focus: impl FnMut(usize) -> anyhow::Result<()>,
-    mut is_focused: impl FnMut(usize) -> bool,
-    dispatch: impl FnOnce() -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
-    if let Some(target) = target {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
-        loop {
-            focus(target)?;
-            if is_focused(target) {
-                break;
-            }
-            if std::time::Instant::now() >= deadline {
-                return Err(KeyFocusUnconfirmed.into());
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-    }
-    dispatch()
-}
-
 fn delivery_failed(error: anyhow::Error) -> ToolResult {
     if let Some(refusal) = crate::security_prompt::tool_result(&error) {
         return refusal;
     }
-    if error.is::<KeyFocusUnconfirmed>() {
-        return ToolResult::error(error.to_string()).with_structured(serde_json::json!({
-            "code": "target_focus_unconfirmed", "effect": "refused", "dispatched": false,
-            "message": error.to_string(),
-        }));
+    if let Some(refusal) = super::key_focus_unconfirmed_error(&error) {
+        return refusal;
     }
     let message = format!("press_key delivery failed: {error}");
     ToolResult::error(&message).with_structured(serde_json::json!({
@@ -504,7 +475,7 @@ impl Tool for PressKeyTool {
                                 wid,
                                 || {
                                     // Activation may replace the first responder; confirm inside the HID guard.
-                                    with_confirmed_key_focus(
+                                    crate::input::ax_actions::with_confirmed_key_focus(
                                         pre_focus_ptr,
                                         crate::input::ax_actions::focus_element,
                                         |target| {
@@ -524,7 +495,7 @@ impl Tool for PressKeyTool {
                     }
                     // background (default): auth-envelope post, no raise.
                     dispatch_with_ax_oracle(pid, window_id, pre_focus_ptr, || {
-                        with_confirmed_key_focus(
+                        crate::input::ax_actions::with_confirmed_key_focus(
                             pre_focus_ptr,
                             crate::input::ax_actions::focus_element,
                             |target| {
@@ -604,7 +575,7 @@ mod tests {
     fn targeted_key_requires_focus_readback_before_dispatch() {
         use std::cell::RefCell;
         let events = RefCell::new(Vec::new());
-        let result = with_confirmed_key_focus(
+        let result = crate::input::ax_actions::with_confirmed_key_focus(
             Some(42),
             |target| {
                 events.borrow_mut().push(("focus", target));
@@ -640,7 +611,7 @@ mod tests {
         use std::cell::RefCell;
         let events = RefCell::new(Vec::new());
         let mut checks = 0;
-        with_confirmed_key_focus(
+        crate::input::ax_actions::with_confirmed_key_focus(
             Some(42),
             |target| {
                 events.borrow_mut().push(("focus", target));
@@ -674,7 +645,7 @@ mod tests {
         use std::cell::Cell;
         let sent = Cell::new(0);
         for target in [Some(42), None] {
-            with_confirmed_key_focus(
+            crate::input::ax_actions::with_confirmed_key_focus(
                 target,
                 |_| Ok(()),
                 |_| true,
@@ -686,14 +657,14 @@ mod tests {
             .unwrap();
         }
         assert_eq!(sent.get(), 2);
-        let failed = with_confirmed_key_focus(
+        let failed = crate::input::ax_actions::with_confirmed_key_focus(
             Some(42),
             |_| anyhow::bail!("focus unavailable"),
             |_| panic!("must not confirm failed focus"),
             || -> anyhow::Result<()> { panic!("must not dispatch") },
         );
         assert_eq!(failed.unwrap_err().to_string(), "focus unavailable");
-        with_confirmed_key_focus(
+        crate::input::ax_actions::with_confirmed_key_focus(
             None,
             |_| panic!("window key has no element"),
             |_| panic!("window key has no element"),

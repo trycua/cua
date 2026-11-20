@@ -225,7 +225,8 @@ pub enum DaemonPresence {
     /// Nothing answers, nothing holds the lock, and no socket file is left.
     Absent,
     /// Nothing answers or holds the lock, but a dead daemon left its socket
-    /// file. The next launch clears it.
+    /// file. The next launch clears it. A path that is not a socket is never
+    /// stale.
     Stale { socket_file: std::path::PathBuf },
     /// A process holds the daemon lock without answering: a launch that has
     /// not started serving yet, or a daemon finishing its shutdown.
@@ -282,10 +283,16 @@ pub fn probe_presence(socket_path: &str) -> DaemonPresence {
         };
     }
     // A named pipe vanishes with its last server, so only Unix leaves a file.
-    if cfg!(unix) && std::fs::symlink_metadata(socket_path).is_ok() {
-        return DaemonPresence::Stale {
-            socket_file: socket_path.into(),
-        };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt as _;
+        if std::fs::symlink_metadata(socket_path)
+            .is_ok_and(|metadata| metadata.file_type().is_socket())
+        {
+            return DaemonPresence::Stale {
+                socket_file: socket_path.into(),
+            };
+        }
     }
     DaemonPresence::Absent
 }

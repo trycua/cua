@@ -2745,6 +2745,12 @@ fn report_not_serving(socket_path: &str, presence: DaemonPresence) {
         }
         DaemonPresence::Absent | DaemonPresence::Serving { .. } => {
             eprintln!("Cua Driver daemon is not running");
+            #[cfg(unix)]
+            if std::fs::symlink_metadata(socket_path).is_ok() {
+                eprintln!(
+                    "  {socket_path} exists and is not a socket; a launch cannot bind there until it is moved"
+                );
+            }
         }
     }
 }
@@ -3016,6 +3022,10 @@ mod presence_tests {
         let socket = directory.path().join("driver.sock");
         let path = socket.to_str().unwrap();
         assert_eq!(probe_presence(path), DaemonPresence::Absent);
+
+        std::fs::write(&socket, "not a socket").unwrap();
+        assert_eq!(probe_presence(path), DaemonPresence::Absent);
+        std::fs::remove_file(&socket).unwrap();
 
         drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
 

@@ -669,7 +669,7 @@ fn script_only_lists_run_script_alone_and_never_empties_the_list() {
 
 #[tokio::test]
 async fn every_registered_tool_but_the_nesting_ones_is_callable_by_name() {
-    let harness = Harness::new();
+    let harness = Harness::with(&["replay_trajectory"]);
     // check_permissions was on no default-mode list; any registered tool is
     // reachable now, through cua.tools and cua.call.
     let result = harness
@@ -689,8 +689,9 @@ async fn every_registered_tool_but_the_nesting_ones_is_callable_by_name() {
         .collect();
     let mut want: std::collections::BTreeSet<String> =
         harness.registry.tool_names().map(str::to_owned).collect();
-    want.remove("run_script");
-    want.remove("run_steps");
+    for denied in super::DENIED_TOOLS {
+        want.remove(*denied);
+    }
     assert_eq!(names, want);
     for tool in ["kill_app", "move_cursor", "get_guide", "end_session"] {
         assert!(names.contains(tool), "{tool}");
@@ -720,7 +721,7 @@ async fn every_registered_tool_but_the_nesting_ones_is_callable_by_name() {
     );
     assert!(harness.calls("kill_app").is_empty());
 
-    for tool in ["run_script", "run_steps"] {
+    for tool in ["run_script", "run_steps", "replay_trajectory"] {
         let result = harness
             .run(&format!(
                 "if (cua.tools.{tool} !== undefined) return 'exposed';\nawait cua.call('{tool}', {{}});"
@@ -808,7 +809,7 @@ fn a_signature_lists_required_arguments_then_optional_ones_and_never_session() {
 #[test]
 fn the_script_only_description_is_generated_from_the_registry() {
     // A tool on no list anywhere shows up.
-    let harness = Harness::with(&["brand_new_tool"]);
+    let harness = Harness::with(&["brand_new_tool", "replay_trajectory"]);
     let description = super::script_only_description(&harness.registry);
     let listed = &harness.registry.tools_list_for(true)["tools"][0];
     assert_eq!(listed["name"], "run_script");
@@ -824,7 +825,7 @@ fn the_script_only_description_is_generated_from_the_registry() {
         .collect();
     let mut want: Vec<String> = Vec::new();
     for name in harness.registry.tool_names() {
-        if !matches!(name, "run_script" | "run_steps")
+        if !matches!(name, "run_script" | "run_steps" | "replay_trajectory")
             && !want.iter().any(|w| w.starts_with(&format!("{name}(")))
         {
             want.push(super::signature(harness.registry.get_def(name).unwrap()));
@@ -846,7 +847,7 @@ fn the_script_only_description_is_generated_from_the_registry() {
         .description
         .clone();
     assert!(!default.contains("brand_new_tool"));
-    assert!(default.contains("except run_script and run_steps"));
+    assert!(default.contains("except run_script, run_steps and replay_trajectory"));
     assert!(
         !default.contains("launch_app, list_apps"),
         "no hand-written list"

@@ -38,7 +38,7 @@ use crate::{
         BATCHABLE_TOOLS, RUN_STEPS_TOOL,
     },
     protocol::{Content, ToolResult},
-    recording_tools::ReplayRegistrySlot,
+    recording_tools::{ReplayRegistrySlot, REPLAY_TRAJECTORY_TOOL},
     tool::{Tool, ToolDef, ToolRegistry, DISABLE_CONFIG_KEY, LEGACY_CONFIG_KEY},
 };
 
@@ -79,7 +79,7 @@ const SHUTDOWN_GRACE: Duration = Duration::from_millis(1_500);
 /// Registered tools a script can never call: each runs other tools through
 /// this registry, so calling one from a script would nest. Every other tool
 /// the registry lists is callable, through the same checks as a direct call.
-pub const DENIED_TOOLS: &[&str] = &[RUN_SCRIPT_TOOL, RUN_STEPS_TOOL];
+pub const DENIED_TOOLS: &[&str] = &[RUN_SCRIPT_TOOL, RUN_STEPS_TOOL, REPLAY_TRAJECTORY_TOOL];
 
 /// Operations the prelude sends that are not registry tools. A registry tool
 /// with one of these names would be shadowed, so it is not callable either.
@@ -285,8 +285,17 @@ fn default_description() -> String {
          for (const key of [\"7\", \"multiply\", \"6\", \"equals\"]) await app.click({{role: \"button\", name: key}});\n\
          const [display] = await app.query({{role: \"statictext\"}});\n\
          return display.value;",
-        denied = DENIED_TOOLS.join(" and "),
+        denied = denied_list(),
     )
+}
+
+/// `DENIED_TOOLS` as prose: "a, b and c".
+fn denied_list() -> String {
+    match DENIED_TOOLS.split_last() {
+        Some((last, [])) => (*last).to_owned(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+        None => String::new(),
+    }
 }
 
 pub struct RunScriptTool {

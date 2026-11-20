@@ -372,13 +372,15 @@ impl ReplayTrajectoryTool {
     }
 }
 
+pub const REPLAY_TRAJECTORY_TOOL: &str = "replay_trajectory";
+
 static REPLAY_DEF: OnceLock<ToolDef> = OnceLock::new();
 
 #[async_trait]
 impl Tool for ReplayTrajectoryTool {
     fn def(&self) -> &ToolDef {
         REPLAY_DEF.get_or_init(|| ToolDef {
-            name: "replay_trajectory".into(),
+            name: REPLAY_TRAJECTORY_TOOL.into(),
             // Description ported from Swift `ReplayTrajectoryTool.swift`
             // with its caveats about element-indexed actions and recording-
             // during-replay semantics.

@@ -92,7 +92,7 @@ The script is the body of an async function: use `await`, and `return` a JSON va
 - app.waitFor(&#123;role?, name?, text?, gone?, value?, timeout_ms?&#125;) and app.verify(predicate | predicates) (verify_state)
 - app.click(t), doubleClick(t), rightClick(t), typeText(text, t?), pressKey("return" | "cmd+s", t?), hotkey(["cmd","s"]), scroll(t, direction, amount?), setValue(t, value), drag([x,y], [x,y]), zoom([x1,y1,x2,y2])
 where a target `t` is &#123;role, name, nth?&#125; (found fresh, waits up to 3 s), an element_token string, a row number from this app's last getState(), or [x, y] window pixels.
-- `await cua.tools.<name>(args)` (or `cua.call(name, args)`) for any other tool this driver lists, except run_script and run_steps, with that tool's own arguments; `await cua.describe(name)` → its description and input schema.
+- `await cua.tools.<name>(args)` (or `cua.call(name, args)`) for any other tool this driver lists, except run_script, run_steps and replay_trajectory, with that tool's own arguments; `await cua.describe(name)` → its description and input schema.
 A failed driver call throws a CuaError (catch it to recover). Every call goes through the same session, permission and approval checks as a direct call.
 
 Limits: `timeout_ms` wall time (default 30000, max 120000), `max_calls` driver calls (default 100, max 500), 32 MiB heap. Returns the return value, console output, and a per-call log; an error names the script line, the call and the reason.

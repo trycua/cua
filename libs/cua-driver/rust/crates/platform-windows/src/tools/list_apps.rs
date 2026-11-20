@@ -57,7 +57,8 @@ impl Tool for ListAppsTool {
     async fn invoke(&self, _args: Value) -> ToolResult {
         // Strategy:
         // 1. Enumerate top-level visible windows → derive the set of running pids
-        //    that have a user-facing surface.
+        //    that have a user-facing surface, including the packaged app each
+        //    ApplicationFrameHost frame hosts.
         // 2. Enumerate the process table to map pid → executable name and full
         //    path (used to merge against Start-Menu / UWP launch_paths).
         // 3. Enumerate installed apps from Start-Menu shortcuts + WinRT
@@ -79,11 +80,7 @@ impl Tool for ListAppsTool {
             let t0 = std::time::Instant::now();
             let wins = crate::win32::list_windows_via_win32(None);
             tracing::debug!(target: "list_apps", "step 1 list_windows: {} wins ({}ms)", wins.len(), t0.elapsed().as_millis());
-            let mut seen_pids = std::collections::HashSet::new();
-            let mut running_pids: Vec<u32> = Vec::new();
-            for w in &wins {
-                if seen_pids.insert(w.pid) { running_pids.push(w.pid); }
-            }
+            let running_pids = running_app_pids(&wins, crate::win32::hosted_app_pid);
 
             let t1 = std::time::Instant::now();
             let foreground_pid = unsafe {
@@ -215,6 +212,27 @@ impl Tool for ListAppsTool {
     }
 }
 
+/// Pids that own a visible top-level window, in first-seen order. A UWP app
+/// hosted in an `ApplicationFrameHost` frame owns no top-level window of its
+/// own, so `hosted` resolves each frame to the app pid behind it, which
+/// follows the host's pid. That is the pid bounded mode resolves the frame to
+/// before it looks the app up here.
+fn running_app_pids(
+    windows: &[crate::win32::WindowInfo],
+    hosted: impl Fn(u32, u64) -> Option<u32>,
+) -> Vec<u32> {
+    let mut seen = std::collections::HashSet::new();
+    let mut pids = Vec::new();
+    for window in windows {
+        for pid in std::iter::once(window.pid).chain(hosted(window.pid, window.hwnd)) {
+            if seen.insert(pid) {
+                pids.push(pid);
+            }
+        }
+    }
+    pids
+}
+
 /// Pick which of several Start-Menu / UWP-derived installed apps best matches
 /// a running pid whose exe basename collided. Precedence:
 ///   1. exact case-insensitive equality between `proc_exe_basename` and the
@@ -269,3 +287,6 @@ fn packaged_installed_match(
 
 #[cfg(test)]
 mod list_apps_packaged_identity_tests;
+
+#[cfg(test)]
+mod running_app_pids_tests;

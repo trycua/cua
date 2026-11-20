@@ -54,6 +54,8 @@ private final class RecordingProvider: SpaceStreamSourceProviding, @unchecked Se
         return media
     }
 
+    /// Whether the guest takes ⌘ as Control (a Linux or Windows Space).
+    var commandAsControl = false
     /// Whether the Space's clipboard setting lets a paste send the clipboard.
     var sendsClipboard = true
     /// How long the clipboard takes to reach the Space.
@@ -409,6 +411,30 @@ private func pointerEvents(in text: String) -> [[String: Any]] {
         await session.stop()
     }
 
+    /// The right ⌘+V is Super+V on a Linux or Windows Space, the desktop's
+    /// own shortcut: it goes as keys, with no clipboard. A Space that keeps
+    /// ⌘ still pastes from it.
+    @Test func theRightCommandVPastesOnlyWhereCommandStaysCommand() async throws {
+        let superV: [InteractiveInputEvent] = [.key(key: "v", down: true, modifiers: [.superKey], repeatKey: false)]
+        let provider = RecordingProvider()
+        provider.commandAsControl = true
+        let session = LiveStreamSession(provider: provider)
+        await session.start()
+        session.paste(superV, text: "copied on the Mac")
+        await eventually("the chord") { provider.media.sent.count == 1 }
+        #expect(provider.clipboards.isEmpty)
+        #expect(typed(in: provider.media.sent) == [["v"]])
+        await session.stop()
+
+        let mac = RecordingProvider()
+        let macSession = LiveStreamSession(provider: mac)
+        await macSession.start()
+        macSession.paste(superV, text: "copied on the Mac")
+        await eventually("the paste") { mac.media.sent.count == 1 }
+        #expect(mac.clipboards == ["copied on the Mac"])
+        await macSession.stop()
+    }
+
     /// A Mac clipboard with no text still goes first, as empty text, so the
     /// paste inserts nothing instead of what the Space copied before.
     @Test func anEmptyClipboardStillGoesBeforeTheChord() async throws {
@@ -510,10 +536,6 @@ private func pointerEvents(in text: String) -> [[String: Any]] {
         #expect(LiveStreamInputView.isPasteChord(characters: "v", flags: [.command, .shift]))
         #expect(!LiveStreamInputView.isPasteChord(characters: "v", flags: [.command, .option]))
         #expect(!LiveStreamInputView.isPasteChord(characters: "c", flags: .command))
-        let rightCommand = NSEvent.ModifierFlags(rawValue: NSEvent.ModifierFlags.command.rawValue | 0x10)
-        let leftCommand = NSEvent.ModifierFlags(rawValue: NSEvent.ModifierFlags.command.rawValue | 0x08)
-        #expect(LiveStreamInputView.isPasteChord(characters: "v", flags: leftCommand))
-        #expect(!LiveStreamInputView.isPasteChord(characters: "v", flags: rightCommand))
 
         let provider = RecordingProvider()
         provider.sendsClipboard = false

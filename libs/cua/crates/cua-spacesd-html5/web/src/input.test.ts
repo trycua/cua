@@ -107,6 +107,23 @@ describe("keyboard mapping", () => {
     expect(pasted).toEqual([]);
   });
 
+  it("pastes with the right Cmd+V on a guest that keeps Cmd", () => {
+    const surface = document.createElement("div");
+    const sent: InteractiveInputEvent[] = [];
+    const input = new InputController({
+      surface,
+      screen: () => surface,
+      emit: (e) => sent.push(e),
+      keyOptions: () => ({ metaAsControl: false }),
+      onPaste: () => {},
+    });
+    const press = (type: string, init: KeyboardEventInit) => input.textarea.dispatchEvent(new KeyboardEvent(type, { cancelable: true, ...init }));
+    press("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
+    expect(press("keydown", { key: "v", code: "KeyV", metaKey: true })).toBe(true);
+    expect(sent.map((e) => (e.kind === "key" ? e.key : e.kind))).toEqual(["meta"]);
+    input.dispose();
+  });
+
   it("treats AltGr and IME composition as text", () => {
     const altGr = key({ key: "@", code: "KeyQ", ctrlKey: true, altKey: true, getModifierState: (m) => m === "AltGraph" });
     expect(mapKey(altGr, "down", opts)).toBeNull();

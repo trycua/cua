@@ -9,6 +9,12 @@ use std::time::Duration;
 use clap::Parser;
 use cua_relay::server::{Relay, RelayConfig};
 
+// jemalloc, not the system allocator: see the comment in Cargo.toml and
+// `cua_relay::process_memory`.
+#[cfg(unix)]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 /// Reverse-tunnel relay for cua-spacesd.
 #[derive(Parser, Debug)]
 #[command(name = "cua-relay", version, about)]
@@ -384,6 +390,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
+    #[cfg(unix)]
+    cua_relay::process_memory::use_jemalloc();
     let args = Args::parse();
     if args.stun_only {
         let addr = args

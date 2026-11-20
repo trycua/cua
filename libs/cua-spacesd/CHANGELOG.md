@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.17.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.0...cua-spacesd-v0.17.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **relay:** cut per-connection memory and give freed memory back ([#8314](https://github.com/trycua/cua/issues/8314)) ([4fd73dd](https://github.com/trycua/cua/commit/4fd73ddca26415f67a5daed89e71530775c12633))
+* **relay:** stop machines retrying a refused token every few seconds ([#8302](https://github.com/trycua/cua/issues/8302)) ([83d9eab](https://github.com/trycua/cua/commit/83d9eab3bb81ac26bc6c993e7911f70da43f932a))
+
+## [0.17.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.6...cua-spacesd-v0.17.0) (2026-11-20)
+
+
+### Features
+
+* **cua-relay:** drain connections on SIGTERM before closing tunnels ([#8310](https://github.com/trycua/cua/issues/8310)) ([64886ef](https://github.com/trycua/cua/commit/64886ef8b44eece42e4a77f406d8c04186d31fb2))
+* **cua-relay:** expose boot id and start time on /healthz ([#8308](https://github.com/trycua/cua/issues/8308)) ([c9472c2](https://github.com/trycua/cua/commit/c9472c2d2294ade654380af45a7b013a01fd97be))
+
+## [0.16.6](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.5...cua-spacesd-v0.16.6) (2026-11-20)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** stop capture leases outside the locks their callbacks take ([#8086](https://github.com/trycua/cua/issues/8086)) ([eca3156](https://github.com/trycua/cua/commit/eca3156e213d2ba6ede7b21ff63974c6a6dd3412))
+
 ## [0.16.5](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.4...cua-spacesd-v0.16.5) (2026-11-19)
 
 

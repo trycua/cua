@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.39.7](https://github.com/trycua/cua/compare/cua-spaces-v0.39.6...cua-spaces-v0.39.7) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** python security bumps (Twisted, pypdf, filelock, virtualenv, litellm, transformers, pyasn1, GitPython, fsspec, joserfc, black, langgraph-sdk) ([#8312](https://github.com/trycua/cua/issues/8312)) ([ee59258](https://github.com/trycua/cua/commit/ee592588b4a6ff6fc8ea929a4354dcb62c64076f))
+
+## [0.39.6](https://github.com/trycua/cua/compare/cua-spaces-v0.39.5...cua-spaces-v0.39.6) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** js security bumps (52 Dependabot alerts) ([#8313](https://github.com/trycua/cua/issues/8313)) ([38d718e](https://github.com/trycua/cua/commit/38d718e66565ec7a4490ff9dd63caee39ff157a2))
+
+## [0.39.5](https://github.com/trycua/cua/compare/cua-spaces-v0.39.4...cua-spaces-v0.39.5) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** bump Playwright to 1.65.1 (Chromium 159, CVE-2026-130959) ([#8321](https://github.com/trycua/cua/issues/8321)) ([7dcd4a9](https://github.com/trycua/cua/commit/7dcd4a9e86e04f3d15308762ee0e2f7f52ac632d))
+
+## [0.39.4](https://github.com/trycua/cua/compare/cua-spaces-v0.39.3...cua-spaces-v0.39.4) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** bump undici to patched versions (39 Dependabot alerts) ([#8311](https://github.com/trycua/cua/issues/8311)) ([3b44583](https://github.com/trycua/cua/commit/3b445836f13f768ba629441db4fdb5c6536578c4))
+
+## [0.39.3](https://github.com/trycua/cua/compare/cua-spaces-v0.39.2...cua-spaces-v0.39.3) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** bump aiohttp to 3.14.5 (44 Dependabot alerts) ([#8309](https://github.com/trycua/cua/issues/8309)) ([006c897](https://github.com/trycua/cua/commit/006c897412aef0820e43a67beab8fe262a4a9886))
+
+## [0.39.2](https://github.com/trycua/cua/compare/cua-spaces-v0.39.1...cua-spaces-v0.39.2) (2026-11-20)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.29.0 in Cua Spaces ([#8267](https://github.com/trycua/cua/issues/8267)) ([8ab798a](https://github.com/trycua/cua/commit/8ab798aad99ddda207a01070192143260be6126f))
+
 ## [0.39.1](https://github.com/trycua/cua/compare/cua-spaces-v0.39.0...cua-spaces-v0.39.1) (2026-11-20)
 
 

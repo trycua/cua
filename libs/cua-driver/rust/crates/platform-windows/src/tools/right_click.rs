@@ -181,7 +181,7 @@ impl Tool for RightClickTool {
             // island ignores posted WM_RBUTTON (measured: RightTapped never
             // fired), and the pen-barrel injector click-activates the frame.
             // Return the structured error (retry with delivery_mode:foreground).
-            if delivery == DeliveryMode::Background {
+            if delivery.is_background() {
                 if let Some(r) =
                     winui3_background_gesture(&admitted, pid, hwnd, Some(idx), 1, "right").await
                 {
@@ -194,7 +194,7 @@ impl Tool for RightClickTool {
             if (cx, cy) != recorded_center {
                 crate::recording_hooks::capture_dispatch_click_target(hwnd, pid, cx, cy);
             }
-            if delivery == DeliveryMode::Background
+            if delivery.is_background()
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
                 let inj = tokio::task::spawn_blocking({
@@ -299,7 +299,7 @@ impl Tool for RightClickTool {
             // delivery_mode:"background" on WinUI3: right-click can't land while
             // holding the contract (no UIA right-click, posted WM_RBUTTON
             // ignored, pen-barrel injector steals foreground) → structured error.
-            if delivery == DeliveryMode::Background {
+            if delivery.is_background() {
                 if let Some(r) =
                     winui3_background_gesture(&admitted, pid, hwnd, None, 1, "right").await
                 {
@@ -308,7 +308,7 @@ impl Tool for RightClickTool {
             }
             // delivery_mode:"background" (default): try coordinate injection (no
             // foreground swap) for drop-prone targets (#1984).
-            if delivery == DeliveryMode::Background
+            if delivery.is_background()
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
                 let inj = tokio::task::spawn_blocking({

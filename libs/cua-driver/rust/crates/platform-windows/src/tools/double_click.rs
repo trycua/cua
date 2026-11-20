@@ -168,7 +168,7 @@ impl Tool for DoubleClickTool {
             // → last_action=double_click, held non-activatable so no foreground
             // swap. If the element has no InvokePattern, a background double-
             // click isn't expressible → structured error.
-            if delivery == DeliveryMode::Background {
+            if delivery.is_background() {
                 if let Some(r) =
                     winui3_background_gesture(&admitted, pid, hwnd, Some(idx), 2, "left").await
                 {
@@ -183,7 +183,7 @@ impl Tool for DoubleClickTool {
             if (cx, cy) != recorded_center {
                 crate::recording_hooks::capture_dispatch_click_target(hwnd, pid, cx, cy);
             }
-            if delivery == DeliveryMode::Background
+            if delivery.is_background()
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
                 let inj = tokio::task::spawn_blocking({
@@ -295,7 +295,7 @@ impl Tool for DoubleClickTool {
             // background double-click on WinUI3 only lands via UIA Invoke on a
             // cached element, which the pixel path doesn't have → structured
             // error (caller retries with delivery_mode:foreground or uses element_index).
-            if delivery == DeliveryMode::Background {
+            if delivery.is_background() {
                 if let Some(r) =
                     winui3_background_gesture(&admitted, pid, hwnd, None, 2, "left").await
                 {
@@ -304,7 +304,7 @@ impl Tool for DoubleClickTool {
             }
             // delivery_mode:"background" (default): inject via the coordinate actuator
             // (no foreground swap) for targets that drop posted clicks (#1984).
-            if delivery == DeliveryMode::Background
+            if delivery.is_background()
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
                 let inj = tokio::task::spawn_blocking({

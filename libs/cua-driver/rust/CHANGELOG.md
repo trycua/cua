@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.55.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.55.2...cua-driver-rs-v0.55.3) (2026-11-20)
+
+
+### Bug Fixes
+
+* **cua-driver:** fall back on what a run_steps step last sent ([#8282](https://github.com/trycua/cua/issues/8282)) ([a367c3b](https://github.com/trycua/cua/commit/a367c3bfc673fee66f62e4e49423eb07b89bd1ba))
+
+## [0.55.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.55.1...cua-driver-rs-v0.55.2) (2026-11-20)
+
+
+### Bug Fixes
+
+* **cua-driver:** match running Windows Store apps to their bundle_id grant ([#8127](https://github.com/trycua/cua/issues/8127)) ([3aefd3b](https://github.com/trycua/cua/commit/3aefd3b5790c0f51bad08d0d1230485e8fc5b9d7))
+
+## [0.55.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.55.0...cua-driver-rs-v0.55.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **cua-driver:** do not retype a macOS web AX write as keys when AXValue lags ([#8089](https://github.com/trycua/cua/issues/8089)) ([d975b18](https://github.com/trycua/cua/commit/d975b18d45fd2db6571a32664f56c6df3cddb9cf)), closes [#5383](https://github.com/trycua/cua/issues/5383)
+* **cua-driver:** focus the field under a macOS background pixel type_text in Firefox ([#8092](https://github.com/trycua/cua/issues/8092)) ([58f9d9c](https://github.com/trycua/cua/commit/58f9d9ceccd3a232995ccbeaab91d0575a087d22))
+* **cua-driver:** honor the permissions grant verification in the macOS capture consent gate ([#8119](https://github.com/trycua/cua/issues/8119)) ([b3ddc70](https://github.com/trycua/cua/commit/b3ddc70cc85295124ce3059db0176a2e4076999d))
+* **cua-driver:** never retype a batched macOS send into a terminal ([#8128](https://github.com/trycua/cua/issues/8128)) ([e2468d8](https://github.com/trycua/cua/commit/e2468d8acf6882378ad634f8da99c3539860d1f7))
+* **cua-driver:** refuse background type_text into the iOS Simulator ([#8112](https://github.com/trycua/cua/issues/8112)) ([30a3571](https://github.com/trycua/cua/commit/30a35712479c0c53c84d97271e7328b27114430d))
+* **cua-driver:** reopen running apps with launch_app ([#8220](https://github.com/trycua/cua/issues/8220)) ([f492b0a](https://github.com/trycua/cua/commit/f492b0a14d8f173c862cd091a8997eba977b9ec6))
+* **cua-driver:** verify existing-profile CDP readiness ([#8168](https://github.com/trycua/cua/issues/8168)) ([b5b0b29](https://github.com/trycua/cua/commit/b5b0b298640c7e2cefdd12e5c730e61d0bef4e62))
+* **cua-driver:** wait for the menu a macOS menu-button press opens ([#8103](https://github.com/trycua/cua/issues/8103)) ([010b729](https://github.com/trycua/cua/commit/010b729b959c92be1006b7b08b5bc7f552f32401))
+
 ## [0.55.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.54.0...cua-driver-rs-v0.55.0) (2026-11-19)
 
 

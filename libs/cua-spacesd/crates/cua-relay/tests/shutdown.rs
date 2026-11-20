@@ -125,3 +125,45 @@ fn sigterm_with_an_open_request_exits_after_the_grace() {
     assert!(started.elapsed() < Duration::from_secs(6));
     drop(open);
 }
+
+/// The `x-cua-relay-boot` header of `/healthz`, and the start time.
+fn boot_headers(port: u16) -> (String, u64) {
+    let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    s.write_all(b"GET /healthz HTTP/1.1\r\nhost: relay\r\nconnection: close\r\n\r\n")
+        .unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).unwrap();
+    let get = |name: &str| {
+        out.lines()
+            .find_map(|l| {
+                let (k, v) = l.split_once(':')?;
+                k.eq_ignore_ascii_case(name).then(|| v.trim().to_owned())
+            })
+            .unwrap_or_else(|| panic!("no {name} header in {out}"))
+    };
+    (
+        get("x-cua-relay-boot"),
+        get("x-cua-relay-started").parse().unwrap(),
+    )
+}
+
+#[test]
+fn a_restarted_relay_has_a_new_boot_id() {
+    let (mut first, port) = start_ready(1);
+    let (id1, started1) = boot_headers(port);
+    assert_eq!(boot_headers(port).0, id1, "stable within one process");
+    sigterm(&first);
+    wait_exit(&mut first, Duration::from_secs(5));
+    let (mut second, port) = start_ready(1);
+    let (id2, started2) = boot_headers(port);
+    assert_ne!(id1, id2);
+    assert!(started2 >= started1);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    assert!(now.abs_diff(started2) < 60);
+    sigterm(&second);
+    wait_exit(&mut second, Duration::from_secs(5));
+}

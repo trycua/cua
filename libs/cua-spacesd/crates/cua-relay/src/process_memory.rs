@@ -87,7 +87,7 @@ pub fn resident_bytes() -> Option<u64> {
 }
 
 /// Set once the binary runs on jemalloc ([`use_jemalloc`]).
-#[cfg(unix)]
+#[cfg(all(unix, feature = "jemalloc"))]
 static JEMALLOC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Called by the `cua-relay` binary, whose global allocator is jemalloc:
@@ -102,7 +102,7 @@ static JEMALLOC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::
 /// table growing. The gauges tell the two apart from now on: a real leak
 /// grows `cua_relay_heap_allocated_bytes`; fragmentation grows only the
 /// gap between it and `cua_relay_process_resident_bytes`.
-#[cfg(unix)]
+#[cfg(all(unix, feature = "jemalloc"))]
 pub fn use_jemalloc() {
     // Background purging is a Linux feature of jemalloc; elsewhere the
     // purge happens on allocator activity instead.
@@ -114,7 +114,7 @@ pub fn use_jemalloc() {
 
 /// jemalloc's own view: bytes in live allocations, bytes in pages it holds
 /// resident, and bytes of address space it keeps mapped for reuse.
-#[cfg(unix)]
+#[cfg(all(unix, feature = "jemalloc"))]
 fn heap_stats() -> Option<(u64, u64, u64)> {
     use tikv_jemalloc_ctl::{epoch, stats};
     if !JEMALLOC.load(std::sync::atomic::Ordering::Relaxed) {
@@ -127,7 +127,7 @@ fn heap_stats() -> Option<(u64, u64, u64)> {
         stats::retained::read().ok()? as u64,
     ))
 }
-#[cfg(not(unix))]
+#[cfg(not(all(unix, feature = "jemalloc")))]
 fn heap_stats() -> Option<(u64, u64, u64)> {
     None
 }

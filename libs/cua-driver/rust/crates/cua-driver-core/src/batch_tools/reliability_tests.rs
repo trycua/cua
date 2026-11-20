@@ -455,8 +455,6 @@ async fn a_menu_bar_item_token_runs_as_invoke_menu() {
     let result = harness
         .run(json!({"steps": [{"tool": "click", "args": {"pid": 80, "window_id": 90, "element_token": "s0000a0e1:771", "fail_message": refused}}]}))
         .await;
-    // The probe invoke_menu carries no action record, so only the routing
-    // is checked here; the real tool reports its own outcome.
     let menu = harness.last("invoke_menu");
     assert_eq!(menu["path"], json!(["Sheet", "Navigate", "To Next Sheet"]));
     assert_eq!(
@@ -468,6 +466,36 @@ async fn a_menu_bar_item_token_runs_as_invoke_menu() {
         "{}",
         text(&result)
     );
+}
+
+/// A strict click rerouted to invoke_menu stays strict: the menu route
+/// cannot confirm itself, so the batch stops with action_unverified instead
+/// of carrying on.
+#[tokio::test]
+async fn a_strict_menu_bar_click_stays_strict_as_invoke_menu() {
+    let harness = Harness::new();
+    crate::window_state_view::remember_for_test(
+        "s0000a0e2",
+        80,
+        90,
+        "- [0] AXWindow \"Doc\"\n- [27] AXMenuBar\n  - [700] AXMenuBarItem \"Sheet\"\n    - [701] AXMenu\n      - [771] AXMenuItem \"To Next Sheet\"\n",
+    );
+    let refused = "Background input refused (element_outside_target_window): the addressed element could not be proven to belong to window 90";
+    let result = harness
+        .run(json!({"steps": [
+            {"tool": "click", "args": {"pid": 80, "window_id": 90, "element_token": "s0000a0e2:771",
+                "fail_message": refused, "require_verified": true}},
+            {"tool": "press_key", "args": {"pid": 80, "key": "a"}},
+        ]}))
+        .await;
+    assert_eq!(harness.hits("invoke_menu"), 1);
+    assert_eq!(result.is_error, Some(true), "{}", text(&result));
+    let structured = result.structured_content.unwrap();
+    assert_eq!(
+        structured["steps"][0]["code"], "action_unverified",
+        "{structured:#}"
+    );
+    assert_eq!(harness.hits("press_key"), 0, "the batch stops at the step");
 }
 
 // ── stale element targets ────────────────────────────────────────────────
@@ -534,7 +562,11 @@ impl Tool for Rerender {
                 let row: usize = token[current.len()..].parse().unwrap();
                 let label = state.rows[row - 1].1.to_owned();
                 state.clicked.push(label.clone());
-                ToolResult::text(format!("clicked {label}"))
+                // A delivered click the fake cannot confirm, whose summary
+                // points at the foreground retry.
+                ToolResult::text(format!(
+                    "clicked {label}; Retry this action with delivery_mode:\"foreground\" if nothing changed"
+                ))
             }
             "list_windows" => ToolResult::text("windows").with_structured(json!({"windows": [{
                 "pid": 42, "window_id": 7, "app_name": "Daymark", "title": "Daymark",
@@ -562,7 +594,8 @@ fn rerender_registry(
                 description: "fake".into(),
                 input_schema: json!({"type": "object", "properties": {
                     "pid": {"type": "integer"}, "window_id": {"type": "integer"},
-                    "element_token": {"type": "string"}
+                    "element_token": {"type": "string"},
+                    "delivery_mode": {"type": "string"}
                 }}),
                 read_only: name != "click",
                 destructive: false,
@@ -605,6 +638,36 @@ async fn a_stale_element_token_is_found_again_by_its_role_and_label() {
         vec!["Cinder decision LHP-CINDER"]
     );
     assert!(text(&result).contains("went stale"), "{}", text(&result));
+}
+
+/// The re-found click delivers but cannot be confirmed, so `require_verified`
+/// makes it an error that names the foreground retry. The input already went
+/// out: the foreground fallback must not send it a third time.
+#[tokio::test]
+async fn a_refound_step_that_delivered_is_not_sent_again_in_the_foreground() {
+    let (registry, state) = rerender_registry(vec![("AXButton", "Aster kickoff")]);
+    crate::window_state_view::remember_for_test(
+        "s0000002e",
+        42,
+        7,
+        "- [0] AXWindow \"Daymark\"\n  - [5] AXButton \"Aster kickoff\" [actions=[press]]\n",
+    );
+    let result = registry
+        .invoke(
+            super::super::RUN_STEPS_TOOL,
+            json!({"foreground_fallback": true, "steps": [{"tool": "click", "args": {
+                "pid": 42, "window_id": 7, "element_token": "s0000002e:5", "require_verified": true
+            }}]}),
+        )
+        .await;
+    assert_eq!(result.is_error, Some(true), "{}", text(&result));
+    let structured = result.structured_content.unwrap();
+    assert_eq!(structured["steps"][0]["code"], "action_unverified");
+    assert_eq!(
+        state.lock().unwrap().clicked,
+        vec!["Aster kickoff"],
+        "delivered once, by the re-find, and never again"
+    );
 }
 
 #[tokio::test]

@@ -515,7 +515,7 @@
     "additionalProperties": false,
     "properties": {
      "action": {
-      "description": "AX action: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui. show_alternate_ui reveals hover-only controls on an element that lists it, without the pointer.",
+      "description": "AX action: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui; or an element's published custom_actions name or raw envelope. show_alternate_ui reveals hover-only controls on an element that lists it, without the pointer.",
       "type": "string"
      },
      "button": {

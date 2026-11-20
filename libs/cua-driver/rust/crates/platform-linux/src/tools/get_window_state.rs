@@ -150,6 +150,99 @@ mod megapixel_cap_tests {
     }
 }
 
+/// The space of a window's element frames: the frame-space position of the
+/// window's top-left pixel, and the X11 pixels per frame unit. Chromium under
+/// a device scale reports its AT-SPI extents in DIPs while its X11 window, and
+/// the capture of it, are in device pixels; its top-level frame is then the
+/// X11 window rectangle divided by that scale. Frames in X11 pixels give the
+/// window origin and 1.
+fn atspi_frame_space(window: (i32, i32, i32, i32), elements: &[Value]) -> ((f64, f64), f64) {
+    let (wx, wy, ww, wh) = window;
+    let top_level_scale = |entry: &Value| {
+        let role = entry["role"].as_str()?.to_ascii_lowercase();
+        if !matches!(role.as_str(), "frame" | "window" | "dialog") {
+            return None;
+        }
+        let frame = &entry["frame"];
+        let [x, y, w, h] = ["x", "y", "w", "h"].map(|key| frame[key].as_f64());
+        let (x, y, w, h) = (x?, y?, w?, h?);
+        if w <= 0.0 || h <= 0.0 {
+            return None;
+        }
+        let scale = f64::from(ww) / w;
+        // A frame unit spans `scale` pixels, so rounding moves each edge by
+        // less than one unit.
+        let fits = |frame: f64, window: i32| (frame * scale - f64::from(window)).abs() <= scale;
+        (scale > 1.0 && fits(h, wh) && fits(x, wx) && fits(y, wy)).then_some(scale)
+    };
+    let scale = elements.iter().find_map(top_level_scale).unwrap_or(1.0);
+    ((f64::from(wx) / scale, f64::from(wy) / scale), scale)
+}
+
+#[cfg(test)]
+mod atspi_frame_space_tests {
+    use super::atspi_frame_space;
+    use cua_driver_core::element_frame::with_screenshot_frames;
+    use serde_json::json;
+
+    fn frames(
+        window: (i32, i32, i32, i32),
+        elements: Vec<serde_json::Value>,
+    ) -> Vec<serde_json::Value> {
+        let (origin, unit) = atspi_frame_space(window, &elements);
+        with_screenshot_frames(elements, origin, unit)
+            .into_iter()
+            .map(|entry| entry["screenshot_frame"].clone())
+            .collect()
+    }
+
+    // #6935: Electron at device scale 2 on X11, its window at (1040,440)
+    // with a 1840x1360 native capture.
+    #[test]
+    fn dip_frames_map_onto_the_device_pixel_capture() {
+        let elements = vec![
+            json!({"role": "frame", "frame": {"x": 520, "y": 220, "w": 920, "h": 680}}),
+            json!({"role": "push button", "frame": {"x": 1390, "y": 220, "w": 50, "h": 30}}),
+        ];
+        assert_eq!(
+            frames((1040, 440, 1840, 1360), elements),
+            vec![
+                json!({"x": 0, "y": 0, "w": 1840, "h": 1360}),
+                json!({"x": 1740, "y": 0, "w": 100, "h": 60}),
+            ]
+        );
+    }
+
+    #[test]
+    fn pixel_frames_keep_the_window_origin() {
+        let elements = vec![
+            json!({"role": "frame", "frame": {"x": 520, "y": 220, "w": 920, "h": 680}}),
+            json!({"role": "push button", "frame": {"x": 1390, "y": 220, "w": 50, "h": 30}}),
+        ];
+        assert_eq!(
+            frames((520, 220, 920, 680), elements),
+            vec![
+                json!({"x": 0, "y": 0, "w": 920, "h": 680}),
+                json!({"x": 870, "y": 0, "w": 50, "h": 30}),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_smaller_frame_elsewhere_is_not_a_device_scale() {
+        // A dialog half the window's size that does not sit at half its
+        // origin belongs to another window, not a scaled copy of this one.
+        let elements = vec![
+            json!({"role": "dialog", "frame": {"x": 700, "y": 400, "w": 460, "h": 340}}),
+            json!({"role": "push button", "frame": {"x": 720, "y": 420, "w": 50, "h": 30}}),
+        ];
+        assert_eq!(
+            frames((520, 220, 920, 680), elements)[1],
+            json!({"x": 200, "y": 200, "w": 50, "h": 30})
+        );
+    }
+}
+
 /// Build a single structured element entry for `get_window_state`.
 /// Returns `None` when the node has no `element_index` (non-actionable rows).
 fn build_element_entry(
@@ -869,10 +962,9 @@ impl Tool for GetWindowStateTool {
                     // (override-redirect) window is not in the WM's client
                     // list; when its origin cannot be read, the popup's own
                     // screen rectangle is the origin.
-                    let local_origin = (!crate::wayland::is_wayland())
-                        .then(|| crate::atspi::native::x11_window_origin(xid))
-                        .flatten()
-                        .or_else(|| popup_meta.as_ref().map(|popup| (popup.x, popup.y)));
+                    let x11_window = (!crate::wayland::is_wayland())
+                        .then(|| crate::atspi::native::x11_window_geometry(xid))
+                        .flatten();
                     let bounds_by_idx: HashMap<usize, (i32, i32, u32, u32)> = bounds
                         .into_iter()
                         .map(|(i, x, y, w, h)| (i, (x, y, w, h)))
@@ -894,15 +986,21 @@ impl Tool for GetWindowStateTool {
                         &tr.tree_markdown,
                     );
                     let elements = framed_elements_first(elements);
+                    let frame_space = match x11_window {
+                        Some(window) => Some(atspi_frame_space(window, &elements)),
+                        None => popup_meta
+                            .as_ref()
+                            .map(|popup| ((f64::from(popup.x), f64::from(popup.y)), 1.0)),
+                    };
                     // Screenshot pixels: the capture is the window's own X11
                     // drawable (screen pixels), downsized by delivered/native.
-                    let elements = match (local_origin, shot_opt.as_ref()) {
-                        (Some((ox, oy)), Some((_, _, w, _, orig_w, _))) => {
+                    let elements = match (frame_space, shot_opt.as_ref()) {
+                        (Some((origin, unit)), Some((_, _, w, _, orig_w, _))) => {
                             let scale = orig_w.map_or(1.0, |ow| *w as f64 / ow as f64);
                             cua_driver_core::element_frame::with_screenshot_frames(
                                 elements,
-                                (f64::from(ox), f64::from(oy)),
-                                scale,
+                                origin,
+                                unit * scale,
                             )
                         }
                         _ => elements,

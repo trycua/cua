@@ -4915,6 +4915,8 @@ mod spare_keycode_restore_tests {
     #[ignore = "starts its own Xvfb"]
     fn the_next_driver_restores_the_spare_keycodes_of_one_that_was_killed() {
         let (_server, display) = xvfb();
+        // Xvfb resets its keymap when its last client leaves.
+        let (conn, _) = RustConnection::connect(Some(&display)).unwrap();
         let mut holder = Server(
             Command::new(std::env::current_exe().unwrap())
                 .args([
@@ -4938,7 +4940,6 @@ mod spare_keycode_restore_tests {
         let pid = holder.0.id();
         drop(holder);
 
-        let (conn, _) = RustConnection::connect(Some(&display)).unwrap();
         assert_eq!(keysyms_of(&conn, keycode)[0], HELD_KEYSYM);
         assert_eq!(marked_by(&conn, pid), [u32::from(keycode)]);
         keyboard_mapping(&conn).unwrap();

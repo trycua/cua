@@ -111,5 +111,45 @@ class DocsGateTests(unittest.TestCase):
         self.assertEqual(self.run_gate(), 1)
 
 
+class CraneAnonymousTests(unittest.TestCase):
+    """crane must never reach a credential helper: osxkeychain/desktop block forever on a headless Mac."""
+
+    def fake_crane(self, root: str, body: str) -> dict:
+        path = os.path.join(root, "crane")
+        with open(path, "w") as fh:
+            fh.write("#!/bin/sh\n" + body)
+        os.chmod(path, 0o755)
+        return dict(os.environ, PATH=root + os.pathsep + os.environ["PATH"])
+
+    def run_with(self, env: dict, fn):
+        old = os.environ.copy()
+        os.environ.update(env)
+        try:
+            return fn()
+        finally:
+            os.environ.clear()
+            os.environ.update(old)
+
+    # The fake "credential helper" is a hang whenever DOCKER_CONFIG holds a config file (the user's real one does).
+    HANG_UNLESS_ANON = (
+        'if [ -n "$DOCKER_CONFIG" ] && [ -z "$(ls -A "$DOCKER_CONFIG")" ]; then\n'
+        '  case "$1" in digest) echo sha256:%s;; manifest) echo \'{"manifests":[]}\';; esac; exit 0\n'
+        'fi\nsleep 30\n' % ("a" * 64)
+    )
+
+    def test_resolves_anonymously_even_when_the_user_config_would_hang(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            env = self.fake_crane(root, self.HANG_UNLESS_ANON)
+            res = self.run_with(env, lambda: check_docs.resolve_crane("ghcr.io/trycua/linux:24.04"))
+        self.assertEqual(res, {"digest": "sha256:" + "a" * 64, "children": []})
+
+    def test_a_hung_crane_times_out_with_a_clear_error(self) -> None:
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as anon:
+            env = self.fake_crane(root, "sleep 30\n")
+            rc, _, err = self.run_with(env, lambda: check_docs.run_crane(["digest", "x"], anon, timeout=0.5))
+        self.assertEqual(rc, 124)
+        self.assertIn("timed out", err)
+
+
 if __name__ == "__main__":
     unittest.main()

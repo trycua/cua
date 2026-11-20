@@ -4965,10 +4965,16 @@ mod spare_keycode_restore_tests {
         let (_server, display) = xvfb();
         let (conn, _) = RustConnection::connect(Some(&display)).unwrap();
         let (keycode, pid) = spare_keycode_of_a_killed_driver(&display);
-        let per = keyboard_mapping(&conn).unwrap().keysyms_per_keycode;
+        let per = conn
+            .get_keyboard_mapping(keycode, 1)
+            .unwrap()
+            .reply()
+            .unwrap()
+            .keysyms_per_keycode;
         conn.change_keyboard_mapping(1, keycode, per, &vec![F13; usize::from(per)])
             .unwrap();
         conn.get_input_focus().unwrap().reply().unwrap();
+        assert_eq!(marked_by(&conn, pid), [u32::from(keycode), HELD_KEYSYM]);
 
         keyboard_mapping(&conn).unwrap();
         assert_eq!(keysyms_of(&conn, keycode)[0], F13);

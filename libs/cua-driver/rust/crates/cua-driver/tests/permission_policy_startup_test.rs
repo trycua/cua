@@ -59,14 +59,6 @@ fn mcp_rejects_serve_only_authorization_flags() {
             &["mcp", "--dangerously-bypass-approvals"],
             "--dangerously-bypass-approvals",
         ),
-        (
-            &["mcp", "--session-policy", "unused.yaml"],
-            "--session-policy",
-        ),
-        (
-            &["mcp", "--approve-session-policy"],
-            "--approve-session-policy",
-        ),
         (&["--permission-mode=bounded"], "--permission-mode"),
     ];
 
@@ -293,9 +285,63 @@ fn bounded_mode_requires_launch_time_manifest_approval_before_bind() {
 }
 
 #[test]
-fn deprecated_session_policy_flags_remain_startup_aliases() {
-    let directory = tempfile::tempdir().expect("temporary bounded alias test directory");
-    let policy = directory.path().join("legacy-session-policy.yaml");
+fn removed_flags_fail_and_name_their_replacement() {
+    let cases: &[(&[&str], &str)] = &[
+        (
+            &["serve", "--session-policy", "unused.yaml"],
+            "--session-policy was removed; use `cua-driver serve --capability-manifest <path>` instead.",
+        ),
+        (
+            &["serve", "--session-policy=unused.yaml"],
+            "--session-policy was removed; use `cua-driver serve --capability-manifest <path>` instead.",
+        ),
+        (
+            &["mcp", "--session-policy", "unused.yaml"],
+            "--session-policy was removed; use `cua-driver serve --capability-manifest <path>` instead.",
+        ),
+        (
+            &["serve", "--approve-session-policy"],
+            "--approve-session-policy was removed; use `cua-driver serve --approve-capability-manifest` instead.",
+        ),
+        (
+            &["mcp", "--approve-session-policy"],
+            "--approve-session-policy was removed; use `cua-driver serve --approve-capability-manifest` instead.",
+        ),
+        (
+            &["mcp", "--claude-code-computer-use-compat"],
+            "--claude-code-computer-use-compat was removed; it had no effect on the tool surface. Remove it and register the server as plain `cua-driver mcp`",
+        ),
+        (
+            &["--claude-code-computer-use-compat"],
+            "--claude-code-computer-use-compat was removed;",
+        ),
+        (
+            &["serve", "--claude-code-computer-use-compat"],
+            "--claude-code-computer-use-compat was removed;",
+        ),
+    ];
+
+    for (args, message) in cases {
+        let output = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+            .args(*args)
+            .stdin(Stdio::null())
+            .env("CUA_DRIVER_RS_PERMISSIONS_GATE", "0")
+            .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
+            .output()
+            .expect("run cua-driver with a removed flag");
+        assert_eq!(output.status.code(), Some(64), "args={args:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.starts_with(&format!("cua-driver: {message}")),
+            "args={args:?}, stderr={stderr}"
+        );
+    }
+}
+
+#[test]
+fn approved_capability_manifest_reaches_bounded_lifetime_validation() {
+    let directory = tempfile::tempdir().expect("temporary bounded manifest test directory");
+    let policy = directory.path().join("no-lifetime.yaml");
     std::fs::write(
         &policy,
         r#"
@@ -306,15 +352,15 @@ allow:
 "#,
     )
     .expect("write v3 manifest without bounded lifetime fields");
-    let socket = test_socket(&directory, "bounded-deprecated-aliases");
+    let socket = test_socket(&directory, "bounded-no-lifetime");
     let output = rejected_serve(
         &socket,
         &[
             "--permission-mode",
             "bounded",
-            "--session-policy",
+            "--capability-manifest",
             &policy.display().to_string(),
-            "--approve-session-policy",
+            "--approve-capability-manifest",
         ],
     );
 
@@ -322,7 +368,7 @@ allow:
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("requires capability manifest expires_after and idle_timeout"),
-        "deprecated aliases did not reach bounded manifest validation: {stderr}"
+        "capability manifest did not reach bounded manifest validation: {stderr}"
     );
     #[cfg(unix)]
     assert!(!std::path::Path::new(&socket).exists());

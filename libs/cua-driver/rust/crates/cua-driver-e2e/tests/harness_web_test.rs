@@ -301,6 +301,7 @@ fn harness_webview_type_text_refuses_value_assignment_before_mutation() {
     )
     .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]);
     let token = RefCell::new(None);
+    let barrier = RefCell::new(None);
     let payload = RefCell::new(String::new());
     run_web_case_with_preparation(
         case,
@@ -334,6 +335,9 @@ fn harness_webview_type_text_refuses_value_assignment_before_mutation() {
             let index = ax::element_index_by_id(state.tree_text(), "txt-input")
                 .expect("text input missing from fresh WebView2 snapshot");
             token.replace(Some(state.element_token(index).to_owned()));
+            let index = ax::element_index_by_id(state.tree_text(), "number-input")
+                .expect("number input missing from fresh WebView2 snapshot");
+            barrier.replace(Some(state.element_token(index).to_owned()));
         },
         |pid, wid, driver, journal| {
             let response = driver.call(
@@ -350,9 +354,40 @@ fn harness_webview_type_text_refuses_value_assignment_before_mutation() {
                 response.text()
             );
             assert_eq!(response.structured()["code"], "background_unavailable");
-            wait_for_journal_text(journal, "lbl-input-mirror", "mirror=");
-            wait_for_journal_text(journal, "lbl-input-payload", &payload.borrow());
-            assert_eq!(journal.snapshot()["txt-input"]["value"], "");
+            // The journal holds the last published state, so the unchanged
+            // text field alone could be a pre-action publication. Change a
+            // second field and wait for it to get a publication taken after
+            // the refusal.
+            let marked = driver.call(
+                "set_value",
+                serde_json::json!({
+                    "pid": pid, "window_id": wid,
+                    "element_token": barrier.borrow().as_ref().unwrap(),
+                    "value": "7",
+                }),
+            );
+            assert!(
+                !marked.is_error(),
+                "barrier assignment failed: {}",
+                marked.text()
+            );
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while journal.snapshot()["number-input"]["value"] != "7" {
+                assert!(
+                    Instant::now() < deadline,
+                    "WebView2 fixture journal did not publish the barrier: {}",
+                    journal.snapshot()
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            let state = journal.snapshot();
+            assert_eq!(state["txt-input"]["value"], "", "{state}");
+            assert_eq!(state["lbl-input-mirror"]["text"], "mirror=", "{state}");
+            assert_eq!(
+                state["lbl-input-payload"]["text"],
+                payload.borrow().as_str(),
+                "{state}"
+            );
             response.text().to_owned()
         },
         |message, mut passed| {

@@ -180,6 +180,14 @@ fn finite_position(pos: (f64, f64)) -> bool {
     pos.0.is_finite() && pos.1.is_finite()
 }
 
+// The macOS timer also ticks a static, opaque cursor to keep the idle clock
+// and z-order heartbeat moving. Only shared visual activity needs new pixels.
+fn needs_paint_tick(map: &RenderMap) -> bool {
+    map.cursors
+        .values()
+        .any(|state| state.core.needs_frame_tick())
+}
+
 fn cursor_may_paint(state: &RenderState) -> bool {
     state.core.cfg.enabled
         && state.core.visible
@@ -954,6 +962,7 @@ fn render_loop(
     let hover_poll_ms = Duration::from_millis(80);
     let mut last_tick = Instant::now();
     let mut frame_tick_needed = false;
+    let mut paint_tick_needed = false;
     let mut hover_poll_needed = false;
     // Repin bookkeeping: track last pinned wid and a frame counter for
     // the periodic defensive-repin (every ~60 active frames ≈ 1 s).
@@ -1018,6 +1027,7 @@ fn render_loop(
             had_msg,
             hover_changed,
             next_frame_tick_needed,
+            next_paint_tick_needed,
             next_hover_poll_needed,
         ) = {
             let mut guard = RENDER.lock().unwrap();
@@ -1074,6 +1084,7 @@ fn render_loop(
                         .is_some_and(cursor_is_externally_visible)
                         && pinned.is_none();
                     let next_frame_tick_needed = map.needs_frame_tick();
+                    let next_paint_tick_needed = needs_paint_tick(map);
                     let next_hover_poll_needed = map
                         .cursors
                         .values()
@@ -1085,6 +1096,7 @@ fn render_loop(
                         had_msg,
                         hover_changed,
                         next_frame_tick_needed,
+                        next_paint_tick_needed,
                         next_hover_poll_needed,
                     )
                 }
@@ -1131,7 +1143,7 @@ fn render_loop(
         // Render only when a command arrived or the previous/next tick can
         // change pixels. A final frame is emitted as animations/fades finish so
         // the layer is left in the completed/cleared state before blocking.
-        if had_msg || refit || hover_changed || frame_tick_needed || next_frame_tick_needed {
+        if had_msg || refit || hover_changed || paint_tick_needed || next_paint_tick_needed {
             let tiles = {
                 let guard = RENDER.lock().unwrap();
                 let Some(map) = guard.as_ref() else {
@@ -1149,6 +1161,7 @@ fn render_loop(
         }
 
         frame_tick_needed = next_frame_tick_needed;
+        paint_tick_needed = next_paint_tick_needed;
         hover_poll_needed = next_hover_poll_needed;
         if frame_tick_needed {
             // Sleep remainder of frame budget.
@@ -2071,6 +2084,7 @@ mod tests {
         cursor.core.options_override = Some(cursor_overlay::CursorOptions::default());
         assert!(cursor.core.has_resting_motion());
         assert!(map.needs_frame_tick());
+        assert!(needs_paint_tick(&map), "the resting float changes pixels");
 
         let cursor = map.cursors.get_mut("sessA").unwrap();
         cursor.core.motion.idle_hide_ms = 0.0;
@@ -2078,7 +2092,7 @@ mod tests {
     }
 
     #[test]
-    fn reduced_motion_countdown_keeps_macos_frames() {
+    fn reduced_motion_countdown_ticks_without_repainting_until_the_fade() {
         let mut map = empty_map();
         let cursor = placed(&mut map, "sessA");
         cursor.core.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
@@ -2086,7 +2100,24 @@ mod tests {
         // The macOS loop has no idle deadline, so the opaque countdown ticks.
         assert!(!cursor.core.needs_frame_tick());
         assert!(cursor.needs_frame_tick());
+        assert!(
+            !needs_paint_tick(&map),
+            "opaque countdown pixels do not change"
+        );
 
+        map.cursors.get_mut("sessA").unwrap().core.idle_secs = 19.99;
+        map.tick_all(0.05);
+        assert!(needs_paint_tick(&map), "idle fade changes pixels");
+        for _ in 0..5 {
+            map.tick_all(0.05);
+        }
+        assert!(
+            !needs_paint_tick(&map),
+            "fully hidden cursor needs no paint ticks"
+        );
+        assert!(!map.needs_frame_tick());
+
+        let cursor = map.cursors.get_mut("sessA").unwrap();
         cursor.core.motion.idle_hide_ms = 0.0;
         assert!(!cursor.needs_frame_tick());
         // A retired focus-rect command draws nothing and keeps no frames alive.

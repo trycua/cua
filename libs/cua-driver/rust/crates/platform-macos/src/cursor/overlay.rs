@@ -98,6 +98,31 @@ static RENDER_LOOP_RUNNING: AtomicBool = AtomicBool::new(false);
 /// settles well inside it; a stalled render loop must never wedge a tool.
 const ARRIVAL_TIMEOUT: Duration = Duration::from_secs(8);
 
+/// Set when another window was raised over the overlay's pin target, so the
+/// render loop re-orders the overlay above it even though the target did not
+/// change and no cursor is animating.
+static REPIN_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// Re-order the overlay above its pinned window. Call after raising a window
+/// for input: the raise puts it over the normal-level overlay, and a resting
+/// cursor's parked render loop would otherwise leave it covered.
+pub(crate) fn request_repin() {
+    REPIN_REQUESTED.store(true, Ordering::Release);
+    if let Some(tx) = CMD_TX.get() {
+        let _ = tx.try_send(OverlayMsg::Wake);
+    }
+}
+
+/// Whether the render loop re-orders the overlay above `pinned` this frame.
+fn should_repin(
+    pinned: Option<u64>,
+    pin_changed: bool,
+    requested: bool,
+    repin_frames: u32,
+) -> bool {
+    pinned.is_some() && (pin_changed || requested || repin_frames >= 60)
+}
+
 pub(crate) fn is_overlay_window(window_id: u32) -> bool {
     window_id != 0 && OVERLAY_WINDOW_IDS.lock().unwrap().contains(&window_id)
 }
@@ -821,10 +846,7 @@ unsafe fn create_surface(
     let _: () = msg_send![tile_layer, release]; // owned by the root layer
     let _: () = msg_send![win, orderFrontRegardless];
     Some(DisplaySurface {
-        geometry: SurfaceGeometry::new(
-            ScreenFrame::new(d.x, d.y, d.width, d.height),
-            d.backing_scale,
-        ),
+        geometry: d.surface_geometry(),
         win_ptr: win as usize,
         layer_ptr: tile_layer as usize,
         window_id: u32::try_from(number).ok()?,
@@ -1082,7 +1104,8 @@ fn render_loop(
             repin_frames += 1;
             let pin_changed = pinned_wid != last_pinned;
             last_pinned = pinned_wid;
-            if pinned_wid.is_some() && (pin_changed || refit || repin_frames >= 60) {
+            let requested = REPIN_REQUESTED.swap(false, Ordering::AcqRel);
+            if should_repin(pinned_wid, pin_changed || refit, requested, repin_frames) {
                 for surface in &surfaces {
                     MacZOrderEnforcer {
                         win_ptr: surface.win_ptr,
@@ -1482,6 +1505,18 @@ fn pixmap_to_cgimage(pixmap: &tiny_skia::Pixmap) -> Option<usize> {
 mod tests {
     use super::*;
 
+    /// A raised target window must get the overlay back above it at once,
+    /// even with no pin change and a parked render loop; nothing re-orders
+    /// an overlay that has no pin target.
+    #[test]
+    fn a_requested_repin_reorders_the_overlay_above_its_target() {
+        assert!(should_repin(Some(7), false, true, 0));
+        assert!(should_repin(Some(7), true, false, 0));
+        assert!(should_repin(Some(7), false, false, 60));
+        assert!(!should_repin(Some(7), false, false, 1));
+        assert!(!should_repin(None, false, true, 60));
+    }
+
     /// A human-origin session (a Cua Spaces viewer's relayed input) never
     /// reaches the renderer; an agent's session does. The rule itself lives
     /// in `cua_driver_core::agent_cursor`.
@@ -1616,7 +1651,7 @@ mod tests {
                 height: 600.0,
             },
             layer: 0,
-            z_index,
+            z_index: Some(z_index),
             is_on_screen: true,
             current_space_id: None,
             on_current_space: None,
@@ -1737,13 +1772,96 @@ mod tests {
         }
     }
 
+    /// trycua/cua#5336: on each reported layout, every active display gets a
+    /// surface, and a cursor at a target paints only on the surface of the
+    /// display holding that target, at the target.
+    #[test]
+    fn each_reported_layout_draws_the_cursor_on_the_display_holding_the_target() {
+        use super::super::display_layout::{DisplayGeometry, DisplayLayout};
+        let display = |id, x, y, width, height, backing_scale| DisplayGeometry {
+            id,
+            x,
+            y,
+            width,
+            height,
+            backing_scale,
+            is_primary: id == 1,
+        };
+        let layouts = [
+            // The issue: a display below the main one and a portrait one left.
+            vec![
+                display(1, 0.0, 0.0, 3008.0, 1692.0, 1.0),
+                display(2, 0.0, 1692.0, 1800.0, 1169.0, 2.0),
+                display(3, -1080.0, -200.0, 1080.0, 1920.0, 1.0),
+            ],
+            // A wider display to the right of a 2x main display.
+            vec![
+                display(1, 0.0, 0.0, 1728.0, 1117.0, 2.0),
+                display(2, 1728.0, 0.0, 3008.0, 1692.0, 1.0),
+            ],
+            // A display above the main one, partly at negative X.
+            vec![
+                display(1, 0.0, 0.0, 1470.0, 956.0, 2.0),
+                display(2, -227.0, -1080.0, 1920.0, 1080.0, 1.0),
+            ],
+            // Taller portrait displays on both sides, offset upward.
+            vec![
+                display(1, 0.0, 0.0, 3072.0, 1728.0, 2.0),
+                display(2, 3072.0, -430.0, 1440.0, 2560.0, 2.0),
+                display(3, -1440.0, -467.0, 1440.0, 2560.0, 2.0),
+            ],
+        ];
+        for displays in layouts {
+            let layout = DisplayLayout {
+                generation: 0,
+                displays,
+            };
+            let surfaces: Vec<SurfaceGeometry> = layout
+                .displays
+                .iter()
+                .map(|d| d.surface_geometry())
+                .collect();
+            for d in &layout.displays {
+                // The centre, and a point near the bottom edge.
+                for target in [
+                    (d.x + d.width / 2.0, d.y + d.height / 2.0),
+                    (d.x + d.width / 2.0, d.y + d.height - 200.0),
+                ] {
+                    assert_eq!(layout.display_at(target.0, target.1), Some(*d));
+                    let mut map = empty_map();
+                    let core = &mut placed(&mut map, "sessA").core;
+                    core.pos = cursor_overlay::anchor_for_pointer(target.0, target.1, core.heading);
+                    for (other, surface) in layout.displays.iter().zip(&surfaces) {
+                        let tile = paint_tile_for(&map, *surface);
+                        if other.id != d.id {
+                            assert!(tile.is_none(), "display {} paints {target:?}", other.id);
+                            continue;
+                        }
+                        let tile = tile.expect("the display holding the target paints");
+                        assert_eq!(tile.scale, d.backing_scale);
+                        let (left, top) = (d.x + tile.frame[0], d.y + tile.frame[1]);
+                        assert!(
+                            left <= target.0
+                                && target.0 < left + tile.frame[2]
+                                && top <= target.1
+                                && target.1 < top + tile.frame[3],
+                            "tile {:?} on display {} misses {target:?}",
+                            tile.frame,
+                            d.id
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn frontmost_target_can_raise_overlay_without_covering_another_app() {
         let target_pid = 100;
         let mut windows = vec![window(10, target_pid, 20), window(11, 200, 10)];
         // WindowServer may retain another app's window ahead in its global
         // list; the active app identity is the authoritative cross-app guard.
-        windows[1].z_index = 30;
+        windows[1].z_index = Some(30);
         assert!(target_is_frontmost_visible_window(
             10,
             Some(target_pid),

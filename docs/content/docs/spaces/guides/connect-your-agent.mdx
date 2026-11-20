@@ -184,9 +184,12 @@ lists the tools it gets.
 
 ## What your agent can do
 
-The cua MCP server gives an agent 33 Spaces tools plus sandbox and computer
-tools. For the computer the agent runs on, use [Cua Driver](/cua-driver/quickstart)
-instead. The main ones:
+By default the cua MCP server gives an agent every Spaces tool except the few
+that are for a person only, plus sandbox, computer, skills and other tools.
+[MCP tools](/cua-cli/reference/mcp-tools) lists each one with the permission
+that gates it, and [Limit what an agent can do](#limit-what-an-agent-can-do)
+narrows the set. For the computer the agent runs on, use
+[Cua Driver](/cua-driver/quickstart) instead. The main ones:
 
 ```text output
 list_spaces / create_space {reuse}  -> pick, reuse or create a Space

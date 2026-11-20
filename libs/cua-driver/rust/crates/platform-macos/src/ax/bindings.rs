@@ -775,12 +775,12 @@ pub unsafe fn copy_children_limited(element: AXUIElementRef, max: usize) -> Vec<
     if err != kAXErrorSuccess || value.is_null() {
         return vec![];
     }
-    retained_elements(value as CFTypeRef)
+    retained_elements(value as CFTypeRef).unwrap_or_default()
 }
 
 /// The AX elements of a +1 `CFArray`, each retained for the caller. Consumes
-/// `value`; anything else is released and yields nothing.
-unsafe fn retained_elements(value: CFTypeRef) -> Vec<AXUIElementRef> {
+/// `value`; anything else is released and is an error.
+unsafe fn retained_elements(value: CFTypeRef) -> Result<Vec<AXUIElementRef>, AXError> {
     let cf_array_type_id = CFArray::<CFTypeRef>::type_id();
     if core_foundation::base::CFGetTypeID(value) != cf_array_type_id {
         CFRelease(value);

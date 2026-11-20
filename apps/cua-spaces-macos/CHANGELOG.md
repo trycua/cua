@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.39.3](https://github.com/trycua/cua/compare/cua-spaces-v0.39.2...cua-spaces-v0.39.3) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** bump aiohttp to 3.14.5 (44 Dependabot alerts) ([#8309](https://github.com/trycua/cua/issues/8309)) ([006c897](https://github.com/trycua/cua/commit/006c897412aef0820e43a67beab8fe262a4a9886))
+
 ## [0.39.2](https://github.com/trycua/cua/compare/cua-spaces-v0.39.1...cua-spaces-v0.39.2) (2026-11-20)
 
 

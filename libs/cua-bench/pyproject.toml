@@ -1,6 +1,6 @@
 [project]
 name = "cua-bench"
-version = "0.4.12"
+version = "0.4.13"
 description = "Run computer-use benchmark datasets on sandboxes"
 readme = "README.md"
 license = "MIT"
@@ -31,7 +31,7 @@ requires-python = ">=3.12,<3.14"
 # Core dependencies - minimal set for basic functionality
 dependencies = [
     # Async & networking (aiohttp: the legacy computer-server client)
-    "aiohttp>=3.9.0",
+    "aiohttp>=3.14.4",
     # CLI & display
     "rich>=14.2.0",
     "tqdm>=4.66.0",

@@ -3062,6 +3062,10 @@ fn inspect_archive(
     })
 }
 
+fn driver_satisfies(requirement: &VersionReq, driver: &Version) -> bool {
+    requirement.matches(driver)
+}
+
 fn validate_manifest(
     manifest: &ExtensionManifest,
     entry: &RegistryEntry,
@@ -3085,7 +3089,7 @@ fn validate_manifest(
     let requirement = VersionReq::parse(&manifest.driver_version)
         .context("manifest driver_version is not a valid semantic version requirement")?;
     let driver = Version::parse(env!("CARGO_PKG_VERSION"))?;
-    if !requirement.matches(&driver) {
+    if !driver_satisfies(&requirement, &driver) {
         bail!(
             "extension {} requires Driver {}; running Driver is {}",
             manifest.version,
@@ -8068,6 +8072,24 @@ mod tests {
         assert!(store.root.join(TRUST_NAME).exists());
         assert!(!store.root.join(TRUST_BACKUP_NAME).exists());
         assert!(!store.root.join(TRUST_NEW_NAME).exists());
+    }
+
+    #[test]
+    fn driver_requirement_accepts_prerelease_builds_by_base_version() {
+        let satisfies = |requirement: &str, driver: &str| {
+            driver_satisfies(
+                &VersionReq::parse(requirement).unwrap(),
+                &Version::parse(driver).unwrap(),
+            )
+        };
+        let nightly = "0.38.1-nightly.20261105.41967274244";
+        assert!(satisfies(">=0.28.2", nightly));
+        assert!(satisfies(">=0.38.1", nightly));
+        assert!(satisfies(&format!("={nightly}"), nightly));
+        assert!(!satisfies(">=0.38.2", nightly));
+        assert!(!satisfies("<0.38.1", nightly));
+        assert!(satisfies(">=0.28.2", "0.38.0"));
+        assert!(!satisfies(">=0.28.2", "0.28.1"));
     }
 
     #[test]

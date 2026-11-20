@@ -4570,18 +4570,34 @@ mod runtime_isolation_tests {
         while provider.requests.load(Ordering::SeqCst) == 0 {
             tokio::task::yield_now().await;
         }
+        // Let the second call be admitted and queue behind the open prompt.
         let queued = tokio::spawn(call("history_query"));
-        for _ in 0..16 {
+        for _ in 0..200 {
             tokio::task::yield_now().await;
         }
         call("end_session").await;
         provider.gate.add_permits(1);
-        assert_eq!(asking.await.unwrap().is_error, Some(true));
+        let refusal_code = |result: &ToolResult| {
+            result
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        };
+        assert_eq!(
+            refusal_code(&asking.await.unwrap()).as_deref(),
+            Some("authorization_canceled")
+        );
         let queued = tokio::time::timeout(Duration::from_secs(10), queued)
             .await
             .expect("the queued call is canceled without a prompt")
             .unwrap();
-        assert_eq!(queued.is_error, Some(true));
+        // Refused at consent, not at admission: it was waiting for its turn.
+        assert_eq!(
+            refusal_code(&queued).as_deref(),
+            Some("authorization_canceled")
+        );
         assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
         assert_eq!(hits.load(Ordering::SeqCst), 0);
         assert!(crate::session::is_session_ended(

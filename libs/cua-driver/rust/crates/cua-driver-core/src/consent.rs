@@ -1066,9 +1066,11 @@ mod tests {
             tokio::task::yield_now().await;
         }
         assert!(crate::session::end_session_for_owner(&session, &session));
-        provider.gate.add_permits(2);
+        provider.gate.add_permits(1);
         assert!(first.await.unwrap().unwrap().is_some());
+        // It is canceled when its turn comes, without asking anyone.
         assert_eq!(queued.await.unwrap().unwrap_err(), ConsentError::Canceled);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
 
         // Its next episode is asked again.
         assert!(start_episode(&session));
@@ -1077,7 +1079,7 @@ mod tests {
             .await
             .unwrap()
             .is_some());
-        assert_eq!(provider.requests.load(Ordering::SeqCst), 3);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
         for session in [&other, &session] {
             crate::session::end_session(session);
             crate::session::forget_ended_sessions_with_prefix(session);

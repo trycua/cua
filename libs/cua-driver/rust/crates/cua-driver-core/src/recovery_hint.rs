@@ -901,6 +901,11 @@ fn background_unavailable(c: &Ctx) -> RecoveryHint {
              is not a drag first (Move button, menu item, shortcut). {foreground}"
         ))
         .call(c.read_window()),
+        (_, Some("earlier_call_failed")) => RecoveryHint::new(
+            "An earlier UI Automation call failed and may have taken effect. Read the window again \
+             and check the target before you act again.",
+        )
+        .call(c.read_window()),
         (_, Some("electron_main_process_unavailable")) => RecoveryHint::new(format!(
             "This Electron window cannot take a background drag. Use the app's own controls (button, \
              menu item or keyboard route). {foreground}"

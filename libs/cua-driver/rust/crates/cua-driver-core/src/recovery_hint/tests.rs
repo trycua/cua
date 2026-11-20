@@ -364,6 +364,34 @@ fn an_unresponsive_app_waits_then_reads_the_same_window_again() {
 }
 
 #[test]
+fn an_earlier_failed_call_reads_the_window_and_never_retries_in_the_foreground() {
+    let hint = hint_for(
+        "click",
+        &window_seed(),
+        true,
+        json!({
+            "code": "background_unavailable",
+            "reason": "earlier_call_failed",
+            "effect": "unverifiable",
+            "escalation": {"recommended": "foreground", "reason": "r"},
+        }),
+    );
+    assert_eq!(
+        hint.hint,
+        "An earlier UI Automation call failed and may have taken effect. Read the window again and \
+         check the target before you act again."
+    );
+    assert!(!hint.hint.contains("foreground"));
+    assert_eq!(
+        call_value(&hint),
+        json!({
+            "tool": "get_window_state",
+            "arguments": {"pid": 4242, "window_id": 17, "session": "run-1"},
+        })
+    );
+}
+
+#[test]
 fn a_window_target_comes_from_the_typed_target_when_the_call_has_no_top_level_ids() {
     let hint = hint_for(
         "click",

@@ -2341,6 +2341,10 @@ fn perform_ax_click(
         }
 
         if let Some(target) = web_pixel {
+            let page = (watch_page && !foreground)
+                .then(|| unsafe { crate::ax::web_effect::PageProbe::before_press(pid, element) })
+                .flatten();
+            let pressed_at = std::time::Instant::now();
             crate::input::mouse::click_at_xy_with_window_local(
                 pid,
                 target.screen_x,
@@ -2362,8 +2366,8 @@ fn perform_ax_click(
                 unadvertised: false,
                 selection_verified: false,
                 selection_via_pixel: true,
-                page: None,
-                pressed_at: std::time::Instant::now(),
+                page,
+                pressed_at,
             });
         }
     }

@@ -4151,7 +4151,7 @@ fn type_text_xtest(conn: &RustConnection, text: &str, pacing: TypePacing) -> Res
         .get(..kpm)
         .and_then(|s| s.iter().copied().find(|&k| k != 0))
         .unwrap_or(50);
-    let caps_lock = CapsLockOff::engage(conn, modmap.keycodes.get(kpm..2 * kpm).unwrap_or(&[]))?;
+    let caps_lock = CapsLockOff::engage(conn)?;
     let client = RefCell::new(TextClient::new(conn, None));
     type_text_in_spare_batches(
         text,
@@ -4195,41 +4195,59 @@ fn type_text_xtest(conn: &RustConnection, text: &str, pacing: TypePacing) -> Res
     Ok(())
 }
 
+/// Clears a locked Lock modifier for the life of the guard and locks it again
+/// on drop. It sets the XKB lock state directly rather than tapping the Lock
+/// key, since a tap does not toggle Lock while that key is held down.
 struct CapsLockOff<'a> {
     conn: &'a RustConnection,
-    keycode: u8,
 }
 
 impl<'a> CapsLockOff<'a> {
-    fn engage(conn: &'a RustConnection, lock_keycodes: &[u8]) -> Result<Option<Self>> {
-        let root = conn.setup().roots[0].root;
-        if !conn
-            .query_pointer(root)?
-            .reply()?
-            .mask
-            .contains(KeyButMask::LOCK)
+    fn engage(conn: &'a RustConnection) -> Result<Option<Self>> {
+        use x11rb::connection::RequestConnection as _;
+        use x11rb::protocol::xkb::{self, ConnectionExt as _};
+        if conn
+            .extension_information(xkb::X11_EXTENSION_NAME)?
+            .is_none()
+            || !conn.xkb_use_extension(1, 0)?.reply()?.supported
         {
             return Ok(None);
         }
-        let Some(keycode) = lock_keycodes.iter().copied().find(|&k| k != 0) else {
+        let state = conn.xkb_get_state(xkb::ID::USE_CORE_KBD.into())?.reply()?;
+        if !state.locked_mods.contains(ModMask::LOCK) {
             return Ok(None);
-        };
-        admitted(|| Self::tap(conn, keycode))?;
-        Ok(Some(Self { conn, keycode }))
+        }
+        admitted(|| Self::set_locked(conn, false))?;
+        Ok(Some(Self { conn }))
     }
 
-    fn tap(conn: &RustConnection, keycode: u8) -> Result<(), x11rb::errors::ConnectionError> {
-        use x11rb::protocol::xtest::ConnectionExt as _;
-        for kind in [KEY_PRESS_EVENT, KEY_RELEASE_EVENT] {
-            conn.xtest_fake_input(kind, keycode, 0, x11rb::NONE, 0, 0, 0)?;
-        }
+    fn set_locked(
+        conn: &RustConnection,
+        locked: bool,
+    ) -> Result<(), x11rb::errors::ConnectionError> {
+        use x11rb::protocol::xkb::{self, ConnectionExt as _};
+        let mod_locks = if locked {
+            ModMask::LOCK
+        } else {
+            ModMask::from(0u16)
+        };
+        conn.xkb_latch_lock_state(
+            xkb::ID::USE_CORE_KBD.into(),
+            ModMask::LOCK,
+            mod_locks,
+            false,
+            xkb::Group::M1,
+            ModMask::from(0u16),
+            false,
+            0,
+        )?;
         conn.flush()
     }
 }
 
 impl Drop for CapsLockOff<'_> {
     fn drop(&mut self) {
-        let _ = Self::tap(self.conn, self.keycode);
+        let _ = Self::set_locked(self.conn, true);
     }
 }
 
@@ -5202,13 +5220,19 @@ mod caps_lock_tests {
         }
     }
 
-    fn locked(conn: &RustConnection, root: Window) -> bool {
-        let mask = conn.query_pointer(root).unwrap().reply().unwrap().mask;
-        mask.contains(KeyButMask::LOCK)
+    fn locked(conn: &RustConnection) -> bool {
+        use x11rb::protocol::xkb::{self, ConnectionExt as _};
+        let state = conn.xkb_get_state(xkb::ID::USE_CORE_KBD.into());
+        let state = state.unwrap().reply().unwrap();
+        state.locked_mods.contains(ModMask::LOCK)
     }
 
-    #[test]
-    fn xtest_typing_keeps_case_under_caps_lock() {
+    /// Locks Caps Lock on a private Xvfb, leaving its key held down when
+    /// `held`, types "Hello é" into a focused window, then releases the key.
+    /// Returns the ASCII text the KeyPress events decode to, whether any of
+    /// them carried Lock, and whether Lock is locked at the end.
+    fn type_under_caps_lock(held: bool) -> (String, bool, bool) {
+        use x11rb::protocol::xkb::ConnectionExt as _;
         let mut server = Server(
             Command::new("Xvfb")
                 .args(["-displayfd", "1", "-nolisten", "tcp"])
@@ -5221,6 +5245,13 @@ mod caps_lock_tests {
             .read_line(&mut number)
             .unwrap();
         let (conn, screen) = RustConnection::connect(Some(&format!(":{}", number.trim()))).unwrap();
+        assert!(
+            conn.xkb_use_extension(1, 0)
+                .unwrap()
+                .reply()
+                .unwrap()
+                .supported
+        );
         let root = conn.setup().roots[screen].root;
         let win = conn.generate_id().unwrap();
         conn.create_window(
@@ -5246,18 +5277,29 @@ mod caps_lock_tests {
             .copied()
             .find(|&k| k != 0)
             .unwrap();
-        for kind in [KEY_PRESS_EVENT, KEY_RELEASE_EVENT] {
-            conn.xtest_fake_input(kind, lock, 0, x11rb::NONE, 0, 0, 0)
-                .unwrap();
+        let tap = |kinds: &[u8]| {
+            for &kind in kinds {
+                conn.xtest_fake_input(kind, lock, 0, x11rb::NONE, 0, 0, 0)
+                    .unwrap();
+            }
+            conn.get_input_focus().unwrap().reply().unwrap();
+        };
+        if held {
+            tap(&[KEY_PRESS_EVENT]);
+        } else {
+            tap(&[KEY_PRESS_EVENT, KEY_RELEASE_EVENT]);
         }
-        conn.get_input_focus().unwrap().reply().unwrap();
-        assert!(locked(&conn, root));
+        assert!(locked(&conn));
 
         type_text_xtest(&conn, "Hello é", TypePacing::default()).unwrap();
+        if held {
+            tap(&[KEY_RELEASE_EVENT]);
+        }
 
         let mapping = conn.get_keyboard_mapping(8, 248).unwrap().reply().unwrap();
         let per = mapping.keysyms_per_keycode as usize;
         let mut typed = String::new();
+        let mut lock_seen = false;
         while let Some(event) = conn.poll_for_event().unwrap() {
             let Event::KeyPress(press) = event else {
                 continue;
@@ -5265,7 +5307,7 @@ mod caps_lock_tests {
             if press.detail == lock {
                 continue;
             }
-            assert!(!press.state.contains(KeyButMask::LOCK));
+            lock_seen |= press.state.contains(KeyButMask::LOCK);
             let syms = &mapping.keysyms[(press.detail as usize - 8) * per..];
             let alphabetic = char::from_u32(syms[0]).is_some_and(|c| c.is_ascii_lowercase());
             let shifted = press.state.contains(KeyButMask::SHIFT)
@@ -5276,8 +5318,20 @@ mod caps_lock_tests {
                 typed.push(c);
             }
         }
-        assert_eq!(typed, "Hello");
-        assert!(locked(&conn, root));
+        (typed, lock_seen, locked(&conn))
+    }
+
+    #[test]
+    fn xtest_typing_keeps_case_under_caps_lock() {
+        assert_eq!(type_under_caps_lock(false), ("Hello".into(), false, true));
+    }
+
+    #[test]
+    fn xtest_typing_restores_caps_lock_held_down() {
+        // The held key keeps Lock in the base modifiers, as a held Shift would,
+        // so only the lock state is asserted.
+        let (_, _, locked) = type_under_caps_lock(true);
+        assert!(locked);
     }
 }
 

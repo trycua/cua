@@ -24,7 +24,7 @@ tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 clipboard-rs = { version = "0.3.5", features = ["wayland"] }
 cua-driver-core = { path = "../cua-driver-core", features = ["keyring"] }
 # X11 background input + window enumeration + MIT-SHM capture
-x11rb = { version = "0.13", features = ["xinput", "randr", "xfixes", "composite", "shape", "xtest", "shm", "res"] }
+x11rb = { version = "0.13", features = ["xinput", "randr", "xfixes", "composite", "shape", "xtest", "shm", "res", "xkb"] }
 x11 = { version = "2.21", features = ["xlib", "xinput", "xtest"] }
 base64 = { workspace = true }
 image = { workspace = true }

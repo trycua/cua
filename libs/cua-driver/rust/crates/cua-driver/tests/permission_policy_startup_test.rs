@@ -319,6 +319,18 @@ fn removed_flags_fail_and_name_their_replacement() {
             &["serve", "--claude-code-computer-use-compat"],
             "--claude-code-computer-use-compat was removed;",
         ),
+        (
+            &["mcp", "--claude-code-computer-use-compat", "--help"],
+            "--claude-code-computer-use-compat was removed;",
+        ),
+        (
+            &["serve", "--session-policy", "x.yaml", "--version"],
+            "--session-policy was removed;",
+        ),
+        (
+            &["mcp", "--approve-session-policy", "--expected-pid", "1"],
+            "--approve-session-policy was removed;",
+        ),
     ];
 
     for (args, message) in cases {

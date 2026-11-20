@@ -586,6 +586,11 @@ fn finite_tool_name_from_args(args: &[String]) -> Option<String> {
 pub fn parse_command() -> Command {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
+    if let Some(error) = removed_option_error(&args) {
+        eprintln!("{error}");
+        process::exit(64);
+    }
+
     // Handle --version / -V before any other parsing so they are never
     // silently stripped as "bare flags" and swallowed by MCP mode.
     if args.iter().any(|a| a == "--version" || a == "-V") {
@@ -823,11 +828,6 @@ pub fn parse_command() -> Command {
     }
 
     let expected_stop_pid = parse_expected_stop_pid(&args, positionals.first().copied());
-
-    if let Some(error) = removed_option_error(&args) {
-        eprintln!("{error}");
-        process::exit(64);
-    }
 
     if matches!(positionals.first().copied(), None | Some("mcp")) {
         if let Some(flag) = serve_only_authorization_flag(&args) {

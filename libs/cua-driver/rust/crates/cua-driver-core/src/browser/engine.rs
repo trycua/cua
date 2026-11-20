@@ -1571,17 +1571,34 @@ impl BrowserEngine {
                 "the driver-owned headless browser has no page target",
             ));
         };
+        // A manifest admits this bind without an origin. A tab outside its
+        // origins is recorded by handle only, so neither the bind nor a later
+        // snapshot's fallback reports the title or URL its origin check refuses.
+        let dispatch_context = crate::tool::current_dispatch_authorization_context();
+        let manifest = dispatch_context
+            .as_deref()
+            .and_then(|context| context.capability_manifest());
         let tabs = candidates
             .iter()
             .map(|candidate| {
                 let tab_id = self.store.mint_tab_id();
+                let visible = manifest
+                    .is_none_or(|manifest| manifest.authorize_browser_url(&candidate.url).is_ok());
                 (
                     tab_id.clone(),
                     TabRecord {
                         tab_id,
                         cdp_target_id: candidate.cdp_target_id.clone(),
-                        title: candidate.title.clone(),
-                        url: candidate.url.clone(),
+                        title: if visible {
+                            candidate.title.clone()
+                        } else {
+                            String::new()
+                        },
+                        url: if visible {
+                            candidate.url.clone()
+                        } else {
+                            String::new()
+                        },
                         active: None,
                         generation: 0,
                         snapshots: HashMap::new(),

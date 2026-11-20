@@ -518,11 +518,21 @@ allow:
     );
     let outside = tabs
         .iter()
-        .find(|tab| tab["url"].is_null())
+        .find(|tab| tab["url"] == "")
         .unwrap_or_else(|| panic!("the outside tab is not redacted: {s}"));
     assert!(outside["tab_id"].is_string());
-    assert!(outside["title"].is_null());
+    assert_eq!(outside["title"], "");
     assert!(!s.to_string().contains("outside.test"), "{s}");
+    let target = s["target_id"].as_str().unwrap();
+    let stored = h
+        .engine
+        .store
+        .get_target(&context.runtime_session_key(&session), target)
+        .unwrap();
+    assert!(stored
+        .tabs
+        .values()
+        .all(|tab| !tab.url.contains("outside.test") && !tab.title.contains("Outside")));
 
     let forged = registry
         .invoke_with_context(

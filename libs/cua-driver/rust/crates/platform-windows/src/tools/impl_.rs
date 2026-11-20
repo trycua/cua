@@ -725,10 +725,7 @@ pub(crate) fn split_launchable_target(s: &str) -> (String, String) {
     (trimmed.to_owned(), String::new())
 }
 
-/// Returns `true` when the launch target names a Chromium-based browser
-/// — i.e. one whose hidden launch under `SW_SHOWNOACTIVATE` will trigger
-/// renderer-occlusion throttling unless we inject the anti-throttling flags
-/// below. See #1620.
+/// Returns `true` when the target names a Chromium-based browser.
 ///
 /// Matches the executable basename (case-insensitive, with or without
 /// `.exe`). Accepts bare names (the App Paths shortcut, e.g. `"msedge"`),

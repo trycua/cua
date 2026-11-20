@@ -238,29 +238,17 @@ agent's typed text, (c) trigger the new app via the Start Menu's own
 activation path which `SW_SHOWNORMAL`s it. Use `launch_app({name})` /
 `{aumid}` / `{path}` instead.
 
-**"Open \<app\>" in user speech means launch, not activate.**
-`cua-driver launch_app` is the one correct path for process startup:
-it's idempotent (no-op on a running app), returns the pid, and
-internally uses `SW_SHOWNOACTIVATE` plus the AppX-broker activation
-flow for packaged apps so the target's window comes up without
-becoming foreground. The macOS `FocusRestoreGuard` is replaced on
-Windows by the activation-deny dance: the launcher pumps a
-`VK_NONAME` keystroke before activating, which Windows interprets as
-"another app just had user activity" and rejects the target's own
-`SetForegroundWindow` call per [Windows focus-stealing prevention
-rules](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow).
+**"Open \<app\>" in user speech means launch.** `cua-driver launch_app` is
+the process-startup path: it returns the pid and windows. Ordinary desktop
+launches use `SW_SHOWNORMAL` and Windows' natural foreground behavior. When
+background operation is explicitly required, `start_minimized:true` holds the
+foreground lock and uses `SW_SHOWMINNOACTIVE`; packaged-app activation remains
+broker-controlled. Ordinary launches do not schedule detached foreground-restore
+polling after the response.
 
-**`launch_app` foreground-restore behaviour (Windows).** In addition to
-`SW_SHOWNOACTIVATE`, `launch_app` captures `GetForegroundWindow()` before
-the spawn and schedules a post-spawn polling restore (every 100 ms for up
-to 3 s) that flips the foreground back to the prior window once the
-spawned app has actually activated. This mirrors the macOS
-`FocusRestoreGuard`. For `urls`-only invocations (open these links in the
-default browser, no app-identifying field) the restore is **skipped**,
-because the user explicitly asked for the page to come up. The restore is
-best-effort: `SetForegroundWindow` from non-UIAccess processes is subject
-to Windows' foreground-lock and may silently no-op: failures are logged
-at `tracing::trace!` and not surfaced as errors.
+The Siren downstream build preserves exact Chromium argv when
+`SIREN_CHROMIUM_FLAGS=0` or `false`; when unset, upstream anti-throttling flag
+injection remains enabled.
 
 **`hotkey` modifier dispatch on Chromium/Electron (Windows).** When
 the target is detected as a Chromium-family window (`Chrome_WidgetWin_*`

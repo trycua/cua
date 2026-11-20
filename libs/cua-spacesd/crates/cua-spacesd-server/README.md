@@ -7,7 +7,7 @@ The gRPC, gRPC-Web and HTTP server core of `cua-spacesd`. One TCP port
 |---|---|---|
 | `cua.env.v1.*` over native gRPC (h2c) and gRPC-Web (HTTP/1.1) | root token | `authorization: Bearer <token>` **or** `x-cua-env-authorization: Bearer <token>` (a gateway in front of the daemon can strip `authorization`) |
 | gRPC reflection (`grpc.reflection.v1`, `v1alpha`) | root token | from `cua_proto::FILE_DESCRIPTOR_SET` |
-| `GET /health` | none | 204 while serving, 503 while shutting down |
+| `GET /health` | non-Windows: none; Windows: root token (either header) | Non-Windows: 204 while serving, 503 while shutting down; Windows: Siren readiness JSON, 200 only for a live interactive `WinSta0\Default`, otherwise 503 |
 | `GET/HEAD/PUT/POST /files?path&method&exp&sig` | HMAC signed URL | from `FilesystemService.CreateSignedUrl`; mandatory expiry; `Range`; 507 on a full disk; a URL signed for `PUT` also takes `POST multipart/form-data` (the first file part is written like the `PUT` body, answer `[{"name","path","type"}]`); a URL signed with `run_as` acts as that guest user |
 | `POST /mcp` | root token (either header) | streamable-HTTP MCP over the cua-driver registry (`cua_driver_core::server` dispatch) |
 | `GET /tunnel` (WebSocket) | `tunnel` ticket | from `TunnelService.Forward` |

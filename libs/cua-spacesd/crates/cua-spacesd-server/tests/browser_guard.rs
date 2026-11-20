@@ -36,15 +36,21 @@ fn health(host: &str, origin: Option<&str>) -> Request<Body> {
     b.body(Body::empty()).unwrap()
 }
 
+fn assert_health_allowed(status: StatusCode) {
+    #[cfg(not(target_os = "windows"))]
+    assert!(status.is_success());
+    #[cfg(target_os = "windows")]
+    assert!(matches!(
+        status,
+        StatusCode::OK | StatusCode::SERVICE_UNAVAILABLE
+    ));
+}
+
 #[tokio::test]
 async fn tokenless_loopback_refuses_foreign_origins_and_hosts() {
     let (r, _d) = router(None);
-    assert!(send(&r, health("127.0.0.1:3211", None)).await.is_success());
-    assert!(
-        send(&r, health("localhost:3211", Some("http://localhost:5173")))
-            .await
-            .is_success()
-    );
+    assert_health_allowed(send(&r, health("127.0.0.1:3211", None)).await);
+    assert_health_allowed(send(&r, health("localhost:3211", Some("http://localhost:5173"))).await);
     assert_eq!(
         send(&r, health("127.0.0.1:3211", Some("https://evil.example"))).await,
         StatusCode::FORBIDDEN
@@ -82,9 +88,14 @@ async fn tokenless_loopback_refuses_foreign_origins_and_hosts() {
 #[tokio::test]
 async fn token_servers_allow_any_origin() {
     let (r, _d) = router(Some("secret-token"));
-    assert!(
-        send(&r, health("relay.example", Some("https://app.example")))
-            .await
-            .is_success()
-    );
+    let request = health("relay.example", Some("https://app.example"));
+    #[cfg(target_os = "windows")]
+    let request = {
+        let mut request = request;
+        request
+            .headers_mut()
+            .insert("authorization", "Bearer secret-token".parse().unwrap());
+        request
+    };
+    assert_health_allowed(send(&r, request).await);
 }

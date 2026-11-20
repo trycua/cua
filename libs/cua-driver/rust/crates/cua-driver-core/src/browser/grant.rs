@@ -322,71 +322,51 @@ impl ExistingProfileGrants {
         self.inner.lock().unwrap().ended.push(grant);
     }
 
-    /// The parked grants idle for longer than the parking bound. They stay
-    /// recorded, so no grant can join their socket through them, until the
-    /// caller has released their holds and calls [`Self::forget_parked`].
+    // Parked grants are read, released by the caller, and only then
+    // forgotten: until `forget_parked`, a parked grant past its idle bound
+    // still tells the pool that no grant may join its socket through it.
+
+    /// The parked grants idle for longer than the parking bound.
     pub fn idle_parked(&self, now: Instant) -> Vec<ExistingProfileGrant> {
-        let registry = self.inner.lock().unwrap();
-        registry
-            .ended
-            .iter()
-            .filter(|grant| self.parked_past_idle(grant, now))
-            .cloned()
-            .collect()
+        self.parked_where(|grant| self.parked_past_idle(grant, now))
+    }
+
+    /// The parked grants on the socket for `endpoint_ws_url`. A grant that
+    /// closes its socket ends them too.
+    pub fn parked_on(&self, endpoint_ws_url: &str) -> Vec<ExistingProfileGrant> {
+        self.parked_where(|grant| grant.endpoint_ws_url == endpoint_ws_url)
+    }
+
+    /// Every parked grant.
+    pub fn all_parked(&self) -> Vec<ExistingProfileGrant> {
+        self.parked_where(|_| true)
     }
 
     /// Drop the parked grants at `generations` once their holds are released.
     pub fn forget_parked(&self, generations: &[u64]) {
-        self.take_ended(|grant| {
-            matches!(grant.attachment, Attachment::Parked { .. })
-                && generations.contains(&grant.generation)
+        self.inner.lock().unwrap().ended.retain(|grant| {
+            !(matches!(grant.attachment, Attachment::Parked { .. })
+                && generations.contains(&grant.generation))
         });
     }
 
-    fn parked_past_idle(&self, grant: &ExistingProfileGrant, now: Instant) -> bool {
-        matches!(grant.attachment, Attachment::Parked { since }
-            if now.duration_since(since) > self.parked_idle_ttl)
-    }
-
-    /// Remove the parked grants on the socket for `endpoint_ws_url`, for the
-    /// caller to release. A grant that closes its socket ends them too.
-    pub fn take_parked_on(&self, endpoint_ws_url: &str) -> Vec<ExistingProfileGrant> {
-        self.take_ended(|grant| {
-            matches!(grant.attachment, Attachment::Parked { .. })
-                && grant.endpoint_ws_url == endpoint_ws_url
-        })
-    }
-
-    #[cfg(test)]
-    pub fn parked_generations(&self) -> Vec<u64> {
+    fn parked_where(
+        &self,
+        select: impl Fn(&ExistingProfileGrant) -> bool,
+    ) -> Vec<ExistingProfileGrant> {
         self.inner
             .lock()
             .unwrap()
             .ended
             .iter()
-            .filter(|grant| matches!(grant.attachment, Attachment::Parked { .. }))
-            .map(|grant| grant.generation)
+            .filter(|grant| matches!(grant.attachment, Attachment::Parked { .. }) && select(grant))
+            .cloned()
             .collect()
     }
 
-    /// Remove every parked grant, for the caller to release its socket.
-    pub fn take_parked(&self) -> Vec<ExistingProfileGrant> {
-        self.take_ended(|grant| matches!(grant.attachment, Attachment::Parked { .. }))
-    }
-
-    fn take_ended(
-        &self,
-        take: impl Fn(&ExistingProfileGrant) -> bool,
-    ) -> Vec<ExistingProfileGrant> {
-        let mut taken = Vec::new();
-        self.inner.lock().unwrap().ended.retain(|grant| {
-            let keep = !take(grant);
-            if !keep {
-                taken.push(grant.clone());
-            }
-            keep
-        });
-        taken
+    fn parked_past_idle(&self, grant: &ExistingProfileGrant, now: Instant) -> bool {
+        matches!(grant.attachment, Attachment::Parked { since }
+            if now.duration_since(since) > self.parked_idle_ttl)
     }
 
     /// Move the attached grant at `generation` to `NeedsSetup`. Returns the
@@ -763,7 +743,7 @@ mod tests {
             "an idle parked grant stays recorded until its hold is released"
         );
         grants.forget_parked(&[attached.generation]);
-        assert!(grants.take_parked().is_empty());
+        assert!(grants.all_parked().is_empty());
     }
 
     #[test]
@@ -773,7 +753,7 @@ mod tests {
         let ended = grants.end_session("a");
         assert!(ended.parked.is_empty());
         assert_eq!(ended.released.len(), 1);
-        assert!(grants.take_parked().is_empty());
+        assert!(grants.all_parked().is_empty());
     }
 
     #[test]
@@ -794,10 +774,11 @@ mod tests {
         );
         grants.end_session("a");
         grants.end_session("b");
-        let taken = grants.take_parked_on("ws://127.0.0.1:1/devtools/browser/x");
-        assert_eq!(taken.len(), 1);
-        assert_eq!(taken[0].pid, 42);
-        assert_eq!(grants.take_parked().len(), 1);
+        let on_socket = grants.parked_on("ws://127.0.0.1:1/devtools/browser/x");
+        assert_eq!(on_socket.len(), 1);
+        assert_eq!(on_socket[0].pid, 42);
+        grants.forget_parked(&[on_socket[0].generation]);
+        assert_eq!(grants.all_parked().len(), 1);
     }
 
     #[test]
@@ -806,7 +787,7 @@ mod tests {
         let first = mint(&grants, "a", false);
         let second = mint(&grants, "a", false);
         assert_ne!(first.generation, second.generation);
-        let parked = grants.take_parked();
+        let parked = grants.all_parked();
         assert_eq!(parked.len(), 1);
         assert_eq!(
             parked[0].generation, first.generation,
@@ -889,7 +870,7 @@ mod tests {
             Attachment::Attached
         ));
         assert!(
-            grants.take_parked().is_empty(),
+            grants.all_parked().is_empty(),
             "the replaced grant held no socket, so nothing parks"
         );
     }

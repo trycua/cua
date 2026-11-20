@@ -973,36 +973,36 @@ impl BrowserEngine {
 
     /// End the grants parked on the socket for `endpoint_ws_url`.
     async fn end_parked_on(&self, endpoint_ws_url: &str) {
-        for parked in self.existing_profile_grants.take_parked_on(endpoint_ws_url) {
-            self.pool
-                .release_existing(&parked.endpoint_ws_url, parked.generation)
-                .await;
-        }
+        self.end_parked(self.existing_profile_grants.parked_on(endpoint_ws_url))
+            .await;
     }
 
     /// End the parked grants past their idle bound.
     async fn end_idle_parked(&self) {
-        // Release first: until the grants are forgotten, the pool still sees
-        // them as idle parked holders and lets no grant join through them.
-        let idle = self
-            .existing_profile_grants
-            .idle_parked(std::time::Instant::now());
-        for parked in &idle {
-            self.pool
-                .release_existing(&parked.endpoint_ws_url, parked.generation)
-                .await;
-        }
-        let generations: Vec<u64> = idle.iter().map(|parked| parked.generation).collect();
-        self.existing_profile_grants.forget_parked(&generations);
+        self.end_parked(
+            self.existing_profile_grants
+                .idle_parked(std::time::Instant::now()),
+        )
+        .await;
     }
 
     /// End every parked grant and release the sockets they kept open.
     pub(crate) async fn close_parked_sockets(&self) {
-        for parked in self.existing_profile_grants.take_parked() {
+        self.end_parked(self.existing_profile_grants.all_parked())
+            .await;
+    }
+
+    /// Release parked grants' socket holds, then forget the grants. Until
+    /// they are forgotten, the pool still sees an idle one as a holder that
+    /// no grant may join through.
+    async fn end_parked(&self, parked: Vec<ExistingProfileGrant>) {
+        for grant in &parked {
             self.pool
-                .release_existing(&parked.endpoint_ws_url, parked.generation)
+                .release_existing(&grant.endpoint_ws_url, grant.generation)
                 .await;
         }
+        let generations: Vec<u64> = parked.iter().map(|grant| grant.generation).collect();
+        self.existing_profile_grants.forget_parked(&generations);
     }
 
     /// End the parked grants whose idle bound has passed, once it can have.

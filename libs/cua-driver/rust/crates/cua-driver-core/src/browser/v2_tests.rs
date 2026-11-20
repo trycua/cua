@@ -5737,8 +5737,9 @@ async fn a_session_end_ends_every_parked_hold_on_a_socket_that_is_already_gone()
     assert!(f
         .engine
         .existing_profile_grants
-        .parked_generations()
-        .contains(&a_generation));
+        .all_parked()
+        .iter()
+        .any(|parked| parked.generation == a_generation));
 
     // The socket goes away while B still uses it; then B's session ends.
     let url = f._server.ws_url();
@@ -5746,12 +5747,7 @@ async fn a_session_end_ends_every_parked_hold_on_a_socket_that_is_already_gone()
     f.engine.pool.release_existing(&url, b_generation).await;
     crate::session::fire_session_end("park-dead-socket-b");
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while !f
-            .engine
-            .existing_profile_grants
-            .parked_generations()
-            .is_empty()
-        {
+        while !f.engine.existing_profile_grants.all_parked().is_empty() {
             tokio::task::yield_now().await;
         }
     })

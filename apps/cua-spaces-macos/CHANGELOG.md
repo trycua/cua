@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.39.5](https://github.com/trycua/cua/compare/cua-spaces-v0.39.4...cua-spaces-v0.39.5) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** bump Playwright to 1.65.1 (Chromium 159, CVE-2026-130959) ([#8321](https://github.com/trycua/cua/issues/8321)) ([7dcd4a9](https://github.com/trycua/cua/commit/7dcd4a9e86e04f3d15308762ee0e2f7f52ac632d))
+
+## [0.39.4](https://github.com/trycua/cua/compare/cua-spaces-v0.39.3...cua-spaces-v0.39.4) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** bump undici to patched versions (39 Dependabot alerts) ([#8311](https://github.com/trycua/cua/issues/8311)) ([3b44583](https://github.com/trycua/cua/commit/3b445836f13f768ba629441db4fdb5c6536578c4))
+
+## [0.39.3](https://github.com/trycua/cua/compare/cua-spaces-v0.39.2...cua-spaces-v0.39.3) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** bump aiohttp to 3.14.5 (44 Dependabot alerts) ([#8309](https://github.com/trycua/cua/issues/8309)) ([006c897](https://github.com/trycua/cua/commit/006c897412aef0820e43a67beab8fe262a4a9886))
+
 ## [0.39.2](https://github.com/trycua/cua/compare/cua-spaces-v0.39.1...cua-spaces-v0.39.2) (2026-11-20)
 
 

@@ -1212,6 +1212,9 @@ pub(crate) async fn connect(
     if !relay.config.mesh.enabled {
         return refuse(StatusCode::NOT_FOUND, "this relay has no mesh coordinator");
     }
+    if relay.is_draining() {
+        return crate::server::draining_response();
+    }
     let owner = match authenticate(&relay, &headers).await {
         Ok(o) => o,
         Err(r) => return r,
@@ -1517,6 +1520,16 @@ async fn session(relay: Relay, owner: Owner, agent: String, socket: WebSocket) {
         );
     }
     let (tx, mut rx) = mpsc::channel::<Message>(QUEUE);
+    if relay.is_draining() {
+        // Past the check at the door: the drain would not see this one.
+        let _ = sink
+            .send(close(
+                proto::CLOSE_RELAY_CHANGED,
+                "the relay is restarting: reconnect",
+            ))
+            .await;
+        return;
+    }
     let generation = mesh.generation.fetch_add(1, Ordering::SeqCst);
     let allowed: Arc<RwLock<HashSet<PublicKey>>> = Arc::default();
     if let Some(old) = mesh.conns.lock().expect("conns").insert(

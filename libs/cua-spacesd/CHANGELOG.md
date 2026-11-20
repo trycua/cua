@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.6...cua-spacesd-v0.17.0) (2026-11-20)
+
+
+### Features
+
+* **cua-relay:** drain connections on SIGTERM before closing tunnels ([#8310](https://github.com/trycua/cua/issues/8310)) ([64886ef](https://github.com/trycua/cua/commit/64886ef8b44eece42e4a77f406d8c04186d31fb2))
+* **cua-relay:** expose boot id and start time on /healthz ([#8308](https://github.com/trycua/cua/issues/8308)) ([c9472c2](https://github.com/trycua/cua/commit/c9472c2d2294ade654380af45a7b013a01fd97be))
+
 ## [0.16.6](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.5...cua-spacesd-v0.16.6) (2026-11-20)
 
 

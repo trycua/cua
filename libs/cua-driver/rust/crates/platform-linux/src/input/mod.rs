@@ -4836,7 +4836,7 @@ mod spare_keycode_restore_tests {
         assert_eq!(typed, "?".repeat(TEXT.chars().count()));
     }
 
-    fn type_into_a_late_reader(answers_ping: bool, lookup_after: Duration) -> String {
+    fn xvfb() -> (Server, String) {
         let mut server = Server(
             Command::new("Xvfb")
                 .args(["-displayfd", "1", "-nolisten", "tcp"])
@@ -4848,7 +4848,123 @@ mod spare_keycode_restore_tests {
         BufReader::new(server.0.stdout.take().unwrap())
             .read_line(&mut number)
             .unwrap();
-        let display = format!(":{}", number.trim());
+        (server, format!(":{}", number.trim()))
+    }
+
+    const HELD_KEYSYM: u32 = 0x100_4e2d;
+    const HOLDER: &str = "CUA_TEST_SPARE_KEYCODE_HOLDER";
+
+    fn keysyms_of(conn: &RustConnection, keycode: u8) -> Vec<u32> {
+        conn.get_keyboard_mapping(keycode, 1)
+            .unwrap()
+            .reply()
+            .unwrap()
+            .keysyms
+    }
+
+    fn marked_by(conn: &RustConnection, pid: u32) -> Vec<u32> {
+        let root = conn.setup().roots[0].root;
+        let name = format!("_CUA_DRIVER_SPARE_KEYCODES_{pid}");
+        let atom = conn
+            .intern_atom(false, name.as_bytes())
+            .unwrap()
+            .reply()
+            .unwrap()
+            .atom;
+        let property = conn
+            .get_property(false, root, atom, AtomEnum::CARDINAL, 0, 256)
+            .unwrap()
+            .reply()
+            .unwrap();
+        property.value32().into_iter().flatten().collect()
+    }
+
+    /// The driver the next test kills: it binds a spare keycode, reports
+    /// it, and waits. Outside that test it does nothing.
+    #[test]
+    #[ignore = "starts its own Xvfb"]
+    fn spare_keycode_holder() {
+        if std::env::var_os(HOLDER).is_none() {
+            return;
+        }
+        let (conn, _) = RustConnection::connect(None).unwrap();
+        let mut mapping = keyboard_mapping(&conn).unwrap();
+        let (keycode, guard) =
+            keycode_for_keysym(&conn, &mut mapping, HELD_KEYSYM, "\u{4e2d}").unwrap();
+        std::mem::forget(guard);
+        println!("bound {keycode}");
+        loop {
+            sleep(Duration::from_secs(60));
+        }
+    }
+
+    #[test]
+    #[ignore = "starts its own Xvfb"]
+    fn the_next_driver_restores_the_spare_keycodes_of_one_that_was_killed() {
+        let (_server, display) = xvfb();
+        let mut holder = Server(
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "spare_keycode_restore_tests::spare_keycode_holder",
+                    "--ignored",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env(HOLDER, "1")
+                .env("DISPLAY", &display)
+                .env_remove("WAYLAND_DISPLAY")
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        let keycode: u8 = BufReader::new(holder.0.stdout.take().unwrap())
+            .lines()
+            .map(Result::unwrap)
+            .find_map(|line| line.strip_prefix("bound ").map(|k| k.parse().unwrap()))
+            .expect("the holder bound no spare keycode");
+        let pid = holder.0.id();
+        drop(holder);
+
+        let (conn, _) = RustConnection::connect(Some(&display)).unwrap();
+        assert!(keysyms_of(&conn, keycode).iter().all(|&s| s == HELD_KEYSYM));
+        assert_eq!(marked_by(&conn, pid), [u32::from(keycode)]);
+        keyboard_mapping(&conn).unwrap();
+        assert!(
+            keysyms_of(&conn, keycode).iter().all(|&s| s == 0),
+            "keycode {keycode} still holds the killed driver's keysym"
+        );
+        assert_eq!(marked_by(&conn, pid), Vec::<u32>::new());
+    }
+
+    #[test]
+    #[ignore = "starts its own Xvfb"]
+    fn an_abandoned_call_still_restores_its_spare_keycode() {
+        let (_server, display) = xvfb();
+        let _display = crate::test_env::x11_display(&display);
+        let (observer, _) = RustConnection::connect(Some(&display)).unwrap();
+        let action = action::Action::new(Duration::from_secs(60));
+        let _bound = action::bind(action.clone());
+        let (conn, _) = connect_x11_for_input().unwrap();
+        let mut mapping = keyboard_mapping(&conn).unwrap();
+        let (keycode, guard) =
+            keycode_for_keysym(&conn, &mut mapping, HELD_KEYSYM, "\u{4e2d}").unwrap();
+        keyboard_mapping(&observer).unwrap();
+        assert!(
+            keysyms_of(&observer, keycode).iter().all(|&s| s == HELD_KEYSYM),
+            "loading the keymap took a live driver's spare keycode"
+        );
+
+        action.abandon();
+        drop(guard);
+        assert!(
+            keysyms_of(&observer, keycode).iter().all(|&s| s == 0),
+            "the abandoned call left keycode {keycode} bound"
+        );
+        assert_eq!(marked_by(&observer, std::process::id()), Vec::<u32>::new());
+    }
+
+    fn type_into_a_late_reader(answers_ping: bool, lookup_after: Duration) -> String {
+        let (_server, display) = xvfb();
         let (reader, screen) = RustConnection::connect(Some(&display)).unwrap();
         let root = reader.setup().roots[screen].root;
         let win = reader.generate_id().unwrap();

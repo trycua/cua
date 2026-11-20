@@ -24,6 +24,7 @@
 #include <kwin/workspace.h>
 
 #include <QDBusConnection>
+#include <QDBusConnectionInterface>
 #include <QDBusContext>
 #include <QDBusMessage>
 #include <QDBusServiceWatcher>
@@ -333,21 +334,23 @@ public slots:
             reply["error"] = QStringLiteral("the input gate is armed only over D-Bus");
             return toJson(reply);
         }
-        auto arm = std::make_unique<Arm>();
-        arm->id = m_nextArm++;
-        arm->target = target->internalId();
-        arm->client = client;
-        const quint64 id = arm->id;
-        gate.arm = std::move(arm);
-        m_owner = std::make_unique<QDBusServiceWatcher>(message().service(),
-                                                        connection(),
-                                                        QDBusServiceWatcher::WatchForUnregistration);
-        connect(m_owner.get(), &QDBusServiceWatcher::serviceUnregistered, this, [this, id] {
+        const quint64 id = m_nextArm++;
+        auto owner = watchCaller([this, id] {
             if (gate.arm && gate.arm->id == id) {
                 gate.arm.reset();
             }
             dropOwner();
         });
+        if (!owner) {
+            reply["error"] = QStringLiteral("the caller left before the gate was armed");
+            return toJson(reply);
+        }
+        auto arm = std::make_unique<Arm>();
+        arm->id = id;
+        arm->target = target->internalId();
+        arm->client = client;
+        gate.arm = std::move(arm);
+        m_owner = std::move(owner);
         reply["arm"] = static_cast<qint64>(id);
         return toJson(reply);
     }
@@ -361,14 +364,22 @@ public slots:
         if (gate.arm || !calledFromDBus()) {
             return false;
         }
-        if (!m_closer) {
-            m_closer = std::make_unique<QDBusServiceWatcher>(message().service(),
-                                                             connection(),
-                                                             QDBusServiceWatcher::WatchForUnregistration);
-            connect(m_closer.get(), &QDBusServiceWatcher::serviceUnregistered, this, [this] {
-                m_closer.release()->deleteLater();
-            });
+        // Only one caller holds the gate closed: a second one could unload
+        // the helper after the first has gone and a gate was armed again.
+        if (m_closer) {
+            return m_closerService == message().service();
         }
+        auto closer = watchCaller([this] {
+            if (m_closer) {
+                m_closer.release()->deleteLater();
+            }
+            m_closerService.clear();
+        });
+        if (!closer) {
+            return false;
+        }
+        m_closer = std::move(closer);
+        m_closerService = message().service();
         return true;
     }
 
@@ -383,6 +394,24 @@ public slots:
     }
 
 private:
+    // Watches the D-Bus caller of the current call and runs `gone` once its
+    // connection closes. Null when the caller has already left, since then
+    // the watcher would never fire.
+    template<typename Gone>
+    std::unique_ptr<QDBusServiceWatcher> watchCaller(Gone gone)
+    {
+        const auto service = message().service();
+        auto watcher = std::make_unique<QDBusServiceWatcher>(service,
+                                                             connection(),
+                                                             QDBusServiceWatcher::WatchForUnregistration);
+        connect(watcher.get(), &QDBusServiceWatcher::serviceUnregistered, this, gone);
+        const QDBusReply<bool> registered = connection().interface()->isServiceRegistered(service);
+        if (!registered.isValid() || !registered.value()) {
+            return nullptr;
+        }
+        return watcher;
+    }
+
     QString armState(quint64 id, bool disarm)
     {
         QJsonObject reply;
@@ -443,6 +472,7 @@ private:
     std::unique_ptr<QDBusServiceWatcher> m_owner;
     // Watches the D-Bus connection that closed the gate to unload the helper.
     std::unique_ptr<QDBusServiceWatcher> m_closer;
+    QString m_closerService;
 };
 
 class KwinTargetHelperEffect : public KWin::Effect

@@ -4911,12 +4911,11 @@ mod spare_keycode_restore_tests {
         }
     }
 
-    #[test]
-    #[ignore = "starts its own Xvfb"]
-    fn the_next_driver_restores_the_spare_keycodes_of_one_that_was_killed() {
-        let (_server, display) = xvfb();
-        // Xvfb resets its keymap when its last client leaves.
-        let (conn, _) = RustConnection::connect(Some(&display)).unwrap();
+    /// Run [`spare_keycode_holder`] on `display`, kill it once it has
+    /// bound a spare keycode, and return that keycode and its pid. Keep a
+    /// connection to `display` open: Xvfb resets its keymap when its last
+    /// client leaves.
+    fn spare_keycode_of_a_killed_driver(display: &str) -> (u8, u32) {
         let mut holder = Server(
             Command::new(std::env::current_exe().unwrap())
                 .args([
@@ -4926,7 +4925,7 @@ mod spare_keycode_restore_tests {
                     "--test-threads=1",
                 ])
                 .env(HOLDER, "1")
-                .env("DISPLAY", &display)
+                .env("DISPLAY", display)
                 .env_remove("WAYLAND_DISPLAY")
                 .stderr(Stdio::piped())
                 .spawn()
@@ -4939,14 +4938,40 @@ mod spare_keycode_restore_tests {
             .expect("the holder bound no spare keycode");
         let pid = holder.0.id();
         drop(holder);
+        (keycode, pid)
+    }
+
+    #[test]
+    #[ignore = "starts its own Xvfb"]
+    fn the_next_driver_restores_the_spare_keycodes_of_one_that_was_killed() {
+        let (_server, display) = xvfb();
+        let (conn, _) = RustConnection::connect(Some(&display)).unwrap();
+        let (keycode, pid) = spare_keycode_of_a_killed_driver(&display);
 
         assert_eq!(keysyms_of(&conn, keycode)[0], HELD_KEYSYM);
-        assert_eq!(marked_by(&conn, pid), [u32::from(keycode)]);
+        assert_eq!(marked_by(&conn, pid), [u32::from(keycode), HELD_KEYSYM]);
         keyboard_mapping(&conn).unwrap();
         assert!(
             keysyms_of(&conn, keycode).iter().all(|&s| s == 0),
             "keycode {keycode} still holds the killed driver's keysym"
         );
+        assert_eq!(marked_by(&conn, pid), Vec::<u32>::new());
+    }
+
+    #[test]
+    #[ignore = "starts its own Xvfb"]
+    fn a_killed_drivers_spare_keycode_that_was_rebound_since_is_left_alone() {
+        const F13: u32 = 0xffca;
+        let (_server, display) = xvfb();
+        let (conn, _) = RustConnection::connect(Some(&display)).unwrap();
+        let (keycode, pid) = spare_keycode_of_a_killed_driver(&display);
+        let per = keyboard_mapping(&conn).unwrap().keysyms_per_keycode;
+        conn.change_keyboard_mapping(1, keycode, per, &vec![F13; usize::from(per)])
+            .unwrap();
+        conn.get_input_focus().unwrap().reply().unwrap();
+
+        keyboard_mapping(&conn).unwrap();
+        assert_eq!(keysyms_of(&conn, keycode)[0], F13);
         assert_eq!(marked_by(&conn, pid), Vec::<u32>::new());
     }
 
@@ -5548,7 +5573,7 @@ fn restore_spare(conn: &RustConnection, keycode: u8, per: u8, original: &[u32]) 
 }
 
 /// Prefixes the root-window property, named for a driver's pid, that lists
-/// the spare keycodes that driver has bound. The property outlives the
+/// the spare keycodes that driver has bound, each followed by its keysym. The property outlives the
 /// process, so the keycodes a killed or crashed driver left bound are
 /// restored the next time a driver loads the keyboard map.
 const SPARE_MARKER_PREFIX: &str = "_CUA_DRIVER_SPARE_KEYCODES_";
@@ -5565,23 +5590,28 @@ fn spare_marker(conn: &RustConnection) -> Result<(Window, Atom)> {
     ))
 }
 
-fn marked_keycodes(conn: &RustConnection, root: Window, marker: Atom) -> Result<Vec<u8>> {
+/// The (keycode, keysym) pairs `marker` lists.
+fn marked_keycodes(conn: &RustConnection, root: Window, marker: Atom) -> Result<Vec<(u8, u32)>> {
     let property = conn
-        .get_property(false, root, marker, AtomEnum::CARDINAL, 0, 256)?
+        .get_property(false, root, marker, AtomEnum::CARDINAL, 0, 512)?
         .reply()?;
-    let keycodes = property.value32().into_iter().flatten();
-    Ok(keycodes.filter_map(|k| u8::try_from(k).ok()).collect())
+    let values = property.value32().into_iter().flatten().collect::<Vec<_>>();
+    Ok(values
+        .chunks_exact(2)
+        .filter_map(|pair| Some((u8::try_from(pair[0]).ok()?, pair[1])))
+        .collect())
 }
 
-/// List `keycode` in this driver's marker. Called before it is bound.
-fn mark_spare(conn: &RustConnection, keycode: u8) -> Result<()> {
+/// List `keycode` and the `keysym` it is about to hold in this driver's
+/// marker. Called before it is bound.
+fn mark_spare(conn: &RustConnection, keycode: u8, keysym: u32) -> Result<()> {
     use x11rb::wrapper::ConnectionExt as _;
     let _edit = SPARE_MARKER_EDIT
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (root, marker) = spare_marker(conn)?;
-    let keycode = [u32::from(keycode)];
-    conn.change_property32(PropMode::APPEND, root, marker, AtomEnum::CARDINAL, &keycode)?;
+    let pair = [u32::from(keycode), keysym];
+    conn.change_property32(PropMode::APPEND, root, marker, AtomEnum::CARDINAL, &pair)?;
     Ok(())
 }
 
@@ -5594,8 +5624,8 @@ fn unmark_spare(conn: &RustConnection, keycode: u8) -> Result<()> {
     let (root, marker) = spare_marker(conn)?;
     let rest = marked_keycodes(conn, root, marker)?
         .into_iter()
-        .filter(|&k| k != keycode)
-        .map(u32::from)
+        .filter(|&(k, _)| k != keycode)
+        .flat_map(|(k, keysym)| [u32::from(k), keysym])
         .collect::<Vec<_>>();
     if rest.is_empty() {
         conn.delete_property(root, marker)?;
@@ -5654,24 +5684,25 @@ fn restore_dead_drivers_spares(conn: &RustConnection) -> Result<()> {
     Ok(())
 }
 
-/// Whether `keysyms` is what [`reserve_spare_keycode`] binds: one keysym,
-/// on every level the server reports back. Under XKB the core map can read
-/// some levels back as NoSymbol.
-fn holds_one_keysym(keysyms: &[u32]) -> bool {
-    keysyms.first().is_some_and(|&first| {
-        first != 0 && keysyms.iter().all(|&keysym| keysym == first || keysym == 0)
-    })
+/// Whether `keysyms` is what [`reserve_spare_keycode`] binds for `keysym`:
+/// that keysym on every level the server reports back. Under XKB the core
+/// map can read some levels back as NoSymbol.
+fn holds_keysym(keysyms: &[u32], keysym: u32) -> bool {
+    keysym != 0
+        && keysyms.first() == Some(&keysym)
+        && keysyms.iter().all(|&level| level == keysym || level == 0)
 }
 
-/// A dead driver's keycode is restored only while [`holds_one_keysym`] is
-/// true of it and no running driver lists it.
+/// A dead driver's keycode is restored only while it still holds the
+/// keysym its marker lists ([`holds_keysym`]) and no running driver lists
+/// it, so a binding someone made since is left alone.
 fn restore_spares_under_grab(conn: &RustConnection, root: Window) -> Result<()> {
     let mut live = std::collections::HashSet::new();
     let mut dead = Vec::new();
     for (marker, pid) in spare_markers(conn, root)? {
         let keycodes = marked_keycodes(conn, root, marker)?;
         if process_is_alive(pid) {
-            live.extend(keycodes);
+            live.extend(keycodes.into_iter().map(|(keycode, _)| keycode));
         } else {
             dead.push((marker, keycodes));
         }
@@ -5679,7 +5710,7 @@ fn restore_spares_under_grab(conn: &RustConnection, root: Window) -> Result<()> 
     let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
     let per = mapping.keysyms_per_keycode;
     for (marker, keycodes) in dead {
-        for keycode in keycodes.into_iter().filter(|k| !live.contains(k)) {
+        for (keycode, keysym) in keycodes.into_iter().filter(|(k, _)| !live.contains(k)) {
             let Some(at) = usize::from(keycode).checked_sub(8) else {
                 continue;
             };
@@ -5687,7 +5718,7 @@ fn restore_spares_under_grab(conn: &RustConnection, root: Window) -> Result<()> 
             let Some(keysyms) = mapping.keysyms.get(at..at + usize::from(per)) else {
                 continue;
             };
-            if holds_one_keysym(keysyms) {
+            if holds_keysym(keysyms, keysym) {
                 conn.change_keyboard_mapping(1, keycode, per, &vec![0; usize::from(per)])?;
             }
         }
@@ -5823,7 +5854,7 @@ fn keycode_for_keysym<'a>(
 
     // Not in the map — fall back to remapping a spare keycode.
     let (keycode, guard) = reserve_spare_keycode(mapping, keysym, |spare, per, original, new| {
-        mark_spare(conn, spare)?;
+        mark_spare(conn, spare, keysym)?;
         conn.change_keyboard_mapping(1, spare, per, new)?;
         let guard = RemappedKeycode {
             conn,

@@ -587,6 +587,21 @@ struct WebUIHostTests {
         #expect(held.last == ShortcutKeys(label: "\u{2318}K"))
     }
 
+    /// Choosing the keys it already has, while another app still holds them,
+    /// fails with why instead of reading as done.
+    @Test func reChoosingTakenKeysSaysTheyAreTaken() async throws {
+        let (bridge, _) = bridge()
+        defer { GlobalShortcut.installed = nil }
+        GlobalShortcut.installed = GlobalShortcut { _ in false }
+        GlobalShortcut.installed?.ensure()
+        await #expect(throws: WebUIBridge.Failure.self) {
+            try await bridge.handle("settings.choose", ["row": "global-shortcut", "option": "Shift+Command+Space"])
+        }
+        #expect(throws: GlobalShortcut.Refusal.taken("\u{21e7}\u{2318}Space")) {
+            try GlobalShortcut.installed?.change("Shift+Command+Space")
+        }
+    }
+
     /// The settings file's `hotkey`, as written by hand or by Settings: glyphs
     /// in any order. Empty is off; one that is not a shortcut is the default.
     @Test func theSavedHotkeyIsTheShortcut() {

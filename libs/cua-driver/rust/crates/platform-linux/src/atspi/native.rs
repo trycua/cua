@@ -1417,11 +1417,17 @@ async fn resolve_window_frame(
         // the caller's window is the only thing this application could be
         // showing, and no geometry round-trip can make that more certain.
         // GNOME's AT-SPI tree can omit a window the Shell has mapped, so
-        // there the Shell must vouch for it (`lone_top_level_renders`).
-        let proven = !crate::wayland::is_wayland()
-            || bounded_blocking(move || lone_top_level_proves_window(pid, xid))
+        // there the Shell must vouch for it (`lone_top_level_renders`). X11
+        // can too: a native modal of an Electron app has its own window but
+        // no root, so the lone root is then another window's and only
+        // geometry can bind it.
+        let proven = if crate::wayland::is_wayland() {
+            bounded_blocking(move || lone_top_level_proves_window(pid, xid))
                 .await
-                .unwrap_or(false);
+                .unwrap_or(false)
+        } else {
+            !x11_window_has_sibling(xid, &x11_pid_window_ids(pid))
+        };
         if proven {
             return Some(0);
         }
@@ -7637,6 +7643,22 @@ pub(crate) fn lone_top_level_renders(
     )
 }
 
+/// The managed X11 windows of `pid`.
+fn x11_pid_window_ids(pid: u32) -> Vec<u64> {
+    crate::x11::list_windows(Some(pid))
+        .into_iter()
+        .map(|window| window.xid)
+        .collect()
+}
+
+/// Whether managed window `xid` shares its process with another managed
+/// window, so an application-wide AT-SPI tree may be that other window's. A
+/// popup (override-redirect, absent from `pid_windows`) is described by its
+/// application's tree and has no sibling here.
+fn x11_window_has_sibling(xid: u64, pid_windows: &[u64]) -> bool {
+    pid_windows.contains(&xid) && pid_windows.iter().any(|&window| window != xid)
+}
+
 fn lone_top_level_proves_window(pid: u32, xid: u64) -> bool {
     lone_top_level_renders(
         pid,
@@ -7662,10 +7684,16 @@ fn window_bound_element(
     Ok(())
 }
 
-/// The window-scope rule for a walk of window `xid`. X11 and Hyprland keep
-/// their own routes.
+/// The window-scope rule for a walk of window `xid`. Hyprland keeps its own
+/// route. On X11 an uncorrelated walk is the application's, so it stands for
+/// a managed window only when the process has no other managed window.
 fn window_scope_proven(pid: u32, xid: u64, scoped_frame: Option<usize>) -> bool {
-    if !crate::wayland::is_wayland() || crate::wayland::hyprland::is_session() {
+    if !crate::wayland::is_wayland() {
+        return xid == 0
+            || scoped_frame.is_some()
+            || !x11_window_has_sibling(xid, &x11_pid_window_ids(pid));
+    }
+    if crate::wayland::hyprland::is_session() {
         return true;
     }
     gnome_window_scope_proven(
@@ -7734,8 +7762,9 @@ async fn gnome_window_bound_element_async(
 /// need a correlated top-level, since an application-wide walk can include
 /// another window of the same process. Elsewhere a native walk's correlated
 /// top-level counts, or else the window-scope rule for an uncorrelated walk:
-/// always on X11 and on compositors without a GNOME Shell, and on GNOME only
-/// when the attested Shell lists exactly `xid` for the PID.
+/// on X11 when the process has no other managed window, always on compositors
+/// without a GNOME Shell, and on GNOME only when the attested Shell lists
+/// exactly `xid` for the PID.
 pub(crate) fn snapshot_binds_window(
     exact_window_ids: bool,
     window_scoped: bool,
@@ -7754,7 +7783,8 @@ pub fn snapshot_binds_window_for(pid: u32, xid: u64, window_scoped: bool, truste
             && (crate::wayland::hyprland::is_session() || crate::wayland::niri::is_session()),
         window_scoped,
         trusted,
-        || window_scope_proven(pid, xid, None),
+        // The X11 property fallback is untrusted but read from `xid` itself.
+        || (window_scoped && !crate::wayland::is_wayland()) || window_scope_proven(pid, xid, None),
     )
 }
 
@@ -9730,8 +9760,8 @@ mod window_scope_tests {
 mod token_scope_tests {
     use super::{
         gnome_window_scope_proven, is_window_membership_unproven, lone_top_level_renders,
-        snapshot_binds_window, window_element_membership, ELEMENT_OUTSIDE_WINDOW,
-        WINDOW_SCOPE_UNPROVEN,
+        snapshot_binds_window, window_element_membership, x11_window_has_sibling,
+        ELEMENT_OUTSIDE_WINDOW, WINDOW_SCOPE_UNPROVEN,
     };
 
     // One PID owns Shell windows A and B; `get_window_state` reads B.
@@ -9774,11 +9804,26 @@ mod token_scope_tests {
     }
 
     #[test]
+    fn x11_lone_root_stands_for_a_window_only_without_a_sibling() {
+        const MAIN: u64 = 0x0400_0001;
+        const DIALOG: u64 = 0x0400_0002;
+        const POPUP: u64 = 0x0400_0003;
+        // A native modal beside its main window (#6936): the lone root may be
+        // the main window's, so neither window is the application's tree.
+        assert!(x11_window_has_sibling(DIALOG, &[MAIN, DIALOG]));
+        assert!(x11_window_has_sibling(MAIN, &[MAIN, DIALOG]));
+        // The process's only managed window is the application.
+        assert!(!x11_window_has_sibling(MAIN, &[MAIN]));
+        // An override-redirect popup is not a managed window of its own.
+        assert!(!x11_window_has_sibling(POPUP, &[MAIN]));
+    }
+
+    #[test]
     fn x11_hyprland_and_other_compositors_bind_as_before() {
         for window_scoped in [false, true] {
             for trusted in [false, true] {
-                // X11 and compositors without a GNOME Shell: the uncorrelated
-                // walk rule holds, so the previous `true` stands.
+                // Compositors without a GNOME Shell: the uncorrelated walk
+                // rule holds, so the previous `true` stands.
                 assert!(snapshot_binds_window(false, window_scoped, trusted, || {
                     gnome_window_scope_proven(REQUESTED_B, None, false, || false, || None)
                 }));

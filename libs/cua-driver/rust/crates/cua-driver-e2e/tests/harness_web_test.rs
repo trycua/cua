@@ -372,15 +372,17 @@ fn harness_webview_type_text_refuses_value_assignment_before_mutation() {
                 marked.text()
             );
             let deadline = Instant::now() + Duration::from_secs(5);
-            while journal.snapshot()["number-input"]["value"] != "7" {
+            let state = loop {
+                let state = journal.snapshot();
+                if state["number-input"]["value"] == "7" {
+                    break state;
+                }
                 assert!(
                     Instant::now() < deadline,
-                    "WebView2 fixture journal did not publish the barrier: {}",
-                    journal.snapshot()
+                    "WebView2 fixture journal did not publish the barrier: {state}"
                 );
                 std::thread::sleep(Duration::from_millis(50));
-            }
-            let state = journal.snapshot();
+            };
             assert_eq!(state["txt-input"]["value"], "", "{state}");
             assert_eq!(state["lbl-input-mirror"]["text"], "mirror=", "{state}");
             assert_eq!(

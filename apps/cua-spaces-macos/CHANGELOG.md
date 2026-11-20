@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.39.0](https://github.com/trycua/cua/compare/cua-spaces-v0.38.19...cua-spaces-v0.39.0) (2026-11-20)
+
+
+### Features
+
+* **spaces:** stream direct Spaces over the advertised QUIC media endpoint ([#8083](https://github.com/trycua/cua/issues/8083)) ([ecde561](https://github.com/trycua/cua/commit/ecde5618f7d20cff7fb66a6c2ce0dba16a473c55))
+
+## [0.38.19](https://github.com/trycua/cua/compare/cua-spaces-v0.38.18...cua-spaces-v0.38.19) (2026-11-19)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.28.6 in Cua Spaces ([#8256](https://github.com/trycua/cua/issues/8256)) ([894a6d7](https://github.com/trycua/cua/commit/894a6d70dc975e0dea4af2924f68ee2da70f2c86))
+
+## [0.38.18](https://github.com/trycua/cua/compare/cua-spaces-v0.38.17...cua-spaces-v0.38.18) (2026-11-19)
+
+
+### Bug Fixes
+
+* **spaces:** serve the loopback control server on Windows and Linux so open_space_viewer works ([#8255](https://github.com/trycua/cua/issues/8255)) ([7b7fb01](https://github.com/trycua/cua/commit/7b7fb01f05ce470847980f08570df84286f9c8ef)), closes [#8254](https://github.com/trycua/cua/issues/8254)
+
+## [0.38.17](https://github.com/trycua/cua/compare/cua-spaces-v0.38.16...cua-spaces-v0.38.17) (2026-11-19)
+
+
+### Bug Fixes
+
+* **cua-vmm:** wait for a starting container engine, name and retry its failed pings ([#8241](https://github.com/trycua/cua/issues/8241)) ([fd4e019](https://github.com/trycua/cua/commit/fd4e01991b42350dc8cf0e807c9f211ada44e0bd))
+* **spaces-macos:** bundle cua 0.28.5 in Cua Spaces ([#8232](https://github.com/trycua/cua/issues/8232)) ([1cc9693](https://github.com/trycua/cua/commit/1cc96937190e2a8f490c0b53b47c279120ff13dd))
+
 ## [0.38.16](https://github.com/trycua/cua/compare/cua-spaces-v0.38.15...cua-spaces-v0.38.16) (2026-11-19)
 
 

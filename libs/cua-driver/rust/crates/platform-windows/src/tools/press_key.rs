@@ -43,6 +43,36 @@ fn native_background_key_target(
     Ok(target)
 }
 
+/// Whether a background element key belongs to an embedded WebView rather
+/// than a native control beside it. A windowless element has no HWND of its
+/// own, so only the WebView focus-click route can reach it.
+fn element_in_embedded_webview(
+    native: Option<u64>,
+    owner: u64,
+    is_chromium: impl Fn(u64) -> bool,
+    parent: impl Fn(u64) -> u64,
+) -> bool {
+    let Some(mut current) = native else {
+        return true;
+    };
+    for _ in 0..64 {
+        if current == 0 || current == owner {
+            return false;
+        }
+        if is_chromium(current) {
+            return true;
+        }
+        current = parent(current);
+    }
+    false
+}
+
+fn native_parent(hwnd: u64) -> u64 {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GA_PARENT};
+    unsafe { GetAncestor(HWND(hwnd as *mut _), GA_PARENT) }.0 as usize as u64
+}
+
 fn screen_to_bitmap(hwnd: u64, sx: i32, sy: i32) -> (i32, i32) {
     let (origin_x, origin_y) = bitmap_to_screen(hwnd, 0, 0);
     (sx - origin_x, sy - origin_y)
@@ -243,7 +273,23 @@ impl Tool for PressKeyTool {
         // cached center.
         let background_webview_focus = elem_idx.is_some()
             && delivery == DeliveryMode::Background
-            && crate::input::has_chromium_descendant(hwnd);
+            && crate::input::has_chromium_descendant(hwnd)
+            && tokio::task::spawn_blocking({
+                let admitted = admitted.clone();
+                move || {
+                    let native = admitted
+                        .as_ref()
+                        .and_then(|element| element.native_window_handle());
+                    element_in_embedded_webview(
+                        native,
+                        hwnd,
+                        crate::input::is_chromium_target_window,
+                        native_parent,
+                    )
+                }
+            })
+            .await
+            .unwrap_or(true);
         // Native controls are addressed directly below; only the existing
         // WebView focus-click route needs an activation guard.
         let mut noact = if background_webview_focus {
@@ -372,5 +418,65 @@ impl Tool for PressKeyTool {
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::element_in_embedded_webview;
+
+    const OWNER: u64 = 0x100;
+    const EDIT: u64 = 0x200;
+    const WEBVIEW_HOST: u64 = 0x300;
+    const RENDERER: u64 = 0x400;
+
+    fn is_chromium(hwnd: u64) -> bool {
+        hwnd == WEBVIEW_HOST
+    }
+
+    fn parent(hwnd: u64) -> u64 {
+        match hwnd {
+            EDIT | WEBVIEW_HOST => OWNER,
+            RENDERER => WEBVIEW_HOST,
+            _ => 0,
+        }
+    }
+
+    #[test]
+    fn native_control_beside_a_webview_keeps_its_exact_hwnd() {
+        assert!(!element_in_embedded_webview(
+            Some(EDIT),
+            OWNER,
+            is_chromium,
+            parent
+        ));
+        assert!(!element_in_embedded_webview(
+            Some(OWNER),
+            OWNER,
+            is_chromium,
+            parent
+        ));
+    }
+
+    #[test]
+    fn webview_elements_take_the_focus_click_route() {
+        assert!(element_in_embedded_webview(
+            None,
+            OWNER,
+            is_chromium,
+            parent
+        ));
+        assert!(element_in_embedded_webview(
+            Some(WEBVIEW_HOST),
+            OWNER,
+            is_chromium,
+            parent
+        ));
+        assert!(element_in_embedded_webview(
+            Some(RENDERER),
+            OWNER,
+            is_chromium,
+            parent
+        ));
     }
 }

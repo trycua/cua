@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.13](https://github.com/trycua/cua/compare/sandbox-v0.11.12...sandbox-v0.11.13) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** bump mcp to 1.30.0+ (GHSA-qx49-fqc8-xw99) ([#8300](https://github.com/trycua/cua/issues/8300)) ([3d9c32f](https://github.com/trycua/cua/commit/3d9c32fc21e9e9326b330da26e230f8f56c69c0b))
+
 ## [0.11.12](https://github.com/trycua/cua/compare/sandbox-v0.11.11...sandbox-v0.11.12) (2026-11-20)
 
 

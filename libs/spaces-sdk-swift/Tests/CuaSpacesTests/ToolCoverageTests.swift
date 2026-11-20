@@ -43,7 +43,7 @@ import Testing
     ]
 
     @Test func testTheContractIsCompleteTools() {
-        XCTAssertEqual(Self.advertisedTools.count, 122)
+        XCTAssertEqual(Self.advertisedTools.count, 123)
         // The Python server's `local_rcdp` is gone; `stream_endpoint` mints a
         // media ticket for any provider, and `send_file` is new.
         XCTAssertFalse(Self.advertisedTools.contains("local_rcdp"))
@@ -166,6 +166,7 @@ import Testing
         _ = try await connection.notifications.post("Your research is ready") // notify_user
         _ = try await connection.notifications.list()                        // notifications_list
         _ = try await connection.notifications.markRead()                    // notifications_ack
+        _ = try await connection.notifications.delete(["n-1"])               // notifications_delete
 
         // --- Sharing through the relay -----------------------------------------
         let shared = try await space.share(with: "bob@example.com", role: "editor") // share_space

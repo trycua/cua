@@ -240,6 +240,9 @@ impl Tool for SetValueTool {
             Some((element_ptr, Some(element_index))),
             Some(window_id),
         );
+        // WebKit (not Chromium or Electron) web content: a field that ignores
+        // the write may take it once focused.
+        let webkit_field = ax_echo_surface && !is_chromium_popup_owner(pid);
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // AXValue writes on popups / sliders can cause reflex activations
@@ -261,6 +264,7 @@ impl Tool for SetValueTool {
                         pid,
                         window_id,
                         &value,
+                        webkit_field,
                     )
                 })
                 .await
@@ -670,6 +674,7 @@ fn set_value_blocking(
     pid: i32,
     window_id: u32,
     value: &str,
+    webkit_field: bool,
 ) -> anyhow::Result<SetValueOutcome> {
     let element = element_ptr as AXUIElementRef;
 
@@ -748,6 +753,37 @@ fn set_value_blocking(
                     numeric_target.is_some(),
                 );
             }
+            // WebKit form fields ignore an AXValue write while they are not
+            // the page's focused element and accept it once they are. Focus
+            // moves inside the app only; the app is not activated or raised.
+            let mut focused_retry = false;
+            if webkit_field && !secure && write_not_applied(verified, changed) {
+                let focused =
+                    unsafe { crate::ax::bindings::set_bool_attr_true(element, "AXFocused") };
+                if focused == kAXErrorSuccess
+                    && unsafe { set_string_attr(element, "AXValue", value) } == kAXErrorSuccess
+                {
+                    focused_retry = true;
+                    for _ in 0..NOT_APPLIED_REREADS {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        unsafe {
+                            crate::ax::enablement::flush_pending_web_updates_for_element(
+                                pid, element,
+                            )
+                        };
+                        after = unsafe { copy_string_attr(element, "AXValue") };
+                        (verified, changed) = classify_write(
+                            before.as_deref(),
+                            after.as_deref(),
+                            value,
+                            numeric_target.is_some(),
+                        );
+                        if !write_not_applied(verified, changed) {
+                            break;
+                        }
+                    }
+                }
+            }
             let suffix = match (verified, changed) {
                 (Some(true), Some(false)) => " Value already matched; write was idempotent.",
                 (Some(true), _) => "",
@@ -763,7 +799,12 @@ fn set_value_blocking(
             };
             Ok(SetValueOutcome {
                 detail: format!(
-                    "✅ Set AXValue on [{element_index}] {role}.{suffix}{}",
+                    "✅ Set AXValue on [{element_index}] {role}{}.{suffix}{}",
+                    if focused_retry {
+                        " after focusing it (the first write was not applied)"
+                    } else {
+                        ""
+                    },
                     document.note()
                 ),
                 value: after,

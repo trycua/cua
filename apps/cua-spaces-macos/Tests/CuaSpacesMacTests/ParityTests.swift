@@ -66,6 +66,7 @@ struct ParityTests {
         case .copyCommand: return "copy-command"
         case .openUrl: return "open-url"
         case .details: return "details"
+        case .chooseWindowsIso: return "choose-windows-iso"
         }
     }
 

@@ -362,6 +362,14 @@ impl RenderStateCore {
         self.visible && self.placed && self.idle_alpha >= 0.004
     }
 
+    /// Whether an action should glide this cursor and wait for its arrival:
+    /// enabled at launch, not turned off at runtime, and placed. A cursor
+    /// turned off with `SetEnabled(false)` never animates, so an action never
+    /// waits for a glide nobody can see (#4276).
+    pub fn animates(&self) -> bool {
+        self.cfg.enabled && self.visible && self.placed
+    }
+
     /// Whether a revealed cursor keeps changing pixels while it rests.
     ///
     /// Two extras animate at rest: the resting float of the built-in theme
@@ -1541,6 +1549,20 @@ mod glide_duration_tests {
             assert!(!core.is_revealed());
             assert!(core.idle_fade_wait().is_none());
         }
+    }
+
+    #[test]
+    fn a_cursor_turned_off_at_runtime_does_not_animate() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        assert!(!core.animates(), "an unplaced cursor has nothing to glide");
+        core.apply_command_base(OverlayCommand::ClickPulse { x: 40.0, y: 40.0 }, true, true);
+        assert!(core.animates());
+        core.apply_command_base(OverlayCommand::SetEnabled(false), true, true);
+        assert!(!core.animates(), "turned off after it was shown");
+        core.apply_command_base(OverlayCommand::SetEnabled(true), true, true);
+        assert!(core.animates());
+        core.cfg.enabled = false;
+        assert!(!core.animates(), "disabled at launch");
     }
 
     #[test]

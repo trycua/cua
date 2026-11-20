@@ -236,7 +236,7 @@ pub(crate) fn wayland_capture_limitation() -> Option<String> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum WaylandOverlayBackend {
+pub(crate) enum WaylandOverlayBackend {
     SemanticShellHelper,
     LayerShell,
     LegacyShellHelper,
@@ -263,7 +263,7 @@ fn select_wayland_overlay_backend(
 }
 
 #[cfg(target_os = "linux")]
-fn wayland_overlay_backend() -> WaylandOverlayBackend {
+pub(crate) fn wayland_overlay_backend() -> WaylandOverlayBackend {
     *WAYLAND_OVERLAY_BACKEND.get_or_init(|| {
         select_wayland_overlay_backend(
             crate::wayland::shell_helper::semantic_cursor_available(),
@@ -841,12 +841,10 @@ async fn animate_cursor_on(
     seed_start_if_unplaced(&key, x, y);
     let should_animate = {
         let guard = RENDER.lock().unwrap();
-        matches!(
-            guard.as_ref().and_then(|m| m.cursors.get(&key)),
-            Some(rs) if rs.core.cfg.enabled
-                && rs.core.visible
-                && rs.core.placed
-        )
+        guard
+            .as_ref()
+            .and_then(|m| m.cursors.get(&key))
+            .is_some_and(|rs| rs.core.animates())
     };
     if !should_animate {
         return;

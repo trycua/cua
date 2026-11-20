@@ -36,8 +36,9 @@ pub(crate) fn pin_overlay_above(key: &str, hwnd: u64) {
 /// `explicit` is the targeted element's screen centre when the action has
 /// one. Without it the cursor reuses its remembered position, then falls back
 /// to the target window's centre, so the first keyboard action of a session
-/// is visible. Anonymous calls keep their existing behavior. Geometry and
-/// overlay failures are observational and never affect the input result.
+/// is visible, and last to the hardware pointer. Anonymous calls keep their
+/// existing behavior. Geometry and overlay failures are observational and
+/// never affect the input result.
 pub(crate) async fn position_keyboard_cursor(
     state: &ToolState,
     args: &Value,
@@ -52,15 +53,15 @@ pub(crate) async fn position_keyboard_cursor(
         .cursor_registry
         .get(&cursor_key)
         .and_then(|cursor| cursor.x.zip(cursor.y));
-    let window_center = if hwnd != 0
-        && cursor_overlay::keyboard_cursor_target(explicit, remembered, None, None).is_none()
-    {
-        keyboard_window_center(hwnd)
-    } else {
-        None
-    };
+    let (window_center, pointer) =
+        if cursor_overlay::keyboard_cursor_target(explicit, remembered, None, None).is_none() {
+            let center = (hwnd != 0).then(|| keyboard_window_center(hwnd)).flatten();
+            (center, center.is_none().then(pointer_position).flatten())
+        } else {
+            (None, None)
+        };
     let Some((x, y)) =
-        cursor_overlay::keyboard_cursor_target(explicit, remembered, window_center, None)
+        cursor_overlay::keyboard_cursor_target(explicit, remembered, window_center, pointer)
     else {
         return;
     };
@@ -69,6 +70,14 @@ pub(crate) async fn position_keyboard_cursor(
     }
     overlay_glide_to(&cursor_key, x, y).await;
     state.cursor_registry.update_position(&cursor_key, x, y);
+}
+
+fn pointer_position() -> Option<(f64, f64)> {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    let mut point = POINT::default();
+    unsafe { GetCursorPos(&mut point) }.ok()?;
+    Some((f64::from(point.x), f64::from(point.y)))
 }
 
 fn keyboard_window_center(hwnd: u64) -> Option<(f64, f64)> {
@@ -269,34 +278,8 @@ pub(crate) fn minimized_element_refusal(
 /// the capture fallback which also keeps the full PrintWindow bitmap
 /// without crop.
 pub(crate) fn bitmap_to_screen(hwnd: u64, px: i32, py: i32) -> (i32, i32) {
-    use windows::Win32::Foundation::{HWND, RECT};
-    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
-    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
-
-    // Keep this constant in sync with `capture::DWM_CROP_INSET_PX`.
-    const DWM_CROP_INSET_PX: i32 = 1;
-    let h = HWND(hwnd as *mut _);
-    unsafe {
-        let mut dwm = RECT::default();
-        let hr = DwmGetWindowAttribute(
-            h,
-            DWMWA_EXTENDED_FRAME_BOUNDS,
-            &mut dwm as *mut _ as *mut _,
-            std::mem::size_of::<RECT>() as u32,
-        );
-        if hr.is_ok() {
-            return (
-                dwm.left + DWM_CROP_INSET_PX + px,
-                dwm.top + DWM_CROP_INSET_PX + py,
-            );
-        }
-        // Fallback path — capture also keeps the full bitmap when DWM
-        // bounds aren't available, so the bitmap origin IS GetWindowRect
-        // top-left in that branch.
-        let mut wr = RECT::default();
-        let _ = GetWindowRect(h, &mut wr);
-        (wr.left + px, wr.top + py)
-    }
+    let (left, top) = crate::capture::window_capture_origin(hwnd).unwrap_or((0, 0));
+    (left + px, top + py)
 }
 
 /// Animate the agent cursor to (sx, sy) in screen coordinates and wait for the
@@ -636,12 +619,13 @@ impl Default for DriverConfig {
 /// affects behavior — `get_window_state` always returns tree + screenshot.)
 pub fn load_driver_config() -> DriverConfig {
     let mut cfg = DriverConfig::default();
-    if let Some(v) =
-        pip_preview::read_config_value("capture_mode").and_then(|v| v.as_str().map(str::to_owned))
+    if let Some(v) = cua_driver_core::config_file::read_config_value("capture_mode")
+        .and_then(|v| v.as_str().map(str::to_owned))
     {
         cfg.capture_mode = v;
     }
-    if let Some(v) = pip_preview::read_config_value("max_image_dimension").and_then(|v| v.as_u64())
+    if let Some(v) = cua_driver_core::config_file::read_config_value("max_image_dimension")
+        .and_then(|v| v.as_u64())
     {
         if let Ok(v32) = u32::try_from(v) {
             cfg.max_image_dimension = v32;
@@ -1277,6 +1261,13 @@ pub fn build_registry_with_provider(
 ) -> ToolRegistry {
     let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
     let state = ToolState::new(Some(r.capture_service()));
+    {
+        let state = state.clone();
+        r.set_token_window_resolver(Arc::new(move |args| state.snapshots.window_for_token(args)));
+    }
+    r.set_window_identity_resolver(Arc::new(|pid, window_id| {
+        crate::win32::hosted_app_pid(u32::try_from(pid).ok()?, window_id).map(i64::from)
+    }));
     let cursor_outcome_reader = {
         let cursor_registry = state.cursor_registry.clone();
         cua_driver_core::session::register_scoped_cursor_outcome_reader(std::sync::Arc::new(

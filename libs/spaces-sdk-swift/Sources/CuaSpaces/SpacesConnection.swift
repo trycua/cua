@@ -147,6 +147,19 @@ public actor SpacesConnection {
         return handle
     }
 
+    /// When a viewer may send this computer's clipboard to `id` (`viewing`,
+    /// `ask` or `off`; empty is `viewing`), from its record now: a handle's
+    /// info is a connection-time snapshot. `nil` when this connection is not
+    /// backed by the cua SDK.
+    public func clipboardSetting(_ id: SpaceID) async throws -> String? {
+        guard let native else { return nil }
+        do {
+            return try await native.resolve(space: id.rawValue).clipboard
+        } catch let error as CuaError {
+            throw SpacesError(cua: error, tool: "resolve")
+        }
+    }
+
     // MARK: - Spaces
 
     /// Every Space the account can see, from every provider.

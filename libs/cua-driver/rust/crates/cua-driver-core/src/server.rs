@@ -481,6 +481,7 @@ pub fn is_computer_action(tool_name: &str, operation: ToolOperation) -> bool {
                         | "window.activate"
                         | "window.frame.set"
                         | "browser.navigate"
+                        | "browser.motion.policy"
                         | "browser.input.click"
                         | "browser.input.type"
                 )
@@ -690,6 +691,7 @@ fn structured_refusal_code(tool_name: &str, result: Option<&serde_json::Value>) 
         "get_browser_state"
             | "browser_prepare"
             | "browser_navigate"
+            | "browser_motion_policy"
             | "browser_click"
             | "browser_type"
             | "browser_dialog"
@@ -1434,6 +1436,28 @@ mod observation_tests {
                 Some(&serde_json::json!({"url": "https://private.example"})),
             ),
             ToolOperation::NotApplicable
+        );
+    }
+
+    #[test]
+    fn motion_policy_wrong_target_refusal_has_closed_telemetry_without_private_details() {
+        let response = serde_json::json!({
+            "structuredContent": {
+                "status": "refused",
+                "refusal": {
+                    "code": "browser_wrong_target_refused",
+                    "message": "private target description",
+                    "detail": {"target": "private target id"}
+                }
+            }
+        });
+        assert_eq!(
+            structured_refusal_code("browser_motion_policy", Some(&response)),
+            ToolRefusalCode::BrowserWrongTargetRefused
+        );
+        assert_eq!(
+            structured_refusal_code("unknown_motion_policy", Some(&response)),
+            ToolRefusalCode::None
         );
     }
 

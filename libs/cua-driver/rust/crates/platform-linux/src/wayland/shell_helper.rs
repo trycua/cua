@@ -318,7 +318,8 @@ fn attested_owner_with_version(deadline: Instant) -> Option<(String, u32)> {
 }
 
 /// Capture one window's compositor actor without activating it. Covered
-/// windows keep their own content, so no stage crop is involved.
+/// windows keep their own content, so no stage crop is involved. The image is
+/// the window's logical frame, the frame its window coordinates are in.
 pub fn screenshot_window(id: u64, pid: Option<u32>) -> WindowCapture {
     let deadline = operation_deadline(CAPTURE_CAP);
     let Some((owner, version)) = attested_owner_with_version(deadline) else {
@@ -330,19 +331,69 @@ pub fn screenshot_window(id: u64, pid: Option<u32>) -> WindowCapture {
     let Ok(id) = u32::try_from(id) else {
         return WindowCapture::Unavailable;
     };
-    transport::call(
+    let frame = || frame_size(&owner, id, pid, deadline);
+    let Some(before) = frame() else {
+        return WindowCapture::Unavailable;
+    };
+    let png = transport::call(
         &owner,
         PATH,
         &format!("{IFACE}.CaptureWindow"),
         &[id.to_string(), pid.unwrap_or(0).to_string()],
         deadline,
     )
-    .and_then(|raw| decode_capture(&raw))
-    .map_or(WindowCapture::Unavailable, WindowCapture::Png)
+    .and_then(|raw| decode_capture(&raw));
+    png.filter(|_| frame() == Some(before))
+        .and_then(|png| to_logical_frame(png, before))
+        .map_or(WindowCapture::Unavailable, WindowCapture::Png)
+}
+
+/// The logical frame size Shell reports for exactly this window.
+fn frame_size(owner: &str, id: u32, pid: Option<u32>, deadline: Instant) -> Option<(u32, u32)> {
+    let raw = transport::call(owner, PATH, &format!("{IFACE}.GetRects"), &[], deadline)?;
+    let window = select_window(parse_windows(&raw, pid)?, Some(u64::from(id)))?;
+    Some((window.width, window.height))
+}
+
+/// Whether `pixels` is `frame` at one scale, each side rounded to a whole
+/// pixel, as the helper rounds `frame * resource_scale`.
+fn uniformly_scaled(pixels: (u32, u32), frame: (u32, u32)) -> bool {
+    if pixels.0 == 0 || pixels.1 == 0 || frame.0 == 0 || frame.1 == 0 {
+        return false;
+    }
+    let scales = |pixels: u32, frame: u32| {
+        let (pixels, frame) = (f64::from(pixels), f64::from(frame));
+        ((pixels - 0.5) / frame, (pixels + 0.5) / frame)
+    };
+    let (x_low, x_high) = scales(pixels.0, frame.0);
+    let (y_low, y_high) = scales(pixels.1, frame.1);
+    x_low.max(y_low) <= x_high.min(y_high)
+}
+
+/// An actor capture resized to the window's logical frame. Mutter renders a
+/// window at its resource scale, the output scale rounded up (2 on a 150%
+/// output), while window coordinates are logical: a pixel read off the raw
+/// capture names another spot. `None` when the image is not the frame at one
+/// scale, which means the window changed under the capture.
+fn to_logical_frame(png: Vec<u8>, frame: (u32, u32)) -> Option<Vec<u8>> {
+    let pixels = crate::capture::png_dimensions_pub(&png).ok()?;
+    if pixels == frame {
+        return Some(png);
+    }
+    if !uniformly_scaled(pixels, frame) {
+        return None;
+    }
+    let image = image::load_from_memory_with_format(&png, image::ImageFormat::Png).ok()?;
+    let mut out = std::io::Cursor::new(Vec::new());
+    image
+        .resize_exact(frame.0, frame.1, image::imageops::FilterType::Lanczos3)
+        .write_to(&mut out, image::ImageFormat::Png)
+        .ok()?;
+    Some(out.into_inner())
 }
 
 /// Preview-sized pixels of one window, downscaled in the compositor, plus the
-/// window's full-size dimensions. `None` when the helper is older than API 10
+/// window's logical frame size. `None` when the helper is older than API 10
 /// or refuses; callers then take the full-size capture path.
 pub fn screenshot_window_preview(
     id: u64,
@@ -352,6 +403,7 @@ pub fn screenshot_window_preview(
     let id = u32::try_from(id).ok()?;
     let deadline = operation_deadline(CAPTURE_CAP);
     let owner = shell_owner_with_min_version(Some(WINDOW_PREVIEW_API_VERSION), deadline)?;
+    let frame = frame_size(&owner, id, Some(pid), deadline)?;
     let raw = transport::call(
         &owner,
         PATH,
@@ -360,8 +412,19 @@ pub fn screenshot_window_preview(
         deadline,
     )?;
     let png = strip_preview_timestamp(decode_capture(&raw)?)?;
-    let (width, height) = parse_preview_dimensions(&raw)?;
-    Some((png, width, height))
+    // The helper reports the frame at the actor's resource scale.
+    let backing = parse_preview_dimensions(&raw)?;
+    if !uniformly_scaled(backing, frame) || frame_size(&owner, id, Some(pid), deadline)? != frame {
+        return None;
+    }
+    // A capture under the cap is not downscaled, so it is still the backing size.
+    let pixels = crate::capture::png_dimensions_pub(&png).ok()?;
+    let png = if pixels.0 > frame.0 || pixels.1 > frame.1 {
+        to_logical_frame(png, frame)?
+    } else {
+        png
+    };
+    Some((png, frame.0, frame.1))
 }
 
 /// The `uint32 W, uint32 H` after the PNG in a `CaptureWindowPreview` reply.
@@ -778,6 +841,41 @@ mod tests {
         let mut malformed = first;
         malformed[8..12].copy_from_slice(&u32::MAX.to_be_bytes());
         assert!(strip_preview_timestamp(malformed).is_none());
+    }
+
+    fn solid_png(width: u32, height: u32) -> Vec<u8> {
+        let image = image::RgbaImage::from_pixel(width, height, image::Rgba([255, 0, 0, 255]));
+        let mut out = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    }
+
+    #[test]
+    fn a_window_rendered_at_its_resource_scale_is_one_scale_of_its_frame() {
+        // GNOME 48 at 150% renders a 400x337 frame at resource scale 2, and the
+        // helper rounds each side of frame * scale.
+        assert!(uniformly_scaled((800, 674), (400, 337)));
+        assert!(uniformly_scaled((601, 507), (401, 338)));
+        assert!(uniformly_scaled((400, 337), (400, 337)));
+        // A window resized between the frame read and the capture.
+        assert!(!uniformly_scaled((800, 674), (500, 337)));
+        assert!(!uniformly_scaled((0, 674), (400, 337)));
+        assert!(!uniformly_scaled((800, 674), (0, 337)));
+    }
+
+    #[test]
+    fn a_scaled_window_capture_is_returned_in_its_logical_frame() {
+        let png = to_logical_frame(solid_png(800, 674), (400, 337)).unwrap();
+        assert_eq!(
+            crate::capture::png_dimensions_pub(&png).unwrap(),
+            (400, 337)
+        );
+        let unscaled = solid_png(400, 337);
+        assert_eq!(
+            to_logical_frame(unscaled.clone(), (400, 337)),
+            Some(unscaled)
+        );
+        assert_eq!(to_logical_frame(solid_png(800, 674), (500, 337)), None);
     }
 
     #[test]

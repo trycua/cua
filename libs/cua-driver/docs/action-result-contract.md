@@ -31,6 +31,13 @@ client that hands the model only `structuredContent` still sees everything a
 raw MCP client reads from `content`. `evidence[].detail` is the readback the
 evidence rests on. A `refused` result adds `error: {code, hint}`.
 
+Only a `confirmed` result's text may open with `✅`. For any other effect
+the dispatch seam replaces a leading `✅` with words that match `effect`:
+`Sent, effect not verified:` (`unverifiable`), `Sent, but probably had no
+effect:` (`suspected_noop`), `Partly done:` (`partial`) or `Refused:`
+(`refused`). A client that reads only the text never sees a success glyph on
+an unconfirmed action.
+
 | Field | Values |
 | --- | --- |
 | `effect` | `confirmed`, `partial`, `unverifiable`, `suspected_noop`, `refused` |
@@ -117,16 +124,24 @@ They appear on three kinds of result:
 | A browser refusal (`status: "refused"`, `refusal.code`) | next to `refusal` in `structuredContent` |
 | An `ActionResult` with `effect` `unverifiable`, `suspected_noop` or `refused` | `hint` and `next_call` on the `ActionResult` |
 
-For example, a background drag that macOS cannot drop returns:
+For example, a background drag whose drag-and-drop session did not end at the drop point returns:
 
 ```json
 {
   "code": "background_unavailable",
   "reason": "drag_and_drop_session",
-  "hint": "No drop landed: macOS drag-and-drop needs the real pointer. Try a route that is not a drag first (Move button, menu item, shortcut). Retry with delivery_mode:\"foreground\" only if the user allows the window to come forward.",
+  "hint": "No drop landed: the drag-and-drop session did not end at the drop point. Try a route that is not a drag first (Move button, menu item, shortcut). Retry with delivery_mode:\"foreground\" only if the user allows the window to come forward.",
   "next_call": {"tool": "get_window_state", "arguments": {"pid": 811, "window_id": 659}}
 }
 ```
+
+A refusal also ends its text with a line `Next: <hint>`, so a client that shows
+the agent only the text still delivers it. The first line stays the refusal.
+Every hint names only routes the driver supports in that situation, and says
+why when nothing will work. For example, an Electron window drops background
+scrolling and typing, so those hints point to `get_window_state` plus
+`element_token`, `set_value` or `invoke_menu`, and name foreground delivery only
+with its condition.
 
 A producer that already sets `hint` or `next_call` keeps its own value. In
 `run_steps`, a failed step's report carries the same `hint` and `next_call`; in

@@ -253,7 +253,8 @@ pub fn ensure_ax_action_enabled_after_activation(
 
 /// Perform an AX action on a cached element.
 pub fn perform_ax_action(element_ptr: usize, action: &str) -> anyhow::Result<()> {
-    let ax_action = map_action(action)?;
+    let advertised = unsafe { copy_action_names(element_ptr as AXUIElementRef) };
+    let ax_action = crate::ax::actions::wire_name(&advertised, action)?;
     ensure_ax_action_enabled(element_ptr, ax_action)?;
     let err = unsafe { perform_action(element_ptr as AXUIElementRef, ax_action) };
 
@@ -337,6 +338,35 @@ pub fn is_element_focused(pid: i32, element_ptr: usize) -> bool {
 pub fn element_has_keyboard_focus(pid: i32, element_ptr: usize) -> bool {
     is_element_focused(pid, element_ptr)
         || unsafe { copy_bool_attr(element_ptr as AXUIElementRef, "AXFocused") } == Some(true)
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("the addressed element did not acquire keyboard focus; no key was dispatched")]
+pub struct KeyFocusUnconfirmed;
+
+/// Focus `target` and confirm it holds keyboard focus before `dispatch` runs.
+/// A target whose focus is not confirmed within 200ms fails with
+/// [`KeyFocusUnconfirmed`] and nothing is dispatched; `None` dispatches as is.
+pub fn with_confirmed_key_focus<T>(
+    target: Option<usize>,
+    mut focus: impl FnMut(usize) -> anyhow::Result<()>,
+    mut is_focused: impl FnMut(usize) -> bool,
+    dispatch: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    if let Some(target) = target {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
+        loop {
+            focus(target)?;
+            if is_focused(target) {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(KeyFocusUnconfirmed.into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+    dispatch()
 }
 
 #[cfg(test)]

@@ -1,4 +1,5 @@
-//! The default cua skills, bundled from `libs/cua/skills/` at build time.
+//! The default cua skills, bundled from `libs/cua/skills/` and the cua-driver
+//! release's `libs/cua-driver/rust/Skills/cua-driver` at build time.
 //! Each is an Agent Skills folder (`<name>/SKILL.md` with `name` and
 //! `description` front matter, plus optional reference files).
 
@@ -358,7 +359,11 @@ mod tests {
         }
         // cua-driver carries its own release version, not the cua one.
         let driver = bundled().into_iter().find(|s| s.name == "cua-driver");
-        let md = include_str!("../../../skills/cua-driver/SKILL.md");
+        let md = BUNDLED
+            .get_file("cua-driver/SKILL.md")
+            .unwrap()
+            .contents_utf8()
+            .unwrap();
         let version = driver.unwrap().version;
         assert!(
             md.contains(&format!(
@@ -366,6 +371,30 @@ mod tests {
             )),
             "{version}"
         );
+    }
+
+    #[test]
+    fn skills_with_a_canonical_source_install_it_byte_for_byte() {
+        let crate_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for (name, canonical) in [
+            ("cua-driver", "../../../cua-driver/rust/Skills/cua-driver"),
+            ("gui-automation", "../../../../skills/gui-automation"),
+        ] {
+            let canonical = crate_dir.join(canonical);
+            if !canonical.exists() {
+                // Built from the crates.io package, which vendors the skills.
+                continue;
+            }
+            let d = tempfile::tempdir().unwrap();
+            let dest = d.path().join(name);
+            write_to(name, &dest).unwrap();
+            assert_eq!(
+                fsutil::hash_dir(&dest).unwrap(),
+                fsutil::hash_dir(&canonical).unwrap(),
+                "the bundled {name} skill differs from {}",
+                canonical.display()
+            );
+        }
     }
 
     #[test]

@@ -205,7 +205,7 @@ impl ActionCancellation {
         Self(self.0.clone(), Some(Arc::new(guard)))
     }
 
-    fn before_dispatch(&self) -> Result<()> {
+    pub(crate) fn before_dispatch(&self) -> Result<()> {
         self.check()?;
         match &self.1 {
             Some(guard) => guard(),

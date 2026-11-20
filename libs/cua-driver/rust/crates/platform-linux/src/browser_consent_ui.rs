@@ -527,7 +527,7 @@ pub async fn handle(
         prove_window_owner(pid, request.window_id)?;
         let window_id = request.window_id;
         let walk_started = Instant::now();
-        let tree = tokio::task::spawn_blocking(move || {
+        let walked = tokio::task::spawn_blocking(move || {
             crate::browser_setup_ui::window_scoped_tree(pid, window_id)
         })
         .await
@@ -536,9 +536,21 @@ pub async fn handle(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("could not inspect the browser consent UI: {error}"),
             )
-        })??;
+        })?;
         slowest_walk = slowest_walk.max(walk_started.elapsed());
         deadline = started + consent_budget(slowest_walk);
+        let tree = match walked {
+            Ok(tree) => tree,
+            // A walk that is not provably this window's proves nothing about
+            // the prompt, so the driver never acts on it. Keep observing:
+            // the deadline then leaves the pending connection open for the
+            // person instead of ending the attempt as an unavailable route.
+            Err(refusal) => {
+                tracing::debug!(error = %refusal.message, "consent walk was not window-scoped");
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                continue;
+            }
+        };
         last_snapshot = redacted_native_prompt_snapshot(&tree.nodes, &tree.bounds);
         if let Err(refusal) = check_deadline(deadline) {
             return Err(refusal.with_detail(serde_json::json!({

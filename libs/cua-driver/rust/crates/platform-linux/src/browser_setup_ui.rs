@@ -537,6 +537,8 @@ impl SetupInput {
             )?);
         }
         with_target_foreground(pid, window_id, session_policy().setup, || {
+            // Activation can take a while: recheck right before the keys.
+            self.before_dispatch()?;
             if crate::desktop::desktop() != crate::desktop::Desktop::X11 {
                 let mut keys = modifiers
                     .iter()
@@ -548,6 +550,13 @@ impl SetupInput {
                 crate::input::send_key_xtest(key, modifiers)
             }
         })
+    }
+
+    /// The lifecycle check and the invocation's dispatch guard, for a route
+    /// whose input this module sends itself.
+    fn before_dispatch(&self) -> anyhow::Result<()> {
+        self.check()?;
+        self.cancellation.before_dispatch()
     }
 
     fn type_setup_url(&self, pid: u32, window_id: u64, url: &str) -> anyhow::Result<()> {
@@ -980,14 +989,18 @@ fn trusted_setup_navigation(
         clipboard
             .write_text(descriptor.setup_url.to_owned())
             .map_err(|error| anyhow::anyhow!("could not stage the fixed setup URL: {error}"))?;
+        let owned = handle.owned_input()?;
         let paste = with_target_foreground(pid, window_id, session_policy().setup, || {
+            owned.before_dispatch()?;
             if wayland {
                 crate::wayland::hotkey_focused(&["ctrl".to_owned(), "a".to_owned()])?;
                 std::thread::sleep(Duration::from_millis(60));
+                owned.before_dispatch()?;
                 crate::wayland::hotkey_focused(&["ctrl".to_owned(), "v".to_owned()])
             } else {
                 crate::input::send_key_xtest("a", &["ctrl"])?;
                 std::thread::sleep(Duration::from_millis(60));
+                owned.before_dispatch()?;
                 crate::input::send_key_xtest("v", &["ctrl"])
             }
         });
@@ -1652,9 +1665,10 @@ fn set_remote_debugging(
                 }
                 Some(_) if !handle.enable_attempted => {
                     // A toggle that failed after it was sent may have
-                    // switched remote debugging: read it back like a success,
-                    // so a rollback knows what to restore.
-                    handle.enable_attempted = true;
+                    // switched remote debugging: `perform_exact_action` reads
+                    // it back like a success, so a rollback knows what to
+                    // restore. One refused before dispatch sent nothing, and
+                    // a rollback must not touch a checkbox it never toggled.
                     if let Err(error) = perform_exact_action(pid, window_id, node, || input.check())
                     {
                         return Err(handle.abort(BrowserRefusal::new(
@@ -1662,6 +1676,7 @@ fn set_remote_debugging(
                             format!("the exact checkbox action failed: {error}"),
                         )));
                     }
+                    handle.enable_attempted = true;
                 }
                 Some(_)
                     if descriptor.product == BrowserProduct::MicrosoftEdge
@@ -1808,6 +1823,18 @@ mod tests {
             cancellation: ActionCancellation::default(),
             focus: FocusRestore::default(),
         }
+    }
+
+    #[test]
+    fn module_sent_input_runs_the_dispatch_guard_before_each_send() {
+        let mut input = test_input("setup-dispatch-guard-private");
+        input.hyprland = false;
+        assert!(input.before_dispatch().is_ok());
+        input.cancellation = input
+            .cancellation
+            .with_dispatch_guard(|| anyhow::bail!("owned tab no longer selected"));
+        let error = input.before_dispatch().unwrap_err();
+        assert!(error.to_string().contains("owned tab"), "{error}");
     }
 
     #[test]

@@ -2344,11 +2344,14 @@ fn perform_ax_click(
         // window takes the click without being raised. The center must then
         // hit the element itself: a sticky header or an overlay over it would
         // take the click, so the AX press runs instead.
-        if let Some(target) = web_pixel.filter(|target| {
+        if let Some(target) = web_pixel {
             if !foreground && apps::frontmost_pid() != Some(pid) {
                 crate::input::mouse::prepare_background_pixel_click(pid, window_id);
             }
-            unsafe {
+            let page = (watch_page && !foreground)
+                .then(|| unsafe { crate::ax::web_effect::PageProbe::before_press(pid, element) })
+                .flatten();
+            let lands = unsafe {
                 element_at_screen_position(pid, target.screen_x, target.screen_y).is_some_and(
                     |hit| {
                         let lands = crate::fast_path_guard::is_self_or_ancestor(hit, element);
@@ -2356,36 +2359,34 @@ fn perform_ax_click(
                         lands
                     },
                 )
+            };
+            if lands {
+                let pressed_at = std::time::Instant::now();
+                crate::input::mouse::click_at_xy_with_window_local(
+                    pid,
+                    target.screen_x,
+                    target.screen_y,
+                    target.window_x,
+                    target.window_y,
+                    window_id,
+                    1,
+                    &[],
+                    crate::input::mouse::WindowClickDelivery::from_foreground(foreground),
+                )?;
+                return Ok(AxClickOutcome {
+                    summary: format!(
+                        "✅ Posted a click at the center of [{idx}] {role} \"{title}\": this web \
+                         content does not advertise AXPress, so the press would be a no-op \
+                         (not driver-verified)."
+                    ),
+                    needs_webkit_delay: false,
+                    unadvertised: false,
+                    selection_verified: false,
+                    selection_via_pixel: true,
+                    page,
+                    pressed_at,
+                });
             }
-        }) {
-            let page = (watch_page && !foreground)
-                .then(|| unsafe { crate::ax::web_effect::PageProbe::before_press(pid, element) })
-                .flatten();
-            let pressed_at = std::time::Instant::now();
-            crate::input::mouse::click_at_xy_with_window_local(
-                pid,
-                target.screen_x,
-                target.screen_y,
-                target.window_x,
-                target.window_y,
-                window_id,
-                1,
-                &[],
-                crate::input::mouse::WindowClickDelivery::from_foreground(foreground),
-            )?;
-            return Ok(AxClickOutcome {
-                summary: format!(
-                    "✅ Posted a click at the center of [{idx}] {role} \"{title}\": this web \
-                     content does not advertise AXPress, so the press would be a no-op \
-                     (not driver-verified)."
-                ),
-                needs_webkit_delay: false,
-                unadvertised: false,
-                selection_verified: false,
-                selection_via_pixel: true,
-                page,
-                pressed_at,
-            });
         }
     }
 

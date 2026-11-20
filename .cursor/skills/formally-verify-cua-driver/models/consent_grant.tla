@@ -95,6 +95,10 @@ Spec == Init /\ [][Next]_vars
 \* applies once cleanup has finished: until then the ended episode's own grant
 \* may still be in the map, and revival is refused.
 CG1 == grant # 0 => (grant = ep /\ (live \/ cleanup # "none"))
-\* CG2. No call is let through on a grant from an earlier episode.
+\* CG2. No grant lookup lets a call through on a grant from an earlier episode.
+\* It covers the lookup, not where the call runs: consent returns before
+\* lifecycle admission (tool.rs:2232-2248, :2428), so a call let through in one
+\* episode can still be admitted into the next. That approval covers that call
+\* only, and this model does not check it.
 CG2 == ~usedStale
 ====

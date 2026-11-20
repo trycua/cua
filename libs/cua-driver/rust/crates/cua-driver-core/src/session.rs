@@ -1344,6 +1344,15 @@ fn capture_modality_for(tool_name: &str, args: &serde_json::Value) -> Option<Cap
     }
 }
 
+/// Taken by every end before it marks an episode ended, and held by
+/// [`fire_session_revive_for_owner`] across its callbacks. Always taken
+/// before the lifecycle lock, never while holding it.
+static END_ORDER: Mutex<()> = Mutex::new(());
+
+fn end_order() -> MutexGuard<'static, ()> {
+    END_ORDER.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 fn hooks() -> &'static Mutex<HashMap<u64, RegisteredSessionEndHook>> {
     SESSION_END_HOOKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
@@ -1454,9 +1463,10 @@ impl Drop for SessionReviveHookRegistration {
     }
 }
 
-/// owned by the same transport. Holding the lifecycle lock across callbacks
+/// owned by the same transport. Holding the end-order lock across callbacks
 /// orders a racing end after revival, so its cleanup cannot be followed by a
-/// late overlay resurrection.
+/// late overlay resurrection. The lifecycle lock itself is released first,
+/// so a callback may still read session state.
 pub fn fire_session_revive_for_owner(session_id: &str, owner_transport: &str) -> bool {
     let registered = revive_hooks()
         .lock()
@@ -1464,8 +1474,8 @@ pub fn fire_session_revive_for_owner(session_id: &str, owner_transport: &str) ->
         .values()
         .cloned()
         .collect::<Vec<_>>();
-    let lifecycle = lifecycle();
-    if !lifecycle.episodes.get(session_id).is_some_and(|episode| {
+    let _ends = end_order();
+    if !lifecycle().episodes.get(session_id).is_some_and(|episode| {
         matches!(&episode.phase, EpisodePhase::Live(live) if live.owner_transport == owner_transport)
     }) {
         return false;
@@ -1573,6 +1583,7 @@ fn mark_session_ended(
     bound_to: Option<&str>,
     idle: Option<IdleCheck>,
 ) -> EndTransition {
+    let _ends = end_order();
     let mut lifecycle = lifecycle();
     let lifecycle = &mut *lifecycle;
     let episode = lifecycle.episodes.get_mut(session_id);
@@ -1895,6 +1906,15 @@ pub fn is_session_ended(session_id: &str) -> bool {
 /// it) and every call from a closed transport on a label.
 pub fn recreates_on_next_call(session_id: &str, owner_transport: &str) -> bool {
     lifecycle().claim(session_id, owner_transport, Claim::Call) == Ok(Claimed::Replaces)
+}
+
+/// Why `owner_transport`'s next session-requiring call on `session_id` would
+/// be refused, or `None` when it would be admitted. The same check admission
+/// applies, for callers that refuse before reaching it.
+pub fn next_call_refusal(session_id: &str, owner_transport: &str) -> Option<DispatchRefusal> {
+    lifecycle()
+        .claim(session_id, owner_transport, Claim::Call)
+        .err()
 }
 
 /// Whether termination has been requested for a runtime-private lifecycle.

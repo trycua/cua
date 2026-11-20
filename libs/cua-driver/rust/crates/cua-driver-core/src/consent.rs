@@ -512,11 +512,15 @@ impl ProtectedResourceGrants {
         if cacheable {
             // An episode that ended while the person decided, whether queued
             // behind another prompt or accepted after the end, keeps nothing.
+            // The check holds the grant lock, which the session-end hook's
+            // revocation takes after the end is recorded, so an end that lands
+            // after the check still revokes this grant.
+            let mut grants = self.grants.lock().unwrap();
             if episode_status(lifecycle_session) != episode {
                 grant.protected.revoke();
                 return Err(ConsentError::Canceled);
             }
-            self.grants.lock().unwrap().insert(key, grant.clone());
+            grants.insert(key, grant.clone());
         }
         Ok(Some(grant))
     }

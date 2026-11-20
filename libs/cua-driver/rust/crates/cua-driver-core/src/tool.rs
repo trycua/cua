@@ -2125,13 +2125,22 @@ impl ToolRegistry {
             // identity.
             if !matches!(resolved_name, "start_session" | "end_session")
                 && crate::session::is_session_ended(session)
-                && !crate::session::recreates_on_next_call(session, owner)
             {
-                let mut result = session_ended_refusal(
-                    args.get("_public_session_label").and_then(Value::as_str),
-                );
-                restore_public_runtime_result(&mut result, &runtime_prefix);
-                return result;
+                let refusal = match crate::session::next_call_refusal(session, owner) {
+                    None => None,
+                    // A closed transport can neither restart the label nor
+                    // pick a new one.
+                    Some(crate::session::DispatchRefusal::TransportClosed) => {
+                        Some(transport_closed_refusal())
+                    }
+                    Some(_) => Some(session_ended_refusal(
+                        args.get("_public_session_label").and_then(Value::as_str),
+                    )),
+                };
+                if let Some(mut result) = refusal {
+                    restore_public_runtime_result(&mut result, &runtime_prefix);
+                    return result;
+                }
             }
         }
 
@@ -2302,6 +2311,9 @@ impl ToolRegistry {
                     Ok(guard) => Some(guard),
                     Err(crate::session::DispatchRefusal::OwnedByOtherTransport(holder)) => {
                         return session_owned_by_other_transport_refusal(public_label, holder);
+                    }
+                    Err(crate::session::DispatchRefusal::TransportClosed) => {
+                        return transport_closed_refusal();
                     }
                     Err(refusal) => {
                         return protected_refusal("session_ended", refusal.message());
@@ -4516,6 +4528,49 @@ mod runtime_isolation_tests {
         assert_ne!(allowed.is_error, Some(true));
         assert_eq!(allowed_hits.load(Ordering::SeqCst), 1);
         assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_closed_transports_late_call_on_its_label_gets_no_restart_hint() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let registry = observation_registry(None, hits.clone());
+        let context = standard_context();
+        let call = || {
+            let mut args = serde_json::json!({
+                "session": "late",
+                "_transport_session_id": "closed-transport",
+                "pid": 42,
+                "window_id": 7,
+            });
+            let evidence = TrustedInvocationEvidence::extract_from_adapter_args(&mut args);
+            registry.invoke_with_context_and_evidence(
+                "get_window_state",
+                args,
+                context.clone(),
+                evidence,
+            )
+        };
+        assert_ne!(call().await.is_error, Some(true));
+        assert_eq!(
+            crate::session::end_sessions_for_owner(
+                &context.runtime_session_key("closed-transport"),
+                crate::session::SessionEndReason::ProcessExit,
+            ),
+            1
+        );
+
+        let late = call().await;
+        let refusal = &late.structured_content.as_ref().unwrap()["refusal"];
+        assert_eq!(refusal["code"], "session_unavailable");
+        assert_eq!(
+            refusal["message"],
+            "session is not available to this transport"
+        );
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        crate::session::forget_ended_sessions_with_prefix(&format!(
+            "__cua_runtime_{}:",
+            context.runtime_scope_key()
+        ));
     }
 
     #[tokio::test]
@@ -7469,6 +7524,14 @@ pub fn session_ended_refusal(public_label: Option<&str>) -> ToolResult {
         None => "this transport's unnamed session has ended; call start_session without a session label to start a new one".to_owned(),
     };
     protected_refusal("session_ended", &message)
+}
+
+/// The refusal for a late call from a transport that has closed, on a label.
+fn transport_closed_refusal() -> ToolResult {
+    protected_refusal(
+        "session_unavailable",
+        crate::session::DispatchRefusal::TransportClosed.message(),
+    )
 }
 
 /// The refusal for a call on a session that is live but held by another

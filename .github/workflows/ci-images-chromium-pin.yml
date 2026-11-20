@@ -1,16 +1,18 @@
 name: "CI: Images, Chromium pin"
 
-# The Linux image installs Chromium from the xtradeb/apps PPA at a pinned major
-# per arch (libs/images/linux/Dockerfile, CHROMIUM_MAJOR_AMD64/ARM64). The PPA
-# keeps only its newest build per arch, so a pinned major can vanish overnight.
-# The image build then falls back to the newest build (and warns); this check
-# fails loudly with the versions the PPA has, on PRs that touch the pin and
-# once a day, so the pin is bumped on purpose.
+# The Linux image installs Playwright's pinned Chromium (libs/images/linux/Dockerfile,
+# PLAYWRIGHT_VERSION and MIN_CHROMIUM_MAJOR), replacing the xtradeb PPA build
+# that lagged Chrome security releases. This check fails if the minimum is below
+# the CVE floor, if the pinned Playwright ships an older Chromium, if the PPA
+# comes back, or if libs/cuabot pins another Playwright. It runs on PRs that
+# touch the pin and once a day. The image build also fails below the minimum.
 
 on:
   pull_request:
     paths:
       - "libs/images/linux/Dockerfile"
+      - "libs/images/bench/web/Dockerfile"
+      - "libs/cuabot/Dockerfile"
       - "scripts/images/check-chromium-pin.sh"
       - ".github/workflows/ci-images-chromium-pin.yml"
   schedule:
@@ -26,12 +28,12 @@ concurrency:
 
 jobs:
   pin:
-    name: The PPA has the pinned Chromium majors
+    name: The pinned Playwright ships a patched Chromium
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-      - name: Check the pinned majors against the PPA
+      - name: Check the Chromium pin
         run: scripts/images/check-chromium-pin.sh libs/images/linux/Dockerfile

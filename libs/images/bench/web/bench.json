@@ -10,7 +10,7 @@
   "license": {
     "code": "MIT",
     "data": "MiniWoB++ pages MIT (Farama-Foundation/miniwob-plusplus); live-web task lists are not baked in",
-    "image": "cua code MIT; Chromium (open-source build from the xtradeb/apps PPA, pinned) BSD-3-Clause; Ubuntu 24.04 packages under their own licenses"
+    "image": "cua code MIT; Chromium (Playwright's pinned Chrome for Testing build); Ubuntu 24.04 packages under their own licenses"
   },
   "upstream": {
     "repo": "https://github.com/Farama-Foundation/miniwob-plusplus",

@@ -1126,6 +1126,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_ended_session_does_not_reuse_a_grant_its_end_has_not_revoked_yet() {
+        let provider = provider(ConsentAction::Accept);
+        let grants =
+            ProtectedResourceGrants::new(Arc::new(ApprovalBroker::new(Some(provider.clone()))));
+        let context = authorization_context(PermissionMode::Standard);
+        let session = context.runtime_session_key("public-ended-with-stored-grant");
+        drop(
+            crate::session::begin_session_dispatch(
+                &session,
+                Some("public-ended-with-stored-grant"),
+                &session,
+                false,
+                crate::session::SessionTransport::McpStdio,
+                crate::session::SessionClientKind::Mcp,
+            )
+            .unwrap(),
+        );
+        let authorize = || {
+            grants.authorize(
+                &context,
+                "computer_history",
+                RiskClass::R2,
+                Some(&session),
+                serde_json::json!({"kind": "history"}),
+                "Read history",
+                Duration::from_secs(60),
+                Duration::from_secs(120),
+            )
+        };
+        authorize().await.unwrap().unwrap();
+        // No end hook revokes these grants, so the stored grant outlives the
+        // tombstone, as it does while a real end hook is still running.
+        assert!(crate::session::end_session_for_owner(&session, &session));
+        authorize().await.unwrap().unwrap();
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+        crate::session::forget_ended_sessions_with_prefix(&session);
+    }
+
+    #[tokio::test]
     async fn exact_accept_creates_a_revocable_grant() {
         let provider = provider(ConsentAction::Accept);
         let broker = ApprovalBroker::new(Some(provider.clone()));

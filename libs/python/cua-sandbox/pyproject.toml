@@ -51,7 +51,7 @@ auth = [
 ]
 # `sb.mcp(service)`: the official MCP Python SDK.
 mcp = [
-    "mcp>=1.10",
+    "mcp>=1.30.0",
 ]
 dev = [
     "pytest>=8.0.0",

@@ -487,6 +487,25 @@ fn recheck_then_send<C, T>(
     send(context)
 }
 
+/// Whether the exact `pid`/`window_id` pair holds the keyboard focus now,
+/// read from the same source the foreground transaction confirmed it with.
+fn target_keyboard_focused(pid: u32, window_id: u64) -> anyhow::Result<()> {
+    let deadline = Instant::now() + Duration::from_millis(500);
+    let focused = if crate::desktop::desktop() == crate::desktop::Desktop::X11 {
+        crate::x11::focused_window_among(&[window_id]) == Some(window_id)
+    } else if crate::wayland::niri::is_session() {
+        crate::wayland::niri::keyboard_focus()? == Some(window_id)
+    } else if crate::wayland::sway_ipc::window_for_id(window_id).is_some() {
+        crate::wayland::sway_ipc::focused(deadline)? == Some((pid, window_id))
+    } else {
+        crate::wayland::shell_helper::trusted_focus(deadline)? == Some((Some(pid), window_id))
+    };
+    if !focused {
+        anyhow::bail!("the approved browser window lost the keyboard focus before setup input");
+    }
+    Ok(())
+}
+
 /// Ends a setup transaction on every path, including errors and panics.
 pub(crate) struct RestoreFocusOnDrop(FocusRestore);
 
@@ -538,7 +557,7 @@ impl SetupInput {
         }
         with_target_foreground(pid, window_id, session_policy().setup, || {
             // Activation can take a while: recheck right before the keys.
-            self.before_dispatch()?;
+            self.before_dispatch_to(pid, window_id)?;
             if crate::desktop::desktop() != crate::desktop::Desktop::X11 {
                 let mut keys = modifiers
                     .iter()
@@ -557,6 +576,14 @@ impl SetupInput {
     fn before_dispatch(&self) -> anyhow::Result<()> {
         self.check()?;
         self.cancellation.before_dispatch()
+    }
+
+    /// [`Self::before_dispatch`], then a read-back that `window_id` still
+    /// holds the keyboard focus: the guard's accessibility reads take time,
+    /// and the keys go wherever the focus is when they are sent.
+    fn before_dispatch_to(&self, pid: u32, window_id: u64) -> anyhow::Result<()> {
+        self.before_dispatch()?;
+        target_keyboard_focused(pid, window_id)
     }
 
     fn type_setup_url(&self, pid: u32, window_id: u64, url: &str) -> anyhow::Result<()> {
@@ -627,6 +654,27 @@ fn document_is_setup_page(
         [uri] => Some(uri.eq_ignore_ascii_case(descriptor.setup_url)),
         _ => Some(false),
     }
+}
+
+/// The one rendered document that reports the setup URL, when the browser
+/// reports document URIs at all.
+fn setup_document_object(
+    nodes: &[AtspiNode],
+    descriptor: &BrowserSetupDescriptor,
+) -> Option<ObjectRef> {
+    if document_is_setup_page(nodes, descriptor) != Some(true) {
+        return None;
+    }
+    nodes
+        .iter()
+        .find(|node| {
+            role_is(node, &["document web", "document frame"])
+                && node
+                    .document_uri
+                    .as_deref()
+                    .is_some_and(|uri| uri.trim().eq_ignore_ascii_case(descriptor.setup_url))
+        })
+        .and_then(|node| node.object_ref.clone())
 }
 
 fn setup_page_proven(
@@ -991,16 +1039,16 @@ fn trusted_setup_navigation(
             .map_err(|error| anyhow::anyhow!("could not stage the fixed setup URL: {error}"))?;
         let owned = handle.owned_input()?;
         let paste = with_target_foreground(pid, window_id, session_policy().setup, || {
-            owned.before_dispatch()?;
+            owned.before_dispatch_to(pid, window_id)?;
             if wayland {
                 crate::wayland::hotkey_focused(&["ctrl".to_owned(), "a".to_owned()])?;
                 std::thread::sleep(Duration::from_millis(60));
-                owned.before_dispatch()?;
+                owned.before_dispatch_to(pid, window_id)?;
                 crate::wayland::hotkey_focused(&["ctrl".to_owned(), "v".to_owned()])
             } else {
                 crate::input::send_key_xtest("a", &["ctrl"])?;
                 std::thread::sleep(Duration::from_millis(60));
-                owned.before_dispatch()?;
+                owned.before_dispatch_to(pid, window_id)?;
                 crate::input::send_key_xtest("v", &["ctrl"])
             }
         });
@@ -1223,6 +1271,28 @@ impl SetupUiHandle {
         Ok(input)
     }
 
+    /// [`Self::owned_input`] for the closing shortcut: the guard also
+    /// re-reads the setup document's URI, so a tab the person navigated
+    /// elsewhere while cleanup waited is never closed. A browser whose
+    /// document reports no URI is held to the selection check alone, after
+    /// the page proof that precedes this input.
+    fn owned_close_input(&self, document: Option<ObjectRef>) -> anyhow::Result<SetupInput> {
+        let mut input = self.owned_input()?;
+        let Some(document) = document else {
+            return Ok(input);
+        };
+        let setup_url = self.descriptor.setup_url;
+        let selected = input.cancellation.clone();
+        input.cancellation = selected.clone().with_dispatch_guard(move || {
+            let uri = crate::atspi::native::document_uri_ref(&document)?;
+            if !uri.is_some_and(|uri| uri.trim().eq_ignore_ascii_case(setup_url)) {
+                anyhow::bail!("the owned setup tab no longer shows the exact fixed setup page");
+            }
+            selected.before_dispatch()
+        });
+        Ok(input)
+    }
+
     fn owned_hotkey(&mut self, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
         recheck_then_send(
             self,
@@ -1247,19 +1317,29 @@ impl SetupUiHandle {
             .clone()
             .ok_or_else(|| anyhow::anyhow!("this setup has no independently proven created tab"))?;
         let mut recheck_failed = false;
+        let setup_document = std::cell::RefCell::new(None);
         let sent = recheck_then_send(
             self,
             |handle| handle.input.ready(handle.pid, handle.window_id),
             |handle| {
-                let result = handle.require_owned_tab_selected_now();
+                // The page is proven again after the wait for quiet input,
+                // and its document object is kept for the dispatch guard.
+                let result = window_scoped_tree(handle.pid, handle.window_id)
+                    .and_then(|tree| {
+                        handle.require_owned_setup_page(&tree)?;
+                        *setup_document.borrow_mut() =
+                            setup_document_object(&tree.nodes, handle.descriptor);
+                        Ok(())
+                    })
+                    .map_err(|error| anyhow::anyhow!(error.message))
+                    .and_then(|()| handle.require_owned_tab_selected_now());
                 recheck_failed = result.is_err();
                 result
             },
             |handle| {
-                let result =
-                    handle
-                        .owned_input()?
-                        .hotkey(handle.pid, handle.window_id, "w", &["ctrl"]);
+                let result = handle
+                    .owned_close_input(setup_document.borrow().clone())?
+                    .hotkey(handle.pid, handle.window_id, "w", &["ctrl"]);
                 handle.record_input_result(result)
             },
         );
@@ -1823,6 +1903,33 @@ mod tests {
             cancellation: ActionCancellation::default(),
             focus: FocusRestore::default(),
         }
+    }
+
+    #[test]
+    fn close_guard_keeps_only_the_one_document_that_reports_the_setup_url() {
+        let document = |uri: Option<&str>, path: &str| {
+            let mut node = node("document web", descriptor().page_titles[0], None, &[]);
+            node.document_uri = uri.map(str::to_owned);
+            node.object_ref = Some(ObjectRef {
+                bus: ":1.5156".to_owned(),
+                path: path.to_owned(),
+            });
+            node
+        };
+        let setup = vec![document(Some(descriptor().setup_url), "/setup")];
+        assert_eq!(
+            setup_document_object(&setup, descriptor()).map(|object| object.path),
+            Some("/setup".to_owned())
+        );
+        let elsewhere = vec![document(Some("https://example.com/"), "/other")];
+        assert!(setup_document_object(&elsewhere, descriptor()).is_none());
+        let unreported = vec![document(None, "/setup")];
+        assert!(setup_document_object(&unreported, descriptor()).is_none());
+        let both = vec![
+            document(Some(descriptor().setup_url), "/setup"),
+            document(Some("https://example.com/"), "/frame"),
+        ];
+        assert!(setup_document_object(&both, descriptor()).is_none());
     }
 
     #[test]

@@ -4796,6 +4796,39 @@ pub fn element_selected_ref(object_ref: &ObjectRef) -> Result<bool> {
     )
 }
 
+/// The Document "URI" a snapshot-cached document reports right now, or
+/// `None` when it reports none: no tree re-walk. A navigation either changes
+/// it or retires the object, which errors.
+pub fn document_uri_ref(object_ref: &ObjectRef) -> Result<Option<String>> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, _) = live_accessible(conn, object_ref).await?;
+            let proxies = match call(acc.proxies()).await {
+                Some(Ok(proxies)) => proxies,
+                Some(Err(error)) => {
+                    return Err(anyhow!("cached document exposed no interfaces: {error}"))
+                }
+                None => return Err(anyhow!("cached element did not answer in time")),
+            };
+            let document = match call(proxies.document()).await {
+                Some(Ok(document)) => document,
+                Some(Err(error)) => {
+                    return Err(anyhow!("cached element is not a document: {error}"))
+                }
+                None => return Err(anyhow!("cached element did not answer in time")),
+            };
+            match call(document.get_attribute_value("URI")).await {
+                Some(Ok(uri)) => Ok(Some(uri).filter(|uri| !uri.trim().is_empty())),
+                Some(Err(_)) => Ok(None),
+                None => Err(anyhow!("cached element did not answer in time")),
+            }
+        },
+        || Err(anyhow!("document_uri (cached element) timed out")),
+    )
+}
+
 /// [`focus_element`] on a snapshot-cached element identity.
 pub fn focus_element_ref(object_ref: &ObjectRef) -> Result<bool> {
     bounded_for(

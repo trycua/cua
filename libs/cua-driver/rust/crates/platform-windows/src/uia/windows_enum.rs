@@ -11,15 +11,16 @@
 // with a fresh local binding and break the match. Mirrors overlay.rs:12.
 #![allow(non_upper_case_globals)]
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
 use cua_driver_core::single_flight::SingleFlight;
 
 use anyhow::{bail, Context};
-use windows::core::{Interface, BSTR};
+use windows::core::{IUnknown, Interface, BSTR};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
@@ -31,7 +32,7 @@ use windows::Win32::UI::Accessibility::{
     UIA_HyperlinkControlTypeId, UIA_InvokePatternId, UIA_ListItemControlTypeId,
     UIA_MenuItemControlTypeId, UIA_RadioButtonControlTypeId, UIA_SplitButtonControlTypeId,
     UIA_TabItemControlTypeId, UIA_TogglePatternId, UIA_TreeItemControlTypeId, UIA_CONTROLTYPE_ID,
-    UIA_PROPERTY_ID,
+    UIA_PATTERN_ID, UIA_PROPERTY_ID,
 };
 
 /// HRESULT for "COM already initialized in another mode on this thread."
@@ -59,6 +60,20 @@ pub(crate) enum UiaDeadlineError {
 fn uia_single_flight() -> &'static Arc<SingleFlight> {
     static GATE: OnceLock<Arc<SingleFlight>> = OnceLock::new();
     GATE.get_or_init(|| Arc::new(SingleFlight::new(Duration::ZERO)))
+}
+
+/// The gate for one process's element reads, kept only while a worker holds it.
+fn process_single_flight(pid: u32) -> Arc<SingleFlight> {
+    static GATES: OnceLock<Mutex<HashMap<u32, Arc<SingleFlight>>>> = OnceLock::new();
+    let mut gates = GATES
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    gates.retain(|_, gate| Arc::strong_count(gate) > 1);
+    gates
+        .entry(pid)
+        .or_insert_with(|| Arc::new(SingleFlight::new(Duration::ZERO)))
+        .clone()
 }
 
 /// Run `f` on a dedicated thread under `gate`. `f` receives the flag that is
@@ -827,6 +842,10 @@ pub(crate) type PointShapeChain = (
 /// Budget for the presence hit-test's UIA work. Short: a hover cursor that
 /// misses its deadline just falls back to the arrow.
 const POINT_SHAPE_TIMEOUT: Duration = Duration::from_millis(150);
+/// An element action's read of the element's state or of one of its patterns.
+const ELEMENT_READ_TIMEOUT: Duration = Duration::from_secs(2);
+/// An element action's scroll of an off-screen element into view.
+const SCROLL_INTO_VIEW_TIMEOUT: Duration = Duration::from_secs(4);
 /// How far up to look for an enclosing `Document` from page text.
 const POINT_SHAPE_DOCUMENT_DEPTH: usize = 16;
 
@@ -849,6 +868,159 @@ pub(crate) fn point_shape_chain(sx: i32, sy: i32) -> Option<PointShapeChain> {
     )
     .ok()
     .flatten()
+}
+
+/// A UI Automation element reference that a deadline worker owns, so a worker
+/// that is never run, or that outlives its caller, releases it itself.
+struct WorkerElement(IUIAutomationElement);
+
+// SAFETY: UIA client elements are free-threaded; each worker joins the MTA before use.
+unsafe impl Send for WorkerElement {}
+
+impl WorkerElement {
+    /// A new reference to `element`; `None` for an MSAA or detached element.
+    fn of(element: &crate::uia::snapshot::RetainedElement) -> Option<Self> {
+        if !element.is_uia() || element.as_ptr() == 0 {
+            return None;
+        }
+        // SAFETY: `element` keeps its own reference alive while this borrow clones it.
+        let borrowed = std::mem::ManuallyDrop::new(unsafe {
+            IUIAutomationElement::from_raw(element.as_ptr() as *mut _)
+        });
+        Some(Self((*borrowed).clone()))
+    }
+
+    /// The reference itself; a method, so a closure captures the whole wrapper.
+    fn into_inner(self) -> IUIAutomationElement {
+        self.0
+    }
+}
+
+/// A UI Automation pattern reference that a deadline worker read; a late
+/// worker releases it itself.
+pub(crate) struct WorkerPattern(IUnknown);
+
+// SAFETY: UIA client patterns are free-threaded; each worker joins the MTA before use.
+unsafe impl Send for WorkerPattern {}
+
+impl WorkerPattern {
+    pub(crate) fn cast<T: Interface>(&self) -> windows::core::Result<T> {
+        self.0.cast()
+    }
+}
+
+/// `element`'s live `IsEnabled` within [`ELEMENT_READ_TIMEOUT`], under `pid`'s
+/// gate: `Ok(None)` when it cannot be read, `Err` when the gate is busy or
+/// the read is late.
+pub(crate) fn element_is_enabled_bounded(
+    pid: u32,
+    element: &crate::uia::snapshot::RetainedElement,
+) -> Result<Option<bool>, ()> {
+    let Some(owned) = WorkerElement::of(element) else {
+        return Ok(None);
+    };
+    run_uia_single_flight(
+        &process_single_flight(pid),
+        "is-enabled read",
+        ELEMENT_READ_TIMEOUT,
+        "an unread IsEnabled",
+        move |_| {
+            // Keep this first so COM interfaces drop before CoUninitialize.
+            let _com = ComInit::new();
+            let element = owned.into_inner();
+            unsafe { element.CurrentIsEnabled() }
+                .ok()
+                .map(|value| value.as_bool())
+        },
+    )
+    .map_err(|_| ())
+}
+
+/// `element`'s live `IsOffscreen` within [`ELEMENT_READ_TIMEOUT`], under the gate
+/// of `hwnd`'s process: `Ok(None)` when it cannot be read, `Err` when the gate
+/// is busy or the read is late.
+pub(crate) fn element_is_offscreen_bounded(
+    hwnd: u64,
+    element: &crate::uia::snapshot::RetainedElement,
+) -> Result<Option<bool>, ()> {
+    let Some(owned) = WorkerElement::of(element) else {
+        return Ok(None);
+    };
+    run_uia_single_flight(
+        &process_single_flight(crate::win32::window_owner_pid(hwnd).unwrap_or(0)),
+        "off-screen read",
+        ELEMENT_READ_TIMEOUT,
+        "an off-screen refusal",
+        move |_| {
+            // Keep this first so COM interfaces drop before CoUninitialize.
+            let _com = ComInit::new();
+            let element = owned.into_inner();
+            unsafe { element.CurrentIsOffscreen() }
+                .ok()
+                .map(|value| value.as_bool())
+        },
+    )
+    .map_err(|_| ())
+}
+
+/// `element`'s `pattern` within [`ELEMENT_READ_TIMEOUT`], under the gate of
+/// `hwnd`'s process: `Ok(None)` when it has no such pattern, `Err` when the
+/// gate is busy or the read is late.
+pub(crate) fn element_pattern_bounded(
+    hwnd: u64,
+    element: &crate::uia::snapshot::RetainedElement,
+    pattern: UIA_PATTERN_ID,
+) -> Result<Option<WorkerPattern>, ()> {
+    let Some(owned) = WorkerElement::of(element) else {
+        return Ok(None);
+    };
+    run_uia_single_flight(
+        &process_single_flight(crate::win32::window_owner_pid(hwnd).unwrap_or(0)),
+        "pattern read",
+        ELEMENT_READ_TIMEOUT,
+        "a pattern refusal",
+        move |_| {
+            // Keep this first so COM interfaces drop before CoUninitialize.
+            let _com = ComInit::new();
+            let element = owned.into_inner();
+            unsafe { element.GetCurrentPattern(pattern) }
+                .ok()
+                .map(WorkerPattern)
+        },
+    )
+    .map_err(|_| ())
+}
+
+/// [`crate::uia::scroll::scroll_into_view_and_recenter`] within
+/// [`SCROLL_INTO_VIEW_TIMEOUT`], under the gate of `host_hwnd`'s process:
+/// `Ok(None)` when the scroll gives no point, `Err` when the gate is busy or
+/// the scroll is late.
+pub(crate) fn scroll_into_view_bounded(
+    host_hwnd: u64,
+    element: &crate::uia::snapshot::RetainedElement,
+) -> Result<Option<(i32, i32)>, ()> {
+    let Some(owned) = WorkerElement::of(element) else {
+        return Ok(None);
+    };
+    run_uia_single_flight(
+        &process_single_flight(crate::win32::window_owner_pid(host_hwnd).unwrap_or(0)),
+        "scroll into view",
+        SCROLL_INTO_VIEW_TIMEOUT,
+        "the off-screen refusal",
+        move |_| {
+            // Keep this first so COM interfaces drop before CoUninitialize.
+            let _com = ComInit::new();
+            let element = owned.into_inner();
+            // SAFETY: `element` holds its own reference for the whole call.
+            unsafe {
+                crate::uia::scroll::scroll_into_view_and_recenter(
+                    host_hwnd,
+                    element.as_raw() as usize,
+                )
+            }
+        },
+    )
+    .map_err(|_| ())
 }
 
 fn point_shape_chain_unbounded(sx: i32, sy: i32) -> Option<PointShapeChain> {
@@ -916,6 +1088,22 @@ fn point_shape_chain_unbounded(sx: i32, sy: i32) -> Option<PointShapeChain> {
         let rects = elements.iter().map(rect_of).collect();
         Some((chain, rects, in_document))
     }
+}
+
+#[cfg(test)]
+pub(crate) fn hold_process_gate(pid: u32) -> mpsc::Sender<()> {
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let held = run_uia_single_flight(
+        &process_single_flight(pid),
+        "test hold",
+        Duration::from_millis(20),
+        "test",
+        move |_| {
+            let _ = release_rx.recv();
+        },
+    );
+    assert!(matches!(held, Err(UiaDeadlineError::Timeout)));
+    release_tx
 }
 
 #[cfg(test)]
@@ -1047,5 +1235,55 @@ mod tests {
         assert!(matches!(recovered, Ok(42)));
         assert_eq!(starts.load(Ordering::Acquire), 2);
         assert_eq!(max_active.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn a_stuck_process_gate_admits_other_processes_and_is_dropped_once_free() {
+        let (stuck, other, pruner) = (u32::MAX - 1, u32::MAX - 2, u32::MAX - 3);
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let (done_tx, done_rx) = mpsc::channel();
+        let gate = process_single_flight(stuck);
+        let result = run_uia_single_flight(
+            &gate,
+            "test stuck",
+            Duration::from_millis(20),
+            "test",
+            move |_| {
+                let _ = release_rx.recv();
+                done_tx.send(()).unwrap();
+            },
+        );
+        assert!(matches!(result, Err(UiaDeadlineError::Timeout)));
+
+        let admitted = run_uia_single_flight(
+            &process_single_flight(other),
+            "test other",
+            Duration::from_secs(1),
+            "test",
+            |_| 7,
+        );
+        assert!(matches!(admitted, Ok(7)));
+
+        let weak = Arc::downgrade(&gate);
+        drop(gate);
+        drop(process_single_flight(pruner));
+        let held = process_single_flight(stuck);
+        assert!(Arc::ptr_eq(&held, &weak.upgrade().unwrap()));
+        let retry =
+            run_uia_single_flight(&held, "test retry", Duration::from_secs(1), "test", |_| ());
+        assert!(matches!(retry, Err(UiaDeadlineError::Busy)));
+        drop(held);
+
+        release_tx.send(()).unwrap();
+        done_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            drop(process_single_flight(pruner));
+            if weak.upgrade().is_none() || Instant::now() >= deadline {
+                break;
+            }
+            thread::yield_now();
+        }
+        assert!(weak.upgrade().is_none());
     }
 }

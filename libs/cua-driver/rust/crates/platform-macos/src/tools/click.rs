@@ -2810,15 +2810,16 @@ mod tests {
     fn each_popup_read_gets_only_the_time_left() {
         let ms = std::time::Duration::from_millis;
         let budgets = std::cell::RefCell::new(Vec::new());
-        let stalled = |left: std::time::Duration| {
+        let slow = |left: std::time::Duration| {
             budgets.borrow_mut().push(left);
-            std::thread::sleep(left);
+            std::thread::sleep(ms(10).min(left));
             None
         };
-        assert!(!popup_shows("Research", stalled, ms(60), ms(10)));
+        assert!(!popup_shows("Research", slow, ms(60), ms(1)));
         let budgets = budgets.into_inner();
+        assert!(budgets.len() >= 2, "{budgets:?}");
         assert!(budgets[0] <= ms(60));
-        assert!(budgets.windows(2).all(|w| w[1] < w[0]));
+        assert!(budgets.windows(2).all(|w| w[1] < w[0]), "{budgets:?}");
     }
 
     #[test]

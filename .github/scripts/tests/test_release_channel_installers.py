@@ -199,8 +199,8 @@ def test_installers_make_channel_persistent_but_keep_exact_pins_one_shot():
 def test_driver_download_uses_the_resolved_tag_not_the_stable_prefix():
     source = (ROOT / "libs/cua-driver/scripts/_install-rust.sh").read_text()
     body = shell_function(source, "download_release_tarball")
-    assert "releases/download/${TAG}/" in body
-    assert "releases/download/${TAG_PREFIX}" not in body
+    assert "$RELEASE_DOWNLOAD_BASE/${TAG}/" in body
+    assert "/${TAG_PREFIX}" not in body
 
 
 def test_windows_driver_has_disjoint_exact_pin_grammars():
@@ -211,4 +211,4 @@ def test_windows_driver_has_disjoint_exact_pin_grammars():
     )
     assert stable
     assert "^nightly-cua-driver-rs-v" in source
-    assert "releases/download/$Script:CuaDriverRsReleaseTag/" in source
+    assert "$ReleaseDownloadBase/$Script:CuaDriverRsReleaseTag/" in source

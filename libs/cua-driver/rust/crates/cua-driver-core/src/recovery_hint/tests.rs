@@ -124,6 +124,10 @@ fn every_hint_variant_stays_within_the_length_limit() {
             json!({"code": "browser_consent_required"}),
         ),
         (
+            "browser_prepare",
+            json!({"code": "browser_consent_required", "detail": {"reason": "browser_consent_unanswered"}}),
+        ),
+        (
             "browser_click",
             json!({"code": "browser_input_trust_unavailable"}),
         ),
@@ -1030,4 +1034,36 @@ fn a_confirmed_result_keeps_its_text_unchanged() {
     let mut ok = ToolResult::text("Posted click").with_structured(json!({"effect": "confirmed"}));
     annotate("click", &window_seed(), &mut ok);
     assert!(matches!(&ok.content[0], Content::Text { text, .. } if text == "Posted click"));
+}
+
+#[test]
+fn an_unanswered_browser_prompt_asks_the_user_to_allow_and_retries_the_attach() {
+    let hint = hint_for(
+        "browser_prepare",
+        &window_seed(),
+        true,
+        json!({"status": "refused", "refusal": {
+            "code": "browser_consent_required",
+            "detail": {"reason": "browser_consent_unanswered"},
+        }}),
+    );
+    assert!(
+        hint.hint.contains("Allow remote debugging?"),
+        "{}",
+        hint.hint
+    );
+    assert!(!hint.hint.contains("Retrying will not"), "{}", hint.hint);
+    let call = call_value(&hint);
+    assert_eq!(call["tool"], "browser_prepare");
+    assert_eq!(call["arguments"]["strategy"]["kind"], "existing_profile");
+    assert!(call["arguments"].get("delivery_mode").is_none());
+
+    // Missing authorization keeps its own advice.
+    let hint = hint_for(
+        "browser_prepare",
+        &window_seed(),
+        true,
+        json!({"status": "refused", "refusal": {"code": "browser_consent_required"}}),
+    );
+    assert!(hint.hint.contains("Retrying will not"), "{}", hint.hint);
 }

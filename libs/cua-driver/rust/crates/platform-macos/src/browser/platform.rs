@@ -869,6 +869,10 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         ))
     }
 
+    fn managed_extension_policy(&self, executable: &str) -> Option<String> {
+        super::managed_policy::managed_extension_policy(executable)
+    }
+
     fn security_prompt_open(&self) -> bool {
         crate::security_prompt::security_prompt_on_screen()
     }
@@ -1464,6 +1468,24 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         })
     }
 
+    async fn dismiss_abandoned_existing_profile_consent(
+        &self,
+        pid: i64,
+        window_id: u64,
+    ) -> Result<bool, BrowserRefusal> {
+        let (Ok(pid), Ok(window_id)) = (i32::try_from(pid), u32::try_from(window_id)) else {
+            return Ok(false);
+        };
+        tokio::task::spawn_blocking(move || super::consent_ui::dismiss(pid, window_id))
+            .await
+            .unwrap_or_else(|join_error| {
+                Err(BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not close the abandoned browser consent prompt: {join_error}"),
+                ))
+            })
+    }
+
     async fn handle_existing_profile_consent(
         &self,
         request: BrowserConsentRequest,
@@ -1819,7 +1841,7 @@ mod tests {
                 height: 780.0,
             },
             layer: 0,
-            z_index: 0,
+            z_index: Some(0),
             is_on_screen: true,
             current_space_id: None,
             on_current_space: Some(true),

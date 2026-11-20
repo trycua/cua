@@ -121,20 +121,25 @@ pub fn app_state_json_for(
     pid: Option<i64>,
     budget: cua_driver_core::recording::StateCaptureBudget,
 ) -> Option<Vec<u8>> {
+    // The recorder runs this hook on its own state-capture thread.
+    if let Err(error) = crate::dpi::use_per_monitor_v2_for_current_thread() {
+        tracing::warn!(target: "recording", "application-state capture refused: {error}");
+        return None;
+    }
     let pid = u32::try_from(pid?).ok()?;
     let hwnd = resolve_window_for_recording(window_id, Some(pid.into()))?;
     let mut walk = cua_driver_core::walk_budget::WalkBudget::new(
         budget.timeout_ms,
         crate::uia::DEFAULT_MAX_TOTAL_ELEMENTS,
     );
-    let result =
+    let mut result =
         crate::uia::walk_tree_budgeted(hwnd, None, crate::uia::DEFAULT_MAX_DEPTH, &mut walk);
     let kind = if result.nodes.iter().any(|node| node.msaa_role.is_some()) {
         SnapshotKind::Msaa
     } else {
         SnapshotKind::Uia
     };
-    let _native_payload = UiaSnapshot::from_nodes(&result.nodes, kind);
+    let _native_payload = UiaSnapshot::from_nodes(&mut result.nodes, kind);
     let element_count = result
         .nodes
         .iter()

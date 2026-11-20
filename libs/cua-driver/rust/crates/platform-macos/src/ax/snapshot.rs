@@ -27,13 +27,15 @@ impl ObservedIdentity {
     }
 
     unsafe fn read(ptr: usize) -> Self {
-        use super::bindings::copy_string_attr;
-        let element = ptr as AXUIElementRef;
+        let [role, title, description, identifier] = super::batch::copy_string_attrs(
+            ptr as AXUIElementRef,
+            ["AXRole", "AXTitle", "AXDescription", "AXIdentifier"],
+        );
         Self {
-            role: copy_string_attr(element, "AXRole").unwrap_or_else(|| "AXUnknown".into()),
-            title: normalized_label(copy_string_attr(element, "AXTitle")),
-            description: normalized_label(copy_string_attr(element, "AXDescription")),
-            identifier: copy_string_attr(element, "AXIdentifier"),
+            role: role.unwrap_or_else(|| "AXUnknown".into()),
+            title: normalized_label(title),
+            description: normalized_label(description),
+            identifier,
         }
     }
 }

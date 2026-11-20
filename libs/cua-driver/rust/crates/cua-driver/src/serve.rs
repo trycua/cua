@@ -651,18 +651,27 @@ fn secure_local_socket(socket_path: &str) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("secure local daemon socket {socket_path}: {e}"))
 }
 
-/// Take the standalone daemon's exclusive lock on `<socket>.lock`, then clear
-/// any stale socket. Without the lock, two launches that both pass the
-/// liveness probe unlink each other's socket and orphan a daemon. The kernel
-/// drops the lock when the returned file closes or the process dies.
+/// Take the standalone daemon's exclusive lock on `<socket>.lock`. Without
+/// the lock, two launches that both pass the liveness probe unlink each
+/// other's socket and orphan a daemon. The kernel drops the lock when the
+/// returned file closes or the process dies.
 #[cfg(unix)]
 fn claim_standalone_socket(
     socket_path: &str,
     wait: std::time::Duration,
 ) -> anyhow::Result<std::fs::File> {
-    let lock = claim_daemon_lock(&daemon_lock_path(socket_path), socket_path, wait)?;
-    let _ = std::fs::remove_file(socket_path);
-    Ok(lock)
+    claim_daemon_lock(&daemon_lock_path(socket_path), socket_path, wait)
+}
+
+/// Remove the socket a dead daemon left at `socket_path`. Only the lock holder
+/// calls this, so no live daemon owns it. Anything that is not a socket stays.
+#[cfg(unix)]
+fn remove_stale_socket(socket_path: &str) {
+    use std::os::unix::fs::FileTypeExt as _;
+    if std::fs::symlink_metadata(socket_path).is_ok_and(|metadata| metadata.file_type().is_socket())
+    {
+        let _ = std::fs::remove_file(socket_path);
+    }
 }
 
 #[cfg(unix)]
@@ -716,7 +725,7 @@ fn claim_socket(socket_path: &str) -> anyhow::Result<Option<std::fs::File>> {
 }
 
 /// Run the daemon server on `socket_path` after claiming it.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 async fn run_serve(
     sdk: std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     socket_path: &str,
@@ -1083,7 +1092,7 @@ async fn serve_claimed_socket(
     socket_path: &str,
     pid_file_path: Option<&str>,
     // Held until return so a racing launch cannot unlink this daemon's socket.
-    _socket_lock: Option<std::fs::File>,
+    socket_lock: Option<std::fs::File>,
 ) -> anyhow::Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixListener;
@@ -1097,8 +1106,10 @@ async fn serve_claimed_socket(
     if let Some(dir) = std::path::Path::new(socket_path).parent() {
         std::fs::create_dir_all(dir)?;
     }
-
-    let embedded = cua_driver_core::embedded_mode();
+    // Only a standalone daemon holds a lock. An embedded host owns its path.
+    if socket_lock.is_some() {
+        remove_stale_socket(socket_path);
+    }
 
     let listener =
         UnixListener::bind(socket_path).map_err(|e| anyhow::anyhow!("bind {socket_path}: {e}"))?;
@@ -1133,7 +1144,7 @@ async fn serve_claimed_socket(
     // daemon steps aside for an updated install.
     let executable_replaced = async {
         #[cfg(target_os = "macos")]
-        if !embedded {
+        if !cua_driver_core::embedded_mode() {
             wait_for_executable_replacement().await;
             return;
         }
@@ -2928,6 +2939,24 @@ mod socket_tests {
         assert!(std::path::Path::new(socket).exists());
         drop(first);
         assert!(super::claim_standalone_socket(socket, std::time::Duration::ZERO).is_ok());
+    }
+
+    #[test]
+    fn only_a_stale_socket_is_cleared_and_only_after_the_claim() {
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
+        let socket = directory.path().join("driver.sock");
+        let path = socket.to_str().unwrap();
+        drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
+
+        let lock = super::claim_standalone_socket(path, std::time::Duration::ZERO).unwrap();
+        assert!(socket.exists(), "claiming alone must not unlink");
+        super::remove_stale_socket(path);
+        assert!(!socket.exists());
+
+        std::fs::write(&socket, "not a socket").unwrap();
+        super::remove_stale_socket(path);
+        assert!(socket.exists());
+        drop(lock);
     }
 
     #[test]

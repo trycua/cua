@@ -119,6 +119,7 @@ on:
       - "CD: Auto Release on Merge"
       - "Release: Auto-merge release PRs"
       - "CI: PR title"
+      - "CI: Squash message"
       - "Smoke: Cua Driver live agent loop"
       - "Space egress (nightly)"
   status:

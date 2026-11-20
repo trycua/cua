@@ -4099,6 +4099,31 @@ mod runtime_isolation_tests {
         }
     }
 
+    /// Accepts each prompt only when the test releases it.
+    struct GatedProvider {
+        gate: tokio::sync::Semaphore,
+        requests: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl ProtectedConsentProvider for GatedProvider {
+        fn provider_id(&self) -> &'static str {
+            "test.gated-provider"
+        }
+
+        async fn request_consent(
+            &self,
+            request: &ConsentRequest,
+        ) -> Result<ProviderDecision, String> {
+            self.requests.fetch_add(1, Ordering::SeqCst);
+            self.gate.acquire().await.unwrap().forget();
+            Ok(ProviderDecision {
+                action: ConsentAction::Accept,
+                request_digest: request.request_digest.clone(),
+            })
+        }
+    }
+
     fn observation_registry(
         provider: Option<Arc<dyn ProtectedConsentProvider>>,
         hits: Arc<AtomicUsize>,
@@ -4475,6 +4500,61 @@ mod runtime_isolation_tests {
         assert_ne!(allowed.is_error, Some(true));
         assert_eq!(allowed_hits.load(Ordering::SeqCst), 1);
         assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_grant_approved_after_end_session_does_not_reach_the_next_episode() {
+        let provider = Arc::new(GatedProvider {
+            gate: tokio::sync::Semaphore::new(0),
+            requests: AtomicUsize::new(0),
+        });
+        let hits = Arc::new(AtomicUsize::new(0));
+        let mut registry =
+            super::ToolRegistry::new_with_protected_consent_provider(Some(provider.clone()));
+        registry.register(Box::new(ObservationProbe {
+            hits: hits.clone(),
+            def: super::ToolDef {
+                name: "history_query".into(),
+                description: "test history".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: true,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            },
+        }));
+        registry.register(Box::new(crate::session_tools::StartSessionTool));
+        registry.register(Box::new(crate::session_tools::EndSessionTool));
+        let registry = Arc::new(registry);
+        let context = standard_context();
+        let call = |name: &'static str| {
+            let registry = registry.clone();
+            let context = context.clone();
+            async move {
+                registry
+                    .invoke_with_context(name, serde_json::json!({"session": "b2"}), context)
+                    .await
+            }
+        };
+
+        assert_ne!(call("start_session").await.is_error, Some(true));
+        let pending = tokio::spawn(call("history_query"));
+        while provider.requests.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+        // The session ends while the person decides, then they approve.
+        call("end_session").await;
+        provider.gate.add_permits(1);
+        assert_eq!(pending.await.unwrap().is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+
+        // The label's next episode is asked again.
+        assert_ne!(call("start_session").await.is_error, Some(true));
+        provider.gate.add_permits(1);
+        assert_ne!(call("history_query").await.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+        assert_ne!(call("end_session").await.is_error, Some(true));
     }
 
     #[cfg(feature = "yaml")]

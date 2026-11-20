@@ -492,6 +492,13 @@ allow:
         .as_str()
         .unwrap()
         .to_owned();
+    h.state.lock().unwrap().sibling_tabs.push(json!({
+        "targetId": "T_OUTSIDE",
+        "type": "page",
+        "title": "Outside secret",
+        "url": "https://outside.test/account?token=secret",
+        "attached": false,
+    }));
 
     let bind = registry
         .invoke_with_context(
@@ -503,6 +510,19 @@ allow:
     let s = structured(&bind);
     assert_eq!(s["status"], "ok", "{s}");
     assert_eq!(s["binding_route"], "driver_owned_headless");
+    let tabs = s["tabs"].as_array().unwrap();
+    assert_eq!(tabs.len(), 2, "{s}");
+    assert!(
+        tabs.iter().any(|tab| tab["url"] == "https://fixture.test/"),
+        "{s}"
+    );
+    let outside = tabs
+        .iter()
+        .find(|tab| tab["url"].is_null())
+        .unwrap_or_else(|| panic!("the outside tab is not redacted: {s}"));
+    assert!(outside["tab_id"].is_string());
+    assert!(outside["title"].is_null());
+    assert!(!s.to_string().contains("outside.test"), "{s}");
 
     let forged = registry
         .invoke_with_context(

@@ -121,7 +121,7 @@ pub(super) struct FixtureState {
     windowless_targets: Vec<Value>,
     /// Extra page targets living in the bound window, after T1 in the
     /// browser's `Target.getTargets` order.
-    sibling_tabs: Vec<Value>,
+    pub(super) sibling_tabs: Vec<Value>,
     /// Drop the primary tab target T1 from `Target.getTargets`.
     omit_primary_target: bool,
     /// Make `Browser.getWindowForTarget` for T1 answer this CDP error.

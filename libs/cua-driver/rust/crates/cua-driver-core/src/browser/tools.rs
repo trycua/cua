@@ -770,14 +770,24 @@ impl Tool for GetBrowserStateTool {
                 .await
             {
                 Ok((target_id, record)) => {
+                    let dispatch_context = crate::tool::current_dispatch_authorization_context();
+                    let manifest = dispatch_context
+                        .as_deref()
+                        .and_then(|context| context.capability_manifest());
                     let tabs: Vec<Value> = record
                         .tabs
                         .values()
                         .map(|t| {
+                            // A manifest admits the bind without an origin, so
+                            // a tab outside its origins keeps only its handle:
+                            // its title and URL are what a snapshot refuses.
+                            let visible = manifest.is_none_or(|manifest| {
+                                manifest.authorize_browser_url(&t.url).is_ok()
+                            });
                             json!({
                                 "tab_id": t.tab_id,
-                                "title": t.title,
-                                "url": t.url,
+                                "title": visible.then_some(&t.title),
+                                "url": visible.then_some(&t.url),
                                 "active": t.active,
                             })
                         })

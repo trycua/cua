@@ -4588,6 +4588,31 @@ mod runtime_isolation_tests {
     }
 
     #[tokio::test]
+    async fn an_approval_granted_after_its_session_was_recreated_is_not_refused() {
+        let provider = Arc::new(AcceptingProvider {
+            requests: AtomicUsize::new(0),
+        });
+        let registry = history_registry(provider.clone());
+        let context = standard_context();
+        let session = context.runtime_session_key("approval-after-recreate");
+        drop(admit_implicit(&session).unwrap());
+        let grants = registry.protected_resource_grants();
+        let window = grants.open_window();
+        assert_eq!(
+            crate::session::evict_idle_with_prefix(Duration::ZERO, &session),
+            vec![session.clone()]
+        );
+        drop(admit_implicit(&session).unwrap());
+
+        // Approved in the recreated episode, so a retry may reuse it and this
+        // call must not be refused for the end before it.
+        let grant = authorize_history(&registry, &context, &session).await;
+        assert!(super::ended_approval_refusal(&[grant], &window, &[session.as_str()]).is_none());
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+        crate::session::forget_ended_sessions_with_prefix(&session);
+    }
+
+    #[tokio::test]
     async fn a_one_call_approval_refuses_when_a_later_episode_ends_before_admission() {
         let provider = Arc::new(AcceptingProvider {
             requests: AtomicUsize::new(0),
@@ -7556,17 +7581,19 @@ fn session_owned_by_other_transport_refusal(
 }
 
 /// Refuses a call holding an approval that was revoked before its lifecycle
-/// admission, or whose session's approvals were. An end revokes its
-/// episode's approvals before admission may recreate the session, so either
-/// means the approval belongs to an episode that has ended. An approval that
-/// was never stored is covered only by the session revocation.
+/// admission, or whose session's approvals were revoked after it was handed
+/// out. An end revokes its episode's approvals before admission may recreate
+/// the session, so either means the approval belongs to an episode that has
+/// ended. An approval that was never stored is covered only by the session
+/// revocation.
 fn ended_approval_refusal(
     consented: &[crate::consent::ResourceGrant],
     window: &crate::consent::AuthorizationWindow<'_>,
     sessions: &[&str],
 ) -> Option<ToolResult> {
-    let ended = !consented.is_empty()
-        && (consented.iter().any(|grant| !grant.is_live()) || window.revoked_for(sessions));
+    let ended = consented
+        .iter()
+        .any(|grant| !grant.is_live() || window.revoked_after(grant, sessions));
     ended.then(|| {
         protected_refusal(
             "authorization_session_ended",

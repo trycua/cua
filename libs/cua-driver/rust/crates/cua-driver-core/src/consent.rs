@@ -249,6 +249,9 @@ pub struct ResourceGrant {
     last_used_at: Instant,
     idle_ttl: Duration,
     absolute_ttl: Duration,
+    /// The revocation count when the authorization that handed out this
+    /// copy started.
+    authorized_at: u64,
 }
 
 impl ResourceGrant {
@@ -307,15 +310,17 @@ pub struct AuthorizationWindow<'a> {
 
 impl AuthorizationWindow<'_> {
     /// Whether a `revoke_session` naming any of `sessions`, or a
-    /// `revoke_all`, ran since this window opened.
-    pub fn revoked_for(&self, sessions: &[&str]) -> bool {
+    /// `revoke_all`, ran after the authorization that handed out `grant`
+    /// started. Only revocations while this window is open are seen, so it
+    /// must open before that authorization.
+    pub fn revoked_after(&self, grant: &ResourceGrant, sessions: &[&str]) -> bool {
         let grants = self.table.lock().unwrap();
-        grants.all_revoked_at > self.since
+        grants.all_revoked_at > grant.authorized_at
             || sessions.iter().any(|session| {
                 grants
                     .session_revoked_at
                     .get(*session)
-                    .is_some_and(|at| *at > self.since)
+                    .is_some_and(|at| *at > grant.authorized_at)
             })
     }
 }
@@ -498,7 +503,7 @@ impl ProtectedResourceGrants {
         let resource_digest = digest_resource(adapter_id, &resource);
         let key = resource_grant_key(context, lifecycle_session, adapter_id, &resource_digest);
         if !ended {
-            if let Some(grant) = self.lookup(&key, context) {
+            if let Some(grant) = self.lookup(&key, context, window.since) {
                 return Ok(Some(grant));
             }
         }
@@ -508,7 +513,7 @@ impl ProtectedResourceGrants {
         // peer that just approved the same exact scope supplies the grant.
         let _admission = self.admission.lock().await;
         if !ended {
-            if let Some(grant) = self.lookup(&key, context) {
+            if let Some(grant) = self.lookup(&key, context, window.since) {
                 return Ok(Some(grant));
             }
         }
@@ -552,6 +557,7 @@ impl ProtectedResourceGrants {
             last_used_at: now,
             idle_ttl,
             absolute_ttl,
+            authorized_at: window.since,
         };
         if !ended {
             grants.granted.insert(key, grant.clone());
@@ -563,6 +569,7 @@ impl ProtectedResourceGrants {
         &self,
         key: &ResourceGrantKey,
         context: &crate::session_authorization::EffectiveAuthorizationContext,
+        authorized_at: u64,
     ) -> Option<ResourceGrant> {
         let now = Instant::now();
         let mut table = self.grants.lock().unwrap();
@@ -579,7 +586,10 @@ impl ProtectedResourceGrants {
             return None;
         }
         grant.last_used_at = now;
-        Some(grant.clone())
+        Some(ResourceGrant {
+            authorized_at,
+            ..grant.clone()
+        })
     }
 
     /// Records every session revocation from now until the window drops.

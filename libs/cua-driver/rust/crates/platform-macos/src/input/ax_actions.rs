@@ -253,7 +253,8 @@ pub fn ensure_ax_action_enabled_after_activation(
 
 /// Perform an AX action on a cached element.
 pub fn perform_ax_action(element_ptr: usize, action: &str) -> anyhow::Result<()> {
-    let ax_action = map_action(action)?;
+    let advertised = unsafe { copy_action_names(element_ptr as AXUIElementRef) };
+    let ax_action = crate::ax::actions::wire_name(&advertised, action)?;
     ensure_ax_action_enabled(element_ptr, ax_action)?;
     let err = unsafe { perform_action(element_ptr as AXUIElementRef, ax_action) };
 

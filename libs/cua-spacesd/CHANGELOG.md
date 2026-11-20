@@ -1,5 +1,79 @@
 # Changelog
 
+## [0.16.5](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.4...cua-spacesd-v0.16.5) (2026-11-19)
+
+
+### Bug Fixes
+
+* **cua-driver:** rank macOS list_windows z_index by live stacking ([#8158](https://github.com/trycua/cua/issues/8158)) ([9d8bb07](https://github.com/trycua/cua/commit/9d8bb07cef136d8d0add2f6282b05d76a7fbd9b1))
+
+## [0.16.4](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.3...cua-spacesd-v0.16.4) (2026-11-19)
+
+
+### Bug Fixes
+
+* **relay:** size the client stream budget to the memory limit, add memory and stream gauges (CUA-3138) ([#6379](https://github.com/trycua/cua/issues/6379)) ([4e5a10e](https://github.com/trycua/cua/commit/4e5a10e78e8fe4040dc9d4ef1d16a84544c27ae6))
+
+## [0.16.3](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.2...cua-spacesd-v0.16.3) (2026-11-18)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** probe hardware encoders off the GetCapabilities path ([#8161](https://github.com/trycua/cua/issues/8161)) ([9346cab](https://github.com/trycua/cua/commit/9346cabc2e0614a2ec9d9b629ab0db39b44db4bb))
+
+## [0.16.2](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.1...cua-spacesd-v0.16.2) (2026-11-18)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** send desktop Super chords through the desktop scope ([#8143](https://github.com/trycua/cua/issues/8143)) ([d9dcb1e](https://github.com/trycua/cua/commit/d9dcb1ee770fce99b531a85d4989d81ade098639)), closes [#5344](https://github.com/trycua/cua/issues/5344)
+
+## [0.16.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.0...cua-spacesd-v0.16.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** note that the release build installs cross targets for the pinned toolchain ([#7578](https://github.com/trycua/cua/issues/7578)) ([fccd2eb](https://github.com/trycua/cua/commit/fccd2eb27faab70b3a6b7b3cc7a4d840b4f914fd))
+
+## [0.16.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.5...cua-spacesd-v0.16.0) (2026-11-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cua-driver:** removed the `escalate_session` and `get_session_state` MCP tools and SDK methods, the `EscalateSessionInput`, `GetSessionStateInput` and `EscalationReason` types, the `escalation_reason` and `escalation_detail` fields of the `start_session` result, the `experimental_pip` and `experimental_pip_geometry` config keys, and the picture-in-picture preview window.
+
+### Features
+
+* **cua-driver:** remove picture-in-picture preview and deprecated session tools ([#7481](https://github.com/trycua/cua/issues/7481)) ([d2fb9e2](https://github.com/trycua/cua/commit/d2fb9e24f0fdf2673aa89911b859bd2661311c14))
+
+## [0.15.5](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.4...cua-spacesd-v0.15.5) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-driver:** load libxkbcommon's 1.0 text functions at run time so the driver starts on Ubuntu 20.04 ([#6498](https://github.com/trycua/cua/issues/6498)) ([b9e38d1](https://github.com/trycua/cua/commit/b9e38d1ac1eb9e5683e0b7394ecf50b360da2881))
+
+## [0.15.4](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.3...cua-spacesd-v0.15.4) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** request a keyframe while a viewer waits for one ([#7415](https://github.com/trycua/cua/issues/7415)) ([a8fa23c](https://github.com/trycua/cua/commit/a8fa23c124923a8889dd3cb3d35eb8aa0235ff0d))
+
+## [0.15.3](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.2...cua-spacesd-v0.15.3) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-vmm:** run the engine helper's chroot from PATH and build sandbox overlays on 24.04 ([#7409](https://github.com/trycua/cua/issues/7409)) ([10cd739](https://github.com/trycua/cua/commit/10cd739d46db34a0373245531c8219babf606c1f))
+
+## [0.15.2](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.1...cua-spacesd-v0.15.2) (2026-11-11)
+
+
+### Bug Fixes
+
+* **cua-spacesd-doctor:** type into the form only after its entry holds keyboard focus ([#7322](https://github.com/trycua/cua/issues/7322)) ([0470fc6](https://github.com/trycua/cua/commit/0470fc64e2ad0486b655182a5cc6321711378223))
+
 ## [0.15.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.0...cua-spacesd-v0.15.1) (2026-11-10)
 
 

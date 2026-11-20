@@ -1767,6 +1767,11 @@ class Sandbox:
                         "omit runtime= to use the pool"
                     )
                 start_opts["pool"] = local_pool
+            if time_to_start is not None and _sdk_backed(runtime):
+                # The caller's readiness budget (it covers boot and the
+                # cua-spacesd wait); without it a slow VM (QEMU without KVM)
+                # gets the runtime's 900 s default whatever time_to_start says.
+                start_opts["ready_timeout"] = float(time_to_start)
             rt_info = await runtime.start(image, sb_name, ephemeral=bool(ephemeral), **start_opts)
             if rt_info.environment == "android" and not rt_info.qmp_port:
                 if rt_info.grpc_port:

@@ -78,3 +78,13 @@ use std::time::Duration;
 /// Hard ceiling on any single tool call: a hung driver becomes a fast, localized
 /// failure instead of an indefinite wall-clock hang.
 pub const CALL_TIMEOUT: Duration = Duration::from_secs(25);
+
+/// Test directory for Unix socket endpoints. sun_path holds 104 bytes on
+/// macOS and a long TMPDIR can use most of it, so tests bind under /tmp.
+pub fn socket_tempdir() -> std::io::Result<tempfile::TempDir> {
+    if cfg!(unix) {
+        tempfile::Builder::new().prefix("cua-").tempdir_in("/tmp")
+    } else {
+        tempfile::tempdir()
+    }
+}

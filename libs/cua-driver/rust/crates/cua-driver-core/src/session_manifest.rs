@@ -282,14 +282,6 @@ impl SessionManifest {
                 "browser_target" | "authenticated_browser_tab" => {
                     self.authorize_resource_origin(resource)
                 }
-                // `escalate_session` always expands a browser-scoped session
-                // to desktop scope; it has no caller-selectable capture_scope
-                // argument. Require the immutable manifest's display grant
-                // directly instead of keying enforcement on a field the tool
-                // can never send.
-                "session_capture_scope" => self.desktop_display.then_some(()).ok_or_else(|| {
-                    "desktop capture escalation is outside the capability manifest".to_owned()
-                }),
                 "session_trajectory_recording" => Ok(()),
                 _ => refused(),
             },
@@ -1935,56 +1927,6 @@ allow:
                 &serde_json::json!({
                     "kind": "authenticated_browser_tab",
                     "live_origin": "about:blank"
-                }),
-            )
-            .unwrap();
-    }
-
-    #[cfg(feature = "yaml")]
-    #[test]
-    fn desktop_escalation_requires_the_manifest_display_grant() {
-        let without_display = manifest(
-            r#"
-version: 1
-mode: bounded
-expires_after: 8h
-idle_timeout: 30m
-resources: {}
-allow:
-  tools: [escalate_session]
-"#,
-        )
-        .unwrap();
-        assert!(without_display
-            .authorize_protected_resource(
-                "private_observation",
-                &serde_json::json!({
-                    "kind": "session_capture_scope",
-                    "capture_scope": "desktop"
-                }),
-            )
-            .is_err());
-
-        let with_display = manifest(
-            r#"
-version: 1
-mode: bounded
-expires_after: 8h
-idle_timeout: 30m
-resources:
-  desktop:
-    display: true
-allow:
-  tools: [escalate_session]
-"#,
-        )
-        .unwrap();
-        with_display
-            .authorize_protected_resource(
-                "private_observation",
-                &serde_json::json!({
-                    "kind": "session_capture_scope",
-                    "capture_scope": "desktop"
                 }),
             )
             .unwrap();

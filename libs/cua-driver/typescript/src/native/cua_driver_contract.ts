@@ -1233,7 +1233,7 @@ export type ClipboardReadInput = {
     includeText: boolean,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -1346,7 +1346,7 @@ export type ClipboardWriteInput = {
     filePath?: string,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -2271,7 +2271,7 @@ export type DragInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string,
     durationMs?: bigint,
@@ -2339,6 +2339,49 @@ const FfiConverterTypeDragInput = (() => {
              FfiConverterOptionalUInt64.allocationSize(value.steps) +
              FfiConverterOptionalTypeClickButton.allocationSize(value.button) +
              FfiConverterOptionalSequenceString.allocationSize(value.modifier);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type ElementCustomAction = {
+    name: string,
+    raw: string
+}
+
+/**
+ * Generated factory for {@link ElementCustomAction} record objects.
+ */
+export const ElementCustomAction = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ElementCustomAction, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ElementCustomAction>,
+    });
+})();
+
+const FfiConverterTypeElementCustomAction = (() => {
+    type TypeName = ElementCustomAction;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                name: FfiConverterString.read(from),
+                raw: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.name, into);
+            FfiConverterString.write(value.raw, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.name) +
+             FfiConverterString.allocationSize(value.raw);
 
         }
     };
@@ -2590,100 +2633,6 @@ const FfiConverterTypeEndSessionOutput = (() => {
     return new FFIConverter();
 })();
 
-export enum EscalationReason {
-    AxTreePixelMismatch,
-    BackgroundDeliveryFailed,
-    ForegroundIneffective,
-    NoWindowTarget,
-    Other
-}
-
-const FfiConverterTypeEscalationReason = (() => {
-    const ordinalConverter = FfiConverterInt32;
-    type TypeName = EscalationReason;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            switch (ordinalConverter.read(from)) {
-                case 1: return EscalationReason.AxTreePixelMismatch;
-                case 2: return EscalationReason.BackgroundDeliveryFailed;
-                case 3: return EscalationReason.ForegroundIneffective;
-                case 4: return EscalationReason.NoWindowTarget;
-                case 5: return EscalationReason.Other;
-                default: throw new UniffiInternalError.UnexpectedEnumCase();
-            }
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            switch (value) {
-                case EscalationReason.AxTreePixelMismatch: return ordinalConverter.write(1, into);
-                case EscalationReason.BackgroundDeliveryFailed: return ordinalConverter.write(2, into);
-                case EscalationReason.ForegroundIneffective: return ordinalConverter.write(3, into);
-                case EscalationReason.NoWindowTarget: return ordinalConverter.write(4, into);
-                case EscalationReason.Other: return ordinalConverter.write(5, into);
-            }
-        }
-        allocationSize(value: TypeName): number {
-            return ordinalConverter.allocationSize(0);
-        }
-    }
-    return new FFIConverter();
-})();
-
-export type EscalateSessionInput = {
-    /**
-     * Public label of the legacy capture-scope session to escalate.
-     */
-    session: string,
-    /**
-     * Why the window-scoped attempt failed and desktop capture is needed.
-     */
-    reason: EscalationReason,
-    /**
-     * Optional bounded diagnostic detail. Never use secrets or page content.
-     */
-    detail?: string
-}
-
-/**
- * Generated factory for {@link EscalateSessionInput} record objects.
- */
-export const EscalateSessionInput = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<EscalateSessionInput, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<EscalateSessionInput>,
-    });
-})();
-
-const FfiConverterTypeEscalateSessionInput = (() => {
-    type TypeName = EscalateSessionInput;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                session: FfiConverterString.read(from),
-                reason: FfiConverterTypeEscalationReason.read(from),
-                detail: FfiConverterOptionalString.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterString.write(value.session, into);
-            FfiConverterTypeEscalationReason.write(value.reason, into);
-            FfiConverterOptionalString.write(value.detail, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterString.allocationSize(value.session) +
-             FfiConverterTypeEscalationReason.allocationSize(value.reason) +
-             FfiConverterOptionalString.allocationSize(value.detail);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
 export type GetAgentCursorStateInput = {
     /**
      * Public label of the session whose cursor to inspect.
@@ -2788,7 +2737,7 @@ const FfiConverterTypeGetAgentCursorStateOutput = (() => {
 export type GetCursorPositionInput = {
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -2831,7 +2780,7 @@ const FfiConverterTypeGetCursorPositionInput = (() => {
 export type GetDesktopStateInput = {
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string,
     /**
@@ -2891,7 +2840,7 @@ const FfiConverterTypeGetDesktopStateInput = (() => {
 export type GetScreenSizeInput = {
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -2957,49 +2906,6 @@ export const GetSessionInput = (() => {
 
 const FfiConverterTypeGetSessionInput = (() => {
     type TypeName = GetSessionInput;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                session: FfiConverterOptionalString.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterOptionalString.write(value.session, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterOptionalString.allocationSize(value.session);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-export type GetSessionStateInput = {
-    /**
-     * Optional public label. When omitted, inspect the caller's attached
-     * implicit session.
-     */
-    session?: string
-}
-
-/**
- * Generated factory for {@link GetSessionStateInput} record objects.
- */
-export const GetSessionStateInput = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<GetSessionStateInput, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<GetSessionStateInput>,
-    });
-})();
-
-const FfiConverterTypeGetSessionStateInput = (() => {
-    type TypeName = GetSessionStateInput;
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
@@ -3157,7 +3063,7 @@ export type HotkeyInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -3228,8 +3134,15 @@ export type InvokeMenuInput = {
      */
     path: Array<string>,
     /**
+     * `background` (default) never takes the user's keyboard or pointer and refuses with
+     * `background_unavailable` when the item can only be reached by opening a menu. `foreground`
+     * is the explicit escalation that may activate the window and open menus. Linux honors it;
+     * macOS and Windows accept it and keep their existing menu behavior.
+     */
+    deliveryMode?: InputDeliveryMode,
+    /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -3258,6 +3171,7 @@ const FfiConverterTypeInvokeMenuInput = (() => {
                 pid: FfiConverterUInt32.read(from),
                 windowId: FfiConverterUInt64.read(from),
                 path: FfiConverterSequenceString.read(from),
+                deliveryMode: FfiConverterOptionalTypeInputDeliveryMode.read(from),
                 session: FfiConverterOptionalString.read(from)
             };
         }
@@ -3265,12 +3179,14 @@ const FfiConverterTypeInvokeMenuInput = (() => {
             FfiConverterUInt32.write(value.pid, into);
             FfiConverterUInt64.write(value.windowId, into);
             FfiConverterSequenceString.write(value.path, into);
+            FfiConverterOptionalTypeInputDeliveryMode.write(value.deliveryMode, into);
             FfiConverterOptionalString.write(value.session, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterUInt32.allocationSize(value.pid) +
              FfiConverterUInt64.allocationSize(value.windowId) +
              FfiConverterSequenceString.allocationSize(value.path) +
+             FfiConverterOptionalTypeInputDeliveryMode.allocationSize(value.deliveryMode) +
              FfiConverterOptionalString.allocationSize(value.session);
 
         }
@@ -3868,7 +3784,7 @@ export type MoveCursorInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -5007,7 +4923,7 @@ export type PressKeyInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string,
     modifiers?: Array<string>
@@ -5139,7 +5055,7 @@ export type ScrollInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string,
     by?: ScrollBy,
@@ -5264,7 +5180,7 @@ const FfiConverterTypeEffectiveScope = (() => {
 })();
 
 /**
- * Successful structured result shared by session state and escalation tools.
+ * Capture-scope state carried by the `start_session` result.
  */
 export type SessionStateOutput = {
     session: string,
@@ -5279,9 +5195,7 @@ export type SessionStateOutput = {
      * Compatibility field: this reports whether this session has unlocked
      * desktop capture scope. It is not an operating-system lock-screen probe.
      */
-    desktopUnlocked: boolean,
-    escalationReason?: EscalationReason,
-    escalationDetail?: string
+    desktopUnlocked: boolean
 }
 
 /**
@@ -5309,9 +5223,7 @@ const FfiConverterTypeSessionStateOutput = (() => {
                 captureScope: FfiConverterTypeCaptureScope.read(from),
                 effectiveScope: FfiConverterTypeEffectiveScope.read(from),
                 desktopCaptureAuthorized: FfiConverterBool.read(from),
-                desktopUnlocked: FfiConverterBool.read(from),
-                escalationReason: FfiConverterOptionalTypeEscalationReason.read(from),
-                escalationDetail: FfiConverterOptionalString.read(from)
+                desktopUnlocked: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -5320,17 +5232,13 @@ const FfiConverterTypeSessionStateOutput = (() => {
             FfiConverterTypeEffectiveScope.write(value.effectiveScope, into);
             FfiConverterBool.write(value.desktopCaptureAuthorized, into);
             FfiConverterBool.write(value.desktopUnlocked, into);
-            FfiConverterOptionalTypeEscalationReason.write(value.escalationReason, into);
-            FfiConverterOptionalString.write(value.escalationDetail, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.session) +
              FfiConverterTypeCaptureScope.allocationSize(value.captureScope) +
              FfiConverterTypeEffectiveScope.allocationSize(value.effectiveScope) +
              FfiConverterBool.allocationSize(value.desktopCaptureAuthorized) +
-             FfiConverterBool.allocationSize(value.desktopUnlocked) +
-             FfiConverterOptionalTypeEscalationReason.allocationSize(value.escalationReason) +
-             FfiConverterOptionalString.allocationSize(value.escalationDetail);
+             FfiConverterBool.allocationSize(value.desktopUnlocked);
 
         }
     };
@@ -5743,7 +5651,7 @@ export type SetWindowFrameInput = {
     height: number,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -6070,7 +5978,7 @@ export type TypeTextInput = {
     scope?: DesktopScope,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * accepts it.
      */
     session?: string
 }
@@ -6134,8 +6042,7 @@ export type VerifyStateInput = {
     expect: Array<StatePredicate>,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session. This
-     * field never selects capture modality or authorization.
+     * accepts it. This field never selects capture modality or authorization.
      */
     session?: string,
     /**
@@ -6396,8 +6303,18 @@ export type WindowElement = {
     valueDescription?: string,
     enabled?: boolean,
     selected?: boolean,
+    /**
+     * Whether the element is a password field. Windows reports it from UIA
+     * `IsPassword`: `false` only on `Edit` controls, absent when unknown.
+     */
+    isPassword?: boolean,
     inWebContent?: boolean,
     actions?: Array<string>,
+    /**
+     * macOS only: application-defined actions, with a readable name and the
+     * exact action envelope accepted by `click`. Windows and Linux omit this.
+     */
+    customActions?: Array<ElementCustomAction>,
     parentIndex?: bigint,
     frame?: ElementFrame,
     min?: number,
@@ -6434,8 +6351,10 @@ const FfiConverterTypeWindowElement = (() => {
                 valueDescription: FfiConverterOptionalString.read(from),
                 enabled: FfiConverterOptionalBoolean.read(from),
                 selected: FfiConverterOptionalBoolean.read(from),
+                isPassword: FfiConverterOptionalBoolean.read(from),
                 inWebContent: FfiConverterOptionalBoolean.read(from),
                 actions: FfiConverterOptionalSequenceString.read(from),
+                customActions: FfiConverterOptionalSequenceTypeElementCustomAction.read(from),
                 parentIndex: FfiConverterOptionalUInt64.read(from),
                 frame: FfiConverterOptionalTypeElementFrame.read(from),
                 min: FfiConverterOptionalFloat64.read(from),
@@ -6452,8 +6371,10 @@ const FfiConverterTypeWindowElement = (() => {
             FfiConverterOptionalString.write(value.valueDescription, into);
             FfiConverterOptionalBoolean.write(value.enabled, into);
             FfiConverterOptionalBoolean.write(value.selected, into);
+            FfiConverterOptionalBoolean.write(value.isPassword, into);
             FfiConverterOptionalBoolean.write(value.inWebContent, into);
             FfiConverterOptionalSequenceString.write(value.actions, into);
+            FfiConverterOptionalSequenceTypeElementCustomAction.write(value.customActions, into);
             FfiConverterOptionalUInt64.write(value.parentIndex, into);
             FfiConverterOptionalTypeElementFrame.write(value.frame, into);
             FfiConverterOptionalFloat64.write(value.min, into);
@@ -6469,12 +6390,83 @@ const FfiConverterTypeWindowElement = (() => {
              FfiConverterOptionalString.allocationSize(value.valueDescription) +
              FfiConverterOptionalBoolean.allocationSize(value.enabled) +
              FfiConverterOptionalBoolean.allocationSize(value.selected) +
+             FfiConverterOptionalBoolean.allocationSize(value.isPassword) +
              FfiConverterOptionalBoolean.allocationSize(value.inWebContent) +
              FfiConverterOptionalSequenceString.allocationSize(value.actions) +
+             FfiConverterOptionalSequenceTypeElementCustomAction.allocationSize(value.customActions) +
              FfiConverterOptionalUInt64.allocationSize(value.parentIndex) +
              FfiConverterOptionalTypeElementFrame.allocationSize(value.frame) +
              FfiConverterOptionalFloat64.allocationSize(value.min) +
              FfiConverterOptionalFloat64.allocationSize(value.max);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * A readable native row with no action handle: static text, a label, a
+ * read-only value. It comes from the same walk as `elements`, carries no
+ * `element_index` or `element_token`, and no action tool accepts it.
+ * `parent_index` names the nearest addressable ancestor in `elements`.
+ */
+export type WindowObservation = {
+    role: string,
+    depth: number,
+    label?: string,
+    value?: string,
+    frame?: ElementFrame,
+    parentIndex?: bigint,
+    inWebContent?: boolean
+}
+
+/**
+ * Generated factory for {@link WindowObservation} record objects.
+ */
+export const WindowObservation = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<WindowObservation, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<WindowObservation>,
+    });
+})();
+
+const FfiConverterTypeWindowObservation = (() => {
+    type TypeName = WindowObservation;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                role: FfiConverterString.read(from),
+                depth: FfiConverterUInt32.read(from),
+                label: FfiConverterOptionalString.read(from),
+                value: FfiConverterOptionalString.read(from),
+                frame: FfiConverterOptionalTypeElementFrame.read(from),
+                parentIndex: FfiConverterOptionalUInt64.read(from),
+                inWebContent: FfiConverterOptionalBoolean.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.role, into);
+            FfiConverterUInt32.write(value.depth, into);
+            FfiConverterOptionalString.write(value.label, into);
+            FfiConverterOptionalString.write(value.value, into);
+            FfiConverterOptionalTypeElementFrame.write(value.frame, into);
+            FfiConverterOptionalUInt64.write(value.parentIndex, into);
+            FfiConverterOptionalBoolean.write(value.inWebContent, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.role) +
+             FfiConverterUInt32.allocationSize(value.depth) +
+             FfiConverterOptionalString.allocationSize(value.label) +
+             FfiConverterOptionalString.allocationSize(value.value) +
+             FfiConverterOptionalTypeElementFrame.allocationSize(value.frame) +
+             FfiConverterOptionalUInt64.allocationSize(value.parentIndex) +
+             FfiConverterOptionalBoolean.allocationSize(value.inWebContent);
 
         }
     };
@@ -6489,6 +6481,15 @@ export type WindowStateOutput = {
     windowTitle?: string,
     treeMarkdown?: string,
     elements?: Array<WindowElement>,
+    /**
+     * Display-only rows of the same walk. Absent means the platform did not
+     * observe them, never that the window has none.
+     */
+    observations?: Array<WindowObservation>,
+    /**
+     * True when `observations` stopped at its row cap.
+     */
+    observationsTruncated?: boolean,
     elementCount?: bigint,
     totalElementCount?: bigint,
     returnedElementCount?: bigint,
@@ -6562,6 +6563,8 @@ const FfiConverterTypeWindowStateOutput = (() => {
                 windowTitle: FfiConverterOptionalString.read(from),
                 treeMarkdown: FfiConverterOptionalString.read(from),
                 elements: FfiConverterOptionalSequenceTypeWindowElement.read(from),
+                observations: FfiConverterOptionalSequenceTypeWindowObservation.read(from),
+                observationsTruncated: FfiConverterOptionalBoolean.read(from),
                 elementCount: FfiConverterOptionalUInt64.read(from),
                 totalElementCount: FfiConverterOptionalUInt64.read(from),
                 returnedElementCount: FfiConverterOptionalUInt64.read(from),
@@ -6594,6 +6597,8 @@ const FfiConverterTypeWindowStateOutput = (() => {
             FfiConverterOptionalString.write(value.windowTitle, into);
             FfiConverterOptionalString.write(value.treeMarkdown, into);
             FfiConverterOptionalSequenceTypeWindowElement.write(value.elements, into);
+            FfiConverterOptionalSequenceTypeWindowObservation.write(value.observations, into);
+            FfiConverterOptionalBoolean.write(value.observationsTruncated, into);
             FfiConverterOptionalUInt64.write(value.elementCount, into);
             FfiConverterOptionalUInt64.write(value.totalElementCount, into);
             FfiConverterOptionalUInt64.write(value.returnedElementCount, into);
@@ -6625,6 +6630,8 @@ const FfiConverterTypeWindowStateOutput = (() => {
              FfiConverterOptionalString.allocationSize(value.windowTitle) +
              FfiConverterOptionalString.allocationSize(value.treeMarkdown) +
              FfiConverterOptionalSequenceTypeWindowElement.allocationSize(value.elements) +
+             FfiConverterOptionalSequenceTypeWindowObservation.allocationSize(value.observations) +
+             FfiConverterOptionalBoolean.allocationSize(value.observationsTruncated) +
              FfiConverterOptionalUInt64.allocationSize(value.elementCount) +
              FfiConverterOptionalUInt64.allocationSize(value.totalElementCount) +
              FfiConverterOptionalUInt64.allocationSize(value.returnedElementCount) +
@@ -6754,6 +6761,9 @@ const FfiConverterOptionalBoolean = new FfiConverterOptional(FfiConverterBool);
 // FfiConverter for CursorPointOutput | undefined
 const FfiConverterOptionalTypeCursorPointOutput = new FfiConverterOptional(FfiConverterTypeCursorPointOutput);
 
+// FfiConverter for InputDeliveryMode | undefined
+const FfiConverterOptionalTypeInputDeliveryMode = new FfiConverterOptional(FfiConverterTypeInputDeliveryMode);
+
 // FfiConverter for Array<AppInfo>
 const FfiConverterSequenceTypeAppInfo = new FfiConverterArray(FfiConverterTypeAppInfo);
 
@@ -6793,9 +6803,6 @@ const FfiConverterOptionalTypeUnknownReason = new FfiConverterOptional(FfiConver
 // FfiConverter for ScrollBy | undefined
 const FfiConverterOptionalTypeScrollBy = new FfiConverterOptional(FfiConverterTypeScrollBy);
 
-// FfiConverter for EscalationReason | undefined
-const FfiConverterOptionalTypeEscalationReason = new FfiConverterOptional(FfiConverterTypeEscalationReason);
-
 // FfiConverter for CaptureScope | undefined
 const FfiConverterOptionalTypeCaptureScope = new FfiConverterOptional(FfiConverterTypeCaptureScope);
 
@@ -6820,6 +6827,12 @@ const FfiConverterSequenceTypeStatePredicate = new FfiConverterArray(FfiConverte
 // FfiConverter for Array<PredicateOutcome>
 const FfiConverterSequenceTypePredicateOutcome = new FfiConverterArray(FfiConverterTypePredicateOutcome);
 
+// FfiConverter for Array<ElementCustomAction>
+const FfiConverterSequenceTypeElementCustomAction = new FfiConverterArray(FfiConverterTypeElementCustomAction);
+
+// FfiConverter for Array<ElementCustomAction> | undefined
+const FfiConverterOptionalSequenceTypeElementCustomAction = new FfiConverterOptional(FfiConverterSequenceTypeElementCustomAction);
+
 // FfiConverter for ElementFrame | undefined
 const FfiConverterOptionalTypeElementFrame = new FfiConverterOptional(FfiConverterTypeElementFrame);
 
@@ -6828,6 +6841,12 @@ const FfiConverterSequenceTypeWindowElement = new FfiConverterArray(FfiConverter
 
 // FfiConverter for Array<WindowElement> | undefined
 const FfiConverterOptionalSequenceTypeWindowElement = new FfiConverterOptional(FfiConverterSequenceTypeWindowElement);
+
+// FfiConverter for Array<WindowObservation>
+const FfiConverterSequenceTypeWindowObservation = new FfiConverterArray(FfiConverterTypeWindowObservation);
+
+// FfiConverter for Array<WindowObservation> | undefined
+const FfiConverterOptionalSequenceTypeWindowObservation = new FfiConverterOptional(FfiConverterSequenceTypeWindowObservation);
 
 // FfiConverter for WindowBounds | undefined
 const FfiConverterOptionalTypeWindowBounds = new FfiConverterOptional(FfiConverterTypeWindowBounds);
@@ -6900,20 +6919,18 @@ export default Object.freeze({
     FfiConverterTypeDesktopScope,
     FfiConverterTypeDragInput,
     FfiConverterTypeEffectiveScope,
+    FfiConverterTypeElementCustomAction,
     FfiConverterTypeElementFrame,
     FfiConverterTypeElementPredicate,
     FfiConverterTypeElementSelector,
     FfiConverterTypeEndSessionInput,
     FfiConverterTypeEndSessionOutput,
-    FfiConverterTypeEscalateSessionInput,
-    FfiConverterTypeEscalationReason,
     FfiConverterTypeGetAgentCursorStateInput,
     FfiConverterTypeGetAgentCursorStateOutput,
     FfiConverterTypeGetCursorPositionInput,
     FfiConverterTypeGetDesktopStateInput,
     FfiConverterTypeGetScreenSizeInput,
     FfiConverterTypeGetSessionInput,
-    FfiConverterTypeGetSessionStateInput,
     FfiConverterTypeGetWindowStateInput,
     FfiConverterTypeHotkeyInput,
     FfiConverterTypeInputDeliveryMode,
@@ -6970,6 +6987,7 @@ export default Object.freeze({
     FfiConverterTypeWindowBounds,
     FfiConverterTypeWindowElement,
     FfiConverterTypeWindowInfo,
+    FfiConverterTypeWindowObservation,
     FfiConverterTypeWindowPredicate,
     FfiConverterTypeWindowStateOutput,
   }

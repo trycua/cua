@@ -71,7 +71,6 @@ PATHS = (
             "cua-driver-core",
             "cua-driver-sdk",
             "cursor-overlay",
-            "pip-preview",
             "platform-linux",
         )
     ),

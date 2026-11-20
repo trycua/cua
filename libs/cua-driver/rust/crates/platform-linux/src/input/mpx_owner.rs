@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Incarnation-aware ownership encoded atomically in XIAddMaster's name.
-//! No separate property-write window can leave an unmarked new master after SIGKILL.
+//! Incarnation-aware ownership of the XI2 master pairs Cua adds.
+//!
+//! The creator is encoded atomically in XIAddMaster's name, so a SIGKILL right
+//! after the add never leaves a master nobody can attribute. Pairs are pooled
+//! and never removed (removal crashes Qt 6.5+ clients, trycua/cua#7325); the
+//! current holder is a device property on the master pointer, written as a
+//! [`Owner::holder_token`], and an empty property marks a free pair.
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use sha2::{Digest, Sha256};
 use std::{fs, io};
@@ -60,15 +65,30 @@ impl Owner {
     }
 
     pub(super) fn master_name(&self, nonce: u64) -> String {
+        format!(
+            "CUA {}.{}",
+            self.holder_token(),
+            URL_SAFE_NO_PAD.encode(nonce.to_be_bytes())
+        )
+    }
+
+    /// The holder mark this process writes on a pooled master pair it takes:
+    /// the owner part of [`Self::master_name`] without the nonce.
+    pub(super) fn holder_token(&self) -> String {
         let mut process = [0; 12];
         process[..4].copy_from_slice(&self.pid.to_be_bytes());
         process[4..].copy_from_slice(&self.start_ticks.to_be_bytes());
         format!(
-            "CUA v1.{}.{}.{}",
+            "v1.{}.{}",
             URL_SAFE_NO_PAD.encode(self.domain),
-            URL_SAFE_NO_PAD.encode(process),
-            URL_SAFE_NO_PAD.encode(nonce.to_be_bytes())
+            URL_SAFE_NO_PAD.encode(process)
         )
+    }
+
+    pub(super) fn from_holder_token(token: &[u8]) -> Option<Self> {
+        let token = std::str::from_utf8(token).ok()?.strip_prefix("v1.")?;
+        let (domain, process) = token.split_once('.')?;
+        Self::from_parts(domain, process, None)
     }
 
     pub(super) fn from_pointer_name(name: &str) -> Option<Self> {
@@ -76,23 +96,20 @@ impl Owner {
             .strip_prefix("CUA v1.")?
             .strip_suffix(" pointer")?
             .split('.');
-        let domain: [u8; 16] = URL_SAFE_NO_PAD
-            .decode(parts.next()?)
-            .ok()?
-            .try_into()
-            .ok()?;
-        let process: [u8; 12] = URL_SAFE_NO_PAD
-            .decode(parts.next()?)
-            .ok()?
-            .try_into()
-            .ok()?;
-        let _: [u8; 8] = URL_SAFE_NO_PAD
-            .decode(parts.next()?)
-            .ok()?
-            .try_into()
-            .ok()?;
+        let domain = parts.next()?;
+        let process = parts.next()?;
+        let nonce = parts.next()?;
         if parts.next().is_some() {
             return None;
+        }
+        Self::from_parts(domain, process, Some(nonce))
+    }
+
+    fn from_parts(domain: &str, process: &str, nonce: Option<&str>) -> Option<Self> {
+        let domain: [u8; 16] = URL_SAFE_NO_PAD.decode(domain).ok()?.try_into().ok()?;
+        let process: [u8; 12] = URL_SAFE_NO_PAD.decode(process).ok()?.try_into().ok()?;
+        if let Some(nonce) = nonce {
+            let _: [u8; 8] = URL_SAFE_NO_PAD.decode(nonce).ok()?.try_into().ok()?;
         }
         let pid = u32::from_be_bytes(process[..4].try_into().ok()?);
         if pid == 0 || pid > i32::MAX as u32 {
@@ -165,6 +182,25 @@ mod tests {
             "ordinary pointer",
         ] {
             assert!(Owner::from_pointer_name(name).is_none());
+        }
+    }
+
+    #[test]
+    fn holder_token_names_the_same_owner_as_the_master_name() {
+        let owner = Owner {
+            pid: i32::MAX as u32,
+            start_ticks: u64::MAX,
+            ..owner()
+        };
+        let token = owner.holder_token();
+        assert_eq!(
+            Owner::from_holder_token(token.as_bytes()),
+            Some(owner.clone())
+        );
+        let name = owner.master_name(9);
+        assert!(name.starts_with(&format!("CUA {token}.")));
+        for bad in [&b""[..], b"?", b"v1.bad.bad", b"v1.only", b"\xff\xfe"] {
+            assert!(Owner::from_holder_token(bad).is_none());
         }
     }
 

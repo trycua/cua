@@ -196,6 +196,7 @@ background delivery and attach desktop-side-effect oracles.
 | Desktop target | `desktop_scope_macos_test.rs` | Per-call window/desktop modality, screen-absolute action delivery, and strict rejection |
 | Installed-app launch/focus | `installed_app_launch_macos_test.rs` | Real Calculator/TextEdit launch and focus behavior in the canonical logged-in lane |
 | Installed-app text | `installed_app_textedit_macos_test.rs` | Real TextEdit AX background write and verification in the canonical logged-in lane |
+| Installed-app remote input | `screen_sharing_macos_test.rs` | Foreground pixel `type_text` into one exact, minimized Screen Sharing window, checked against local VNC servers |
 
 The AppKit `snapshot_publication` regression holds a fixture PNG write with FIFO
 backpressure while replacing a button at the same AX index. It exercises the

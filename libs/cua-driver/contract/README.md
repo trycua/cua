@@ -24,9 +24,10 @@ The typed slice covers the cross-platform session lifecycle tools:
 
 Ordinary calls do not need `start_session`. The runtime creates one implicit
 session for the authenticated transport lease and reuses it until transport
-close, explicit end, or five minutes of inactivity. `escalate_session` and
-`get_session_state` remain deprecated compatibility tools for legacy
-capture-scope sessions. There is no `deescalate_session` tool.
+close, explicit end, or five minutes of inactivity. The deprecated
+`escalate_session` and `get_session_state` tools were removed in 0.48.0; select
+window or desktop modality on each action and use `get_session` for session
+state.
 
 It also covers the portable whole-desktop loop:
 
@@ -50,6 +51,18 @@ explicit `ActionTarget`, and an explicit `InputDeliveryMode`, and returns
 `ActionResult` directly. Native refusals become `DriverError.Tool`.
 See the [0.8 SDK contract migration](../docs/native-window-sdk-migration.md)
 for the intentional SDK break and unchanged CLI/MCP wire forms.
+
+On macOS, an element's application-defined actions are published in the optional
+`custom_actions` output field as `{name, raw}` records. `name` is the readable
+action label; `raw` is the exact action envelope supplied by the application.
+Either can be passed as `click.action`. Standard AX actions remain in `actions`.
+Windows and Linux do not emit `custom_actions`. This additive element output
+does not change `ActionResult` or the RFC #4009 action-outcome contract.
+
+macOS retains groups and scroll areas whose batched attributes contain a title,
+description, value, or help. Empty layout containers still collapse before the
+action-name request, including containers exposing only actions, so layout-only
+nodes do not acquire an additional AX round trip.
 
 The canonical session-owned cursor slice is shared exactly by MCP and both
 generated SDKs:

@@ -1196,7 +1196,24 @@ describe("webkit adapter", () => {
       page: {
         title: "Settings",
         sections: [
-          { id: "general", rows: [toggle("auto-connect", false), toggle("placement-overflow", true)] },
+          {
+            id: "general",
+            rows: [
+              toggle("auto-connect", false),
+              toggle("placement-overflow", true),
+              {
+                id: "close-window",
+                kind: "choice",
+                label: "When I close the window",
+                enabled: true,
+                options: [
+                  { id: "keep", label: "Keep running in the background", active: false },
+                  { id: "quit", label: "Quit Cua Spaces", active: true },
+                ],
+              },
+              toggle("close-notice", true),
+            ],
+          },
           { id: "runtimes", rows: [choice("runtime:container", "system"), choice("runtime:vm", "builtin"), choice("runtime:microvm", "auto")] },
           {
             id: "keyvault",
@@ -1216,6 +1233,8 @@ describe("webkit adapter", () => {
       runtimes: runtimes,
       autoConnect: false,
       overflow: true,
+      closeWindowKeepsRunning: false,
+      closeNotice: true,
       keyvaultAutoWipe: true,
       keyvaultUnlockPrompt: false,
       keyvaultSiteIcons: true,
@@ -1231,6 +1250,8 @@ describe("webkit adapter", () => {
     expect((await createWebkitAdapter(bare).call("settings.get", {})).hostSettings).toEqual({
       runtimes: null,
       autoConnect: null,
+      closeWindowKeepsRunning: null,
+      closeNotice: null,
       overflow: null,
       keyvaultAutoWipe: null,
       keyvaultUnlockPrompt: null,

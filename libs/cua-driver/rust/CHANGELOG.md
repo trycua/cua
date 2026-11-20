@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.55.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.55.4...cua-driver-rs-v0.55.5) (2026-11-20)
+
+
+### Bug Fixes
+
+* **cua-driver:** let nightly builds satisfy extension Driver requirements ([#8361](https://github.com/trycua/cua/issues/8361)) ([a7307c2](https://github.com/trycua/cua/commit/a7307c2e8ac6df2d12b4cc10b76a8c852f58598d)), closes [#6692](https://github.com/trycua/cua/issues/6692)
+
 ## [0.55.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.55.3...cua-driver-rs-v0.55.4) (2026-11-20)
 
 

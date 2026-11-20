@@ -2269,6 +2269,9 @@ impl ToolRegistry {
         // preserving the public arguments in the grant scope and the private
         // runtime session key in its revocation lifecycle.
         let history_observation = has_adapter("computer_history");
+        // Every grant this call holds is checked again once lifecycle
+        // admission pins its episode.
+        let mut consented = Vec::new();
         if (has_adapter("private_observation") || history_observation)
             && (history_observation
                 || (!runtime_proves_driver_owned
@@ -2278,7 +2281,7 @@ impl ToolRegistry {
                         != ProtectedResourceOwnership::DriverOwned)
                 || context.capability_manifest().is_some())
         {
-            if let Err(error) = self
+            match self
                 .authorize_private_observation(
                     tool.as_ref(),
                     resolved_name,
@@ -2293,11 +2296,12 @@ impl ToolRegistry {
                 )
                 .await
             {
-                return protected_consent_refusal(error);
+                Ok(grant) => consented.extend(grant),
+                Err(error) => return protected_consent_refusal(error),
             }
         }
         if has_adapter("clipboard") {
-            if let Err(error) = self
+            match self
                 .authorize_clipboard(
                     resolved_name,
                     &public_args,
@@ -2306,11 +2310,12 @@ impl ToolRegistry {
                 )
                 .await
             {
-                return protected_consent_refusal(error);
+                Ok(grant) => consented.extend(grant),
+                Err(error) => return protected_consent_refusal(error),
             }
         }
         if has_adapter("file_transfer_and_output") {
-            if let Err(refusal) = self
+            match self
                 .authorize_file_transfer(
                     resolved_name,
                     &mut public_args,
@@ -2319,7 +2324,8 @@ impl ToolRegistry {
                 )
                 .await
             {
-                return refusal;
+                Ok(grant) => consented.extend(grant),
+                Err(refusal) => return refusal,
             }
             // File adapters rewrite exact paths to their canonical form after
             // approval. Dispatch must receive those same values, while the
@@ -2331,7 +2337,7 @@ impl ToolRegistry {
         if has_adapter("desktop_input")
             && (!runtime_proves_driver_owned || context.capability_manifest().is_some())
         {
-            if let Err(error) = self
+            match self
                 .authorize_desktop_input(
                     resolved_name,
                     &public_args,
@@ -2340,7 +2346,8 @@ impl ToolRegistry {
                 )
                 .await
             {
-                return protected_consent_refusal(error);
+                Ok(grant) => consented.extend(grant),
+                Err(error) => return protected_consent_refusal(error),
             }
         }
         if has_adapter("browser_consequential_action")
@@ -2364,7 +2371,10 @@ impl ToolRegistry {
                 )
                 .await
             {
-                Ok(scope) => scope,
+                Ok((scope, grant)) => {
+                    consented.extend(grant);
+                    scope
+                }
                 Err(refusal) => return refusal,
             };
             if let Err(refusal) = self
@@ -2402,7 +2412,10 @@ impl ToolRegistry {
                 )
                 .await
             {
-                Ok(scope) => scope,
+                Ok((scope, grant)) => {
+                    consented.extend(grant);
+                    scope
+                }
                 Err(refusal) => return refusal,
             };
             if let Err(refusal) = self
@@ -2436,7 +2449,10 @@ impl ToolRegistry {
                 )
                 .await
             {
-                Ok(scope) => scope,
+                Ok((scope, grant)) => {
+                    consented.extend(grant);
+                    scope
+                }
                 Err(refusal) => return refusal,
             };
             if let Err(refusal) = self
@@ -2457,7 +2473,7 @@ impl ToolRegistry {
             }
         }
         if has_adapter("driver_configuration") {
-            if let Err(refusal) = self
+            match self
                 .authorize_driver_configuration(
                     tool.as_ref(),
                     &public_args,
@@ -2466,7 +2482,8 @@ impl ToolRegistry {
                 )
                 .await
             {
-                return refusal;
+                Ok(grant) => consented.extend(grant),
+                Err(refusal) => return refusal,
             }
         }
 
@@ -2519,6 +2536,9 @@ impl ToolRegistry {
             } else {
                 None
             };
+        if let Some(refusal) = ended_approval_refusal(&consented) {
+            return refusal;
+        }
 
         // Capture start time for recording timestamps only after validation.
         let launch_snapshot = if resolved_name == "launch_app" {
@@ -2775,11 +2795,11 @@ impl ToolRegistry {
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         lifecycle_session: Option<&str>,
         adapter_id: &str,
-    ) -> Result<(), crate::consent::ConsentError> {
+    ) -> Result<Option<crate::consent::ResourceGrant>, crate::consent::ConsentError> {
         if context.mode() == crate::authorization::PermissionMode::Unrestricted
             && context.capability_manifest().is_none()
         {
-            return Ok(());
+            return Ok(None);
         }
         let browser_target = args.get("target_id").and_then(Value::as_str);
         let browser_tab = args.get("tab_id").and_then(Value::as_str);
@@ -2803,7 +2823,7 @@ impl ToolRegistry {
             // Whole-display scope discovery is X11-specific on Linux. It is
             // not a grant boundary in standard mode and must not turn routine
             // promptless operation into a pure-Wayland failure.
-            return Ok(());
+            return Ok(None);
         }
         let history_resource = history_observation_resource(tool_name);
         let browser_scope = if history_resource.is_none() {
@@ -2921,8 +2941,7 @@ impl ToolRegistry {
                 Duration::from_secs(30 * 60),
                 Duration::from_secs(8 * 60 * 60),
             )
-            .await?;
-        Ok(())
+            .await
     }
 
     async fn authorize_desktop_input(
@@ -2931,14 +2950,14 @@ impl ToolRegistry {
         args: &Value,
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         lifecycle_session: Option<&str>,
-    ) -> Result<(), crate::consent::ConsentError> {
+    ) -> Result<Option<crate::consent::ResourceGrant>, crate::consent::ConsentError> {
         if context.mode() != crate::authorization::PermissionMode::Bounded
             && context.capability_manifest().is_none()
         {
             // Standard and unrestricted input do not need a protected grant.
             // Bounded mode continues below so the exact resource can be
             // checked against its approved manifest.
-            return Ok(());
+            return Ok(None);
         }
         let delivery_mode = if tool_name == "bring_to_front" {
             "foreground"
@@ -3025,8 +3044,7 @@ impl ToolRegistry {
                 Duration::from_secs(30 * 60),
                 Duration::from_secs(8 * 60 * 60),
             )
-            .await?;
-        Ok(())
+            .await
     }
 
     async fn authorize_clipboard(
@@ -3035,11 +3053,11 @@ impl ToolRegistry {
         args: &Value,
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         lifecycle_session: Option<&str>,
-    ) -> Result<(), crate::consent::ConsentError> {
+    ) -> Result<Option<crate::consent::ResourceGrant>, crate::consent::ConsentError> {
         if context.mode() != crate::authorization::PermissionMode::Bounded
             && context.capability_manifest().is_none()
         {
-            return Ok(());
+            return Ok(None);
         }
         let (operation, content_kind, summary) = if tool_name == "clipboard_read" {
             (
@@ -3081,7 +3099,6 @@ impl ToolRegistry {
                 Duration::from_secs(8 * 60 * 60),
             )
             .await
-            .map(|_| ())
     }
 
     async fn authorize_file_transfer(
@@ -3090,11 +3107,11 @@ impl ToolRegistry {
         args: &mut Value,
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         lifecycle_session: Option<&str>,
-    ) -> Result<(), ToolResult> {
+    ) -> Result<Option<crate::consent::ResourceGrant>, ToolResult> {
         if context.mode() == crate::authorization::PermissionMode::Unrestricted
             && context.capability_manifest().is_none()
         {
-            return Ok(());
+            return Ok(None);
         }
         let (resource, summary) = match tool_name {
             "browser_set_input_files" => {
@@ -3183,7 +3200,7 @@ impl ToolRegistry {
                 let Some(output_dir) = state.output_dir else {
                     // Stopping an already-stopped recorder is a side-effect-free
                     // no-op and must not manufacture an approval prompt.
-                    return Ok(());
+                    return Ok(None);
                 };
                 let output = canonical_proposed_path(&output_dir)?;
                 (
@@ -3245,8 +3262,7 @@ impl ToolRegistry {
                 Duration::from_secs(8 * 60 * 60),
             )
             .await
-            .map_err(protected_consent_refusal)?;
-        Ok(())
+            .map_err(protected_consent_refusal)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3261,11 +3277,11 @@ impl ToolRegistry {
         human_summary: &str,
         idle_ttl: Duration,
         absolute_ttl: Duration,
-    ) -> Result<Value, ToolResult> {
+    ) -> Result<(Value, Option<crate::consent::ResourceGrant>), ToolResult> {
         if context.mode() == crate::authorization::PermissionMode::Unrestricted
             && context.capability_manifest().is_none()
         {
-            return Ok(Value::Null);
+            return Ok((Value::Null, None));
         }
         let mut resource = tool
             .protected_resource_scope(adapter_id, args)
@@ -3285,7 +3301,8 @@ impl ToolRegistry {
                 });
             resource["driver_owned"] = Value::Bool(driver_owned);
         }
-        self.protected_resource_grants
+        let grant = self
+            .protected_resource_grants
             .authorize(
                 context,
                 adapter_id,
@@ -3298,7 +3315,7 @@ impl ToolRegistry {
             )
             .await
             .map_err(protected_consent_refusal)?;
-        Ok(resource)
+        Ok((resource, grant))
     }
 
     async fn validate_attested_resource(
@@ -3349,11 +3366,11 @@ impl ToolRegistry {
         args: &Value,
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         lifecycle_session: Option<&str>,
-    ) -> Result<(), ToolResult> {
+    ) -> Result<Option<crate::consent::ResourceGrant>, ToolResult> {
         if context.mode() == crate::authorization::PermissionMode::Unrestricted
             && context.capability_manifest().is_none()
         {
-            return Ok(());
+            return Ok(None);
         }
         let properties = tool
             .def()
@@ -3403,8 +3420,7 @@ impl ToolRegistry {
                 Duration::from_secs(30 * 60),
             )
             .await
-            .map_err(protected_consent_refusal)?;
-        Ok(())
+            .map_err(protected_consent_refusal)
     }
 }
 
@@ -4475,6 +4491,66 @@ mod runtime_isolation_tests {
         assert_ne!(allowed.is_error, Some(true));
         assert_eq!(allowed_hits.load(Ordering::SeqCst), 1);
         assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn an_approval_held_across_its_session_end_refuses_once_the_session_is_recreated() {
+        let provider = Arc::new(AcceptingProvider {
+            requests: AtomicUsize::new(0),
+        });
+        let registry = observation_registry_for(
+            "history_query",
+            Some(provider.clone()),
+            Arc::new(AtomicUsize::new(0)),
+        );
+        let context = standard_context();
+        let session = context.runtime_session_key("approval-across-end");
+        let admit = || {
+            crate::session::begin_session_dispatch(
+                &session,
+                None,
+                &session,
+                true,
+                crate::session::SessionTransport::McpStdio,
+                crate::session::SessionClientKind::Mcp,
+            )
+        };
+        drop(admit().unwrap());
+        let grant = registry
+            .protected_resource_grants()
+            .authorize(
+                &context,
+                "computer_history",
+                crate::authorization::RiskClass::R2,
+                Some(&session),
+                serde_json::json!({"kind": "history"}),
+                "Read history",
+                Duration::from_secs(60),
+                Duration::from_secs(120),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(super::ended_approval_refusal(std::slice::from_ref(&grant)).is_none());
+
+        // The registry's end hook revokes the episode's grants before
+        // admission may recreate the session.
+        assert_eq!(
+            crate::session::evict_idle_with_prefix(Duration::ZERO, &session),
+            vec![session.clone()]
+        );
+        drop(admit().unwrap());
+        let refusal = super::ended_approval_refusal(&[grant]).unwrap();
+        assert_eq!(
+            refusal
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str),
+            Some("authorization_session_ended")
+        );
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+        crate::session::forget_ended_sessions_with_prefix(&session);
     }
 
     #[cfg(feature = "yaml")]
@@ -7403,6 +7479,18 @@ fn session_owned_by_other_transport_refusal(
         refusal.insert("owner_transport".to_owned(), Value::from(holder));
     }
     result
+}
+
+/// Refuses a call whose approval was revoked before lifecycle admission. An
+/// end revokes its episode's grants before admission may recreate the
+/// session, so a dead grant here belongs to an episode that has ended.
+fn ended_approval_refusal(consented: &[crate::consent::ResourceGrant]) -> Option<ToolResult> {
+    consented.iter().any(|grant| !grant.is_live()).then(|| {
+        protected_refusal(
+            "authorization_session_ended",
+            "this call's approval ended with its session; retry the call to request a new one",
+        )
+    })
 }
 
 fn protected_refusal(code: &str, message: &str) -> ToolResult {

@@ -56,7 +56,8 @@ impl Tool for ListAppsTool {
     async fn invoke(&self, _args: Value) -> ToolResult {
         // Strategy:
         // 1. Enumerate top-level visible windows → derive the set of running pids
-        //    that have a user-facing surface.
+        //    that have a user-facing surface, including the packaged app each
+        //    ApplicationFrameHost frame hosts.
         // 2. Enumerate the process table to map pid → executable name and full
         //    path (used to merge against Start-Menu / UWP launch_paths).
         // 3. Enumerate installed apps from Start-Menu shortcuts + WinRT
@@ -78,11 +79,7 @@ impl Tool for ListAppsTool {
             let t0 = std::time::Instant::now();
             let wins = crate::win32::list_windows_via_win32(None);
             tracing::debug!(target: "list_apps", "step 1 list_windows: {} wins ({}ms)", wins.len(), t0.elapsed().as_millis());
-            let mut seen_pids = std::collections::HashSet::new();
-            let mut running_pids: Vec<u32> = Vec::new();
-            for w in &wins {
-                if seen_pids.insert(w.pid) { running_pids.push(w.pid); }
-            }
+            let running_pids = running_app_pids(&wins, crate::win32::hosted_app_pid);
 
             let t1 = std::time::Instant::now();
             let foreground_pid = unsafe {
@@ -214,6 +211,27 @@ impl Tool for ListAppsTool {
     }
 }
 
+/// Pids that own a visible top-level window, in first-seen order. A UWP app
+/// hosted in an `ApplicationFrameHost` frame owns no top-level window of its
+/// own, so `hosted` resolves each frame to the app pid behind it, which
+/// follows the host's pid. That is the pid bounded mode resolves the frame to
+/// before it looks the app up here.
+fn running_app_pids(
+    windows: &[crate::win32::WindowInfo],
+    hosted: impl Fn(u32, u64) -> Option<u32>,
+) -> Vec<u32> {
+    let mut seen = std::collections::HashSet::new();
+    let mut pids = Vec::new();
+    for window in windows {
+        for pid in std::iter::once(window.pid).chain(hosted(window.pid, window.hwnd)) {
+            if seen.insert(pid) {
+                pids.push(pid);
+            }
+        }
+    }
+    pids
+}
+
 /// Pick which of several Start-Menu / UWP-derived installed apps best matches
 /// a running pid whose exe basename collided. Precedence:
 ///   1. exact case-insensitive equality between `proc_exe_basename` and the
@@ -334,5 +352,45 @@ mod list_apps_packaged_identity_tests {
         )];
         let aumid = format!("{NOTEPAD}!App");
         assert_eq!(packaged_installed_match(Some(&aumid), &apps), None);
+    }
+}
+
+#[cfg(test)]
+mod running_app_pids_tests {
+    use super::running_app_pids;
+    use crate::win32::WindowInfo;
+
+    fn window(pid: u32, hwnd: u64) -> WindowInfo {
+        WindowInfo {
+            hwnd,
+            pid,
+            title: String::new(),
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 100,
+            is_on_screen: true,
+            minimized: false,
+        }
+    }
+
+    #[test]
+    fn hosted_apps_follow_their_frame_host_once_each() {
+        // Host pid 100's frames 7 and 8 host app pids 200 and 300; frame 9
+        // hosts nothing the platform can attribute. Pid 42 is a plain window.
+        let windows = [
+            window(42, 1),
+            window(100, 7),
+            window(100, 8),
+            window(100, 9),
+            window(42, 2),
+            window(100, 7),
+        ];
+        let hosted = |pid: u32, hwnd: u64| match (pid, hwnd) {
+            (100, 7) => Some(200),
+            (100, 8) => Some(300),
+            _ => None,
+        };
+        assert_eq!(running_app_pids(&windows, hosted), vec![42, 100, 200, 300]);
     }
 }

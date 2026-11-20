@@ -1070,9 +1070,11 @@ struct FixtureFocus {
     browser_off_space: bool,
     guards: StdMutex<Vec<(i64, u64)>>,
     /// Re-proofs of the approved endpoint that still find it. After them it
-    /// is gone, or owned by `reproof_owner` when set. `None` always finds it.
+    /// is gone, owned by `reproof_owner` when set, or refused by the platform
+    /// as owner-mismatched when `reproof_refuses`. `None` always finds it.
     reproofs_left: StdMutex<Option<usize>>,
     reproof_owner: Option<i64>,
+    reproof_refuses: bool,
 }
 
 #[async_trait]
@@ -1211,6 +1213,11 @@ impl BrowserPlatform for FixturePlatform {
         if let Some(left) = self.focus.reproofs_left.lock().unwrap().as_mut() {
             if *left > 0 {
                 *left -= 1;
+            } else if self.focus.reproof_refuses {
+                return Err(BrowserRefusal::new(
+                    super::refusal::BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                    "the fixture DevTools endpoint changed",
+                ));
             } else {
                 match self.focus.reproof_owner {
                     Some(owner) => owner_pid = owner,
@@ -5676,4 +5683,64 @@ async fn revoking_a_grant_also_closes_the_socket_an_ended_session_parked() {
         .await;
     assert_eq!(f.engine.pool.shared_socket_holders(&url).await, None);
     crate::session::fire_session_end("parked-then-revoked-b");
+}
+
+#[tokio::test]
+async fn a_reconnect_whose_platform_proof_refuses_the_owner_needs_setup() {
+    const TRANSPORT: &str = "needs-setup-reconnect-refused";
+    let focus = Arc::new(FixtureFocus {
+        reproof_refuses: true,
+        ..Default::default()
+    });
+    let (f, _) = protected_existing_profile_fixture_with_consent(focus.clone(), false).await;
+    let prepared = attach_existing_profile(&f, TRANSPORT, TRANSPORT).await;
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    let grant = f
+        .engine
+        .existing_profile_grant(TRANSPORT, Some(TRANSPORT), 1)
+        .await
+        .unwrap()
+        .unwrap();
+    f.engine
+        .pool
+        .release_existing(&grant.endpoint_ws_url, grant.generation)
+        .await;
+    // The bind's proof passes; the reconnect's proof is refused.
+    *focus.reproofs_left.lock().unwrap() = Some(1);
+
+    let state = existing_profile_state(&f, TRANSPORT, TRANSPORT).await;
+    assert_needs_setup(&state, "browser_endpoint_owner_mismatch", TRANSPORT);
+    crate::session::fire_session_end(TRANSPORT);
+}
+
+#[tokio::test]
+async fn a_session_end_does_not_park_a_socket_that_is_already_gone() {
+    const TRANSPORT: &str = "park-dead-socket";
+    let (f, _) = protected_existing_profile_fixture().await;
+    let prepared = attach_existing_profile(&f, TRANSPORT, TRANSPORT).await;
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    let grant = f
+        .engine
+        .existing_profile_grant(TRANSPORT, Some(TRANSPORT), 1)
+        .await
+        .unwrap()
+        .unwrap();
+    f.engine
+        .pool
+        .release_existing(&grant.endpoint_ws_url, grant.generation)
+        .await;
+
+    crate::session::fire_session_end(TRANSPORT);
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while f
+            .engine
+            .existing_profile_grants
+            .parked_generations()
+            .contains(&grant.generation)
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("a session end must not keep a gone socket parked");
 }

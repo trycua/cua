@@ -250,6 +250,15 @@ fn needs_setup_refusal(
     existing_profile_next_call(refusal, session, pid, window_id)
 }
 
+/// Whether an endpoint proof failed because the approved endpoint is gone or
+/// owned by another process, which leaves a grant needing `browser_prepare`.
+fn endpoint_lost(refusal: &BrowserRefusal) -> bool {
+    matches!(
+        refusal.code,
+        BrowserRefusalCode::BrowserRequiresSetup | BrowserRefusalCode::BrowserEndpointOwnerMismatch
+    )
+}
+
 fn existing_profile_next_call(
     mut refusal: BrowserRefusal,
     session: &str,
@@ -795,6 +804,11 @@ impl BrowserEngine {
                     if !ended.parked.is_empty() {
                         engine.schedule_parked_reaper();
                     }
+                    let parked: Vec<_> = ended
+                        .parked
+                        .iter()
+                        .map(|grant| (grant.endpoint_ws_url.clone(), grant.generation))
+                        .collect();
                     let revoked: Vec<_> = ended.parked.into_iter().chain(ended.released).collect();
                     for grant in &revoked {
                         if let Some(protected) = grant.protected_consent.as_ref() {
@@ -804,6 +818,24 @@ impl BrowserEngine {
                     if let Ok(runtime) = tokio::runtime::Handle::try_current() {
                         let engine = engine.clone();
                         runtime.spawn(async move {
+                            // A socket already closed or past its absolute bound
+                            // is not worth keeping for the next session.
+                            for (url, generation) in parked {
+                                if engine.pool.get_existing(&url, generation).await.is_err() {
+                                    for stale in engine
+                                        .existing_profile_grants
+                                        .take_parked_generation(generation)
+                                    {
+                                        engine
+                                            .pool
+                                            .release_existing(
+                                                &stale.endpoint_ws_url,
+                                                stale.generation,
+                                            )
+                                            .await;
+                                    }
+                                }
+                            }
                             for grant in revoked {
                                 if grant.cleanup_remote_debugging {
                                     engine.close_existing_profile_socket(&grant).await;
@@ -1086,28 +1118,31 @@ impl BrowserEngine {
                     "the browser process changed; existing-profile attachment needs fresh approval",
                 ));
             }
-            let Some(endpoint) = self
+            let reproved = match self
                 .platform
                 .reprove_existing_profile_endpoint(pid, &grant.endpoint_ws_url)
-                .await?
-            else {
-                let refusal = refuse(
-                    BrowserRefusalCode::BrowserRequiresSetup,
-                    "the approved browser endpoint disappeared during reconnect",
-                );
-                return Err(self
-                    .enter_needs_setup(session, transport_session, &grant, refusal)
-                    .await);
-            };
-            if endpoint.ownership.owner_pid != pid {
-                let refusal = refuse(
+                .await
+            {
+                Ok(Some(endpoint)) if endpoint.ownership.owner_pid == pid => Ok(endpoint),
+                Ok(Some(_)) => Err(refuse(
                     BrowserRefusalCode::BrowserEndpointOwnerMismatch,
                     "the reconnect endpoint is not owned by the approved browser process",
-                );
-                return Err(self
-                    .enter_needs_setup(session, transport_session, &grant, refusal)
-                    .await);
-            }
+                )),
+                Ok(None) => Err(refuse(
+                    BrowserRefusalCode::BrowserRequiresSetup,
+                    "the approved browser endpoint disappeared during reconnect",
+                )),
+                Err(refusal) => Err(refusal),
+            };
+            let endpoint = match reproved {
+                Ok(endpoint) => endpoint,
+                Err(refusal) if endpoint_lost(&refusal) => {
+                    return Err(self
+                        .enter_needs_setup(session, transport_session, &grant, refusal)
+                        .await);
+                }
+                Err(refusal) => return Err(refusal),
+            };
             if endpoint.ws_url != grant.endpoint_ws_url {
                 self.revoke_existing_profile_grant(session, transport_session, pid)
                     .await;
@@ -1118,9 +1153,12 @@ impl BrowserEngine {
             }
 
             let old_generation = grant.generation;
-            let new_generation =
-                self.existing_profile_grants
-                    .bump_generation(session, transport_session, pid)?;
+            let new_generation = self.existing_profile_grants.bump_generation(
+                session,
+                transport_session,
+                pid,
+                old_generation,
+            )?;
             self.store
                 .invalidate_endpoint_generation(pid, old_generation);
             let attempt = super::grant::MAX_RECONNECT_ATTEMPTS
@@ -1163,20 +1201,46 @@ impl BrowserEngine {
                     }
                 }
             };
-            match reconnected {
-                Ok(conn) => {
-                    grant = self
-                        .existing_profile_grant(session, transport_session, pid)
-                        .await?
-                        .expect("grant exists after successful generation bump");
-                    return Ok((conn, grant));
+            let current = self
+                .existing_profile_grant(session, transport_session, pid)
+                .await;
+            let current = match current {
+                Ok(Some(current))
+                    if matches!(current.attachment, Attachment::Attached)
+                        && current.generation == new_generation =>
+                {
+                    current
                 }
+                // The grant moved on while the socket was dialing: the new
+                // hold is not its to keep.
+                moved_on => {
+                    if reconnected.is_ok() {
+                        self.pool
+                            .release_existing(&endpoint.ws_url, new_generation)
+                            .await;
+                    }
+                    return Err(match moved_on {
+                        Ok(Some(ExistingProfileGrant {
+                            attachment: Attachment::NeedsSetup { refusal },
+                            ..
+                        })) => refusal,
+                        Ok(Some(_)) => refuse(
+                            BrowserRefusalCode::BrowserBindingStale,
+                            "the browser attachment changed while reconnecting; re-run get_browser_state",
+                        ),
+                        Ok(None) => refuse(
+                            BrowserRefusalCode::BrowserConsentRequired,
+                            "the existing-profile grant ended while reconnecting",
+                        ),
+                        Err(refusal) => refusal,
+                    });
+                }
+            };
+            match reconnected {
+                Ok(conn) => return Ok((conn, current)),
                 Err(error) => {
                     last_error = Some(error.to_string());
-                    grant = self
-                        .existing_profile_grant(session, transport_session, pid)
-                        .await?
-                        .expect("grant exists while reconnect budget remains");
+                    grant = current;
                 }
             }
         }
@@ -1282,17 +1346,9 @@ impl BrowserEngine {
             .existing_profile_endpoint(grant.pid, &grant.endpoint_ws_url)
             .await
         {
-            Err(refusal)
-                if matches!(
-                    refusal.code,
-                    BrowserRefusalCode::BrowserRequiresSetup
-                        | BrowserRefusalCode::BrowserEndpointOwnerMismatch
-                ) =>
-            {
-                Err(self
-                    .enter_needs_setup(session, transport_session, grant, refusal)
-                    .await)
-            }
+            Err(refusal) if endpoint_lost(&refusal) => Err(self
+                .enter_needs_setup(session, transport_session, grant, refusal)
+                .await),
             result => result,
         }
     }

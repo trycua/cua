@@ -340,6 +340,25 @@ impl ExistingProfileGrants {
         })
     }
 
+    /// Remove the parked grant at `generation`, for the caller to release.
+    pub fn take_parked_generation(&self, generation: u64) -> Vec<ExistingProfileGrant> {
+        self.take_ended(|grant| {
+            matches!(grant.attachment, Attachment::Parked { .. }) && grant.generation == generation
+        })
+    }
+
+    #[cfg(test)]
+    pub fn parked_generations(&self) -> Vec<u64> {
+        self.inner
+            .lock()
+            .unwrap()
+            .ended
+            .iter()
+            .filter(|grant| matches!(grant.attachment, Attachment::Parked { .. }))
+            .map(|grant| grant.generation)
+            .collect()
+    }
+
     /// Remove every parked grant, for the caller to release its socket.
     pub fn take_parked(&self) -> Vec<ExistingProfileGrant> {
         self.take_ended(|grant| matches!(grant.attachment, Attachment::Parked { .. }))
@@ -382,11 +401,16 @@ impl ExistingProfileGrants {
         Some(attached)
     }
 
+    /// Start a reconnect attempt for the grant attached at `expected`: spend
+    /// one reconnect and return the generation the new socket is claimed for.
+    /// A grant that moved on meanwhile (to `NeedsSetup`, or to another
+    /// generation) refuses, so no attempt claims a socket for it.
     pub fn bump_generation(
         &self,
         public_session: &str,
         transport_session: Option<&str>,
         pid: i64,
+        expected: u64,
     ) -> Result<u64, BrowserRefusal> {
         let key = Self::key(public_session, transport_session, pid);
         let mut registry = self.inner.lock().unwrap();
@@ -396,6 +420,15 @@ impl ExistingProfileGrants {
                 "no live existing-profile grant remains for reconnect",
             )
         })?;
+        if let Attachment::NeedsSetup { refusal } = &grant.attachment {
+            return Err(refusal.clone());
+        }
+        if grant.generation != expected {
+            return Err(BrowserRefusal::new(
+                BrowserRefusalCode::BrowserBindingStale,
+                "the browser attachment changed while reconnecting; re-run get_browser_state",
+            ));
+        }
         if grant.reconnect_attempts_remaining == 0 {
             return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserReconnectExhausted,
@@ -645,7 +678,7 @@ mod tests {
         let a = mint("session-a");
         let b = mint("session-b");
         assert_ne!(a, b, "sessions sharing one socket need distinct holders");
-        let bumped = grants.bump_generation("session-a", None, 42).unwrap();
+        let bumped = grants.bump_generation("session-a", None, 42, a).unwrap();
         assert!(
             bumped > b,
             "a reconnect generation never collides with another session"
@@ -852,5 +885,26 @@ mod tests {
             Attachment::Expired
         ));
         assert!(grants.end_session("a").owed_cleanups.is_empty());
+    }
+
+    #[test]
+    fn a_reconnect_attempt_needs_the_grant_still_attached_at_its_generation() {
+        let grants = ExistingProfileGrants::new();
+        let attached = mint(&grants, "a", false);
+        let stale = grants
+            .bump_generation("a", None, 42, attached.generation + 1)
+            .unwrap_err();
+        assert_eq!(stale.code, BrowserRefusalCode::BrowserBindingStale);
+
+        grants.needs_setup("a", None, 42, attached.generation, lost_endpoint());
+        let refused = grants
+            .bump_generation("a", None, 42, attached.generation)
+            .unwrap_err();
+        assert_eq!(refused.code, BrowserRefusalCode::BrowserRequiresSetup);
+        assert_eq!(
+            live(&grants, "a").reconnect_attempts_remaining,
+            MAX_RECONNECT_ATTEMPTS,
+            "a refused attempt spends no reconnect"
+        );
     }
 }

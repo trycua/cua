@@ -18,7 +18,7 @@ describe.skipIf(!wasmBuilt)("New Space split button", () => {
   it("opens the address form from the arrow's menu, and the wizard from the button", { timeout: 20_000 }, async () => {
     await mountApp("/spaces", { failsCreates: false, listsGhost: false });
     fireEvent.click((await screen.findAllByRole("button", { name: "More ways to add" }))[0]!);
-    const item = await screen.findByRole("menuitem", { name: "Add a machine by its address…" });
+    const item = await screen.findByRole("menuitem", { name: "Add a computer by its address…" });
     fireEvent.click(item);
     const dialog = await waitFor(() => {
       const d = document.querySelector<HTMLElement>("[data-new-space]");

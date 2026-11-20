@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Per-test daemon lifecycle for CLI and MCP transport fixtures.
 
 use std::path::Path;
@@ -64,11 +67,7 @@ impl TestDaemon {
 
         #[cfg(unix)]
         let (socket, socket_dir) = {
-            // Unix-domain socket paths are short on macOS, so keep the test
-            // directory directly under /tmp with a compact filename.
-            let dir = tempfile::Builder::new()
-                .prefix("cua-")
-                .tempdir_in("/tmp")
+            let dir = crate::socket_tempdir()
                 .inspect_err(|error| {
                     eprintln!("[testkit] create daemon socket directory failed: {error}")
                 })
@@ -428,10 +427,7 @@ mod readiness_probe_tests {
     ) {
         use std::io::{BufRead, BufReader, Write};
 
-        let dir = tempfile::Builder::new()
-            .prefix("cua-")
-            .tempdir_in("/tmp")
-            .unwrap();
+        let dir = crate::socket_tempdir().unwrap();
         let socket = dir.path().join("p.sock").display().to_string();
         let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
         let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
@@ -460,10 +456,7 @@ mod readiness_probe_tests {
     #[cfg(unix)]
     #[test]
     fn unix_probe_reports_each_protocol_outcome() {
-        let missing = tempfile::Builder::new()
-            .prefix("cua-")
-            .tempdir_in("/tmp")
-            .unwrap();
+        let missing = crate::socket_tempdir().unwrap();
         let missing = missing.path().join("none.sock").display().to_string();
         assert_eq!(
             probe_socket_with_timeout(&missing, Duration::from_secs(2)),

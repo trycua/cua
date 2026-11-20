@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS side of the fast path (CUA-3102): record fingerprints and the
 //! window image at read time, and read the live state at act time for the
 //! shared checks in `cua_driver_core::fast_path`.
@@ -184,7 +187,7 @@ unsafe fn hit_test(pid: i32, x: f64, y: f64) -> Option<AXUIElementRef> {
 }
 
 /// Whether `hit` is `target` or a descendant within a few ancestors.
-unsafe fn is_self_or_ancestor(hit: AXUIElementRef, target: AXUIElementRef) -> bool {
+pub(crate) unsafe fn is_self_or_ancestor(hit: AXUIElementRef, target: AXUIElementRef) -> bool {
     let mut current = hit;
     let mut owned: Vec<AXUIElementRef> = Vec::new();
     let mut found = false;

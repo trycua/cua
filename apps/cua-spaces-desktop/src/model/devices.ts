@@ -10,22 +10,51 @@
 // buttons, and announcing a device that asks to join (a system
 // notification, once per launch).
 import { execFileSync } from "node:child_process";
+import * as net from "node:net";
 import * as os from "node:os";
 import type { Native } from "../native/load";
-import type { AppApprovalPrompt, AppDevicesInput, AppDevicesView, AppMachineAccessNotice, DevicesLike, DevicesSnapshot, PairingCode, RelayDevice } from "../native/generated/index";
+import type {
+  AppApprovalPrompt,
+  AppDevicesInput,
+  AppDevicesView,
+  AppMachineAccessNotice,
+  DevicesLike,
+  DevicesSnapshot,
+  PairingCode,
+  RelayDevice,
+} from "../native/generated/index";
 import { words } from "./errors";
 
-/** What this machine is called on the relay: macOS's computer name ("Dana's MacBook Pro"), else the hostname. */
+/** What this machine is called on the relay: macOS's computer name ("Dana's MacBook Pro"), else the hostname, as a person reads it (`personName`). */
 export function computerName(platform: NodeJS.Platform = process.platform): string {
   if (platform === "darwin") {
     try {
-      const name = execFileSync("scutil", ["--get", "ComputerName"], { encoding: "utf8", timeout: 2000 }).trim();
+      const name = personName(execFileSync("scutil", ["--get", "ComputerName"], { encoding: "utf8", timeout: 2000 }));
       if (name) return name;
     } catch {
       // Falls back to the hostname.
     }
   }
-  return os.hostname();
+  return personName(os.hostname());
+}
+
+/**
+ * A computer name as a person reads it, the cua service's rule (`cua_host` `person_name`): kept when it has spaces or
+ * no dots ("Dana's MacBook Pro", "studio"); a network host name keeps its first part ("j17-2.example-host.com" ->
+ * "j17-2", "Mac.localdomain" -> "Mac"); an IP address stays whole. A hosted Mac's Computer Name is often its full host
+ * name, which the lists cut off. The person can rename the computer afterwards.
+ */
+export function personName(raw: string): string {
+  let name = raw.trim();
+  for (const suffix of [".localdomain", ".local"]) {
+    if (name.toLowerCase().endsWith(suffix) && name.length > suffix.length) {
+      name = name.slice(0, -suffix.length);
+      break;
+    }
+  }
+  if (/\s/.test(name) || !name.includes(".") || net.isIP(name) !== 0) return name;
+  const first = name.split(".")[0] ?? "";
+  return first || name;
 }
 
 export class DevicesModel {
@@ -61,7 +90,15 @@ export class DevicesModel {
 
   get input(): AppDevicesInput {
     if (this.snapshot) return this.native.appDevicesInput(this.snapshot, this.pendingCode ?? undefined);
-    return { devices: [], audit: [], localDeviceId: undefined, pendingCode: this.pendingCode ?? undefined, enforceAfter: undefined, machineNames: new Map(), machines: [] };
+    return {
+      devices: [],
+      audit: [],
+      localDeviceId: undefined,
+      pendingCode: this.pendingCode ?? undefined,
+      enforceAfter: undefined,
+      machineNames: new Map(),
+      machines: [],
+    };
   }
 
   /** The Devices page. */

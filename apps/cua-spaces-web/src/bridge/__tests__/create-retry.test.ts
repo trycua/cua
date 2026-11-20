@@ -108,7 +108,10 @@ describe.skipIf(!wasmBuilt)("a create that fails", () => {
           // The host fails once, says it runs it again, then finishes.
           const pendingId = args.pendingId!;
           listeners.forEach((l) =>
-            l({ type: "spaces.createProgress", progress: { pendingId, phase: "preparing", detail: "", retry: { error: DEMO_CREATE_FAILURES.runtime, errorVariant: "Runtime" } } }),
+            l({
+              type: "spaces.createProgress",
+              progress: { pendingId, phase: "preparing", detail: "", retry: { error: DEMO_CREATE_FAILURES.runtime, errorVariant: "Runtime" } },
+            }),
           );
           return new Promise((r) => (release = () => r(demo.call(method as never, args as never))));
         }

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! JSON shapes for the fast path: the config key, refusal payloads, and the
 //! check summary attached to action results. Kept apart from the checks so
 //! those stay std-only.

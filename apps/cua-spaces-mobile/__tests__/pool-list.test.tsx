@@ -15,7 +15,18 @@ jest.mock("expo-router", () => ({ useRouter: () => ({ push: jest.fn() }) }));
 beforeAll(installFixtureCore);
 afterAll(uninstallCore);
 
-const row = (id: string, name: string, extra: Record<string, unknown> = {}) => ({ id, name, owner: { id: "acct:you" }, role: "owner", online: true, sharing: true, version: "1", url: "", meta: {}, ...extra });
+const row = (id: string, name: string, extra: Record<string, unknown> = {}) => ({
+  id,
+  name,
+  owner: { id: "acct:you" },
+  role: "owner",
+  online: true,
+  sharing: true,
+  version: "1",
+  url: "",
+  meta: {},
+  ...extra,
+});
 
 /** A pool the way the relay reports it: a Mac that hosts Spaces, a plain computer that hosts none, one Space, and the phone. */
 const machines = [
@@ -23,15 +34,30 @@ const machines = [
   row("plain-pc", "Plain PC", { meta: { "cua.host.os": "windows" } }),
   row("space-aaaa1111", "checkout-api", { host: "studio", meta: { "cua.host.os": "macos" } }),
 ];
-const devices = [{ id: "dev_0123456789abcdef01234567", name: "Dillon's iPhone", platform: "ios", phone: true, state: "enrolled", current: true, last_seen: 1_799_999_000 }];
+const devices = [
+  { id: "dev_0123456789abcdef01234567", name: "Dillon's iPhone", platform: "ios", phone: true, state: "enrolled", current: true, last_seen: 1_799_999_000 },
+];
 
 function live() {
   const fake = fakeRelay({
     machines,
-    tools: (name) => (name === "thread_read" ? { entries: [], cursor: 0, unread: 0, me: { id: "acct:you" }, role: "owner", live: { key: "", agents: [] } } : name === "agent_members" ? { members: [] } : {}),
+    tools: (name) =>
+      name === "thread_read"
+        ? { entries: [], cursor: 0, unread: 0, me: { id: "acct:you" }, role: "owner", live: { key: "", agents: [] } }
+        : name === "agent_members"
+          ? { members: [] }
+          : {},
     rest: (method, path) => (method === "GET" && path === "/v1/devices" ? { body: { devices } } : undefined),
   });
-  return createLiveBackend({ relay: new RelayClient("https://relay.test", fake.fetcher as never), token: async () => "acct-token", deviceSession: async () => "dev-session", me: () => "acct:you", deviceId: () => "dev_0123456789abcdef01234567", fetcher: fake.fetcher as never, now: () => 1_800_000_000_000 });
+  return createLiveBackend({
+    relay: new RelayClient("https://relay.test", fake.fetcher as never),
+    token: async () => "acct-token",
+    deviceSession: async () => "dev-session",
+    me: () => "acct:you",
+    deviceId: () => "dev_0123456789abcdef01234567",
+    fetcher: fake.fetcher as never,
+    now: () => 1_800_000_000_000,
+  });
 }
 
 describe("the one list: Spaces and computers from the same pool the desktop reads", () => {

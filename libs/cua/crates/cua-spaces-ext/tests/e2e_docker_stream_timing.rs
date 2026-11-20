@@ -78,8 +78,17 @@ async fn desktop_stream_connect_phases() {
         eprintln!("skipped: set CUA_SPACES_E2E_URL (see run-docker-e2e.sh)");
         return;
     }
+    // Per-hop `stream.open` lines (debug, target `cua::stream::timing`).
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("cua::stream::timing=debug")
+        .with_writer(std::io::stderr)
+        .try_init();
     let reg = tempfile::tempdir().unwrap();
     let (_spaces, space) = connect(reg.path()).await;
+    let rounds: usize = std::env::var("CUA_STREAM_ROUNDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(4);
     let mut totals = Vec::new();
     // The viewer joins presence before it opens its stream (so the Space
     // attributes its input), so the join is part of every cold open.
@@ -108,7 +117,7 @@ async fn desktop_stream_connect_phases() {
             ms(t.elapsed())
         );
     }
-    for round in 0..4 {
+    for round in 0..rounds {
         // Phase 1 and 2 split: the ticket alone (and give it back), then the
         // whole open with a first-frame clock.
         let t = Instant::now();
@@ -143,9 +152,29 @@ async fn desktop_stream_connect_phases() {
         );
         totals.push(first_ms);
     }
-    // Generous: a fixed multi-second sleep or retry loop would break these.
-    assert!(totals[0] < 15_000.0, "first connect took {} ms", totals[0]);
-    for (i, t) in totals.iter().enumerate().skip(1) {
-        assert!(*t < 10_000.0, "reconnect {i} took {t} ms");
+    // The budget (time to the first frame at the client): a cold open under
+    // 2 s, every later one (warm path) under 1 s at the 95th percentile. A
+    // fixed sleep, a retry loop or an extra round trip creeping into the
+    // path breaks it. `CUA_STREAM_COLD_BUDGET_MS` / `CUA_STREAM_WARM_BUDGET_MS`
+    // loosen it for a slow runner.
+    let budget = |name: &str, default: f64| {
+        std::env::var(name)
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(default)
+    };
+    let cold = budget("CUA_STREAM_COLD_BUDGET_MS", 2_000.0);
+    let warm = budget("CUA_STREAM_WARM_BUDGET_MS", 1_000.0);
+    assert!(
+        totals[0] < cold,
+        "cold open took {:.0} ms (budget {cold:.0})",
+        totals[0]
+    );
+    let mut later: Vec<f64> = totals.iter().copied().skip(1).collect();
+    later.sort_by(|a, b| a.total_cmp(b));
+    if !later.is_empty() {
+        let p95 = later[((later.len() as f64 * 0.95).ceil() as usize).clamp(1, later.len()) - 1];
+        eprintln!("TIMING warm p95 {p95:.0} ms over {} opens", later.len());
+        assert!(p95 < warm, "warm open p95 {p95:.0} ms (budget {warm:.0})");
     }
 }

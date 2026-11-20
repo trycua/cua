@@ -290,7 +290,23 @@ fi
 if [ -x "$APP_DEST/Contents/MacOS/CuaSpacesMac" ]; then
     log "unregistering the helper login item"
 fi
+# Cua Driver's login item (CUA-3638), while the app is still here to remove
+# it: left registered, its supervisor keeps running and writes ~/.cua-local
+# again after the uninstall. The app is stopped first, so it can't register
+# the item again meanwhile; then the job is stopped in case it could not.
+# An app from before the driver item has no --driver-helper (it would open
+# its window instead), so it is asked only when it ships the item.
+quit_local_app "$APP_DEST"
+if [ -x "$APP_DEST/Contents/MacOS/CuaSpacesMac" ] \
+    && [ -f "$APP_DEST/Contents/Library/LaunchAgents/$LOCAL_DRIVER_LABEL.plist" ]; then
+    # Gone only when the app says so; a status it couldn't read counts as still there.
+    CUA_CHANNEL=local "$APP_DEST/Contents/MacOS/CuaSpacesMac" --driver-helper unregister >/dev/null 2>&1 \
+        || CUA_CHANNEL=local "$APP_DEST/Contents/MacOS/CuaSpacesMac" --driver-helper status 2>/dev/null \
+            | grep -Eq '"status":"(not-registered|not-found)"' \
+        || warn "the app could not unregister Cua Driver's login item; remove $LOCAL_APP_DIR_NAME from System Settings > Login Items if it stays."
+fi
 retire_local_app "$APP_DEST"
+launchctl bootout "gui/$(id -u)/$LOCAL_DRIVER_LABEL" >/dev/null 2>&1 || true
 # Permissions next, while the app is still installed: tccutil resolves the
 # bundle id through the app and fails once it is gone.
 if [ "$KEEP_PERMISSIONS" != 1 ]; then

@@ -67,7 +67,9 @@ describe.each([
     s = onboardingReduce(core, s, { type: "start" }, ctx);
     expect(s.step).toBe("signin");
     expect(onboardingView(core, s, "linux").canSkip).toBe(true);
-    expect(onboardingView(core, s, "linux").lede).toBe("Sign in to reach your computers and Spaces from any of your computers. You can skip this and sign in later.");
+    expect(onboardingView(core, s, "linux").lede).toBe(
+      "Sign in to reach your computers and Spaces from any of your computers. You can skip this and sign in later.",
+    );
     s = onboardingReduce(core, s, { type: "signin-done" }, ctx);
     expect(s.step).toBe("agents");
     s = onboardingReduce(core, s, { type: "agents-done", configured: ["Codex"] }, ctx);
@@ -303,48 +305,44 @@ describe.skipIf(!wasmBuilt)("Done's Launch at login", () => {
   beforeEach(() => onPlatform("Linux x86_64"));
   const toDone = async (probe: Probe) => {
     await waitFor(() => expect(probe.flow.state).toBeTruthy());
-    act(() => probe.flow.send({ type: 'start' }));
-    act(() => probe.flow.send({ type: 'signin-done' }));
-    act(() => probe.flow.send({ type: 'agents-done', configured: [] }));
-    act(() => probe.flow.send({ type: 'presentation-done' }));
-    act(() => probe.flow.send({ type: 'mode-chosen', mode: 'client' }));
-    await waitFor(() => expect(probe.flow.view?.step).toBe('done'));
+    act(() => probe.flow.send({ type: "start" }));
+    act(() => probe.flow.send({ type: "signin-done" }));
+    act(() => probe.flow.send({ type: "agents-done", configured: [] }));
+    act(() => probe.flow.send({ type: "presentation-done" }));
+    act(() => probe.flow.send({ type: "mode-chosen", mode: "client" }));
+    await waitFor(() => expect(probe.flow.view?.step).toBe("done"));
   };
 
-  it('shows where the host applies it (Electron), and finishes with the choice', async () => {
-    const { probe, calls } = mount(await testCore(), 'electron');
+  it("shows where the host applies it (Electron), and finishes with the choice", async () => {
+    const { probe, calls } = mount(await testCore(), "electron");
     await toDone(probe);
     expect(probe.flow.launchAtLogin).toMatchObject({ checked: true });
     expect(probe.flow.launchAtLogin?.label).toBeTruthy();
     await act(async () => {
       await probe.flow.finish();
     });
-    expect(calls.filter(([op]) => op === 'session.completeOnboarding')).toEqual([
-      ['session.completeOnboarding', { mode: 'client', launchAtLogin: true }],
-    ]);
+    expect(calls.filter(([op]) => op === "session.completeOnboarding")).toEqual([["session.completeOnboarding", { mode: "client", launchAtLogin: true }]]);
   });
 
-  it('registers the login item only on Start, not while the box is merely ticked', async () => {
-    const { probe, calls } = mount(await testCore(), 'electron');
+  it("registers the login item only on Start, not while the box is merely ticked", async () => {
+    const { probe, calls } = mount(await testCore(), "electron");
     await toDone(probe);
     expect(probe.flow.launchAtLogin).toMatchObject({ checked: true });
-    expect(calls.filter(([op]) => op === 'session.completeOnboarding' || String(op).startsWith('loginItem.'))).toEqual([]);
+    expect(calls.filter(([op]) => op === "session.completeOnboarding" || String(op).startsWith("loginItem."))).toEqual([]);
     await act(async () => {
       await probe.flow.finish();
     });
-    expect(calls.filter(([op]) => op === 'session.completeOnboarding')).toHaveLength(1);
+    expect(calls.filter(([op]) => op === "session.completeOnboarding")).toHaveLength(1);
   });
 
-  it('is not offered where the host does not apply it', async () => {
+  it("is not offered where the host does not apply it", async () => {
     const { probe, calls } = mount(await testCore());
     await toDone(probe);
     expect(probe.flow.launchAtLogin).toBeNull();
     await act(async () => {
       await probe.flow.finish();
     });
-    expect(calls.filter(([op]) => op === 'session.completeOnboarding')).toEqual([
-      ['session.completeOnboarding', { mode: 'client' }],
-    ]);
+    expect(calls.filter(([op]) => op === "session.completeOnboarding")).toEqual([["session.completeOnboarding", { mode: "client" }]]);
   });
 });
 

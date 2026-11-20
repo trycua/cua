@@ -23,6 +23,9 @@ export interface HomeOffer {
 /** The page's create request (`bridge/store.ts`'s `CreateSpaceRequest`). */
 export type HomeCreateRequest = SpaceCreateConfig & { os: "linux" };
 
+/** The labels of the home that warms in the background (`registry::HIDDEN_LABEL` and `RELAY_LABEL`). */
+export const HOME_WARMING_LABELS = { "cua.hidden": "home", "cua.relay": "off" } as const;
+
 /** The words preparing stops with when this machine has no Linux Space to offer. */
 export const NO_LINUX_OFFER = "This computer can't make a Linux Space right now. Open New Space to see why.";
 
@@ -37,5 +40,7 @@ export function homeCreateRequest(offers: readonly HomeOffer[], name: string): H
   if (linux.blocked) throw new Error(linux.blocked);
   const image = linux.args.image || linux.image;
   if (!image) throw new Error(NO_LINUX_OFFER);
-  return { ...linux.args, image, os: "linux", name };
+  // The home warms in the background: labelled hidden and off the relay, so it stays out of the top bar and
+  // off the phone's list until a person writes into its thread (the daemon then makes it visible).
+  return { ...linux.args, image, os: "linux", name, labels: { ...HOME_WARMING_LABELS } };
 }

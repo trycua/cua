@@ -88,7 +88,11 @@ export interface SpaceList {
 /** The Space or computer runs Cua Spaces from before phones: the relay does not send a phone's calls to it. */
 export class NeedsUpdateError extends Error {
   constructor(readonly what: "Space" | "computer") {
-    super(what === "Space" ? "This Space needs an update. Update Cua Spaces on the computer it runs on, then try again." : "This computer needs an update. Update Cua Spaces on it, then try again.");
+    super(
+      what === "Space"
+        ? "This Space needs an update. Update Cua Spaces on the computer it runs on, then try again."
+        : "This computer needs an update. Update Cua Spaces on it, then try again.",
+    );
     this.name = "NeedsUpdateError";
   }
 }
@@ -174,7 +178,10 @@ export interface Backend {
   readonly sample?: { readonly offline: boolean; setOffline(on: boolean): void };
   readonly capabilities: Capabilities;
   listSpaces(): Promise<SpaceList>;
-  readThread(spaceId: string, opts: { after?: number | null; before?: number | null; limit?: number; followMs?: number; markRead?: boolean; liveAfter?: string | null }): Promise<ThreadPage>;
+  readThread(
+    spaceId: string,
+    opts: { after?: number | null; before?: number | null; limit?: number; followMs?: number; markRead?: boolean; liveAfter?: string | null },
+  ): Promise<ThreadPage>;
   members(spaceId: string): Promise<AgentMember[]>;
   post(spaceId: string, text: string, opts?: PostOptions): Promise<ThreadEntry | null>;
   answer(spaceId: string, approval: number, approve: boolean, opts?: AnswerOptions): Promise<ThreadEntry | null>;

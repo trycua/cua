@@ -161,6 +161,11 @@ pub struct RelayConfig {
     /// machines of the relay this one took over from are on their way
     /// (CUA-1774). Zero: fail at once.
     pub reconnect_grace: Duration,
+    /// On SIGTERM, how long to keep machine tunnels open for client
+    /// streams still running before closing them (connection draining). New
+    /// tunnels are refused for that time. Zero: close at once. Bounded by
+    /// the shutdown grace in the binary.
+    pub drain: Duration,
     /// The OIDC web client behind the browser sign-in of `cua share`
     /// links (see [`crate::share_web`]). `None`: no browser sign-in.
     pub share_web: Option<crate::share_web::ShareWebConfig>,
@@ -223,6 +228,7 @@ impl Default for RelayConfig {
             #[cfg(feature = "hosted")]
             org_access: crate::org_access::OrgAccessConfig::default(),
             reconnect_grace: Duration::ZERO,
+            drain: Duration::ZERO,
             share_web: None,
             share_limits: crate::share_web::ShareLimits::default(),
             analytics_key_file: None,
@@ -409,10 +415,16 @@ pub struct Relay {
     pub(crate) grants: Arc<crate::grants::Grants>,
     /// Pairing codes ("add a machine" by link or QR).
     pub(crate) pairing: Arc<crate::pairing::PairingStore>,
+    /// Each account's default Space and fallback order.
+    pub(crate) spaces: Arc<crate::spaces::SpacesSettings>,
+    /// Removed computers' Spaces still to delete on them.
+    pub(crate) pending_deletions: Arc<crate::pending_deletions::PendingDeletions>,
     pub(crate) key: Arc<RelayKey>,
     /// Open client streams across every machine (S7): the global memory
     /// budget's live counter.
     pub(crate) global_streams: Arc<AtomicU64>,
+    /// Client streams refused at the global budget since start.
+    pub(crate) streams_refused: Arc<AtomicU64>,
     /// The mesh coordinator's registry and connections.
     pub(crate) mesh: Arc<crate::mesh::MeshState>,
     /// Each account's pool: coordinator lease, job log, mailbox.
@@ -427,10 +439,40 @@ pub struct Relay {
     join_limiter: Arc<Mutex<crate::join_limit::JoinLimiter>>,
     /// When this relay started (the reconnect grace counts from it).
     started: Instant,
+    /// Set on SIGTERM: no new machine tunnels or mesh connections.
+    draining: Arc<std::sync::atomic::AtomicBool>,
     /// Share links: browser sign-in state and public-link rate limits.
     pub(crate) share: Arc<crate::share_web::ShareState>,
     /// Public TCP shares, when configured.
     pub(crate) tcp: Option<Arc<crate::tcp_shares::TcpShares>>,
+}
+
+/// What [`Relay::drain`] did.
+#[derive(Debug, Clone, Copy)]
+pub struct DrainReport {
+    /// Machine tunnels open when the drain began.
+    pub machines: usize,
+    /// Mesh connections open when the drain began.
+    pub mesh: usize,
+    /// Client streams open when the drain began.
+    pub streams_at_start: u64,
+    /// Client streams still open when the tunnels were closed (cut).
+    pub streams_left: u64,
+    /// How long the relay waited for the streams.
+    pub waited: Duration,
+}
+
+impl DrainReport {
+    fn log(&self) {
+        tracing::info!(
+            machines = self.machines,
+            mesh = self.mesh,
+            streams_at_start = self.streams_at_start,
+            streams_cut = self.streams_left,
+            waited_ms = self.waited.as_millis() as u64,
+            "drained: closed machine and mesh connections"
+        );
+    }
 }
 
 /// One row of `/relay/v1/machines`.
@@ -529,6 +571,20 @@ impl Relay {
             )?,
             None => crate::pairing::PairingStore::in_memory(),
         };
+        let spaces = match &config.state_file {
+            Some(path) => crate::spaces::SpacesSettings::open_with(
+                path.with_extension("spaces.json"),
+                storage.clone(),
+            )?,
+            None => crate::spaces::SpacesSettings::in_memory(),
+        };
+        let pending_deletions = match &config.state_file {
+            Some(path) => crate::pending_deletions::PendingDeletions::open_with(
+                path.with_extension("pending-deletions.json"),
+                storage.clone(),
+            )?,
+            None => crate::pending_deletions::PendingDeletions::in_memory(),
+        };
         let key = config
             .signing_key
             .clone()
@@ -583,8 +639,11 @@ impl Relay {
             plans,
             grants: Arc::new(grants),
             pairing: Arc::new(pairing),
+            spaces: Arc::new(spaces),
+            pending_deletions: Arc::new(pending_deletions),
             key,
             global_streams: Arc::default(),
+            streams_refused: Arc::default(),
             mesh,
             pool,
             storage,
@@ -592,6 +651,7 @@ impl Relay {
             conns: Arc::default(),
             join_limiter,
             started: Instant::now(),
+            draining: Arc::default(),
             share: Arc::default(),
             tcp,
         };
@@ -639,6 +699,8 @@ impl Relay {
             .merge(crate::meter::routes())
             .merge(self.hosted_routes())
             .merge(crate::pairing::routes())
+            .merge(crate::spaces::routes())
+            .merge(crate::pending_deletions::routes())
             .merge(crate::tcp_shares::routes())
             .merge(if self.share_web_enabled() {
                 crate::share_web::routes()
@@ -999,6 +1061,60 @@ impl Relay {
         }
     }
 
+    /// True once [`Self::drain`] has started: new tunnels are refused.
+    pub fn is_draining(&self) -> bool {
+        self.draining.load(Ordering::SeqCst)
+    }
+
+    /// Connection draining, run once the stop signal has arrived. In order:
+    ///
+    /// 1. New machine tunnels and mesh connections are refused (503 with
+    ///    `Retry-After`: the relay that replaces this one takes them).
+    ///    Heartbeats and streams already open keep working.
+    /// 2. Waits, up to [`RelayConfig::drain`], for the open client streams
+    ///    to finish. The tunnels stay up meanwhile, so nothing running is cut.
+    /// 3. Closes every machine tunnel cleanly (yamux GoAway and a close
+    ///    frame) and tells every mesh node to reconnect (close code 4000),
+    ///    right before the process exits, so the relay that takes over the
+    ///    state directory finds the lock free at once.
+    ///
+    /// Returns what happened, for the log.
+    pub async fn drain(&self) -> DrainReport {
+        let begun = Instant::now();
+        self.draining.store(true, Ordering::SeqCst);
+        let streams_at_start = self.global_streams.load(Ordering::SeqCst);
+        let machines = self.machine_ids().len();
+        let mesh = self.mesh.connected();
+        let deadline = begun + self.config.drain;
+        while self.global_streams.load(Ordering::SeqCst) > 0 && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let streams_left = self.global_streams.load(Ordering::SeqCst);
+        let waited = begun.elapsed();
+        // Orderly close first; the abort below only catches what did not end.
+        for machine in self.machines.lock().expect("machines").values() {
+            machine.handle.close();
+        }
+        self.mesh.disconnect_all();
+        let flush = Instant::now() + Duration::from_millis(1000);
+        while Instant::now() < flush && !self.machines.lock().expect("machines").is_empty() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        if mesh > 0 {
+            // The close frames are queued to each connection's writer.
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        }
+        self.disconnect_all();
+        self.mesh.disconnect_all();
+        DrainReport {
+            machines,
+            mesh,
+            streams_at_start,
+            streams_left,
+            waited,
+        }
+    }
+
     /// Serves on `listener` until the future `shutdown` resolves.
     pub async fn serve(
         self,
@@ -1053,16 +1169,13 @@ impl Relay {
         )
         .with_graceful_shutdown(async move {
             shutdown.await;
-            // Machines and mesh nodes reconnect at once, to the relay that
-            // replaces this one (CUA-1774), instead of holding the shutdown
-            // open until the process exits.
-            let machines = handle.machine_ids().len();
-            let mesh = handle.mesh.connected();
-            handle.disconnect_all();
-            handle.mesh.disconnect_all();
-            tracing::info!(machines, mesh, "closed machine and mesh connections");
-            // Keep the last minutes of usage across a restart.
+            // Drain, then machines and mesh nodes reconnect at once, to the
+            // relay that replaces this one (CUA-1774).
+            handle.drain().await.log();
+            // Keep the last minutes of usage and of mesh `last_seen`
+            // across a restart.
             handle.meter.persist(true);
+            handle.mesh.flush_last_seen();
         })
         .await
     }
@@ -1084,16 +1197,13 @@ impl Relay {
             let handle = self.clone();
             async move {
                 shutdown.await;
-                // Machines and mesh nodes reconnect at once, to the relay that
-                // replaces this one (CUA-1774), instead of holding the shutdown
-                // open until the process exits.
-                let machines = handle.machine_ids().len();
-                let mesh = handle.mesh.connected();
-                handle.disconnect_all();
-                handle.mesh.disconnect_all();
-                tracing::info!(machines, mesh, "closed machine and mesh connections");
-                // Keep the last minutes of usage across a restart.
+                // Drain, then machines and mesh nodes reconnect at once, to the
+                // relay that replaces this one (CUA-1774).
+                handle.drain().await.log();
+                // Keep the last minutes of usage and of mesh `last_seen`
+                // across a restart.
                 handle.meter.persist(true);
+                handle.mesh.flush_last_seen();
             }
         };
         tokio::pin!(stop);
@@ -1161,6 +1271,18 @@ pub(crate) fn bearer<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> 
 pub(crate) fn account_token(headers: &HeaderMap) -> Option<&str> {
     bearer(headers, RELAY_AUTHORIZATION_HEADER)
         .or_else(|| bearer(headers, header::AUTHORIZATION.as_str()))
+}
+
+/// The answer to a new tunnel while the relay drains for a restart.
+pub(crate) fn draining_response() -> Response {
+    let mut response = text(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "the relay is restarting; try again shortly",
+    );
+    response
+        .headers_mut()
+        .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
+    response
 }
 
 pub(crate) fn text(status: StatusCode, message: impl Into<String>) -> Response {
@@ -1362,6 +1484,46 @@ async fn machine_connect_inner(
     else {
         return text(StatusCode::BAD_REQUEST, "missing or invalid computer id");
     };
+    if relay.is_draining() {
+        return draining_response();
+    }
+    let registrant = if let Some(index) = relay.token_index(&headers) {
+        if relay.directory.get(&id).is_some() {
+            return text(
+                StatusCode::CONFLICT,
+                "computer id is registered to an account",
+            );
+        }
+        Registrant::Static(index)
+    } else {
+        let record = bearer(&headers, header::AUTHORIZATION.as_str())
+            .filter(|t| t.starts_with(MACHINE_TOKEN_PREFIX))
+            .and_then(|t| relay.directory.machine_for_token(t));
+        match record {
+            Some(record) if record.id == id && relay.directory.is_detached(&record) => {
+                return text(StatusCode::FORBIDDEN, crate::api::DETACHED_MESSAGE)
+            }
+            Some(record) if record.id == id => Registrant::Account(record.owner.id),
+            Some(_) => {
+                return text(
+                    StatusCode::FORBIDDEN,
+                    "computer token belongs to another computer id",
+                )
+            }
+            None => {
+                let reason = match bearer(&headers, header::AUTHORIZATION.as_str()) {
+                    None => Reason::MissingToken,
+                    Some(t) if t.starts_with(MACHINE_TOKEN_PREFIX) => Reason::UnknownMachineToken,
+                    Some(_) => Reason::InvalidRelayToken,
+                };
+                auth_log::rejected(&headers, Route::Connect, reason, None);
+                return text(StatusCode::UNAUTHORIZED, "invalid relay token");
+            }
+        }
+    };
+    // After the credential is checked: a computer the relay does not know
+    // (removed, rotated) is refused with a 401 that holds no state and takes no
+    // slot, so a crowd of stale tokens cannot starve real machines of joins.
     // A reconnect storm (every machine back at once after a restart) is let
     // in at a steady rate; the rest are told when to come back.
     let admitted = relay
@@ -1384,37 +1546,6 @@ async fn machine_connect_inner(
         }
         return response;
     }
-    let registrant = if let Some(index) = relay.token_index(&headers) {
-        if relay.directory.get(&id).is_some() {
-            return text(
-                StatusCode::CONFLICT,
-                "computer id is registered to an account",
-            );
-        }
-        Registrant::Static(index)
-    } else {
-        let record = bearer(&headers, header::AUTHORIZATION.as_str())
-            .filter(|t| t.starts_with(MACHINE_TOKEN_PREFIX))
-            .and_then(|t| relay.directory.machine_for_token(t));
-        match record {
-            Some(record) if record.id == id => Registrant::Account(record.owner.id),
-            Some(_) => {
-                return text(
-                    StatusCode::FORBIDDEN,
-                    "computer token belongs to another computer id",
-                )
-            }
-            None => {
-                let reason = match bearer(&headers, header::AUTHORIZATION.as_str()) {
-                    None => Reason::MissingToken,
-                    Some(t) if t.starts_with(MACHINE_TOKEN_PREFIX) => Reason::UnknownMachineToken,
-                    Some(_) => Reason::InvalidRelayToken,
-                };
-                auth_log::rejected(&headers, Route::Connect, reason, None);
-                return text(StatusCode::UNAUTHORIZED, "invalid relay token");
-            }
-        }
-    };
     let version = headers
         .get(VERSION_HEADER)
         .and_then(|v| v.to_str().ok())
@@ -1492,6 +1623,13 @@ async fn machine_connect_inner(
             // join that upgraded earlier but arrives later from pushing the count past it.
             let (replaced, over_limit) = {
                 let mut machines = relay.machines.lock().expect("machines");
+                // The drain began after the check above: do not take a tunnel
+                // the drain would not see (it closes what is registered).
+                if relay.is_draining() {
+                    drop(machines);
+                    driver.abort();
+                    return;
+                }
                 let over_limit = matches!(machine.registrant, Registrant::Static(_))
                     && machines
                         .values()
@@ -1511,7 +1649,16 @@ async fn machine_connect_inner(
                 return;
             }
             if let Some(old) = replaced {
-                tracing::info!(machine = %id, "replacing previous session");
+                // Both versions and the old session's age: two installs that
+                // share one computer id (and replace each other every few
+                // seconds) show as two versions alternating.
+                tracing::info!(
+                    machine = %id,
+                    version = %machine.version,
+                    old_version = %old.version,
+                    old_age_s = old.connected_at.elapsed().map_or(0, |d| d.as_secs()),
+                    "replacing previous session"
+                );
                 old.cut_clients();
                 old.abort.abort();
             }
@@ -1626,6 +1773,21 @@ async fn metrics(State(relay): State<Relay>, headers: HeaderMap) -> Response {
     text.push_str(&relay.conns.render());
     text.push_str(&relay.mesh.metrics());
     text.push_str(&crate::auth_log::metrics());
+    text.push_str(&crate::process_memory::metrics());
+    text.push_str(&format!(
+        "# HELP cua_relay_client_streams Client streams open now, across every machine.\n\
+         # TYPE cua_relay_client_streams gauge\n\
+         cua_relay_client_streams {}\n\
+         # HELP cua_relay_client_streams_budget Most client streams open at once (the memory budget, S7).\n\
+         # TYPE cua_relay_client_streams_budget gauge\n\
+         cua_relay_client_streams_budget {}\n\
+         # HELP cua_relay_client_streams_refused_total Client streams refused because the budget was spent.\n\
+         # TYPE cua_relay_client_streams_refused_total counter\n\
+         cua_relay_client_streams_refused_total {}\n",
+        relay.global_streams.load(Ordering::Relaxed),
+        relay.config.max_global_streams,
+        relay.streams_refused.load(Ordering::Relaxed),
+    ));
     #[cfg(feature = "hosted")]
     {
         text.push_str(&relay.org.metrics());
@@ -2107,6 +2269,21 @@ async fn authorize_account_client(
             StatusCode::FORBIDDEN,
             GrpcCode::PermissionDenied,
             "the host stopped sharing this computer",
+        ));
+    }
+    // A Space whose computer was removed from the account is kept but
+    // refused. Someone it is not shared with gets the usual refusal below,
+    // so this does not tell them it exists.
+    if relay.directory.is_detached(&record)
+        && identity
+            .as_ref()
+            .is_none_or(|who| relay.machine_role(&record, who).is_some())
+    {
+        return Err(refuse(
+            headers,
+            StatusCode::FORBIDDEN,
+            GrpcCode::PermissionDenied,
+            crate::api::DETACHED_MESSAGE,
         ));
     }
     let mut phone_call = false;
@@ -2903,12 +3080,29 @@ async fn proxy_inner(State(relay): State<Relay>, mut request: Request) -> Respon
     if relay.global_streams.fetch_add(1, Ordering::SeqCst) >= relay.config.max_global_streams {
         relay.global_streams.fetch_sub(1, Ordering::SeqCst);
         machine.active.fetch_sub(1, Ordering::SeqCst);
-        return refuse(
+        relay.streams_refused.fetch_add(1, Ordering::Relaxed);
+        let mut response = refuse(
             request.headers(),
             StatusCode::SERVICE_UNAVAILABLE,
             GrpcCode::ResourceExhausted,
             "the relay is at its concurrent-stream budget; retry shortly",
         );
+        // Like the join-limit refusals: a jittered 1 to 5 s, so clients that
+        // all reopen their streams after a relay restart do not return
+        // together (`transport.rs` honors it).
+        let unit = {
+            use rand::Rng as _;
+            rand::thread_rng().gen::<f64>()
+        };
+        let secs = crate::join_limit::retry_after_secs(
+            Duration::from_secs(1),
+            Duration::from_secs(4),
+            unit,
+        );
+        if let Ok(v) = HeaderValue::from_str(&secs.to_string()) {
+            response.headers_mut().insert(header::RETRY_AFTER, v);
+        }
+        return response;
     }
     if let Some(who) = &identity {
         machine.client_enter(who);

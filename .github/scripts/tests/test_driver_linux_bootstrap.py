@@ -53,6 +53,17 @@ class TestDriverLinuxBootstrap(unittest.TestCase):
             suites.add(suite)
         self.assertEqual(suites, {"bullseye", "bullseye-updates", "bullseye-security"})
         remaining = self.bootstrap.replace(sources[1], "")
+        # The documented archive.debian.org fallback (past Valid-Until by
+        # design) is the only other place expiry checks may be disabled.
+        fallback = re.search(
+            r"cat > /etc/apt/sources.list <<'EOF'\n(deb \[check-valid-until=no\] "
+            r"http://archive.debian.org/.*?)\nEOF",
+            remaining,
+            re.S,
+        )
+        self.assertIsNotNone(fallback)
+        self.assertEqual(len(fallback[1].splitlines()), 3)
+        remaining = remaining.replace(fallback[1], "")
         self.assertNotRegex(remaining.lower(), r"check-valid-until|check-date")
         self.assertNotRegex(
             self.bootstrap.lower(),
@@ -60,27 +71,28 @@ class TestDriverLinuxBootstrap(unittest.TestCase):
             r"allowweak|allow-weak|verify-peer|verify-host",
         )
 
-    def test_apt_uses_only_snapshot_sources_and_full_dependencies(self) -> None:
-        commands = [
-            shlex.split(line)
-            for line in self.bootstrap.replace("\\\n", " ").splitlines()
-            if line.startswith("apt-get ")
-        ]
-        self.assertEqual(commands[0], ["apt-get", "-o", "Dir::Etc::sourceparts=-", "-o", "Acquire::Retries=5", "update"])
-        self.assertEqual(
-            commands[1][:8],
-            ["apt-get", "-o", "Dir::Etc::sourceparts=-", "-o", "Acquire::Retries=5", "install", "-y", "--no-install-recommends"],
+    def test_apt_retries_snapshot_first_then_archive_fallback(self) -> None:
+        self.assertIn('Acquire::Retries "5";', self.bootstrap)
+        self.assertIn('Acquire::http::Timeout "30";', self.bootstrap)
+        self.assertIn("apt mirror used: snapshot.debian.org 20260901T000000Z", self.bootstrap)
+        self.assertIn("apt mirror used: archive.debian.org", self.bootstrap)
+        # Snapshot sources are written first, the archive fallback second.
+        self.assertLess(
+            self.bootstrap.index("snapshot.debian.org/archive/debian/"),
+            self.bootstrap.index("http://archive.debian.org/debian bullseye main"),
         )
-        self.assertEqual(len(commands), 2)
+        # Image-provided extra sources stay ignored in both attempts.
+        self.assertIn("Dir::Etc::sourceparts=-", self.bootstrap)
+        pkgs = re.search(r'PACKAGES="([^"]*)"', self.bootstrap)
+        self.assertIsNotNone(pkgs)
         self.assertEqual(
-            set(commands[1][8:]),
+            set(pkgs[1].split()),
             {
                 "git", "ca-certificates", "curl", "python3", "build-essential", "pkg-config",
                 "libx11-dev", "libxi-dev", "libxtst-dev", "libxext-dev", "libwayland-dev",
                 "libxkbcommon-dev",
             },
         )
-        self.assertLess(self.bootstrap.index("\nEOF\n"), self.bootstrap.index("apt-get "))
 
 
 if __name__ == "__main__":

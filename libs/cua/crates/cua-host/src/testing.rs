@@ -15,7 +15,7 @@
 //! rest are answered 502.
 
 use crate::relay::{ConnectedClient, Identity, Machine};
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -87,6 +87,10 @@ struct State_ {
     ignore_meta_patches: bool,
     /// Answers `POST /v1/machines/{id}/leave` as a relay that predates it.
     without_leave: bool,
+    /// The account default Space settings last saved, by account id.
+    spaces_settings: BTreeMap<String, serde_json::Value>,
+    /// Answers the `/v1/spaces/...` routes as a relay that predates them.
+    without_spaces_settings: bool,
     /// A relay (or its control plane) that refuses to change who a computer
     /// is shared with, with this code (`share_outside_team`).
     refuse_shares: Option<String>,
@@ -562,7 +566,19 @@ async fn list(State(s): State<S>, headers: HeaderMap) -> Response {
     let Some(Caller::Account(who)) = caller(&st, &headers) else {
         return err(StatusCode::UNAUTHORIZED, "account token required");
     };
-    let machines: Vec<Machine> = st.machines.values().filter_map(|r| view(r, &who)).collect();
+    // A Space whose computer was removed is detached: hidden until the
+    // computer registers again.
+    let machines: Vec<Machine> = st
+        .machines
+        .values()
+        .filter(|r| {
+            r.machine
+                .host
+                .as_deref()
+                .is_none_or(|h| h.is_empty() || st.machines.contains_key(h))
+        })
+        .filter_map(|r| view(r, &who))
+        .collect();
     Json(serde_json::json!({ "machines": machines })).into_response()
 }
 
@@ -666,7 +682,12 @@ async fn patch(
     Json(rec.machine.clone()).into_response()
 }
 
-async fn delete(State(s): State<S>, headers: HeaderMap, Path(id): Path<String>) -> Response {
+async fn delete(
+    State(s): State<S>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(q): Query<BTreeMap<String, String>>,
+) -> Response {
     let mut st = s.lock().unwrap();
     if let Some(code) = st.fail_deletes.pop_front() {
         return err(
@@ -678,7 +699,165 @@ async fn delete(State(s): State<S>, headers: HeaderMap, Path(id): Path<String>) 
         return r;
     }
     st.machines.remove(&id);
+    // The Spaces it provides stay, detached; `?spaces=delete` removes them.
+    if q.get("spaces").map(String::as_str) == Some("delete") {
+        st.machines
+            .retain(|_, r| r.machine.host.as_deref() != Some(id.as_str()));
+    }
     StatusCode::NO_CONTENT.into_response()
+}
+
+/// The account (and device gate) behind a `/v1/spaces/...` call.
+#[allow(clippy::result_large_err)]
+fn spaces_caller(st: &State_, headers: &HeaderMap) -> Result<Identity, Response> {
+    if st.without_spaces_settings {
+        return Err(StatusCode::NOT_FOUND.into_response());
+    }
+    st.gate(headers)?;
+    match caller(st, headers) {
+        Some(Caller::Account(who)) => Ok(who),
+        Some(Caller::Machine(_)) => {
+            Err(err(StatusCode::FORBIDDEN, "a machine token cannot do this"))
+        }
+        None => Err(err(StatusCode::UNAUTHORIZED, "account token required")),
+    }
+}
+
+fn settings_of(st: &State_, who: &Identity) -> serde_json::Value {
+    st.spaces_settings.get(&who.id).cloned().unwrap_or_else(|| {
+        serde_json::json!({"default_space": null, "fallback": [], "fallback_on": true, "updated_at": 0})
+    })
+}
+
+async fn spaces_settings_get(State(s): State<S>, headers: HeaderMap) -> Response {
+    let st = s.lock().unwrap();
+    match spaces_caller(&st, &headers) {
+        Ok(who) => Json(settings_of(&st, &who)).into_response(),
+        Err(r) => r,
+    }
+}
+
+async fn spaces_settings_put(
+    State(s): State<S>,
+    headers: HeaderMap,
+    Json(mut body): Json<serde_json::Value>,
+) -> Response {
+    let mut st = s.lock().unwrap();
+    let who = match spaces_caller(&st, &headers) {
+        Ok(w) => w,
+        Err(r) => return r,
+    };
+    let machine_of = |id: &str| {
+        id.strip_prefix("relay:")
+            .map(|r| r.split('/').next().unwrap_or(r).to_string())
+    };
+    let mut ids: Vec<String> = body["fallback"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+    if let Some(d) = body["default_space"].as_str() {
+        ids.insert(0, d.to_string());
+    }
+    for (i, id) in ids.iter().enumerate() {
+        let Some(m) = machine_of(id) else {
+            return err(StatusCode::BAD_REQUEST, "bad Space id");
+        };
+        if ids[..i].contains(id) {
+            return err(StatusCode::BAD_REQUEST, "duplicate Space");
+        }
+        match st.machines.get(&m).and_then(|r| view(r, &who)) {
+            Some(_) => {}
+            None => return err(StatusCode::FORBIDDEN, "no such computer for you"),
+        }
+    }
+    body["updated_at"] = serde_json::json!(now_secs());
+    st.spaces_settings.insert(who.id.clone(), body.clone());
+    Json(body).into_response()
+}
+
+async fn spaces_default(
+    State(s): State<S>,
+    headers: HeaderMap,
+    Query(q): Query<BTreeMap<String, String>>,
+) -> Response {
+    let st = s.lock().unwrap();
+    let who = match spaces_caller(&st, &headers) {
+        Ok(w) => w,
+        Err(r) => return r,
+    };
+    let settings = settings_of(&st, &who);
+    let mine: Vec<(String, Machine)> = st
+        .machines
+        .values()
+        .filter(|r| {
+            r.machine
+                .host
+                .as_deref()
+                .is_none_or(|h| h.is_empty() || st.machines.contains_key(h))
+        })
+        .filter_map(|r| view(r, &who))
+        .map(|m| (format!("relay:{}", m.id), m))
+        .collect();
+    let default = settings["default_space"].as_str().map(str::to_string);
+    let step = |id: &str, role: &str| {
+        let m = mine.iter().find(|(i, _)| i == id).map(|(_, m)| m);
+        serde_json::json!({"space": id, "name": m.map(|m| m.name.clone()).unwrap_or_default(),
+            "online": m.is_some_and(|m| m.online && m.sharing), "role": role})
+    };
+    let mut order = Vec::new();
+    if let Some(d) = &default {
+        order.push(step(d, "default"));
+    }
+    let here = q.get("here").map(|h| format!("relay:{h}"));
+    let fallback: Vec<String> = if settings["fallback_on"].as_bool() == Some(false) {
+        vec![]
+    } else if let Some(list) = settings["fallback"].as_array().filter(|l| !l.is_empty()) {
+        list.iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect()
+    } else {
+        let mut all: Vec<_> = mine
+            .iter()
+            .filter(|(_, m)| m.role == "owner" && m.host.as_deref().is_none_or(str::is_empty))
+            .map(|(i, m)| (m.connected_at.unwrap_or(0), i.clone()))
+            .collect();
+        all.sort();
+        all.into_iter().map(|(_, i)| i).collect()
+    };
+    for f in fallback {
+        if Some(&f) != default.as_ref() && Some(&f) != here.as_ref() {
+            order.push(step(&f, "fallback"));
+        }
+    }
+    if let Some(h) = &here
+        && mine.iter().any(|(i, _)| i == h)
+    {
+        order.push(step(h, "here"));
+    }
+    let first = order.iter().find(|o| o["online"] == true).cloned();
+    let (space, reason) = match &first {
+        Some(o) => (
+            o["space"].clone(),
+            o["role"].as_str().unwrap_or("here").to_string(),
+        ),
+        None if default.is_none() && order.is_empty() => (serde_json::Value::Null, "unset".into()),
+        None => (serde_json::Value::Null, "here".to_string()),
+    };
+    let reason = if default.is_none() && reason == "fallback" {
+        "unset".into()
+    } else {
+        reason
+    };
+    Json(serde_json::json!({
+        "space": if reason == "here" && here.is_none() { serde_json::Value::Null } else { space },
+        "reason": reason,
+        "default_space": default,
+        "default_online": default.as_ref().map(|d| step(d, "default")["online"] == true),
+        "order": order,
+    }))
+    .into_response()
 }
 
 async fn leave(State(s): State<S>, headers: HeaderMap, Path(id): Path<String>) -> Response {
@@ -1272,6 +1451,11 @@ impl FakeRelay {
             .route("/v1/machines/{id}/stop-sharing", post(stop))
             .route("/v1/machines/{id}/start-sharing", post(start))
             .route("/v1/machines/{id}/leave", post(leave))
+            .route(
+                "/v1/spaces/settings",
+                get(spaces_settings_get).put(spaces_settings_put),
+            )
+            .route("/v1/spaces/default", get(spaces_default))
             .route("/v1/devices", get(device_list).post(device_register))
             .route("/v1/devices/session", post(device_session))
             .route("/v1/devices/approve", post(device_approve))
@@ -1464,6 +1648,12 @@ impl FakeRelay {
     /// predates it does (404, no body), or as the current relay again.
     pub fn without_leave(&self, on: bool) {
         self.state.lock().unwrap().without_leave = on;
+    }
+
+    /// Answers the `/v1/spaces/...` routes the way a relay that predates
+    /// them does (404, no body), or as the current relay again.
+    pub fn without_spaces_settings(&self, on: bool) {
+        self.state.lock().unwrap().without_spaces_settings = on;
     }
 
     /// Machine registrations received so far (refused ones too).

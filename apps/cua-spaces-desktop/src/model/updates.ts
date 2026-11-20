@@ -21,8 +21,8 @@ export interface UpdaterDriving {
   readonly lastCheck: number | null;
   /** Check Now can run (false while a check runs). */
   readonly canCheck: boolean;
-  /** The channel it installs from (`stable` or `beta`). */
-  channel: "stable" | "beta";
+  /** The channel it installs from (`stable` or `nightly`). */
+  channel: "stable" | "nightly";
   /** Called after any of the above changes. */
   onChange: (() => void) | null;
   /** Told each step: `found`, `not_found`, `downloaded`, `installed` or `failed` (fixed words). */
@@ -41,7 +41,7 @@ export class FixtureUpdater implements UpdaterDriving {
   automaticallyInstalls = false;
   lastCheck: number | null;
   canCheck = true;
-  channel: "stable" | "beta" = "stable";
+  channel: "stable" | "nightly" = "stable";
   onChange: (() => void) | null = null;
   onUpdateEvent: ((event: string) => void) | null = null;
   checks = 0;
@@ -148,8 +148,8 @@ export class UpdatesModel {
     this.updater?.installNow();
   }
 
-  get channelWord(): "stable" | "beta" {
-    return this.channel === this.native.AppUpdateChannel.Beta ? "beta" : "stable";
+  get channelWord(): "stable" | "nightly" {
+    return this.channel === this.native.AppUpdateChannel.Nightly ? "nightly" : "stable";
   }
 
   private record(action: string): void {
@@ -191,10 +191,15 @@ export class UpdatesModel {
   }
 
   choose(id: string): void {
-    this.channel = id === "beta" ? this.native.AppUpdateChannel.Beta : this.native.AppUpdateChannel.Stable;
+    // `beta`, from a page before Nightly, is Nightly now.
+    const next = id === "nightly" || id === "beta" ? this.native.AppUpdateChannel.Nightly : this.native.AppUpdateChannel.Stable;
+    const switched = next !== this.channel;
+    this.channel = next;
     if (this.updater) this.updater.channel = this.channelWord;
     this.saveChannel(this.channel);
     this.changed();
+    // A new channel is checked at once; what it finds downloads and is offered as "Restart to update".
+    if (switched && this.updater) this.checkNow();
   }
 
   checkNow(): void {

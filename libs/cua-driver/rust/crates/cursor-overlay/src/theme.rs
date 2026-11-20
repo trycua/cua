@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Canonical cursor-theme semantics and `cua.default` runtime parameters.
 //!
 //! The default artwork is authored as a checked-in dotLottie archive and

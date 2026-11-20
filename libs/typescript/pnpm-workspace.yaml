@@ -1,6 +1,5 @@
 packages:
   - "core"
-  - "agent"
   - "playground"
   - "cursor-motion"
 

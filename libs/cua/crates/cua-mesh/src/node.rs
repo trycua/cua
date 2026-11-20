@@ -62,6 +62,12 @@ pub struct MeshConfig {
     pub stun: Vec<String>,
     /// Never use direct paths (tests; `CUA_MESH_RELAY_ONLY=1`).
     pub relay_only: bool,
+    /// Use paths on the local network (default; `CUA_MESH_LAN=0` turns it
+    /// off). Off for a node whose network refuses the local network (a
+    /// Space on the internet-only default): it neither pings nor
+    /// advertises local addresses, so that network sees nothing of the
+    /// mesh to block, and the relay and internet paths carry the traffic.
+    pub lan: bool,
     /// The mesh UDP port of the peers' QUIC media service: client forwards
     /// send media datagrams to it, and a machine serves it with
     /// [`Mesh::serve_udp`] on the same number. Default
@@ -105,6 +111,7 @@ impl MeshConfig {
             approved_path: None,
             stun: Vec::new(),
             relay_only: std::env::var("CUA_MESH_RELAY_ONLY").is_ok_and(|v| v == "1"),
+            lan: !std::env::var("CUA_MESH_LAN").is_ok_and(|v| v == "0" || v == "off"),
             media_udp_port: MEDIA_UDP_PORT,
             reconnect_speedup: 1,
             connect_timeout: CONNECT_TIMEOUT,
@@ -334,8 +341,9 @@ struct Inner {
     /// Connections peers opened to us, so a peer leaving the map is cut.
     inbound: Mutex<Vec<(PublicKey, quinn::Connection)>>,
     connect_timeout: Duration,
-    /// The last failed dial per peer: when, and why.
-    failed_dials: Mutex<HashMap<PublicKey, (Instant, String)>>,
+    /// The last failed dial per peer: when, whether the map listed the
+    /// peer online then, and why.
+    failed_dials: Mutex<HashMap<PublicKey, (Instant, bool, String)>>,
 }
 
 /// One node on the mesh. Cheap to clone.
@@ -364,6 +372,7 @@ impl Mesh {
         let engine = Engine::new(identity.clone(), cfg.listen_port, cfg.relay_only)
             .await
             .map_err(|e| Error::Io(format!("udp: {e}")))?;
+        engine.set_lan_allowed(cfg.lan);
         let prefer = crate::engine::Prefer::from_env();
         if prefer != crate::engine::Prefer::Auto {
             engine.set_prefer(prefer);
@@ -659,7 +668,7 @@ impl Mesh {
             return Ok(c);
         }
         // A dial that just failed answers the callers that waited for it.
-        if let Some(why) = self.recent_failure(&peer.node_key) {
+        if let Some(why) = self.recent_failure(peer) {
             return Err(Error::Unreachable(why));
         }
         self.inner.engine.want(&peer.node_key);
@@ -719,7 +728,7 @@ impl Mesh {
                         .failed_dials
                         .lock()
                         .expect("failed dials")
-                        .insert(peer.node_key, (Instant::now(), e.to_string()));
+                        .insert(peer.node_key, (Instant::now(), peer.online, e.to_string()));
                 }
                 Err(e)
             }
@@ -737,13 +746,14 @@ impl Mesh {
     }
 
     /// Why the last dial to `peer` failed, when it failed less than
-    /// [`FAILED_DIAL_HOLD`] ago.
-    fn recent_failure(&self, peer: &PublicKey) -> Option<String> {
+    /// [`FAILED_DIAL_HOLD`] ago and the map still lists it as it did then
+    /// (a peer that came online since gets a fresh dial).
+    fn recent_failure(&self, peer: &PeerInfo) -> Option<String> {
         let failed = self.inner.failed_dials.lock().expect("failed dials");
         failed
-            .get(peer)
-            .filter(|(at, _)| at.elapsed() < FAILED_DIAL_HOLD)
-            .map(|(_, why)| why.clone())
+            .get(&peer.node_key)
+            .filter(|(at, online, _)| at.elapsed() < FAILED_DIAL_HOLD && *online == peer.online)
+            .map(|(_, _, why)| why.clone())
     }
 
     /// Why this node can no longer use the mesh, while it holds: its
@@ -1014,6 +1024,12 @@ impl Mesh {
     /// Never use direct paths from now on (or again).
     pub fn set_relay_only(&self, on: bool) {
         self.inner.engine.set_relay_only(on);
+    }
+
+    /// Allows or forbids paths on the local network from now on (see
+    /// [`MeshConfig::lan`]); forbidding forgets the ones learned.
+    pub fn set_lan(&self, on: bool) {
+        self.inner.engine.set_lan_allowed(on);
     }
 
     /// Pins the path to every peer ([`crate::engine::Prefer`]); `auto`

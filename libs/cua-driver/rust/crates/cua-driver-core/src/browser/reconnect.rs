@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Per-browser reconnect leadership.
 //!
 //! A public session is not browser identity. Reconnect callers therefore

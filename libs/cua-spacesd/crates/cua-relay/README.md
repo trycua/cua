@@ -206,6 +206,37 @@ without printing proxy credentials, relay URL queries or response bodies.
   (`GET /v1/pairing-codes`, never the code) and revokes
   (`DELETE /v1/pairing-codes/{id}`) them. See `src/pairing.rs`.
 
+Removing a computer (`DELETE /v1/machines/{id}`) keeps the Spaces it provided
+(records whose `host` is that id) but detaches them: they are not listed and
+connections are refused (403, "its computer was removed from the account")
+until the computer registers again with the same id.
+`DELETE /v1/machines/{id}?spaces=delete` (owner) forgets them too and cuts
+their connections. A computer can be removed while it is offline, so the
+relay first keeps a pending deletion for it (the Spaces' ids and names, who
+asked, the computer's token hash), and the computer deletes them, files
+included, the next time it dials the relay:
+
+- `GET /v1/machines/{id}/pending-deletions` lists them (`{computer, spaces:
+  [{id, name}], requested_at, expires_at}`; empty `spaces` when none).
+- `POST /v1/machines/{id}/pending-deletions/{space}/ack` marks one deleted
+  (idempotent); the last ack clears the record.
+- Only that computer's machine token is accepted: the one it had when it was
+  removed, or its new one if it was added again with the same id. Another
+  computer's token or an account token gets 403, an unknown token 401.
+- Adding the computer again keeps the record (deleted means deleted), and a
+  pending Space id cannot be registered again (410) until it is acked.
+- A record expires 90 days after the (latest) request, so a computer that
+  never comes back does not pin it forever; erasing the account drops it.
+
+See `src/pending_deletions.rs`; the computer side is
+`cua_spacesd_server::pending_deletions`.
+
+Each account has a default Space and a fallback order, so the apps, CLI,
+phone and agents agree where to work: `GET`/`PUT /v1/spaces/settings` and
+`GET /v1/spaces/default?here=<machine-id>`, which resolves the default, then
+the fallback (or every online computer, oldest first), then `here` (see
+`src/spaces.rs`).
+
 The API: `/v1/machines` (directory, see `src/api.rs`), `/v1/pairing-codes`, `/v1/devices` and
 `/v1/audit` (see `src/device_api.rs`), `/v1/info`, `/healthz`, and
 `/relay/v1/machines` (connected machines, admin token only).
@@ -483,9 +514,10 @@ register machines: `CUA_RELAY_TOKENS`/`CUA_RELAY_TOKEN_FILE` or
 | `CUA_RELAY_MAX_STREAMS` | `256` | Concurrent client streams per machine (app-level check; S7). |
 | `CUA_RELAY_MACHINE_MAX_STREAMS` | `256` | yamux's own per-machine stream cap (S7); keep `>=` the value above. |
 | `CUA_RELAY_MACHINE_WINDOW_BYTES` | `67108864` (64 MiB) | yamux's per-machine connection receive window (S7); must be `>=` `machine-max-streams * 256 KiB`. |
-| `CUA_RELAY_MAX_GLOBAL_STREAMS` | `4096` | Concurrent client streams across every machine at once: the relay-wide memory budget (S7). Tune to the pod's memory limit. |
+| `CUA_RELAY_MAX_GLOBAL_STREAMS` | from the memory limit | Concurrent client streams across every machine at once: the relay-wide memory budget (S7). Unset, the relay derives it from its container's memory limit (cgroup): half the limit divided by 768 KiB, the worst case one slow-reading stream buffers, between 64 and 4096. Without a limit, 4096. `/metrics` shows it as `cua_relay_client_streams_budget`, next to `cua_relay_client_streams` and `cua_relay_client_streams_refused_total`. |
 | `CUA_RELAY_IDLE_SECS` | `90` | Seconds without a heartbeat before a machine is dropped (min 5). |
-| `CUA_RELAY_SHUTDOWN_GRACE_SECS` | `10` | Seconds open requests get after SIGTERM / SIGINT. Machine tunnels and mesh connections are closed at once, so they reconnect to the next relay. |
+| `CUA_RELAY_SHUTDOWN_GRACE_SECS` | `10` | Seconds open requests get after SIGTERM / SIGINT, counted after the drain. |
+| `CUA_RELAY_DRAIN_SECS` | `0` | Connection draining on SIGTERM / SIGINT: new machine tunnels and mesh connections get 503 with `Retry-After` for this long at most, while client streams already open finish (tunnels stay up). Then every tunnel is closed cleanly (yamux GoAway, mesh close code 4000) just before exit, so they reconnect to the relay that takes over. `0` closes tunnels at once. The hard stop is drain plus grace: keep the pod's `terminationGracePeriodSeconds` above `preStop + drain + grace`. A longer drain also lengthens the time the next relay waits on the state lock. |
 | `CUA_RELAY_HEALTH_LISTEN` | unset | Probe address (`0.0.0.0:8081`) answering `GET /healthz` from start, standby included. Point the Kubernetes probes here for rolling deploys. |
 | `CUA_RELAY_WEB_CLIENT_ID` | unset | OIDC client id of the browser sign-in for share links (public client + PKCE; redirect URI `<CUA_RELAY_PUBLIC_URL>/v1/web/callback`). Needs account mode, `CUA_RELAY_PUBLIC_URL` and `CUA_RELAY_HOST_DOMAIN`. Unset: no browser sign-in, `/v1/web/*` is 404 and a browser without a token gets 401. |
 | `CUA_RELAY_WEB_CLIENT_SECRET` | unset | Client secret, for a confidential web client. |
@@ -542,6 +574,8 @@ Everything the relay keeps lives next to the state file, on one volume:
 | Mesh registry | `<state>.mesh.json` | Compact JSON, one coalesced write per burst of changes (off the async workers), retried with backoff on failure. A new node waits for the write that covers it; a pairing is confirmed only once saved. Soft state: nodes register again on reconnect. Endpoint addresses nodes report are never written to it. |
 | Pools | `<state>.pool/<account>/` | `log.jsonl` and `terminal.txt` appended (fsynced) per append; `lease.json`, `keys.json`, `snapshot.bin` replaced whole. A failed append is cut back (no torn line) and answered `500 storage`. |
 | Pairing codes | `<state>.pairing.json` | Compact JSON, rewritten (streamed) per mint, spend or revoke. A failed write refuses the mint or spend (`500`); the code stays as it was. |
+| Space settings | `<state>.spaces.json` | Compact JSON of each account's default Space and fallback, rewritten (streamed) per change. A failed write refuses the change (`500`). |
+| Pending deletions | `<state>.pending-deletions.json` | Compact JSON of removed computers' Spaces still to delete on them, rewritten (streamed) per removal and ack; records older than 90 days are dropped. A failed write refuses the removal (`500`, nothing removed). |
 | Grants | `<state>.grants.json` | Compact JSON of who reached each machine and whose access was revoked, rewritten (streamed) on a change. A failed write is not rolled back (a revoke holds in memory, so old tickets stay refused) and is retried with the next authorization. |
 
 Every replaced file goes through a temp file (`.<name>.<uuid>.tmp`); startup
@@ -623,6 +657,12 @@ admin token set or not, account sign-in on or off), and an edge or
 load-balancer error page carries no marker at all. The values are fixed:
 `tests/probe_contract.rs` fails if one changes or disappears. Changing them
 means changing the probes in trycua/cloud in the same release.
+
+**Boot identity.** `/healthz` also carries `x-cua-relay-boot` (a random
+id, new on every process start), `x-cua-relay-started` (Unix seconds) and
+`x-cua-relay-version`. Two answers with the same boot id come from the same
+process; a new id means the relay restarted. Tests, canaries and
+dashboards use it to tell a rollout from an outage. It carries no secret.
 
 **Log lines to alert on** (stable message and `alert` field):
 `state persist failed` (`alert=state_persist_failed`, with `store` and

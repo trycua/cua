@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_contract::MoveCursorInput;
 use cua_driver_core::{
@@ -39,7 +42,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["x", "y"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "x": { "type": "number", "description": "Destination X. Window target: window screenshot pixels. No target: screen points for the agent cursor overlay. Desktop scope: native get_desktop_state screenshot pixels." },
                 "y": { "type": "number", "description": "Destination Y, in the same space as x." },
                 "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "\"window\" (default) moves only the agent cursor overlay; \"desktop\" moves the real OS pointer." },

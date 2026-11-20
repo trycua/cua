@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Linux tool implementations.
 //!
 //! On Linux: delegates to real x11/atspi/input/capture implementations.

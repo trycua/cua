@@ -84,7 +84,15 @@ export {
   type AgentKeysView,
 } from "./agent-keys";
 export type { AgentKeyInfo, AgentKeyProvider, AgentKeysReport, KeyChoices } from "./ops/agent-keys";
-export { connectionRows, useConnections, type ConnectionsHook, type ConnectionReport, type ConnectionRow, type ConnectionRowView, type ConnectResult } from "./connections";
+export {
+  connectionRows,
+  useConnections,
+  type ConnectionsHook,
+  type ConnectionReport,
+  type ConnectionRow,
+  type ConnectionRowView,
+  type ConnectResult,
+} from "./connections";
 export {
   DEFAULT_SETTINGS,
   OPERATIONS,
@@ -92,12 +100,14 @@ export {
   type AppearanceTheme,
   type HostEvent,
   type HostOperations,
+  type AppTarget,
   type CliInfo,
   type GlobalShortcut,
   type HostSettings,
   type OpName,
   type SettingKey,
   type SettingsValues,
+  type AgentMenuPrefs,
   type UpdateChannel,
 } from "./protocol";
 
@@ -131,7 +141,17 @@ export {
   type RuntimeFixHook,
 } from "./new-space-hooks";
 export { runCreateFix, type CreateFixActions } from "./create-retry";
-export { createFailedText, emptyHome, type EmptyHome, type EmptyTile, type FirstPrompts, type FirstSpaceOffer, type PromptCap, type PromptExample, type PromptSuggestion } from "./new-space";
+export {
+  createFailedText,
+  emptyHome,
+  type EmptyHome,
+  type EmptyTile,
+  type FirstPrompts,
+  type FirstSpaceOffer,
+  type PromptCap,
+  type PromptExample,
+  type PromptSuggestion,
+} from "./new-space";
 export type * from "./contracts/volume";
 export * from "./volume";
 export type { GithubAccountRow, GithubDetail, GithubRow, GithubSourceLine, GithubTone, GithubView } from "./contracts/github";
@@ -144,9 +164,18 @@ export * from "./prepare-core";
 export { ThumbnailStore, THUMBNAIL_CAP, THUMBNAIL_REFRESH_MS, thumbnailStore, useSpaceThumbnail } from "./thumbnails";
 export { useWindowDropTarget } from "./window-drop";
 export { useSpaceFiles, parseDropped, dropSendingText, dropSentText, sendFiles, splitDrop, type DropStatus, type SpaceFilesHook } from "./space-files";
-export { agentRunLines, useDesktopCover, useSpaceDetail, type AgentRunLine, type DetailFor, type DetailReadings, type PipOutcome, type SpaceDetailHook } from "./space-detail";
+export {
+  agentRunLines,
+  useDesktopCover,
+  useSpaceDetail,
+  type AgentRunLine,
+  type DetailFor,
+  type DetailReadings,
+  type PipOutcome,
+  type SpaceDetailHook,
+} from "./space-detail";
 export type * from "./ops/space-detail";
-export { useThisMachine, type HostFailure, type HostFormView as HostSetupFormView, type ThisMachineHook } from "./this-machine";
+export { isNeedsProof, useThisMachine, type HostFailure, type HostFormView as HostSetupFormView, type ThisMachineHook } from "./this-machine";
 export type { HostFormAction, HostSetupRequest } from "./ops/host-setup";
 export type { TelemetrySignal } from "./ops/telemetry";
 export { useStartup, type StartupHook } from "./startup";
@@ -155,19 +184,22 @@ export type { TelemetryLinkNotice } from "./ops/telemetry";
 export { defaultTeam, eligibleTeams, teamName, useTeamChoices, type TeamChoices } from "./teams";
 export { joinFailureText, useJoinWithCode, type JoinHook, type JoinPhase } from "./join";
 export { displayPairingCode, normalizePairingCode, pairingLinkRelay } from "./pairing-code";
-export { BUY_PRO_URL, BUY_TEAMS_URL, expiresInText, FINISHING_SETUP, PAIRING_POLL_MS, pairingUnsupported, planFailure, usePairingCode, type PairingHook, type PairingPhase } from "./pairing";
+export {
+  BUY_PRO_URL,
+  BUY_TEAMS_URL,
+  expiresInText,
+  FINISHING_SETUP,
+  PAIRING_POLL_MS,
+  pairingUnsupported,
+  planFailure,
+  usePairingCode,
+  type PairingHook,
+  type PairingPhase,
+} from "./pairing";
 export { READY_STARTUP, type StartupAction, type StartupPhase, type StartupState } from "./ops/startup";
 export { NO_TIPS, sendTipsEvent, tipsState, useTips, type TipsHook } from "./tips";
 export { useNotchPins, type NotchPins } from "./notch-pins";
-export {
-  CHECKLIST_STEPS,
-  useChecklist,
-  type ChecklistHook,
-  type ChecklistRow,
-  type ChecklistState,
-  type ChecklistStep,
-  type ChecklistView,
-} from "./checklist";
+export { CHECKLIST_STEPS, useChecklist, type ChecklistHook, type ChecklistRow, type ChecklistState, type ChecklistStep, type ChecklistView } from "./checklist";
 export {
   useRelayUsage,
   useRelayUsageView,
@@ -180,10 +212,63 @@ export {
   type RelayUsage,
   type RelayUsageView,
 } from "./relay-usage";
+export { environmentTag, useEnvironmentTag, type EnvironmentTag } from "./environment-tag";
+export {
+  resolveDefaultSpace,
+  useSpacesDefault,
+  type DefaultCandidate,
+  type DefaultSpace,
+  type DefaultSpaceReason,
+  type DefaultSpaceStep,
+  type SpacesDefaultHook,
+  type SpacesSettings,
+  type SpacesSettingsInput,
+} from "./spaces-settings";
 
 export { dataWords, linkEnds, needsRelaySetup, useLinks, useShareSettings, type LinksHook, type ShareSettingsHook } from "./links";
-export { chatKey, mergeChats, useAgentChats, useAgentDm, type AgentChat, type AgentChats, type AgentChatSpace, type AgentDm, type ChatAttempt, type ChatNeed, type ChatTone, type DmItem } from "./agents-dm";
-export { foldThread, readSeqFrom, useSpaceThread, type SpaceThread, type SpaceThreadStatus, type ThreadAnswer, type ThreadItem, type ThreadQuote } from "./thread";
+export {
+  pointerChange,
+  pointerSettings,
+  sinceText,
+  useDriver,
+  useDriverMachines,
+  DRIVER_POLL_MS,
+  POINTER_STYLES,
+  type DriverActivity,
+  type DriverApp,
+  type DriverConfig,
+  type DriverHook,
+  type DriverLiveTest,
+  type DriverMachine,
+  type DriverPermission,
+  type DriverStatus,
+  type DriverUpdate,
+  type PointerSettings,
+} from "./driver";
+export {
+  chatKey,
+  mergeChats,
+  useAgentChats,
+  useAgentDm,
+  type AgentChat,
+  type AgentChats,
+  type AgentChatSpace,
+  type AgentDm,
+  type ChatAttempt,
+  type ChatNeed,
+  type ChatTone,
+  type DmItem,
+} from "./agents-dm";
+export {
+  foldThread,
+  readSeqFrom,
+  useSpaceThread,
+  type SpaceThread,
+  type SpaceThreadStatus,
+  type ThreadAnswer,
+  type ThreadItem,
+  type ThreadQuote,
+} from "./thread";
 export {
   DEFAULT_AGENT_RIGHTS,
   isMissingThreadTool,
@@ -194,7 +279,9 @@ export {
   type JoinCodeState,
   type JoinRequest,
   type JoinMethod,
+  type ChildNote,
   type LiveAgent,
+  type LiveChild,
   type MemberEvent,
   type MemberIdentity,
   type MemberRef,
@@ -211,7 +298,18 @@ export {
   type ThreadPage,
   type ThreadRole,
 } from "./ops/thread";
-export { folderLabel, resumeContext, THREAD_AGENTS, type PastMessage, type PastThread, type RecentThread, type ThreadAgent } from "./ops/agent-threads";
+export { computerSignInAgentOf, type ComputerSignInAgent, type ComputerSignInState } from "./ops/agent-sign-in";
+export {
+  agentOf as threadAgentOf,
+  folderLabel,
+  onlyAgents,
+  resumeContext,
+  THREAD_AGENTS,
+  type PastMessage,
+  type PastThread,
+  type RecentThread,
+  type ThreadAgent,
+} from "./ops/agent-threads";
 export type { LinkAccess, LinkCreate, ShareLanding, ShareLink, ShareSettings } from "./ops/links";
 export {
   useResources,
@@ -248,17 +346,14 @@ export {
   type UpsellPrompt,
   type UpsellSurface,
 } from "./upsell";
-export { flagOn, newOnboardingOn, setFlagOverride, setRemoteFlags, useFlag, useNewOnboarding, type FlagName } from "./flags";
+// Clears the overrides of retired flags once, on load.
+import "./flags";
 export type { CreateReport, ReportPart, ReportSend } from "./diagnostic-report";
+export { createReport, reportMailto } from "./diagnostic-report";
 export {
-  FIRST_RUN_POLL_MS,
   TEAMMATES_KEY,
   UPSELL_DISMISSED_KEY,
-  firstRunPermissions,
-  firstRunTodos,
-  firstRunView,
   firstRunCliView,
-  firstRunSteps,
   cliMissing,
   cliPresent,
   useCliInstall,
@@ -266,29 +361,14 @@ export {
   noteTeammates,
   readFirstRun,
   resetFirstRunCache,
-  useFirstRun,
   useFirstRunSaved,
-  useScreenPermissions,
   writeFirstRun,
-  type FirstRunHook,
-  type ScreenPermissions,
-  type FirstRunUsage,
   type FirstRunSaved,
 } from "./first-run";
 export type * from "./contracts/first-run";
 // The new Spaces page's decisions (CUA-2204): menus, bulk delete and leave,
 // tips, the Pro banner and the account menu.
-export {
-  accountMenu,
-  bulkConfirm,
-  bulkDone,
-  bulkProgress,
-  chooseSettings,
-  proBanner,
-  spaceMenu,
-  tipsReduce,
-  tipsView,
-} from "./spaces-page";
+export { accountMenu, bulkConfirm, bulkDone, bulkProgress, chooseSettings, proBanner, spaceMenu, tipsReduce, tipsView } from "./spaces-page";
 export type * from "./contracts/spaces-page";
 export * from "./connectors";
 export * from "./profile-card";

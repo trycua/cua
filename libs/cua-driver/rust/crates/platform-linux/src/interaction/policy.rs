@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! What each primitive decides from the facts an adapter reports. Every
 //! decision states what an unknown fact means for each scope.
 

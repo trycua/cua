@@ -16,6 +16,7 @@ on:
     paths:
       - ".github/workflows/ci-cua-spaces-desktop-install-smoke.yml"
 
+  merge_group:
 permissions:
   contents: read
   actions: read
@@ -31,12 +32,12 @@ concurrency:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   resolve:
     needs: quick
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: Find a run with live artifacts
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -61,7 +62,8 @@ jobs:
 
   windows:
     name: Windows x64 install, launch, uninstall
-    needs: resolve
+    needs: [quick, resolve]
+    if: ${{ !failure() && !cancelled() && needs.resolve.result == 'success' && needs.quick.outputs.skip != 'true' }}
     runs-on: windows-latest
     env:
       RUN_ID: ${{ needs.resolve.outputs.run_id }}
@@ -154,19 +156,27 @@ jobs:
 
   linux:
     name: Linux x64 deb and AppImage
-    needs: resolve
+    needs: [quick, resolve]
+    if: ${{ !failure() && !cancelled() && needs.resolve.result == 'success' && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     env:
       RUN_ID: ${{ needs.resolve.outputs.run_id }}
     timeout-minutes: 25
     steps:
+      # A local action needs the repo on disk; this job has no other checkout.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/actions
+          persist-credentials: false
+
       - name: Download electron-linux
         run: gh run download "$RUN_ID" -n electron-linux -D dl
 
       - name: Tools
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb xdotool wmctrl imagemagick x11-apps x11-utils dbus-x11 openbox
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            xvfb xdotool wmctrl imagemagick x11-apps x11-utils dbus-x11 openbox
 
       - name: Install the .deb
         run: |
@@ -232,3 +242,20 @@ jobs:
           name: gh-linux
           path: out
           if-no-files-found: warn
+
+  # A smoke run where the real test jobs were skipped must not pass green.
+  verify:
+    name: Smoke jobs ran
+    needs: [quick, resolve, windows, linux]
+    if: ${{ always() && needs.quick.outputs.skip != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ needs.resolve.result }} ${{ needs.windows.result }} ${{ needs.linux.result }}
+        run: |
+          echo "resolve windows linux: $RESULTS"
+          if [ "$RESULTS" != "success success success" ]; then
+            echo "::error::the install smoke did not fully run: $RESULTS"
+            exit 1
+          fi

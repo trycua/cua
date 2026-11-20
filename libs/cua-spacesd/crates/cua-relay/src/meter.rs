@@ -6,7 +6,7 @@
 //!
 //! Measure and prompt, plus one refusal: a plan in
 //! [`MeterConfig::enforce_plans`] (Pro) cannot open a NEW session past its
-//! live-session or hours allowance, on any path a session can take: a
+//! computers-in-use or hours allowance, on any path a session can take: a
 //! WebSocket upgrade, a long gRPC stream (process, terminal and watch
 //! RPCs) through the HTTPS proxy ([`Meter::enter_enforced`], 429 or gRPC
 //! `ResourceExhausted`), or a mesh session a machine reports
@@ -76,7 +76,7 @@ const PLAN_WARM_TIMEOUT: Duration = Duration::from_secs(3);
 pub const DEFAULT_PLAN: &str = "free";
 /// Where the upgrade prompt links by default (the pricing page).
 pub const DEFAULT_UPGRADE_URL: &str = "https://cua.ai/pricing";
-/// Default allowances: Free is 2 live sessions and 20 hours a month. Pro
+/// Default allowances: Free is 2 computers in use at once and 20 hours a month. Pro
 /// and Teams (per seat) are placeholders until their numbers are set.
 pub const DEFAULT_ALLOWANCES: &str = "free=2/20,pro=5/200,teams=5/200";
 
@@ -438,7 +438,7 @@ pub struct UsageView {
     pub team: Option<TeamView>,
     /// Live remote sessions now (the pool's).
     pub live_sessions: u32,
-    /// Allowed live sessions at a time (the pool's).
+    /// Allowed computers in use at a time (the pool's).
     pub live_sessions_limit: u32,
     /// Relay hours used this period (the pool's), one decimal.
     pub hours_used: f64,
@@ -515,7 +515,7 @@ impl Refusal {
             other => other,
         };
         let (what, hint) = if self.code == "plan_limit_sessions" {
-            ("live sessions", "Close one or upgrade")
+            ("computers in use at once", "Close one or upgrade")
         } else {
             ("remote hours this month", "Upgrade to keep going")
         };
@@ -524,6 +524,12 @@ impl Refusal {
         } else {
             hint.to_owned()
         };
+        if self.code == "plan_limit_sessions" {
+            return format!(
+                "You have {} of {} {what} on {plan}. {hint}: {}",
+                self.used, self.limit, self.upgrade_url
+            );
+        }
         format!(
             "You're using {} of {} {what} on {plan}. {hint}: {}",
             self.used, self.limit, self.upgrade_url
@@ -1424,7 +1430,7 @@ fn error(status: StatusCode, message: impl Into<String>) -> Response {
     (status, Json(serde_json::json!({"error": message.into()}))).into_response()
 }
 
-/// `GET /v1/usage`: the caller's live sessions and relay hours against its
+/// `GET /v1/usage`: the caller's computers in use at once and relay hours against its
 /// allowance. Needs the account token only (no enrolled device): it shows
 /// nothing but the caller's own counts.
 async fn usage(Extract(relay): Extract<Relay>, headers: HeaderMap) -> Response {
@@ -1538,7 +1544,7 @@ mod tests {
         let r = m.enter_enforced(&ada, "m5").unwrap_err();
         assert_eq!(r.code, "plan_limit_sessions");
         assert!(r.message().starts_with(
-            "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams"
+            "You have 5 of 5 computers in use at once on Pro. Close one or upgrade to Teams"
         ));
         // Free is refused at 2.
         let bob = who("bob", "bob@example.com");

@@ -19,7 +19,7 @@ yourself, do not retry, and do not fall back to another approach. Later calls
 are immediate.
 
 **When an asset the user asks for does not exist, author it here.** A request to
-add something the project does not contain is a request to *make* it. Model it
+add something the project does not contain is a request to _make_ it. Model it
 in Blender in the Space. Do not substitute a file downloaded from the web, copied
 from the user's machine, or found elsewhere on disk: that is a different result
 from the one asked for, and in a Space it is also unnecessary: the tool to

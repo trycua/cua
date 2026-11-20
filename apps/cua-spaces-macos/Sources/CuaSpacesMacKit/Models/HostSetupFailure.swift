@@ -20,7 +20,30 @@ public struct HostSetupFailure: Equatable, Sendable {
         case signedOut
         /// macOS did not start the host service (launchd).
         case service
+        /// The account already has computers: a new one is added from one
+        /// of them, or with a pairing code (the relay's rule for an
+        /// account with phone support).
+        case addFromAnotherComputer
+        /// The account already has other computers, and this one came with
+        /// no proof that it is the owner adding it (the relay's
+        /// `new_computer_needs_proof`): a code from one of them adds it.
+        case needsProof
         case other
+
+        /// The kind's name on the bridge (`HostFailure.kind` on the page).
+        public var wireName: String {
+            switch self {
+            case .download: "download"
+            case .network: "network"
+            case .throttled: "throttled"
+            case .guiSession: "guiSession"
+            case .signedOut: "signedOut"
+            case .service: "service"
+            case .addFromAnotherComputer: "addFromAnotherComputer"
+            case .needsProof: "needsProof"
+            case .other: "other"
+            }
+        }
     }
 
     public let kind: Kind
@@ -28,12 +51,30 @@ public struct HostSetupFailure: Equatable, Sendable {
     public let message: String
     /// The raw error, as the setup reported it.
     public let details: String
+    /// The relay's code for the refusal (`[code: …]` in the raw error), when
+    /// it gave one: what the page matches on, whatever the words.
+    public var refusalCode: String? { Self.refusalCode(details) }
 
     public static let retryLabel = "Retry"
     public static let retryingLabel = "Retrying\u{2026}"
     public static let detailsLabel = "Details"
     public static let copyLabel = "Copy"
     public static let signInLabel = "Sign In"
+    public static let useCodeLabel = "Use a code from another computer"
+
+    /// The relay's code `cua_host::refusal_code` reads: the raw error ends
+    /// with `[code: <lowercase_word>]`.
+    static func refusalCode(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let open = trimmed.range(of: " [code: ", options: .backwards), trimmed.hasSuffix("]") else { return nil }
+        let code = trimmed[open.upperBound..<trimmed.index(before: trimmed.endIndex)]
+        guard !code.isEmpty, code.allSatisfy({ $0 == "_" || ("a"..."z").contains($0) }) else { return nil }
+        return String(code)
+    }
+
+    /// The relay's code for a new computer that needs proof it is the owner
+    /// adding it (`cua_host::NEW_COMPUTER_NEEDS_PROOF`).
+    public static let newComputerNeedsProof = "new_computer_needs_proof"
 
     /// A failure whose kind the error itself says (the account refused,
     /// whatever its words), with the raw error as details.
@@ -44,7 +85,13 @@ public struct HostSetupFailure: Equatable, Sendable {
 
     /// The failure's button: Sign In when the account is what is missing
     /// (it signs in inline, then sets up), Retry otherwise.
-    public var actionLabel: String { kind == .signedOut ? Self.signInLabel : Self.retryLabel }
+    public var actionLabel: String {
+        switch kind {
+        case .signedOut: Self.signInLabel
+        case .needsProof: Self.useCodeLabel
+        default: Self.retryLabel
+        }
+    }
 
     /// Maps the raw setup error to what the sheet shows.
     public static func presenting(_ raw: String) -> HostSetupFailure {
@@ -84,6 +131,9 @@ public struct HostSetupFailure: Equatable, Sendable {
     }
 
     static func classify(_ raw: String) -> Kind {
+        // The relay's own code first: it says which refusal it is, whatever
+        // the words around it.
+        if refusalCode(raw) == newComputerNeedsProof { return .needsProof }
         if throttledWait(raw) != nil { return .throttled }
         let s = raw.lowercased()
         func any(_ needles: [String]) -> Bool { needles.contains { s.contains($0) } }
@@ -107,6 +157,8 @@ public struct HostSetupFailure: Equatable, Sendable {
 
         if any(["launchctl", "launchd", "host service", "bootstrap failed"]) { return .service }
 
+        if any(["add computers from a computer you already added"]) { return .addFromAnotherComputer }
+
         if word("401") || any([
             "signed out", "not signed in", "sign in again", "please sign in", "unauthenticated", "unauthorized",
             "login required", "not logged in", "session expired", "token expired", "invalid token",
@@ -120,9 +172,8 @@ public struct HostSetupFailure: Equatable, Sendable {
     static func words(_ kind: Kind, raw: String = "") -> (String, String) {
         switch kind {
         case .download:
-            return ("Couldn\u{2019}t download the Cua host service",
-                    "The service this Mac needs to accept connections isn\u{2019}t available right now. "
-                        + "Check your internet connection and try again; if it keeps failing, update Cua Spaces.")
+            return ("Couldn\u{2019}t set up sharing for this Mac",
+                    "Check your internet connection and try again.")
         case .network:
             return ("Couldn\u{2019}t connect",
                     "Cua Spaces couldn\u{2019}t reach the internet. Check your connection and try again.")
@@ -142,6 +193,14 @@ public struct HostSetupFailure: Equatable, Sendable {
             return ("Couldn\u{2019}t start the Cua host service",
                     "macOS didn\u{2019}t start the service your other machines connect to. Try again; "
                         + "if it keeps failing, restart this Mac.")
+        case .addFromAnotherComputer:
+            return ("Add this Mac from another computer",
+                    "Your account already has computers, so a new Mac is added from one of them or with a pairing code. "
+                        + "Open Cua Spaces on one of your computers and add this Mac from there.")
+        case .needsProof:
+            return ("Confirm it\u{2019}s you",
+                    "To add this Mac to your account, enter a code from a computer you already added. "
+                        + "On that computer, open Cua Spaces, go to Computers and click Add a computer.")
         case .other:
             return ("Couldn\u{2019}t set up this Mac for access",
                     "Something went wrong. Try again, or open Details to see what happened.")

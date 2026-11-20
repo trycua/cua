@@ -44,11 +44,15 @@ impl FsBackend {
     /// otherwise the store directory exists afterwards.
     fn ensure_root(&self) -> Result<()> {
         use std::sync::atomic::Ordering::SeqCst;
+        // `seen` is read before the directory check: a clone creating the
+        // store at the same moment sets it only after the directory exists,
+        // so a missing directory with `seen` already set was removed.
+        let seen = self.seen.load(SeqCst);
         if self.root.is_dir() {
             self.seen.store(true, SeqCst);
             return Ok(());
         }
-        if self.seen.load(SeqCst) {
+        if seen {
             return Err(Error::NotFound(format!(
                 "the store {} was removed",
                 self.root.display()
@@ -942,6 +946,30 @@ mod tests {
             .await
             .unwrap();
         assert!(root.is_dir());
+    }
+
+    /// Concurrent first writes on a store that does not exist yet all land:
+    /// one clone creating the store must not make another, which looked
+    /// before the store was there, take it for removed.
+    #[test]
+    fn concurrent_first_writes_all_create_the_store() {
+        for _ in 0..2000 {
+            let home = tempfile::tempdir().unwrap();
+            let b = FsBackend::new(home.path().join("data"));
+            let start = std::sync::Arc::new(std::sync::Barrier::new(16));
+            let threads: Vec<_> = (0..16)
+                .map(|_| {
+                    let (b, start) = (b.clone(), start.clone());
+                    std::thread::spawn(move || {
+                        start.wait();
+                        b.ensure_root()
+                    })
+                })
+                .collect();
+            for t in threads {
+                t.join().unwrap().unwrap();
+            }
+        }
     }
 
     #[tokio::test]

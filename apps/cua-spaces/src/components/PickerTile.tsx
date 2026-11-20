@@ -52,7 +52,9 @@ export function PickerTileView({
           )}
         </span>
         <span className="hp-card-meta">
-          {icon ? <img className="hp-card-badge hp-card-badge-icon" src={icon} alt="" data-testid="hp-card-badge-icon" /> : null}
+          {icon ? (
+            <img className="hp-card-badge hp-card-badge-icon" src={icon} alt="" data-testid="hp-card-badge-icon" />
+          ) : null}
           <span className="hp-card-title">{tile.title}</span>
         </span>
       </button>

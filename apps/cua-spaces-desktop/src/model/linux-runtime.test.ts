@@ -17,7 +17,9 @@ import {
 const STATUS_OLD = "Name:\tcua\nGid:\t1000\t1000\t1000\t1000\nGroups:\t4 24 27 1000 \n";
 const STATUS_NEW = "Name:\tcua\nGid:\t1000\t1000\t1000\t1000\nGroups:\t4 24 27 118 1000 \n";
 
-function system(over: { entry?: string | null; status?: string; socketExists?: () => boolean; hasSg?: () => boolean } = {}): LinuxSystem & { relaunch: ReturnType<typeof vi.fn> } {
+function system(
+  over: { entry?: string | null; status?: string; socketExists?: () => boolean; hasSg?: () => boolean } = {},
+): LinuxSystem & { relaunch: ReturnType<typeof vi.fn> } {
   return {
     user: "azureuser",
     groupEntry: async () => (over.entry === undefined ? "docker:x:118:azureuser" : over.entry),
@@ -64,7 +66,10 @@ describe("linuxRuntimeAdvice", () => {
   });
 
   it("says to log out when the restart already ran, or there is no sg", () => {
-    for (const [can, again] of [[true, true], [false, false]] as const) {
+    for (const [can, again] of [
+      [true, true],
+      [false, false],
+    ] as const) {
       const a = linuxRuntimeAdvice(stale, "permission denied", can, again);
       expect(a?.fix).toBeNull();
       expect(a?.reason).toMatch(/Log out/);
@@ -100,7 +105,13 @@ describe("LinuxRuntime", () => {
   });
 
   it("does not relaunch when the session has the group, Docker is absent, the user is not a member, or it already did", async () => {
-    for (const sys of [system({ status: STATUS_NEW }), system({ socketExists: () => false }), system({ entry: "docker:x:118:other" }), system({ entry: null }), system({ hasSg: () => false })]) {
+    for (const sys of [
+      system({ status: STATUS_NEW }),
+      system({ socketExists: () => false }),
+      system({ entry: "docker:x:118:other" }),
+      system({ entry: null }),
+      system({ hasSg: () => false }),
+    ]) {
       expect(await new LinuxRuntime(sys, {}).relaunchIfNeeded()).toBe(false);
       expect(sys.relaunch).not.toHaveBeenCalled();
     }

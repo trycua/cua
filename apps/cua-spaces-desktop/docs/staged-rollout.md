@@ -7,14 +7,14 @@ before everyone has it.
 Run **Actions > Release: staged rollout (Cua Spaces)**. It edits only the feed
 files on the rolling `cua-spaces-latest` release. Inputs:
 
-| Input | Values |
-|---|---|
-| `component` | `spaces` |
-| `platform` | `all`, `macos`, `windows`, `linux` |
-| `stage` | `10`, `50`, `100`, `pause` |
-| `reason` | free text, logged with the actor in the job summary |
-| `channel` | `stable` (default), `beta` (rehearsal only) |
-| `dry_run` | on by default: prints the feed diff, uploads nothing |
+| Input       | Values                                               |
+| ----------- | ---------------------------------------------------- |
+| `component` | `spaces`                                             |
+| `platform`  | `all`, `macos`, `windows`, `linux`                   |
+| `stage`     | `10`, `50`, `100`, `pause`                           |
+| `reason`    | free text, logged with the actor in the job summary  |
+| `channel`   | `stable` (default), `beta` (rehearsal only)          |
+| `dry_run`   | on by default: prints the feed diff, uploads nothing |
 
 Typical flow after a stable release: `10`, watch crash and update telemetry,
 `50`, `100`. Bad build: `pause`. The release workflow still publishes feeds as
@@ -29,13 +29,48 @@ live feeds (`stagingPercentage` plus the newest appcast item's interval and
 and dispatches `release-rollout.yml` itself, so the actor and reason land in that
 job summary as usual. Manual dispatch is unchanged.
 
-| Decision | When |
-|---|---|
-| advance (10 to 50, 50 to 100) | stage at least 24h old, every gate has enough data and passes |
-| wait | younger than 24h, or a gate has too little data (no data is not healthy) |
-| pause | a gate is past its threshold, at any stage age: dispatches `pause` and posts an Alertmanager alert (`SpacesRolloutAutoPaused`, source `github-actions`, to #alerts-staging; it does not page) |
-| hold | the variable `SPACES_ROLLOUT_HOLD` is set (the text is the reason) or an open issue has the label `spaces-rollout-hold`: never advances; a failing gate still pauses |
-| none | 100%, paused (resuming is a person's call), or the feeds disagree |
+| Decision                      | When                                                                                                                                                                                          |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| advance (10 to 50, 50 to 100) | the stage has soaked long enough (see Soak below), every gate has enough data and passes                                                                                                      |
+| wait                          | younger than the soak, or a gate has too little data (no data is not healthy)                                                                                                                 |
+| pause                         | a gate is past its threshold, at any stage age: dispatches `pause` and posts an Alertmanager alert (`SpacesRolloutAutoPaused`, source `github-actions`, to #alerts-staging; it does not page) |
+| hold                          | the variable `SPACES_ROLLOUT_HOLD` is set (the text is the reason) or an open issue has the label `spaces-rollout-hold`: never advances; a failing gate still pauses                          |
+| none                          | 100%, paused (resuming is a person's call), or the feeds disagree                                                                                                                             |
+
+### Soak
+
+How long a stage must have run before it may advance depends on the release:
+
+| Release                | At 10% | At 50% |
+| ---------------------- | ------ | ------ |
+| Patch (x.y.z, z not 0) | 2h     | 4h     |
+| x.y.0 (minor or major) | 24h    | 24h    |
+
+The short soak only applies once the crash gate has passed on enough sessions
+(`min_sessions`, 100, on the new version). Until then a patch release waits for
+more sessions, up to the full 24h. After that it advances as before as soon as
+every gate has data and passes; a gate with too little data still waits. A
+failing gate pauses at any age, and the hold still stops advancing. A Spaces
+release reaches 100% in about 8h instead of 48h.
+
+Every threshold is a named value in `config/spaces-rollout-soak.json`, and each is also a flag
+of the script that overrides it for one run:
+
+| Config value               | Flag                         | Default | Meaning                                                                     |
+| -------------------------- | ---------------------------- | ------- | --------------------------------------------------------------------------- |
+| `soak_hours_10`            | `--soak-hours-10`            | 2       | patch release: hours at 10% before advancing                                |
+| `soak_hours_50`            | `--soak-hours-50`            | 4       | patch release: hours at 50% before advancing                                |
+| `soak_hours_full`          | `--soak-hours-full`          | 24      | x.y.0 releases at every step, and the cap a patch waits for enough sessions |
+| `min_sessions`             | `--min-sessions`             | 100     | crash gate: sessions of the new version needed                              |
+| `min_installs`             | `--min-installs`             | 15      | adoption gate                                                               |
+| `min_create_events`        | `--min-create-events`        | 30      | space create gate: events needed on each side                               |
+| `max_create_error_delta`   | `--max-create-error-delta`   | 10.0    | space create gate: points above the previous version                        |
+| `min_update_events`        | `--min-update-events`        | 20      | update gate: attempts needed                                                |
+| `max_update_failure_delta` | `--max-update-failure-delta` | 15.0    | update gate: points above the week before                                   |
+| `max_crash_free_drop`      | `--max-crash-free-drop`      | 0.5     | crash gate: points below the previous version                               |
+| `min_crash_free`           | `--min-crash-free`           | 99.0    | crash gate: floor when there is no baseline                                 |
+
+To change a threshold, edit the config file in a PR; to try one, run the script locally with the flag.
 
 Gates (PostHog project 56041, `spaces_app` events of the new version against the
 previous stable, the most active non-prerelease version the week before the stage):
@@ -46,7 +81,7 @@ previous stable, the most active non-prerelease version the week before the stag
 - incident: no active incident.io incident with "spaces" in its name (needs the `INCIDENT_IO_API_KEY` secret; skipped and said so in the summary until it is set).
 - crash: Sentry release health (org and project in `config/spaces-crash-reporting.json`, release `cua-spaces-desktop@<version>`, environment `stable`). Crash-free sessions of the new version since the stage began must be at most 0.5 points below the previous version's over the same window, with at least 100 sessions on the new version (fewer: wait). A previous version with fewer than 100 sessions (it shipped before crash reporting) is no baseline, so the new version must reach 99% crash-free. Needs the `SENTRY_AUTH_TOKEN` secret (`org:read`, `project:read`); skipped and said so in the summary until it is set. Crash reports and sessions only come from people who left "Share usage data" on, so the numbers are a sample.
 
-Thresholds are flags of that script. Secrets: `POSTHOG_API_KEY` (query read),
+Thresholds are in the config file and flags of that script. Secrets: `POSTHOG_API_KEY` (query read),
 optional `INCIDENT_IO_API_KEY`, `SENTRY_AUTH_TOKEN`, and the existing
 `ALERTMANAGER_INTAKE_TOKEN`.
 
@@ -58,12 +93,12 @@ prints the same decision as JSON.
 
 ## What each stage does
 
-| Stage | electron-updater (Windows, Linux) | Sparkle (macOS) |
-|---|---|---|
-| `10` | `stagingPercentage: 10` | newest stable item gets `pubDate` = now and a 10-year `phasedRolloutInterval`: group 0 of 7 only, 14.3% |
-| `50` | `stagingPercentage: 50` | `pubDate` = 3 weeks ago, interval 1 week: groups 0 to 3, 57.1%. Group 4 follows a week later |
-| `100` | field removed | interval removed |
-| `pause` | `stagingPercentage: 0` | item removed from the appcast (kept in `cua-spaces-appcast-paused.xml`) |
+| Stage   | electron-updater (Windows, Linux) | Sparkle (macOS)                                                                                         |
+| ------- | --------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `10`    | `stagingPercentage: 10`           | newest stable item gets `pubDate` = now and a 10-year `phasedRolloutInterval`: group 0 of 7 only, 14.3% |
+| `50`    | `stagingPercentage: 50`           | `pubDate` = 3 weeks ago, interval 1 week: groups 0 to 3, 57.1%. Group 4 follows a week later            |
+| `100`   | field removed                     | interval removed                                                                                        |
+| `pause` | `stagingPercentage: 0`            | item removed from the appcast (kept in `cua-spaces-appcast-paused.xml`)                                 |
 
 Resuming (`10`, `50`, `100` after `pause`) restores the paused Sparkle item
 first. Installs that already took the update keep it in every case: neither

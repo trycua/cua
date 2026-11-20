@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows-specific environment probes used by `cua-driver doctor`.
 //!
 //! These are read-only checks against the process environment + Win32 APIs.

@@ -22,9 +22,9 @@
     "source": "Copied from Cua's private benchmark repository at revision 16a1937a79ff2ee2e48f5b5d9bb5e6f944119b5a; see taskpack/README.md. shared/cdb-s02 also carries the Amendment 19 checker fix (one Schedule row per session). The licence metadata (package.json/package-lock.json `license`, PROVENANCE.md) was changed from MIT to FSL-1.1-MIT on 11 Oct 2026; `mit_release_tree_sha256` holds the digests of the MIT copy published in #4973/#4978.",
     "revision": "16a1937a79ff2ee2e48f5b5d9bb5e6f944119b5a",
     "tree_sha256": {
-      "shared/cdb-s02": "07018de7f2c8fec2b604f11749800477e56981f4b1c19312e2350851de9a280b",
-      "shared/cdb-s03": "095f8be9ee022ca0005dd428d2872d1347e6a1e766c767dff9592841018bb719",
-      "shared/cdb-s04": "0c5f559573b0a3e0b1726bd44d4d6f1c75231ab4cbdcc1d0d229c4c6d223fbc6",
+      "shared/cdb-s02": "9dd045f098686a189a5b458758066cb5400e08166714627c0e2f23b10835ebd6",
+      "shared/cdb-s03": "1d1a7df218afaa8f31784eb01fd86dc7a68ca0921ef4aee9d14e1d3dd8caa768",
+      "shared/cdb-s04": "9cf83a1cd13ebf584f7a8acab2f358686b9dca9ef80194b894d9fe7f6915be3c",
       "shared/web-01": "82853053f6fd546b022d18b857c8bc370538cb1111636cf905a78db55fc44a95",
       "shared/web-02": "78f504225bc2943881582bfcece129c525c589aa3d3f5483090769f2fe12ff89"
     },
@@ -133,5 +133,24 @@
     "codex_cli_sha256": "6b582e8813ce7e8ed4c52814ee5cf230dba647bf2292df747a4003f2657ef201",
     "model": "gpt-6.1-sol",
     "effort": "low"
+  },
+  "agent_desktop": {
+    "version": "1.2.0",
+    "package": "agent-desktop@1.2.0 on npm (vercel-labs/agent-desktop, Apache-2.0)",
+    "adapter": "tools/agent_desktop/ad_mcp.py",
+    "instructions": "tools/agent_desktop/ad-instructions.md"
+  },
+  "browser_use_harness": {
+    "macos_harness_version": "0.2.1",
+    "windows_harness_version": "0.2.2",
+    "windows_harness_repo": "https://github.com/browser-use/windows-harness",
+    "windows_harness_commit": "46a37cf1d411c7816adffc274d5bdc2cca2bd9f0",
+    "macos_adapter": "tools/browser_use_harness/bu_mcp.py",
+    "windows_adapter": "tools/browser_use_harness/wh_mcp.py"
+  },
+  "codex_cu_platforms": {
+    "macos_chatgpt_app": "26.930",
+    "windows_chatgpt_codex_app": "26.1029.9216.0",
+    "filter": "tools/codex_cu/codex_cu_filter.py"
   }
 }

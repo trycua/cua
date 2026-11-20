@@ -90,6 +90,14 @@ pub struct JoinConfig {
     pub heartbeat: Duration,
     /// Backoff cap.
     pub max_backoff: Duration,
+    /// After the relay answers 401 more than once with the same token, the
+    /// first wait before the next try. The token is not valid any more (the
+    /// computer was removed, or its token rotated), so retrying every few
+    /// seconds only loads the relay; the wait doubles up to
+    /// [`Self::max_reauth_backoff`] and ends early when the token changes.
+    pub min_reauth_backoff: Duration,
+    /// The longest wait between tries while the relay refuses the token.
+    pub max_reauth_backoff: Duration,
     /// The first reconnect after a session that was up is spread over this
     /// long (uniformly from a tenth of it): a relay restart drops every
     /// machine at once, and they should not all knock together.
@@ -104,6 +112,10 @@ pub struct JoinConfig {
     /// every call). A build that does not must say `false`: the relay then sends
     /// it nothing of a phone's.
     pub phone_support: bool,
+    /// Notified before every attempt to dial the relay (the first one and
+    /// each reconnect): the machine reads its pending deletions then (see
+    /// [`pending_deletions`]).
+    pub dialing: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl JoinConfig {
@@ -122,10 +134,13 @@ impl JoinConfig {
             local,
             heartbeat: Duration::from_secs(15),
             max_backoff: Duration::from_secs(30),
+            min_reauth_backoff: Duration::from_secs(60),
+            max_reauth_backoff: Duration::from_secs(60 * 60),
             reconnect_spread: Duration::from_secs(5),
             relay_token_file: None,
             account: Arc::default(),
             phone_support: true,
+            dialing: None,
         }
     }
 }
@@ -192,6 +207,63 @@ pub fn reconnect_delay(
     backoff_with(attempt, cap, 0.5 + 0.5 * unit.clamp(0.0, 1.0))
 }
 
+/// The wait after the `n`th 401 in a row with the same token (`n` from 1;
+/// `unit` is a random number from 0 to 1). The first is an ordinary
+/// reconnect backoff (a relay that is still loading, a token being rotated:
+/// one more try); after that the wait starts at `min` and doubles to `max`,
+/// with jitter so machines that lost their token together do not knock together.
+pub fn reauth_delay(n: u32, cap: Duration, min: Duration, max: Duration, unit: f64) -> Duration {
+    let unit = unit.clamp(0.0, 1.0);
+    if n <= 1 {
+        return backoff_with(0, cap, 0.5 + 0.5 * unit);
+    }
+    let base = min
+        .saturating_mul(1u32 << (n - 2).min(16))
+        .min(max.max(min));
+    base.mul_f64(0.5 + 0.5 * unit)
+}
+
+/// The relay token to send now: the token file when readable and non-empty,
+/// else the configured token.
+fn current_token(config: &JoinConfig) -> String {
+    config
+        .relay_token_file
+        .as_deref()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|t| t.trim().to_owned())
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| config.relay_token.clone())
+}
+
+/// How often a token file is re-read while waiting out 401s.
+const TOKEN_POLL: Duration = Duration::from_secs(2);
+
+/// Waits `delay`, or until the token changes (`cua host setup` rotated it)
+/// when it comes from a file. Returns false on shutdown.
+async fn wait_for_token_change(
+    config: &JoinConfig,
+    stale: &str,
+    delay: Duration,
+    shutdown: &CancellationToken,
+) -> bool {
+    let deadline = tokio::time::Instant::now() + delay;
+    loop {
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let step = if config.relay_token_file.is_some() {
+            left.min(TOKEN_POLL)
+        } else {
+            left
+        };
+        tokio::select! {
+            _ = tokio::time::sleep(step) => {}
+            _ = shutdown.cancelled() => return false,
+        }
+        if tokio::time::Instant::now() >= deadline || current_token(config) != stale {
+            return true;
+        }
+    }
+}
+
 /// Why a session ended.
 #[derive(Debug)]
 pub enum SessionEnd {
@@ -199,6 +271,10 @@ pub enum SessionEnd {
     Shutdown,
     /// The relay refused the handshake (bad token, conflict, limit).
     Refused(String),
+    /// The relay answered 401: it does not accept this computer's token
+    /// (removed from the account, token rotated, account deleted). Retrying
+    /// the same token cannot work.
+    Unauthorized,
     /// Transport failure.
     Lost(String),
     /// The relay is busy admitting joins (`503` with `Retry-After`): come
@@ -209,11 +285,34 @@ pub enum SessionEnd {
 /// Runs until `shutdown`: connect, serve, reconnect with backoff.
 pub async fn run(config: JoinConfig, shutdown: CancellationToken) {
     let mut attempt = 0u32;
+    // Consecutive 401s with the same token.
+    let mut unauthorized = 0u32;
+    let mut stale = String::new();
     loop {
+        if let Some(dialing) = &config.dialing {
+            dialing.notify_one();
+        }
         let started = Instant::now();
+        let token = current_token(&config);
         let end = session(&config, &shutdown).await;
         match &end {
             SessionEnd::Shutdown => return,
+            SessionEnd::Unauthorized => {
+                if token != stale {
+                    stale = token.clone();
+                    unauthorized = 0;
+                }
+                unauthorized = unauthorized.saturating_add(1);
+                if unauthorized == 2 {
+                    tracing::error!(
+                        "the relay does not accept this computer's token: it was removed from \
+                         the account or its token changed. Sign in again (`cua host setup`) to \
+                         add it back. Retrying rarely until the token changes"
+                    );
+                } else {
+                    tracing::warn!("relay join refused: HTTP 401");
+                }
+            }
             SessionEnd::Refused(reason) => tracing::warn!(%reason, "relay join refused"),
             SessionEnd::Lost(reason) => tracing::info!(%reason, "relay connection lost"),
             SessionEnd::Throttled(after) => tracing::info!(?after, "the relay is busy"),
@@ -223,7 +322,24 @@ pub async fn run(config: JoinConfig, shutdown: CancellationToken) {
             attempt = 0;
         }
         let was_up = started.elapsed() > Duration::from_secs(10);
+        if !matches!(end, SessionEnd::Unauthorized) {
+            unauthorized = 0;
+        }
         let delay = match &end {
+            SessionEnd::Unauthorized => {
+                let d = reauth_delay(
+                    unauthorized,
+                    config.max_backoff,
+                    config.min_reauth_backoff,
+                    config.max_reauth_backoff,
+                    rand::thread_rng().gen_range(0.0..=1.0),
+                );
+                tracing::info!(delay = ?d, "reconnecting to the relay");
+                if !wait_for_token_change(&config, &token, d, &shutdown).await {
+                    return;
+                }
+                continue;
+            }
             // The relay said when: that, and up to a second more.
             SessionEnd::Throttled(after) => {
                 *after + Duration::from_millis(rand::thread_rng().gen_range(0..1000))
@@ -260,13 +376,7 @@ pub async fn session(config: &JoinConfig, shutdown: &CancellationToken) -> Sessi
     };
     let headers = request.headers_mut();
     let header = |v: &str| http::HeaderValue::from_str(v).map_err(|e| e.to_string());
-    let token = config
-        .relay_token_file
-        .as_deref()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .map(|t| t.trim().to_owned())
-        .filter(|t| !t.is_empty())
-        .unwrap_or_else(|| config.relay_token.clone());
+    let token = current_token(config);
     match (
         header(&format!("Bearer {token}")),
         header(&config.machine_id),
@@ -328,6 +438,112 @@ pub async fn session(config: &JoinConfig, shutdown: &CancellationToken) -> Sessi
     // its relay connection up until the relay's heartbeat notices.
     driver.abort();
     end
+}
+
+/// The relay's HTTP base for its REST routes (`ws(s)://` becomes
+/// `http(s)://`; no trailing slash).
+pub fn http_base(relay_url: &str) -> Result<String, String> {
+    let mut url = url::Url::parse(relay_url).map_err(|_| "invalid relay URL".to_owned())?;
+    let scheme = match url.scheme() {
+        "wss" | "https" => "https",
+        "ws" | "http" => "http",
+        _ => return Err("unsupported relay scheme".into()),
+    };
+    url.set_scheme(scheme)
+        .map_err(|_| "cannot set scheme".to_owned())?;
+    Ok(url.to_string().trim_end_matches('/').to_owned())
+}
+
+/// What went wrong asking the relay for this machine's pending deletions.
+#[derive(Debug)]
+pub enum PendingError {
+    /// The relay does not know this token (nothing is pending for a
+    /// removed computer, or the token is wrong): ask again much later.
+    Unknown(String),
+    /// Anything else (network, a relay error, an old relay without the
+    /// route): ask again soon.
+    Failed(String),
+}
+
+impl std::fmt::Display for PendingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PendingError::Unknown(m) | PendingError::Failed(m) => f.write_str(m),
+        }
+    }
+}
+
+fn pending_http() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .unwrap_or_default()
+}
+
+async fn pending_error(r: reqwest::Response) -> PendingError {
+    let status = r.status();
+    let body = r.text().await.unwrap_or_default();
+    let message = serde_json::from_str::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|v| v["error"].as_str().map(str::to_owned))
+        .unwrap_or(body);
+    let text = format!("relay answered {status}: {message}");
+    if status == http::StatusCode::UNAUTHORIZED {
+        PendingError::Unknown(text)
+    } else {
+        PendingError::Failed(text)
+    }
+}
+
+/// The Spaces this machine's owner deleted while it was removed from the
+/// account ([`crate::pending_deletions`]), read with its machine token.
+pub async fn pending_deletions(
+    relay_url: &str,
+    machine_id: &str,
+    token: &str,
+) -> Result<Vec<crate::pending_deletions::PendingSpace>, PendingError> {
+    #[derive(serde::Deserialize)]
+    struct Answer {
+        #[serde(default)]
+        spaces: Vec<crate::pending_deletions::PendingSpace>,
+    }
+    let base = http_base(relay_url).map_err(PendingError::Failed)?;
+    let r = pending_http()
+        .get(format!("{base}/v1/machines/{machine_id}/pending-deletions"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| PendingError::Failed(e.to_string()))?;
+    if !r.status().is_success() {
+        return Err(pending_error(r).await);
+    }
+    r.json::<Answer>()
+        .await
+        .map(|a| a.spaces)
+        .map_err(|e| PendingError::Failed(e.to_string()))
+}
+
+/// Tells the relay this machine deleted `space` (one of its pending
+/// deletions). Idempotent.
+pub async fn ack_pending_deletion(
+    relay_url: &str,
+    machine_id: &str,
+    token: &str,
+    space: &str,
+) -> Result<(), PendingError> {
+    let base = http_base(relay_url).map_err(PendingError::Failed)?;
+    let r = pending_http()
+        .post(format!(
+            "{base}/v1/machines/{machine_id}/pending-deletions/{space}/ack"
+        ))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| PendingError::Failed(e.to_string()))?;
+    if !r.status().is_success() {
+        return Err(pending_error(r).await);
+    }
+    Ok(())
 }
 
 /// Records the relay keys and owner from the 101 response. With pinned
@@ -444,6 +660,22 @@ mod tests {
     }
 
     #[test]
+    fn repeated_401s_back_off_to_the_cap_and_never_below_the_floor() {
+        let cap = Duration::from_secs(30);
+        let (min, max) = (Duration::from_secs(60), Duration::from_secs(3600));
+        // The first 401 is one ordinary retry.
+        assert!(reauth_delay(1, cap, min, max, 1.0) <= cap);
+        // Then at least half the floor, doubling, never past the cap.
+        assert_eq!(reauth_delay(2, cap, min, max, 1.0), min);
+        assert_eq!(reauth_delay(3, cap, min, max, 1.0), min * 2);
+        assert!(reauth_delay(2, cap, min, max, 0.0) >= min / 2);
+        for n in [10, 40, u32::MAX] {
+            assert_eq!(reauth_delay(n, cap, min, max, 1.0), max);
+            assert!(reauth_delay(n, cap, min, max, 0.0) >= max / 2);
+        }
+    }
+
+    #[test]
     fn backoff_is_capped_and_jittered() {
         let cap = Duration::from_secs(30);
         for attempt in 0..40 {
@@ -452,6 +684,23 @@ mod tests {
             assert!(d >= Duration::from_millis(250));
         }
         assert!(backoff(20, cap) >= Duration::from_secs(15));
+    }
+
+    #[test]
+    fn http_base_turns_the_relay_url_into_its_rest_base() {
+        assert_eq!(
+            http_base("wss://relay.cua.ai").unwrap(),
+            "https://relay.cua.ai"
+        );
+        assert_eq!(
+            http_base("ws://127.0.0.1:9/").unwrap(),
+            "http://127.0.0.1:9"
+        );
+        assert_eq!(
+            http_base("https://r.example/base/").unwrap(),
+            "https://r.example/base"
+        );
+        assert!(http_base("ftp://x").is_err());
     }
 
     #[test]

@@ -92,12 +92,13 @@ run_with_deadline() {
 [[ "${RUNNER_ENVIRONMENT:-}" == github-hosted ]] || fail "runner must be GitHub-hosted"
 [[ "${CI:-}" == true ]] || fail "CI must be true"
 # Only maintainer-controlled events may seed hosted TCC state: a manual
-# dispatch, the nightly schedule on main, or the stable Cua Driver tag push whose CD run calls this matrix
+# dispatch, the nightly schedule or post-merge push on main, or the stable Cua Driver tag push whose CD run calls this matrix
 # as its release gate. Pull request events are never accepted.
 if [[ "${GITHUB_EVENT_NAME:-}" != workflow_dispatch ]]; then
   [[ ( "${GITHUB_EVENT_NAME:-}" == push && "${GITHUB_REF:-}" == refs/tags/cua-driver-rs-v* ) \
-      || ( "${GITHUB_EVENT_NAME:-}" == schedule && "${GITHUB_REF:-}" == refs/heads/main ) ]] \
-    || fail "probe must be manually dispatched, run by a stable cua-driver-rs tag release gate, or run by the nightly schedule on main"
+      || ( "${GITHUB_EVENT_NAME:-}" == schedule && "${GITHUB_REF:-}" == refs/heads/main ) \
+      || ( "${GITHUB_EVENT_NAME:-}" == push && "${GITHUB_REF:-}" == refs/heads/main ) ]] \
+    || fail "probe must be manually dispatched, run by a stable cua-driver-rs tag release gate, run by the nightly schedule on main, or the post-merge push to main"
 fi
 [[ "${SOURCE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]] || fail "source SHA must contain 40 hexadecimal characters"
 [[ -z "${SSH_CONNECTION:-}${SSH_CLIENT:-}${SSH_TTY:-}" ]] || fail "SSH sessions cannot seed or certify hosted TCC state"

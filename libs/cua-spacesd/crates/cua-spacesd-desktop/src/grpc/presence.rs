@@ -1234,16 +1234,20 @@ mod tests {
         assert!(alice_rx.try_recv().is_err());
     }
 
-    #[tokio::test]
+    // Keep sender and flusher on the same virtual clock, independent of host load.
+    #[tokio::test(start_paused = true)]
     async fn cursor_updates_are_coalesced_to_20_hz() {
         let hub = PresenceHub::new();
         let (alice, _, _alice_rx) = hub.join(principal("alice", ""));
         let (_, _, mut bob_rx) = hub.join(principal("bob", ""));
         let started = Instant::now();
-        for step in 0..100 {
+        for step in 0..98 {
             hub.update_cursor(&alice.participant_id, at(f64::from(step) / 100.0, 0.0));
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
+        // These final updates share an instant: the flusher must deliver the newest.
+        hub.update_cursor(&alice.participant_id, at(0.98, 0.0));
+        hub.update_cursor(&alice.participant_id, at(0.99, 0.0));
         tokio::time::sleep(Duration::from_millis(120)).await;
         let mut moves = 0;
         let mut last_x = 0.0;

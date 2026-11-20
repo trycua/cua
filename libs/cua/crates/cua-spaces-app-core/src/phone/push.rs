@@ -120,7 +120,7 @@ pub fn route(data: &Value) -> Route {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct RegistrationInput {
     /// The system permission: `granted`, `denied`, `undetermined`.
@@ -137,6 +137,22 @@ pub struct RegistrationInput {
     pub done: bool,
     /// The fingerprint of the registration the relay already has, if any.
     pub registered: Option<String>,
+}
+
+impl std::fmt::Debug for RegistrationInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RegistrationInput")
+            .field("permission", &self.permission)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("device_id", &self.device_id)
+            .field("env", &self.env)
+            .field("app_id", &self.app_id)
+            .field("locale", &self.locale)
+            .field("needs_you", &self.needs_you)
+            .field("done", &self.done)
+            .field("registered", &self.registered)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

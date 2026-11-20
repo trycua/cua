@@ -60,8 +60,10 @@ import { STREAM_OPERATIONS } from "../ops/stream";
 import { RELAY_USAGE_OPERATIONS } from "../ops/relay-usage";
 import { NUDGES_OPERATIONS } from "../ops/nudges";
 import { AGENT_THREADS_OPERATIONS } from "../ops/agent-threads";
+import { AGENT_SIGN_IN_OPERATIONS } from "../ops/agent-sign-in";
 import { RESOURCES_OPERATIONS } from "../ops/resources";
 import { MACHINES_OPERATIONS } from "../ops/machines";
+import { SPACES_SETTINGS_OPERATIONS } from "../ops/spaces-settings";
 import { CHECKLIST_OPERATIONS } from "../ops/checklist";
 import { LINKS_OPERATIONS } from "../ops/links";
 import { CLI_OPERATIONS } from "../ops/cli";
@@ -70,6 +72,7 @@ import { THREAD_OPERATIONS } from "../ops/thread";
 import { PRESENCE_OPERATIONS } from "../ops/presence";
 import { cloudApproveTauriOps } from "../ops/cloud-approve";
 import { RUNTIME_FIX_OPERATIONS } from "../ops/runtime-fix";
+import { DRIVER_OPERATIONS } from "../ops/driver";
 import { tauriTelemetryOps } from "../ops/telemetry";
 import { tauriStartupOps } from "../ops/startup";
 
@@ -98,6 +101,12 @@ export const TAURI_UNSUPPORTED: readonly OpName[] = [
   "network.log",
   "network.ackNotice",
   "spaces.setAccess",
+  "spaces.tree",
+  "children.set",
+  "budget.get",
+  "budget.set",
+  "services.list",
+  "services.control",
   "spaces.deleteMany",
   "spaces.leave",
   "spaces.rename",
@@ -121,8 +130,10 @@ export const TAURI_UNSUPPORTED: readonly OpName[] = [
   ...RELAY_USAGE_OPERATIONS,
   ...NUDGES_OPERATIONS,
   ...AGENT_THREADS_OPERATIONS,
+  ...AGENT_SIGN_IN_OPERATIONS,
   ...RESOURCES_OPERATIONS,
   ...MACHINES_OPERATIONS,
+  ...SPACES_SETTINGS_OPERATIONS,
   ...CHECKLIST_OPERATIONS,
   ...LINKS_OPERATIONS,
   ...CLI_OPERATIONS,
@@ -131,6 +142,7 @@ export const TAURI_UNSUPPORTED: readonly OpName[] = [
   "crashReporting.config",
   ...PRESENCE_OPERATIONS,
   ...RUNTIME_FIX_OPERATIONS,
+  ...DRIVER_OPERATIONS,
 ];
 
 /** `persistent_agent_list`'s snake_case agents, as `PersistentAgent`s (as `src/native/persistent.ts` maps them). */
@@ -219,7 +231,7 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
       const selfId = status?.machineId ?? "local";
       const self: MachineRow = {
         id: selfId,
-        name: status?.name ?? "This machine",
+        name: status?.name ?? "This computer",
         via: "local",
         online: true,
         os: env?.platform ?? "macos",
@@ -257,6 +269,7 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
         // The app core's own settings file is the Mac and Electron apps'; the page keeps this for the session.
         case "tips":
         case "notchPinned":
+        case "agentMenu":
           throw new UnsupportedOperationError("tauri", `settings.set ${key}`);
       }
       return readSettings();
@@ -268,8 +281,7 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
       else await invoke("keyvault_unlock");
       return null;
     },
-    "keyvault.setUnattended": ({ itemIds, unattended }) =>
-      invoke("keyvault_set_unattended", { args: { itemIds, unattended } }),
+    "keyvault.setUnattended": ({ itemIds, unattended }) => invoke("keyvault_set_unattended", { args: { itemIds, unattended } }),
     "keyvault.setDisabled": async ({ disabled }) => {
       await invoke("keyvault_set_disabled", { disabled });
       return null;

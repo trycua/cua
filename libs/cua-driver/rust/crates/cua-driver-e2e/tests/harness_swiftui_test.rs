@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Integration test against the CuaTestHarness.SwiftUI Swift app.
 //!
 //! macOS equivalent of `harness_winui3_test.rs` — SwiftUI plays the same
@@ -10,6 +13,7 @@
 //!   - text_body : Text with HARNESS_TEXT_MARKER_v1
 //!   - text_input: TextField with mirror Text
 //!   - popover   : .popover() — SwiftUI analogue of WinUI3 CommandBarFlyout
+//!   - menu_button: Menu (AXMenuButton) whose items appear after the press
 //!
 //! Run locally (after `libs/cua-driver/tests/fixtures/build/macos.sh`):
 //!   cargo test --test harness_swiftui_test -- --ignored --nocapture
@@ -317,6 +321,54 @@ fn harness_swiftui_set_value_background() {
                     .tree_text()
                     .contains("swiftui-cua"),
                 "SwiftUI background AX value did not reach the field"
+            );
+        },
+    );
+}
+
+/// #6082: a background press on a SwiftUI `Menu` (AXMenuButton) returns once
+/// its menu is in the AX tree, so a snapshot taken right after it finds the
+/// items without a caller-side sleep.
+#[test]
+#[ignore]
+fn harness_swiftui_menu_button_background() {
+    run_background_case(
+        "menu_open",
+        DriverRoute::MacosAxAction,
+        |pid, wid, driver| {
+            let pre = snapshot_elements(driver, pid, wid);
+            assert!(
+                !pre.tree_text().contains("New Item"),
+                "menu item present before the menu opened"
+            );
+            let index = element_index_by_id(pre.tree_text(), "menu-create")
+                .expect("menu-create element_index not found");
+            let response = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": pre.element_token(index),
+                    "action": "press",
+                    "delivery_mode": "background"
+                }),
+            );
+            assert!(
+                !response.is_error(),
+                "SwiftUI menu button press failed: {}",
+                response.text()
+            );
+            assert_eq!(
+                response.structured()["effect"],
+                "confirmed",
+                "menu press did not observe its menu: {}",
+                response.text()
+            );
+            assert!(
+                snapshot_elements(driver, pid, wid)
+                    .tree_text()
+                    .contains("New Item"),
+                "SwiftUI menu items absent from the snapshot taken right after the press"
             );
         },
     );

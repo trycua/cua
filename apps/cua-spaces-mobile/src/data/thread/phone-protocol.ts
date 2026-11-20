@@ -111,7 +111,19 @@ export function taskOptionsFromTool(v: unknown): TaskOptions {
     machines: rows.flatMap((m) => {
       const o = obj(m);
       const id = str(o?.id);
-      return o && id ? [{ id, name: str(o.name) || id, online: o.online === true, canCreate: o.can_create === true, why: str(o.why) || null, os: arr(o.os).filter((x): x is string => typeof x === "string"), readyAgents: obj(p.machine) ? ready : null }] : [];
+      return o && id
+        ? [
+            {
+              id,
+              name: str(o.name) || id,
+              online: o.online === true,
+              canCreate: o.can_create === true,
+              why: str(o.why) || null,
+              os: arr(o.os).filter((x): x is string => typeof x === "string"),
+              readyAgents: obj(p.machine) ? ready : null,
+            },
+          ]
+        : [];
     }),
     agents,
   };
@@ -134,7 +146,9 @@ export function mergeTaskOptions(parts: TaskOptions[], names: Map<string, string
 
 /** The machines that are known but offline: listed (disabled, "Offline") beside the ones that answered. */
 export function offlineMachineOptions(known: { id: string; name: string; online: boolean }[], answered: Set<string>): TaskOptions["machines"] {
-  return known.filter((m) => !m.online && !answered.has(m.id)).map((m) => ({ id: m.id, name: m.name, online: false, canCreate: false, why: null, os: [], readyAgents: null }));
+  return known
+    .filter((m) => !m.online && !answered.has(m.id))
+    .map((m) => ({ id: m.id, name: m.name, online: false, canCreate: false, why: null, os: [], readyAgents: null }));
 }
 
 export interface TaskResult {
@@ -157,7 +171,15 @@ export function taskResultFromTool(v: unknown): TaskResult {
   const state = p.state === "creating" ? "creating" : p.state === "failed" ? "failed" : "ready";
   const space = str(p.space);
   if (!space && state === "ready") throw new Error("The computer did not say where the task went.");
-  return { space, created: p.created !== false, entrySeq: num(p.entry_seq), state, pendingId: str(p.pending_id) || null, error: str(p.error) || null, agent: str(p.agent) || null };
+  return {
+    space,
+    created: p.created !== false,
+    entrySeq: num(p.entry_seq),
+    state,
+    pendingId: str(p.pending_id) || null,
+    error: str(p.error) || null,
+    agent: str(p.agent) || null,
+  };
 }
 
 export const taskStatusArgs = (clientId: string): Json => ({ client_id: clientId });
@@ -171,11 +193,24 @@ export interface ChangeSet {
   headSha: string | null;
   /** The machine checked these against the push approval's card. */
   verified: boolean;
-  files: { path: string; oldPath: string | null; status: string; additions: number | null; deletions: number | null; binary: boolean; size: number | null; mime: string | null }[];
+  files: {
+    path: string;
+    oldPath: string | null;
+    status: string;
+    additions: number | null;
+    deletions: number | null;
+    binary: boolean;
+    size: number | null;
+    mime: string | null;
+  }[];
   truncated: boolean;
 }
 
-export const changesArgs = (a: { spaceId: string; repo?: string | null; base?: string | null }): Json => ({ space: a.spaceId, ...(a.repo ? { repo: a.repo } : {}), ...(a.base ? { base: a.base } : {}) });
+export const changesArgs = (a: { spaceId: string; repo?: string | null; base?: string | null }): Json => ({
+  space: a.spaceId,
+  ...(a.repo ? { repo: a.repo } : {}),
+  ...(a.base ? { base: a.base } : {}),
+});
 
 export function changesFromTool(v: unknown): ChangeSet {
   const p = obj(v) ?? {};
@@ -189,7 +224,20 @@ export function changesFromTool(v: unknown): ChangeSet {
     files: arr(p.files).flatMap((f) => {
       const o = obj(f);
       const path = str(o?.path);
-      return o && path ? [{ path, oldPath: str(o.old_path) || null, status: str(o.status, "modified"), additions: num(o.additions), deletions: num(o.deletions), binary: o.binary === true, size: num(o.size), mime: str(o.mime) || null }] : [];
+      return o && path
+        ? [
+            {
+              path,
+              oldPath: str(o.old_path) || null,
+              status: str(o.status, "modified"),
+              additions: num(o.additions),
+              deletions: num(o.deletions),
+              binary: o.binary === true,
+              size: num(o.size),
+              mime: str(o.mime) || null,
+            },
+          ]
+        : [];
     }),
   };
 }
@@ -201,7 +249,12 @@ export interface FileDiffData {
   binary: boolean;
 }
 
-export const fileDiffArgs = (a: { spaceId: string; path: string; repo?: string | null; base?: string | null }): Json => ({ space: a.spaceId, path: a.path, ...(a.repo ? { repo: a.repo } : {}), ...(a.base ? { base: a.base } : {}) });
+export const fileDiffArgs = (a: { spaceId: string; path: string; repo?: string | null; base?: string | null }): Json => ({
+  space: a.spaceId,
+  path: a.path,
+  ...(a.repo ? { repo: a.repo } : {}),
+  ...(a.base ? { base: a.base } : {}),
+});
 
 export function fileDiffFromTool(v: unknown): FileDiffData {
   const p = obj(v) ?? {};
@@ -217,9 +270,21 @@ export interface FilePreviewData {
   truncated: boolean;
 }
 
-export const filePreviewArgs = (a: { spaceId: string; path: string; repo?: string | null; rev?: "head" | "base" | "working" }): Json => ({ space: a.spaceId, path: a.path, ...(a.repo ? { repo: a.repo } : {}), ...(a.rev ? { rev: a.rev } : {}) });
+export const filePreviewArgs = (a: { spaceId: string; path: string; repo?: string | null; rev?: "head" | "base" | "working" }): Json => ({
+  space: a.spaceId,
+  path: a.path,
+  ...(a.repo ? { repo: a.repo } : {}),
+  ...(a.rev ? { rev: a.rev } : {}),
+});
 
 export function filePreviewFromTool(v: unknown): FilePreviewData {
   const p = obj(v) ?? {};
-  return { path: str(p.path), mime: str(p.mime) || null, size: num(p.size), encoding: p.encoding === "base64" ? "base64" : "utf8", content: str(p.content), truncated: p.truncated === true };
+  return {
+    path: str(p.path),
+    mime: str(p.mime) || null,
+    size: num(p.size),
+    encoding: p.encoding === "base64" ? "base64" : "utf8",
+    content: str(p.content),
+    truncated: p.truncated === true,
+  };
 }

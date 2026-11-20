@@ -60,6 +60,14 @@ def waits(cluster):
 def plain():
     return {"ok": True}
 
+@app.function()
+def with_defaults(steps=5, lr=0.1):
+    return {"steps": steps, "lr": lr}
+
+@app.function()
+def needs_arg(steps):
+    return steps
+
 import torch_not_installed_but_unused_ok if False else None
 '''
 
@@ -103,6 +111,30 @@ class Parse(unittest.TestCase):
             app.function(store="http://x/y")
         with self.assertRaises(ValueError):
             app.function(network="vpn")
+
+    def test_gpu_is_the_modal_spelling_of_the_accelerator(self):
+        def acc(**kw):
+            return cua.App("x").function(**kw)(lambda: None).spec["accelerator"]
+        self.assertEqual(acc(), "")
+        self.assertEqual(acc(gpu="any"), "gpu")
+        self.assertEqual(acc(gpu="nvidia"), "nvidia")
+        self.assertEqual(acc(gpu="L4"), "nvidia:L4")
+        self.assertEqual(acc(gpu="A100:2"), "nvidia:A100")
+        self.assertEqual(acc(gpu="RTX PRO 6000", gpu_memory="40GB"), "nvidia:RTX PRO 6000:40GB")
+        self.assertEqual(acc(gpu_memory=24), "gpu:24GB")
+        self.assertEqual(acc(gpu="apple"), "apple")
+        self.assertEqual(acc(accelerator="cuda"), "nvidia")
+        self.assertEqual(acc(accelerator="nvidia:L4", gpu_memory="16 gb"), "nvidia:L4:16GB")
+        with self.assertRaises(ValueError):
+            acc(gpu="L4", accelerator="nvidia")
+        with self.assertRaises(ValueError):
+            acc(gpu_memory="lots")
+        with self.assertRaises(ValueError):
+            acc(accelerator="tpu:16GB")
+
+    def test_on_local_is_this_computer(self):
+        f = cua.App("x").function(on="local")(lambda: None)
+        self.assertEqual(f.spec["on"], "local")
 
     def test_network_direct_sets_the_peer_route(self):
         f = cua.App("x").function(network="direct")(lambda: None)
@@ -256,7 +288,7 @@ class Entry(unittest.TestCase):
     def test_unknown_function(self):
         r = self.run_entry("--spec", str(self.job), "nope")
         self.assertNotEqual(r.returncode, 0)
-        self.assertIn("available: launches, outdir, plain, raw, train, waits", r.stderr)
+        self.assertIn("available: launches, needs_arg, outdir, plain, raw, train, waits, with_defaults", r.stderr)
 
     def test_sigterm_stops_the_launched_command(self):
         import signal
@@ -342,6 +374,19 @@ class Entry(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(json.loads(untar(res)["result.json"]), {"ok": True})
         self.assertFalse((Path(self.tmp.name) / "d" / "result.json").exists())  # not in data_dir
+
+    def test_parameters_with_defaults_get_no_cluster(self):
+        res = Path(self.tmp.name) / "result"
+        r = self.run_entry(str(self.job), "with_defaults", CUA_JOB_DATA=str(Path(self.tmp.name) / "d"),
+                           CUA_RESULT_PATH=str(res))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(untar(res)["result.json"]), {"steps": 5, "lr": 0.1})
+
+    def test_a_required_parameter_that_is_not_the_cluster_says_so(self):
+        r = self.run_entry(str(self.job), "needs_arg", CUA_JOB_DATA=str(Path(self.tmp.name) / "d"))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("needs_arg() needs steps: a function run passes no arguments", r.stderr)
+        self.assertIn("name the first one `cluster`", r.stderr)
 
     def test_launch_picks_cuda_builds_on_nvidia_hosts_only(self):
         import _cua_entry as e

@@ -27,10 +27,23 @@ export function LockScreen({ title, reason }: { title: string; reason: string })
   }, [ask]);
   return (
     <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 14, padding: 32, backgroundColor: c.background }} testID="lock-screen">
-      <Text variant="title" accessibilityRole="header">{title}</Text>
-      {cancelled ? <Text color="muted" style={{ textAlign: "center" }}>Use Face ID or your passcode to open it.</Text> : null}
-      <Pressable onPress={() => void ask()} accessibilityRole="button" accessibilityLabel="Unlock" style={{ paddingVertical: 12, paddingHorizontal: 28, borderRadius: 12, backgroundColor: c.brand }}>
-        <Text weight="600" color="inverse">Unlock</Text>
+      <Text variant="title" accessibilityRole="header">
+        {title}
+      </Text>
+      {cancelled ? (
+        <Text color="muted" style={{ textAlign: "center" }}>
+          Use Face ID or your passcode to open it.
+        </Text>
+      ) : null}
+      <Pressable
+        onPress={() => void ask()}
+        accessibilityRole="button"
+        accessibilityLabel="Unlock"
+        style={{ paddingVertical: 12, paddingHorizontal: 28, borderRadius: 12, backgroundColor: c.brand }}
+      >
+        <Text weight="600" color="inverse">
+          Unlock
+        </Text>
       </Pressable>
     </View>
   );

@@ -54,14 +54,10 @@ runs:
           libs/cua-driver/rust -> target
         key: ${{ inputs.cache-key }}
     - name: Install build dependencies
-      shell: bash
-      run: |
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq --no-install-recommends \
-          clang pkg-config cmake nasm perl make \
-          libx11-dev libxi-dev libxtst-dev libxext-dev libxkbcommon-dev libxkbcommon-x11-dev \
-          libdbus-1-dev libwayland-dev libxcb1-dev libx11-xcb-dev libxrandr-dev libxfixes-dev \
-          libxdamage-dev libudev-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev
+      uses: ./.github/actions/apt-install
+      with:
+        packages: >-
+          clang pkg-config cmake nasm perl make libx11-dev libxi-dev libxtst-dev libxext-dev libxkbcommon-dev libxkbcommon-x11-dev libdbus-1-dev libwayland-dev libxcb1-dev libx11-xcb-dev libxrandr-dev libxfixes-dev libxdamage-dev libudev-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev
     - id: build
       name: Build
       shell: bash

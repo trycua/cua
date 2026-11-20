@@ -236,7 +236,9 @@ export class LocalSpacesd {
       const exited = existsSync(join(dir, "exit"))
       const pid = Number(read(join(dir, "pid")).toString() || 0)
       const record = {
-        state: exited ? "EXEC_STATE_EXITED" : pid && alive(pid) ? "EXEC_STATE_RUNNING" : "EXEC_STATE_LOST",
+        // An aborted command is cut off by the epoch and never runs on, even while its shell is still
+        // exiting (alive() is true until it is reaped), so its record is lost, not running.
+        state: exited ? "EXEC_STATE_EXITED" : pid && alive(pid) && !existsSync(join(dir, "aborted")) ? "EXEC_STATE_RUNNING" : "EXEC_STATE_LOST",
         epoch: String(meta.epoch),
         outputBytes: String(read(join(dir, "out")).length),
       }

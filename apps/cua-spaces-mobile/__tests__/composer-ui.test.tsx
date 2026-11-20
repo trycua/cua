@@ -17,8 +17,20 @@ const members = [
 ];
 
 async function setup(over: Partial<React.ComponentProps<typeof Composer>> = {}) {
-  const props = { placeholder: "Message checkout-api", mentionables: members, running: false, onSend: jest.fn(), onStop: jest.fn(), onSendWithScreen: jest.fn(), ...over };
-  await render(<ThemeProvider force="light"><Composer {...props} /></ThemeProvider>);
+  const props = {
+    placeholder: "Message checkout-api",
+    mentionables: members,
+    running: false,
+    onSend: jest.fn(),
+    onStop: jest.fn(),
+    onSendWithScreen: jest.fn(),
+    ...over,
+  };
+  await render(
+    <ThemeProvider force="light">
+      <Composer {...props} />
+    </ThemeProvider>,
+  );
   return props;
 }
 

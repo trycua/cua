@@ -391,11 +391,7 @@ pub(super) async fn prepare_user(d: &Daytona, r: &Record) {
         return;
     }
     let Ok(c) = d.spacesd(r).await else { return };
-    let script = format!(
-        "id -u {user} >/dev/null 2>&1 && exit 0; \
-         (useradd -m -s /bin/bash {user} || adduser -D -s /bin/sh {user}) >/dev/null 2>&1 || exit 1; \
-         if [ -d /etc/sudoers.d ]; then echo '{user} ALL=(ALL:ALL) NOPASSWD: ALL' > /etc/sudoers.d/90-{user} && chmod 440 /etc/sudoers.d/90-{user}; fi"
-    );
+    let script = crate::guest::create_user_script(&user);
     let driver = d.drivers.of(&r.id, &c).await;
     if let Ok(out) = crate::guest::run_as(&c, &driver, "root", &script, &[]).await
         && !out.success()

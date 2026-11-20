@@ -1,10 +1,15 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Authenticated, connection-bound session client for an explicit service.
 //!
 //! The accepted service connection owns exactly one trusted session. Authority
 //! is never returned as a bearer value and cannot move to another connection.
 
 use crate::{DriverError, TrustedSessionOptions};
-use cua_driver_core::daemon::{DaemonClientKind, DaemonRequest, DaemonResponse, REPLY_DEADLINE};
+#[cfg(unix)]
+use cua_driver_core::daemon::REPLY_DEADLINE;
+use cua_driver_core::daemon::{DaemonClientKind, DaemonRequest, DaemonResponse};
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
 use std::sync::{Arc, Mutex};

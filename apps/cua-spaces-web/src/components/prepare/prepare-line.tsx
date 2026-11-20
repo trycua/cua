@@ -15,7 +15,12 @@ export function PrepareLine({ view, onRetry }: { view: PrepareView | null; onRet
       <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-destructive" />
       <span className="min-w-0 truncate">{view.line ?? "Preparing stopped"}</span>
       {view.action && onRetry ? (
-        <button type="button" onClick={onRetry} data-prepare-action={view.action.id} className="shrink-0 text-foreground underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60">
+        <button
+          type="button"
+          onClick={onRetry}
+          data-prepare-action={view.action.id}
+          className="shrink-0 text-foreground underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60"
+        >
           {view.action.label}
         </button>
       ) : null}

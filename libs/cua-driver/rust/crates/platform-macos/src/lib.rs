@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS platform backend for cua-driver-rs.
 //!
 //! Provides background automation on macOS via:
@@ -34,6 +37,8 @@ pub mod document_edit;
 #[cfg(target_os = "macos")]
 pub mod fast_path_guard;
 #[cfg(target_os = "macos")]
+pub mod focus_arbiter;
+#[cfg(target_os = "macos")]
 pub mod focus_guard;
 #[cfg(target_os = "macos")]
 pub mod focus_steal;
@@ -48,13 +53,16 @@ mod permission_observation;
 #[cfg(target_os = "macos")]
 pub mod permissions;
 #[cfg(target_os = "macos")]
-pub mod pip;
 #[cfg(target_os = "macos")]
 pub mod pointer_shape;
 /// AX role -> cursor shape table for the presence hit-test (pure, every host).
 pub mod pointer_shape_map;
 #[cfg(target_os = "macos")]
 pub mod recording_hooks;
+#[cfg(target_os = "macos")]
+pub mod running_image;
+#[cfg(target_os = "macos")]
+pub mod security_prompt;
 #[cfg(target_os = "macos")]
 pub mod session;
 #[cfg(all(test, target_os = "macos"))]

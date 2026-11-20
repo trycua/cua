@@ -16,8 +16,9 @@
  *
  * `code`: `unimplemented`, `bad_args`, `not_found`, `cancelled`,
  * `native_only`, `forbidden` or `failed`. A failed host setup or This
- * machine button also says `title`, `details` (the raw error) and
- * `actionLabel` (`HostSetupFailure`), and `message` is then the plain words.
+ * machine button also says `title`, `details` (the raw error),
+ * `actionLabel`, `kind` (`HostSetupFailure.Kind`, e.g. `needsProof`) and the
+ * relay's `refusalCode` when it gave one, and `message` is then the plain words.
  *
  * Host -> page events: `window.dispatchEvent(new CustomEvent("cua:event",
  * { detail: { event, payload } }))`, where `event` is one of `WEBKIT_EVENTS`.
@@ -39,6 +40,8 @@ import { KEYVAULT_MANAGE_WEBKIT_METHODS } from "./ops/keyvault-manage";
 import { KEYVAULT_SETUP_WEBKIT_METHODS } from "./ops/keyvault-setup";
 import { THREAD_WEBKIT_METHODS } from "./ops/thread";
 import { AGENT_THREADS_WEBKIT_METHODS } from "./ops/agent-threads";
+import { AGENT_SIGN_IN_WEBKIT_METHODS } from "./ops/agent-sign-in";
+import { SPACES_SETTINGS_WEBKIT_METHODS } from "./ops/spaces-settings";
 
 export const WEBKIT_HANDLER_NAME = "cua";
 /** The window event the host dispatches. */
@@ -71,6 +74,12 @@ export const WEBKIT_METHODS = [
   "network.log",
   "network.ackNotice",
   "spaces.setAccess",
+  "spaces.tree",
+  "children.set",
+  "budget.get",
+  "budget.set",
+  "services.list",
+  "services.control",
   "spaces.cancelCreate",
   "machines.list",
   "host.status",
@@ -158,17 +167,21 @@ export const WEBKIT_METHODS = [
   "notifications.list",
   "notifications.markAllRead",
   "notifications.markRead",
+  "notifications.delete",
+  "notifications.deleteAll",
   "telemetry.track",
   "telemetry.linkNotice",
   "telemetry.acknowledgeLinkNotice",
   "crashReporting.config",
   "spaces.usage",
+  "spaces.reach",
   "spaces.windows",
   "stream.pip",
   "spaces.thumbnail",
   "spaces.chooseFiles",
   "spaces.droppedFiles",
   "spaces.sendFiles",
+  "windows.chooseIso",
   "host.setUp",
   "host.joinWithCode",
   "host.action",
@@ -193,10 +206,20 @@ export const WEBKIT_METHODS = [
   "relay.usage",
   "nudges.pending",
   "nudges.answer",
+  "driver.status",
+  "driver.list",
+  "driver.config",
+  "driver.setConfig",
+  "driver.test",
+  "driver.pause",
+  "driver.setup",
+  "driver.setApp",
+  "driver.permissions",
   "resources.get",
   "machines.rename",
   "machines.remove",
   "machines.checkHealth",
+  ...SPACES_SETTINGS_WEBKIT_METHODS,
   "checklist.get",
   "checklist.send",
   "links.list",
@@ -212,6 +235,7 @@ export const WEBKIT_METHODS = [
   ...CI_WEBKIT_METHODS,
   ...THREAD_WEBKIT_METHODS,
   ...AGENT_THREADS_WEBKIT_METHODS,
+  ...AGENT_SIGN_IN_WEBKIT_METHODS,
 ] as const;
 
 export type WebkitMethod = (typeof WEBKIT_METHODS)[number];
@@ -260,7 +284,11 @@ export interface WebkitRequest {
 
 export type WebkitResponse =
   | { id: string; ok: true; result: unknown }
-  | { id: string; ok: false; error: { code: string; message: string; title?: string; details?: string; actionLabel?: string } };
+  | {
+      id: string;
+      ok: false;
+      error: { code: string; message: string; title?: string; details?: string; actionLabel?: string; kind?: string; refusalCode?: string };
+    };
 
 /** `CustomEvent("cua:event").detail`. */
 export interface WebkitEventDetail {
@@ -293,6 +321,8 @@ export interface WkSpace {
   arch?: string | null;
   host?: string | null;
   hostName?: string | null;
+  /** The Space it is a child of (its id), from the daemon's tree. */
+  parent?: string | null;
   power?: { control: "suspend" | "stop" | (string & {}); off: boolean; turningOn?: boolean | null; error?: string | null; stopReason?: string | null } | null;
   cloud?: string | null;
   cloudPlace?: string | null;
@@ -386,7 +416,7 @@ export interface WkSettingsRow {
 /** `settings.get`, `settings.choose`, `settings.press`: the core's Settings page. */
 export interface WkSettings {
   page: { title: string; sections: { id: string; rows: WkSettingsRow[] }[] };
-  /** `AppSettings.updateChannel` (`stable` or `beta`); null while the build
+  /** `AppSettings.updateChannel` (`stable` or `nightly`; `beta` from an older host); null while the build
    * has no updater. Set with `settings.choose {row: "update-channel"}`. */
   updateChannel?: string | null;
   /** The global shortcut the host registered; absent or null: none. */
@@ -396,10 +426,14 @@ export interface WkSettings {
   /** The CLI the app installs (its install plan's file name) and whether it
    * is on this computer; absent or null: not known. */
   cli?: { name: string; installed: boolean } | null;
+  /** The channel and environment the app runs as (`app_target`); absent or null: not known. */
+  target?: { channel: string; env: string; authHost: string } | null;
   /** `AppSettings.tips`; absent: an older host that keeps none. Saved with `settings.update`. */
   tips?: { off: boolean; done: string[] };
   /** `AppSettings.notchPinned`: the Spaces and desktops pinned to the notch, in pin order; absent: an older host. Saved with `settings.update`. */
   notchPinned?: string[];
+  /** `AppSettings.agentMenu*`: which coding apps the agent menu shows; absent: an older host. Saved with `settings.update`. */
+  agentMenu?: { shown: string[]; hidden: string[]; seen: string[] };
   /** Settings, Advanced's runtimes as the host read them (`runtimes::RuntimesInput`); absent: not read. */
   runtimes?: RuntimesInput | null;
 }

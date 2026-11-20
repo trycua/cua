@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Pixel guard for sparse or no-tree targets (design note section 3).
 //!
 //! Compare a crop around the point from the read-time window image with

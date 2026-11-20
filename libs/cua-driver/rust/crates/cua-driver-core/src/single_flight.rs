@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! A process-wide single-flight gate for blocking platform calls that cannot
 //! be cancelled once they start (COM, WinRT, and similar provider calls).
 //!

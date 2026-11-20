@@ -142,7 +142,7 @@ while True:
             if request["method"] == "metadata":
                 result = {
                     "driver_version": "0.10.0",
-                    "contract_version": "0.8.0",
+                    "contract_version": "0.9.0",
                     "tools_list_schema_version": "1",
                     "capability_version": "1",
                     "mcp_protocol_version": "2025-06-18",
@@ -230,7 +230,7 @@ except FileNotFoundError:
                         if request["method"] == "metadata":
                             result = {
                                 "driver_version": "0.12.6",
-                                "contract_version": "0.8.0",
+                                "contract_version": "0.9.0",
                                 "tools_list_schema_version": "1",
                                 "capability_version": "1",
                                 "mcp_protocol_version": "2025-06-18",
@@ -298,10 +298,8 @@ except FileNotFoundError:
             driver = CuaDriver.connect(socket_path)
             expected_methods = {
                 "start_session",
-                "escalate_session",
                 "get_session",
                 "list_sessions",
-                "get_session_state",
                 "end_session",
                 "get_desktop_state",
                 "get_screen_size",

@@ -87,7 +87,7 @@ export interface PlanCard {
 export interface RelayUsageView {
   /** "Remote use". */
   label: string;
-  /** "Live sessions 1 of 2 · Remote hours 6.5 of 20 this month". */
+  /** "Computers in use 1 of 2 · Remote hours 6.5 of 20 this month". */
   line: string;
   /** "Free plan". */
   plan: string;

@@ -987,6 +987,7 @@ fn trusted_setup_navigation(
         input.check()?;
         let tree =
             window_scoped_tree(pid, window_id).map_err(|error| anyhow::anyhow!(error.message))?;
+        handle.observe_document_uris(&tree);
         handle
             .require_owned_selected_tab(&tree)
             .map_err(|error| anyhow::anyhow!(error.message))?;
@@ -1079,12 +1080,12 @@ fn trusted_setup_navigation(
         input.check()?;
         let tree =
             window_scoped_tree(pid, window_id).map_err(|error| anyhow::anyhow!(error.message))?;
+        handle.observe_document_uris(&tree);
         handle
             .require_owned_selected_tab(&tree)
             .map_err(|error| anyhow::anyhow!(error.message))?;
         if setup_page_proven(&tree.nodes, descriptor, true) {
             handle.trusted_setup_navigation = true;
-            handle.reports_document_uri = document_is_setup_page(&tree.nodes, descriptor).is_some();
             return Ok(());
         }
         if Instant::now() >= deadline {
@@ -1168,8 +1169,8 @@ pub struct SetupUiHandle {
     owned_setup_tab: Option<ObjectRef>,
     trusted_setup_navigation: bool,
     input_delivery_unknown: bool,
-    /// The setup page was proven by its document URI, so cleanup can and
-    /// must re-read that URI before closing the tab.
+    /// A walk of this window showed a document URI, so this browser reports
+    /// them and cleanup must re-read the setup URI before closing the tab.
     reports_document_uri: bool,
     armed: bool,
     enabling: bool,
@@ -1334,6 +1335,7 @@ impl SetupUiHandle {
                 // and its document object is kept for the dispatch guard.
                 let result = window_scoped_tree(handle.pid, handle.window_id)
                     .and_then(|tree| {
+                        handle.observe_document_uris(&tree);
                         handle.require_owned_setup_page(&tree)?;
                         let document = setup_document_object(&tree.nodes, handle.descriptor);
                         if handle.reports_document_uri && document.is_none() {
@@ -1384,6 +1386,12 @@ impl SetupUiHandle {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
+    }
+
+    /// Latch that the browser reports document URIs once any walk of the
+    /// window shows one; a later walk whose read failed reports none.
+    fn observe_document_uris(&mut self, tree: &AtspiTreeResult) {
+        self.reports_document_uri |= !document_uris(&tree.nodes).is_empty();
     }
 
     fn require_owned_selected_tab(&self, tree: &AtspiTreeResult) -> Result<(), BrowserRefusal> {
@@ -1748,6 +1756,7 @@ fn set_remote_debugging(
             Ok(tree) => tree,
             Err(error) => return Err(handle.abort(error)),
         };
+        handle.observe_document_uris(&tree);
         match exact_setup_checkbox(&tree.nodes, descriptor, handle.trusted_setup_navigation) {
             Ok(Some(node)) => match node.checked {
                 Some(state) if state == desired_enabled => {

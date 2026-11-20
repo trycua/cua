@@ -5750,7 +5750,7 @@ pub(crate) fn keyboard_mapping(
     if let Err(error) = restore_dead_drivers_spares(conn) {
         tracing::warn!("restoring the spare keycodes of stopped drivers failed: {error:#}");
     }
-    Ok(conn.get_keyboard_mapping(8, 248)?.reply()?)
+    conn.get_keyboard_mapping(8, 248)?.reply()
 }
 
 /// Whether a text may borrow `keycode`: every keysym slot is NoSymbol (0) — i.e.

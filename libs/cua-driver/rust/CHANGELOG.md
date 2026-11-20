@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.56.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.55.5...cua-driver-rs-v0.56.0) (2026-11-20)
+
+
+### Features
+
+* **cua-driver:** add optional and items constraints to YAML policies ([#8365](https://github.com/trycua/cua/issues/8365)) ([cda5d03](https://github.com/trycua/cua/commit/cda5d037171f60872286aa539a52cc2ed07d4874))
+
+
+### Bug Fixes
+
+* **cua-driver:** recommend foreground for unverifiable background keys to Chromium and Electron apps ([#8377](https://github.com/trycua/cua/issues/8377)) ([7539bdd](https://github.com/trycua/cua/commit/7539bddaf817c367203dc06ef25a3eebfa04574f))
+* **cua-driver:** release content-only UIA references after get_window_state ([#8370](https://github.com/trycua/cua/issues/8370)) ([d57af67](https://github.com/trycua/cua/commit/d57af67155738c28d4e5d5795eb370af09b2b65c)), closes [#6867](https://github.com/trycua/cua/issues/6867)
+* **cua-driver:** return app_unresponsive at once for a Linux app while its GetState probe is pending ([#8380](https://github.com/trycua/cua/issues/8380)) ([e91d313](https://github.com/trycua/cua/commit/e91d313db7ec23a1589b923796e07a44fdb86b9b))
+
 ## [0.55.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.55.4...cua-driver-rs-v0.55.5) (2026-11-20)
 
 

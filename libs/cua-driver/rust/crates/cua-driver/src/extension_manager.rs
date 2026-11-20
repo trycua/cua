@@ -3062,8 +3062,11 @@ fn inspect_archive(
     })
 }
 
+/// semver never lets a prerelease satisfy a plain comparator such as
+/// `>=0.28.2`, so a nightly build is also checked by its base version.
 fn driver_satisfies(requirement: &VersionReq, driver: &Version) -> bool {
     requirement.matches(driver)
+        || requirement.matches(&Version::new(driver.major, driver.minor, driver.patch))
 }
 
 fn validate_manifest(

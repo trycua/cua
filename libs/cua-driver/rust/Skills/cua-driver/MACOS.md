@@ -911,10 +911,11 @@ known native application-menu path. It resolves each immediate child from live
 AX state and uses only `AXPress`/`AXPick`-class actions. Where the target sits
 decides how:
 
-- **App in the background:** the whole path is resolved without opening a menu
-  and the app is never activated (see the AXMenuBar rule above).
+- **App in the background, or the target on another Space:** the whole path is
+  resolved without opening a menu and the app is never activated (see the
+  AXMenuBar rule above).
 - **Another window of the app the user is in** (the app is frontmost, the
-  target is not its key window): the target is made key for the press through
+  target is on the current Space and is not its key window): the target is made key for the press through
   the in-app key-window record, with no raise and no activation, the item is
   pressed without opening its menu (after the same focused- and main-window
   check as the background route), and key goes back to the user's window. When

@@ -485,6 +485,13 @@ struct RerenderState {
     /// Labels of the current snapshot, by row.
     rows: Vec<(&'static str, &'static str)>,
     clicked: Vec<String>,
+    /// Every click's arguments, in order.
+    sent: Vec<Value>,
+    /// Refuse a live token's click unless it asks for the foreground, as a
+    /// toolkit that ignores background input does.
+    refuse_background: bool,
+    /// Fail a live token's foreground click too.
+    foreground_fails: bool,
 }
 
 #[async_trait]
@@ -523,6 +530,7 @@ impl Tool for Rerender {
                     .as_str()
                     .unwrap_or_default()
                     .to_owned();
+                state.sent.push(args.clone());
                 let current = format!("s{:08x}:", state.snapshot);
                 if !token.starts_with(&current) {
                     return ToolResult::error(
@@ -530,6 +538,19 @@ impl Tool for Rerender {
                          element could not be proven to belong to window 7; take a fresh \
                          get_window_state snapshot and re-address it",
                     );
+                }
+                let foreground = args["delivery_mode"] == "foreground";
+                if state.refuse_background && !foreground {
+                    return crate::delivery::background_unavailable_result(
+                        "Background click is not available: this toolkit ignores background \
+                         mouse events.",
+                        "background_unavailable",
+                        "the toolkit ignores background mouse events",
+                        json!({}),
+                    );
+                }
+                if state.foreground_fails && foreground {
+                    return ToolResult::error("foreground click did not reach the element");
                 }
                 let row: usize = token[current.len()..].parse().unwrap();
                 let label = state.rows[row - 1].1.to_owned();
@@ -562,7 +583,7 @@ fn rerender_registry(
                 description: "fake".into(),
                 input_schema: json!({"type": "object", "properties": {
                     "pid": {"type": "integer"}, "window_id": {"type": "integer"},
-                    "element_token": {"type": "string"}
+                    "element_token": {"type": "string"}, "delivery_mode": {"type": "string"}
                 }}),
                 read_only: name != "click",
                 destructive: false,
@@ -605,6 +626,71 @@ async fn a_stale_element_token_is_found_again_by_its_role_and_label() {
         vec!["Cinder decision LHP-CINDER"]
     );
     assert!(text(&result).contains("went stale"), "{}", text(&result));
+}
+
+#[tokio::test]
+async fn a_found_again_target_refused_in_the_background_falls_back_on_its_fresh_token() {
+    let rows = vec![
+        ("AXButton", "Update event"),
+        ("AXButton", "Aster kickoff"),
+        ("AXButton", "Cinder decision LHP-CINDER"),
+    ];
+    for foreground_fails in [false, true] {
+        let (registry, state) = rerender_registry(rows.clone());
+        {
+            let mut state = state.lock().unwrap();
+            state.refuse_background = true;
+            state.foreground_fails = foreground_fails;
+        }
+        crate::window_state_view::remember_for_test(
+            "s0000002e",
+            42,
+            7,
+            "- [0] AXWindow \"Daymark\"\n  - [14] AXButton \"Cinder decision LHP-CINDER\" [actions=[press]]\n",
+        );
+        let result = registry
+            .invoke(
+                super::super::RUN_STEPS_TOOL,
+                json!({"foreground_fallback": true, "steps": [{"tool": "click", "args": {
+                    "pid": 42, "window_id": 7, "element_token": "s0000002e:14"
+                }}]}),
+            )
+            .await;
+        let state = state.lock().unwrap();
+        // Stale original, the re-found token in the background, then the
+        // same re-found token in the foreground.
+        let sent: Vec<(&str, &str)> = state
+            .sent
+            .iter()
+            .map(|args| {
+                (
+                    args["element_token"].as_str().unwrap_or_default(),
+                    args["delivery_mode"].as_str().unwrap_or_default(),
+                )
+            })
+            .collect();
+        assert_eq!(sent.len(), 3, "{sent:?}");
+        assert_eq!(sent[0], ("s0000002e:14", ""));
+        assert_ne!(sent[1].0, "s0000002e:14");
+        assert_eq!(sent[1].1, "");
+        assert_eq!(sent[2], (sent[1].0, "foreground"));
+        let text = text(&result);
+        assert!(text.contains("went stale"), "{text}");
+        if foreground_fails {
+            assert_eq!(result.is_error, Some(true), "{text}");
+            assert!(state.clicked.is_empty());
+            assert!(
+                text.contains("the foreground retry failed: foreground click did not reach"),
+                "{text}"
+            );
+            assert!(!text.contains("ran in the foreground"), "{text}");
+        } else {
+            assert_ne!(result.is_error, Some(true), "{text}");
+            assert_eq!(state.clicked, vec!["Cinder decision LHP-CINDER"]);
+            assert!(text.contains("so it ran in the foreground"), "{text}");
+            assert!(!text.contains("element_outside_target_window"), "{text}");
+        }
+    }
 }
 
 #[tokio::test]

@@ -48,6 +48,14 @@ pub trait IsolatedBrowserProcess: Send {
         }
     }
 
+    /// Whether the leader has not been reaped. Until it is, its pid, and so
+    /// its process group id, cannot be reused, even after it exits. The
+    /// default asks `try_wait`, which reaps an exited leader and so answers
+    /// false for it.
+    fn leader_unreaped(&mut self) -> bool {
+        matches!(self.try_wait(), Ok(None))
+    }
+
     /// Run `work` with the authority of the browser's token. The browser can
     /// write its profile directory, so a more privileged Driver must not
     /// follow browser-planted links there with its own rights. When the
@@ -74,6 +82,22 @@ impl IsolatedBrowserProcess for Child {
 
     fn wait(&mut self) -> std::io::Result<ExitStatus> {
         Child::wait(self)
+    }
+
+    /// An exited leader that is still a zombie holds its pid, so it counts as
+    /// unreaped and its surviving descendants are still signalled. `WNOWAIT`
+    /// leaves it a zombie; `ECHILD` means it was already reaped.
+    #[cfg(unix)]
+    fn leader_unreaped(&mut self) -> bool {
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        unsafe {
+            libc::waitid(
+                libc::P_PID,
+                Child::id(self) as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            ) == 0
+        }
     }
 }
 

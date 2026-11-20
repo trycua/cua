@@ -656,14 +656,13 @@ fn remove_owned_profile_as_browser(
     });
 }
 
-/// Signal the driver-launched process group only while its leader is still
-/// running and unreaped: until then its id cannot be reused. Once the leader
-/// has been reaped (for example by a launch-time `try_wait`), the numeric
-/// group id may already belong to an unrelated process, so it is never
-/// signalled. Chromium children normally exit when the browser process does,
-/// but that is not guaranteed; a surviving descendant is not signalled here.
+/// Signal the driver-launched process group only while its leader is
+/// unreaped, running or exited: until then its id cannot be reused. Once the
+/// leader has been reaped (for example by a launch-time `try_wait`), the
+/// numeric group id may already belong to an unrelated process, so it is
+/// never signalled.
 pub(super) fn signal_group_if_unreaped(browser: &mut dyn IsolatedBrowserProcess) -> bool {
-    if matches!(browser.try_wait(), Ok(None)) {
+    if browser.leader_unreaped() {
         browser.kill_process_group();
         return true;
     }

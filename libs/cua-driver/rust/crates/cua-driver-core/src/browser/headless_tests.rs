@@ -710,3 +710,68 @@ fn group_cleanup_never_signals_a_reaped_leader() {
     assert!(super::prepare::signal_group_if_unreaped(&mut running));
     assert_eq!(*signals.lock().unwrap(), [format!("group:{}", running.pid)]);
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn group_cleanup_signals_an_exited_leader_that_is_not_yet_reaped() {
+    // A browser leader can exit before session cleanup while a descendant
+    // keeps running. Its zombie still holds the group id, so the group is
+    // signalled and the descendant does not outlive cleanup.
+    use std::io::Read;
+    use std::os::unix::process::CommandExt;
+
+    let mut child = Command::new("sh")
+        .args(["-c", "sleep 30 >/dev/null 2>&1 & echo $!"])
+        .stdout(std::process::Stdio::piped())
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let mut out = String::new();
+    child
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_string(&mut out)
+        .unwrap();
+    let descendant: u32 = out.trim().parse().unwrap();
+    let stat = format!("/proc/{descendant}/stat");
+    let dead = || {
+        std::fs::read_to_string(&stat)
+            .map(|stat| {
+                stat.rsplit(')')
+                    .next()
+                    .unwrap_or("")
+                    .trim_start()
+                    .starts_with('Z')
+            })
+            .unwrap_or(true)
+    };
+    // The leader has closed stdout and is exiting; wait until it is a zombie.
+    let leader_stat = format!("/proc/{}/stat", child.id());
+    for _ in 0..200 {
+        let zombie = std::fs::read_to_string(&leader_stat).is_ok_and(|stat| {
+            stat.rsplit(')')
+                .next()
+                .unwrap_or("")
+                .trim_start()
+                .starts_with('Z')
+        });
+        if zombie {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(!dead(), "the descendant should still be running");
+
+    assert!(super::prepare::signal_group_if_unreaped(&mut child));
+    let mut gone = false;
+    for _ in 0..500 {
+        if dead() {
+            gone = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let _ = child.wait();
+    assert!(gone, "the descendant outlived its group's cleanup");
+}

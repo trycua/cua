@@ -469,6 +469,11 @@ impl ProtectedResourceGrants {
         // peer that just approved the same exact scope supplies the grant.
         let _admission = self.admission.lock().await;
         if cacheable {
+            // An end that landed while this call waited for its turn cancels
+            // it before anyone is asked.
+            if episode_status(lifecycle_session) != episode {
+                return Err(ConsentError::Canceled);
+            }
             if let Some(grant) = self.lookup(&key, context) {
                 return Ok(Some(grant));
             }

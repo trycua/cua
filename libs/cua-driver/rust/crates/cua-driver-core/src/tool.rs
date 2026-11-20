@@ -4531,6 +4531,65 @@ mod runtime_isolation_tests {
     }
 
     #[tokio::test]
+    async fn a_call_queued_for_consent_when_its_session_ends_never_prompts() {
+        let provider = Arc::new(GatedProvider {
+            gate: tokio::sync::Semaphore::new(0),
+            requests: AtomicUsize::new(0),
+        });
+        let hits = Arc::new(AtomicUsize::new(0));
+        let mut registry =
+            super::ToolRegistry::new_with_protected_consent_provider(Some(provider.clone()));
+        registry.register(Box::new(ObservationProbe {
+            hits: hits.clone(),
+            def: super::ToolDef {
+                name: "history_query".into(),
+                description: "test history".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: true,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            },
+        }));
+        registry.register(Box::new(crate::session_tools::StartSessionTool));
+        registry.register(Box::new(crate::session_tools::EndSessionTool));
+        let registry = Arc::new(registry);
+        let context = standard_context();
+        let call = |name: &'static str| {
+            let registry = registry.clone();
+            let context = context.clone();
+            async move {
+                registry
+                    .invoke_with_context(name, serde_json::json!({"session": "queued"}), context)
+                    .await
+            }
+        };
+
+        assert_ne!(call("start_session").await.is_error, Some(true));
+        let asking = tokio::spawn(call("history_query"));
+        while provider.requests.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+        let queued = tokio::spawn(call("history_query"));
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+        call("end_session").await;
+        provider.gate.add_permits(1);
+        assert_eq!(asking.await.unwrap().is_error, Some(true));
+        let queued = tokio::time::timeout(Duration::from_secs(10), queued)
+            .await
+            .expect("the queued call is canceled without a prompt")
+            .unwrap();
+        assert_eq!(queued.is_error, Some(true));
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert!(crate::session::is_session_ended(
+            &context.runtime_session_key("queued")
+        ));
+    }
+
+    #[tokio::test]
     async fn a_closed_transports_late_call_on_its_label_gets_no_restart_hint() {
         let hits = Arc::new(AtomicUsize::new(0));
         let registry = observation_registry(None, hits.clone());

@@ -696,7 +696,7 @@ impl ClickTool {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Sent screen-absolute {button_label} at desktop-pixel \
                      ({sx_shot:.0},{sy_shot:.0}) → screen-point ({sx:.0},{sy:.0}) \
-                     (desktop scope; not driver-verified)."
+                     (desktop scope)."
                 ))
                 .with_structured(serde_json::json!({ "path": "cgevent_hid", "verified": false, "effect": "unverifiable" })),
                 Ok(Err(e)) => crate::security_prompt::tool_result(&e).unwrap_or_else(|| {
@@ -1012,7 +1012,7 @@ impl ClickTool {
                 return match result {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "Posted middle-click to pid {pid} at element [{idx}] center \
-                         (background CGEvent; not driver-verified — confirm via screenshot)."
+                         (background CGEvent)."
                     ))
                     .with_structured(serde_json::json!({ "path": "cgevent", "verified": false, "effect": "unverifiable" })),
                     Ok(Err(e)) if e.downcast_ref::<ObservedIdentityChanged>().is_some() => identity_refusal(),

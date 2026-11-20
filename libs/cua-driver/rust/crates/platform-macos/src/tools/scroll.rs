@@ -598,8 +598,7 @@ impl Tool for ScrollTool {
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Sent {direction} scroll by {by} × {amount} via pixel wheel at \
-                     ({screen_x:.0}, {screen_y:.0}){mode_label} (background CGEvent; not \
-                     driver-verified — confirm via screenshot).{}",
+                     ({screen_x:.0}, {screen_y:.0}){mode_label} (background CGEvent).{}",
                     changes.result_suffix()
                 ))
                 .with_structured(serde_json::json!({
@@ -693,7 +692,7 @@ impl Tool for ScrollTool {
         match result {
             Ok(Ok(())) => ToolResult::text(format!(
                 "Sent {direction} scroll by {by} × {amount} via keystroke \
-                 (background; not driver-verified — confirm via screenshot).{}",
+                 (background).{}",
                 changes.result_suffix()
             ))
             .with_structured(serde_json::json!({ "path": "key_events", "verified": false })),

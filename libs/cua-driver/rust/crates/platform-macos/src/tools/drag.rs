@@ -601,8 +601,7 @@ impl Tool for DragTool {
                 "Posted drag{btn_suffix}{mod_suffix} to pid {pid} window {wid} \
                  from window-pixel ({}, {}) → ({}, {}), \
                  screen ({}, {}) → ({}, {}) \
-                 in {duration_ms}ms / {steps} steps ({route_note}; not driver-verified — \
-                 confirm via screenshot).{session_note}{}",
+                 in {duration_ms}ms / {steps} steps ({route_note}).{session_note}{}",
                 from_x as i64,
                 from_y as i64,
                 to_x as i64,
@@ -776,8 +775,7 @@ impl DragTool {
                 ToolResult::text(format!(
                     "Posted drag to Electron pid {pid} window {wid} from window-point \
                      ({:.0}, {:.0}) → ({:.0}, {:.0}) through the app's main process \
-                     ({route}); pointer not moved, window not raised, focus kept.{dnd} \
-                     Not driver-verified — confirm via screenshot.",
+                     ({route}); pointer not moved, window not raised, focus kept.{dnd}",
                     from_local.0, from_local.1, to_local.0, to_local.1,
                 ))
                 .with_structured(serde_json::json!({

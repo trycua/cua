@@ -84,10 +84,11 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
 }
 
 /// Every window of `pid` that [`list_windows`] could describe, untitled ones
-/// included. Without an EWMH client list, `list_windows` hides untitled
-/// windows, so only this shows that a process has no other window.
-pub fn window_inventory(pid: u32) -> Vec<WindowInfo> {
-    list_windows_inner(Some(pid), true).unwrap_or_default()
+/// included, so it can show that a process has no other window. Without an
+/// EWMH client list, `list_windows` hides untitled windows and those whose
+/// owner only XRes knows. `None` when the server cannot be fully listed.
+pub fn window_inventory(pid: u32) -> Option<Vec<WindowInfo>> {
+    list_windows_inner(Some(pid), true).ok()
 }
 
 /// Whether the X server still knows a window by this id.
@@ -217,8 +218,9 @@ pub(crate) fn get_window_list(
     window_list(conn, root, false)
 }
 
-/// [`get_window_list`], where `untitled` also takes a managed window without
-/// a title when no EWMH client list names the clients.
+/// [`get_window_list`], where `untitled` takes every managed window, titled or
+/// not, when no EWMH client list names the clients, and fails rather than
+/// list root children when the window tree is too large to walk.
 fn window_list(
     conn: &RustConnection,
     root: Window,
@@ -278,7 +280,7 @@ fn window_list(
                                 .as_slice(),
                         )
                     });
-                let client = if valid {
+                let client = walk_takes_client(valid, untitled, || {
                     let owner = conn.get_property(false, w, pid, AtomEnum::CARDINAL, 0, 1)?;
                     let title = conn.get_property(false, w, name, AtomEnum::ANY, 0, 1024)?;
                     let legacy =
@@ -292,15 +294,17 @@ fn window_list(
                         .ok()
                         .filter(|r| !r.value.is_empty())
                         .or_else(|| legacy.reply().ok());
-                    let title = title.map(|r| String::from_utf8_lossy(&r.value).into_owned());
-                    client_has_identity(owner, title.as_deref(), untitled)
-                } else {
-                    false
-                };
+                    Ok(title.is_some_and(|r| {
+                        client_has_identity(owner, &String::from_utf8_lossy(&r.value))
+                    }))
+                })?;
                 Ok((tree.reply().map(|r| r.children).unwrap_or_default(), client))
             })
             .collect()
     })?;
+    if untitled && clients.is_none() {
+        anyhow::bail!("the window tree is too large to list every managed window");
+    }
     if let Some(clients) = clients.filter(|clients| ewmh || !clients.is_empty()) {
         return Ok((clients, WindowSource::ClientList));
     }
@@ -322,10 +326,20 @@ fn client_list_property(property_type: Atom, windows: &[Window]) -> Option<&[Win
     (property_type != x11rb::NONE && !windows.is_empty()).then_some(windows)
 }
 
-/// A client needs an owner pid, and a nonblank title unless `untitled`.
-fn client_has_identity(pid: Option<u32>, title: Option<&str>, untitled: bool) -> bool {
-    pid.is_some()
-        && (untitled || title.is_some_and(|title| !title.trim_end_matches('\0').trim().is_empty()))
+/// Whether the `WM_STATE` walk takes a window as a client: one with a valid
+/// state, and for a listing also a pid and a title (`identity`). An inventory
+/// takes every managed window and leaves its owner to [`OwnerResolver`],
+/// which also knows windows that publish no `_NET_WM_PID`.
+fn walk_takes_client(
+    valid: bool,
+    untitled: bool,
+    identity: impl FnOnce() -> Result<bool>,
+) -> Result<bool> {
+    Ok(valid && (untitled || identity()?))
+}
+
+fn client_has_identity(pid: Option<u32>, title: &str) -> bool {
+    pid.is_some() && !title.trim_end_matches('\0').trim().is_empty()
 }
 
 fn valid_wm_state(values: &[u32]) -> bool {
@@ -1008,20 +1022,21 @@ mod tests {
     }
 
     #[test]
-    fn clients_require_pid_and_nonblank_title() {
-        assert!(!client_has_identity(None, Some("browser"), false));
-        assert!(!client_has_identity(Some(42), None, false));
-        assert!(!client_has_identity(Some(42), Some(""), false));
-        assert!(!client_has_identity(Some(42), Some(" \t"), false));
-        assert!(client_has_identity(Some(42), Some("browser"), false));
+    fn an_inventory_takes_every_managed_window() {
+        let unread = || -> Result<bool> { panic!("an inventory reads no identity") };
+        assert!(walk_takes_client(true, true, unread).unwrap());
+        assert!(!walk_takes_client(false, true, unread).unwrap());
+        assert!(!walk_takes_client(true, false, || Ok(false)).unwrap());
+        assert!(walk_takes_client(true, false, || Ok(true)).unwrap());
+        assert!(!walk_takes_client(false, false, || Ok(true)).unwrap());
     }
 
-    /// The window inventory takes the untitled main window a dialog sits on.
     #[test]
-    fn an_inventory_client_needs_only_a_pid() {
-        assert!(client_has_identity(Some(42), None, true));
-        assert!(client_has_identity(Some(42), Some(""), true));
-        assert!(!client_has_identity(None, Some("browser"), true));
+    fn clients_require_pid_and_nonblank_title() {
+        assert!(!client_has_identity(None, "browser"));
+        assert!(!client_has_identity(Some(42), ""));
+        assert!(!client_has_identity(Some(42), " \t"));
+        assert!(client_has_identity(Some(42), "browser"));
     }
 
     #[test]

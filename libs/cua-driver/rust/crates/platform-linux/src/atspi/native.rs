@@ -1499,7 +1499,10 @@ async fn resolve_window_frame(
         }
     }
     // Untitled windows count: an unlisted main window can own the frame.
-    let siblings = crate::x11::window_inventory(pid);
+    let Some(siblings) = crate::x11::window_inventory(pid) else {
+        dlog!("could not list pid {pid}'s windows; xid {xid} stays application-scoped");
+        return None;
+    };
     let resolved = correlate_frame_to_window(&candidates, &window, &siblings);
     if resolved.is_none() {
         dlog!(
@@ -7671,6 +7674,7 @@ pub(crate) fn lone_top_level_renders(
 /// [`x11_app_tree_is_window`] for window `xid` of `pid`, read from the server.
 fn x11_app_tree_proves_window(pid: u32, xid: u64) -> bool {
     let pid_windows: Vec<u64> = crate::x11::window_inventory(pid)
+        .unwrap_or_default()
         .into_iter()
         .map(|window| window.xid)
         .collect();

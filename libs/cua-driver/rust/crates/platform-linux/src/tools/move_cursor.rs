@@ -65,13 +65,7 @@ impl Tool for MoveCursorTool {
             let (x, y) = (input.x, input.y);
             let xi = x.round() as i32;
             let yi = y.round() as i32;
-            let wayland = crate::wayland::is_wayland();
-            let transport = if wayland {
-                ActionTransport::LinuxWaylandVirtualPointer
-            } else {
-                ActionTransport::LinuxXTest
-            };
-            let result = if wayland {
+            let result = if crate::wayland::is_wayland() {
                 spawn_blocking_bounded("move_cursor", foreground_budget(0), move || {
                     let space = crate::wayland::DesktopInputSpace::current()?;
                     crate::wayland::move_cursor_desktop(&space, xi, yi)
@@ -80,11 +74,12 @@ impl Tool for MoveCursorTool {
             } else {
                 spawn_blocking_bounded("move_cursor", foreground_budget(0), move || {
                     crate::input::send_move_xtest_desktop(xi, yi)
+                        .map(|()| ActionTransport::LinuxXTest)
                 })
                 .await
             };
             return match result {
-                Ok(Ok(())) => {
+                Ok(Ok(transport)) => {
                     ToolResult::text(format!("Moved the real desktop pointer to ({xi}, {yi})."))
                         .with_action_record(ActionExecutionRecord::cursor_move(transport, &args))
                 }

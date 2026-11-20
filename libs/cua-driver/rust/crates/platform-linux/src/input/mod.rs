@@ -5211,6 +5211,8 @@ mod caps_lock_tests {
     use std::process::{Command, Stdio};
     use x11rb::protocol::xtest::ConnectionExt as _;
     use x11rb::protocol::Event;
+    use x11rb::reexports::x11rb_protocol::parse_display::ConnectAddress;
+    use x11rb::rust_connection::DefaultStream;
 
     struct Server(std::process::Child);
     impl Drop for Server {
@@ -5244,7 +5246,13 @@ mod caps_lock_tests {
         BufReader::new(server.0.stdout.take().unwrap())
             .read_line(&mut number)
             .unwrap();
-        let (conn, screen) = RustConnection::connect(Some(&format!(":{}", number.trim()))).unwrap();
+        // Xvfb runs without access control, so connect with no auth rather
+        // than reading the host's XAUTHORITY.
+        let address = ConnectAddress::Socket(format!("/tmp/.X11-unix/X{}", number.trim()));
+        let (stream, _) = DefaultStream::connect(&address).unwrap();
+        let screen = 0;
+        let conn = RustConnection::connect_to_stream_with_auth_info(stream, screen, vec![], vec![])
+            .unwrap();
         assert!(
             conn.xkb_use_extension(1, 0)
                 .unwrap()

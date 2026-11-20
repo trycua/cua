@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Prove the person gave no physical input across one short desktop
 //! transaction, using `ext-idle-notify-v1` on the person's own seat.
 //!

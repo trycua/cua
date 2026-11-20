@@ -1533,8 +1533,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
     ) -> Option<Box<dyn Send>> {
         // Hyprland's focus-on-activate lets Chromium's own consent prompt
         // pull focus and workspace although the driver sends no input.
-        if std::env::var_os("WAYLAND_DISPLAY").is_none() || !crate::wayland::hyprland::is_session()
-        {
+        if !crate::wayland::is_wayland() || !crate::wayland::hyprland::is_session() {
             return None;
         }
         let guard = crate::browser_setup_ui::FocusRestore::guard_consent_prompt(

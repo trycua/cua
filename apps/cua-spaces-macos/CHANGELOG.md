@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.39.6](https://github.com/trycua/cua/compare/cua-spaces-v0.39.5...cua-spaces-v0.39.6) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** js security bumps (52 Dependabot alerts) ([#8313](https://github.com/trycua/cua/issues/8313)) ([38d718e](https://github.com/trycua/cua/commit/38d718e66565ec7a4490ff9dd63caee39ff157a2))
+
 ## [0.39.5](https://github.com/trycua/cua/compare/cua-spaces-v0.39.4...cua-spaces-v0.39.5) (2026-11-20)
 
 

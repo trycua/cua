@@ -17,10 +17,11 @@
 \*                 never reads CLOSED_TRANSPORTS for a label with no tombstone)
 EXTENDS Naturals
 CONSTANTS RefuseClosed
-VARIABLES rec, tomb, cleanup, aClosed, aStep, scanHit, aMarked, aLate, bOutcome, lateBound
-vars == <<rec, tomb, cleanup, aClosed, aStep, scanHit, aMarked, aLate, bOutcome, lateBound>>
+VARIABLES rec, tomb, tombIdle, cleanup, aClosed, aStep, scanHit, aMarked, aLate, bOutcome, lateBound
+vars == <<rec, tomb, tombIdle, cleanup, aClosed, aStep, scanHit, aMarked, aLate, bOutcome, lateBound>>
 \* rec: owner of the live record on L: "none" | "A" | "B"
 \* tomb: owner named by L's tombstone: "none" | "A" | "B"
+\* tombIdle: the tombstone is an idle end's (the episode is dormant).
 \* cleanup: the tombstoned episode's cleanup hooks have not all finished.
 \* aClosed: A's transport has closed. aMarked: A is in CLOSED_TRANSPORTS.
 \* aStep: end_sessions_for_owner(A): "open" | "scanned" | "ended" | "done"
@@ -28,13 +29,13 @@ vars == <<rec, tomb, cleanup, aClosed, aStep, scanHit, aMarked, aLate, bOutcome,
 \* aLate: "none" | "sent" (a request from A is in flight to the daemon) | "done"
 \* bOutcome: "none" | "ok" | "refused"
 
-Init == /\ rec = "none" /\ tomb = "none" /\ cleanup = FALSE /\ aClosed = FALSE /\ aStep = "open"
+Init == /\ rec = "none" /\ tomb = "none" /\ tombIdle = FALSE /\ cleanup = FALSE /\ aClosed = FALSE /\ aStep = "open"
         /\ scanHit = FALSE /\ aMarked = FALSE
         /\ aLate = "none" /\ bOutcome = "none" /\ lateBound = FALSE
 
 \* A's agent sends a request on L before its transport closes.
 ASends == /\ ~aClosed /\ aLate = "none" /\ aLate' = "sent"
-          /\ UNCHANGED <<rec, tomb, cleanup, aClosed, aStep, scanHit, aMarked, bOutcome, lateBound>>
+          /\ UNCHANGED <<rec, tomb, tombIdle, cleanup, aClosed, aStep, scanHit, aMarked, bOutcome, lateBound>>
 \* begin_session_dispatch_inner (:482-541) for A's request, in one critical
 \* section over ended -> records. A tombstone naming A refuses (:503-511);
 \* otherwise the record is created or reused for A.
@@ -43,25 +44,32 @@ AAdmitted ==
   /\ IF tomb = "none" /\ rec \in {"none", "A"} /\ ~(RefuseClosed /\ aClosed)
      THEN rec' = "A" /\ lateBound' = (lateBound \/ aClosed)
      ELSE UNCHANGED <<rec, lateBound>>
-  /\ UNCHANGED <<tomb, cleanup, aClosed, aStep, scanHit, aMarked, bOutcome>>
+  /\ UNCHANGED <<tomb, tombIdle, cleanup, aClosed, aStep, scanHit, aMarked, bOutcome>>
 \* The control connection EOFs and end_sessions_for_owner(A) runs in three
 \* critical sections; a call can be admitted between any two of them.
-\* 1. The scan (:870-877) lists A's records under the records lock. With
-\*    RefuseClosed, A is recorded closed here, before anything ends.
+\* 1. The scan lists A's live records (:870-876) and its dormant, idle-ended
+\*    episodes (:877, dormant_sessions :1205); either way an episode that
+\*    turns dormant in between is listed. With RefuseClosed, A is recorded
+\*    closed here, before anything ends.
 AClosed ==
   /\ ~aClosed /\ aClosed' = TRUE /\ aStep' = "scanned"
-  /\ scanHit' = (rec = "A")
+  /\ scanHit' = (rec = "A" \/ (tomb = "A" /\ tombIdle))
   /\ aMarked' = (aMarked \/ RefuseClosed)
-  /\ UNCHANGED <<rec, tomb, cleanup, aLate, bOutcome, lateBound>>
+  /\ UNCHANGED <<rec, tomb, tombIdle, cleanup, aLate, bOutcome, lateBound>>
 \* 2. Each listed episode ends, bound to A (:880-882): an episode A no longer
 \*    holds is left alone. mark_session_ended publishes the tombstone and
 \*    registers its cleanup in one step (:1477-1566). An end that a running
 \*    call defers (:1509-1515) publishes them when that call exits; the mark
-\*    below sees the live record either way, so the model ends it here.
+\*    below sees the live record either way, so the model ends it here. A
+\*    dormant episode ends terminally after its idle end (TerminalAfterIdle
+\*    :1521-1528), which registers its cleanup again.
 AEnds ==
   /\ aStep = "scanned" /\ aStep' = "ended"
-  /\ IF scanHit /\ rec = "A" THEN rec' = "none" /\ tomb' = "A" /\ cleanup' = TRUE
-                              ELSE UNCHANGED <<rec, tomb, cleanup>>
+  /\ IF scanHit /\ rec = "A"
+       THEN rec' = "none" /\ tomb' = "A" /\ tombIdle' = FALSE /\ cleanup' = TRUE
+     ELSE IF scanHit /\ tomb = "A" /\ tombIdle
+       THEN tombIdle' = FALSE /\ cleanup' = TRUE /\ UNCHANGED <<rec, tomb>>
+     ELSE UNCHANGED <<rec, tomb, tombIdle, cleanup>>
   /\ UNCHANGED <<aClosed, scanHit, aMarked, aLate, bOutcome, lateBound>>
 \* 3. A is marked closed only when a label still names it (:886-895,
 \*    names_labels_of :1166), live or tombstoned. A record bound to A after
@@ -69,14 +77,14 @@ AEnds ==
 AMarks ==
   /\ aStep = "ended" /\ aStep' = "done"
   /\ aMarked' = (aMarked \/ rec = "A" \/ tomb = "A")
-  /\ UNCHANGED <<rec, tomb, cleanup, aClosed, scanHit, aLate, bOutcome, lateBound>>
+  /\ UNCHANGED <<rec, tomb, tombIdle, cleanup, aClosed, scanHit, aLate, bOutcome, lateBound>>
 \* The idle sweep ends a live record nobody uses (evict_idle_matching :2051).
-Sweep == /\ rec # "none" /\ tomb' = rec /\ rec' = "none" /\ cleanup' = TRUE
+Sweep == /\ rec # "none" /\ tomb' = rec /\ tombIdle' = TRUE /\ rec' = "none" /\ cleanup' = TRUE
          /\ UNCHANGED <<aClosed, aStep, scanHit, aMarked, aLate, bOutcome, lateBound>>
 \* The last cleanup hook finishes and retry_session_cleanup removes the
 \* episode's progress (:1669-1675).
 CleanupDone == /\ cleanup /\ cleanup' = FALSE
-               /\ UNCHANGED <<rec, tomb, aClosed, aStep, scanHit, aMarked, aLate, bOutcome, lateBound>>
+               /\ UNCHANGED <<rec, tomb, tombIdle, aClosed, aStep, scanHit, aMarked, aLate, bOutcome, lateBound>>
 \* B's agent calls start_session or a tool on L, after A has closed:
 \* activate_or_revive_session_for_owner / begin_session_dispatch_inner.
 \* A tombstone naming another transport is claimable only when released_to
@@ -85,12 +93,12 @@ CleanupDone == /\ cleanup /\ cleanup' = FALSE
 BClaims ==
   /\ aClosed /\ bOutcome = "none" /\ rec # "B"
   /\ IF rec = "none" /\ (tomb = "none" \/ (tomb = "A" /\ aMarked /\ ~cleanup))
-     THEN rec' = "B" /\ tomb' = "none" /\ bOutcome' = "ok"
-     ELSE bOutcome' = "refused" /\ UNCHANGED <<rec, tomb>>
+     THEN rec' = "B" /\ tomb' = "none" /\ tombIdle' = FALSE /\ bOutcome' = "ok"
+     ELSE bOutcome' = "refused" /\ UNCHANGED <<rec, tomb, tombIdle>>
   /\ UNCHANGED <<cleanup, aClosed, aStep, scanHit, aMarked, aLate, lateBound>>
 \* B gives up and retries later.
 BRetries == /\ bOutcome = "refused" /\ bOutcome' = "none"
-            /\ UNCHANGED <<rec, tomb, cleanup, aClosed, aStep, scanHit, aMarked, aLate, lateBound>>
+            /\ UNCHANGED <<rec, tomb, tombIdle, cleanup, aClosed, aStep, scanHit, aMarked, aLate, lateBound>>
 Done == aStep = "done" /\ aLate # "sent" /\ bOutcome = "ok" /\ UNCHANGED vars
 
 Next == ASends \/ AAdmitted \/ AClosed \/ AEnds \/ AMarks \/ Sweep \/ CleanupDone \/ BClaims \/ BRetries \/ Done

@@ -495,13 +495,18 @@ impl ActionExecutionRecord {
         if !is_action_tool(tool_name) {
             return None;
         }
+        let effect = legacy_effect(structured);
+        // Every successful `move_cursor` producer attaches its own record;
+        // only its refusals still come through here.
+        if tool_name == "move_cursor" && effect != ActionEffect::Refused {
+            return None;
+        }
         let requested_delivery = requested_delivery(tool_name, args);
         let raw_path = structured
             .get("path")
             .or_else(|| structured.get("route"))
             .and_then(serde_json::Value::as_str);
         let transport = transport_from_legacy(tool_name, args, raw_path)?;
-        let effect = legacy_effect(structured);
         let actual_delivery =
             actual_delivery_from_legacy(tool_name, args, structured, raw_path, effect);
 
@@ -1657,14 +1662,16 @@ mod tests {
     /// the dispatch seam instead of publishing a guessed route.
     #[test]
     fn move_cursor_is_not_interpreted_from_legacy_payloads() {
-        assert_eq!(
-            ActionExecutionRecord::from_legacy(
-                "move_cursor",
-                &serde_json::json!({"x": 1, "y": 1}),
-                &serde_json::Value::Null,
-            ),
-            None
-        );
+        for args in [
+            serde_json::json!({"x": 1, "y": 1}),
+            serde_json::json!({"x": 1, "y": 1, "scope": "desktop"}),
+        ] {
+            assert_eq!(
+                ActionExecutionRecord::from_legacy("move_cursor", &args, &serde_json::Value::Null),
+                None,
+                "{args}"
+            );
+        }
     }
 
     #[test]

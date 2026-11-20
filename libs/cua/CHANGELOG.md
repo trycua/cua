@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.29.2](https://github.com/trycua/cua/compare/cua-sdk-v0.29.1...cua-sdk-v0.29.2) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** js security bumps (52 Dependabot alerts) ([#8313](https://github.com/trycua/cua/issues/8313)) ([38d718e](https://github.com/trycua/cua/commit/38d718e66565ec7a4490ff9dd63caee39ff157a2))
+
 ## [0.29.1](https://github.com/trycua/cua/compare/cua-sdk-v0.29.0...cua-sdk-v0.29.1) (2026-11-20)
 
 

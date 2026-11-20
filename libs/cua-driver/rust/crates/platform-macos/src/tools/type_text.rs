@@ -597,6 +597,7 @@ impl Tool for TypeTextTool {
                 })
             }
             Ok(Err(e)) => crate::security_prompt::tool_result(&e)
+                .or_else(|| super::key_focus_unconfirmed_error(&e))
                 .or_else(|| {
                     window_id.and_then(|wid| {
                         super::element_disabled_error(pid, wid, &e, delivery_mode.is_foreground())
@@ -1268,30 +1269,6 @@ fn await_front_settled(pid: i32, window_id: u32) -> bool {
 const FRONT_SETTLE_STABLE: std::time::Duration = std::time::Duration::from_millis(250);
 const FRONT_SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1500);
 
-/// Focus the target element so the keystrokes land in IT. Critical in
-/// foreground mode: a freshly-fronted window's keyboard focus may be on the
-/// search box or nowhere, so without this the text goes into the void (or the
-/// wrong field). AXFocused is best-effort — harmless when unsupported.
-///
-/// Ordering matters as much as the write itself. The foreground wrapper has
-/// already waited for the activation to land, so AppKit has installed the
-/// window's remembered first responder by now and this write lands *after*
-/// it rather than being clobbered by it. Re-applying once on a failed
-/// read-back covers apps that install their responder slightly late.
-fn focus_target_element(
-    pid: i32,
-    element_ptr_and_idx: Option<(usize, Option<usize>)>,
-    settle_ms: u64,
-) {
-    if let Some((ptr, _)) = element_ptr_and_idx {
-        let _ = crate::input::ax_actions::focus_element(ptr);
-        if settle_ms > 0 && !crate::input::ax_actions::is_element_focused(pid, ptr) {
-            std::thread::sleep(FOCUS_REAPPLY_DELAY);
-            let _ = crate::input::ax_actions::focus_element(ptr);
-        }
-    }
-}
-
 /// Type via CGEvent keystrokes at the current insertion point, then verify by
 /// read-back. `type_text` is deliberately non-idempotent: it must never clear
 /// an existing value merely because AX cannot read that value back.
@@ -1304,7 +1281,23 @@ fn cgevent_type_verified(
     settle_ms: u64,
     window_id: Option<u32>,
 ) -> anyhow::Result<(bool, Option<usize>)> {
-    focus_target_element(pid, element_ptr_and_idx, settle_ms);
+    // Focus the target element so the keystrokes land in IT. Critical in
+    // foreground mode: a freshly-fronted window's keyboard focus may be on the
+    // search box or nowhere, so without this the text goes into the void (or the
+    // wrong field). AXFocused is best-effort — harmless when unsupported.
+    //
+    // Ordering matters as much as the write itself. `with_foreground_assist` has
+    // already waited for the activation to land, so AppKit has installed the
+    // window's remembered first responder by now and this write lands *after*
+    // it rather than being clobbered by it. Re-applying once on a failed
+    // read-back covers apps that install their responder slightly late.
+    if let Some((ptr, _)) = element_ptr_and_idx {
+        let _ = crate::input::ax_actions::focus_element(ptr);
+        if settle_ms > 0 && !crate::input::ax_actions::is_element_focused(pid, ptr) {
+            std::thread::sleep(FOCUS_REAPPLY_DELAY);
+            let _ = crate::input::ax_actions::focus_element(ptr);
+        }
+    }
     // First-keystroke settle (foreground rung only — caller passes `settle_ms > 0`).
     // Even once the window is front and the element focused, the surface isn't
     // ready to accept input for a few tens of ms, so the FIRST synthesized
@@ -1571,13 +1564,25 @@ fn type_text_in_key_window(
                     wid,
                     || {
                         ensure_enabled()?;
-                        focus_target_element(pid, element_ptr_and_idx, foreground_settle_ms);
-                        if foreground_settle_ms > 0 {
-                            std::thread::sleep(std::time::Duration::from_millis(
-                                foreground_settle_ms,
-                            ));
-                        }
-                        crate::input::keyboard::type_text_physical_global(prompt, text, delay_ms)
+                        // Physical keys reach whichever field has focus, so an
+                        // addressed field must be confirmed focused first.
+                        crate::input::ax_actions::with_confirmed_key_focus(
+                            element_ptr_and_idx.map(|(ptr, _)| ptr),
+                            crate::input::ax_actions::focus_element,
+                            |target| {
+                                crate::input::ax_actions::element_has_keyboard_focus(pid, target)
+                            },
+                            || {
+                                if foreground_settle_ms > 0 {
+                                    std::thread::sleep(std::time::Duration::from_millis(
+                                        foreground_settle_ms,
+                                    ));
+                                }
+                                crate::input::keyboard::type_text_physical_global(
+                                    prompt, text, delay_ms,
+                                )
+                            },
+                        )
                     },
                 )?;
                 ((false, None), true)

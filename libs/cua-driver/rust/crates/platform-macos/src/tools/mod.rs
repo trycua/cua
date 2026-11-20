@@ -338,6 +338,23 @@ pub(crate) fn element_disabled_error(
     ))
 }
 
+/// The `target_focus_unconfirmed` refusal for a dispatch error that is a
+/// [`crate::input::ax_actions::KeyFocusUnconfirmed`], or `None` for any other
+/// error.
+pub(crate) fn key_focus_unconfirmed_error(
+    error: &anyhow::Error,
+) -> Option<cua_driver_core::protocol::ToolResult> {
+    error.downcast_ref::<crate::input::ax_actions::KeyFocusUnconfirmed>()?;
+    Some(
+        cua_driver_core::protocol::ToolResult::error(error.to_string()).with_structured(
+            serde_json::json!({
+                "code": "target_focus_unconfirmed", "effect": "refused", "dispatched": false,
+                "message": error.to_string(),
+            }),
+        ),
+    )
+}
+
 fn disabled_refusal(
     pid: i32,
     window_id: u32,

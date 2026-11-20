@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.55.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.55.1...cua-driver-rs-v0.55.2) (2026-11-20)
+
+
+### Bug Fixes
+
+* **cua-driver:** match running Windows Store apps to their bundle_id grant ([#8127](https://github.com/trycua/cua/issues/8127)) ([3aefd3b](https://github.com/trycua/cua/commit/3aefd3b5790c0f51bad08d0d1230485e8fc5b9d7))
+
 ## [0.55.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.55.0...cua-driver-rs-v0.55.1) (2026-11-20)
 
 

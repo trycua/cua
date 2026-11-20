@@ -463,7 +463,7 @@ requires-dist = [
     { name = "accelerate", marker = "extra == 'moondream3'" },
     { name = "accelerate", marker = "extra == 'opencua-hf'" },
     { name = "accelerate", marker = "extra == 'uitars-hf'" },
-    { name = "aiohttp", specifier = ">=3.9.3" },
+    { name = "aiohttp", specifier = ">=3.14.4" },
     { name = "anyio", specifier = ">=4.4.1" },
     { name = "blobfile", marker = "extra == 'all'", specifier = ">=3.0.0" },
     { name = "blobfile", marker = "extra == 'opencua-hf'", specifier = ">=3.0.0" },
@@ -541,7 +541,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiohttp", specifier = ">=3.9.0" },
+    { name = "aiohttp", specifier = ">=3.14.4" },
     { name = "anthropic", marker = "extra == 'agents'", specifier = ">=0.26.0" },
     { name = "beautifulsoup4", specifier = ">=4.14.2" },
     { name = "beautifulsoup4", marker = "extra == 'osworld'", specifier = ">=4.12" },
@@ -639,7 +639,7 @@ torch = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiohttp", specifier = ">=3.9.0" },
+    { name = "aiohttp", specifier = ">=3.14.4" },
     { name = "cua-bench", editable = "../cua-bench" },
     { name = "fastapi", specifier = ">=0.100.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },

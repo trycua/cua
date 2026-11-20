@@ -9,6 +9,7 @@
 //! AppKit window frames use a bottom-left origin. Keeping both frames here
 //! prevents either convention from leaking into cursor state or rendering.
 
+use cursor_overlay::{ScreenFrame, SurfaceGeometry};
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 
 pub(crate) type DisplayId = u32;
@@ -35,6 +36,14 @@ impl DisplayGeometry {
         (
             (self.width * scale).round().max(1.0) as u32,
             (self.height * scale).round().max(1.0) as u32,
+        )
+    }
+
+    /// The overlay surface that covers this display.
+    pub(crate) fn surface_geometry(self) -> SurfaceGeometry {
+        SurfaceGeometry::new(
+            ScreenFrame::new(self.x, self.y, self.width, self.height),
+            self.backing_scale,
         )
     }
 

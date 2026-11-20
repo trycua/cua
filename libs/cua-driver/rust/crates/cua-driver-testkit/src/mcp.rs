@@ -371,7 +371,7 @@ impl McpDriver {
     /// Configure the per-turn application-state budget before behavioral capture starts.
     pub fn set_behavior_recording_state_timeout_ms(&mut self, timeout_ms: u64) {
         assert!(
-            !self.recording_started,
+            self.behavior_video == BehaviorVideo::NotStarted,
             "configure the state timeout before behavioral recording starts"
         );
         self.recording_state_timeout_ms = Some(timeout_ms);

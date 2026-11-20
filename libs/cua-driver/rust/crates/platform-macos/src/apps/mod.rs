@@ -387,10 +387,10 @@ fn enumerate_running_apps() -> (Vec<AppInfo>, RunningAppStates) {
 /// Replaces a prior `open -g -b` shell-out. The NSWorkspace path:
 ///   * honors `activates = false` so LaunchServices doesn't bring the
 ///     target frontmost,
-///   * attaches an `aevt/oapp` AppleEvent descriptor so cold-launched
-///     apps (Calculator, etc) get their window-creation handler invoked
-///     reliably (the shell-out path silently skipped this for state-
-///     restored apps),
+///   * attaches an `aevt/oapp` descriptor for a cold launch or an
+///     `aevt/rapp` descriptor when the target is already running, so the
+///     app's window-creation handler is invoked reliably without relying on
+///     activation,
 ///   * returns the actual `NSRunningApplication.processIdentifier`
 ///     without needing a separate `list_running_apps` lookup, so we
 ///     can't race a same-bundle-id helper that happens to be running.

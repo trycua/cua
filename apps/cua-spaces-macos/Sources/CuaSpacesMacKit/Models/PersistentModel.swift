@@ -353,6 +353,19 @@ public final class PersistentModel {
         await pollNotifications()
     }
 
+    /// Deletes these entries for good; none deletes nothing, never all.
+    public func deleteNotifications(ids: [String]) async {
+        guard !ids.isEmpty else { return }
+        _ = try? await call("notifications_delete", ["ids": ids])
+        await pollNotifications()
+    }
+
+    /// Deletes every entry.
+    public func deleteAllNotifications() async {
+        _ = try? await call("notifications_delete", ["ids": [String](), "all": true])
+        await pollNotifications()
+    }
+
     /// The feed as the web page reads it (`NotificationInput`): the core's
     /// entries, each with the Space it is about when it has one.
     func feedRows() -> [[String: Any]] {

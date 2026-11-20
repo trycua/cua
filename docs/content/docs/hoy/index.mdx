@@ -27,12 +27,15 @@ is always the same:
 1. **Prepare macOS once: make an image.** `hoy image create` downloads Apple's
    macOS from Apple, installs it, sets it up (a user, ssh, Hoy's guest agent)
    and stores the result as an image. You do it once per macOS version.
-2. **Create a VM from the image.** `hoy create demo --image macos-27.2.1`
+2. **Create a VM from the image.** `hoy create demo --image macos-27.2.1 --window`
    takes seconds and almost no disk, because the VM is a clone of the image.
-   `create` does not start the VM. It is listed as stopped.
+   `create` does not start the VM. It is listed as stopped. `--window` gives
+   the VM a desktop you can open. You choose it when you create the VM; it can't
+   be added later.
 3. **Start it.** `hoy start demo --wait ready` boots the VM and waits until it
    answers.
-4. **Open its desktop, or run commands in it.** `hoy vnc demo` opens the desktop.
+4. **Open its desktop, or run commands in it.** `hoy vnc demo` opens the desktop
+   of a VM created with `--window`.
    `hoy exec demo -- sw_vers` and `hoy ssh demo` use the shell.
 
 A plain image name means the newest image with that name that passed its smoke

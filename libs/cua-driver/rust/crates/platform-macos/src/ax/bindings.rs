@@ -15,7 +15,7 @@
 
 use core_foundation::{
     array::CFArrayRef,
-    base::{CFRelease, CFRetain, CFTypeID, CFTypeRef},
+    base::{CFIndex, CFRelease, CFRetain, CFTypeID, CFTypeRef},
     string::CFStringRef,
 };
 use std::os::raw::{c_int, c_void};
@@ -67,6 +67,13 @@ extern "C" {
         element: AXUIElementRef,
         attribute: CFStringRef,
         value: *mut CFTypeRef,
+    ) -> AXError;
+    pub fn AXUIElementCopyAttributeValues(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        index: CFIndex,
+        max_values: CFIndex,
+        values: *mut CFArrayRef,
     ) -> AXError;
     pub fn AXUIElementCopyAttributeNames(
         element: AXUIElementRef,
@@ -731,6 +738,34 @@ pub unsafe fn copy_children(element: AXUIElementRef) -> Vec<AXUIElementRef> {
     if err != kAXErrorSuccess || value.is_null() {
         return vec![];
     }
+    retained_elements(value)
+}
+
+/// Get at most the first `max` children of an AX element. Only those are
+/// read from the application.
+///
+/// # Safety
+///
+/// `element` must be valid, and the caller must release every returned element.
+pub unsafe fn copy_children_limited(element: AXUIElementRef, max: usize) -> Vec<AXUIElementRef> {
+    let attr = CFStr::new("AXChildren");
+    let mut value: CFArrayRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValues(
+        element,
+        attr.as_concrete_TypeRef(),
+        0,
+        CFIndex::try_from(max).unwrap_or(CFIndex::MAX),
+        &mut value,
+    );
+    if err != kAXErrorSuccess || value.is_null() {
+        return vec![];
+    }
+    retained_elements(value as CFTypeRef)
+}
+
+/// The AX elements of a +1 `CFArray`, each retained for the caller. Consumes
+/// `value`; anything else is released and yields nothing.
+unsafe fn retained_elements(value: CFTypeRef) -> Vec<AXUIElementRef> {
     let cf_array_type_id = CFArray::<CFTypeRef>::type_id();
     if core_foundation::base::CFGetTypeID(value) != cf_array_type_id {
         CFRelease(value);
@@ -773,6 +808,22 @@ pub unsafe fn copy_element_attr(
         return None;
     }
     Some(value as AXUIElementRef)
+}
+
+/// Whether `element` answers a read of `attr_name` with no value or as
+/// unsupported. A failed read is not an absence.
+///
+/// # Safety
+///
+/// `element` must be a valid `AXUIElementRef`.
+pub unsafe fn attr_is_absent(element: AXUIElementRef, attr_name: &str) -> bool {
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if !value.is_null() {
+        CFRelease(value);
+    }
+    err == kAXErrorNoValue || err == kAXErrorAttributeUnsupported
 }
 
 /// Whether `element` no longer exists: a read answers `kAXErrorInvalidUIElement`.
@@ -893,6 +944,10 @@ pub enum AccessibilityOptIn {
     /// `AXManualAccessibility` is unsupported and the app is neither Chromium
     /// nor Electron: nothing was written, and nothing needs enabling.
     NotNeeded,
+    /// The app rejected the `AXEnhancedUserInterface` write, yet reads it back as set.
+    Deferred,
+    /// The app rejected both attributes.
+    Refused,
     NotAccepted,
 }
 
@@ -917,12 +972,14 @@ pub unsafe fn enable_chromium_accessibility(
     choose_accessibility_opt_in(
         |attr| set_bool_attr_true(app_element, attr),
         is_chromium_family,
+        |attr| copy_bool_attr(app_element, attr) == Some(true),
     )
 }
 
 fn choose_accessibility_opt_in(
     mut set_true: impl FnMut(&str) -> AXError,
     is_chromium_family: impl FnOnce() -> bool,
+    reads_true: impl FnOnce(&str) -> bool,
 ) -> AccessibilityOptIn {
     let manual = set_true("AXManualAccessibility");
     if manual == kAXErrorSuccess {
@@ -939,8 +996,10 @@ fn choose_accessibility_opt_in(
     }
     if set_true("AXEnhancedUserInterface") == kAXErrorSuccess {
         AccessibilityOptIn::EnhancedUserInterface
+    } else if reads_true("AXEnhancedUserInterface") {
+        AccessibilityOptIn::Deferred
     } else {
-        AccessibilityOptIn::NotAccepted
+        AccessibilityOptIn::Refused
     }
 }
 
@@ -1260,6 +1319,7 @@ mod tests {
                     }
                 },
                 || chromium,
+                |_| false,
             );
             (opt_in, written)
         };

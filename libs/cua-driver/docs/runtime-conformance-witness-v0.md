@@ -58,6 +58,9 @@ tool the portable contract publishes as acting, whatever its flag says, and a
 probe naming a tool outside the portable contract, since nothing published
 says whether a runtime-only tool acts.
 
+It also refuses a probe that claims a capability its tool does not publish in
+the portable contract.
+
 This boundary also keeps CI and downstream fleet qualification safe: a default
 conformance job may inspect capabilities, but it cannot interact with a user's
 desktop.

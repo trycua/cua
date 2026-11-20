@@ -194,6 +194,16 @@ impl RuntimeWitnessV0 {
                     probe.tool
                 ));
             }
+            if let Some(unpublished) = probe
+                .capabilities
+                .iter()
+                .find(|capability| !contract.capabilities.contains(capability))
+            {
+                return Err(format!(
+                    "runtime witness probe {} claims capability {} it does not publish",
+                    probe.tool, unpublished
+                ));
+            }
             match probe.outcome {
                 ProbeOutcome::Pass => {
                     if probe.output_schema_valid != Some(true) {
@@ -332,6 +342,29 @@ mod tests {
         assert_eq!(
             witness.validate(),
             Err("runtime witness v0 refuses acting probe click".into())
+        );
+    }
+
+    #[test]
+    fn v0_refuses_capability_the_tool_does_not_publish() {
+        let mut probe = passing_probe();
+        probe.capabilities = vec!["clipboard.read".into()];
+        let witness = RuntimeWitnessV0::new(
+            "0.14.0",
+            None,
+            Platform::Linux,
+            WitnessRuntimeHost::Daemon,
+            true,
+            WitnessHealthOverall::Unknown,
+            false,
+            vec![probe],
+        );
+        assert_eq!(
+            witness.validate(),
+            Err(
+                "runtime witness probe get_screen_size claims capability clipboard.read it does not publish"
+                    .into()
+            )
         );
     }
 

@@ -71,7 +71,7 @@ the input, and restores the previous foreground.
 Empirical: pixel-clicks via `delivery_mode:"background"` against the UWP
 Calculator on Win11 (Number-pad buttons + operators) consistently
 resolve through `try_invoke_in_window_at_point` and produce
-`"✅ Performed UIA Invoke at (sx,sy) for pid X."` with zero visible
+`"Performed UIA Invoke at (sx,sy) for pid X."` with zero visible
 flash. `delivery_mode:"foreground"` on the same coords also works but
 flashes the Calculator window foreground for ~40 ms: it's the
 costlier path; only use it for surfaces with no UIA peer.

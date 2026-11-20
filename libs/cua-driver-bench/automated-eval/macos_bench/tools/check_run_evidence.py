@@ -21,10 +21,12 @@ CUA_ARMS = (
     "cc-cua-driver-main",
     "cc-cua-driver-main-skill",
     "cc-cua-driver-script",
+    "cc-cua-driver-script-only",
     "pi-cua-driver",
     "pi-cua-driver-main",
     "pi-cua-driver-main-skill",
     "pi-cua-driver-script",
+    "pi-cua-driver-script-only",
 )
 
 

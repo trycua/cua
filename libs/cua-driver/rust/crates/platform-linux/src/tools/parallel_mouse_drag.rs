@@ -332,7 +332,7 @@ impl Tool for ParallelMouseDragTool {
                     );
                 }
                 ToolResult::text(format!(
-                    "✅ Ran {} MPX drag gesture(s) concurrently.",
+                    "Ran {} MPX drag gesture(s) concurrently.",
                     drags.len()
                 ))
                 .with_structured(json!({"count": drags.len()}))

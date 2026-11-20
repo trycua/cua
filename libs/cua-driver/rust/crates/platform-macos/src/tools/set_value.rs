@@ -295,7 +295,6 @@ impl Tool for SetValueTool {
             }
             Ok(Ok(mut outcome)) => {
                 apply_surface_trust(&mut outcome, ax_echo_surface);
-                apply_verification_label(&mut outcome);
                 let mut msg = outcome.detail;
                 msg.push_str(&changes.result_suffix());
                 let verified = outcome.verified.unwrap_or(false);
@@ -410,14 +409,14 @@ async fn calc_set_value(
         Err(error) => return ToolResult::error(format!("Task error: {error}")),
     };
     let (verified, detail) = match (&target, &shown) {
-        (CalcTarget::NameBox, _) => (true, format!("✅ Went to {address} through the Name Box.")),
+        (CalcTarget::NameBox, _) => (true, format!("Went to {address} through the Name Box.")),
         (CalcTarget::Cell { .. }, Some(Some(shown))) => {
             super::calc_cell::cell_outcome(&address, element_index, &value, shown)
         }
         (CalcTarget::Cell { .. }, _) => (
             false,
             format!(
-                "📨 Typed {value:?} into {address} [{element_index}] through the Name Box and \
+                "Typed {value:?} into {address} [{element_index}] through the Name Box and \
                  keys, but the cell could not be read back. Read the window before relying on it."
             ),
         ),
@@ -552,7 +551,7 @@ fn finder_rename_result(
         .unwrap_or_default();
     match renamed {
         Ok(Ok(new_path)) => ToolResult::text(format!(
-            "✅ Renamed \"{old_name}\" to \"{new_name}\" through Finder's scripting interface, \
+            "Renamed \"{old_name}\" to \"{new_name}\" through Finder's scripting interface, \
              with Finder left in the background (not activated). Verified on disk: {} exists \
              and the old name is gone. Take a fresh get_window_state before addressing the \
              item again.",
@@ -657,14 +656,6 @@ fn apply_surface_trust(outcome: &mut SetValueOutcome, ax_echo_surface: bool) {
             " AXValue read-back is not trusted for web content; verify the \
              renderer via screenshot or use the browser page tools.",
         );
-    }
-}
-
-fn apply_verification_label(outcome: &mut SetValueOutcome) {
-    if outcome.verified != Some(true) {
-        if let Some(rest) = outcome.detail.strip_prefix("✅ Set") {
-            outcome.detail = format!("📨 Sent (unverified){rest}");
-        }
     }
 }
 
@@ -799,7 +790,7 @@ fn set_value_blocking(
             };
             Ok(SetValueOutcome {
                 detail: format!(
-                    "✅ Set AXValue on [{element_index}] {role}{}.{suffix}{}",
+                    "Set AXValue on [{element_index}] {role}{}.{suffix}{}",
                     if focused_retry {
                         " after focusing it (the first write was not applied)"
                     } else {
@@ -824,7 +815,7 @@ fn set_value_blocking(
                     classify_write(before.as_deref(), after.as_deref(), value, true);
                 Ok(SetValueOutcome {
                     detail: format!(
-                        "✅ Set AXValue on [{element_index}] {role} via AXIncrement/AXDecrement stepping."
+                        "Set AXValue on [{element_index}] {role} via AXIncrement/AXDecrement stepping."
                     ),
                     value: after,
                     verified,
@@ -1271,7 +1262,7 @@ fn select_chromium_popup_by_typeahead(
     let matches = |current: &str| current.trim().to_lowercase() == wanted.to_lowercase();
     if matches(&selected()) {
         return Some(format!(
-            "✅ '{wanted}' is already selected in AXPopUpButton [{element_index}] \
+            "'{wanted}' is already selected in AXPopUpButton [{element_index}] \
              \"{element_title}\"; nothing was changed."
         ));
     }
@@ -1290,7 +1281,7 @@ fn select_chromium_popup_by_typeahead(
         let current = selected();
         if matches(&current) {
             return Some(format!(
-                "✅ Selected '{current}' in AXPopUpButton [{element_index}] \
+                "Selected '{current}' in AXPopUpButton [{element_index}] \
                  \"{element_title}\" by typing its label into the focused control \
                  (the menu was not opened, so the window order did not change)."
             ));
@@ -1424,7 +1415,7 @@ fn select_popup_option(
                     &option.title
                 };
                 Ok(format!(
-                    "✅ Selected '{label}' in AXPopUpButton [{element_index}] \
+                    "Selected '{label}' in AXPopUpButton [{element_index}] \
                      \"{element_title}\" via AX menu item AXPress{}.",
                     if opened_menu {
                         " (the popup's menu was opened for the selection and closed again)"
@@ -1560,7 +1551,7 @@ fn set_select_via_js(
 
     if let Some(dom_val) = raw.strip_prefix("SET:") {
         Ok(format!(
-            "✅ Set select [{element_index}] '{element_title}' to '{value}' via \
+            "Set select [{element_index}] '{element_title}' to '{value}' via \
              Safari JavaScript (DOM value: \"{dom_val}\")."
         ))
     } else if let Some(available) = raw.strip_prefix("NOTFOUND:") {
@@ -1608,10 +1599,9 @@ fn hex_digit(n: u8) -> char {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_surface_trust, apply_verification_label, calc_cell_record, classify_write,
-        file_name_needs_rename, is_file_name_cell, is_get_info_name_field, not_applied_result,
-        write_not_applied, FieldSettle, SetValueOutcome, FIELD_QUIET, GET_INFO_RENAME_ROUTE,
-        LIST_RENAME_ROUTE,
+        apply_surface_trust, calc_cell_record, classify_write, file_name_needs_rename,
+        is_file_name_cell, is_get_info_name_field, not_applied_result, write_not_applied,
+        FieldSettle, SetValueOutcome, FIELD_QUIET, GET_INFO_RENAME_ROUTE, LIST_RENAME_ROUTE,
     };
     use std::time::Duration;
 
@@ -1921,22 +1911,5 @@ mod tests {
         assert_eq!(outcome.verified, Some(true));
         assert_eq!(outcome.changed, Some(true));
         assert_eq!(outcome.detail, "Set value.");
-    }
-
-    #[test]
-    fn unverified_result_does_not_keep_a_success_checkmark() {
-        let mut outcome = SetValueOutcome {
-            detail: "✅ Set AXValue on [4] AXTextField.".to_owned(),
-            value: None,
-            verified: Some(false),
-            changed: Some(false),
-            not_applied: false,
-            document_edited: None,
-        };
-        apply_verification_label(&mut outcome);
-        assert_eq!(
-            outcome.detail,
-            "📨 Sent (unverified) AXValue on [4] AXTextField."
-        );
     }
 }

@@ -5,7 +5,7 @@
 
 use serde_json::{json, Value};
 
-use crate::protocol::{initialize_result, Request, Response, ResponseBody};
+use crate::protocol::{initialize_result_for, Request, Response, ResponseBody};
 
 pub const MODERN_PROTOCOL_VERSION: &str = "2026-07-28";
 pub const PROTOCOL_VERSION_KEY: &str = "io.modelcontextprotocol/protocolVersion";
@@ -106,14 +106,14 @@ pub fn server_capabilities() -> Value {
 }
 
 /// Methods that do not require platform tool execution, shared by both adapters.
-pub fn handle_metadata_request(req: &Request, id: Value) -> Option<Response> {
+pub fn handle_metadata_request(req: &Request, id: Value, tools_list: &Value) -> Option<Response> {
     match req.method.as_str() {
         "server/discover" => Some(Response::ok(
             id,
             json!({
                 "supportedVersions": [MODERN_PROTOCOL_VERSION],
                 "capabilities": server_capabilities(),
-                "instructions": initialize_result()["instructions"],
+                "instructions": initialize_result_for(tools_list)["instructions"],
             }),
         )),
         "ping" => Some(Response::ok(id, json!({}))),
@@ -279,7 +279,7 @@ mod tests {
         let response = finish_response(
             ProtocolEra::Modern,
             &req.method,
-            handle_metadata_request(&req, json!(1)).unwrap(),
+            handle_metadata_request(&req, json!(1), &json!({"tools": []})).unwrap(),
         );
         let result = serde_json::to_value(response).unwrap()["result"].clone();
         assert_eq!(result["resultType"], "complete");

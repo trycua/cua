@@ -133,6 +133,7 @@ pub mod tool_activity;
 pub mod tool_args;
 pub mod tool_schema;
 pub mod type_pacing;
+pub mod verdict;
 pub mod video;
 pub mod video_ffmpeg;
 pub mod walk_budget;

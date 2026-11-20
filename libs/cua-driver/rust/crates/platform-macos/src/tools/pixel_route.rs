@@ -28,7 +28,7 @@ pub(crate) enum PixelClickRoute {
     /// the global HID event tap. The pointer stays at the target.
     ForegroundHid,
     /// Background delivery routed to the target pid. The hardware pointer is
-    /// never moved, so the result stays "not driver-verified".
+    /// never moved, so the result stays `unverifiable`.
     BackgroundPid,
     /// Background left click on a GTK 3 (Quartz) app: hold the app
     /// AppKit-active with the activation event, then post NSEvent-built
@@ -140,20 +140,18 @@ pub(crate) fn delivery_note(route: PixelClickRoute) -> &'static str {
     match route {
         PixelClickRoute::ForegroundHid => {
             "foreground: exact window activated, hardware pointer moved to the target, \
-             HID event tap; not driver-verified — confirm via screenshot"
+             HID event tap"
         }
         PixelClickRoute::BackgroundAppKitActivated => {
             "background: the app was told it is active through the AppKit activation event \
              (not raised; the user's window keeps focus) and the click was posted to the pid as \
              NSEvent-built mouse events; the first click after activation can only make its \
-             window key, and GTK may show the effect only after the next input; not \
-             driver-verified — confirm via screenshot"
+             window key, and GTK may show the effect only after the next input"
         }
         _ => {
             "background CGEvent routed to the pid; the hardware pointer was not moved, \
              so apps that read the pointer position may not receive it at the target; \
-             not driver-verified — confirm via screenshot and retry with \
-             delivery_mode:\"foreground\" if nothing changed"
+             retry with delivery_mode:\"foreground\" if nothing changed"
         }
     }
 }

@@ -24,19 +24,21 @@ Every successful action returns a closed `structuredContent` object:
 }
 ```
 
-`effect` and `route` are required. `summary` repeats the result's text
+`effect` and `route` are required. The result text, and so `summary`,
+starts with a verdict built from `effect` at the dispatch seam, the same on
+every platform: `CONFIRMED:`, `UNCONFIRMED:` (for `unverifiable` and
+`suspected_noop`), `PARTIAL:` or `REFUSED:`, followed by what the tool did. An
+`UNCONFIRMED` or `PARTIAL` headline ends with the read to make, for example
+`UNCONFIRMED: Clicked element [2] with a real pointer click; effect not confirmed.
+Look first: get_window_state {"pid":811,"since":"latest","window_id":659}`.
+Inside `run_steps` such a step reads `UNCONFIRMED` instead of `ok`, and
+`run_script`'s call log marks the call the same way; both end with a count
+(`1 of 3 steps unconfirmed`). `summary` repeats the result's text
 content (resolved `window_point` / `screen_point`, the element hit, popups
 that opened and the call that targets them, focus outcome, retargeting) so a
 client that hands the model only `structuredContent` still sees everything a
 raw MCP client reads from `content`. `evidence[].detail` is the readback the
 evidence rests on. A `refused` result adds `error: {code, hint}`.
-
-Only a `confirmed` result's text may open with `✅`. For any other effect
-the dispatch seam replaces a leading `✅` with words that match `effect`:
-`Sent, effect not verified:` (`unverifiable`), `Sent, but probably had no
-effect:` (`suspected_noop`), `Partly done:` (`partial`) or `Refused:`
-(`refused`). A client that reads only the text never sees a success glyph on
-an unconfirmed action.
 
 | Field | Values |
 | --- | --- |

@@ -230,7 +230,7 @@ impl Tool for MouseDragTool {
                     );
                 }
                 ToolResult::text(format!(
-                    "✅ Cursor '{cursor_id}' dragged held {} button to ({to_x:.1}, {to_y:.1}).",
+                    "Cursor '{cursor_id}' dragged held {} button to ({to_x:.1}, {to_y:.1}).",
                     mouse_button_name(hold.button),
                 ))
                 .with_structured(mouse_hold_json(&cursor_id, Some(&hold)))

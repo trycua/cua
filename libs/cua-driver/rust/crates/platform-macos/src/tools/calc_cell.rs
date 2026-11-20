@@ -221,13 +221,13 @@ pub(super) fn cell_outcome(
         };
         return (
             true,
-            format!("✅ {action} {address} [{element_index}]{to} through the Name Box and keys."),
+            format!("{action} {address} [{element_index}]{to} through the Name Box and keys."),
         );
     }
     (
         false,
         format!(
-            "📨 Typed {value:?} into {address} [{element_index}] through the Name Box and keys, \
+            "Typed {value:?} into {address} [{element_index}] through the Name Box and keys, \
              but the cell reads {shown:?}. Calc may have changed the entry (AutoCorrect, a number \
              or date format, or a formula's result). Read the cell before relying on it."
         ),

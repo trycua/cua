@@ -103,7 +103,7 @@ impl Tool for ScrollTool {
             .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
-                    "✅ Scrolled {dir_disp} via SendInput wheel ({amount} tick(s)) at screen ({sx},{sy}) (desktop scope)."
+                    "Scrolled {dir_disp} via SendInput wheel ({amount} tick(s)) at screen ({sx},{sy}) (desktop scope)."
                 )),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
@@ -343,7 +343,7 @@ impl Tool for ScrollTool {
             .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
-                    "✅ Scrolled {dir_disp} via SendInput wheel ({tick_disp} tick(s)) at \
+                    "Scrolled {dir_disp} via SendInput wheel ({tick_disp} tick(s)) at \
                      screen ({cx},{cy}) (delivery_mode:foreground)."
                 )),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
@@ -401,7 +401,7 @@ impl Tool for ScrollTool {
                     _ => "SB_LINEDOWN",
                 };
                 ToolResult::text(format!(
-                    "✅ Scrolled pid {raw_pid} {direction_display} via {amount}× {mech_name} message(s)."
+                    "Scrolled pid {raw_pid} {direction_display} via {amount}× {mech_name} message(s)."
                 ))
             }
             Ok(Err(e)) => ToolResult::error(e.to_string()),

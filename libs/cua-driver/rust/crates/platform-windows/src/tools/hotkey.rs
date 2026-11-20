@@ -210,7 +210,7 @@ impl Tool for HotkeyTool {
             }
         };
 
-        // Match Swift's text format exactly: `"✅ Pressed K1+K2+... on pid X."`
+        // Match Swift's text format exactly: `"Pressed K1+K2+... on pid X."`
         // where K1+K2+... is `keys.joined(separator: "+")` of the FULL keys
         // array as the caller supplied it (modifiers + non-modifier in order).
         let key_display = full_keys.join("+");
@@ -285,7 +285,7 @@ impl Tool for HotkeyTool {
             .await;
             return match result {
                 Ok(Ok((true, _))) => ToolResult::text(format!(
-                    "✅ Pressed {key_display_for_result} on pid {raw_pid} via UIA \
+                    "Pressed {key_display_for_result} on pid {raw_pid} via UIA \
                      InvokePattern/TogglePattern (XAML / UWP target)."
                 )),
                 Ok(Ok((false, scanned))) => ToolResult::error(format!(
@@ -392,7 +392,7 @@ impl Tool for HotkeyTool {
         };
         match result {
             Ok(Ok(())) => ToolResult::text(format!(
-                "✅ Pressed {key_display} on pid {raw_pid} via {path} \
+                "Pressed {key_display} on pid {raw_pid} via {path} \
                  (Win32 target)."
             )),
             Ok(Err(e)) => crate::typing_turn::foreground_input_error(e),

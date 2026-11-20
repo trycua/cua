@@ -1421,7 +1421,8 @@ pub fn status_json_with_provider(authorization_host: Option<&'static str>) -> se
                 "expires_unix_ms": manifest.expires_unix_ms(),
                 "idle_timeout_seconds": manifest.idle_timeout().map(|duration| duration.as_secs()),
                 "expired": manifest.is_expired(),
-                "idle_expired": manifest.is_idle_expired(),
+                "idle_expired": crate::session_authorization::configured_manifest_phase()
+                    == Some(crate::session_authorization::AuthorizationPhase::IdleExpired),
                 "allow_count": allow,
                 "deny_count": deny,
                 "ask_count": ask,

@@ -10,7 +10,6 @@
 //! creation remains disabled.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -183,11 +182,157 @@ pub struct EffectiveAuthorizationContext {
     user_policy_sha256: Option<String>,
     managed_policy_sha256: Option<String>,
     expires_unix_ms: Option<u128>,
+    clock: Arc<AuthorizationClock>,
+}
+
+/// Where an authorization context is in its one lifetime. Every phase but
+/// `Active` is terminal: neither a tool call nor a lifecycle revival
+/// returns a context to `Active`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthorizationPhase {
+    Active { last_dispatch: Instant },
+    IdleExpired,
+    Expired,
+    Revoked,
+}
+
+impl AuthorizationPhase {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Active { .. } => "active",
+            Self::IdleExpired => "idle_expired",
+            Self::Expired => "expired",
+            Self::Revoked => "revoked",
+        }
+    }
+
+    /// Refusal code and message for a phase that denies every call, or
+    /// `None` while the context is active.
+    pub fn refusal(self) -> Option<(&'static str, &'static str)> {
+        match self {
+            Self::Active { .. } => None,
+            Self::IdleExpired => Some((
+                "permission_denied",
+                "authorization context idle timeout exceeded",
+            )),
+            Self::Expired => Some(("permission_denied", "authorization context expired")),
+            Self::Revoked => Some((
+                "authorization_revoked",
+                "this session authorization context has been revoked",
+            )),
+        }
+    }
+}
+
+/// The one idle and expiry clock behind an authorization context. It merges
+/// the context's own TTLs with the capability manifest's declared
+/// `expires_after` and `idle_timeout`; the manifest keeps no timer of its
+/// own.
+#[derive(Debug)]
+struct AuthorizationClock {
     expires_at: Option<Instant>,
+    manifest_expires_unix_ms: Option<u128>,
     idle_ttl: Option<Duration>,
-    last_authorized_dispatch: Option<Arc<Mutex<Instant>>>,
-    idle_expired: Option<Arc<AtomicBool>>,
-    revoked: Arc<AtomicBool>,
+    phase: Mutex<AuthorizationPhase>,
+}
+
+impl AuthorizationClock {
+    fn new(
+        expires_at: Option<Instant>,
+        idle_ttl: Option<Duration>,
+        manifest: Option<&SessionManifest>,
+    ) -> Self {
+        let manifest_idle = manifest.and_then(SessionManifest::idle_timeout);
+        Self {
+            expires_at,
+            manifest_expires_unix_ms: manifest.and_then(SessionManifest::expires_unix_ms),
+            idle_ttl: match (idle_ttl, manifest_idle) {
+                (Some(context), Some(manifest)) => Some(context.min(manifest)),
+                (context, manifest) => context.or(manifest),
+            },
+            phase: Mutex::new(AuthorizationPhase::Active {
+                last_dispatch: Instant::now(),
+            }),
+        }
+    }
+
+    fn advance(&self, phase: &mut AuthorizationPhase, now: Instant) {
+        let AuthorizationPhase::Active { last_dispatch } = *phase else {
+            return;
+        };
+        if self.expires_at.is_some_and(|expires| now >= expires)
+            || self
+                .manifest_expires_unix_ms
+                .is_some_and(|expires| expires < now_unix_ms())
+        {
+            *phase = AuthorizationPhase::Expired;
+        } else if self
+            .idle_ttl
+            .is_some_and(|idle_ttl| now.duration_since(last_dispatch) >= idle_ttl)
+        {
+            *phase = AuthorizationPhase::IdleExpired;
+        }
+    }
+
+    fn phase(&self) -> AuthorizationPhase {
+        let mut phase = self.phase.lock().unwrap();
+        self.advance(&mut phase, Instant::now());
+        *phase
+    }
+
+    /// Refresh the idle lease, or report the terminal phase that denies the
+    /// call, under one lock so a refused call refreshes nothing.
+    fn commit(&self) -> Result<(), AuthorizationPhase> {
+        let now = Instant::now();
+        let mut phase = self.phase.lock().unwrap();
+        self.advance(&mut phase, now);
+        match *phase {
+            AuthorizationPhase::Active { .. } => {
+                *phase = AuthorizationPhase::Active { last_dispatch: now };
+                Ok(())
+            }
+            terminal => Err(terminal),
+        }
+    }
+
+    fn revoke(&self) {
+        *self.phase.lock().unwrap() = AuthorizationPhase::Revoked;
+    }
+
+    #[cfg(test)]
+    fn backdate_for_test(&self, by: Duration) {
+        if let AuthorizationPhase::Active { last_dispatch } = &mut *self.phase.lock().unwrap() {
+            *last_dispatch = last_dispatch.checked_sub(by).unwrap();
+        }
+    }
+}
+
+/// The configured capability manifest is process-wide, so every
+/// compatibility context built from it shares one clock: its idle timeout is
+/// terminal for the whole daemon instance, and status reports that clock.
+fn compatibility_clock(manifest: Option<&SessionManifest>) -> Arc<AuthorizationClock> {
+    static CONFIGURED: OnceLock<Arc<AuthorizationClock>> = OnceLock::new();
+    let configured = crate::session_manifest::configured_capability_manifest()
+        .ok()
+        .flatten();
+    match (manifest, configured) {
+        (Some(manifest), Some(configured)) if manifest.sha256() == configured.sha256() => {
+            CONFIGURED
+                .get_or_init(|| Arc::new(AuthorizationClock::new(None, None, Some(configured))))
+                .clone()
+        }
+        (manifest, _) => Arc::new(AuthorizationClock::new(None, None, manifest)),
+    }
+}
+
+/// Phase of the configured capability manifest's process-wide clock, for
+/// content-free status output.
+#[doc(hidden)]
+pub fn configured_manifest_phase() -> Option<AuthorizationPhase> {
+    let configured = crate::session_manifest::configured_capability_manifest()
+        .ok()
+        .flatten()?;
+    Some(compatibility_clock(Some(configured)).phase())
 }
 
 impl EffectiveAuthorizationContext {
@@ -232,7 +377,19 @@ impl EffectiveAuthorizationContext {
     }
 
     pub fn is_revoked(&self) -> bool {
-        self.revoked.load(Ordering::Acquire)
+        self.phase() == AuthorizationPhase::Revoked
+    }
+
+    /// The single source of truth for whether this context still admits
+    /// calls. Lifecycle admission and revival read it; they keep no clock of
+    /// their own for authorization.
+    pub fn phase(&self) -> AuthorizationPhase {
+        self.clock.phase()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn backdate_idle_for_test(&self, by: Duration) {
+        self.clock.backdate_for_test(by);
     }
 
     #[doc(hidden)]
@@ -245,7 +402,7 @@ impl EffectiveAuthorizationContext {
     #[doc(hidden)]
     pub fn lifecycle_idle_ttl_override(&self) -> Option<Duration> {
         (self.source == AuthorizationContextSource::TrustedHost)
-            .then_some(self.idle_ttl)
+            .then_some(self.clock.idle_ttl)
             .flatten()
     }
 
@@ -260,71 +417,14 @@ impl EffectiveAuthorizationContext {
     }
 
     pub fn is_expired(&self) -> bool {
-        if self.revoked.load(Ordering::Acquire) {
-            return true;
-        }
-        if self
-            .expires_at
-            .is_some_and(|expires| Instant::now() >= expires)
-        {
-            return true;
-        }
-        let (Some(idle_ttl), Some(last), Some(expired)) = (
-            self.idle_ttl,
-            self.last_authorized_dispatch.as_ref(),
-            self.idle_expired.as_ref(),
-        ) else {
-            return false;
-        };
-        if expired.load(Ordering::Acquire) {
-            return true;
-        }
-        if Instant::now().duration_since(*last.lock().unwrap()) >= idle_ttl {
-            expired.store(true, Ordering::Release);
-            return true;
-        }
-        false
-    }
-
-    fn commit_context_dispatch(&self) -> Result<(), String> {
-        if self.revoked.load(Ordering::Acquire) {
-            return Err("authorization context has been revoked".to_owned());
-        }
-        let (Some(idle_ttl), Some(last), Some(expired)) = (
-            self.idle_ttl,
-            self.last_authorized_dispatch.as_ref(),
-            self.idle_expired.as_ref(),
-        ) else {
-            return Ok(());
-        };
-        if expired.load(Ordering::Acquire) {
-            return Err("authorization context idle timeout exceeded".to_owned());
-        }
-        let now = Instant::now();
-        let mut previous = last.lock().unwrap();
-        if now.duration_since(*previous) > idle_ttl {
-            expired.store(true, Ordering::Release);
-            return Err("authorization context idle timeout exceeded".to_owned());
-        }
-        *previous = now;
-        Ok(())
+        !matches!(self.phase(), AuthorizationPhase::Active { .. })
     }
 
     /// Commit one dispatch after tool admission and every typed-resource
-    /// check have succeeded. A rejected resource must not refresh either
+    /// check have succeeded. A rejected resource must not refresh the
     /// lifetime lease.
-    pub fn commit_authorized_dispatch(&self) -> Result<(), String> {
-        if self.is_expired() {
-            return Err("authorization context expired".to_owned());
-        }
-        if let Some(manifest) = self.capability_manifest() {
-            manifest.check_lifetime()?;
-        }
-        self.commit_context_dispatch()?;
-        if let Some(manifest) = self.capability_manifest() {
-            manifest.commit_authorized_dispatch()?;
-        }
-        Ok(())
+    pub fn commit_authorized_dispatch(&self) -> Result<(), AuthorizationPhase> {
+        self.clock.commit()
     }
 }
 
@@ -543,15 +643,11 @@ impl SessionAuthorizationRegistry {
             public_session: None,
             transport_session: None,
             host_lease: None,
-            capability_manifest,
             user_policy_sha256: self.ceiling.user_policy_sha256.clone(),
             managed_policy_sha256: self.ceiling.managed_policy_sha256.clone(),
             expires_unix_ms: None,
-            expires_at: None,
-            idle_ttl: None,
-            last_authorized_dispatch: None,
-            idle_expired: None,
-            revoked: Arc::new(AtomicBool::new(false)),
+            clock: compatibility_clock(capability_manifest.as_deref()),
+            capability_manifest,
         }))
     }
 
@@ -603,13 +699,9 @@ impl SessionAuthorizationRegistry {
             return Err(SessionAuthorizationError::InvalidManifest);
         }
         let mut state = self.state.lock().unwrap();
-        state.by_connection.retain(|_, context| {
-            let retain = !context.is_expired();
-            if !retain {
-                context.revoked.store(true, Ordering::Release);
-            }
-            retain
-        });
+        state
+            .by_connection
+            .retain(|_, context| !context.is_expired());
         if state.by_connection.contains_key(&connection.id) {
             return Err(SessionAuthorizationError::ConnectionAlreadyBound);
         }
@@ -626,15 +718,15 @@ impl SessionAuthorizationRegistry {
             public_session: Some(request.public_session),
             transport_session: Some(request.transport_session),
             host_lease: Some(host.id),
-            capability_manifest: request.capability_manifest,
             user_policy_sha256: self.ceiling.user_policy_sha256.clone(),
             managed_policy_sha256: self.ceiling.managed_policy_sha256.clone(),
             expires_unix_ms: Some(now_unix_ms() + request.ttl.as_millis()),
-            expires_at: Some(Instant::now() + request.ttl),
-            idle_ttl: Some(request.idle_ttl),
-            last_authorized_dispatch: Some(Arc::new(Mutex::new(Instant::now()))),
-            idle_expired: Some(Arc::new(AtomicBool::new(false))),
-            revoked: Arc::new(AtomicBool::new(false)),
+            clock: Arc::new(AuthorizationClock::new(
+                Some(Instant::now() + request.ttl),
+                Some(request.idle_ttl),
+                request.capability_manifest.as_deref(),
+            )),
+            capability_manifest: request.capability_manifest,
         });
         state.by_connection.insert(connection.id, context);
         Ok(())
@@ -680,7 +772,7 @@ impl SessionAuthorizationRegistry {
             .by_connection
             .remove(&connection.id)
             .is_some_and(|context| {
-                context.revoked.store(true, Ordering::Release);
+                context.clock.revoke();
                 true
             })
     }
@@ -694,7 +786,7 @@ impl SessionAuthorizationRegistry {
         state.by_connection.retain(|_, context| {
             let retain = context.host_lease != Some(host.id);
             if !retain {
-                context.revoked.store(true, Ordering::Release);
+                context.clock.revoke();
             }
             retain
         });
@@ -710,7 +802,7 @@ impl SessionAuthorizationRegistry {
         let mut state = self.state.lock().unwrap();
         let count = state.by_connection.len();
         for context in state.by_connection.values() {
-            context.revoked.store(true, Ordering::Release);
+            context.clock.revoke();
         }
         state.by_connection.clear();
         count
@@ -1110,6 +1202,152 @@ mod tests {
         assert_eq!(
             registry.status_json()["delegated_session_counts"]["standard"],
             0
+        );
+    }
+
+    #[test]
+    fn idle_expiry_is_one_terminal_phase_that_a_refused_call_cannot_refresh() {
+        let registry = SessionAuthorizationRegistry::delegated_for_test(
+            SessionModeCeiling::delegated([PermissionMode::Standard], false),
+        );
+        let (host, connection) = registry.trusted_pair_for_test(None);
+        registry
+            .bind_delegated_session(&host, &connection, request(PermissionMode::Standard))
+            .unwrap();
+        let context = registry
+            .resolve_delegated(&connection, "public-a", "transport-a")
+            .unwrap();
+        assert!(matches!(context.phase(), AuthorizationPhase::Active { .. }));
+        context.commit_authorized_dispatch().unwrap();
+
+        context.backdate_idle_for_test(Duration::from_secs(31));
+        assert_eq!(context.phase(), AuthorizationPhase::IdleExpired);
+        assert_eq!(
+            context.commit_authorized_dispatch(),
+            Err(AuthorizationPhase::IdleExpired)
+        );
+        assert_eq!(context.phase(), AuthorizationPhase::IdleExpired);
+        assert_eq!(
+            registry
+                .resolve_delegated(&connection, "public-a", "transport-a")
+                .unwrap_err(),
+            SessionAuthorizationError::Expired
+        );
+    }
+
+    #[test]
+    fn absolute_expiry_takes_precedence_over_idle_expiry() {
+        let registry = SessionAuthorizationRegistry::delegated_for_test(
+            SessionModeCeiling::delegated([PermissionMode::Standard], false),
+        );
+        let (host, connection) = registry.trusted_pair_for_test(None);
+        let mut short = request(PermissionMode::Standard);
+        short.ttl = Duration::from_millis(5);
+        short.idle_ttl = Duration::from_millis(5);
+        registry
+            .bind_delegated_session(&host, &connection, short)
+            .unwrap();
+        let context = registry
+            .resolve_delegated(&connection, "public-a", "transport-a")
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(10));
+        assert_eq!(context.phase(), AuthorizationPhase::Expired);
+        assert_eq!(
+            context.commit_authorized_dispatch(),
+            Err(AuthorizationPhase::Expired)
+        );
+    }
+
+    #[test]
+    fn revocation_replaces_any_phase_with_revoked() {
+        let registry = SessionAuthorizationRegistry::delegated_for_test(
+            SessionModeCeiling::delegated([PermissionMode::Standard], false),
+        );
+        let (host, connection_a) = registry.trusted_pair_for_test(None);
+        let (_, connection_b) = registry.trusted_pair_for_test(Some(&host));
+        registry
+            .bind_delegated_session(&host, &connection_a, request(PermissionMode::Standard))
+            .unwrap();
+        let mut second = request(PermissionMode::Standard);
+        second.public_session = "public-b".to_owned();
+        second.transport_session = "transport-b".to_owned();
+        registry
+            .bind_delegated_session(&host, &connection_b, second)
+            .unwrap();
+        let active = registry
+            .resolve_delegated(&connection_a, "public-a", "transport-a")
+            .unwrap();
+        let idle = registry
+            .resolve_delegated(&connection_b, "public-b", "transport-b")
+            .unwrap();
+        idle.backdate_idle_for_test(Duration::from_secs(31));
+        assert_eq!(idle.phase(), AuthorizationPhase::IdleExpired);
+
+        assert_eq!(registry.revoke_all(), 2);
+        for context in [&active, &idle] {
+            assert_eq!(context.phase(), AuthorizationPhase::Revoked);
+            assert!(context.is_revoked());
+            assert_eq!(
+                context.commit_authorized_dispatch(),
+                Err(AuthorizationPhase::Revoked)
+            );
+        }
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn manifest_idle_timeout_drives_the_context_clock_in_every_mode() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "version: 1\nmode: bounded\nexpires_after: 1h\nidle_timeout: 1s\nresources: {{}}\nallow:\n  tools: [get_config]"
+        )
+        .unwrap();
+        let manifest = Arc::new(crate::session_manifest::load_manifest(file.path()).unwrap());
+        let registry =
+            SessionAuthorizationRegistry::delegated_for_test(SessionModeCeiling::delegated(
+                [
+                    PermissionMode::Standard,
+                    PermissionMode::Bounded,
+                    PermissionMode::Unrestricted,
+                ],
+                true,
+            ));
+        for mode in [
+            PermissionMode::Standard,
+            PermissionMode::Bounded,
+            PermissionMode::Unrestricted,
+        ] {
+            let context = registry
+                .compatibility_context(mode, Some(manifest.clone()))
+                .unwrap();
+            context.backdate_idle_for_test(Duration::from_secs(2));
+            assert_eq!(
+                context.phase(),
+                AuthorizationPhase::IdleExpired,
+                "declared idle timeout must be enforced in {mode:?}"
+            );
+        }
+
+        // A delegated session takes the shorter of its own and the
+        // manifest's idle TTL, and lifecycle idle follows the same clock.
+        let (host, connection) = registry.trusted_pair_for_test(None);
+        let mut delegated = request(PermissionMode::Bounded);
+        delegated.capability_manifest = Some(manifest);
+        registry
+            .bind_delegated_session(&host, &connection, delegated)
+            .unwrap();
+        let context = registry
+            .resolve_delegated(&connection, "public-a", "transport-a")
+            .unwrap();
+        assert_eq!(
+            context.lifecycle_idle_ttl_override(),
+            Some(Duration::from_secs(1))
+        );
+        context.backdate_idle_for_test(Duration::from_secs(2));
+        assert_eq!(
+            context.commit_authorized_dispatch(),
+            Err(AuthorizationPhase::IdleExpired)
         );
     }
 

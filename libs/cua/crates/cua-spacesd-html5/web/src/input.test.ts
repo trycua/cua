@@ -80,13 +80,17 @@ describe("keyboard mapping", () => {
   it("sends keys pressed during a paste after its chord", async () => {
     const sent: InteractiveInputEvent[] = [];
     let landed = () => {};
+    let pastes = 0;
     const surface = document.createElement("div");
     const controller = new InputController({
       surface,
       screen: () => surface,
       emit: (event) => sent.push(event),
       keyOptions: () => ({ metaAsControl: true }),
-      onPaste: () => new Promise<void>((resolve) => (landed = resolve)),
+      onPaste: () => {
+        pastes++;
+        return new Promise<void>((resolve) => (landed = resolve));
+      },
     });
     const press = (type: string, init: KeyboardEventInit) =>
       controller.textarea.dispatchEvent(new KeyboardEvent(type, { ...init, cancelable: true }));
@@ -95,12 +99,19 @@ describe("keyboard mapping", () => {
     // Not cancelled: the browser fires `paste`, and the chord waits for the clipboard.
     expect(press("keydown", { key: "v", code: "KeyV", metaKey: true })).toBe(true);
     controller.textarea.dispatchEvent(new Event("paste"));
+    press("keyup", { key: "v", code: "KeyV", metaKey: true });
+    // A second paste meanwhile waits for the same clipboard.
+    expect(press("keydown", { key: "v", code: "KeyV", metaKey: true })).toBe(false);
+    press("keyup", { key: "v", code: "KeyV", metaKey: true });
     press("keyup", { key: "Meta", code: "MetaLeft", metaKey: true });
     expect(sent.map((e) => (e.kind === "key" ? `${e.key} ${e.state}` : e.kind))).toEqual(["meta down", "meta up", "control down"]);
     landed();
     await new Promise((resolve) => setTimeout(resolve, 0));
     controller.dispose();
+    expect(pastes).toBe(1);
     expect(sent.map((e) => (e.kind === "key" ? [e.key, e.state, e.modifiers] : e.kind)).slice(3)).toEqual([
+      ["v", "down", ["control"]],
+      ["v", "up", ["control"]],
       ["v", "down", ["control"]],
       ["v", "up", ["control"]],
       ["control", "up", []],

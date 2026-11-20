@@ -138,7 +138,7 @@ describe("keyboard mapping", () => {
     press("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
     // Cancelled, so the browser fires no `paste` for the host clipboard.
     expect(press("keydown", { key: "v", code: "KeyV", metaKey: true })).toBe(false);
-    press("keyup", { key: "v", code: "KeyV", metaKey: true });
+    // Sent whole: Chromium may send no key-up for V, and a late one adds nothing.
     press("keydown", { key: "c", code: "KeyC", metaKey: true });
     press("keyup", { key: "c", code: "KeyC", metaKey: true });
     press("keyup", { key: "Meta", code: "MetaRight" });

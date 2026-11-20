@@ -308,6 +308,12 @@ export class InputController {
         return;
       }
       event.preventDefault();
+      if (superKey && mapped.kind === "key") {
+        // Whole, since Chromium may send no key-up for a key pressed with ⌘ held.
+        this.send(mapped);
+        this.send({ ...mapped, state: "up", repeat: false });
+        return;
+      }
       if (mapped.kind === "key") this.heldKeys.set(event.code || mapped.key, mapped);
       this.send(mapped);
       if (chord && (mapped.key === "c" || mapped.key === "x")) {

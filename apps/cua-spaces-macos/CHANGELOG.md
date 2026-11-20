@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.39.4](https://github.com/trycua/cua/compare/cua-spaces-v0.39.3...cua-spaces-v0.39.4) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** bump undici to patched versions (39 Dependabot alerts) ([#8311](https://github.com/trycua/cua/issues/8311)) ([3b44583](https://github.com/trycua/cua/commit/3b445836f13f768ba629441db4fdb5c6536578c4))
+
 ## [0.39.3](https://github.com/trycua/cua/compare/cua-spaces-v0.39.2...cua-spaces-v0.39.3) (2026-11-20)
 
 

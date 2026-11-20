@@ -1105,27 +1105,16 @@ impl ClickTool {
             }
 
             // A hollow web-content press is replaced by a routed pixel click at
-            // the element's center, behind the same WindowPointer gate. The
-            // center must hit the element itself: a sticky header or overlay
-            // over it would take the click, so the AX press runs instead.
+            // the element's center, behind the same WindowPointer gate.
             let mut web_pixel = None;
             if effective_action == "press" && modifiers.is_empty() {
                 if let Some(screen_center) = center {
                     let web_guard = element_guard.clone();
-                    let hollow = tokio::task::spawn_blocking(move || unsafe {
-                        let el = web_guard.as_ptr() as AXUIElementRef;
-                        press_is_hollow(&copy_action_names(el), || {
-                            super::type_text::target_in_web_area(
-                                pid,
-                                Some((el as usize, None)),
-                                Some(wid),
-                            )
-                        }) && element_at_screen_position(pid, screen_center.0, screen_center.1)
-                            .is_some_and(|hit| {
-                                let lands = crate::fast_path_guard::is_self_or_ancestor(hit, el);
-                                CFRelease(hit as _);
-                                lands
-                            })
+                    let hollow = tokio::task::spawn_blocking(move || {
+                        let el = web_guard.as_ptr();
+                        press_is_hollow(&unsafe { copy_action_names(el as AXUIElementRef) }, || {
+                            super::type_text::target_in_web_area(pid, Some((el, None)), Some(wid))
+                        })
                     })
                     .await
                     .unwrap_or(false);
@@ -2351,15 +2340,27 @@ fn perform_ax_click(
             );
         }
 
-        if let Some(target) = web_pixel {
-            let page = (watch_page && !foreground)
-                .then(|| unsafe { crate::ax::web_effect::PageProbe::before_press(pid, element) })
-                .flatten();
-            // The same focus record the background pixel path posts first, so
-            // the window takes the click without being raised.
+        // The same focus record the background pixel path posts first, so the
+        // window takes the click without being raised. The center must then
+        // hit the element itself: a sticky header or an overlay over it would
+        // take the click, so the AX press runs instead.
+        if let Some(target) = web_pixel.filter(|target| {
             if !foreground && apps::frontmost_pid() != Some(pid) {
                 crate::input::mouse::prepare_background_pixel_click(pid, window_id);
             }
+            unsafe {
+                element_at_screen_position(pid, target.screen_x, target.screen_y).is_some_and(
+                    |hit| {
+                        let lands = crate::fast_path_guard::is_self_or_ancestor(hit, element);
+                        CFRelease(hit as _);
+                        lands
+                    },
+                )
+            }
+        }) {
+            let page = (watch_page && !foreground)
+                .then(|| unsafe { crate::ax::web_effect::PageProbe::before_press(pid, element) })
+                .flatten();
             let pressed_at = std::time::Instant::now();
             crate::input::mouse::click_at_xy_with_window_local(
                 pid,

@@ -1117,7 +1117,7 @@ mod tests {
         let args = serde_json::json!({ "element_token": token_for(id, 1) });
         assert_eq!(cache.pid_for_token(&args), Some(42));
         assert_eq!(cache.pid_for_token(&serde_json::json!({})), None);
-        let unknown = serde_json::json!({ "element_token": token_for(id + 1000, 0) });
+        let unknown = serde_json::json!({ "element_token": token_for(id.wrapping_add(1000), 0) });
         assert_eq!(cache.pid_for_token(&unknown), None);
     }
 

@@ -549,8 +549,6 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
     (loopback_websocket_port(&url) == Some(port)).then_some(url)
 }
 
-#[async_trait]
-
 /// A Wayland session, XWayland included, names its windows through the
 /// compositor rather than X11, so setup verified on X11 does not carry over.
 fn setup_platform() -> SetupPlatform {
@@ -562,6 +560,7 @@ fn setup_platform() -> SetupPlatform {
     }
 }
 
+#[async_trait]
 impl BrowserPlatform for LinuxBrowserPlatform {
     fn isolated_browser_executable(&self) -> Result<String, BrowserRefusal> {
         for candidate in isolated_browser_candidates() {

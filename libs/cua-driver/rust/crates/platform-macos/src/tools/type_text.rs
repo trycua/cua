@@ -479,13 +479,15 @@ impl Tool for TypeTextTool {
                 // chrome (address bar, toolbar) stays trusted. Probe ONLY when a
                 // path with AXValue-only verification would otherwise confirm, so
                 // native types and already-unverified deliveries pay nothing.
-                let target_is_web_content = probes_web_area(path, verified, is_terminal_target)
+                let target_is_web_content = verified
+                    && path_has_untrusted_web_readback(path)
                     && target_in_web_area(pid, element_ptr, window_id);
                 let verification = surface_verification(path, verified, target_is_web_content);
                 let verified = verification.verified;
                 let untrusted_web_readback = verification.untrusted_web_readback;
-                let electron_web_content = untrusted_web_readback
-                    && crate::browser::electron_js::ElectronJs::is_electron(pid);
+                let web_rung = advises_web_rung(untrusted_web_readback, is_terminal_target);
+                let electron_web_content =
+                    web_rung && crate::browser::electron_js::ElectronJs::is_electron(pid);
                 let (unconfirmed_note, foreground_next) =
                     unconfirmed_advice(path, is_terminal_target);
 
@@ -496,7 +498,7 @@ impl Tool for TypeTextTool {
                 // right next rung.
                 let (mark, note) = if verified {
                     ("✅ Inserted", String::new())
-                } else if untrusted_web_readback {
+                } else if web_rung {
                     let next_step = if electron_web_content && used_pixel_focus {
                         "The pixel-focus rung already ran, so do not repeat it; verify the \
                          result via the screenshot."
@@ -539,7 +541,7 @@ impl Tool for TypeTextTool {
                     if let Some(delivered_chars) = delivered_chars {
                         s["delivered_chars"] = serde_json::json!(delivered_chars);
                     }
-                    if untrusted_web_readback {
+                    if web_rung {
                         // Web-content AXValue read-back. A real browser TAB → the
                         // `page` tool (drives the DOM via CDP) is the reliable rung;
                         // an embedded web view (Electron, no CDP) → the element px
@@ -781,11 +783,6 @@ fn path_has_untrusted_web_readback(path: &str) -> bool {
     path == PATH_AX || path == PATH_KEY_EVENTS || path == PATH_KEY_EVENTS_FG
 }
 
-/// A terminal has no web area, so its read-back is never reclassified as web content.
-fn probes_web_area(path: &str, verified: bool, is_terminal_target: bool) -> bool {
-    verified && !is_terminal_target && path_has_untrusted_web_readback(path)
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SurfaceVerification {
     verified: bool,
@@ -803,6 +800,11 @@ fn surface_verification(
         verified: verified && !untrusted_web_readback,
         untrusted_web_readback,
     }
+}
+
+/// A terminal never gets a web rung's retype advice, even when its read-back is web content.
+fn advises_web_rung(untrusted_web_readback: bool, is_terminal_target: bool) -> bool {
+    untrusted_web_readback && !is_terminal_target
 }
 
 fn unconfirmed_advice(path: &str, is_terminal_target: bool) -> (&'static str, bool) {
@@ -2754,15 +2756,6 @@ mod tests {
     }
 
     #[test]
-    fn a_terminal_read_back_is_never_probed_for_web_content() {
-        for path in [PATH_AX, PATH_KEY_EVENTS, PATH_KEY_EVENTS_FG] {
-            assert!(!probes_web_area(path, true, true), "path={path}");
-            assert!(probes_web_area(path, true, false), "path={path}");
-            assert!(!probes_web_area(path, false, false), "path={path}");
-        }
-    }
-
-    #[test]
     fn path_constants_are_stable_tokens() {
         // These string constants are part of the structured-response
         // contract; freezing them here makes the contract a unit test.
@@ -2874,6 +2867,17 @@ mod tests {
         assert!(web_readback_is_untrusted(
             WebAreaClassification::WindowFocusUnavailable
         ));
+    }
+
+    #[test]
+    fn a_terminal_with_web_read_back_never_gets_web_retype_advice() {
+        assert!(!advises_web_rung(true, true));
+        assert!(advises_web_rung(true, false));
+        assert!(!advises_web_rung(false, false));
+        assert!(
+            !unconfirmed_advice(PATH_AX, true).1,
+            "the terminal note it falls through to must not escalate either"
+        );
     }
 
     #[test]

@@ -149,6 +149,11 @@ enum Cmd {
         transitions: Vec<KeyTransition>,
         reply: Sender<anyhow::Result<()>>,
     },
+    /// Sends nothing: answered once EIS has acknowledged everything sent
+    /// before it.
+    Barrier {
+        reply: Sender<anyhow::Result<()>>,
+    },
     Drag {
         from_x: f64,
         from_y: f64,
@@ -452,6 +457,17 @@ pub fn key_sequence(transitions: &[KeyTransition]) -> anyhow::Result<()> {
             transitions: transitions.to_vec(),
             reply: tx_r,
         })
+        .map_err(|e| anyhow::anyhow!("libei worker channel closed: {e}"))?;
+    wait_for_reply(rx_r)
+}
+
+/// Wait until EIS has acknowledged all input this process sent before the
+/// call, including input whose own caller stopped waiting for it.
+pub fn barrier() -> anyhow::Result<()> {
+    ensure_started()?;
+    let (tx_r, rx_r) = bounded(1);
+    tx()?
+        .send(Cmd::Barrier { reply: tx_r })
         .map_err(|e| anyhow::anyhow!("libei worker channel closed: {e}"))?;
     wait_for_reply(rx_r)
 }
@@ -1032,6 +1048,9 @@ impl EisState {
     /// run before their device exists fail with "no EIS device negotiated yet",
     /// so `run_calloop` queues them until this holds (or READY_TIMEOUT elapses).
     fn cmd_ready(&self, cmd: &Cmd) -> bool {
+        if let Cmd::Barrier { .. } = cmd {
+            return self.connection.is_some();
+        }
         if !self.device_is_settled() {
             return false;
         }
@@ -1049,7 +1068,7 @@ impl EisState {
                 (self.device_with_interface("ei_text").is_some() || keyboard)
                     && (!keyboard || self.keyboard_settled())
             }
-            Cmd::Shutdown => true,
+            Cmd::Barrier { .. } | Cmd::Shutdown => true,
         }
     }
 
@@ -1230,7 +1249,7 @@ impl EisState {
                     device.frame(serial, event_time_us());
                 });
             }
-            Cmd::TypeText { .. } | Cmd::Shutdown => {}
+            Cmd::TypeText { .. } | Cmd::Barrier { .. } | Cmd::Shutdown => {}
         }
         if let Some(ctx) = self.context.as_ref() {
             let _ = ctx.flush();
@@ -1571,6 +1590,7 @@ impl Cmd {
             | Cmd::TypeText { reply, .. }
             | Cmd::PressKey { reply, .. }
             | Cmd::KeySequence { reply, .. }
+            | Cmd::Barrier { reply }
             | Cmd::Drag { reply, .. } => Some(reply),
             Cmd::Shutdown => None,
         }

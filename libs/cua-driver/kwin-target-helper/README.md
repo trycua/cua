@@ -65,6 +65,7 @@ The exported D-Bus surface:
 | `ArmInput(uuid, client)` | 2 | an input gate id, or an error |
 | `GetInputGate(id)` | 2 | how many events the gate let through and held back |
 | `DisarmInput(id)` | 2 | the same counts, and removes the gate |
+| `InputGateArmed()` | 2 | whether any gate is armed |
 
 ## Input safety boundary
 
@@ -80,7 +81,9 @@ pointer focus it would go to is that window or one of its transients (menus,
 popups, dialogs). This holds for native Wayland windows and for Xwayland
 windows (Java, Wine and other X11-only apps) alike. Any other event is held back and counted, and Cua Driver fails
 the action with `input_interrupted` instead of reporting success. A release
-follows its press, so no key or button is left held down.
+follows its press, so no key or button is left held down. A held-back key press
+is marked filtered in KWin, so the next window to get keyboard focus is not told
+it is held.
 
 Limits of the gate:
 
@@ -91,6 +94,12 @@ Limits of the gate:
   another gate is armed, or when the window is gone.
 - A gate lasts until `DisarmInput` or until the D-Bus connection that armed it
   closes, so a driver that dies mid-action leaves nothing armed.
+- Cua Driver disarms a gate only after EIS has acknowledged all the input it
+  sent. If KWin never acknowledges it, the gate stays armed, and KWin input is
+  refused until the driver restarts.
+- Unloading the helper removes its gate. `cua-driver kwin-capture off` doesn't
+  unload the helper while a gate is armed; anything else that unloads it
+  mid-action lets the rest of that action's input through ungated.
 - KWin moves the pointer and updates keyboard modifier state before filters
   run. A held-back event can still move the cursor or briefly change the
   modifier state another window sees, but never delivers a key, button, motion,

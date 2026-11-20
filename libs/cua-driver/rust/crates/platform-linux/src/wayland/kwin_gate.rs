@@ -87,7 +87,37 @@ pub(crate) fn gated<T>(
         let _armed = Armed::bind(window_id);
         body()
     };
+    // Input the body gave up waiting for can still reach KWin. Disarming
+    // before KWin has taken all of it would let the rest through ungated.
+    if let Err(unsettled) = input_settled() {
+        // Kept armed, KWin goes on holding back what would reach another
+        // window, and refuses any new gate, until this process exits.
+        std::mem::forget(gate);
+        let note = format!(
+            "input_unverified: KWin did not acknowledge all input sent to window {window_id} \
+             ({unsettled:#}); its input gate stays armed, and KWin input is refused until the \
+             driver restarts"
+        );
+        return Err(match result {
+            Ok(_) => anyhow::anyhow!(note),
+            Err(error) => {
+                let note = format!("{error:#}; {note}");
+                error.context(note)
+            }
+        });
+    }
     verdict(window_id, result, gate.disarm())
+}
+
+/// Wait until KWin has acknowledged all of this process's libei input.
+#[cfg(feature = "portal-input")]
+fn input_settled() -> anyhow::Result<()> {
+    super::libei::barrier()
+}
+
+#[cfg(not(feature = "portal-input"))]
+fn input_settled() -> anyhow::Result<()> {
+    Ok(())
 }
 
 /// Activate `window_id` and confirm KWin moved keyboard focus to it. Only

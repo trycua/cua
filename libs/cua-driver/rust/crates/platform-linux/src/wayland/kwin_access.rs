@@ -141,7 +141,7 @@ pub fn save(setting: Setting) -> anyhow::Result<()> {
     refresh_service_cache();
     if super::kwin_capture::may_be_session() {
         if setting == Setting::Off {
-            super::kwin_helper::turn_off();
+            super::kwin_helper::turn_off()?;
         } else {
             wait_until_kwin_lists_windows();
             super::kwin_helper::turn_on();

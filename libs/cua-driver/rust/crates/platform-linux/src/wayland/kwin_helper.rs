@@ -172,14 +172,34 @@ pub(crate) fn turn_on() {
     }
 }
 
-/// Unload the helper and stop KWin from starting it.
-pub(crate) fn turn_off() {
+/// Unload the helper and stop KWin from starting it. Unloading takes the input
+/// gate with it, so while an action holds the gate armed the helper is left
+/// loaded and this fails: the action's remaining input would go out ungated.
+pub(crate) fn turn_off() -> anyhow::Result<()> {
     if autostarts() {
         write_autostart(false);
     }
-    if loaded().is_some() {
-        effects_call("unloadEffect");
+    let Some((owner, _)) = loaded() else {
+        return Ok(());
+    };
+    let deadline = std::time::Instant::now() + START_TIMEOUT;
+    while gate_armed(&owner) {
+        anyhow::ensure!(
+            std::time::Instant::now() < deadline,
+            "the Cua KWin helper was left loaded: an action in progress holds its input \
+             gate armed. KWin no longer starts it with the session; run \
+             `cua-driver kwin-capture off` again once the action ends to unload it now"
+        );
+        crate::interaction::pause(Duration::from_millis(100));
     }
+    effects_call("unloadEffect");
+    Ok(())
+}
+
+/// Whether the helper at `owner` has an input gate armed. A helper that can't
+/// say has no gate to arm.
+fn gate_armed(owner: &str) -> bool {
+    call_once::<_, bool>(owner, "InputGateArmed", ()).unwrap_or(false)
 }
 
 /// The helper's line in `cua-driver kwin-capture status`, or `None` when KWin
@@ -345,13 +365,13 @@ pub(crate) struct Focus {
 
 /// [`Focus`] for the window with KWin internal id `uuid`.
 pub(crate) fn focus(owner: &str, uuid: &str) -> anyhow::Result<Focus> {
-    let raw = call_once(owner, "GetFocus", (uuid.to_owned(),))?;
+    let raw: String = call_once(owner, "GetFocus", (uuid.to_owned(),))?;
     serde_json::from_str(&raw).map_err(|error| anyhow::anyhow!("KWin helper focus reply: {error}"))
 }
 
 /// The KWin internal id of the active window, if any.
 pub(crate) fn active_uuid(owner: &str) -> anyhow::Result<Option<String>> {
-    let raw = call_once(owner, "GetWindows", ())?;
+    let raw: String = call_once(owner, "GetWindows", ())?;
     Ok(parse_active_uuid(&raw))
 }
 
@@ -365,10 +385,11 @@ fn parse_active_uuid(raw: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// One helper call returning its string reply, on its own connection.
-fn call_once<B>(owner: &str, method: &'static str, body: B) -> anyhow::Result<String>
+/// One helper call on its own connection, answered within [`CALL_TIMEOUT`].
+fn call_once<B, R>(owner: &str, method: &'static str, body: B) -> anyhow::Result<R>
 where
     B: serde::Serialize + zbus::zvariant::DynamicType + Send + 'static,
+    R: for<'d> zbus::zvariant::DynamicDeserialize<'d> + Send + 'static,
 {
     let owner = owner.to_owned();
     std::thread::spawn(move || {
@@ -376,9 +397,14 @@ where
             .enable_all()
             .build()?
             .block_on(async move {
-                let connection = zbus::Connection::session().await?;
-                let proxy = zbus::Proxy::new(&connection, owner.as_str(), PATH, IFACE).await?;
-                anyhow::Ok(proxy.call::<_, _, String>(method, &body).await?)
+                let call = async {
+                    let connection = zbus::Connection::session().await?;
+                    let proxy = zbus::Proxy::new(&connection, owner.as_str(), PATH, IFACE).await?;
+                    anyhow::Ok(proxy.call::<_, _, R>(method, &body).await?)
+                };
+                tokio::time::timeout(CALL_TIMEOUT, call)
+                    .await
+                    .unwrap_or_else(|_| Err(anyhow::anyhow!("no answer within {CALL_TIMEOUT:?}")))
             })
     })
     .join()

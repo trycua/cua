@@ -16,6 +16,7 @@
 #include <kwin/effect/effect.h>
 #include <kwin/input.h>
 #include <kwin/input_event.h>
+#include <kwin/keyboard_input.h>
 #include <kwin/pointer_input.h>
 #include <kwin/wayland/seat.h>
 #include <kwin/wayland_server.h>
@@ -157,15 +158,22 @@ public:
                 return belongsTo(keyboardFocus(), target);
             });
         }
-        return gateTransition(
+        const bool pressed = event->state == KWin::KeyboardKeyState::Pressed;
+        const bool stop = gateTransition(
             event->device,
-            event->state == KWin::KeyboardKeyState::Pressed,
+            pressed,
             event->nativeScanCode,
             &Arm::passedKeys,
             &Arm::droppedKeys,
             [](const KWin::Window *target) {
                 return belongsTo(keyboardFocus(), target);
             });
+        if (stop && pressed) {
+            // KWin counts the press as held anyway, and would name it in the
+            // keyboard enter of the next window to take focus.
+            KWin::input()->keyboard()->addFilteredKey(event->nativeScanCode);
+        }
+        return stop;
     }
 
 private:
@@ -338,6 +346,13 @@ public slots:
         });
         reply["arm"] = static_cast<qint64>(id);
         return toJson(reply);
+    }
+
+    // Whether any input gate is armed. Unloading the helper removes the gate
+    // with it, so the driver doesn't unload it while one is.
+    Q_SCRIPTABLE bool InputGateArmed()
+    {
+        return gate.arm != nullptr;
     }
 
     Q_SCRIPTABLE QString GetInputGate(quint64 arm)

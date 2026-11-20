@@ -149,17 +149,27 @@ fn unique_actionable(
     }
 }
 
+/// Whether a native control carries the English name. The structural
+/// fallbacks for a localized browser run only when none does, so they never
+/// stand in for an English-named control that fails another check.
+fn native_control_named(nodes: &[AXNode], role: &str, label: &str) -> bool {
+    nodes
+        .iter()
+        .any(|node| node.role == role && !node.in_web_content && field_equals(node, label))
+}
+
 /// The address fields holding the exact setup URL. Chrome names the field
 /// "Address and search bar", but a localized Chrome names it in the UI
-/// language ("地址和搜索栏"), so an unlabelled field counts only when it is the
-/// window's one native pressable text field, the field [`unique_omnibox`]
-/// presses. A find bar or other native field open beside it leaves only a
-/// labelled field, or none.
+/// language ("地址和搜索栏"), so when no native field carries the English name,
+/// a field counts only when it is the window's one native pressable text
+/// field, the field [`unique_omnibox`] presses. A find bar or other native
+/// field open beside it leaves only a labelled field, or none.
 fn setup_url_omniboxes<'a>(
     nodes: &'a [AXNode],
     descriptor: &BrowserSetupDescriptor,
 ) -> Vec<(usize, &'a AXNode)> {
     let native_field = |node: &AXNode| node.role == "AXTextField" && !node.in_web_content;
+    let labelled = native_control_named(nodes, "AXTextField", "Address and search bar");
     let pressable = distinct_elements(
         nodes
             .iter()
@@ -168,7 +178,7 @@ fn setup_url_omniboxes<'a>(
         is_same_element,
     );
     let sole_field = match pressable.as_slice() {
-        [(index, _)] => Some(*index),
+        [(index, _)] if !labelled => Some(*index),
         _ => None,
     };
     distinct_elements(
@@ -294,6 +304,15 @@ fn unique_omnibox(
         unique_actionable(nodes, "AXTextField", "Address and search bar", "AXPress")?
     {
         return Ok(element);
+    }
+    if native_control_named(nodes, "AXTextField", "Address and search bar") {
+        return Err(BrowserRefusal::new(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            format!(
+                "the approved {} window has no exact address-and-search field",
+                descriptor.product_name
+            ),
+        ));
     }
     // A localized Chrome names the field in the UI language ("地址和搜索栏"):
     // fall back to the window's one native pressable text field. Page fields
@@ -449,12 +468,24 @@ fn structural_new_tab_button(
     if row.iter().any(|frame| !same_span(frame[3], strip[3])) {
         return Ok(None);
     }
+    let parent_of = |index: usize| {
+        nodes
+            .iter()
+            .find(|candidate| candidate.element_index == Some(index))
+    };
     let inside_tab = |node: &AXNode| {
-        node.parent_element_index.is_some_and(|parent| {
-            nodes
-                .iter()
-                .any(|candidate| candidate.element_index == Some(parent) && is_tab(candidate))
-        })
+        let mut parent = node.parent_element_index;
+        // Bounded by the node count, so a cycle cannot loop forever.
+        for _ in 0..nodes.len() {
+            let Some(ancestor) = parent.and_then(&parent_of) else {
+                return false;
+            };
+            if is_tab(ancestor) {
+                return true;
+            }
+            parent = ancestor.parent_element_index;
+        }
+        true
     };
     let matches = distinct_elements(
         nodes.iter().enumerate().filter(|(_, node)| {
@@ -485,7 +516,12 @@ fn new_tab_button(
     if let Some(element) = unique_actionable(nodes, "AXButton", "New Tab", "AXPress")? {
         return Ok(element);
     }
-    structural_new_tab_button(nodes, is_same_element)?.ok_or_else(|| {
+    let structural = if native_control_named(nodes, "AXButton", "New Tab") {
+        None
+    } else {
+        structural_new_tab_button(nodes, is_same_element)?
+    };
+    structural.ok_or_else(|| {
         BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             format!(
@@ -525,6 +561,8 @@ fn select_new_tab_close_button(
     same_element: impl Fn(usize, usize) -> bool,
     descriptor: &BrowserSetupDescriptor,
 ) -> Result<Option<usize>, BrowserRefusal> {
+    // `before` may be a native-only walk while `after` is a full one, so only
+    // native nodes of `after` can be the browser's tab and its close control.
     let prior_tabs = before
         .iter()
         .filter(|node| node.role == "AXRadioButton" && node.element_index.is_some())
@@ -533,6 +571,7 @@ fn select_new_tab_close_button(
     let new_tabs = distinct_elements(
         after.iter().enumerate().filter(|(_, node)| {
             node.role == "AXRadioButton"
+                && !node.in_web_content
                 && node.element_index.is_some()
                 && !prior_tabs
                     .iter()
@@ -563,7 +602,9 @@ fn select_new_tab_close_button(
         after[tab_index + 1..end]
             .iter()
             .enumerate()
-            .filter(|(_, node)| node.role == "AXButton" && has_action(node, "AXPress"))
+            .filter(|(_, node)| {
+                node.role == "AXButton" && !node.in_web_content && has_action(node, "AXPress")
+            })
     };
     let mut close_buttons = distinct_elements(
         tab_buttons().filter(|(_, node)| {
@@ -574,7 +615,11 @@ fn select_new_tab_close_button(
         }),
         &same_element,
     );
-    if close_buttons.is_empty() {
+    let labelled = descriptor
+        .tab_close_labels
+        .iter()
+        .any(|label| native_control_named(&after[tab_index + 1..end], "AXButton", label));
+    if close_buttons.is_empty() && !labelled {
         // A localized Chrome names the control in the UI language ("关闭").
         // The tab was proven new above, and a fresh tab holds one pressable
         // button, its close control; any other count refuses.
@@ -2440,6 +2485,97 @@ mod tests {
         address.title = Some("Address and search bar".to_owned());
         find_bar.title = Some("Find".to_owned());
         assert!(!omnibox_reads_setup_url(&[address, find_bar], chrome()));
+    }
+
+    #[test]
+    fn an_unpressable_english_address_field_keeps_the_fallback_off() {
+        let url = chrome().setup_url;
+        let mut address = node(
+            "AXTextField",
+            Some("Address and search bar"),
+            Some("https://example.com/"),
+            &["AXShowMenu"],
+        );
+        address.element_index = None;
+        let mut find_bar = node("AXTextField", Some("Find"), Some(url), &["AXPress"]);
+        find_bar.element_index = None;
+        find_bar.element_ptr = 8;
+        let nodes = [address, find_bar];
+        assert!(!omnibox_reads_setup_url(&nodes, chrome()));
+        assert_eq!(
+            unique_omnibox(&nodes, chrome()).unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+    }
+
+    #[test]
+    fn an_unpressable_english_new_tab_button_keeps_the_fallback_off() {
+        let mut nodes = localized_tab_strip();
+        nodes[6].title = Some("New Tab".to_owned());
+        nodes[6].actions = vec!["AXShowMenu".to_owned()];
+        let mut spanning = tree_node("AXButton", None, 108, 1);
+        spanning.element_index = Some(8);
+        spanning.parent_element_index = Some(0);
+        spanning.frame = Some([460.0, 33.0, 28.0, 41.0]);
+        nodes.push(spanning);
+        assert_eq!(
+            new_tab_button(&nodes, chrome()).unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+    }
+
+    #[test]
+    fn structural_new_tab_button_skips_a_button_nested_deeper_in_a_tab() {
+        let mut nodes = localized_tab_strip();
+        let mut group = tree_node("AXGroup", None, 108, 2);
+        group.element_index = Some(8);
+        group.parent_element_index = Some(4);
+        nodes.push(group);
+        let mut nested = tree_node("AXButton", None, 109, 3);
+        nested.element_index = Some(9);
+        nested.parent_element_index = Some(8);
+        nested.frame = Some([460.0, 33.0, 28.0, 41.0]);
+        nodes.push(nested);
+        assert_eq!(
+            structural_new_tab_button(&nodes, |left, right| left == right).unwrap(),
+            Some(106)
+        );
+    }
+
+    #[test]
+    fn new_tab_cleanup_ignores_web_content_and_an_unpressable_english_close() {
+        let before = vec![
+            tree_node("AXRadioButton", Some("首页"), 10, 2),
+            tree_node("AXButton", Some("关闭"), 11, 3),
+        ];
+        let same = |left: usize, right: usize| left == right;
+
+        // A page radio button is not a browser tab, even when the native-only
+        // `before` walk could not have seen it.
+        let mut after = before.clone();
+        let mut page_tab = tree_node("AXRadioButton", Some("选项"), 40, 5);
+        page_tab.in_web_content = true;
+        let mut page_button = tree_node("AXButton", Some("删除"), 41, 6);
+        page_button.in_web_content = true;
+        after.extend([page_tab, page_button]);
+        assert_eq!(
+            select_new_tab_close_button(&before, &after, same, chrome()).unwrap(),
+            None
+        );
+
+        // An English close control that cannot be pressed leaves no fallback.
+        let mut after = before.clone();
+        after.push(tree_node("AXRadioButton", Some("New Tab"), 20, 2));
+        let mut close = tree_node("AXButton", Some("Close"), 21, 3);
+        close.actions = vec!["AXShowMenu".to_owned()];
+        after.push(close);
+        after.push(tree_node("AXButton", Some("Mute tab"), 22, 3));
+        assert_eq!(
+            select_new_tab_close_button(&before, &after, same, chrome())
+                .unwrap_err()
+                .code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
     }
 
     #[test]

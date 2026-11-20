@@ -213,10 +213,14 @@ allow:
     - get_window_state
     - list_apps
     - list_windows
-    - click
     - press_key
     - wait
   rules:                       # allowed when every constraint passes
+    - tool: click
+      constraints:
+        delivery_mode:         # absent means the tool default, background
+          optional: true
+          allowed: [background]
     - tool: type_text
       constraints:
         text:
@@ -231,6 +235,13 @@ allow:
       constraints:
         bundle_id:
           allowed: ["com.apple.Safari", "com.google.Chrome"]
+    - tool: launch_app
+      constraints:
+        path: { pattern: '^C:\\Windows\\System32\\notepad\.exe$' }
+        aumid: { optional: true, allowed: [] }   # must be absent
+        additional_arguments:
+          optional: true
+          items: { pattern: '^[\w.-]+\.txt$' }
 deny:
   tools:                       # checked first
     - shell_execute
@@ -238,7 +249,13 @@ deny:
 
 Evaluation: `deny.tools` → `allow.tools` → any matching `allow.rules` entry →
 deny. Constraint checks are `min`, `max`, `max_length`, `pattern` (RE2 syntax),
-and `allowed`. `allow` and `deny` also accept a flat list of names.
+`allowed`, and `items`, which applies its own checks to every element of an
+array argument. A constrained argument must be present unless the constraint
+sets `optional: true`; an absent optional argument passes and the tool uses
+its default, so the run_script helpers that omit `delivery_mode` pass a
+`delivery_mode: [background]` rule. `optional: true` with `allowed: []`
+forbids an argument, for example `aumid`, which `launch_app` prefers over
+`path`. `allow` and `deny` also accept a flat list of names.
 `type_text_chars` is normalized to `type_text`.
 
 ```bash test="cli-shape" id="cua-driver-serve"

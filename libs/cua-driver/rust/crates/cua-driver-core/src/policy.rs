@@ -548,11 +548,14 @@ struct RawYamlRule {
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawConstraint {
+    #[serde(default)]
+    optional: bool,
     min: Option<f64>,
     max: Option<f64>,
     max_length: Option<usize>,
     pattern: Option<String>,
     allowed: Option<Vec<Value>>,
+    items: Option<Box<RawConstraint>>,
 }
 
 #[cfg(feature = "yaml")]
@@ -588,10 +591,11 @@ impl YamlRule {
             .as_object()
             .ok_or_else(|| "arguments must be a JSON object".to_owned())?;
         for (argument, constraint) in &self.constraints {
-            let value = object
-                .get(argument)
-                .ok_or_else(|| format!("missing required argument '{argument}'"))?;
-            constraint.matches(argument, value)?;
+            match object.get(argument) {
+                Some(value) => constraint.matches(argument, value)?,
+                None if constraint.optional => {}
+                None => return Err(format!("missing required argument '{argument}'")),
+            }
         }
         Ok(())
     }
@@ -600,11 +604,14 @@ impl YamlRule {
 #[cfg(feature = "yaml")]
 #[derive(Debug, Clone)]
 struct Constraint {
+    /// An absent argument passes, so the tool applies its own default.
+    optional: bool,
     min: Option<f64>,
     max: Option<f64>,
     max_length: Option<usize>,
     pattern: Option<regex::Regex>,
     allowed: Option<Vec<Value>>,
+    items: Option<Box<Constraint>>,
 }
 
 #[cfg(feature = "yaml")]
@@ -615,6 +622,7 @@ impl Constraint {
             && raw.max_length.is_none()
             && raw.pattern.is_none()
             && raw.allowed.is_none()
+            && raw.items.is_none()
         {
             bail!("constraint must define at least one check");
         }
@@ -628,12 +636,24 @@ impl Constraint {
             .map(|pattern| regex::Regex::new(&pattern))
             .transpose()
             .context("invalid regex pattern")?;
+        let items = raw
+            .items
+            .map(|items| {
+                if items.optional {
+                    bail!("array items cannot be optional");
+                }
+                Self::compile(*items).map(Box::new)
+            })
+            .transpose()
+            .context("invalid items constraint")?;
         Ok(Self {
+            optional: raw.optional,
             min: raw.min,
             max: raw.max,
             max_length: raw.max_length,
             pattern,
             allowed: raw.allowed,
+            items,
         })
     }
 
@@ -677,6 +697,14 @@ impl Constraint {
                 return Err(format!(
                     "argument '{argument}' is not in the allowed values"
                 ));
+            }
+        }
+        if let Some(items) = &self.items {
+            let elements = value
+                .as_array()
+                .ok_or_else(|| format!("argument '{argument}' must be an array"))?;
+            for (index, element) in elements.iter().enumerate() {
+                items.matches(&format!("{argument}[{index}]"), element)?;
             }
         }
         Ok(())
@@ -900,6 +928,107 @@ allow:
             policy.evaluate("launch_app", &serde_json::json!({"app": "Terminal"})),
             PolicyDecision::Deny(_)
         ));
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn yaml_optional_constraint_lets_an_absent_argument_take_its_default() {
+        let policy = yaml_policy(
+            r#"
+allow:
+  rules:
+    - tool: click
+      constraints:
+        delivery_mode: { optional: true, allowed: [background] }
+"#,
+        );
+        // run_script's app.click sends no delivery_mode.
+        assert_eq!(
+            policy.evaluate(
+                "click",
+                &serde_json::json!({"pid": 1, "element_token": "s:1"})
+            ),
+            PolicyDecision::Allow
+        );
+        assert_eq!(
+            policy.evaluate("click", &serde_json::json!({"delivery_mode": "background"})),
+            PolicyDecision::Allow
+        );
+        assert!(matches!(
+            policy.evaluate("click", &serde_json::json!({"delivery_mode": "foreground"})),
+            PolicyDecision::Deny(reason) if reason.contains("'delivery_mode' is not in the allowed values")
+        ));
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn yaml_constrains_launch_app_path_aumid_and_argument_items() {
+        let policy = yaml_policy(
+            r#"
+allow:
+  rules:
+    - tool: launch_app
+      constraints:
+        path: { pattern: '^C:\\Windows\\System32\\notepad\.exe$' }
+        aumid: { optional: true, allowed: [] }
+        additional_arguments:
+          optional: true
+          items: { pattern: '^[A-Za-z0-9_.-]+\.txt$' }
+"#,
+        );
+        let notepad = r"C:\Windows\System32\notepad.exe";
+        assert_eq!(
+            policy.evaluate("launch_app", &serde_json::json!({"path": notepad})),
+            PolicyDecision::Allow
+        );
+        assert_eq!(
+            policy.evaluate(
+                "launch_app",
+                &serde_json::json!({"path": notepad, "additional_arguments": ["notes.txt"]})
+            ),
+            PolicyDecision::Allow
+        );
+        assert!(matches!(
+            policy.evaluate(
+                "launch_app",
+                &serde_json::json!({"path": notepad, "additional_arguments": ["notes.txt", "/p"]})
+            ),
+            PolicyDecision::Deny(reason) if reason.contains("'additional_arguments[1]' does not match")
+        ));
+        assert!(matches!(
+            policy.evaluate(
+                "launch_app",
+                &serde_json::json!({"path": notepad, "additional_arguments": "notes.txt"})
+            ),
+            PolicyDecision::Deny(reason) if reason.contains("'additional_arguments' must be an array")
+        ));
+        // aumid takes precedence over path, so a matching path must not carry one.
+        assert!(matches!(
+            policy.evaluate(
+                "launch_app",
+                &serde_json::json!({"path": notepad, "aumid": "Microsoft.WindowsTerminal_8wekyb3d8bbwe!App"})
+            ),
+            PolicyDecision::Deny(reason) if reason.contains("'aumid' is not in the allowed values")
+        ));
+        assert!(matches!(
+            policy.evaluate("launch_app", &serde_json::json!({"name": "cmd"})),
+            PolicyDecision::Deny(reason) if reason.contains("missing required argument 'path'")
+        ));
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn yaml_optional_alone_or_on_items_fails_at_load_time() {
+        let error = YamlPolicy::from_str(
+            "allow:\n  rules:\n    - tool: click\n      constraints:\n        delivery_mode: { optional: true }\n",
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("at least one check"));
+        let error = YamlPolicy::from_str(
+            "allow:\n  rules:\n    - tool: launch_app\n      constraints:\n        additional_arguments: { items: { optional: true, max_length: 5 } }\n",
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("array items cannot be optional"));
     }
 
     #[cfg(feature = "yaml")]

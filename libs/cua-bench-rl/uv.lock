@@ -423,7 +423,7 @@ wheels = [
 
 [[package]]
 name = "cua"
-version = "0.29.0"
+version = "0.29.1"
 source = { editable = "../cua/python" }
 
 [package.metadata]
@@ -463,7 +463,7 @@ requires-dist = [
     { name = "accelerate", marker = "extra == 'moondream3'" },
     { name = "accelerate", marker = "extra == 'opencua-hf'" },
     { name = "accelerate", marker = "extra == 'uitars-hf'" },
-    { name = "aiohttp", specifier = ">=3.9.3" },
+    { name = "aiohttp", specifier = ">=3.14.4" },
     { name = "anyio", specifier = ">=4.4.1" },
     { name = "blobfile", marker = "extra == 'all'", specifier = ">=3.0.0" },
     { name = "blobfile", marker = "extra == 'opencua-hf'", specifier = ">=3.0.0" },
@@ -523,7 +523,7 @@ provides-extras = ["computer", "openai", "anthropic", "qwen", "uitars", "uitars-
 
 [[package]]
 name = "cua-bench"
-version = "0.4.12"
+version = "0.4.14"
 source = { editable = "../cua-bench" }
 dependencies = [
     { name = "aiohttp" },
@@ -541,7 +541,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiohttp", specifier = ">=3.9.0" },
+    { name = "aiohttp", specifier = ">=3.14.4" },
     { name = "anthropic", marker = "extra == 'agents'", specifier = ">=0.26.0" },
     { name = "beautifulsoup4", specifier = ">=4.14.2" },
     { name = "beautifulsoup4", marker = "extra == 'osworld'", specifier = ">=4.12" },
@@ -639,7 +639,7 @@ torch = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiohttp", specifier = ">=3.9.0" },
+    { name = "aiohttp", specifier = ">=3.14.4" },
     { name = "cua-bench", editable = "../cua-bench" },
     { name = "fastapi", specifier = ">=0.100.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
@@ -683,7 +683,7 @@ dev = [{ name = "pytest", specifier = ">=8.3.5" }]
 
 [[package]]
 name = "cua-sandbox"
-version = "0.11.11"
+version = "0.11.13"
 source = { editable = "../python/cua-sandbox" }
 dependencies = [
     { name = "cua" },
@@ -704,7 +704,7 @@ requires-dist = [
     { name = "cua-driver", marker = "extra == 'driver'", specifier = ">=0.37.0,<0.56" },
     { name = "grpcio", specifier = "==1.78.0" },
     { name = "httpx", specifier = ">=0.27.0" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.10" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.30.0" },
     { name = "oras", specifier = ">=0.2.40" },
     { name = "paramiko", specifier = ">=5.0.0" },
     { name = "protobuf", specifier = "==6.33.6" },

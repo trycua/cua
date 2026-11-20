@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.14](https://github.com/trycua/cua/compare/bench-v0.4.13...bench-v0.4.14) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** bump mcp to 1.30.0+ (GHSA-qx49-fqc8-xw99) ([#8300](https://github.com/trycua/cua/issues/8300)) ([3d9c32f](https://github.com/trycua/cua/commit/3d9c32fc21e9e9326b330da26e230f8f56c69c0b))
+
+## [0.4.13](https://github.com/trycua/cua/compare/bench-v0.4.12...bench-v0.4.13) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** bump aiohttp to 3.14.5 (44 Dependabot alerts) ([#8309](https://github.com/trycua/cua/issues/8309)) ([006c897](https://github.com/trycua/cua/commit/006c897412aef0820e43a67beab8fe262a4a9886))
+
 ## [0.4.12](https://github.com/trycua/cua/compare/bench-v0.4.11...bench-v0.4.12) (2026-11-19)
 
 

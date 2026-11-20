@@ -38,7 +38,7 @@ pub mod elf;
 pub mod error;
 pub mod exec;
 pub mod experiments;
-#[cfg(any(feature = "lume", feature = "containerization"))]
+#[cfg(any(feature = "lume", feature = "containerization", feature = "microvm"))]
 pub mod fetch;
 pub mod filetable;
 pub mod gpu;

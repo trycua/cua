@@ -3810,27 +3810,21 @@ async fn install_vz() -> std::result::Result<(), VmmError> {
     Ok(())
 }
 
-/// Windows microVMs (QEMU on WHPX): the Windows Hypervisor Platform feature
-/// (one UAC prompt, then a restart when Windows asks), QEMU through winget, and
-/// the pinned guest kernel. The guest init ships next to `cua`.
+/// Windows microVMs (QEMU on WHPX): the Windows Hypervisor Platform feature and
+/// the pinned QEMU installer (one UAC prompt for both, then a restart when
+/// Windows asks; winget only when the download fails), and the pinned guest
+/// kernel. The guest init ships next to `cua`.
 async fn install_microvm_windows() -> std::result::Result<(), VmmError> {
     use cua_vmm::microvm::{assets, whpx};
-    if let Some(why) = whpx::unsupported_reason(&whpx::status()) {
-        match whpx::status() {
-            whpx::Whpx::FeatureOff => match whpx::enable_elevated().await? {
-                whpx::Enabled::Ready => {}
-                whpx::Enabled::RestartNeeded => {
-                    return Err(VmmError::other(
-                        "Windows Hypervisor Platform is on now; restart this PC, then run \
-                         `cua runtime setup microvm` again",
-                    ));
-                }
-            },
-            _ => return Err(VmmError::other(why)),
-        }
+    let w = whpx::status();
+    if w != whpx::Whpx::FeatureOff
+        && let Some(why) = whpx::unsupported_reason(&w)
+    {
+        return Err(VmmError::other(why));
     }
-    if whpx::qemu_bin().is_none() {
-        cua_vmm::qemu::install_qemu().await?;
+    let needs = whpx::needs(&w, whpx::qemu_state_now().await);
+    if needs.any() && whpx::provision(needs).await? == whpx::Enabled::RestartNeeded {
+        return Err(VmmError::other(whpx::restart_message(needs)));
     }
     if assets::init_bin().is_none() {
         return Err(VmmError::missing(

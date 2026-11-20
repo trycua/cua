@@ -950,8 +950,8 @@ async fn microvm_status() -> Option<(BackendStatus, MicroVmReport)> {
 /// microVMs on Windows (QEMU on the Windows Hypervisor Platform, hardware
 /// acceleration only) for `doctor`: ready when WHPX answers, QEMU 9 or later
 /// and the static guest init are there; installable when only what cua can
-/// fetch or turn on is missing (QEMU through winget, the kernel, the
-/// Windows feature through one administrator prompt).
+/// fetch or turn on is missing (QEMU from its pinned installer, the kernel, the
+/// Windows feature, with one administrator prompt for the two).
 #[cfg(feature = "microvm")]
 async fn windows_microvm_status() -> (BackendStatus, MicroVmReport) {
     use crate::microvm::{assets, whpx};
@@ -999,7 +999,11 @@ async fn windows_microvm_status() -> (BackendStatus, MicroVmReport) {
         );
     }
     if qemu.is_none() || old_qemu {
-        provisioning.push("install QEMU with winget (SoftwareFreedomConservancy.QEMU)".into());
+        provisioning.push(format!(
+            "download and install QEMU {} (pinned official installer, about 200 MB; winget \
+             only if the download fails)",
+            whpx::QEMU_VERSION
+        ));
     }
     if !kernel_cached {
         provisioning.push(format!(
@@ -1021,9 +1025,11 @@ async fn windows_microvm_status() -> (BackendStatus, MicroVmReport) {
     } else if let Some(why) = whpx::unsupported_reason(&w) {
         why
     } else if qemu.is_none() {
-        "microVMs run in QEMU on the Windows Hypervisor Platform: QEMU is set up on first use \
-         (winget)"
-            .into()
+        format!(
+            "microVMs run in QEMU on the Windows Hypervisor Platform: QEMU {} is downloaded and \
+             installed on first use (one administrator prompt)",
+            whpx::QEMU_VERSION
+        )
     } else if missing.is_empty() {
         format!(
             "{} on the Windows Hypervisor Platform{}",

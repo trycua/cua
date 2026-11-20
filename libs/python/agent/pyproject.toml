@@ -14,7 +14,7 @@ authors = [
 ]
 dependencies = [
     "httpx>=0.27.0",
-    "aiohttp>=3.9.3",
+    "aiohttp>=3.14.4",
     "anyio>=4.4.1",
     "typing-extensions>=4.12.2",
     "pydantic>=2.6.4",

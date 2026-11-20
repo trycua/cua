@@ -62,6 +62,7 @@ on:
       # time (spaces_rust_slice_inputs.py lists them; a unit test checks this
       # list covers them). apps/cua-spaces-web is above.
       - "libs/images/sandbox-images.json"
+      - "libs/cua-driver/rust/Skills/cua-driver/**"
       - ".cargo/**"
       - ".github/scripts/spaces_rust_slice_inputs.py"
       - ".github/actions/spaces-native/**"

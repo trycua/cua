@@ -14,7 +14,7 @@
 
 use cua_driver_core::walk_budget::WalkBudget;
 use windows::core::{Interface, BSTR, HRESULT};
-use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+use windows::Win32::Foundation::{RPC_E_CHANGED_MODE, TRUE};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
@@ -25,8 +25,8 @@ use windows::Win32::UI::Accessibility::{
     TreeScope, TreeScope_Children, TreeScope_Element, TreeScope_Subtree,
     UIA_AutomationIdPropertyId, UIA_BoundingRectanglePropertyId, UIA_ControlTypePropertyId,
     UIA_ExpandCollapsePatternId, UIA_HelpTextPropertyId, UIA_InvokePatternId,
-    UIA_IsEnabledPropertyId, UIA_IsOffscreenPropertyId, UIA_NamePropertyId,
-    UIA_ProcessIdPropertyId, UIA_RangeValuePatternId, UIA_ScrollPatternId,
+    UIA_IsEnabledPropertyId, UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId,
+    UIA_NamePropertyId, UIA_ProcessIdPropertyId, UIA_RangeValuePatternId, UIA_ScrollPatternId,
     UIA_SelectionItemIsSelectedPropertyId, UIA_SelectionItemPatternId, UIA_TextPatternId,
     UIA_TogglePatternId, UIA_ToggleToggleStatePropertyId, UIA_ValuePatternId,
     UIA_ValueValuePropertyId,
@@ -38,7 +38,6 @@ pub mod scroll;
 pub mod snapshot;
 pub mod windows_enum;
 pub use snapshot::Snapshots;
-pub use windows_enum::enumerate_top_level_windows;
 
 /// Default cap; callers can override via [`walk_tree_bounded`].
 pub const DEFAULT_MAX_DEPTH: usize = 25;
@@ -64,6 +63,10 @@ pub struct UiaNode {
     pub enabled: Option<bool>,
     /// Toggle/selection state when the element exposes one of those patterns.
     pub selected: Option<bool>,
+    /// UIA `IsPassword`: `Some(true)` for a password field, `Some(false)` for
+    /// an `Edit` control that is not one, `None` when unknown or
+    /// not applicable (non-text elements, MSAA fallback).
+    pub is_password: Option<bool>,
     /// Raw COM pointer (IUIAutomationElement for UIA path, IAccessible for
     /// MSAA path) as usize. Retained — `Snapshots` Drop releases it via
     /// the `kind`-appropriate vtable.
@@ -496,8 +499,10 @@ unsafe fn walk_tree_unsafe(
                 );
 
                 if fallback_nodes.iter().any(|n| n.element_index.is_some()) {
-                    nodes = fallback_nodes;
+                    release_walk_nodes(std::mem::replace(&mut nodes, fallback_nodes));
                     lines = fallback_lines;
+                } else {
+                    release_walk_nodes(fallback_nodes);
                 }
             }
         }
@@ -505,7 +510,7 @@ unsafe fn walk_tree_unsafe(
 
     let raw_md = render_lines(&lines);
     let tree_markdown = if let Some(q) = query {
-        filter_tree(&raw_md, q)
+        cua_driver_core::element_query::filter_tree(&raw_md, q)
     } else {
         raw_md
     };
@@ -715,6 +720,7 @@ unsafe fn node_cache_request(
         UIA_HelpTextPropertyId,
         UIA_IsEnabledPropertyId,
         UIA_IsOffscreenPropertyId,
+        UIA_IsPasswordPropertyId,
         UIA_BoundingRectanglePropertyId,
         UIA_ToggleToggleStatePropertyId,
         UIA_SelectionItemIsSelectedPropertyId,
@@ -856,6 +862,11 @@ fn emit_cached_node(
     // macOS: enablement is state the caller needs to read, not a reason to hide
     // the row. The token writers refuse it (`tools::impl_::refuse_if_disabled`).
     let actions = detect_cached_actions(element, &control_type);
+    let is_password = text_entry_is_password(read_cached_is_password(element), &control_type);
+    // Providers are expected to blank Value on password fields, but that is a
+    // convention, not something UIA enforces. Never echo it once the element
+    // says it is a password field.
+    let value = redact_password_value(value, is_password);
     let is_actionable = !actions.is_empty();
     let has_content = name
         .as_deref()
@@ -887,6 +898,7 @@ fn emit_cached_node(
                 actions: actions.clone(),
                 enabled,
                 selected,
+                is_password,
                 element_ptr: ptr,
                 center_x,
                 center_y,
@@ -907,6 +919,7 @@ fn emit_cached_node(
                 actions: vec![],
                 enabled,
                 selected,
+                is_password,
                 element_ptr: ptr,
                 center_x: 0,
                 center_y: 0,
@@ -922,6 +935,36 @@ fn emit_cached_node(
         nodes.push(node);
     }
     (control_type, emitted_parent)
+}
+
+/// Keep `IsPassword` where it carries information: always when it is true,
+/// and as an explicit `false` only on `Edit` controls, the control type UIA
+/// gives a password field. Action names are no guide here: a slider's
+/// RangeValuePattern also maps to `set_value`, and a read-only text surface's
+/// TextPattern to `text`.
+pub(crate) fn text_entry_is_password(
+    is_password: Option<bool>,
+    control_type: &str,
+) -> Option<bool> {
+    match is_password {
+        Some(true) => Some(true),
+        Some(false) if control_type == "Edit" => Some(false),
+        _ => None,
+    }
+}
+
+/// Drop an element's value when it reports itself as a password field, so a
+/// provider that does not blank Value cannot leak the secret through `value`,
+/// the label fallback, or the Markdown row.
+pub(crate) fn redact_password_value(
+    value: Option<String>,
+    is_password: Option<bool>,
+) -> Option<String> {
+    if is_password == Some(true) {
+        None
+    } else {
+        value
+    }
 }
 
 fn read_cached_control_type(element: &IUIAutomationElement) -> String {
@@ -975,13 +1018,30 @@ fn read_cached_bool(
     element: &IUIAutomationElement,
     property_id: windows::Win32::UI::Accessibility::UIA_PROPERTY_ID,
 ) -> Option<bool> {
+    unsafe { variant_bool(&element.GetCachedPropertyValue(property_id).ok()?) }
+}
+
+/// UIA `IsPassword`, or `None` when the provider does not support it. The
+/// plain `GetCachedPropertyValue` substitutes the property's default `false`
+/// for an unsupported property, which would report an unknown field as known
+/// not to be a password field.
+fn read_cached_is_password(element: &IUIAutomationElement) -> Option<bool> {
     unsafe {
-        let variant = element.GetCachedPropertyValue(property_id).ok()?;
-        if variant.as_raw().Anonymous.Anonymous.vt == 11 {
-            Some(variant.as_raw().Anonymous.Anonymous.Anonymous.boolVal != 0)
-        } else {
-            None
-        }
+        variant_bool(
+            &element
+                .GetCachedPropertyValueEx(UIA_IsPasswordPropertyId, TRUE)
+                .ok()?,
+        )
+    }
+}
+
+/// A `VT_BOOL` variant's value; `None` for any other type, including the
+/// not-supported sentinel.
+unsafe fn variant_bool(variant: &windows::core::VARIANT) -> Option<bool> {
+    if variant.as_raw().Anonymous.Anonymous.vt == 11 {
+        Some(variant.as_raw().Anonymous.Anonymous.Anonymous.boolVal != 0)
+    } else {
+        None
     }
 }
 
@@ -1141,6 +1201,9 @@ pub(crate) fn format_node_line(node: &UiaNode) -> String {
         if node.enabled == Some(false) {
             attrs.push("enabled=false".to_owned());
         }
+        if node.is_password == Some(true) {
+            attrs.push("password".to_owned());
+        }
         if !node.actions.is_empty() {
             attrs.push(format!("actions=[{}]", node.actions.join(",")));
         }
@@ -1154,6 +1217,9 @@ pub(crate) fn format_node_line(node: &UiaNode) -> String {
         }
         if let Some(v) = &node.value {
             s.push_str(&format!(" = \"{}\"", v));
+        }
+        if node.is_password == Some(true) {
+            s.push_str(" [password]");
         }
     }
     s
@@ -1169,52 +1235,6 @@ fn render_lines(lines: &[(usize, String)]) -> String {
         out.push('\n');
     }
     out
-}
-
-fn filter_tree(markdown: &str, query: &str) -> String {
-    let needle = query.to_lowercase();
-    let lines: Vec<&str> = markdown.lines().collect();
-    let mut ancestors: Vec<&str> = Vec::new();
-    let mut last_emitted: Vec<Option<&str>> = Vec::new();
-    let mut output: Vec<&str> = Vec::new();
-
-    for line in &lines {
-        let depth = line.chars().take_while(|c| *c == ' ').count() / 2;
-        while ancestors.len() <= depth {
-            ancestors.push("");
-            last_emitted.push(None);
-        }
-        for slot in last_emitted
-            .iter_mut()
-            .take(ancestors.len())
-            .skip(depth + 1)
-        {
-            *slot = None;
-        }
-        ancestors[depth] = line;
-
-        if line.to_lowercase().contains(&needle) {
-            for d in 0..depth {
-                if ancestors[d].is_empty() {
-                    continue;
-                }
-                if last_emitted[d] == Some(ancestors[d]) {
-                    continue;
-                }
-                last_emitted[d] = Some(ancestors[d]);
-                output.push(ancestors[d]);
-            }
-            last_emitted[depth] = Some(line);
-            output.push(line);
-        }
-    }
-
-    if output.is_empty() {
-        return String::new();
-    }
-    let mut r = output.join("\n");
-    r.push('\n');
-    r
 }
 
 #[cfg(test)]
@@ -1233,6 +1253,7 @@ mod tests {
             actions: vec!["toggle".into()],
             enabled: Some(false),
             selected: Some(false),
+            is_password: None,
             element_ptr: 0,
             center_x: 0,
             center_y: 0,

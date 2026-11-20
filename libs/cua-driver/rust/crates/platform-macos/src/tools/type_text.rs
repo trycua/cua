@@ -39,6 +39,7 @@ use crate::ax::bindings::{
     copy_string_attr, focused_element_of_pid, kAXErrorSuccess, set_string_attr, AXUIElementRef,
 };
 use crate::focus_guard;
+use crate::input::keyboard::KeyForwarder;
 use crate::window_change_detector::WindowChangeDetector;
 use core_foundation::base::CFRelease;
 use cua_driver_core::background_input::BackgroundRefusal;
@@ -68,7 +69,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["text"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it." },
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "pid":  { "type": "integer", "description": "Target process ID." },
                 "text": { "type": "string",  "description": "Text to insert." },
                 "window_id": {
@@ -100,26 +101,39 @@ fn def() -> &'static ToolDef {
     })
 }
 
-fn screen_sharing_delivery_error(
-    is_screen_sharing: bool,
+fn key_forwarder_delivery_error(
+    forwarder: Option<KeyForwarder>,
     foreground: bool,
     window_id: Option<u32>,
 ) -> Option<ToolResult> {
-    if !is_screen_sharing || (foreground && window_id.is_some()) {
+    let forwarder = forwarder?;
+    if foreground && window_id.is_some() {
         return None;
     }
-    Some(
-        ToolResult::error(
+    let (message, code, reason) = match forwarder {
+        KeyForwarder::ScreenSharing => (
             "Screen Sharing text input requires delivery_mode:\"foreground\" and window_id \
              so Cua Driver can deliver physical HID key transitions safely.",
-        )
-        .with_structured(serde_json::json!({
-            "code": "SCREEN_SHARING_REQUIRES_FOREGROUND_HID",
+            "SCREEN_SHARING_REQUIRES_FOREGROUND_HID",
+            "Screen Sharing forwards physical keycodes; background PID-routed \
+             Unicode events can corrupt guest text.",
+        ),
+        KeyForwarder::IosSimulator => (
+            "iOS Simulator text input requires delivery_mode:\"foreground\" and window_id \
+             so Cua Driver can deliver physical HID key transitions safely. In the \
+             background, use set_value on the field's element_token, or press_key.",
+            "IOS_SIMULATOR_REQUIRES_FOREGROUND_HID",
+            "The iOS Simulator forwards physical keycodes; background PID-routed \
+             Unicode events arrive as the A key.",
+        ),
+    };
+    Some(
+        ToolResult::error(message).with_structured(serde_json::json!({
+            "code": code,
             "effect": "refused",
             "escalation": {
                 "recommended": "foreground",
-                "reason": "Screen Sharing forwards physical keycodes; background PID-routed \
-                           Unicode events can corrupt guest text.",
+                "reason": reason,
                 "requires": ["window_id"]
             }
         })),
@@ -200,8 +214,8 @@ impl Tool for TypeTextTool {
         };
         let delay_ms = args.u64_or("delay_ms", DEFAULT_DELAY_MS);
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
-        if let Some(error) = screen_sharing_delivery_error(
-            crate::input::keyboard::is_screen_sharing_pid(pid),
+        if let Some(error) = key_forwarder_delivery_error(
+            crate::input::keyboard::key_forwarder_for_pid(pid),
             delivery_mode.is_foreground(),
             window_id,
         ) {
@@ -583,6 +597,7 @@ impl Tool for TypeTextTool {
                 })
             }
             Ok(Err(e)) => crate::security_prompt::tool_result(&e)
+                .or_else(|| super::key_focus_unconfirmed_error(&e))
                 .or_else(|| {
                     window_id.and_then(|wid| {
                         super::element_disabled_error(pid, wid, &e, delivery_mode.is_foreground())
@@ -611,7 +626,7 @@ const PATH_KEY_EVENTS_FG: &str = "key_events_fg";
 // Atomic AX writes are deliberately excluded: their cost does not scale per
 // character and a single write remains the preferred route for large text.
 const SYNTHESIS_BUDGET_MS: u64 = 100_000;
-const KEY_DOWN_GAP_MS: u64 = 8;
+const KEY_DOWN_GAP_MS: u64 = crate::input::keyboard::DEFAULT_KEY_GAP.as_millis() as u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TextDeliveryRoute {
@@ -644,6 +659,31 @@ impl AxAttempt {
             Self::Unchanged => "unchanged",
             Self::Unverifiable => "unverifiable",
         }
+    }
+}
+
+/// What follows an AX write that did not read back as landed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UnlandedAxWrite {
+    /// Nothing landed or the write was refused: type the text as keys.
+    TypeKeys(AxAttempt),
+    /// The write may have landed where AX cannot see it yet: report it
+    /// unverified and send no keys, which would insert the text again.
+    MayHaveLanded,
+}
+
+/// `progress` is `None` when the write was refused. `unchanged_web_readback`
+/// is an unchanged read-back from inside an `AXWebArea`.
+fn after_unlanded_ax_write(
+    progress: Option<TypedProgress>,
+    unchanged_web_readback: bool,
+) -> UnlandedAxWrite {
+    match progress {
+        Some(TypedProgress::Unchanged) if unchanged_web_readback => UnlandedAxWrite::MayHaveLanded,
+        Some(TypedProgress::Unchanged) => UnlandedAxWrite::TypeKeys(AxAttempt::Unchanged),
+        Some(TypedProgress::Unverifiable) => UnlandedAxWrite::TypeKeys(AxAttempt::Unverifiable),
+        None => UnlandedAxWrite::TypeKeys(AxAttempt::Rejected),
+        Some(TypedProgress::Complete | TypedProgress::Partial(_)) => unreachable!(),
     }
 }
 
@@ -1175,6 +1215,13 @@ pub(super) fn is_browser_pid(pid: i32) -> bool {
     crate::browser::browser_js::BrowserJs::supports(&bundle_id) || is_chromium_identity(&bundle_id)
 }
 
+/// Whether `pid` runs a Chromium renderer: a Chrome-family browser or an
+/// Electron app.
+pub(super) fn is_chromium_embedder(pid: i32) -> bool {
+    let bundle_id = apps::bundle_id_for_pid(pid).unwrap_or_default();
+    is_chromium_identity(&bundle_id) || crate::browser::electron_js::ElectronJs::is_electron(pid)
+}
+
 pub(crate) fn is_chromium_identity(bundle_id: &str) -> bool {
     bundle_id
         .to_ascii_lowercase()
@@ -1257,6 +1304,7 @@ const FRONT_SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_mill
 /// Type via CGEvent keystrokes at the current insertion point, then verify by
 /// read-back. `type_text` is deliberately non-idempotent: it must never clear
 /// an existing value merely because AX cannot read that value back.
+#[allow(clippy::too_many_arguments)]
 fn cgevent_type_verified(
     pid: i32,
     text: &str,
@@ -1265,6 +1313,7 @@ fn cgevent_type_verified(
     element_ptr_and_idx: Option<(usize, Option<usize>)>,
     settle_ms: u64,
     window_id: Option<u32>,
+    is_terminal_target: bool,
 ) -> anyhow::Result<(bool, Option<usize>)> {
     // Focus the target element so the keystrokes land in IT. Critical in
     // foreground mode: a freshly-fronted window's keyboard focus may be on the
@@ -1310,28 +1359,59 @@ fn cgevent_type_verified(
     );
     // A batched send that a native field only partly took (an app that reads
     // just the first character of a multi-character event) is finished one
-    // paced key at a time from where it stopped. Web content never takes this
-    // branch: its read-back cannot prove how much landed, so a retype could
-    // duplicate text.
+    // paced key at a time from where it stopped. Web content and terminals never
+    // take this branch: their read-back cannot prove how much landed, so a
+    // retype could duplicate text.
     if batched {
-        if let (false, Some(done)) = outcome {
-            let total = text.chars().count();
-            let web = target_in_web_area(pid, element_ptr_and_idx, window_id);
-            if done < total && !web {
-                let tail: String = text.chars().skip(done).collect();
-                crate::input::keyboard::type_text_with_delay(pid, &tail, RETYPE_TAIL_DELAY_MS)?;
-                let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
-                return Ok(await_typed_delivery(
-                    before,
-                    text,
-                    deadline,
-                    || read_axvalue_bound(pid, element_ptr_and_idx, window_id),
-                    || false,
-                ));
+        let web = || target_in_web_area(pid, element_ptr_and_idx, window_id);
+        if let Some(done) = retype_from(outcome, text.chars().count(), is_terminal_target, web) {
+            let after = read_axvalue_bound(pid, element_ptr_and_idx, window_id);
+            if !appends_prefix(before, after.as_deref(), text, done) {
+                return Ok((false, None));
             }
+            let tail: String = text.chars().skip(done).collect();
+            crate::input::keyboard::type_text_with_delay(pid, &tail, RETYPE_TAIL_DELAY_MS)?;
+            let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
+            return Ok(await_typed_delivery(
+                before,
+                text,
+                deadline,
+                || read_axvalue_bound(pid, element_ptr_and_idx, window_id),
+                || false,
+            ));
         }
     }
-    Ok(outcome)
+    Ok(reported(outcome, is_terminal_target))
+}
+
+fn reported(outcome: (bool, Option<usize>), is_terminal_target: bool) -> (bool, Option<usize>) {
+    let (verified, delivered) = outcome;
+    (
+        verified,
+        delivered.filter(|_| verified || !is_terminal_target),
+    )
+}
+
+/// Where a batched send resumes in a native field; web content and terminals are never retyped.
+fn retype_from(
+    outcome: (bool, Option<usize>),
+    total: usize,
+    is_terminal_target: bool,
+    is_web: impl FnOnce() -> bool,
+) -> Option<usize> {
+    let (false, Some(done)) = outcome else {
+        return None;
+    };
+    (done < total && !is_terminal_target && !is_web()).then_some(done)
+}
+
+fn appends_prefix(before: Option<&str>, after: Option<&str>, text: &str, done: usize) -> bool {
+    let (Some(before), Some(after)) = (before, after) else {
+        return false;
+    };
+    after
+        .strip_prefix(before)
+        .is_some_and(|added| added.chars().eq(text.chars().take(done)))
 }
 
 fn await_typed_delivery(
@@ -1485,9 +1565,9 @@ fn type_text_in_key_window(
 
     // --- Foreground rung: explicit agent request (skip AX/background ladder). ---
     if delivery_mode.is_foreground() {
-        let screen_sharing_target = crate::input::keyboard::is_screen_sharing_pid(pid);
+        let key_forwarder_target = crate::input::keyboard::key_forwarder_for_pid(pid).is_some();
         if let Some(refusal) = synthesis_preflight(
-            if screen_sharing_target {
+            if key_forwarder_target {
                 TextDeliveryRoute::PhysicalSynthesis
             } else {
                 TextDeliveryRoute::UnicodeSynthesis
@@ -1533,14 +1613,16 @@ fn type_text_in_key_window(
                 element,
                 foreground_settle_ms,
                 window_id,
+                is_terminal_target,
             )
         };
         let ((verified, delivered_chars), fronted) = match window_id {
-            Some(wid) if screen_sharing_target => {
-                // Screen Sharing forwards physical HID transitions to the
-                // guest. PID-routed Unicode events all carry keycode 0 (the A
-                // key), so a guest sees "aaaa"; modifier flags alone likewise
-                // turn Cmd+V into plain "v". The explicit foreground rung may
+            Some(wid) if key_forwarder_target => {
+                // Screen Sharing and the iOS Simulator forward physical HID
+                // transitions to the guest. PID-routed Unicode events all
+                // carry keycode 0 (the A key), so a guest sees "aaaa";
+                // modifier flags alone likewise turn Cmd+V into plain "v"
+                // (Screen Sharing). The explicit foreground rung may
                 // safely use the global HID queue while the exact target is
                 // guarded and restored.
                 crate::input::skylight::with_foreground_hid_activation(
@@ -1548,12 +1630,25 @@ fn type_text_in_key_window(
                     wid,
                     || {
                         ensure_enabled()?;
-                        if foreground_settle_ms > 0 {
-                            std::thread::sleep(std::time::Duration::from_millis(
-                                foreground_settle_ms,
-                            ));
-                        }
-                        crate::input::keyboard::type_text_physical_global(prompt, text, delay_ms)
+                        // Physical keys reach whichever field has focus, so an
+                        // addressed field must be confirmed focused first.
+                        crate::input::ax_actions::with_confirmed_key_focus(
+                            element_ptr_and_idx.map(|(ptr, _)| ptr),
+                            crate::input::ax_actions::focus_element,
+                            |target| {
+                                crate::input::ax_actions::element_has_keyboard_focus(pid, target)
+                            },
+                            || {
+                                if foreground_settle_ms > 0 {
+                                    std::thread::sleep(std::time::Duration::from_millis(
+                                        foreground_settle_ms,
+                                    ));
+                                }
+                                crate::input::keyboard::type_text_physical_global(
+                                    prompt, text, delay_ms,
+                                )
+                            },
+                        )
                     },
                 )?;
                 ((false, None), true)
@@ -1660,6 +1755,7 @@ fn type_text_in_key_window(
             element_ptr_and_idx,
             /*settle_ms=*/ 0,
             window_id,
+            true,
         )?;
         return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
             detail: format!(" via CGEvent (terminal emulator, {delay_ms}ms delay)"),
@@ -1839,12 +1935,27 @@ fn type_text_in_key_window(
                 delivered_chars: Some(delivered_chars),
             }));
         }
-        ax_attempt = match ax_progress {
-            Some(TypedProgress::Unchanged) if unchanged_web_readback => AxAttempt::Unverifiable,
-            Some(TypedProgress::Unchanged) => AxAttempt::Unchanged,
-            Some(TypedProgress::Unverifiable) => AxAttempt::Unverifiable,
-            None => AxAttempt::Rejected,
-            Some(TypedProgress::Complete | TypedProgress::Partial(_)) => unreachable!(),
+        ax_attempt = match after_unlanded_ax_write(ax_progress, unchanged_web_readback) {
+            UnlandedAxWrite::TypeKeys(attempt) => attempt,
+            // Firefox accepts the write but updates AXValue later (#5383).
+            UnlandedAxWrite::MayHaveLanded => {
+                let idx_str = idx_opt.map(|i| format!(" [{i}]")).unwrap_or_default();
+                let return_note = if submit_body.is_some() {
+                    "; Return was not sent"
+                } else {
+                    ""
+                };
+                return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
+                    detail: format!(
+                        " via AX write into{idx_str} {role} \"{title}\", which the page \
+                         accepted but has not read back yet, so it was not typed again \
+                         as keys{return_note}; read the field before retrying"
+                    ),
+                    path: PATH_AX,
+                    verified: false,
+                    delivered_chars: None,
+                }));
+            }
         };
         tracing::debug!(
             "AX write did not land for {role} \"{title}\" (err={err}); \
@@ -1884,6 +1995,7 @@ fn type_text_in_key_window(
         element_ptr_and_idx,
         /*settle_ms=*/ 0,
         window_id,
+        false,
     )?;
     Ok(TypeTextDelivery::Typed(TypeTextOutcome {
         detail: format!(" via CGEvent ({delay_ms}ms delay)"),
@@ -1988,7 +2100,7 @@ fn replace_utf16_range(value: &str, location: usize, length: usize, body: &str) 
     Some(format!("{head}{body}{tail}"))
 }
 
-fn is_text_input_role(role: &str) -> bool {
+pub(super) fn is_text_input_role(role: &str) -> bool {
     matches!(
         role,
         "AXTextField" | "AXTextArea" | "AXComboBox" | "AXSearchField"
@@ -2159,7 +2271,7 @@ mod tests {
             0,
             /*is_terminal_target=*/ true,
             KeyboardRoute {
-                delivery_mode: super::super::DeliveryMode::Background,
+                delivery_mode: super::super::DeliveryMode::BackgroundPreferred,
                 window_id: Some(7),
                 keyboard_policy: BackgroundKeyboardPolicy::SemanticOnly(refusal.clone()),
                 explicit_target: false,
@@ -2184,7 +2296,7 @@ mod tests {
             0,
             /*is_terminal_target=*/ false,
             KeyboardRoute {
-                delivery_mode: super::super::DeliveryMode::Background,
+                delivery_mode: super::super::DeliveryMode::BackgroundPreferred,
                 window_id: Some(7),
                 keyboard_policy: BackgroundKeyboardPolicy::Allowed,
                 explicit_target: false,
@@ -2229,7 +2341,7 @@ mod tests {
             0,
             /*is_terminal_target=*/ true,
             KeyboardRoute {
-                delivery_mode: super::super::DeliveryMode::Background,
+                delivery_mode: super::super::DeliveryMode::BackgroundPreferred,
                 window_id: None,
                 keyboard_policy: BackgroundKeyboardPolicy::Allowed,
                 explicit_target: false,
@@ -2292,6 +2404,29 @@ mod tests {
         assert_eq!(indeterminate["synthesized_chars"], 0);
         assert_eq!(indeterminate["retryable"], false);
         assert_eq!(indeterminate["escalation"]["recommended"], "verify_state");
+    }
+
+    #[test]
+    fn an_accepted_web_write_is_never_typed_again_as_keys() {
+        use TypedProgress::{Unchanged, Unverifiable};
+        // Firefox took the write and showed it a moment later; typing it as
+        // keys too left "plain-17plain-17" in the field (#5383).
+        assert_eq!(
+            after_unlanded_ax_write(Some(Unchanged), true),
+            UnlandedAxWrite::MayHaveLanded
+        );
+        assert_eq!(
+            after_unlanded_ax_write(Some(Unchanged), false),
+            UnlandedAxWrite::TypeKeys(AxAttempt::Unchanged)
+        );
+        assert_eq!(
+            after_unlanded_ax_write(Some(Unverifiable), false),
+            UnlandedAxWrite::TypeKeys(AxAttempt::Unverifiable)
+        );
+        assert_eq!(
+            after_unlanded_ax_write(None, true),
+            UnlandedAxWrite::TypeKeys(AxAttempt::Rejected)
+        );
     }
 
     #[test]
@@ -2450,6 +2585,91 @@ mod tests {
     }
 
     #[test]
+    fn a_native_field_retypes_only_a_proven_partial_tail() {
+        assert_eq!(retype_from((false, Some(1)), 5, false, || false), Some(1));
+        assert_eq!(retype_from((false, Some(4)), 5, false, || false), Some(4));
+        assert_eq!(retype_from((false, Some(4)), 5, false, || true), None);
+        assert_eq!(retype_from((false, Some(4)), 5, true, || false), None);
+        assert_eq!(retype_from((false, Some(5)), 5, false, || false), None);
+        assert_eq!(retype_from((true, Some(5)), 5, false, || false), None);
+        assert_eq!(retype_from((false, None), 5, false, || false), None);
+        assert_eq!(retype_from((false, Some(0)), 5, false, || false), Some(0));
+        assert!(appends_prefix(Some("ab"), Some("ab"), "cde", 0));
+        assert!(!appends_prefix(Some("ab"), Some("aX"), "cde", 0));
+    }
+
+    #[test]
+    fn an_unconfirmed_terminal_insert_reports_no_delivered_count() {
+        assert_eq!(reported((false, Some(0)), true), (false, None));
+        assert_eq!(reported((false, Some(3)), true), (false, None));
+        assert_eq!(reported((true, Some(5)), true), (true, Some(5)));
+        assert_eq!(reported((false, Some(3)), false), (false, Some(3)));
+        assert_eq!(reported((false, None), false), (false, None));
+    }
+
+    #[test]
+    fn a_first_character_per_event_read_back_is_not_retyped() {
+        let text = "abcdefghijklmnopq";
+        let outcome = await_typed_delivery(
+            Some(""),
+            text,
+            std::time::Instant::now(),
+            || Some("aq".to_owned()),
+            || false,
+        );
+        assert_eq!(outcome, (false, Some(2)));
+        assert_eq!(
+            retype_from(outcome, text.chars().count(), false, || false),
+            Some(2)
+        );
+        assert!(!appends_prefix(Some(""), Some("aq"), text, 2));
+    }
+
+    #[test]
+    fn a_partial_is_retyped_only_after_its_typed_prefix() {
+        for (before, after, done, appended) in [
+            (Some(""), Some("ab"), 2, true),
+            (Some("x"), Some("xab"), 2, true),
+            (Some("x"), Some("xé"), 1, false),
+            (Some("x"), Some("abx"), 2, false),
+            (Some(""), Some("ba"), 2, false),
+            (Some("x"), Some("yab"), 2, false),
+            (Some(""), Some("abc"), 2, false),
+            (None, Some("ab"), 2, false),
+            (Some(""), None, 2, false),
+        ] {
+            assert_eq!(
+                appends_prefix(before, after, "abcdef", done),
+                appended,
+                "before={before:?} after={after:?} done={done}"
+            );
+        }
+        assert!(appends_prefix(Some("x"), Some("xé"), "éabc", 1));
+    }
+
+    #[test]
+    fn a_terminal_screen_is_never_retyped() {
+        for (before, after, text) in [
+            ("$ read -s pw", "$ read -s pw", "secret"),
+            ("one\ntwo\n$ vim", "one\n$ vim", "dd"),
+            ("$ ", "$ \nfile-a  file-b", "a long command line"),
+        ] {
+            let outcome = await_typed_delivery(
+                Some(before),
+                text,
+                std::time::Instant::now(),
+                || Some(after.to_owned()),
+                || false,
+            );
+            assert_eq!(
+                retype_from(outcome, text.chars().count(), true, || false),
+                None,
+                "before={before:?} after={after:?} text={text:?}"
+            );
+        }
+    }
+
+    #[test]
     fn default_delay_selects_batched_typing() {
         assert_eq!(DEFAULT_DELAY_MS, 0);
     }
@@ -2581,7 +2801,7 @@ mod tests {
     #[test]
     fn electron_web_ax_background_refuses_before_synthesis() {
         let refusal = electron_background_ax_refusal(
-            crate::tools::DeliveryMode::Background,
+            crate::tools::DeliveryMode::BackgroundPreferred,
             true,
             false,
             true,
@@ -2598,14 +2818,14 @@ mod tests {
         )
         .is_none());
         assert!(electron_background_ax_refusal(
-            crate::tools::DeliveryMode::Background,
+            crate::tools::DeliveryMode::BackgroundPreferred,
             false,
             true,
             true,
         )
         .is_none());
         assert!(electron_background_ax_refusal(
-            crate::tools::DeliveryMode::Background,
+            crate::tools::DeliveryMode::BackgroundPreferred,
             true,
             false,
             false,
@@ -2641,18 +2861,29 @@ mod tests {
     }
 
     #[test]
-    fn screen_sharing_text_fails_closed_without_foreground_window() {
-        for (foreground, window_id) in [(false, None), (false, Some(7)), (true, None)] {
-            let result = screen_sharing_delivery_error(true, foreground, window_id)
-                .expect("unsafe Screen Sharing route must be refused");
-            assert_eq!(result.is_error, Some(true));
-            let structured = result.structured_content.unwrap();
-            assert_eq!(structured["code"], "SCREEN_SHARING_REQUIRES_FOREGROUND_HID");
-            assert_eq!(structured["effect"], "refused");
-            assert_eq!(structured["escalation"]["recommended"], "foreground");
-            assert_eq!(structured["escalation"]["requires"][0], "window_id");
+    fn key_forwarder_text_fails_closed_without_foreground_window() {
+        for (forwarder, code) in [
+            (
+                KeyForwarder::ScreenSharing,
+                "SCREEN_SHARING_REQUIRES_FOREGROUND_HID",
+            ),
+            (
+                KeyForwarder::IosSimulator,
+                "IOS_SIMULATOR_REQUIRES_FOREGROUND_HID",
+            ),
+        ] {
+            for (foreground, window_id) in [(false, None), (false, Some(7)), (true, None)] {
+                let result = key_forwarder_delivery_error(Some(forwarder), foreground, window_id)
+                    .expect("unsafe key-forwarder route must be refused");
+                assert_eq!(result.is_error, Some(true));
+                let structured = result.structured_content.unwrap();
+                assert_eq!(structured["code"], code);
+                assert_eq!(structured["effect"], "refused");
+                assert_eq!(structured["escalation"]["recommended"], "foreground");
+                assert_eq!(structured["escalation"]["requires"][0], "window_id");
+            }
+            assert!(key_forwarder_delivery_error(Some(forwarder), true, Some(7)).is_none());
         }
-        assert!(screen_sharing_delivery_error(true, true, Some(7)).is_none());
-        assert!(screen_sharing_delivery_error(false, false, None).is_none());
+        assert!(key_forwarder_delivery_error(None, false, None).is_none());
     }
 }

@@ -408,7 +408,7 @@ export function useCloudActions(): CloudActionsHook {
   };
 }
 
-/* ---- Windows: the runtime fix ("Install Docker Desktop") ------------------ */
+/* ---- Windows: the runtime fix ("Set up Linux support") --------------------- */
 
 /** How often the options are read again while a fix runs, and for how long after one started. */
 export const RUNTIME_FIX_POLL_MS = 3_000;
@@ -424,8 +424,7 @@ export interface RuntimeFixHook {
 }
 
 /**
- * The host's fix for a machine with no local runtime (Windows: install or
- * start Docker Desktop). While it runs, or for a while after it started,
+ * The host's fix for a machine with no local runtime (Windows: set up WSL 2). While it runs, or for a while after it started,
  * the options are read again so the reason, the button and the wizard's
  * Continue follow the install and the engine's start.
  */

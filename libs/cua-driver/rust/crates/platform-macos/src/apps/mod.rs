@@ -141,6 +141,20 @@ fn bundle_root_of_executable(path: &str) -> Option<&str> {
     Some(&path[..at + ".app".len()])
 }
 
+/// Whether `pid` runs from an app bundle that carries
+/// `Electron Framework.framework`.
+pub fn bundles_electron(pid: i32) -> bool {
+    path_of_pid(pid).is_some_and(|path| executable_bundles_electron(&path))
+}
+
+fn executable_bundles_electron(path: &str) -> bool {
+    bundle_root_of_executable(path).is_some_and(|root| {
+        std::path::Path::new(root)
+            .join("Contents/Frameworks/Electron Framework.framework")
+            .exists()
+    })
+}
+
 /// Does this bundle declare itself a background/agent process — the
 /// `NSApplicationActivationPolicyRegular` filter, read from the bundle instead
 /// of from AppKit's cache.
@@ -373,10 +387,10 @@ fn enumerate_running_apps() -> (Vec<AppInfo>, RunningAppStates) {
 /// Replaces a prior `open -g -b` shell-out. The NSWorkspace path:
 ///   * honors `activates = false` so LaunchServices doesn't bring the
 ///     target frontmost,
-///   * attaches an `aevt/oapp` AppleEvent descriptor so cold-launched
-///     apps (Calculator, etc) get their window-creation handler invoked
-///     reliably (the shell-out path silently skipped this for state-
-///     restored apps),
+///   * attaches an `aevt/oapp` descriptor for a cold launch or an
+///     `aevt/rapp` descriptor when the target is already running, so the
+///     app's window-creation handler is invoked reliably without relying on
+///     activation,
 ///   * returns the actual `NSRunningApplication.processIdentifier`
 ///     without needing a separate `list_running_apps` lookup, so we
 ///     can't race a same-bundle-id helper that happens to be running.
@@ -386,10 +400,7 @@ pub fn launch_app(bundle_id: &str) -> anyhow::Result<i32> {
     // NSURL verbatim. Going via a `path` string and back loses the
     // alias/cryptex metadata Safari (and other Cryptex-installed apps)
     // need to relaunch from `/System/Cryptexes/App/...`.
-    let cfg = nsworkspace::OpenConfig {
-        apple_event_bundle_id: Some(bundle_id.to_owned()),
-        ..Default::default()
-    };
+    let cfg = background_launch_config(Some(bundle_id.to_owned()));
     let running = nsworkspace::open_application(bundle_id, &cfg)
         .with_context(|| format!("Failed to launch {bundle_id}"))?;
     let pid: i32 = unsafe { running.processIdentifier() };
@@ -400,14 +411,18 @@ pub fn launch_app(bundle_id: &str) -> anyhow::Result<i32> {
 /// Returns the pid on success.
 pub(crate) fn launch_located(located: AppLocator) -> anyhow::Result<i32> {
     let (app_ref, bid) = located.app_ref_and_bundle_id();
-    let cfg = nsworkspace::OpenConfig {
-        apple_event_bundle_id: bid,
-        ..Default::default()
-    };
+    let cfg = background_launch_config(bid);
     let running = nsworkspace::open_application(&app_ref, &cfg)
         .with_context(|| format!("Failed to launch '{app_ref}'"))?;
     let pid: i32 = unsafe { running.processIdentifier() };
     Ok(pid)
+}
+
+fn background_launch_config(apple_event_bundle_id: Option<String>) -> nsworkspace::OpenConfig {
+    nsworkspace::OpenConfig {
+        apple_event_bundle_id,
+        ..Default::default()
+    }
 }
 
 /// Launch a bundle with URL handoff. Mirrors Swift's
@@ -1378,8 +1393,8 @@ mod tests {
         assert_eq!(super::get_app_name_for_pid(pid), Some(expected));
     }
     use super::{
-        all_pids, bundle_root_of_executable, finder_folder_handoff, merge_app_lists, path_of_pid,
-        running_apps_from_processes, AppInfo,
+        all_pids, bundle_root_of_executable, bundles_electron, executable_bundles_electron,
+        finder_folder_handoff, merge_app_lists, path_of_pid, running_apps_from_processes, AppInfo,
     };
     use std::collections::HashSet;
 
@@ -1432,6 +1447,21 @@ mod tests {
             .to_string_lossy()
             .into_owned();
         assert!(super::locate_by_name(&missing).is_err());
+    }
+
+    #[test]
+    fn electron_is_recognised_by_the_framework_in_its_bundle() {
+        assert!(!bundles_electron(std::process::id() as i32));
+        let root = std::env::temp_dir().join(format!("cua-electron-shape-{}", std::process::id()));
+        let exe = root.join("Fake.app/Contents/MacOS/Fake");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        assert!(!executable_bundles_electron(exe.to_str().unwrap()));
+        std::fs::create_dir_all(
+            root.join("Fake.app/Contents/Frameworks/Electron Framework.framework"),
+        )
+        .unwrap();
+        assert!(executable_bundles_electron(exe.to_str().unwrap()));
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

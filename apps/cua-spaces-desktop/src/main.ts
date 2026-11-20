@@ -20,6 +20,7 @@ import { installBridgeIpc } from "./bridge/ipc";
 import { installMenu } from "./menu";
 import { appCoreStatePaths, migrateFromSwiftApp, SWIFT_BUNDLE_ID } from "./migrate-swift";
 import { openedAtLogin } from "./login-item";
+import { cuaHome } from "./model/daemon";
 import { makeModel, readOnboardingCompleted } from "./model/environment";
 import { recordLaunch, refreshAfterUpdate } from "./model/update-refresh";
 import { loadNative } from "./native/load";
@@ -35,6 +36,7 @@ import {
   teleportFromNotch,
   type NotchFeedUi,
 } from "./notch-feed";
+import { resolveSpace, startControlServer } from "./control-server";
 import { createPipWindows } from "./pip";
 import { electronKeyvaultPrompts } from "./prompts";
 import { APP_ORIGIN, handleAppProtocol, registerSchemePrivileges, resolveWebRoot } from "./protocol";
@@ -247,6 +249,16 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
     },
   });
   env.model.startListPoll();
+  // `cua mcp` asks this app to open a Space's viewer through a loopback server whose port and token
+  // are in `<cua home>/spaces-control.json` (open_space_viewer); without it the tool says the app isn't running.
+  const control = await startControlServer(path.join(cuaHome(process.env), "spaces-control.json"), {
+    resolve: (requested) => resolveSpace(env.model.spaces, requested),
+    openViewer: (spaceId) => {
+      const space = env.model.spaces.find((s) => s.id === spaceId);
+      viewers.open(spaceId, space?.name ?? spaceId, space ? String(space.os) : undefined);
+    },
+  });
+  if (control) app.on("will-quit", () => void control.stop());
   // A deleted Space's viewer closes (a loaded list only: an empty one is a launch).
   env.model.subscribe((change) => {
     if (change === "spaces" && env.model.loaded) viewers.prune(new Set(env.model.spaces.map((s) => s.id)));

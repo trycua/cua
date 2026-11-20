@@ -593,6 +593,21 @@ impl Tool for GetWindowStateTool {
                     .flatten()
                     .map(|bounds| (bounds.width, bounds.height))
             });
+        let app_lookup_timed_out = tree_result
+            .as_ref()
+            .is_some_and(|r| r.walk.reason() == Some("app_lookup_timeout"));
+        let degradation = degradation_for(
+            tree_result.is_some(),
+            element_count,
+            window_scope.as_ref(),
+            app_lookup_timed_out,
+        );
+        let degradation = explain_locked_screen(
+            degradation,
+            !matches!(degradation, Degradation::None) && crate::session::screen_locked(),
+        );
+        let screenshot_frame_scale =
+            kept_frame_scale(scope_matched, degradation, screenshot_resize_scale);
         let SnapshotUpdate {
             snapshot_id,
             refreshed,
@@ -607,7 +622,7 @@ impl Tool for GetWindowStateTool {
                 session_id.as_deref(),
                 scope_matched,
                 prepared_snapshot,
-                screenshot_resize_scale,
+                screenshot_frame_scale,
                 window_size,
             )
         };
@@ -754,19 +769,6 @@ impl Tool for GetWindowStateTool {
         // the screenshot already in this response and click by pixel (x,y).
         // macOS can pixel-target in the background, so the recommendation is
         // `px`, not `foreground`.
-        let app_lookup_timed_out = tree_result
-            .as_ref()
-            .is_some_and(|r| r.walk.reason() == Some("app_lookup_timeout"));
-        let degradation = degradation_for(
-            tree_result.is_some(),
-            element_count,
-            window_scope.as_ref(),
-            app_lookup_timed_out,
-        );
-        let degradation = explain_locked_screen(
-            degradation,
-            !matches!(degradation, Degradation::None) && crate::session::screen_locked(),
-        );
         match degradation {
             Degradation::None => {}
             Degradation::ScreenLocked => {
@@ -828,14 +830,24 @@ impl Tool for GetWindowStateTool {
                     ax_window_count,
                     ax_windows_error,
                 ));
+                let reason = if snapshot_id.is_some() {
+                    "background input (including px) is refused while the requested \
+                     window's AX surface is unresolved — events could reach a \
+                     same-process sibling window. The screenshot in this response IS \
+                     the requested window: act by pixel (x,y) off it with \
+                     delivery_mode:\"foreground\". Foreground delivery still requires \
+                     the window to become the app's focused AXWindow and is refused if \
+                     it does not; then re-snapshot after the app settles."
+                } else {
+                    "observation-only: background input (including px) is refused while \
+                     the requested window's AX surface is unresolved — events could \
+                     reach a same-process sibling window — and this response carries no \
+                     screenshot frame to act on. Re-snapshot with a screenshot, or after \
+                     the app settles, before a delivery_mode:\"foreground\" pixel action."
+                };
                 structured["escalation"] = serde_json::json!({
                     "recommended": "foreground",
-                    "reason": "observation-only: the screenshot in this response IS the \
-                               requested window, but background input (including px) is \
-                               refused while its AX surface is unresolved — events could \
-                               reach a same-process sibling window. Re-snapshot after the \
-                               app settles, or act by pixel (x,y) off this screenshot with \
-                               delivery_mode:\"foreground\"."
+                    "reason": reason,
                 });
             }
         }
@@ -951,6 +963,18 @@ impl Tool for GetWindowStateTool {
             action_record: None,
         }
     }
+}
+
+/// The screenshot scale a read may record in the snapshot store. Of the
+/// unresolved reads, only `ax_window_unresolved` keeps its screenshot's frame:
+/// a launching app or a locked screen stays observation-only.
+fn kept_frame_scale(
+    scope_matched: bool,
+    degradation: Degradation,
+    screenshot_scale: Option<f64>,
+) -> Option<f64> {
+    screenshot_scale
+        .filter(|_| scope_matched || matches!(degradation, Degradation::AxWindowUnresolved { .. }))
 }
 
 /// What a read did to the caller's snapshot of the window.
@@ -1641,6 +1665,27 @@ mod window_scope_contract_tests {
             .expect("foreground pixel actions find the unresolved read's frame");
         assert_eq!(frame.snapshot_id, snapshot_id);
         assert_eq!(frame.scale, 2.0);
+    }
+
+    #[test]
+    fn only_an_unresolved_window_read_keeps_its_screenshot_frame() {
+        let unresolved = Degradation::AxWindowUnresolved {
+            ax_window_count: 1,
+            ax_windows_error: None,
+        };
+        assert_eq!(kept_frame_scale(false, unresolved, Some(2.0)), Some(2.0));
+        assert_eq!(
+            kept_frame_scale(true, Degradation::None, Some(2.0)),
+            Some(2.0)
+        );
+        assert_eq!(
+            kept_frame_scale(false, Degradation::AxAppLaunching, Some(2.0)),
+            None
+        );
+        assert_eq!(
+            kept_frame_scale(false, Degradation::ScreenLocked, Some(2.0)),
+            None
+        );
     }
 
     #[test]

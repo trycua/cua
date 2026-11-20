@@ -102,13 +102,14 @@ describe("keyboard mapping", () => {
     expect(press("keydown", { key: "v", code: "KeyV", metaKey: true })).toBe(true);
     controller.textarea.dispatchEvent(new Event("paste"));
     press("keyup", { key: "v", code: "KeyV", metaKey: true });
-    // A second paste meanwhile waits for the same clipboard, whole: Chromium
-    // may send no key-up for a key pressed with ⌘ held.
-    expect(press("keydown", { key: "v", code: "KeyV", metaKey: true })).toBe(false);
-    // Other keys go at once, as before: a copy reaches the guest before its poll.
+    // While nothing waits behind the paste, other keys go at once, as before:
+    // a copy reaches the guest before its poll.
     press("keydown", { key: "c", code: "KeyC", metaKey: true });
     expect(copies).toBe(1);
     press("keyup", { key: "c", code: "KeyC", metaKey: true });
+    // A second paste meanwhile waits for the same clipboard, whole: Chromium
+    // may send no key-up for a key pressed with ⌘ held.
+    expect(press("keydown", { key: "v", code: "KeyV", metaKey: true })).toBe(false);
     press("keyup", { key: "Meta", code: "MetaLeft", metaKey: true });
     expect(sent.map((e) => (e.kind === "key" ? `${e.key} ${e.state}` : e.kind))).toEqual([
       "meta down",
@@ -129,6 +130,41 @@ describe("keyboard mapping", () => {
       ["control", "up", []],
       ["meta", "down", []],
       ["meta", "up", []],
+    ]);
+  });
+
+  it("keeps a Super chord behind the ⌘ change it follows during a paste", async () => {
+    const sent: InteractiveInputEvent[] = [];
+    let landed = () => {};
+    const surface = document.createElement("div");
+    const controller = new InputController({
+      surface,
+      screen: () => surface,
+      emit: (event) => sent.push(event),
+      keyOptions: () => ({ metaAsControl: true }),
+      onPaste: () => new Promise<void>((resolve) => (landed = resolve)),
+    });
+    const press = (type: string, init: KeyboardEventInit) => controller.textarea.dispatchEvent(new KeyboardEvent(type, init));
+    press("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
+    press("keydown", { key: "Meta", code: "MetaLeft", metaKey: true });
+    press("keydown", { key: "v", code: "KeyV", metaKey: true });
+    controller.textarea.dispatchEvent(new Event("paste"));
+    press("keyup", { key: "Meta", code: "MetaLeft", metaKey: true });
+    press("keydown", { key: "w", code: "KeyW", metaKey: true });
+    landed();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.dispose();
+    expect(sent.map((e) => (e.kind === "key" ? `${e.key} ${e.state}` : e.kind))).toEqual([
+      "meta down",
+      "meta up",
+      "control down",
+      "v down",
+      "v up",
+      "control up",
+      "meta down",
+      "w down",
+      "w up",
+      "meta up",
     ]);
   });
 

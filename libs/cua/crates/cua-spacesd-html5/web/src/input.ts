@@ -215,7 +215,7 @@ export class InputController {
   private readonly touches = new Map<number, Touch>();
   private longPress: number | null = null;
   private touchMode: "none" | "pointer" | "scroll" | "longpress" = "none";
-  private pendingPaste: { resolve: () => void; timer: number; armed: boolean; after: InteractiveInputEvent[] } | null = null;
+  private pendingPaste: { resolve: () => void; timer: number; armed: boolean; after: Array<() => void> } | null = null;
   private readonly heldKeys = new Map<string, InteractiveInputEvent>();
   private readonly commands = new CommandKeys(() => this.options.keyOptions().metaAsControl);
   enabled = true;
@@ -261,12 +261,22 @@ export class InputController {
   /** The guest's ⌘ keys, behind a held paste chord so they reach the guest
    * after it: Super restored before Control+V would turn it into Super+Control+V. */
   private sendCommands(events: InteractiveInputEvent[]): void {
-    if (this.pendingPaste) this.pendingPaste.after.push(...events);
+    if (events.length === 0) return;
+    if (this.pendingPaste) this.pendingPaste.after.push(() => events.forEach((event) => this.send(event)));
     else for (const event of events) this.send(event);
+  }
+
+  /** Runs `act` now, or once a held paste chord is sent when something
+   * already waits behind it, so input keeps its order against the guest's ⌘
+   * keys. */
+  private inOrder(act: () => void): void {
+    if (this.pendingPaste?.after.length) this.pendingPaste.after.push(act);
+    else act();
   }
 
   private send(event: InteractiveInputEvent): void {
     if (!this.enabled) return;
+    if (this.pendingPaste?.after.length) return this.inOrder(() => this.send(event));
     this.options.emit(event);
     this.options.onAction?.(event);
   }
@@ -303,7 +313,10 @@ export class InputController {
         // Queued whole behind the paste waiting for the clipboard, whose host
         // clipboard is the one this paste would send.
         event.preventDefault();
-        this.pendingPaste.after.push(mapped, { ...mapped, state: "up", repeat: false });
+        this.pendingPaste.after.push(() => {
+          this.send(mapped);
+          this.send({ ...mapped, state: "up", repeat: false });
+        });
         return;
       }
       if (isPaste) {
@@ -322,7 +335,8 @@ export class InputController {
       if (mapped.kind === "key") this.heldKeys.set(event.code || mapped.key, mapped);
       this.send(mapped);
       if (chord && (mapped.key === "c" || mapped.key === "x")) {
-        this.options.onCopyShortcut?.();
+        // After the copy reaches the guest.
+        this.inOrder(() => this.options.onCopyShortcut?.());
       }
     });
     this.on(textarea, "keyup", (event) => {
@@ -445,8 +459,8 @@ export class InputController {
   private holdForPaste(keyEvent: InteractiveInputEvent): void {
     // Up to 300 ms for the `paste` event (none comes when the host clipboard
     // is empty or the engine withholds it); the keys go out either way,
-    // followed by the ⌘ changes and pastes held behind them.
-    const after: InteractiveInputEvent[] = [];
+    // followed by the ⌘ changes and the input held behind them.
+    const after: Array<() => void> = [];
     const release = () => {
       if (this.pendingPaste?.after !== after) return;
       window.clearTimeout(this.pendingPaste.timer);
@@ -455,7 +469,7 @@ export class InputController {
         this.send(keyEvent);
         this.send({ ...keyEvent, state: "up", repeat: false });
       }
-      for (const event of after) this.send(event);
+      for (const act of after) act();
     };
     const timer = window.setTimeout(release, 300);
     this.pendingPaste = { resolve: release, timer, armed: false, after };

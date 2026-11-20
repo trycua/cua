@@ -18,6 +18,7 @@ use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 
 use crate::{
+    delivery::DeliveryMode,
     protocol::{Content, ToolResult},
     recording_tools::ReplayRegistrySlot,
     tool::{Tool, ToolDef, ToolRegistry},
@@ -984,33 +985,41 @@ async fn run_step(
             *last_window = Some(window);
         }
 
+        let delivery = DeliveryMode::from_args(&args);
         let mut result = registry.invoke(tool, args.clone()).await;
-        let mut refound_note = None;
+        let mut attempt = StepAttempt::Original;
         if result.is_error == Some(true) && tool == "click" {
             if let Some((menu_args, note)) = menu_bar_route(&args, &result) {
                 report["refound"] = json!(note);
-                result = registry.invoke("invoke_menu", menu_args).await;
-                refound_note = Some(note);
+                result = registry.invoke("invoke_menu", menu_args.clone()).await;
+                attempt = StepAttempt::MenuRoute {
+                    args: menu_args,
+                    note,
+                };
             }
         }
-        if result.is_error == Some(true) && refound_note.is_none() {
+        if result.is_error == Some(true) && matches!(attempt, StepAttempt::Original) {
             if let Some((retry, note)) = refind_stale_target(locator, &args, &result).await {
                 report["refound"] = json!(note);
-                result = registry.invoke(tool, retry).await;
-                refound_note = Some(note);
+                result = registry.invoke(tool, retry.clone()).await;
+                attempt = StepAttempt::Refound { args: retry, note };
             }
         }
+        let attempt_tool = attempt.tool(tool);
         let wants_foreground = result.is_error == Some(true)
             && wants_foreground(&result)
-            && args.get("delivery_mode").is_none()
-            && accepts(registry, tool, "delivery_mode");
+            && delivery.allows_escalation()
+            && accepts(registry, attempt_tool, "delivery_mode");
         let mut foreground_hint = None;
+        let mut fell_back = false;
         if wants_foreground && foreground_fallback {
-            let mut retry = args.clone();
+            // Re-send what the step last sent: the re-found token or the
+            // menu route, not the original arguments.
+            let mut retry = attempt.current_args(&args).clone();
             retry["delivery_mode"] = json!("foreground");
-            result = registry.invoke(tool, retry).await;
-            notes.push("background delivery was refused, so it ran in the foreground".to_owned());
+            result = registry.invoke(attempt_tool, retry).await;
             report["delivery_fallback"] = json!("foreground");
+            fell_back = true;
         } else if wants_foreground {
             foreground_hint = Some(format!(
                 " To run it, send the batch again from step {} with \"delivery_mode\":\"foreground\" \
@@ -1024,11 +1033,23 @@ async fn run_step(
         if let (false, Some(hint)) = (ok, &foreground_hint) {
             message.push_str(hint);
         }
-        if let (false, Some(note)) = (ok, &refound_note) {
-            message = format!("{note}, but: {message}");
+        if fell_back {
+            if ok {
+                notes.push(
+                    "background delivery was refused, so it ran in the foreground".to_owned(),
+                );
+            } else {
+                message = format!(
+                    "background delivery was refused, and the foreground retry failed: {message}"
+                );
+            }
         }
-        if let (true, Some(note)) = (ok, refound_note) {
-            notes.push(note);
+        if let Some(note) = attempt.note() {
+            if ok {
+                notes.push(note.to_owned());
+            } else {
+                message = format!("{note}, but: {message}");
+            }
         }
         report["ok"] = json!(ok);
         report["message"] = json!(message);
@@ -1366,6 +1387,45 @@ fn fit_error_text(content: &mut Vec<Content>, budget: usize) {
             "[the rest of this read was cut so the step report stays readable; call \
              get_window_state for the full window]",
         ));
+    }
+}
+
+/// What a step last sent: its own arguments, or a retarget after its target
+/// went stale. A foreground fallback re-sends exactly this.
+enum StepAttempt {
+    Original,
+    /// A menu-bar item clicked by token, sent as `invoke_menu`.
+    MenuRoute {
+        args: Value,
+        note: String,
+    },
+    /// The same role and label found again under a fresh token.
+    Refound {
+        args: Value,
+        note: String,
+    },
+}
+
+impl StepAttempt {
+    fn tool<'a>(&self, step_tool: &'a str) -> &'a str {
+        match self {
+            Self::MenuRoute { .. } => "invoke_menu",
+            Self::Original | Self::Refound { .. } => step_tool,
+        }
+    }
+
+    fn current_args<'a>(&'a self, original: &'a Value) -> &'a Value {
+        match self {
+            Self::Original => original,
+            Self::MenuRoute { args, .. } | Self::Refound { args, .. } => args,
+        }
+    }
+
+    fn note(&self) -> Option<&str> {
+        match self {
+            Self::Original => None,
+            Self::MenuRoute { note, .. } | Self::Refound { note, .. } => Some(note),
+        }
     }
 }
 

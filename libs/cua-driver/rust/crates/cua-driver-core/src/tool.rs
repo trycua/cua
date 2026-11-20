@@ -2262,6 +2262,55 @@ impl ToolRegistry {
             );
         }
 
+        // Admit the call into its session before any resource adapter can ask
+        // a person, so a call waiting on consent counts as in flight: neither
+        // `end_session` nor the idle sweep ends the episode under it.
+        let lifecycle_dispatch =
+            if session_requiring_tool(resolved_name) && resolved_name != "start_session" {
+                let Some(session_id) = runtime_session.as_deref() else {
+                    return protected_refusal(
+                        "session_unavailable",
+                        "an admitted session-requiring call has no lifecycle identity",
+                    );
+                };
+                let owner = args
+                    .get("_transport_session_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or(session_id);
+                let public_label = args.get("_public_session_label").and_then(Value::as_str);
+                let (transport, client_kind) = crate::session::infer_transport_metadata(owner);
+                let admitted = match context.lifecycle_idle_ttl_override() {
+                    Some(idle_ttl) => crate::session::begin_session_dispatch_with_ttl(
+                        session_id,
+                        public_label,
+                        owner,
+                        public_label.is_none(),
+                        transport,
+                        client_kind,
+                        idle_ttl,
+                    ),
+                    None => crate::session::begin_session_dispatch(
+                        session_id,
+                        public_label,
+                        owner,
+                        public_label.is_none(),
+                        transport,
+                        client_kind,
+                    ),
+                };
+                match admitted {
+                    Ok(guard) => Some(guard),
+                    Err(crate::session::DispatchRefusal::OwnedByOtherTransport(holder)) => {
+                        return session_owned_by_other_transport_refusal(public_label, holder);
+                    }
+                    Err(refusal) => {
+                        return protected_refusal("session_ended", refusal.message());
+                    }
+                }
+            } else {
+                None
+            };
+
         // Resource adapters run at the same canonical boundary as policy and
         // manifest admission, after session capture-scope validation but
         // before recording or the platform tool can observe user state. This
@@ -2470,55 +2519,22 @@ impl ToolRegistry {
             }
         }
 
+        // An end that arrived while the person decided, or while another
+        // adapter ran, wins: the call was admitted but never acts.
+        if lifecycle_dispatch.is_some()
+            && runtime_session
+                .as_deref()
+                .is_some_and(crate::session::is_session_ending)
+        {
+            return protected_refusal(
+                "session_ended",
+                crate::session::DispatchRefusal::Ending.message(),
+            );
+        }
+
         if let Err(error) = context.commit_authorized_dispatch() {
             return permission_denied_result(error);
         }
-
-        let lifecycle_dispatch =
-            if session_requiring_tool(resolved_name) && resolved_name != "start_session" {
-                let Some(session_id) = runtime_session.as_deref() else {
-                    return protected_refusal(
-                        "session_unavailable",
-                        "an admitted session-requiring call has no lifecycle identity",
-                    );
-                };
-                let owner = args
-                    .get("_transport_session_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or(session_id);
-                let public_label = args.get("_public_session_label").and_then(Value::as_str);
-                let (transport, client_kind) = crate::session::infer_transport_metadata(owner);
-                let admitted = match context.lifecycle_idle_ttl_override() {
-                    Some(idle_ttl) => crate::session::begin_session_dispatch_with_ttl(
-                        session_id,
-                        public_label,
-                        owner,
-                        public_label.is_none(),
-                        transport,
-                        client_kind,
-                        idle_ttl,
-                    ),
-                    None => crate::session::begin_session_dispatch(
-                        session_id,
-                        public_label,
-                        owner,
-                        public_label.is_none(),
-                        transport,
-                        client_kind,
-                    ),
-                };
-                match admitted {
-                    Ok(guard) => Some(guard),
-                    Err(crate::session::DispatchRefusal::OwnedByOtherTransport(holder)) => {
-                        return session_owned_by_other_transport_refusal(public_label, holder);
-                    }
-                    Err(refusal) => {
-                        return protected_refusal("session_ended", refusal.message());
-                    }
-                }
-            } else {
-                None
-            };
 
         // Capture start time for recording timestamps only after validation.
         let launch_snapshot = if resolved_name == "launch_app" {

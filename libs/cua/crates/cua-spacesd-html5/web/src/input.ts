@@ -245,6 +245,7 @@ export class InputController {
       if (event.kind === "key") this.send({ ...event, state: "up", repeat: false });
     }
     this.heldKeys.clear();
+    this.commandSides.reset();
   }
 
   private send(event: InteractiveInputEvent): void {
@@ -278,9 +279,12 @@ export class InputController {
     const textarea = this.textarea;
 
     this.on(textarea, "keydown", (event) => {
-      const mapped = mapKey(event, "down", this.keyOptions(this.commandSides.rightOnly(event, "down")));
+      const asSuper = this.commandSides.rightOnly(event, "down");
+      const mapped = mapKey(event, "down", this.keyOptions(asSuper));
       if (!mapped) return; // text arrives through beforeinput
-      const isPaste = mapped.kind === "key" && mapped.key === "v" && mapped.modifiers.length > 0 && this.options.onPaste;
+      // Super+V is the guest desktop's own shortcut, not a paste.
+      const isPaste =
+        !asSuper && mapped.kind === "key" && mapped.key === "v" && mapped.modifiers.length > 0 && this.options.onPaste;
       if (isPaste) {
         // Let the browser fire `paste` (it carries the host clipboard without
         // a permission prompt); the keys follow once the guest has it.

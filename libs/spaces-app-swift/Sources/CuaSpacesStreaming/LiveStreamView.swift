@@ -386,8 +386,10 @@ public final class LiveStreamInputView: NSView {
         }
     }
 
-    /// ⌘V, or ⌘⇧V (a Linux terminal's paste once ⌘ goes as Control).
+    /// ⌘V, or ⌘⇧V (a Linux terminal's paste once ⌘ goes as Control). The
+    /// right ⌘ alone sends Super+V, the guest desktop's own shortcut.
     public static func isPasteChord(characters: String?, flags: NSEvent.ModifierFlags) -> Bool {
+        if InputEncoder.modifiers(from: flags).contains(.superKey) { return false }
         let held = flags.intersection([.command, .shift, .option, .control])
         return characters?.lowercased() == "v" && (held == .command || held == [.command, .shift])
     }

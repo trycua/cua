@@ -777,6 +777,7 @@ export class MediaSession {
       event.preventDefault();
       send(keyEventToInput(event, "up"), sides.rightOnly(event, "up"));
     });
+    on("blur", () => sides.reset());
   }
 }
 

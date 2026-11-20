@@ -462,6 +462,11 @@ export class CommandSides {
     return only;
   }
 
+  /** Forgets both keys (focus loss: their releases go elsewhere). */
+  reset(): void {
+    this.left = this.right = false;
+  }
+
   private note(event: { code: string; metaKey: boolean }, down: boolean): void {
     if (event.code === "MetaLeft") this.left = down;
     else if (event.code === "MetaRight") this.right = down;

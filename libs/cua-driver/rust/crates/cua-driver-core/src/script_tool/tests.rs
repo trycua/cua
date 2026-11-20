@@ -905,19 +905,35 @@ async fn a_script_whose_calls_all_confirm_has_no_unverified_line() {
     assert!(!text(&result).contains("unverified"), "{}", text(&result));
 }
 
+/// An unconfirmed action's script value whose text is its real headline,
+/// and the `Look first` call that headline ends with.
+fn unconfirmed_value(said: &str, next_call: Value, target: &str) -> (Value, String) {
+    let look = format!(
+        "Look first: {} {}",
+        next_call["tool"].as_str().unwrap(),
+        next_call["arguments"]
+    );
+    let mut result = ToolResult::text(said)
+        .with_structured(json!({"effect": "unverifiable", "next_call": next_call}));
+    crate::verdict::annotate("click", &mut result);
+    let mut value = result.structured_content.unwrap();
+    value["text"] = value["summary"].clone();
+    value["target"] = json!({ "element": target });
+    (value, look)
+}
+
 #[test]
 fn a_long_role_name_target_leaves_the_recovery_call_in_the_summary() {
-    let look = "Look first: get_window_state {\"pid\":42,\"since\":\"latest\",\"window_id\":7}";
-    let value = json!({
-        "text": format!(
-            "UNCONFIRMED: {}; effect not confirmed. {look}",
-            "Clicked element [2] with a real pointer click ".repeat(4).trim_end()
-        ),
-        "target": {"element": format!("[2] button \"{}\"", "Apply ".repeat(40))},
-    });
+    let (value, look) = unconfirmed_value(
+        "Clicked element [2] with a real pointer click "
+            .repeat(4)
+            .trim_end(),
+        json!({"tool": "get_window_state", "arguments": {"pid": 42, "since": "latest", "window_id": 7}}),
+        &format!("[2] button \"{}\"", "Apply ".repeat(40)),
+    );
     let summary = super::summarize(&value);
     assert!(summary.chars().count() <= super::SUMMARY_TEXT_LIMIT);
-    assert!(summary.ends_with(look), "{summary}");
+    assert!(summary.ends_with(&look), "{summary}");
     assert!(summary.starts_with("on [2] button \"Apply"), "{summary}");
 }
 
@@ -933,23 +949,24 @@ fn a_confirmed_value_that_quotes_a_look_tail_is_clipped_like_any_line() {
         "target": {"element": "[3] cell \"A1\""},
     });
     let summary = super::summarize(&value);
-    assert!(summary.chars().count() <= super::SUMMARY_TEXT_LIMIT + 1);
+    assert!(summary.chars().count() <= super::SUMMARY_TEXT_LIMIT);
     assert!(summary.ends_with('…'), "{summary}");
 }
 
 #[test]
 fn a_long_recovery_call_is_kept_whole_when_it_fits_the_budget() {
-    let look = format!(
-        "Look first: get_window_state {{\"pid\":42,\"session\":\"{}\",\"since\":\"latest\",\"window_id\":7}}",
-        "s".repeat(150)
+    let (value, look) = unconfirmed_value(
+        "Clicked element [2] with a real pointer click "
+            .repeat(3)
+            .trim_end(),
+        json!({"tool": "get_window_state", "arguments": {
+            "pid": 42,
+            "session": format!("{}; effect not confirmed. Look first: x", "s".repeat(120)),
+            "since": "latest",
+            "window_id": 7,
+        }}),
+        "[2] button \"Apply\"",
     );
-    let value = json!({
-        "text": format!(
-            "UNCONFIRMED: {}; effect not confirmed. {look}",
-            "Clicked element [2] with a real pointer click ".repeat(3).trim_end()
-        ),
-        "target": {"element": "[2] button \"Apply\""},
-    });
     let summary = super::summarize(&value);
     assert!(summary.chars().count() <= super::SUMMARY_TEXT_LIMIT);
     assert!(summary.ends_with(&look), "{summary}");

@@ -893,7 +893,7 @@ fn summarize(value: &Value) -> String {
         .get("text")
         .and_then(Value::as_str)
         .map(|text| text.lines().next().unwrap_or(""));
-    let look = line.and_then(crate::verdict::look_tail);
+    let look = line.and_then(|line| crate::verdict::look_tail(line, value));
     let text = line.map(crate::verdict::strip);
     let target = value
         .get("target")
@@ -1091,7 +1091,7 @@ fn clip_keeping_look(text: &str, look: Option<&str>, max: usize) -> String {
     match look.filter(|look| look.chars().count() < max) {
         Some(look) if text.ends_with(look) => {
             let what = &text[..text.len() - look.len()];
-            let room = max.saturating_sub(look.chars().count() + 1);
+            let room = max.saturating_sub(look.chars().count());
             format!("{}{look}", clip(what, room))
         }
         _ => clip(text, max),
@@ -1102,7 +1102,7 @@ fn clip(text: &str, max: usize) -> String {
     if text.chars().count() <= max {
         text.to_owned()
     } else {
-        text.chars().take(max).collect::<String>() + "…"
+        text.chars().take(max.saturating_sub(1)).collect::<String>() + "…"
     }
 }
 

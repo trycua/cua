@@ -79,20 +79,25 @@ const NO_CHANGE: &str = "; the read-back shows no change. Look first: ";
 const PART_DELIVERED: &str = "; only part of it was delivered. Look first: ";
 
 /// The closing `; … Look first: <call>` of an `UNCONFIRMED` or `PARTIAL`
-/// headline line, so a batch that shortens the line can keep it whole.
-pub fn look_tail(line: &str) -> Option<&str> {
-    let markers = if line.starts_with("UNCONFIRMED: ") {
-        [NOT_CONFIRMED, NO_CHANGE].as_slice()
-    } else if line.starts_with("PARTIAL: ") {
-        [PART_DELIVERED].as_slice()
-    } else {
-        return None;
+/// headline line, rebuilt from the result's structured content and matched
+/// as the line's exact ending, so a batch that shortens the line can keep it
+/// whole.
+pub fn look_tail<'a>(line: &'a str, structured: &Value) -> Option<&'a str> {
+    let verdict = Verdict::of_structured(Some(structured)).filter(|v| v.needs_a_look())?;
+    let marker = match (verdict, structured.get("effect").and_then(Value::as_str)) {
+        (Verdict::Partial, _) => PART_DELIVERED,
+        (_, Some("suspected_noop")) => NO_CHANGE,
+        _ => NOT_CONFIRMED,
     };
-    markers
-        .iter()
-        .filter_map(|marker| line.rfind(marker))
-        .max()
-        .map(|at| &line[at..])
+    let looks = match structured.get("next_call") {
+        Some(call) => vec![look_first("", Some(call))],
+        None => vec![look_first("browser_", None), look_first("", None)],
+    };
+    looks.into_iter().find_map(|look| {
+        let tail = format!("{marker}{look}");
+        line.ends_with(&tail)
+            .then(|| &line[line.len() - tail.len()..])
+    })
 }
 
 /// The tool's own line with the headline's `WORD: ` prefix removed, for a
@@ -346,20 +351,36 @@ mod tests {
     }
 
     #[test]
-    fn only_an_unconfirmed_or_partial_headline_has_a_look_tail() {
-        assert_eq!(
-            look_tail("UNCONFIRMED: a; b; effect not confirmed. Look first: get_desktop_state"),
-            Some("; effect not confirmed. Look first: get_desktop_state")
+    fn the_look_tail_is_rebuilt_from_the_structured_result() {
+        let call = json!({"tool": "get_window_state", "arguments": {
+            "session": "x; effect not confirmed. Look first: y", "pid": 1}});
+        let unconfirmed = json!({"effect": "unverifiable", "next_call": call});
+        let mut result = action("Clicked [2].", unconfirmed.clone());
+        annotate("click", &mut result);
+        let line = first_text(&result).to_owned();
+        let tail = look_tail(&line, &unconfirmed).unwrap();
+        assert!(
+            tail.starts_with("; effect not confirmed. Look first: get_window_state {"),
+            "{tail}"
         );
+        assert_eq!(&line[..line.len() - tail.len()], "UNCONFIRMED: Clicked [2]");
+
+        let partial = json!({"effect": "partial"});
         assert_eq!(
-            look_tail("PARTIAL: a; only part of it was delivered. Look first: x"),
-            Some("; only part of it was delivered. Look first: x")
+            look_tail(
+                "PARTIAL: a; only part of it was delivered. Look first: get_desktop_state",
+                &partial
+            ),
+            Some("; only part of it was delivered. Look first: get_desktop_state")
         );
+        let confirmed = json!({"effect": "confirmed"});
         assert_eq!(
-            look_tail("CONFIRMED: Set A1 to \"; effect not confirmed. Look first: x\"."),
+            look_tail(
+                "CONFIRMED: Set A1 to \"; effect not confirmed. Look first: get_desktop_state\"",
+                &confirmed
+            ),
             None
         );
-        assert_eq!(look_tail("UNCONFIRMED: a; Look first: x"), None);
     }
 
     #[test]

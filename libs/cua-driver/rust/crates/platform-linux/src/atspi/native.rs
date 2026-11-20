@@ -1036,7 +1036,8 @@ fn frame_geometry_distance(
 /// Server-side decorations offset a frame's reported origin from the native
 /// window's outer geometry, so an exact match is not required. The correlation
 /// must still be unambiguous: the best candidate has to be within this budget
-/// AND beat the runner-up by [`FRAME_MATCH_MARGIN_PX`].
+/// AND either match exactly where no other frame does or beat the runner-up by
+/// [`FRAME_MATCH_MARGIN_PX`].
 const FRAME_MATCH_TOLERANCE_PX: u64 = 160;
 
 /// How decisively the best frame must beat the second-best, unless it alone

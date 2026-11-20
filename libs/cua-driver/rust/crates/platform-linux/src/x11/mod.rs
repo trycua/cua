@@ -608,6 +608,21 @@ pub fn window_info(xid: u64) -> Option<WindowInfo> {
     })
 }
 
+/// Whether `xid` is an override-redirect window (a popup menu or tooltip the
+/// window manager never manages). `false` when the server does not answer.
+pub fn is_override_redirect(xid: u64) -> bool {
+    let Ok(window) = u32::try_from(xid) else {
+        return false;
+    };
+    let Ok((conn, _)) = RustConnection::connect(None) else {
+        return false;
+    };
+    conn.get_window_attributes(window)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .is_some_and(|attributes| attributes.override_redirect)
+}
+
 /// Ask the window manager to close `xid` (EWMH `_NET_CLOSE_WINDOW`, which
 /// the WM turns into `WM_DELETE_WINDOW` for a cooperating client): what
 /// Alt+F4 does through mutter's passive grab, which a virtual keyboard cannot

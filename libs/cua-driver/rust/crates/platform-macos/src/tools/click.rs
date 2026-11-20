@@ -33,7 +33,7 @@ use crate::apps;
 use crate::ax::bindings::{
     copy_action_names, copy_bool_attr, copy_children, copy_element_attr, copy_string_attr,
     element_at_screen_position, element_screen_rect, kAXErrorSuccess, AXUIElementPerformAction,
-    AXUIElementRef,
+    AXUIElementRef, AXUIElementSetMessagingTimeout,
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
@@ -287,21 +287,25 @@ unsafe fn has_submenu(item: AXUIElementRef) -> bool {
 }
 
 /// Whether `read` shows `title` before `timeout`, polling every `poll`.
+/// Each read gets the time left as its budget, so a stalled app cannot hold
+/// the wait past `timeout`.
 fn popup_shows(
     title: &str,
-    read: impl Fn() -> Option<String>,
+    read: impl Fn(std::time::Duration) -> Option<String>,
     timeout: std::time::Duration,
     poll: std::time::Duration,
 ) -> bool {
     let deadline = std::time::Instant::now() + timeout;
     loop {
-        if read().as_deref() == Some(title) {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if read(left).as_deref() == Some(title) {
             return true;
         }
-        if std::time::Instant::now() >= deadline {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
             return false;
         }
-        std::thread::sleep(poll);
+        std::thread::sleep(poll.min(left));
     }
 }
 
@@ -2454,7 +2458,12 @@ fn perform_ax_click(
     // right after it (Submit) could read the old value. Wait until the
     // pop-up shows the item.
     if let Some(popup) = popup {
-        let read = || unsafe { copy_string_attr(popup.as_ptr() as AXUIElementRef, "AXValue") };
+        let popup = popup.as_ptr() as AXUIElementRef;
+        // A zero timeout restores the system default, so keep a floor.
+        let read = |left: std::time::Duration| unsafe {
+            AXUIElementSetMessagingTimeout(popup, left.as_secs_f32().max(0.001));
+            copy_string_attr(popup, "AXValue")
+        };
         let shown = popup_shows(&title, read, POPUP_COMMIT_TIMEOUT, SELECTION_READBACK_POLL);
         if !shown {
             summary.push_str(&format!(
@@ -2764,7 +2773,7 @@ mod tests {
     #[test]
     fn a_popup_item_click_waits_until_the_popup_shows_the_item() {
         let polls = std::cell::Cell::new(0);
-        let read = || {
+        let read = |_| {
             polls.set(polls.get() + 1);
             Some(
                 if polls.get() < 4 {
@@ -2786,12 +2795,29 @@ mod tests {
         let started = std::time::Instant::now();
         assert!(!popup_shows(
             "Research",
-            || Some("Design".to_owned()),
+            |_| Some("Design".to_owned()),
             ms(60),
             ms(10)
         ));
         assert!(started.elapsed() >= ms(60));
         assert!(started.elapsed() < ms(300));
+    }
+
+    #[test]
+    fn each_popup_read_gets_only_the_time_left() {
+        let ms = std::time::Duration::from_millis;
+        let budgets = std::cell::RefCell::new(Vec::new());
+        let started = std::time::Instant::now();
+        let stalled = |left: std::time::Duration| {
+            budgets.borrow_mut().push(left);
+            std::thread::sleep(left);
+            None
+        };
+        assert!(!popup_shows("Research", stalled, ms(60), ms(10)));
+        assert!(started.elapsed() < ms(120));
+        let budgets = budgets.into_inner();
+        assert!(budgets[0] <= ms(60));
+        assert!(budgets.windows(2).all(|w| w[1] <= w[0]));
     }
 
     /// The pixel focus rung keeps working after unknown AX action names

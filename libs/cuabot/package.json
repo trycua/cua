@@ -25,7 +25,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0",
     "@lydell/node-pty": "1.2.0-beta.3",
-    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "better-sqlite3": "^11.0.0",
     "get-windows": "^9.2.3",
     "ink": "^5.1.0",
@@ -38,7 +38,7 @@
     "tsx": "^4.19.0",
     "uuid": "^13.0.1",
     "ws": "^8.21.0",
-    "zod": "^3.24.0"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",
@@ -50,7 +50,7 @@
   "pnpm": {
     "overrides": {
       "@hono/node-server": "1.19.17",
-      "@modelcontextprotocol/sdk": "1.26.0",
+      "@modelcontextprotocol/sdk": "1.32.2",
       "ajv": "8.18.0",
       "brace-expansion": "2.1.7",
       "fast-uri": "3.1.8",

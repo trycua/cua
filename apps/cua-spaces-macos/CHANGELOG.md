@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.39.10](https://github.com/trycua/cua/compare/cua-spaces-v0.39.9...cua-spaces-v0.39.10) (2026-11-20)
+
+
+### Bug Fixes
+
+* **spaces:** Windows sets up WSL 2 in one step; Docker Desktop is never offered ([#8246](https://github.com/trycua/cua/issues/8246)) ([d9b030a](https://github.com/trycua/cua/commit/d9b030a10d4b2e95e627bde6c2066af4383f9afb))
+
 ## [0.39.9](https://github.com/trycua/cua/compare/cua-spaces-v0.39.8...cua-spaces-v0.39.9) (2026-11-20)
 
 

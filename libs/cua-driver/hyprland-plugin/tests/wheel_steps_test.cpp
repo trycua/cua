@@ -28,7 +28,8 @@ int main() {
     Pointer v8{8, {}, {}};
     send_wheel_steps(v8, 0, 30);
     send_wheel_steps(v8, 1, -50);
-    check(v8.value120 == std::vector<std::int32_t>{360, -600}, "version 8 sends 120 per click");
+    send_wheel_steps(v8, 0, 0.01);
+    check(v8.value120 == std::vector<std::int32_t>{360, -600}, "version 8 sends 120 per click, never zero");
     check(v8.discrete.empty(), "version 8 sends no axis_discrete");
 
     Pointer v5{5, {}, {}};

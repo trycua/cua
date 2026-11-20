@@ -47,6 +47,7 @@ src/status.cpp
 src/user_seat_guard.cpp
 src/user_seat_guard.hpp
 src/user_seat_policy.hpp
+src/wheel_steps.hpp
 tests/agent_key_repeat_test.py
 tests/cmake-api/CMakeLists.txt
 tests/cmake-api/include/src/Compositor.hpp
@@ -73,6 +74,7 @@ tests/seat_lifetime_test.cpp
 tests/session_availability_test.cpp
 tests/status_test.cpp
 tests/transport_test.cpp
+tests/wheel_steps_test.cpp
 tests/user_seat_policy_test.cpp
 """.split()
 

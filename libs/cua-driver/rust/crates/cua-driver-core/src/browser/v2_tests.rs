@@ -9,7 +9,7 @@
 
 use std::io::Cursor;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc, Mutex as StdMutex,
 };
 
@@ -22,6 +22,7 @@ use crate::action_record::ActionExecutionRecord;
 use crate::protocol::{Content, ToolResult};
 use crate::tool::Tool;
 
+use super::cdp_ws::SharedSocketRelease;
 use super::engine::BrowserEngine;
 use super::mock_cdp::{MockCdpServer, MockEvent, MockHandler, MockReply};
 use super::platform::{
@@ -1034,7 +1035,45 @@ struct FixturePlatform {
     setup_invoked: Arc<AtomicBool>,
     setup_aborted: Arc<AtomicBool>,
     stall_consent: bool,
+    stalls: Arc<FixtureStalls>,
     focus: Arc<FixtureFocus>,
+}
+
+/// How many of each platform proof the fixture answers before every later
+/// one stalls forever, the way a hung `lsof` or profile read does.
+struct FixtureStalls {
+    reproofs: AtomicUsize,
+    fingerprints: AtomicUsize,
+    dismissals: AtomicUsize,
+    /// Turning remote debugging back off blocks its thread while this holds.
+    hold_cleanup: AtomicBool,
+    /// Cleanup calls that fail before the next ones succeed.
+    cleanup_failures: AtomicUsize,
+    cleanup_calls: AtomicUsize,
+    cleanup_finished: AtomicBool,
+}
+
+impl Default for FixtureStalls {
+    fn default() -> Self {
+        Self {
+            reproofs: AtomicUsize::new(usize::MAX),
+            fingerprints: AtomicUsize::new(usize::MAX),
+            dismissals: AtomicUsize::new(usize::MAX),
+            hold_cleanup: AtomicBool::new(false),
+            cleanup_failures: AtomicUsize::new(0),
+            cleanup_calls: AtomicUsize::new(0),
+            cleanup_finished: AtomicBool::new(false),
+        }
+    }
+}
+
+async fn answer_or_stall(remaining: &AtomicUsize) {
+    if remaining
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+        .is_err()
+    {
+        std::future::pending::<()>().await;
+    }
 }
 
 /// Foreground model for existing-profile attachment: whether attaching
@@ -1180,6 +1219,7 @@ impl BrowserPlatform for FixturePlatform {
         pid: i64,
         expected_ws_url: &str,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        answer_or_stall(&self.stalls.reproofs).await;
         if expected_ws_url != self.ws_url {
             return Ok(None);
         }
@@ -1223,6 +1263,32 @@ impl BrowserPlatform for FixturePlatform {
         })
     }
 
+    fn cleanup_existing_profile_setup(
+        &self,
+        _request: ExistingProfileSetupRequest,
+    ) -> Result<bool, BrowserRefusal> {
+        self.stalls.cleanup_calls.fetch_add(1, Ordering::SeqCst);
+        let held_since = std::time::Instant::now();
+        while self.stalls.hold_cleanup.load(Ordering::SeqCst)
+            && held_since.elapsed() < std::time::Duration::from_secs(30)
+        {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        self.stalls.cleanup_finished.store(true, Ordering::SeqCst);
+        if self
+            .stalls
+            .cleanup_failures
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+            .is_ok()
+        {
+            return Err(BrowserRefusal::new(
+                super::refusal::BrowserRefusalCode::BrowserRouteUnavailable,
+                "fixture cleanup failed",
+            ));
+        }
+        Ok(true)
+    }
+
     async fn commit_existing_profile_setup(
         &self,
         _request: ExistingProfileSetupRequest,
@@ -1253,7 +1319,17 @@ impl BrowserPlatform for FixturePlatform {
         ))
     }
 
+    async fn dismiss_abandoned_existing_profile_consent(
+        &self,
+        _pid: i64,
+        _window_id: u64,
+    ) -> Result<bool, BrowserRefusal> {
+        answer_or_stall(&self.stalls.dismissals).await;
+        Ok(false)
+    }
+
     async fn process_fingerprint(&self, pid: i64) -> Result<ProcessFingerprint, BrowserRefusal> {
+        answer_or_stall(&self.stalls.fingerprints).await;
         Ok(ProcessFingerprint {
             pid,
             start_time: Some(1),
@@ -1310,6 +1386,7 @@ async fn fixture_with_platform(
         setup_invoked: setup_invoked.clone(),
         setup_aborted: Arc::new(AtomicBool::new(false)),
         stall_consent: false,
+        stalls: Default::default(),
         focus: Default::default(),
     }));
     Fixture {
@@ -1347,6 +1424,12 @@ impl crate::consent::ProtectedConsentProvider for FixtureProtectedProvider {
 }
 
 async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedProvider>) {
+    protected_existing_profile_fixture_with(Default::default()).await
+}
+
+async fn protected_existing_profile_fixture_with(
+    stalls: Arc<FixtureStalls>,
+) -> (Fixture, Arc<FixtureProtectedProvider>) {
     let state = Arc::new(StdMutex::new(FixtureState::default()));
     let server = MockCdpServer::start(fixture_handler(state.clone())).await;
     let setup_invoked = Arc::new(AtomicBool::new(false));
@@ -1365,6 +1448,7 @@ async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedP
             setup_invoked: setup_invoked.clone(),
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
+            stalls,
             focus: Default::default(),
         }),
         Some(provider.clone()),
@@ -1381,6 +1465,12 @@ async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedP
 }
 
 async fn existing_profile_setup_fixture() -> (Fixture, Arc<AtomicBool>) {
+    existing_profile_setup_fixture_with(Default::default()).await
+}
+
+async fn existing_profile_setup_fixture_with(
+    stalls: Arc<FixtureStalls>,
+) -> (Fixture, Arc<AtomicBool>) {
     let state = Arc::new(StdMutex::new(FixtureState::default()));
     let server = MockCdpServer::start(fixture_handler(state.clone())).await;
     let setup_invoked = Arc::new(AtomicBool::new(false));
@@ -1396,6 +1486,7 @@ async fn existing_profile_setup_fixture() -> (Fixture, Arc<AtomicBool>) {
             setup_invoked: setup_invoked.clone(),
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
+            stalls,
             focus: Default::default(),
         }),
         Some(Arc::new(FixtureProtectedProvider {
@@ -1450,6 +1541,7 @@ async fn attach_fixture_with_space(
             setup_invoked: setup_invoked.clone(),
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
+            stalls: Default::default(),
             focus: focus.clone(),
         }),
         Some(provider.clone()),
@@ -1505,6 +1597,7 @@ async fn standalone_consumer_bind_without_grant_refuses_before_endpoint_discover
         setup_invoked: setup_invoked.clone(),
         setup_aborted: Arc::new(AtomicBool::new(false)),
         stall_consent: false,
+        stalls: Default::default(),
         focus: Default::default(),
     }));
 
@@ -1583,6 +1676,225 @@ async fn approved_existing_profile_attach_claims_then_binds_one_generation() {
         .await;
     assert_eq!(structured(&state)["status"], "ok", "{}", structured(&state));
     crate::session::fire_session_end("transport-v2-attach");
+}
+
+async fn prepare_existing_profile(engine: &Arc<BrowserEngine>, transport: &str) {
+    let prepare = BrowserPrepareTool::new(engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "_transport_session_id": transport,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(
+        structured(&prepare)["status"],
+        "ok",
+        "{}",
+        structured(&prepare)
+    );
+}
+
+async fn bind_existing_profile(engine: &Arc<BrowserEngine>, transport: &str) -> Value {
+    let state = GetBrowserStateTool::new(engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "_transport_session_id": transport
+        }))
+        .await;
+    structured(&state).clone()
+}
+
+#[tokio::test]
+async fn existing_profile_bind_refuses_when_the_endpoint_reproof_stalls() {
+    const TRANSPORT: &str = "transport-v2-reproof-stall";
+    let stalls = Arc::new(FixtureStalls::default());
+    let (f, _) = protected_existing_profile_fixture_with(stalls.clone()).await;
+    prepare_existing_profile(&f.engine, TRANSPORT).await;
+
+    stalls.reproofs.store(0, Ordering::SeqCst);
+    tokio::time::pause();
+    let state = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        bind_existing_profile(&f.engine, TRANSPORT),
+    )
+    .await
+    .expect("a stalled endpoint proof must not hang the bind");
+    assert_eq!(
+        state["refusal"]["code"], "browser_route_unavailable",
+        "{state}"
+    );
+    crate::session::fire_session_end(TRANSPORT);
+}
+
+#[tokio::test]
+async fn existing_profile_reconnect_refuses_within_its_bound_when_a_process_check_stalls() {
+    const TRANSPORT: &str = "transport-v2-reconnect-stall";
+    let stalls = Arc::new(FixtureStalls::default());
+    // Setup turned remote debugging on, so ending the grant turns it back off.
+    let (f, _) = existing_profile_setup_fixture_with(stalls.clone()).await;
+    prepare_existing_profile(&f.engine, TRANSPORT).await;
+
+    // The approved socket is gone, so the bind must reconnect, and neither
+    // the reconnect's own process check nor closing its prompt ever answers.
+    let grant = f
+        .engine
+        .existing_profile_grant(SESSION, Some(TRANSPORT), 1)
+        .await
+        .unwrap()
+        .expect("prepare minted a grant");
+    f.engine
+        .pool
+        .release_existing(
+            &grant.endpoint_ws_url,
+            grant.generation,
+            SharedSocketRelease::Close,
+        )
+        .await;
+    stalls.fingerprints.store(1, Ordering::SeqCst);
+    stalls.dismissals.store(0, Ordering::SeqCst);
+    stalls.hold_cleanup.store(true, Ordering::SeqCst);
+    // The clock is advanced by hand: tokio stops auto-advancing a paused
+    // clock while a blocking task runs, and the held cleanup is one.
+    tokio::time::pause();
+    let bind = tokio::spawn({
+        let engine = f.engine.clone();
+        async move { bind_existing_profile(&engine, TRANSPORT).await }
+    });
+    for _ in 0..120 {
+        if bind.is_finished() {
+            break;
+        }
+        tokio::time::advance(std::time::Duration::from_secs(1)).await;
+    }
+    assert!(
+        bind.is_finished(),
+        "a stalled reconnect must not hang the bind"
+    );
+    let state = bind.await.unwrap();
+    assert_eq!(
+        state["refusal"]["code"], "browser_reconnect_exhausted",
+        "{state}"
+    );
+    assert_eq!(
+        state["refusal"]["detail"]["last_error"], "timed_out",
+        "{state}"
+    );
+    assert!(
+        f.engine
+            .existing_profile_grant(SESSION, Some(TRANSPORT), 1)
+            .await
+            .unwrap()
+            .is_none(),
+        "a reconnect that ran out of time ends the grant"
+    );
+    assert!(
+        !stalls.cleanup_finished.load(Ordering::SeqCst),
+        "the refusal must not wait for a stalled remote-debugging cleanup"
+    );
+
+    // The cleanup fails after the refusal went out; it must still be queued
+    // for the session-end retry.
+    stalls.cleanup_failures.store(1, Ordering::SeqCst);
+    stalls.hold_cleanup.store(false, Ordering::SeqCst);
+    let queued = || queued_cleanups(&f.engine, SESSION);
+    for _ in 0..500 {
+        if queued() > 0 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(queued(), 1, "a late cleanup failure is queued for retry");
+}
+
+fn queued_cleanups(engine: &BrowserEngine, session: &str) -> usize {
+    engine
+        .setup_cleanups
+        .lock()
+        .unwrap()
+        .failed
+        .get(session)
+        .map_or(0, Vec::len)
+}
+
+/// Waits in real time: a blocking cleanup thread is what moves next.
+async fn wait_for(mut done: impl FnMut() -> bool) -> bool {
+    for _ in 0..500 {
+        if done() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        tokio::task::yield_now().await;
+    }
+    done()
+}
+
+#[tokio::test]
+async fn a_cleanup_that_fails_after_its_session_ended_retries_at_once() {
+    // A session end can name either the public session or its transport.
+    const PUBLIC: &str = "cleanup-after-end";
+    const TRANSPORT: &str = "transport-v2-cleanup-after-end";
+    cleanup_fails_after_session_end(PUBLIC, TRANSPORT, PUBLIC).await;
+    const PUBLIC_2: &str = "cleanup-after-transport-end";
+    const TRANSPORT_2: &str = "transport-v2-cleanup-after-transport-end";
+    cleanup_fails_after_session_end(PUBLIC_2, TRANSPORT_2, TRANSPORT_2).await;
+}
+
+async fn cleanup_fails_after_session_end(
+    session: &'static str,
+    transport: &'static str,
+    ended_session: &str,
+) {
+    let stalls = Arc::new(FixtureStalls::default());
+    // Setup turned remote debugging on, so ending the grant turns it back off.
+    let (f, _) = existing_profile_setup_fixture_with(stalls.clone()).await;
+    let prepare = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": session,
+            "_transport_session_id": transport,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(
+        structured(&prepare)["status"],
+        "ok",
+        "{}",
+        structured(&prepare)
+    );
+
+    stalls.hold_cleanup.store(true, Ordering::SeqCst);
+    let revoke = tokio::spawn({
+        let engine = f.engine.clone();
+        async move {
+            engine
+                .revoke_existing_profile_grant(session, Some(transport), 1)
+                .await
+        }
+    });
+    assert!(wait_for(|| stalls.cleanup_calls.load(Ordering::SeqCst) == 1).await);
+
+    // The session ends while its cleanup still runs, then that cleanup fails:
+    // the session-end retry has already passed, so it must retry by itself.
+    crate::session::fire_session_end(ended_session);
+    stalls.cleanup_failures.store(1, Ordering::SeqCst);
+    stalls.hold_cleanup.store(false, Ordering::SeqCst);
+    assert!(
+        wait_for(|| stalls.cleanup_calls.load(Ordering::SeqCst) == 2).await,
+        "the failed cleanup retries without waiting for another session end"
+    );
+    revoke.await.unwrap();
+    assert!(wait_for(|| f.engine.setup_cleanups.lock().unwrap().running.is_empty()).await);
+    assert_eq!(
+        queued_cleanups(&f.engine, session),
+        0,
+        "the retry succeeded"
+    );
 }
 
 #[tokio::test]
@@ -1997,6 +2309,7 @@ async fn refused_consent_cancels_stalled_claim_before_revoking_grant() {
             setup_invoked: Arc::new(AtomicBool::new(false)),
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
+            stalls: Default::default(),
             focus: Default::default(),
         }),
         Some(Arc::new(FixtureProtectedProvider {
@@ -2043,6 +2356,7 @@ async fn cancelled_prepare_aborts_the_exact_pending_setup() {
             setup_invoked: Arc::new(AtomicBool::new(false)),
             setup_aborted: setup_aborted.clone(),
             stall_consent: true,
+            stalls: Default::default(),
             focus: Default::default(),
         }),
         Some(Arc::new(FixtureProtectedProvider {
@@ -2107,6 +2421,7 @@ async fn declined_consent_rolls_back_pending_setup_before_refusing() {
             setup_invoked: Arc::new(AtomicBool::new(false)),
             setup_aborted: setup_aborted.clone(),
             stall_consent: false,
+            stalls: Default::default(),
             focus: Default::default(),
         }),
         Some(Arc::new(DecliningProtectedProvider)),

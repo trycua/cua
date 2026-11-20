@@ -275,6 +275,15 @@ async fn read_loop(mut read: SplitStream<WsStream>, demux: Arc<Demux>) {
 }
 
 /// A single browser-endpoint connection.
+/// Closes the socket when dropped; forgotten once a frame is fully sent.
+struct CloseUnlessSent<'a>(&'a Demux);
+
+impl Drop for CloseUnlessSent<'_> {
+    fn drop(&mut self) {
+        self.0.close();
+    }
+}
+
 pub struct CdpConnection {
     writer: Mutex<SplitSink<WsStream, Message>>,
     demux: Arc<Demux>,
@@ -464,16 +473,38 @@ impl CdpConnection {
         if let Some(sid) = session_id {
             msg["sessionId"] = Value::String(sid.to_owned());
         }
-        let sent = {
-            let mut writer = self.writer.lock().await;
-            writer.send(Message::Text(msg.to_string())).await
-        };
-        if let Err(e) = sent {
+        // The deadline covers the writer too. A browser that stops reading
+        // stalls a send while it holds the writer, which would otherwise keep
+        // every later call on this socket waiting with no deadline at all.
+        let deadline = tokio::time::Instant::now() + timeout;
+        let Ok(mut writer) = tokio::time::timeout_at(deadline, self.writer.lock()).await else {
             self.demux.pending.lock().unwrap().remove(&id);
-            anyhow::bail!("CDP send failed during {method}: {e}");
+            anyhow::bail!("CDP {method} timed out after {timeout:?} waiting to send");
+        };
+        if self.is_closed() {
+            self.demux.pending.lock().unwrap().remove(&id);
+            anyhow::bail!("CDP socket closed before {method}");
         }
+        // Until the frame is fully written, a cancelled or failed send leaves
+        // a partial frame on the wire. The guard closes the socket before the
+        // writer is released, so no later call frames another command on it.
+        let in_flight = CloseUnlessSent(&self.demux);
+        match tokio::time::timeout_at(deadline, writer.send(Message::Text(msg.to_string()))).await {
+            Ok(Ok(())) => std::mem::forget(in_flight),
+            Ok(Err(e)) => {
+                drop(in_flight);
+                self.demux.pending.lock().unwrap().remove(&id);
+                anyhow::bail!("CDP send failed during {method}: {e}");
+            }
+            Err(_) => {
+                drop(in_flight);
+                self.demux.pending.lock().unwrap().remove(&id);
+                anyhow::bail!("CDP {method} timed out after {timeout:?} while sending");
+            }
+        }
+        drop(writer);
 
-        match tokio::time::timeout(timeout, rx).await {
+        match tokio::time::timeout_at(deadline, rx).await {
             Err(_) => {
                 self.demux.pending.lock().unwrap().remove(&id);
                 anyhow::bail!("CDP {method} timed out after {timeout:?}")
@@ -706,6 +737,7 @@ impl Drop for PoolInner {
 /// entries are shared by every grant for that browser instance: each grant
 /// generation is a refcounted holder, and the socket outlives individual
 /// sessions only within the bounded parking window.
+#[derive(Clone)]
 pub struct CdpPool {
     inner: Arc<PoolInner>,
 }
@@ -1046,6 +1078,68 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result["echoed"]["x"], 7);
+    }
+
+    /// A browser that completes the handshake and then stops reading, the
+    /// way a renderer or browser process blocked on the main thread does.
+    async fn unread_browser() -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let _ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            std::future::pending::<()>().await;
+        });
+        (
+            format!("ws://127.0.0.1:{port}/devtools/browser/unread"),
+            task,
+        )
+    }
+
+    #[tokio::test]
+    async fn a_stalled_send_cannot_hold_other_calls_past_their_timeout() {
+        let (url, _browser) = unread_browser().await;
+        let conn = Arc::new(CdpConnection::connect(&url).await.unwrap());
+        // Larger than the loopback socket buffers, so the send never finishes
+        // while the peer does not read.
+        let stalled = tokio::spawn({
+            let conn = conn.clone();
+            async move {
+                conn.call_with_timeout(
+                    None,
+                    "Runtime.evaluate",
+                    json!({ "expression": "x".repeat(64 << 20) }),
+                    Duration::from_secs(1),
+                )
+                .await
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let started = std::time::Instant::now();
+        let queued = tokio::time::timeout(
+            Duration::from_secs(10),
+            conn.call_with_timeout(
+                None,
+                "Browser.getVersion",
+                json!({}),
+                Duration::from_secs(1),
+            ),
+        )
+        .await
+        .expect("a call queued behind a stalled send must honor its own timeout");
+        assert!(queued.is_err());
+        assert!(started.elapsed() < Duration::from_secs(5));
+
+        let stalled = tokio::time::timeout(Duration::from_secs(10), stalled)
+            .await
+            .expect("the stalled send must honor its timeout")
+            .unwrap();
+        assert!(stalled.is_err());
+        assert!(
+            conn.is_closed(),
+            "a socket with a partly written frame cannot carry another command"
+        );
     }
 
     #[tokio::test]

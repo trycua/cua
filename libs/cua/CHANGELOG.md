@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.29.0](https://github.com/trycua/cua/compare/cua-sdk-v0.28.6...cua-sdk-v0.29.0) (2026-11-20)
+
+
+### Features
+
+* **spaces:** stream direct Spaces over the advertised QUIC media endpoint ([#8083](https://github.com/trycua/cua/issues/8083)) ([ecde561](https://github.com/trycua/cua/commit/ecde5618f7d20cff7fb66a6c2ce0dba16a473c55))
+
 ## [0.28.6](https://github.com/trycua/cua/compare/cua-sdk-v0.28.5...cua-sdk-v0.28.6) (2026-11-19)
 
 

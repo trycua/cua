@@ -258,6 +258,20 @@ const PEN_FLAG_BARREL: u32 = 0x00000001;
 // as `background_unavailable` (see `target_visible_at_point`) and the agent
 // escalates to `delivery_mode:"foreground"` instead of the driver raising it.
 
+/// An `InjectSyntheticPointerInput` call failed partway through a stroke, so
+/// part of the stroke may already have reached the target. A refusal built
+/// from it reports the effect as `unverifiable` rather than `refused`.
+#[derive(Debug)]
+pub struct StrokeInterrupted(pub(crate) String);
+
+impl std::fmt::Display for StrokeInterrupted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for StrokeInterrupted {}
+
 /// One down→up **pen** tap at screen `(sx, sy)`. When `barrel` is set the pen's
 /// barrel button is held for the contact, which the system maps to a secondary
 /// (right) click — both for `WM_POINTER`-aware apps (Chromium/WPF/UWP) and via
@@ -304,7 +318,8 @@ fn pen_taps(sx: i32, sy: i32, barrel: bool, count: usize) -> Result<()> {
             sleep(Duration::from_millis(25));
             let r2 = InjectSyntheticPointerInput(dev, &[up]);
             if let Err(e) = r1.and(r2) {
-                result = Err(anyhow::anyhow!("InjectSyntheticPointerInput(pen): {e}"));
+                result =
+                    Err(StrokeInterrupted(format!("InjectSyntheticPointerInput(pen): {e}")).into());
                 break;
             }
             if i + 1 < n {
@@ -717,7 +732,7 @@ fn pen_drag(sx0: i32, sy0: i32, sx1: i32, sy1: i32, steps: usize, barrel: bool) 
         let up = mk(POINTER_FLAG_UP, sx1, sy1);
         res = res.and(InjectSyntheticPointerInput(dev, &[up]));
         DestroySyntheticPointerDevice(dev);
-        res.map_err(|e| anyhow::anyhow!("InjectSyntheticPointerInput(pen drag): {e}"))?;
+        res.map_err(|e| StrokeInterrupted(format!("InjectSyntheticPointerInput(pen drag): {e}")))?;
     }
     Ok(())
 }
@@ -829,7 +844,9 @@ fn touch_drag(sx0: i32, sy0: i32, sx1: i32, sy1: i32, steps: usize) -> Result<()
             let _ = SetCursorPos(cpos.x, cpos.y);
         }
         // device intentionally NOT destroyed — see TOUCH_DEV.
-        res.map_err(|e| anyhow::anyhow!("InjectSyntheticPointerInput(touch drag): {e}"))?;
+        res.map_err(|e| {
+            StrokeInterrupted(format!("InjectSyntheticPointerInput(touch drag): {e}"))
+        })?;
     }
     Ok(())
 }

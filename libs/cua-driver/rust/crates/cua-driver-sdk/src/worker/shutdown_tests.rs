@@ -251,7 +251,14 @@ fn timerless_shutdown_deadline_allows_graceful_exit() {
 
 fn shutdown_deadline_allows_graceful_exit_on(rt: tokio::runtime::Runtime) {
     let dir = tempfile::tempdir().unwrap();
-    let client = fixture_client("graceful", &dir.path().join("requests"));
+    let mut client = fixture_client("graceful", &dir.path().join("requests"));
+    // This test asserts that a prompt graceful exit is reported as success, not
+    // that the production budget is tight (the other tests cover that). The
+    // fixture needs a real process wakeup, request parse and exit, which can
+    // exceed the 100 ms BUDGET on a loaded CI host and flip the result to a
+    // deadline error. Give it ample headroom; it still returns as soon as the
+    // child exits, so the test stays fast.
+    Arc::get_mut(&mut client).unwrap().shutdown_timeout = Duration::from_secs(30);
     rt.block_on(client.shutdown()).unwrap();
     assert!(assert_reaped(&client).success());
 }

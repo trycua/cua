@@ -11,7 +11,7 @@ use cua_relay::server::{Relay, RelayConfig};
 
 // jemalloc, not the system allocator: see the comment in Cargo.toml and
 // `cua_relay::process_memory`.
-#[cfg(unix)]
+#[cfg(all(unix, feature = "jemalloc"))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
@@ -390,7 +390,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
-    #[cfg(unix)]
+    #[cfg(all(unix, feature = "jemalloc"))]
     cua_relay::process_memory::use_jemalloc();
     let args = Args::parse();
     if args.stun_only {

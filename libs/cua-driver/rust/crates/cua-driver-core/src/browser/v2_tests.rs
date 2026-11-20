@@ -1697,10 +1697,8 @@ async fn unattended_attach_and_dom_work_without_any_focus_guard() {
         }))
         .await;
     assert_eq!(
-        structured(&clicked)["status"],
-        "ok",
-        "{}",
-        structured(&clicked)
+        clicked.action_record.as_ref().map(|record| record.effect),
+        Some(crate::action_record::ActionEffect::Confirmed)
     );
     let typed = BrowserTypeTool::new(engine.clone())
         .invoke(json!({

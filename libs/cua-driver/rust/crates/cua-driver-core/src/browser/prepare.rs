@@ -64,8 +64,9 @@ fn validate_profile(profile: &PrepareProfile) -> Result<(), BrowserRefusal> {
 }
 
 /// How long the driver itself looks for the exact browser-owned prompt and
-/// presses its Allow action.
-const AUTOMATIC_CONSENT_BOUND: Duration = Duration::from_secs(4);
+/// presses its Allow action. Linux scales its own attempt from observed
+/// accessibility walk time inside this bound.
+const AUTOMATIC_CONSENT_BOUND: Duration = super::EXISTING_PROFILE_CONSENT_TIMEOUT;
 
 /// How long an attach the person can see keeps the browser's pending
 /// connection open for them to answer a prompt the driver did not answer.
@@ -140,7 +141,7 @@ where
     let mut consent = Box::pin(consent);
     let (result, outcome) = {
         let mut bounded = Box::pin(tokio::time::timeout(
-            super::EXISTING_PROFILE_CONSENT_TIMEOUT,
+            AUTOMATIC_CONSENT_BOUND,
             consent.as_mut(),
         ));
         tokio::select! {
@@ -2127,13 +2128,13 @@ mod tests {
         .await
         .expect_err("background attempts do not wait for a person");
         assert_eq!(error.code, BrowserRefusalCode::BrowserConsentRequired);
-        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(started.elapsed() < AUTOMATIC_CONSENT_BOUND + Duration::from_secs(1));
     }
 
     #[tokio::test(start_paused = true)]
     async fn a_closed_pending_connection_while_waiting_for_a_person_is_a_decline() {
         let mut claim = Box::pin(async {
-            tokio::time::sleep(Duration::from_secs(9)).await;
+            tokio::time::sleep(AUTOMATIC_CONSENT_BOUND + Duration::from_secs(5)).await;
             Err::<u8, _>(anyhow::anyhow!("handshake rejected"))
         });
         let error = claim_with_optional_consent(

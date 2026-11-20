@@ -698,6 +698,10 @@ mod tests {
                     "discover_spawned_endpoint",
                     "the spawned browser owns its listener; launcher handoff is Windows-only",
                 ),
+                (
+                    "existing_profile_consent_focus_guard",
+                    "not implemented: only Hyprland's focus-on-activate is known to hand the consent prompt focus",
+                ),
             ],
         ),
         (
@@ -726,6 +730,10 @@ mod tests {
                 (
                     "restore_frontmost_app",
                     "not implemented: a foreground attachment leaves the browser in front",
+                ),
+                (
+                    "existing_profile_consent_focus_guard",
+                    "not implemented: only Hyprland's focus-on-activate is known to hand the consent prompt focus",
                 ),
             ],
         ),

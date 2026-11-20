@@ -119,7 +119,8 @@ if (($suite -in @("shared", "native", "all")) -and (Test-HarnessWanted "webview"
 }
 if ($suite -in @("native", "all")) {
     $requiredFixtures += @(
-        (Join-Path $env:CUA_TEST_APPS_ROOT "harness-winui3\CuaTestHarness.WinUI3.exe")
+        (Join-Path $env:CUA_TEST_APPS_ROOT "harness-winui3\CuaTestHarness.WinUI3.exe"),
+        (Join-Path $env:CUA_TEST_APPS_ROOT "harness-winforms-modal\CuaTestHarness.WinFormsModal.exe")
     )
 }
 foreach ($fixture in $requiredFixtures) {
@@ -461,6 +462,10 @@ if ($suite -in @("native", "all")) {
     )
     Invoke-CargoTest "WinUI3 harnesses" @(
         "test", "-p", "cua-driver-e2e", "--test", "harness_winui3_test", "--",
+        "--ignored", "--nocapture", "--test-threads=1"
+    )
+    Invoke-CargoTest "Windows semantic UIA deadline" @(
+        "test", "-p", "cua-driver-e2e", "--test", "semantic_click_deadline_windows_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
     Invoke-CargoTest "Windows web harnesses" @(

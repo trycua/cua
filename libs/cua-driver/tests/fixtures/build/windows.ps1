@@ -63,6 +63,7 @@ function Publish-Project {
 
 if (Should-Build "wpf") {
     Publish-Project (Join-Path $harnessDir "apps\windows\wpf\CuaTestHarness.Wpf.csproj") "harness-wpf"
+    & (Join-Path $harnessDir "apps\windows\winforms-modal\build.ps1") -OutputDirectory (Join-Path $testAppsDir "harness-winforms-modal")
 }
 if (Should-Build "winui3") {
     $winuiProj = Join-Path $harnessDir "apps\windows\winui3\CuaTestHarness.WinUI3.csproj"

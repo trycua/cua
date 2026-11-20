@@ -89,6 +89,14 @@ It runs the complete Rust harness matrix; internal lane selectors are retained
 only for focused diagnosis. Optional
 external-app suites remain separate.
 
+The native lane also selects `semantic_click_deadline_windows_test.rs` against
+the repo-local WinForms modal fixture built alongside WPF. Its journal and
+owned-window observations verify the response deadline, busy refusal, no replay,
+and semantic recovery independently of the tool's success or error response.
+For a focused local run, build `tests/fixtures/apps/windows/winforms-modal/build.ps1`
+with `-OutputDirectory rust/test-apps/harness-winforms-modal` from `libs/cua-driver`,
+then run the entire test binary with `--ignored --test-threads=1`.
+
 The canonical macOS E2E entrypoint is
 `libs/cua-driver/tests/runners/macos-lume/run-all.sh`. It runs in a disposable
 clone of the private maintainer seed, or in a SIP-off worker prepared with the

@@ -271,8 +271,8 @@ mod native {
                     .into(),
             ));
         }
-        let bar_notifies_by_position = notifies_by_position(menu)?;
-        initialize(window, WM_INITMENU, menu, 0, "its menu bar")?;
+        let bar = menu;
+        initialize(window, WM_INITMENU, bar, 0, "its menu bar")?;
         for (depth, segment) in path.iter().enumerate() {
             let items = read_items(menu)?;
             let plain: Vec<MenuItem> = items.iter().map(|(item, _)| item.clone()).collect();
@@ -288,8 +288,10 @@ mod native {
                     )?;
                 }
                 MenuStep::Command(position) => {
+                    // Read after the initialization handlers, which may set
+                    // the style.
                     let notify_by_position =
-                        bar_notifies_by_position || notifies_by_position(menu)?;
+                        notifies_by_position(bar)? || notifies_by_position(menu)?;
                     let (message, wparam, lparam) = match menu_dispatch(
                         notify_by_position,
                         position,

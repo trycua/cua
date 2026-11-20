@@ -45,36 +45,9 @@
 #   * Bash 3.2 compatible (macOS default). No associative arrays, no
 #     `[[ =~ ]]` patterns that need bash 4+.
 
-# Best-effort kill of any running cua-driver daemons so the next
-# `cua-driver` invocation starts the FRESH binary, not whatever's still
-# in memory from the pre-upgrade install. Without this the previous
-# daemon keeps running (and on macOS keeps holding TCC-attributed file
-# handles) until the user logs out — which surfaces as "the bug I just
-# fixed is still there" because the in-memory code is pre-fix.
-#
-# Layered escalation, in order of decreasing politeness:
-#   1. macOS: `launchctl unload <plist>` on the Rust LaunchAgent
-#      (com.trycua.cua-driver-rs.plist). Unload
-#      is the documented way to stop a launchd-managed daemon — it
-#      also clears the KeepAlive flag so launchd doesn't immediately
-#      respawn the process we're about to kill. No-op (with stderr
-#      suppressed) when the plist isn't installed.
-#      Linux: `systemctl --user stop cua-driver-rs.service` for the
-#      install-local --autostart path. Same shape — politely stop the
-#      supervisor first so it doesn't restart the process.
-#   2. `pkill -x cua-driver` as the backstop for processes that weren't
-#      launchd/systemd-supervised (e.g. a manual `cua-driver serve`
-#      from a dev shell, or `cua-driver mcp` spawned by an editor that
-#      isn't aware we're swapping the binary out from under it).
-#
-# Daemon-name coverage:
-#   The Rust binary execs as `cua-driver`. One `pkill -x cua-driver`
-#   stops it. `cua-driver-uia` is a Windows-only helper (see
-#   libs/cua-driver/rust/crates/cua-driver-uia/) and never exists on
-#   macOS/Linux, so no pkill for it here.
-#
-# Returns: always 0. Caller threads this through unconditionally; the
-# behaviour is "kill what we can, never block the install".
+# Linux: true when pid runs `cua-driver serve`, judged by its first
+# positional argument so an `mcp` client whose socket path contains
+# "serve" does not match.
 cua_driver_is_serve_process() {
     local pid="$1"
     [ -r "/proc/$pid/cmdline" ] || return 1
@@ -107,6 +80,38 @@ cua_driver_is_serve_process() {
     return 1
 }
 
+# Best-effort kill of any running cua-driver daemons so the next
+# `cua-driver` invocation starts the FRESH binary, not whatever's still
+# in memory from the pre-upgrade install. Without this the previous
+# daemon keeps running (and on macOS keeps holding TCC-attributed file
+# handles) until the user logs out — which surfaces as "the bug I just
+# fixed is still there" because the in-memory code is pre-fix.
+#
+# Layered escalation, in order of decreasing politeness:
+#   1. macOS: `launchctl unload <plist>` on the Rust LaunchAgent
+#      (com.trycua.cua-driver-rs.plist). Unload
+#      is the documented way to stop a launchd-managed daemon — it
+#      also clears the KeepAlive flag so launchd doesn't immediately
+#      respawn the process we're about to kill. No-op (with stderr
+#      suppressed) when the plist isn't installed.
+#      Linux: `systemctl --user stop cua-driver-rs.service` for the
+#      install-local --autostart path. Same shape — politely stop the
+#      supervisor first so it doesn't restart the process.
+#   2. A backstop for processes that weren't launchd/systemd-supervised.
+#      macOS stops every process of this user running a com.trycua.driver
+#      bundle. Linux stops only this user's `cua-driver serve` daemons:
+#      a client-owned `cua-driver mcp` stdio server keeps running on its
+#      old inode across the `packages/current` flip, and ending it would
+#      cut off the agent session that owns it (#6335). Other Unixes fall
+#      back to `pkill -x cua-driver`.
+#
+# Daemon-name coverage:
+#   The Rust binary execs as `cua-driver`. `cua-driver-uia` is a Windows-only helper (see
+#   libs/cua-driver/rust/crates/cua-driver-uia/) and never exists on
+#   macOS/Linux, so no pkill for it here.
+#
+# Returns: always 0. Caller threads this through unconditionally; the
+# behaviour is "kill what we can, never block the install".
 stop_cua_driver_daemons() {
     printf '==> stopping any running cua-driver daemons before swap\n'
 
@@ -170,7 +175,6 @@ stop_cua_driver_daemons() {
                 local user_pids pid
                 user_pids=$(pgrep -x cua-driver -u "$(id -u)" 2>/dev/null || true)
                 for pid in $user_pids; do
-                    [ "$pid" = "$$" ] || [ "$pid" = "$PPID" ] && continue
                     if cua_driver_is_serve_process "$pid"; then
                         kill "$pid" 2>/dev/null || true
                     fi
@@ -240,7 +244,6 @@ show_cua_driver_daemon_survivors() {
 
         local linux_survivor_pids="" pid
         for pid in $(pgrep -x cua-driver -u "$(id -u)" 2>/dev/null || true); do
-            [ "$pid" = "$$" ] || [ "$pid" = "$PPID" ] && continue
             if cua_driver_is_serve_process "$pid"; then
                 linux_survivor_pids="${linux_survivor_pids:+$linux_survivor_pids }$pid"
             fi

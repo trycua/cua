@@ -12,10 +12,11 @@
 //! window, which is what the menu loop itself sends when the user picks the
 //! item. No menu opens and the window is never activated.
 //!
-//! Before reading a submenu the window gets the `WM_INITMENUPOPUP` it would
-//! get just before the submenu opened, so the app can enable, gray or add
-//! items as it does for a real open; an app that does not answer it is
-//! refused, since its menu state may be stale. A menu bar with the
+//! Before reading the menu bar the window gets the `WM_INITMENU` it would get
+//! when its menu activates, and before reading a submenu the
+//! `WM_INITMENUPOPUP` it would get just before the submenu opened, so the app
+//! can enable, gray or add items as it does for a real open. An app that does
+//! not answer either is refused, since its menu state may be stale. A menu bar with the
 //! `MNS_NOTIFYBYPOS` style gets the `WM_MENUCOMMAND` it expects instead.
 
 /// Why a menu path could not be resolved through the window's `HMENU`.
@@ -163,8 +164,39 @@ mod native {
         GetMenu, GetMenuInfo, GetMenuItemCount, GetMenuItemInfoW, PostMessageW,
         SendMessageTimeoutW, HMENU, MENUINFO, MENUITEMINFOW, MFS_DISABLED, MFT_BITMAP,
         MFT_OWNERDRAW, MFT_SEPARATOR, MIIM_FTYPE, MIIM_ID, MIIM_STATE, MIIM_STRING, MIIM_SUBMENU,
-        MIM_STYLE, MNS_NOTIFYBYPOS, SMTO_ABORTIFHUNG, WM_COMMAND, WM_INITMENUPOPUP, WM_MENUCOMMAND,
+        MIM_STYLE, MNS_NOTIFYBYPOS, SMTO_ABORTIFHUNG, WM_COMMAND, WM_INITMENU, WM_INITMENUPOPUP,
+        WM_MENUCOMMAND,
     };
+
+    /// Send the initialization message a real menu open sends, so the app
+    /// updates the items before they are read.
+    fn initialize(
+        window: HWND,
+        message: u32,
+        menu: HMENU,
+        lparam: isize,
+        what: &str,
+    ) -> Result<(), MenuCommandError> {
+        let mut result = 0usize;
+        let answered = unsafe {
+            SendMessageTimeoutW(
+                window,
+                message,
+                WPARAM(menu.0 as usize),
+                LPARAM(lparam),
+                SMTO_ABORTIFHUNG,
+                1000,
+                Some(&mut result),
+            )
+        };
+        if answered.0 == 0 {
+            return Err(MenuCommandError::MustOpen(format!(
+                "the window did not answer the initialization of {what}, so its menu state \
+                 may be stale"
+            )));
+        }
+        Ok(())
+    }
 
     fn notifies_by_position(menu: HMENU) -> Result<bool, MenuCommandError> {
         let mut info = MENUINFO {
@@ -240,32 +272,20 @@ mod native {
             ));
         }
         let bar_notifies_by_position = notifies_by_position(menu)?;
+        initialize(window, WM_INITMENU, menu, 0, "its menu bar")?;
         for (depth, segment) in path.iter().enumerate() {
             let items = read_items(menu)?;
             let plain: Vec<MenuItem> = items.iter().map(|(item, _)| item.clone()).collect();
             match resolve_step(&plain, segment, depth, depth + 1 == path.len())? {
                 MenuStep::Submenu(position) => {
                     menu = items[position].1;
-                    let mut result = 0usize;
-                    // The app enables, grays or fills the submenu here, as it
-                    // does just before a real open.
-                    let answered = unsafe {
-                        SendMessageTimeoutW(
-                            window,
-                            WM_INITMENUPOPUP,
-                            WPARAM(menu.0 as usize),
-                            LPARAM(position as isize),
-                            SMTO_ABORTIFHUNG,
-                            1000,
-                            Some(&mut result),
-                        )
-                    };
-                    if answered.0 == 0 {
-                        return Err(MenuCommandError::MustOpen(format!(
-                            "the window did not answer the initialization of menu path \
-                             segment {depth}, so its menu state may be stale"
-                        )));
-                    }
+                    initialize(
+                        window,
+                        WM_INITMENUPOPUP,
+                        menu,
+                        position as isize,
+                        &format!("menu path segment {depth}"),
+                    )?;
                 }
                 MenuStep::Command(position) => {
                     let notify_by_position =

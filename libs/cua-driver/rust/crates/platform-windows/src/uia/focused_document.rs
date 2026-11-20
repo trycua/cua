@@ -561,8 +561,8 @@ mod tests {
     use super::{
         caret_unit_counts, classify_focused_document_write, focused_document_eligible,
         focused_document_worker_error, normalize_document_line_endings, normalized_text_matches,
-        same_selection, split_at_selection, within_size_cap, FocusedDocumentTypeOutcome,
-        MAX_TYPED_DOCUMENT_UNITS,
+        same_selection, split_at_selection, stored_prefix, within_size_cap,
+        FocusedDocumentTypeOutcome, MAX_TYPED_DOCUMENT_UNITS,
     };
     use crate::uia::windows_enum::UiaDeadlineError;
 

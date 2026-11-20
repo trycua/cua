@@ -364,6 +364,18 @@ pub fn initialize_result() -> Value {
 /// Goose uses in its `ComputerController` extension and Open
 /// Interpreter uses for its system message.
 fn agent_instructions() -> String {
+    agent_instructions_for(
+        &crate::tool_profile::ToolProfile::from_env(),
+        crate::tool_docs::ToolDocs::from_env(),
+    )
+}
+
+/// The instructions for one tool profile: tools `tools/list` hides under it
+/// are not named.
+fn agent_instructions_for(
+    profile: &crate::tool_profile::ToolProfile,
+    docs: crate::tool_docs::ToolDocs,
+) -> String {
     // macOS needs no platform pointer: its permission line below names MACOS.md.
     let (tree_kind, platform_skill_pointer) = if cfg!(target_os = "macos") {
         ("AX", "")
@@ -382,8 +394,18 @@ fn agent_instructions() -> String {
     // macOS only: Cua Driver's own TCC prompts have one narrow, owner-gated
     // exception to "system prompts belong to the user"; the steps and
     // guardrails live in MACOS.md ("Install and approve permissions").
-    let permission_line = if cfg!(target_os = "macos") {
+    // The tool profile decides which tools this text may name: a tool that
+    // `tools/list` does not advertise is not mentioned.
+    let permission_line = if !cfg!(target_os = "macos") {
+        ""
+    } else if profile.advertises("check_permissions") {
         "\n\nmacOS: if `check_permissions` shows Accessibility or Screen Recording off, ask the user; approve Cua Driver's own prompts only if the owner explicitly authorized it (MACOS.md)."
+    } else {
+        "\n\nmacOS: if actions fail because Accessibility or Screen Recording is off, ask the user (`get_guide({topic:\"permissions\"})`); approve Cua Driver's own prompts only if the owner explicitly authorized it (MACOS.md)."
+    };
+
+    let session_line = if profile.advertises("start_session") {
+        "\n\n`start_session` is optional; repeat a short `session` label on every call that accepts it."
     } else {
         ""
     };
@@ -399,6 +421,11 @@ fn agent_instructions() -> String {
         ""
     };
 
+    let profile_note = profile
+        .instructions_note(docs)
+        .map(|note| format!("\n\n{note}"))
+        .unwrap_or_default();
+
     format!(
         r#"cua-driver: background GUI automation. No shell: for non-GUI outcomes use an app API/SDK, CLI or filesystem and read the result back there.
 
@@ -410,11 +437,9 @@ fn agent_instructions() -> String {
 
 Use the narrowest semantic route first: `set_window_frame` plus `list_windows` for geometry, typed browser tools for pages. Stay in the background; `delivery_mode:"foreground"` only if refused/unverifiable.
 
-Chrome/Edge/Brave page: `get_browser_state({{pid, window_id}})`, its `detail.next_call` (`browser_prepare`) if refused, then `browser_click`/`browser_type`/`browser_pointer` (hover, drag); never desktop pointer tools.
+Chrome/Edge/Brave page: `get_browser_state({{pid, window_id}})`, its `detail.next_call` (`browser_prepare`) if refused, then `browser_click`/`browser_type`/`browser_pointer` (hover, drag); never desktop pointer tools.{session_line}{permission_line}
 
-`start_session` is optional; repeat a short `session` label on every call that accepts it.{permission_line}
-
-Guides: `get_guide({{topic}})` (drag, browser, permissions, batching, menus), `skill://cua-driver/SKILL.md`{platform_skill_pointer}."#
+Guides: `get_guide({{topic}})` (drag, browser, permissions, batching, menus), `skill://cua-driver/SKILL.md`{platform_skill_pointer}.{profile_note}"#
     )
 }
 
@@ -500,11 +525,44 @@ mod action_record_wire_tests {
 
 #[cfg(test)]
 mod agent_instruction_tests {
-    use super::{agent_instructions, initialize_result};
+    use super::agent_instructions_for;
+    use crate::tool_docs::ToolDocs;
+    use crate::tool_profile::ToolProfile;
+
+    fn full_instructions() -> String {
+        agent_instructions_for(&ToolProfile::Full, ToolDocs::Full)
+    }
+
+    fn default_instructions() -> String {
+        agent_instructions_for(&ToolProfile::agent(), ToolDocs::Compact)
+    }
+
+    /// Under the default profile the instructions only name tools that
+    /// `tools/list` advertises, and say how to get the rest.
+    #[test]
+    fn default_instructions_name_no_hidden_tool_and_point_at_the_full_surface() {
+        let instructions = default_instructions();
+        for (group, tools) in crate::tool_profile::GROUPS {
+            if *group == crate::tool_profile::AGENT_GROUP {
+                continue;
+            }
+            for tool in *tools {
+                assert!(
+                    !instructions.contains(&format!("`{tool}`")),
+                    "{tool} is hidden by default but named in the instructions"
+                );
+            }
+        }
+        assert!(instructions.contains("CUA_DRIVER_TOOL_PROFILE=full"));
+        assert!(instructions.contains("get_guide({tool})"));
+        assert!(instructions.contains("get_guide({topic})"));
+        assert!(instructions.split_whitespace().count() <= 200);
+        assert!(!full_instructions().contains("CUA_DRIVER_TOOL_PROFILE"));
+    }
 
     #[test]
     fn instructions_route_structured_and_visual_verification_to_the_right_owner() {
-        let instructions = agent_instructions();
+        let instructions = full_instructions();
         assert!(instructions.contains("verify_state"));
         assert!(instructions.contains("`unknown` and `effect:\"unverifiable\"` are not success"));
         assert!(instructions.contains("app API/SDK"));
@@ -539,7 +597,7 @@ mod agent_instruction_tests {
 
     #[test]
     fn instructions_point_at_get_guide_and_keep_the_skill_resource() {
-        let instructions = agent_instructions();
+        let instructions = full_instructions();
         assert!(instructions.contains("`get_guide({topic})`"));
         for topic in crate::guide::topic_names()
             .into_iter()
@@ -556,7 +614,7 @@ mod agent_instruction_tests {
 
     #[test]
     fn macos_instructions_gate_permission_approval_on_owner_authorization() {
-        let instructions = agent_instructions();
+        let instructions = full_instructions();
         let has_line = instructions.contains("Cua Driver's own prompts");
         assert_eq!(
             has_line,
@@ -577,10 +635,8 @@ mod agent_instruction_tests {
 
     #[test]
     fn initialize_instructions_describe_implicit_session_lifecycle() {
-        let result = initialize_result();
-        let instructions = result["instructions"]
-            .as_str()
-            .expect("initialize result should carry agent instructions");
+        let instructions = full_instructions();
+        let instructions = instructions.as_str();
 
         assert!(instructions.contains("`start_session` is optional"));
         assert!(
@@ -594,10 +650,7 @@ mod agent_instruction_tests {
 
     #[test]
     fn initialize_instructions_do_not_send_agents_to_deprecated_history() {
-        let instructions = initialize_result()["instructions"]
-            .as_str()
-            .expect("initialize result should carry agent instructions")
-            .to_owned();
+        let instructions = full_instructions();
 
         assert!(!instructions.contains("history_status"));
         assert!(!instructions.contains("history_query"));

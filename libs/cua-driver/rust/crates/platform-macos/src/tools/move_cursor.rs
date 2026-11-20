@@ -28,7 +28,8 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "move_cursor".into(),
-        description: "Move a cursor to (x, y). With target {kind: \"window\", pid, window_id}, \
+        description: "Move the agent cursor overlay to (x, y). With `target {kind:\"window\", pid, window_id}` the point is in window screenshot pixels, as for `click`; without a target it is in screen points. Most background apps see no hover from this: for a web page in Chrome, Edge or Brave use `browser_pointer` hover.\n\n\
+            Move a cursor to (x, y). With target {kind: \"window\", pid, window_id}, \
             x/y are window screenshot pixels (as for click) and only the agent cursor moves \
             there; in a background app it also hovers through a route that leaves the real \
             pointer alone where one exists (AXShowAlternateUI on the element under the point, \

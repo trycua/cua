@@ -17,7 +17,7 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "launch_app".into(),
         description:
-            "Launch a macOS app in the background — the target does NOT come to the foreground.\n\n\
+            "Launch a macOS app in the background; it does NOT come to the foreground. Pass `bundle_id` (preferred) or `name`. Returns the pid and a `windows` array, ready for `get_window_state`. Single-instance apps hand every caller the same window.\n\n\
              Provide either `bundle_id` (preferred — unambiguous, e.g. `com.apple.calculator`) \
              or `name` (e.g. \"Calculator\", or the absolute `.app` path from `list_apps` \
              `launch_path`). If both are given, bundle_id wins.\n\n\

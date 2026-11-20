@@ -114,9 +114,8 @@ fn await_application<T>(
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "bring_to_front".into(),
-        description: "Persistently activate an app and leave it in the foreground. Most input \
-             does not need this; use it only for a focus-proxy surface that must remain \
-             foreground across interactions. With window_id, success means the exact ordinary \
+        description: "Activate an app (or one window) and leave it in the foreground. Most input does not need this: use it only for a surface that must stay in front across interactions. It DOES steal foreground and does NOT restore the previous app.\n\n\
+             With window_id, success means the exact ordinary \
              macOS window was independently verified as the frontmost process's focused window \
              and the front window of that process on the display it sits on. \
              `exact_window_effect.frontmost_ordinary` additionally reports whether it is first \

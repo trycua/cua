@@ -35,8 +35,8 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "hotkey".into(),
         description:
-            "Press a key combination — e.g. `[\"cmd\", \"c\"]` for Copy, \
-             `[\"cmd\", \"shift\", \"4\"]` for screenshot selection. Follows the same \
+            "Press a key combination, e.g. `[\"cmd\", \"c\"]` for Copy. It is posted to the pid in the background by default: the window is not raised and focus does not move. Menu shortcuts such as cmd+s run through accessibility on a background app; use `delivery_mode:\"foreground\"` for apps that ignore a background combo.\n\n\
+             `[\"cmd\", \"shift\", \"4\"]` is screenshot selection. Follows the same \
              `delivery_mode` ladder as click/type_text — it does NOT raise the \
              window by default:\n\
              • `background` (default): post the combo to the target pid WITHOUT \

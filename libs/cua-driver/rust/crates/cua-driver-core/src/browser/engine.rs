@@ -982,14 +982,18 @@ impl BrowserEngine {
 
     /// End the parked grants past their idle bound.
     async fn end_idle_parked(&self) {
-        for parked in self
+        // Release first: until the grants are forgotten, the pool still sees
+        // them as idle parked holders and lets no grant join through them.
+        let idle = self
             .existing_profile_grants
-            .take_idle_parked(std::time::Instant::now())
-        {
+            .idle_parked(std::time::Instant::now());
+        for parked in &idle {
             self.pool
                 .release_existing(&parked.endpoint_ws_url, parked.generation)
                 .await;
         }
+        let generations: Vec<u64> = idle.iter().map(|parked| parked.generation).collect();
+        self.existing_profile_grants.forget_parked(&generations);
     }
 
     /// End every parked grant and release the sockets they kept open.

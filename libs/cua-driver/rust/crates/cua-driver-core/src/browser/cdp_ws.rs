@@ -745,8 +745,8 @@ impl CdpPool {
             .ok_or_else(|| anyhow::anyhow!("existing-profile endpoint has no loopback port"))?;
         let _dial = self.inner.dial_gate.lock().await;
         {
-            let now = Instant::now();
             let mut conns = self.inner.conns.lock().await;
+            let now = Instant::now();
             if let Some(entry) = self.inner.live_shared(&mut conns, ws_url, now) {
                 let shared = entry
                     .shared
@@ -839,8 +839,8 @@ impl CdpPool {
     ) -> anyhow::Result<Arc<CdpConnection>> {
         let _dial = self.inner.dial_gate.lock().await;
         {
-            let now = Instant::now();
             let mut conns = self.inner.conns.lock().await;
+            let now = Instant::now();
             if let Some(entry) = self.inner.live_shared(&mut conns, ws_url, now) {
                 let shared = entry
                     .shared

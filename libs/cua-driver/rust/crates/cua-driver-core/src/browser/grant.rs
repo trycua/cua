@@ -322,13 +322,30 @@ impl ExistingProfileGrants {
         self.inner.lock().unwrap().ended.push(grant);
     }
 
-    /// Remove parked grants idle for longer than the parking bound, for the
-    /// caller to release their socket.
-    pub fn take_idle_parked(&self, now: Instant) -> Vec<ExistingProfileGrant> {
-        let ttl = self.parked_idle_ttl;
+    /// The parked grants idle for longer than the parking bound. They stay
+    /// recorded, so no grant can join their socket through them, until the
+    /// caller has released their holds and calls [`Self::forget_parked`].
+    pub fn idle_parked(&self, now: Instant) -> Vec<ExistingProfileGrant> {
+        let registry = self.inner.lock().unwrap();
+        registry
+            .ended
+            .iter()
+            .filter(|grant| self.parked_past_idle(grant, now))
+            .cloned()
+            .collect()
+    }
+
+    /// Drop the parked grants at `generations` once their holds are released.
+    pub fn forget_parked(&self, generations: &[u64]) {
         self.take_ended(|grant| {
-            matches!(grant.attachment, Attachment::Parked { since } if now.duration_since(since) > ttl)
-        })
+            matches!(grant.attachment, Attachment::Parked { .. })
+                && generations.contains(&grant.generation)
+        });
+    }
+
+    fn parked_past_idle(&self, grant: &ExistingProfileGrant, now: Instant) -> bool {
+        matches!(grant.attachment, Attachment::Parked { since }
+            if now.duration_since(since) > self.parked_idle_ttl)
     }
 
     /// Remove the parked grants on the socket for `endpoint_ws_url`, for the
@@ -439,11 +456,10 @@ impl super::cdp_ws::SharedSocketHolders for ExistingProfileGrants {
     fn keep_in_use(&self, holders: &std::collections::HashSet<u64>, now: Instant) -> bool {
         let registry = self.inner.lock().unwrap();
         holders.iter().any(|generation| {
-            !registry.ended.iter().any(|grant| {
-                grant.generation == *generation
-                    && matches!(grant.attachment, Attachment::Parked { since }
-                        if now.duration_since(since) > self.parked_idle_ttl)
-            })
+            !registry
+                .ended
+                .iter()
+                .any(|grant| grant.generation == *generation && self.parked_past_idle(grant, now))
         })
     }
 }
@@ -735,11 +751,18 @@ mod tests {
         );
 
         let parked_at = Instant::now();
-        assert!(grants.take_idle_parked(parked_at).is_empty());
-        let reaped = grants.take_idle_parked(parked_at + GRANT_IDLE_TTL + Duration::from_secs(1));
+        assert!(grants.idle_parked(parked_at).is_empty());
+        let idle = parked_at + GRANT_IDLE_TTL + Duration::from_secs(1);
+        let reaped = grants.idle_parked(idle);
         assert_eq!(reaped.len(), 1);
         assert_eq!(reaped[0].generation, attached.generation);
         assert!(matches!(reaped[0].attachment, Attachment::Parked { .. }));
+        assert_eq!(
+            grants.idle_parked(idle).len(),
+            1,
+            "an idle parked grant stays recorded until its hold is released"
+        );
+        grants.forget_parked(&[attached.generation]);
         assert!(grants.take_parked().is_empty());
     }
 

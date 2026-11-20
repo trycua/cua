@@ -348,7 +348,7 @@ impl Tool for LaunchAppTool {
                                 cmd.to_owned(),
                             ));
                         }
-                        Err(_) => {
+                        Err(spawn_error) => {
                             // Not an executable on PATH. Resolve the name against
                             // installed XDG .desktop applications — the same
                             // source list_apps reads — and run the match's Exec=.
@@ -380,11 +380,12 @@ impl Tool for LaunchAppTool {
                             // exit instead of reporting a launch that never
                             // happened.
                             if !cmd.contains("://") && !std::path::Path::new(cmd).exists() {
-                                anyhow::bail!(
-                                    "'{cmd}' is not an executable on PATH and matches no \
-                                     installed .desktop application. Call list_apps and \
-                                     round-trip its launch_path."
-                                );
+                                return Err(unlaunchable_command_error(
+                                    &spawn_error,
+                                    cmd,
+                                    std::env::var_os("PATH").as_deref(),
+                                    &installed,
+                                ));
                             }
                             let child = std::process::Command::new("xdg-open").arg(cmd).spawn()?;
                             if let Some(reason) = xdg_open_failure(child) {
@@ -466,10 +467,128 @@ impl Tool for LaunchAppTool {
                     }))
                 }
             }
-            Ok(Err(e)) => ToolResult::error(format!("Failed to launch: {e}")),
+            Ok(Err(e)) => launch_failure_result(&e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
+}
+
+/// Whether a program of this name may exist: a path that exists, or a file of
+/// that name in a directory of `search_path`. A probe that answers "not found"
+/// or "not a directory" (a search path entry that is a file) shows absence;
+/// a probe that fails for another reason (for example a permission error)
+/// leaves it open. Without a search path absence cannot be shown, because the
+/// system's default search path then applies and differs between C libraries,
+/// so it answers `true` and the caller keeps the plain error.
+fn program_may_exist(program: &str, search_path: Option<&std::ffi::OsStr>) -> bool {
+    let may_exist = |path: &std::path::Path| match path.try_exists() {
+        Ok(exists) => exists,
+        Err(error) => !matches!(
+            error.kind(),
+            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+        ),
+    };
+    if program.contains('/') {
+        return may_exist(std::path::Path::new(program));
+    }
+    match search_path {
+        Some(search_path) => {
+            std::env::split_paths(search_path).any(|dir| may_exist(&dir.join(program)))
+        }
+        None => true,
+    }
+}
+
+/// Whether the command may refer to an installed application, by any of the
+/// criteria of [`match_installed_app`] (without its uniqueness rule, so an
+/// ambiguous name counts) or by the program of an installed `launch_path`
+/// (so a launcher requested with other arguments counts).
+fn names_installed_app(apps: &[crate::installed_apps::InstalledApp], command: &str) -> bool {
+    let query = command.to_ascii_lowercase();
+    if query.is_empty() {
+        return false;
+    }
+    let program = command.split_whitespace().next();
+    apps.iter().any(|app| {
+        let name = app.name.to_ascii_lowercase();
+        name.contains(&query)
+            || app.bundle_id.to_ascii_lowercase() == query
+            || exec_basename(&app.launch_path) == query
+            || (program.is_some() && app.launch_path.split_whitespace().next() == program)
+    })
+}
+
+/// The error for a command whose direct spawn failed and that matched no
+/// installed application and no path `xdg-open` could open. The spawn error
+/// `NotFound` alone does not show that nothing by that name exists: Linux
+/// reports it as well for a program whose script interpreter or ELF loader is
+/// missing. Only when the program is also absent from the path and from
+/// `search_path` is it the typed refusal; any other case keeps the plain error.
+/// So does a command that may refer to an installed application (see
+/// [`names_installed_app`]), whose launcher program is then the thing that is
+/// missing, or whose name is ambiguous.
+/// The probe runs after the spawn failed, so a file that changes in between can
+/// misclassify one launch; the result is a hint for the caller, not a lock.
+fn unlaunchable_command_error(
+    spawn_error: &std::io::Error,
+    cmd: &str,
+    search_path: Option<&std::ffi::OsStr>,
+    installed: &[crate::installed_apps::InstalledApp],
+) -> anyhow::Error {
+    let not_found = AppNotFound {
+        name: cmd.to_owned(),
+    };
+    let program = cmd.split_whitespace().next().unwrap_or(cmd);
+    if spawn_error.kind() == std::io::ErrorKind::NotFound
+        && !names_installed_app(installed, cmd)
+        && !program_may_exist(program, search_path)
+    {
+        not_found.into()
+    } else {
+        anyhow::anyhow!("{not_found}")
+    }
+}
+
+/// The result for a launch that failed before an app started: the typed
+/// refusal for a missing application, plain text for every other failure.
+fn launch_failure_result(error: &anyhow::Error) -> ToolResult {
+    match error.downcast_ref::<AppNotFound>() {
+        Some(not_found) => app_not_found_result(not_found),
+        None => ToolResult::error(format!("Failed to launch: {error}")),
+    }
+}
+
+/// The requested command (`name` or `launch_path`) is neither an executable on PATH nor an installed
+/// `.desktop` application, and not something `xdg-open` could open.
+#[derive(Debug)]
+struct AppNotFound {
+    name: String,
+}
+
+impl std::fmt::Display for AppNotFound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "'{}' is not an executable on PATH and matches no installed .desktop \
+             application. Call list_apps and round-trip its launch_path.",
+            self.name
+        )
+    }
+}
+
+impl std::error::Error for AppNotFound {}
+
+/// Nothing launchable matches the name: no process was started, so this is a
+/// refusal (`code: "app_not_found"`) the caller can tell apart from a launch
+/// that failed after it began.
+fn app_not_found_result(not_found: &AppNotFound) -> ToolResult {
+    ToolResult::error(format!("Failed to launch: {not_found}")).with_structured(json!({
+        "code": "app_not_found",
+        "effect": "refused",
+        "name": not_found.name,
+        "pid": Value::Null,
+        "running": Value::Null,
+    }))
 }
 
 /// The `launch_app` D-Bus-activation hand-off timed out: the launcher exited
@@ -733,5 +852,46 @@ mod launch_resolution_tests {
         assert_eq!(s["running"], Value::Null);
         assert_eq!(s["launcher_pid"], 4242);
         assert_eq!(s["waited_secs"], 8);
+    }
+
+    #[test]
+    fn a_program_may_exist_by_path_or_in_a_search_path_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("cua-present"), "").unwrap();
+        let search_path = std::env::join_paths([other.path(), dir.path()]).unwrap();
+        let search_path = Some(search_path.as_os_str());
+        assert!(program_may_exist("cua-present", search_path));
+        assert!(!program_may_exist("cua-absent", search_path));
+        let absolute = dir.path().join("cua-present");
+        assert!(program_may_exist(absolute.to_str().unwrap(), search_path));
+        assert!(!program_may_exist(
+            dir.path().join("cua-absent").to_str().unwrap(),
+            search_path
+        ));
+        // A search path entry that is a file, not a directory, holds no
+        // program, so it shows absence.
+        let not_a_directory = std::env::join_paths([absolute.as_path()]).unwrap();
+        assert!(!program_may_exist(
+            "cua-absent",
+            Some(not_a_directory.as_os_str())
+        ));
+        // A probe that cannot tell (here a directory without search
+        // permission, where the platform lets it fail) leaves it open.
+        let sealed = dir.path().join("sealed");
+        std::fs::create_dir(&sealed).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let blocked = sealed.join("cua-absent");
+        if blocked.try_exists().is_err() {
+            let search_path = std::env::join_paths([sealed.as_path()]).unwrap();
+            assert!(program_may_exist(
+                "cua-absent",
+                Some(search_path.as_os_str())
+            ));
+        }
+        std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o700)).unwrap();
+        // With no search path, absence cannot be shown.
+        assert!(program_may_exist("cua-absent", None));
     }
 }

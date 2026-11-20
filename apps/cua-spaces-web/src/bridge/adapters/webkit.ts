@@ -866,7 +866,7 @@ export function createWebkitAdapter(win: HostWindow = globalThis.window as HostW
       : unsupportedPresenceOps("webkit")),
     // Approving an agent's cloud: the daemon's person-only `cloud_approve`.
     ...cloudApproveWebkitOps(request),
-    // Windows' "Install Docker Desktop": a Mac sets up its runtimes itself.
+    // Windows' "Set up Linux support": a Mac sets up its runtimes itself.
     ...(electron
       ? { "spaces.fixRuntime": (args: OpArgs<"spaces.fixRuntime">) => request<null>("spaces.fixRuntime", { ...args }) }
       : unsupportedRuntimeFixOps("webkit")),

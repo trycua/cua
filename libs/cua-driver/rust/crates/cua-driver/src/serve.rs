@@ -2746,7 +2746,9 @@ fn report_not_serving(socket_path: &str, presence: DaemonPresence) {
         DaemonPresence::Absent | DaemonPresence::Serving { .. } => {
             eprintln!("Cua Driver daemon is not running");
             #[cfg(unix)]
-            if std::fs::symlink_metadata(socket_path).is_ok() {
+            if std::fs::symlink_metadata(socket_path).is_ok_and(|metadata| {
+                !std::os::unix::fs::FileTypeExt::is_socket(&metadata.file_type())
+            }) {
                 eprintln!(
                     "  {socket_path} exists and is not a socket; a launch cannot bind there until it is moved"
                 );

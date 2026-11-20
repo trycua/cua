@@ -1459,11 +1459,9 @@ async fn resolve_window_frame(
     // list never carries: describe it from the server directly, and let it
     // correlate with the toolkit's popup toplevels (role `window` for GTK
     // menus, `menu` / `popup menu` elsewhere).
-    let pid_windows = crate::x11::list_windows(Some(pid));
-    let (window, popup) = match pid_windows
-        .iter()
+    let (window, popup) = match crate::x11::list_windows(Some(pid))
+        .into_iter()
         .find(|candidate| candidate.xid == xid)
-        .cloned()
     {
         Some(window) => (window, false),
         None => (
@@ -1500,7 +1498,9 @@ async fn resolve_window_frame(
             candidates.push((ordinal, extents));
         }
     }
-    let resolved = correlate_frame_to_window(&candidates, &window, &pid_windows);
+    // Untitled windows count: an unlisted main window can own the frame.
+    let siblings = crate::x11::window_inventory(pid);
+    let resolved = correlate_frame_to_window(&candidates, &window, &siblings);
     if resolved.is_none() {
         dlog!(
             "could not correlate xid {xid} to one of pid {pid}'s {} top-level frame(s); \
@@ -7670,29 +7670,20 @@ pub(crate) fn lone_top_level_renders(
 
 /// [`x11_app_tree_is_window`] for window `xid` of `pid`, read from the server.
 fn x11_app_tree_proves_window(pid: u32, xid: u64) -> bool {
-    let pid_windows = crate::x11::complete_window_list(pid).map(|windows| {
-        windows
-            .into_iter()
-            .map(|window| window.xid)
-            .collect::<Vec<_>>()
-    });
-    x11_app_tree_is_window(
-        xid,
-        pid_windows.as_deref(),
-        crate::x11::is_override_redirect(xid),
-    )
+    let pid_windows: Vec<u64> = crate::x11::window_inventory(pid)
+        .into_iter()
+        .map(|window| window.xid)
+        .collect();
+    x11_app_tree_is_window(xid, &pid_windows, crate::x11::is_override_redirect(xid))
 }
 
 /// Whether the application-wide AT-SPI tree can stand for X11 window `xid`.
 /// A popup (override-redirect) is drawn by its application's tree. A managed
-/// window qualifies only as the one window of the process's complete listing
-/// (`None` when no listing names untitled windows): with a sibling, or when
-/// the listing missed it, the tree may be another window's.
-fn x11_app_tree_is_window(xid: u64, pid_windows: Option<&[u64]>, override_redirect: bool) -> bool {
-    override_redirect
-        || pid_windows.is_some_and(|windows| {
-            windows.contains(&xid) && windows.iter().all(|&window| window == xid)
-        })
+/// window qualifies only as the one window in the process's inventory, untitled
+/// windows included: with a sibling, or when the inventory missed it, the tree
+/// may be another window's.
+fn x11_app_tree_is_window(xid: u64, pid_windows: &[u64], override_redirect: bool) -> bool {
+    override_redirect || (pid_windows.contains(&xid) && pid_windows.iter().all(|&w| w == xid))
 }
 
 fn lone_top_level_proves_window(pid: u32, xid: u64) -> bool {
@@ -9886,27 +9877,15 @@ mod token_scope_tests {
         const POPUP: u64 = 0x0400_0003;
         // A native modal beside its main window (#6936): the lone root may be
         // the main window's, so neither window is the application's tree.
-        assert!(!x11_app_tree_is_window(
-            DIALOG,
-            Some(&[MAIN, DIALOG][..]),
-            false
-        ));
-        assert!(!x11_app_tree_is_window(
-            MAIN,
-            Some(&[MAIN, DIALOG][..]),
-            false
-        ));
-        // A managed dialog the listing missed.
-        assert!(!x11_app_tree_is_window(DIALOG, Some(&[MAIN][..]), false));
-        assert!(!x11_app_tree_is_window(DIALOG, Some(&[][..]), false));
-        // Without an EWMH client list an untitled main window goes unlisted,
-        // so a titled dialog alone in the listing proves nothing.
-        assert!(!x11_app_tree_is_window(DIALOG, None, false));
-        // The process's only managed window is the application.
-        assert!(x11_app_tree_is_window(MAIN, Some(&[MAIN][..]), false));
+        assert!(!x11_app_tree_is_window(DIALOG, &[MAIN, DIALOG], false));
+        assert!(!x11_app_tree_is_window(MAIN, &[MAIN, DIALOG], false));
+        // A managed dialog the inventory missed.
+        assert!(!x11_app_tree_is_window(DIALOG, &[MAIN], false));
+        assert!(!x11_app_tree_is_window(DIALOG, &[], false));
+        // The process's only window is the application.
+        assert!(x11_app_tree_is_window(MAIN, &[MAIN], false));
         // An override-redirect popup is drawn by its application's tree.
-        assert!(x11_app_tree_is_window(POPUP, Some(&[MAIN][..]), true));
-        assert!(x11_app_tree_is_window(POPUP, None, true));
+        assert!(x11_app_tree_is_window(POPUP, &[MAIN], true));
     }
 
     #[test]

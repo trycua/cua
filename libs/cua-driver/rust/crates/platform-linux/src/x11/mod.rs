@@ -80,19 +80,14 @@ fn is_a_client(active: &[Window], clients: &[Window]) -> Option<bool> {
 
 /// List top-level windows, optionally filtered by pid.
 pub fn list_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
-    list_windows_inner(filter_pid)
-        .map(|(windows, _)| windows)
-        .unwrap_or_default()
+    list_windows_inner(filter_pid, false).unwrap_or_default()
 }
 
-/// The windows of `pid` from a window manager's EWMH client list, which names
-/// every managed window, titled or not. `None` without one: the other sources
-/// skip untitled windows, so they cannot show that a process has no others.
-pub fn complete_window_list(pid: u32) -> Option<Vec<WindowInfo>> {
-    list_windows_inner(Some(pid))
-        .ok()
-        .filter(|(_, source)| source.lists_untitled_windows())
-        .map(|(windows, _)| windows)
+/// Every window of `pid` that [`list_windows`] could describe, untitled ones
+/// included. Without an EWMH client list, `list_windows` hides untitled
+/// windows, so only this shows that a process has no other window.
+pub fn window_inventory(pid: u32) -> Vec<WindowInfo> {
+    list_windows_inner(Some(pid), true).unwrap_or_default()
 }
 
 /// Whether the X server still knows a window by this id.
@@ -128,13 +123,13 @@ fn window_owner_matches(owner: Option<u32>, requested_pid: u32) -> bool {
     owner == Some(requested_pid)
 }
 
-fn list_windows_inner(filter_pid: Option<u32>) -> Result<(Vec<WindowInfo>, WindowSource)> {
+fn list_windows_inner(filter_pid: Option<u32>, untitled: bool) -> Result<Vec<WindowInfo>> {
     let (conn, screen_num) = RustConnection::connect(None)?;
     let screen = &conn.setup().roots[screen_num];
     let root = screen.root;
 
     // Prefer _NET_CLIENT_LIST_STACKING; an unordered client list reports null z_index.
-    let (windows, source) = get_window_list(&conn, root)?;
+    let (windows, source) = window_list(&conn, root, untitled)?;
 
     let owners = OwnerResolver::new(&conn);
     let mut result = Vec::new();
@@ -147,7 +142,7 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<(Vec<WindowInfo>, Windo
         }
 
         let title = get_window_title(&conn, xid).unwrap_or_default();
-        if !window_is_listable(source, &title) {
+        if !untitled && !window_is_listable(source, &title) {
             continue;
         }
         let app_name = get_window_class(&conn, xid)
@@ -188,31 +183,21 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<(Vec<WindowInfo>, Windo
         });
     }
 
-    Ok((result, source))
+    Ok(result)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WindowSource {
-    /// `_NET_CLIENT_LIST_STACKING`: managed clients in bottom-to-top stacking order.
+    /// Managed clients in bottom-to-top stacking order.
     ClientList,
     /// `_NET_CLIENT_LIST`: managed clients in mapping order, not stacking order.
     UnorderedClientList,
-    /// Windows carrying `WM_STATE`, without EWMH: only those with a pid and a
-    /// title, in stacking order.
-    ManagedClients,
     RootChildren,
 }
 
 impl WindowSource {
     fn is_stacked(self) -> bool {
         self != WindowSource::UnorderedClientList
-    }
-
-    fn lists_untitled_windows(self) -> bool {
-        matches!(
-            self,
-            WindowSource::ClientList | WindowSource::UnorderedClientList
-        )
     }
 }
 
@@ -228,6 +213,16 @@ fn window_is_listable(source: WindowSource, title: &str) -> bool {
 pub(crate) fn get_window_list(
     conn: &RustConnection,
     root: Window,
+) -> Result<(Vec<Window>, WindowSource)> {
+    window_list(conn, root, false)
+}
+
+/// [`get_window_list`], where `untitled` also takes a managed window without
+/// a title when no EWMH client list names the clients.
+fn window_list(
+    conn: &RustConnection,
+    root: Window,
+    untitled: bool,
 ) -> Result<(Vec<Window>, WindowSource)> {
     let mut ewmh = false;
     let atoms = [
@@ -297,9 +292,8 @@ pub(crate) fn get_window_list(
                         .ok()
                         .filter(|r| !r.value.is_empty())
                         .or_else(|| legacy.reply().ok());
-                    title.is_some_and(|r| {
-                        client_has_identity(owner, &String::from_utf8_lossy(&r.value))
-                    })
+                    let title = title.map(|r| String::from_utf8_lossy(&r.value).into_owned());
+                    client_has_identity(owner, title.as_deref(), untitled)
                 } else {
                     false
                 };
@@ -308,7 +302,7 @@ pub(crate) fn get_window_list(
             .collect()
     })?;
     if let Some(clients) = clients.filter(|clients| ewmh || !clients.is_empty()) {
-        return Ok((clients, WindowSource::ManagedClients));
+        return Ok((clients, WindowSource::ClientList));
     }
     let windows = tree
         .children
@@ -328,8 +322,10 @@ fn client_list_property(property_type: Atom, windows: &[Window]) -> Option<&[Win
     (property_type != x11rb::NONE && !windows.is_empty()).then_some(windows)
 }
 
-fn client_has_identity(pid: Option<u32>, title: &str) -> bool {
-    pid.is_some() && !title.trim_end_matches('\0').trim().is_empty()
+/// A client needs an owner pid, and a nonblank title unless `untitled`.
+fn client_has_identity(pid: Option<u32>, title: Option<&str>, untitled: bool) -> bool {
+    pid.is_some()
+        && (untitled || title.is_some_and(|title| !title.trim_end_matches('\0').trim().is_empty()))
 }
 
 fn valid_wm_state(values: &[u32]) -> bool {
@@ -1013,10 +1009,19 @@ mod tests {
 
     #[test]
     fn clients_require_pid_and_nonblank_title() {
-        assert!(!client_has_identity(None, "browser"));
-        assert!(!client_has_identity(Some(42), ""));
-        assert!(!client_has_identity(Some(42), " \t"));
-        assert!(client_has_identity(Some(42), "browser"));
+        assert!(!client_has_identity(None, Some("browser"), false));
+        assert!(!client_has_identity(Some(42), None, false));
+        assert!(!client_has_identity(Some(42), Some(""), false));
+        assert!(!client_has_identity(Some(42), Some(" \t"), false));
+        assert!(client_has_identity(Some(42), Some("browser"), false));
+    }
+
+    /// The window inventory takes the untitled main window a dialog sits on.
+    #[test]
+    fn an_inventory_client_needs_only_a_pid() {
+        assert!(client_has_identity(Some(42), None, true));
+        assert!(client_has_identity(Some(42), Some(""), true));
+        assert!(!client_has_identity(None, Some("browser"), true));
     }
 
     #[test]
@@ -1057,15 +1062,6 @@ mod tests {
         assert!(WindowSource::ClientList.is_stacked());
         assert!(WindowSource::RootChildren.is_stacked());
         assert!(!WindowSource::UnorderedClientList.is_stacked());
-        assert!(WindowSource::ManagedClients.is_stacked());
-    }
-
-    #[test]
-    fn only_an_ewmh_client_list_names_untitled_windows() {
-        assert!(WindowSource::ClientList.lists_untitled_windows());
-        assert!(WindowSource::UnorderedClientList.lists_untitled_windows());
-        assert!(!WindowSource::ManagedClients.lists_untitled_windows());
-        assert!(!WindowSource::RootChildren.lists_untitled_windows());
     }
 
     #[test]

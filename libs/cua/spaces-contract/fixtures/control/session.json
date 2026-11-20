@@ -529,6 +529,17 @@
       "metering": "free"
     },
     {
+      "tool": "notifications_delete",
+      "sdk_symbol": "Connection::delete_notifications",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
       "tool": "computer_access_grant",
       "sdk_symbol": "Connection::allow_computer",
       "providers": [

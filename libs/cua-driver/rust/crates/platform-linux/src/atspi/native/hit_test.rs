@@ -259,8 +259,9 @@ pub fn point_ownership(
                 Some(ordinal) => seeds.get(ordinal).cloned().into_iter().collect(),
                 None => seeds,
             };
+            let stacking = SiblingStacking::of_app(&app).await;
             for seed in ordered {
-                let chain = descend_at_point(conn, seed, hit_x, hit_y).await;
+                let chain = descend_at_point(conn, seed, hit_x, hit_y, stacking).await;
                 if chain.len() <= 1 {
                     continue;
                 }

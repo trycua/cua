@@ -99,6 +99,10 @@ for (const [width, height] of SIZES) {
       await page.locator("[data-new-run='agent']:not([data-state='looking'])").waitFor({ timeout: 30_000 });
       await measure("agent");
       await primary.click();
+      // Continue turns the step into the checklist of what Cua sets up (CUA-4067); Continue there waits for it to settle.
+      await page.locator("[data-new-run-checklist]").waitFor({ timeout: 30_000 });
+      await expect(primary).toBeEnabled({ timeout: 60_000 });
+      await primary.click();
       // Ready is setup's last screen: Done goes to Home, where the rest is asked for after the first job (CUA-3150).
       await measure("ready");
 

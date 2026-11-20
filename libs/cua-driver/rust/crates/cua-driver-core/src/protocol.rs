@@ -404,22 +404,10 @@ fn agent_instructions_for(
         "\n\nmacOS: if actions fail because Accessibility or Screen Recording is off, ask the user (`get_guide({topic:\"permissions\"})`); approve Cua Driver's own prompts only if the owner explicitly authorized it (MACOS.md)."
     };
 
-    let session_line = {
-        let mut line = String::new();
-        if profile.advertises("start_session") {
-            line.push_str("`start_session` is optional; repeat a short `session` label on every call that accepts it.");
-        }
-        if profile.advertises("history_status") && profile.advertises("history_query") {
-            if !line.is_empty() {
-                line.push(' ');
-            }
-            line.push_str("On continuation/recent-work, call `history_status`; if ready, make one bounded initial `history_query` before broad discovery.");
-        }
-        if line.is_empty() {
-            line
-        } else {
-            format!("\n\n{line}")
-        }
+    let session_line = if profile.advertises("start_session") {
+        "\n\n`start_session` is optional; repeat a short `session` label on every call that accepts it."
+    } else {
+        ""
     };
 
     // Only point at run_script when this driver offers it.
@@ -661,18 +649,11 @@ mod agent_instruction_tests {
     }
 
     #[test]
-    fn initialize_instructions_conditionally_consult_history_before_discovery() {
+    fn initialize_instructions_do_not_send_agents_to_deprecated_history() {
         let instructions = full_instructions();
 
-        assert!(instructions.contains("continuation/recent-work"));
-        let status = instructions.find("call `history_status`").unwrap();
-        let bounded_query = instructions
-            .find("one bounded initial `history_query`")
-            .unwrap();
-        let discovery = instructions.find("broad discovery").unwrap();
-        assert!(status < bounded_query);
-        assert!(bounded_query < discovery);
-        assert!(instructions.contains("if ready"));
+        assert!(!instructions.contains("history_status"));
+        assert!(!instructions.contains("history_query"));
         assert!(instructions.split_whitespace().count() <= 200);
     }
 }

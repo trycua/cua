@@ -380,7 +380,7 @@ uint64_t uniffi_cua_sdk_fn_method_agentsetup_configure_mcp(uint64_t ptr, RustBuf
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_CONNECT_JSON
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_CONNECT_JSON
-uint64_t uniffi_cua_sdk_fn_method_agentsetup_connect_json(uint64_t ptr, RustBuffer agents, RustBuffer server, int8_t skills, int8_t mcp, int8_t sign_in
+uint64_t uniffi_cua_sdk_fn_method_agentsetup_connect_json(uint64_t ptr, RustBuffer agents, RustBuffer server, int8_t skills, int8_t mcp, int8_t sign_in, RustBuffer driver, RustBuffer driver_permissions_granted
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_CONNECTION_STATUS_JSON
@@ -2277,6 +2277,11 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_notifications(uint64_t ptr, int8_t unre
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_NOTIFICATIONS_ACK
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_NOTIFICATIONS_ACK
 uint64_t uniffi_cua_sdk_fn_method_spaces_notifications_ack(uint64_t ptr, RustBuffer ids
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_NOTIFICATIONS_DELETE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_NOTIFICATIONS_DELETE
+uint64_t uniffi_cua_sdk_fn_method_spaces_notifications_delete(uint64_t ptr, RustBuffer ids, int8_t all
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_NOTIFY_USER
@@ -5916,6 +5921,12 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_notifications(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_NOTIFICATIONS_ACK
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_NOTIFICATIONS_ACK
 uint16_t uniffi_cua_sdk_checksum_method_spaces_notifications_ack(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_NOTIFICATIONS_DELETE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_NOTIFICATIONS_DELETE
+uint16_t uniffi_cua_sdk_checksum_method_spaces_notifications_delete(void
 
 );
 #endif

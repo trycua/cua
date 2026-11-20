@@ -19,6 +19,7 @@
 //! - Non-indexed (no actions, not interesting): `- AXRole = "value"`
 //! - 2-space indent per depth level
 
+pub mod actions;
 pub(crate) mod batch;
 pub mod bindings;
 pub mod enablement;
@@ -28,6 +29,7 @@ pub(crate) mod main_thread;
 pub mod reveal_scroll;
 pub mod snapshot;
 pub mod tree;
+pub(crate) mod web_effect;
 pub mod window_scope;
 
 pub use snapshot::Snapshots;

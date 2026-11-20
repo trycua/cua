@@ -19,10 +19,11 @@ use std::sync::{Arc, Mutex};
 use super::input_source;
 
 const SCREEN_SHARING_BUNDLE_ID: &str = "com.apple.ScreenSharing";
+const IOS_SIMULATOR_BUNDLE_ID: &str = "com.apple.iphonesimulator";
 const SHIFT_KEY_CODE: u16 = 56;
 
 /// Default key down→up gap and inter-key pacing.
-const DEFAULT_KEY_GAP: std::time::Duration = std::time::Duration::from_millis(8);
+pub(crate) const DEFAULT_KEY_GAP: std::time::Duration = std::time::Duration::from_millis(8);
 
 /// Key down→up gap and inter-key pacing: `DEFAULT_KEY_GAP`, or the
 /// host's `CUA_DRIVER_KEY_GAP_MS` clamped by `cua_driver_core::key_pacing`.
@@ -36,40 +37,58 @@ fn key_gap_sleep() {
     std::thread::sleep(key_gap());
 }
 
-fn is_screen_sharing_bundle_id(bundle_id: &str) -> bool {
-    bundle_id == SCREEN_SHARING_BUNDLE_ID
+/// Whether `pid` is Apple's Screen Sharing client.
+pub fn is_screen_sharing_pid(pid: i32) -> bool {
+    key_forwarder_for_pid(pid) == Some(KeyForwarder::ScreenSharing)
 }
 
-/// Whether `pid` is Apple's Screen Sharing client.
-///
-/// Screen Sharing is an input forwarder rather than a text consumer: it relays
-/// physical virtual-key transitions to the guest and ignores the Unicode string
-/// attached to a synthetic keycode-0 event. Keep that special case explicit so
-/// ordinary PID-routed text input retains its layout-independent Unicode path.
-pub fn is_screen_sharing_pid(pid: i32) -> bool {
+/// An app that is an input forwarder rather than a text consumer: it relays
+/// physical virtual-key transitions to a guest and ignores the Unicode string
+/// attached to a synthetic keycode-0 event, so ordinary PID-routed text
+/// arrives as repeated A keys. Keep these special cases explicit so ordinary
+/// PID-routed text input retains its layout-independent Unicode path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyForwarder {
+    ScreenSharing,
+    /// Xcode's Simulator: every character typed into an iOS app arrived as
+    /// the A key (`abc` became `Aaa`, or `ㅁㅁㅁ` on a Korean guest keyboard).
+    IosSimulator,
+}
+
+fn key_forwarder_for_bundle_id(bundle_id: &str) -> Option<KeyForwarder> {
+    match bundle_id {
+        SCREEN_SHARING_BUNDLE_ID => Some(KeyForwarder::ScreenSharing),
+        IOS_SIMULATOR_BUNDLE_ID => Some(KeyForwarder::IosSimulator),
+        _ => None,
+    }
+}
+
+/// The key forwarder `pid` is, if any.
+pub fn key_forwarder_for_pid(pid: i32) -> Option<KeyForwarder> {
     crate::apps::bundle_id_for_pid(pid)
         .as_deref()
-        .is_some_and(is_screen_sharing_bundle_id)
+        .and_then(key_forwarder_for_bundle_id)
 }
 
 /// Press and release a single key, delivered to `pid` without stealing focus.
 pub fn press_key(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
     // Handle "+" / "plus" → Shift+= (US keyboard layout).
-    if key == "+" || key.to_lowercase() == "plus" {
-        let flags = modifier_flags(&["shift"]);
-        let eq_code = target_key_code(pid, "=", modifiers)?;
-        post_key(pid, eq_code, true, modifier_flags(modifiers) | flags)?;
-        key_gap_sleep();
-        post_key(pid, eq_code, false, modifier_flags(modifiers) | flags)?;
-        return Ok(());
-    }
+    let (key_code, flags) = if key == "+" || key.to_lowercase() == "plus" {
+        (
+            target_key_code(pid, "=", modifiers)?,
+            modifier_flags(modifiers) | modifier_flags(&["shift"]),
+        )
+    } else {
+        (
+            target_key_code(pid, key, modifiers)?,
+            modifier_flags(modifiers),
+        )
+    };
 
-    let key_code = target_key_code(pid, key, modifiers)?;
-    let flags = modifier_flags(modifiers);
-
-    post_key(pid, key_code, true, flags)?;
+    let [down, up] = pid_key_press(key_code, flags);
+    post_key(pid, down.0, down.1, down.2)?;
     key_gap_sleep();
-    post_key(pid, key_code, false, flags)?;
+    post_key(pid, up.0, up.1, up.2)?;
     Ok(())
 }
 
@@ -178,6 +197,20 @@ pub fn type_text_batched(pid: i32, text: &str) -> anyhow::Result<()> {
         key_gap_sleep();
     }
     Ok(())
+}
+
+/// The down and up events of a background PID-routed key press, with their
+/// flags.
+///
+/// The key-up omits Command. A Mac Catalyst app that is not frontmost drops a
+/// PID-routed key-up that carries Command, so UIKit keeps the key held and
+/// repeats its key command until another key event arrives. Command matters
+/// only on the key-down, where key commands match it.
+fn pid_key_press(key_code: u16, flags: CGEventFlags) -> [(u16, bool, CGEventFlags); 2] {
+    [
+        (key_code, true, flags),
+        (key_code, false, flags & !CGEventFlags::CGEventFlagCommand),
+    ]
 }
 
 /// Type a string character-by-character to `pid`.
@@ -649,7 +682,7 @@ enum PhysicalEventType {
 fn physical_text_events(ch: char) -> anyhow::Result<Vec<PhysicalTextEvent>> {
     let (key_code, shift) = physical_key_for_char(ch).ok_or_else(|| {
         anyhow::anyhow!(
-            "Screen Sharing physical text delivery does not support character U+{:04X}",
+            "physical key text delivery does not support character U+{:04X}",
             ch as u32
         )
     })?;
@@ -1370,6 +1403,29 @@ mod tests {
     }
 
     #[test]
+    fn pid_key_press_releases_the_base_key_without_command() {
+        let chord = modifier_flags(&["cmd", "shift"]);
+        assert_eq!(
+            pid_key_press(33, chord),
+            [
+                (33, true, chord),
+                (33, false, CGEventFlags::CGEventFlagShift),
+            ]
+        );
+        let all = modifier_flags(&["cmd", "shift", "ctrl", "option"]);
+        assert_eq!(
+            pid_key_press(0, all)[1],
+            (0, false, modifier_flags(&["shift", "ctrl", "option"]))
+        );
+        // Chords without Command keep their flags on both halves.
+        let no_command = modifier_flags(&["ctrl", "shift"]);
+        assert_eq!(
+            pid_key_press(0, no_command),
+            [(0, true, no_command), (0, false, no_command)]
+        );
+    }
+
+    #[test]
     fn bare_command_chord_orders_modifier_base_and_reverse_release() {
         let command = (55, CGEventFlags::CGEventFlagCommand);
         assert_eq!(
@@ -1418,6 +1474,21 @@ mod tests {
                 .contains(CGEventFlags::CGEventFlagCommand),
             "the chord's base key must carry Command"
         );
+    }
+
+    #[test]
+    fn key_forwarder_detection_is_exact_and_case_sensitive() {
+        assert_eq!(
+            key_forwarder_for_bundle_id("com.apple.ScreenSharing"),
+            Some(KeyForwarder::ScreenSharing)
+        );
+        assert_eq!(
+            key_forwarder_for_bundle_id("com.apple.iphonesimulator"),
+            Some(KeyForwarder::IosSimulator)
+        );
+        assert_eq!(key_forwarder_for_bundle_id("com.apple.screensharing"), None);
+        assert_eq!(key_forwarder_for_bundle_id("com.microsoft.rdc.macos"), None);
+        assert_eq!(key_forwarder_for_bundle_id("com.apple.TextEdit"), None);
     }
 
     #[test]
@@ -1629,13 +1700,6 @@ mod tests {
             let code = chord_key_code(&letter.to_string(), &[], Some(&*layout)).unwrap();
             assert!(layout.plain.contains(&(code, letter)), "{letter}");
         }
-    }
-
-    #[test]
-    fn screen_sharing_detection_is_exact_and_case_sensitive() {
-        assert!(is_screen_sharing_bundle_id("com.apple.ScreenSharing"));
-        assert!(!is_screen_sharing_bundle_id("com.apple.screensharing"));
-        assert!(!is_screen_sharing_bundle_id("com.microsoft.rdc.macos"));
     }
 }
 

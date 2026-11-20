@@ -45,6 +45,7 @@ cua-driver mcp-config --client <client>
 | Prime Agent | `cua-driver skills install`, then `/reload` and `/skill:cua-driver` | Calls the CLI; no MCP. |
 | Factory Droid | `cua-driver connect --client droid`, then `droid exec --auto medium "…"` | MCP is the supported setup. Droid asks for `--auto high` before any MCP tool not marked read-only, so `connect` also rates each action tool `medium` under `mcpAutonomyOverrides` in `~/.factory/settings.json` and keeps `kill_app` at Droid's default. Ratings you set are kept. `--client droid` on `mcp-config` prints only the `droid mcp add` line. |
 | OpenCode, ZCode | `--client opencode`, `--client zcode` | |
+| DeepSeek Harness | `--client deepseek-harness`; append the printed entry to `~/.dsh/cordis.patch.yml` (every profile) or `~/.dsh/profiles/<profile>/cordis.patch.yml` | The skill lands in `~/.agents/skills`, which DSH's built-in skill provider already reads. A running DSH reloads the patch file when hot reload is on; otherwise restart it. |
 | Qwen Code | `--client qwen`, which prints `qwen mcp add cua-driver <path> mcp` | |
 | Pi | `--client pi` | No MCP: runs one-shot `cua-driver call …` commands. |
 | Kimi Code | `kimi mcp add cua-driver -- <path> mcp`, then `kimi mcp test cua-driver` | No preset. |
@@ -103,7 +104,8 @@ The skill teaches an agent to pick tools, address elements, keep focus, and
 verify each action. `mcp-config --client <client>` and the cua installer install
 it for the agents they set up. To install it for every agent on the machine, or
 for one you set up another way, run `skills install`. It links into Claude Code,
-Codex, Cursor, Prime Agent, OpenClaw, OpenCode, Antigravity, Hermes, and Pi:
+Codex, Cursor, Prime Agent, OpenClaw, OpenCode, Antigravity, Hermes, Pi, and
+DeepSeek Harness:
 
 ```bash test="cli-shape" id="cua-driver-skills-install"
 cua-driver skills install

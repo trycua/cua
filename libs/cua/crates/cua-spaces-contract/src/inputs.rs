@@ -187,6 +187,12 @@ pub struct CreateSpace {
     /// Name. Default: a generated friendly name such as `brave-otter`.
     #[serde(default)]
     pub name: Option<String>,
+    /// vCPUs for each Space. Default: the location's default size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpus: Option<u32>,
+    /// Memory for each Space, in MiB. Default: the location's default size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_mb: Option<u64>,
     /// Return a reachable registered Space in the same location that has
     /// the requested services instead of creating one (get-or-create).
     /// Default false.
@@ -1422,6 +1428,18 @@ pub struct NotificationsAck {
     /// Ids to mark read. Default: every notification.
     #[serde(default)]
     pub ids: Vec<String>,
+}
+
+/// `notifications_delete`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct NotificationsDelete {
+    /// Ids to delete. Unknown ids are ignored; an empty list deletes nothing
+    /// unless `all` is set.
+    #[serde(default)]
+    pub ids: Vec<String>,
+    /// Delete every notification. Default false.
+    #[serde(default)]
+    pub all: Option<bool>,
 }
 
 /// `computer_access_grant`.

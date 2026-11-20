@@ -18,6 +18,7 @@ use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 
 use crate::{
+    delivery::DeliveryMode,
     protocol::{Content, ToolResult},
     recording_tools::ReplayRegistrySlot,
     tool::{Tool, ToolDef, ToolRegistry},
@@ -217,7 +218,7 @@ impl Tool for RunStepsTool {
                         "type": "array",
                         "minItems": 1,
                         "maxItems": MAX_STEPS,
-                        "description": "Ordered actions. Execution stops at the first failing step. Each step is {tool, args} or {<tool>: args}, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check.",
+                        "description": "Ordered actions. Execution stops at the first failing step. Each step is {tool, args}, {tool, <argument fields beside tool>} or {<tool>: args}, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check.",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -536,15 +537,15 @@ impl Plan {
                     }
                 }
             }
-            let names_window = step
-                .action
-                .as_ref()
-                .is_some_and(|action| !action.window.is_empty())
-                || step
-                    .wait_for
-                    .iter()
-                    .chain(step.expect.iter())
-                    .any(|check| !check.window.is_empty());
+            // An `element_token` names its snapshot, and so its window; a
+            // token the runtime no longer holds names nothing (fail closed).
+            let names_window = step.action.as_ref().is_some_and(|action| {
+                !action.window.is_empty() || token_window(registry, &action.args).is_some()
+            }) || step
+                .wait_for
+                .iter()
+                .chain(step.expect.iter())
+                .any(|check| !check.window.is_empty());
             let needs_window = step
                 .action
                 .as_ref()
@@ -962,35 +963,54 @@ async fn run_step(
                 title: None,
                 on_screen: true,
             });
+        } else if let Some(window) = token_window(registry, &args) {
+            // A token-only step: its snapshot names the window later steps
+            // and the end `observe` inherit.
+            if context.is_empty() {
+                *context = WindowSpec {
+                    pid: Some(window.pid),
+                    window_id: Some(window.window_id),
+                    ..Default::default()
+                };
+            }
+            *last_window = Some(window);
         }
 
+        let delivery = DeliveryMode::from_args(&args);
         let mut result = registry.invoke(tool, args.clone()).await;
-        let mut refound_note = None;
+        let mut attempt = StepAttempt::Original;
         if result.is_error == Some(true) && tool == "click" {
             if let Some((menu_args, note)) = menu_bar_route(&args, &result) {
                 report["refound"] = json!(note);
-                result = registry.invoke("invoke_menu", menu_args).await;
-                refound_note = Some(note);
+                result = registry.invoke("invoke_menu", menu_args.clone()).await;
+                attempt = StepAttempt::MenuRoute {
+                    args: menu_args,
+                    note,
+                };
             }
         }
-        if result.is_error == Some(true) && refound_note.is_none() {
+        if result.is_error == Some(true) && matches!(attempt, StepAttempt::Original) {
             if let Some((retry, note)) = refind_stale_target(locator, &args, &result).await {
                 report["refound"] = json!(note);
-                result = registry.invoke(tool, retry).await;
-                refound_note = Some(note);
+                result = registry.invoke(tool, retry.clone()).await;
+                attempt = StepAttempt::Refound { args: retry, note };
             }
         }
+        let attempt_tool = attempt.tool(tool);
         let wants_foreground = result.is_error == Some(true)
             && wants_foreground(&result)
-            && args.get("delivery_mode").is_none()
-            && accepts(registry, tool, "delivery_mode");
+            && delivery.allows_escalation()
+            && accepts(registry, attempt_tool, "delivery_mode");
         let mut foreground_hint = None;
+        let mut fell_back = false;
         if wants_foreground && foreground_fallback {
-            let mut retry = args.clone();
+            // Re-send what the step last sent: the re-found token or the
+            // menu route, not the original arguments.
+            let mut retry = attempt.current_args(&args).clone();
             retry["delivery_mode"] = json!("foreground");
-            result = registry.invoke(tool, retry).await;
-            notes.push("background delivery was refused, so it ran in the foreground".to_owned());
+            result = registry.invoke(attempt_tool, retry).await;
             report["delivery_fallback"] = json!("foreground");
+            fell_back = true;
         } else if wants_foreground {
             foreground_hint = Some(format!(
                 " To run it, send the batch again from step {} with \"delivery_mode\":\"foreground\" \
@@ -1004,11 +1024,23 @@ async fn run_step(
         if let (false, Some(hint)) = (ok, &foreground_hint) {
             message.push_str(hint);
         }
-        if let (false, Some(note)) = (ok, &refound_note) {
-            message = format!("{note}, but: {message}");
+        if fell_back {
+            if ok {
+                notes.push(
+                    "background delivery was refused, so it ran in the foreground".to_owned(),
+                );
+            } else {
+                message = format!(
+                    "background delivery was refused, and the foreground retry failed: {message}"
+                );
+            }
         }
-        if let (true, Some(note)) = (ok, refound_note) {
-            notes.push(note);
+        if let Some(note) = attempt.note() {
+            if ok {
+                notes.push(note.to_owned());
+            } else {
+                message = format!("{note}, but: {message}");
+            }
         }
         report["ok"] = json!(ok);
         report["message"] = json!(message);
@@ -1159,6 +1191,18 @@ fn accepts(registry: &ToolRegistry, tool: &str, field: &str) -> bool {
         .and_then(|def| def.input_schema.get("properties"))
         .and_then(|properties| properties.get(field))
         .is_some()
+}
+
+/// The window a step's live `element_token` was taken of, when it names one.
+fn token_window(registry: &ToolRegistry, args: &Value) -> Option<Window> {
+    let (pid, window_id) = registry.window_for_token(args)?;
+    Some(Window {
+        pid: i64::from(pid),
+        window_id,
+        app: None,
+        title: None,
+        on_screen: true,
+    })
 }
 
 /// Fill the observation's window from the last window the batch used.
@@ -1337,10 +1381,55 @@ fn fit_error_text(content: &mut Vec<Content>, budget: usize) {
     }
 }
 
+/// What a step last sent: its own arguments, or a retarget after its target
+/// went stale. A foreground fallback re-sends exactly this.
+enum StepAttempt {
+    Original,
+    /// A menu-bar item clicked by token, sent as `invoke_menu`.
+    MenuRoute {
+        args: Value,
+        note: String,
+    },
+    /// The same role and label found again under a fresh token.
+    Refound {
+        args: Value,
+        note: String,
+    },
+}
+
+impl StepAttempt {
+    fn tool<'a>(&self, step_tool: &'a str) -> &'a str {
+        match self {
+            Self::MenuRoute { .. } => "invoke_menu",
+            Self::Original | Self::Refound { .. } => step_tool,
+        }
+    }
+
+    fn current_args<'a>(&'a self, original: &'a Value) -> &'a Value {
+        match self {
+            Self::Original => original,
+            Self::MenuRoute { args, .. } | Self::Refound { args, .. } => args,
+        }
+    }
+
+    fn note(&self) -> Option<&str> {
+        match self {
+            Self::Original => None,
+            Self::MenuRoute { note, .. } | Self::Refound { note, .. } => Some(note),
+        }
+    }
+}
+
 /// Whether a refusal names foreground delivery as the route that works:
 /// the target ignores background input (Electron, LibreOffice VCL, ...).
+/// Only a result that shows nothing was delivered is one, whatever it
+/// recommends: sending input that may have landed again could type or click
+/// twice.
 fn wants_foreground(result: &ToolResult) -> bool {
     let structured = result.structured_content.as_ref();
+    if structured.is_some_and(|structured| !nothing_was_delivered(structured)) {
+        return false;
+    }
     let recommended = structured
         .and_then(|value| {
             value
@@ -1361,6 +1450,18 @@ fn wants_foreground(result: &ToolResult) -> bool {
         .unwrap_or("");
     text.contains("Retry this action with delivery_mode:\"foreground\"")
         || text.contains("Retry with delivery_mode:\"foreground\"")
+}
+
+/// Whether a failed step shows that no input reached the app: no `effect`
+/// or a refusal effect (`refused`, `none`, macOS `no_drop`), and no
+/// `delivery` record. Every other effect, `suspected_noop` and values this
+/// rule does not know included, may have landed.
+fn nothing_was_delivered(structured: &Value) -> bool {
+    let refused = match structured.get("effect") {
+        None => true,
+        Some(effect) => matches!(effect.as_str(), Some("refused" | "none" | "no_drop")),
+    };
+    refused && structured.get("delivery").is_none()
 }
 
 /// Whether an action failed because its element target died: the element
@@ -1439,7 +1540,7 @@ async fn refind_stale_target(
     Some((
         retry,
         format!(
-            "element {token} went stale (the window changed); acted on the same {role} \"{label}\", found again as {}",
+            "element {token} went stale (the window changed); found the same {role} \"{label}\" again as {}",
             found.describe()
         ),
     ))
@@ -1533,11 +1634,31 @@ fn parse_step(
         })
         .map(|(key, _)| key)
         .collect();
+    // A flat step `{"tool": "hotkey", "keys": [...]}` carries the arguments
+    // beside `tool`. With no `args`, those fields are the arguments; mixing
+    // them with `args` stays an error.
+    let args_absent = matches!(object.get("args"), None | Some(Value::Null));
+    let flat_args: Option<Value> =
+        (object.get("tool").is_some() && !shorthand.is_empty() && args_absent).then(|| {
+            Value::Object(
+                shorthand
+                    .iter()
+                    .map(|key| ((*key).clone(), object[key.as_str()].clone()))
+                    .collect(),
+            )
+        });
     let (name, raw_args) = match (object.get("tool"), shorthand.as_slice()) {
+        (Some(tool), [_, ..]) if flat_args.is_some() => (
+            Some(
+                tool.as_str()
+                    .ok_or_else(|| PlanError::step(index, "`tool` must be a string"))?,
+            ),
+            flat_args.as_ref(),
+        ),
         (Some(_), [extra, ..]) => {
             return Err(PlanError::step(
                 index,
-                format!("unknown field `{extra}`; a step has `tool` and `args`, or one `{{<tool>: args}}` key, plus optional wait_for/expect/timeout_ms"),
+                format!("unknown field `{extra}` beside `args`; put every argument inside `args` (or drop `args` and write them beside `tool`), plus optional wait_for/expect/timeout_ms"),
             ))
         }
         (Some(tool), []) => (

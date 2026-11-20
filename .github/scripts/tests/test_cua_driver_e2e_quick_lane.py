@@ -35,21 +35,62 @@ class QuickLane(unittest.TestCase):
         self.assertIn('lanes=${4:-full}', decide)
 
     def test_quick_lane_is_the_shared_electron_lane_on_each_os(self):
+        self.assertIn("lane: ${{ needs.decide.outputs.lanes == 'quick' && 'shared' || 'all' }}", job(GATE, "linux"))
+        self.assertIn(
+            "lane: ${{ needs.decide.outputs.lanes == 'quick' && 'shared' || needs.decide.outputs.lanes == 'queue' && 'native,capture,installer' || 'all' }}",
+            job(GATE, "windows"),
+        )
         for name in ("linux", "windows"):
-            body = job(GATE, name)
-            self.assertIn("lane: ${{ needs.decide.outputs.lanes == 'quick' && 'shared' || 'all' }}", body)
-            self.assertIn("harness_filter: ${{ needs.decide.outputs.lanes == 'quick' && 'electron' || '' }}", body)
+            self.assertIn("harness_filter: ${{ needs.decide.outputs.lanes == 'quick' && 'electron' || '' }}", job(GATE, name))
         self.assertIn("-f quick=true", job(GATE, "macos-pr"))
+
+    def test_merge_queue_runs_the_lanes_that_fit_its_timeout_on_gated_paths(self):
+        decide = job(GATE, "decide")
+        self.assertIn('files=$(compare_files "$QUEUE_BASE" "$QUEUE_HEAD")', decide)
+        self.assertIn('emit true queue "merge queue touching gated paths', decide)
+        self.assertIn('emit false queue "merge queue without gated paths"', decide)
+        self.assertIn('emit true queue "merge queue, changed files unreadable" queue', decide)
+        # Linux runs every lane; Windows all but shared Electron + Tauri; macOS and the browsers run after merge.
+        self.assertIn("needs.decide.outputs.lanes != 'queue'", job(GATE, "macos"))
+        self.assertIn("needs.decide.outputs.lanes != 'queue'", job(GATE, "browsers"))
+
+    def test_changed_files_read_in_part_count_as_unreadable(self):
+        import os
+        import subprocess
+        import tempfile
+        decide = job(GATE, "decide")
+        helper = decide[decide.index("compare_files() {"):]
+        helper = helper[:helper.index("\n          }\n") + len("\n          }\n")]
+        def files(stub):
+            with tempfile.TemporaryDirectory() as d:
+                gh = Path(d) / "gh"
+                gh.write_text("#!/bin/bash\n" + stub + "\n")
+                gh.chmod(0o755)
+                return subprocess.run(["bash", "-c", helper + 'compare_files a b'], capture_output=True, text=True,
+                                      env={**os.environ, "PATH": f"{d}:{os.environ['PATH']}", "REPO": "o/r"},
+                                      check=True).stdout.split()
+        self.assertEqual(files("printf 'a.rs\\nb.rs\\n'"), ["a.rs", "b.rs"])
+        # A page that fails after others printed, and a list the API cut off at 300, are not a file list.
+        self.assertEqual(files("printf 'a.rs\\n'; exit 1"), [])
+        self.assertEqual(files("seq 300"), [])
+        self.assertEqual(len(files("seq 299")), 299)
 
     def test_browser_lanes_are_full_only_and_do_not_fail_the_quick_result(self):
         self.assertIn("needs.decide.outputs.lanes != 'quick'", job(GATE, "browsers"))
-        self.assertIn('(.key != "browsers" or .value.result != "skipped" or env.LANES_SIZE != "quick")', job(GATE, "result"))
+        self.assertIn('(.key != "browsers" or .value.result != "skipped" or (env.LANES_SIZE != "quick" and env.LANES_SIZE != "queue"))', job(GATE, "result"))
+        self.assertIn('(.key != "macos" or .value.result != "skipped" or (env.EVENT != "pull_request" and env.LANES_SIZE != "queue"))', job(GATE, "result"))
 
     def test_full_macos_lane_runs_on_push_and_is_not_quick(self):
         macos = job(GATE, "macos")
         self.assertIn("github.event_name != 'pull_request'", macos)
         # Not the quick lane: the only `quick` here is the shared stage's scope decision.
         self.assertNotIn("quick", macos.replace("needs.quick.outputs.skip", "").replace("needs: [quick, ", "needs: ["))
+
+    def test_windows_lanes_take_a_comma_list(self):
+        text = (WF / "e2e-rust-windows.yml").read_text()
+        for lane in ("shared", "native", "capture", "installer"):
+            self.assertIn(f"if: inputs.lane == 'all' || contains(format(',{{0}},', inputs.lane), ',{lane},')", text)
+        self.assertIn("if: success() && inputs.lane == 'all'", text)
 
     def test_failures_after_merge_open_the_tracking_issue(self):
         report = job(GATE, "nightly-report")

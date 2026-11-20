@@ -487,20 +487,25 @@ impl ProtectedResourceGrants {
         let authorizing = Authorizing::start(&self.grants);
         // Read after the snapshot: an end that lands later bumps the counter
         // past it. A session already ended here may still be recreated at
-        // lifecycle admission, so its approval covers this call only.
+        // lifecycle admission, so its approval covers this call only, and a
+        // grant its end has not revoked yet must not cover it either.
         let ended = lifecycle_session.is_some_and(crate::session::is_session_ended);
         let resource_digest = digest_resource(adapter_id, &resource);
         let key = resource_grant_key(context, lifecycle_session, adapter_id, &resource_digest);
-        if let Some(grant) = self.lookup(&key, context) {
-            return Ok(Some(grant));
+        if !ended {
+            if let Some(grant) = self.lookup(&key, context) {
+                return Ok(Some(grant));
+            }
         }
 
         // Collapse concurrent requests for the same or different protected
         // resources into a single provider turn. Re-check after waiting so a
         // peer that just approved the same exact scope supplies the grant.
         let _admission = self.admission.lock().await;
-        if let Some(grant) = self.lookup(&key, context) {
-            return Ok(Some(grant));
+        if !ended {
+            if let Some(grant) = self.lookup(&key, context) {
+                return Ok(Some(grant));
+            }
         }
 
         let public_session = context

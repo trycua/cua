@@ -7,7 +7,12 @@
 //! invariants (keyframe gating per codec epoch, geometry epochs, per-track
 //! audio loss). Encoded frames and audio packets go to the session's
 //! [`FrameSink`] / [`AudioSink`] callbacks on one dedicated delivery thread.
+//!
+//! A ticket with a [`StreamTicket::quic`] listener attaches there first
+//! (datagram video, no head-of-line blocking) and falls back to its
+//! WebSocket when the listener does not answer within [`QUIC_ATTACH`].
 
+use std::collections::VecDeque;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -16,14 +21,23 @@ use std::time::{Duration, Instant};
 
 use cua_media_client::v2::{MediaClient, MediaEvent, MediaPhase};
 use cua_media_protocol::InteractiveInputEvent;
+use cua_media_transport::quic::{MediaQuic, QuicItem};
 use cua_spaces::extension::BoxFuture;
 use cua_spaces::stream::{
-    AudioPacket, AudioSink, DELIVERY_QUEUE, FrameSink, StreamClient, StreamConnection, StreamEvent,
-    StreamStats, StreamTicket, VideoFrame, explain_input_refusal,
+    AudioPacket, AudioSink, DELIVERY_QUEUE, FrameSink, QuicTarget, StreamClient, StreamConnection,
+    StreamEvent, StreamStats, StreamTicket, VideoFrame, explain_input_refusal,
 };
 use cua_spaces::{Error, Result};
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest};
+
+/// How long a QUIC attach may take, through the server's first message,
+/// before the session attaches by its WebSocket instead.
+pub const QUIC_ATTACH: Duration = Duration::from_secs(3);
+
+/// Media held while the session opens: QUIC datagrams can overtake the
+/// greeting on the reliable stream.
+const MAX_EARLY_MEDIA: usize = 256;
 
 /// The Cua Spaces streaming client ([`StreamClient`]).
 #[derive(Debug, Default, Clone, Copy)]
@@ -80,6 +94,154 @@ fn to_json<T: serde::Serialize>(v: &T) -> serde_json::Value {
     serde_json::to_value(v).unwrap_or(serde_json::Value::Null)
 }
 
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// One input from the media socket.
+enum Incoming {
+    Text(String),
+    Binary(Vec<u8>),
+    /// Video lost in transit (QUIC datagrams): resync on a keyframe.
+    Loss,
+    /// Unreadable input, skipped.
+    Malformed(String),
+    Closed(u16, String),
+}
+
+/// The socket a session is attached by.
+enum Link {
+    Ws(Box<Socket>),
+    Quic {
+        quic: Box<MediaQuic>,
+        /// The first input, read while deciding to keep QUIC.
+        early: Option<Incoming>,
+    },
+}
+
+impl Link {
+    fn transport(&self) -> &'static str {
+        match self {
+            Link::Ws(_) => "websocket",
+            Link::Quic { .. } => "quic",
+        }
+    }
+
+    /// The next input. Cancel-safe.
+    async fn recv(&mut self) -> Incoming {
+        match self {
+            Link::Ws(ws) => loop {
+                return match ws.next().await {
+                    Some(Ok(tungstenite::Message::Text(text))) => Incoming::Text(text.to_string()),
+                    Some(Ok(tungstenite::Message::Binary(bytes))) => {
+                        Incoming::Binary(bytes.to_vec())
+                    }
+                    Some(Ok(tungstenite::Message::Close(Some(f)))) => {
+                        Incoming::Closed(u16::from(f.code), f.reason.to_string())
+                    }
+                    Some(Ok(tungstenite::Message::Close(None))) | None => {
+                        Incoming::Closed(1006, "socket ended".into())
+                    }
+                    Some(Ok(_)) => continue,
+                    Some(Err(e)) => Incoming::Closed(1006, e.to_string()),
+                };
+            },
+            Link::Quic { quic, early } => {
+                if let Some(first) = early.take() {
+                    return first;
+                }
+                quic_incoming(quic.next().await)
+            }
+        }
+    }
+
+    async fn send_text(&mut self, text: String) -> bool {
+        match self {
+            Link::Ws(ws) => ws
+                .send(tungstenite::Message::Text(text.into()))
+                .await
+                .is_ok(),
+            Link::Quic { quic, .. } => quic.send_text(&text).await.is_ok(),
+        }
+    }
+
+    async fn close(&mut self) {
+        match self {
+            Link::Ws(ws) => {
+                let _ = ws.send(tungstenite::Message::Close(None)).await;
+            }
+            Link::Quic { quic, .. } => quic.close(),
+        }
+    }
+}
+
+fn quic_incoming(item: std::result::Result<QuicItem, String>) -> Incoming {
+    match item {
+        Ok(QuicItem::Text(text)) => Incoming::Text(text),
+        Ok(QuicItem::Binary(bytes)) => Incoming::Binary(bytes),
+        Ok(QuicItem::Loss { .. }) => Incoming::Loss,
+        Ok(QuicItem::Closed(code)) => {
+            Incoming::Closed(code.unwrap_or(1006), "QUIC connection ended".into())
+        }
+        Err(e) => Incoming::Malformed(e),
+    }
+}
+
+/// Attaches to `quic` with `ticket`, keeping the connection only once the
+/// server has answered (a greeting or media): all of it within `within`.
+async fn attach_quic(
+    quic: &QuicTarget,
+    ticket: &str,
+    within: Duration,
+) -> std::result::Result<Link, String> {
+    let deadline = tokio::time::Instant::now() + within;
+    let mut link = MediaQuic::connect(
+        &quic.host,
+        quic.port,
+        &quic.certificate_sha256,
+        ticket,
+        within,
+    )
+    .await?;
+    let first = tokio::time::timeout_at(deadline, link.next())
+        .await
+        .map_err(|_| "no answer from the QUIC media listener".to_string())?;
+    match quic_incoming(first) {
+        Incoming::Closed(code, reason) => {
+            Err(format!("QUIC media listener closed ({code}): {reason}"))
+        }
+        first => Ok(Link::Quic {
+            quic: Box::new(link),
+            early: Some(first),
+        }),
+    }
+}
+
+async fn attach_ws(ticket: &StreamTicket, headers: &[(String, String)]) -> Result<Link> {
+    let mut request = ticket
+        .ws_url
+        .as_str()
+        .into_client_request()
+        .map_err(|e| Error::Stream(e.to_string()))?;
+    for (k, v) in headers {
+        if let (Ok(k), Ok(v)) = (
+            http::HeaderName::from_bytes(k.as_bytes()),
+            http::HeaderValue::from_str(v),
+        ) {
+            request.headers_mut().insert(k, v);
+        }
+    }
+    cua_spacesd_client::transport::ensure_crypto_provider();
+    let (ws, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .map_err(|e| match e {
+            tungstenite::Error::Http(r) => {
+                Error::Stream(format!("media socket refused: HTTP {}", r.status()))
+            }
+            other => Error::Stream(format!("media socket: {other}")),
+        })?;
+    Ok(Link::Ws(Box::new(ws)))
+}
+
 /// One attached media socket.
 struct MediaStream {
     media_session_id: String,
@@ -98,36 +260,33 @@ impl MediaStream {
         frames: Arc<dyn FrameSink>,
         audio: Option<Arc<dyn AudioSink>>,
     ) -> Result<MediaStream> {
-        let mut request = ticket
-            .ws_url
-            .as_str()
-            .into_client_request()
-            .map_err(|e| Error::Stream(e.to_string()))?;
-        for (k, v) in headers {
-            if let (Ok(k), Ok(v)) = (
-                http::HeaderName::from_bytes(k.as_bytes()),
-                http::HeaderValue::from_str(v),
-            ) {
-                request.headers_mut().insert(k, v);
-            }
-        }
-        cua_spacesd_client::transport::ensure_crypto_provider();
         let timing = Instant::now();
-        let (ws, _) = tokio_tungstenite::connect_async(request)
-            .await
-            .map_err(|e| match e {
-                tungstenite::Error::Http(r) => {
-                    Error::Stream(format!("media socket refused: HTTP {}", r.status()))
-                }
-                other => Error::Stream(format!("media socket: {other}")),
-            })?;
+        let quic = match &ticket.quic {
+            Some(quic) => attach_quic(quic, &ticket.ticket, QUIC_ATTACH)
+                .await
+                .inspect_err(|error| {
+                    tracing::debug!(
+                        target: "cua::stream::timing",
+                        hop = "quic_fallback",
+                        ms = timing.elapsed().as_secs_f64() * 1e3,
+                        %error,
+                        "stream.open"
+                    );
+                })
+                .ok(),
+            None => None,
+        };
+        let mut link = match quic {
+            Some(link) => link,
+            None => attach_ws(ticket, headers).await?,
+        };
         tracing::debug!(
             target: "cua::stream::timing",
             hop = "connection_established",
+            transport = link.transport(),
             ms = timing.elapsed().as_secs_f64() * 1e3,
             "stream.open"
         );
-        let (mut tx, mut rx) = ws.split();
         let counters = Arc::new(Counters::default());
         let closed = Arc::new(AtomicBool::new(false));
         let phase = Arc::new(Mutex::new(MediaPhase::Attaching));
@@ -168,6 +327,9 @@ impl MediaStream {
             let phase = phase.clone();
             tokio::spawn(async move {
                 let mut client = MediaClient::new(1);
+                let mut early: VecDeque<Incoming> = VecDeque::new();
+                let mut early_overflowed = false;
+                let mut replay: VecDeque<Incoming> = VecDeque::new();
                 let mut close = (1006u16, "socket ended".to_string());
                 // Per-hop clock of this open (`stream.open` at debug): the
                 // first packet, the first video access unit, the first keyframe.
@@ -200,13 +362,30 @@ impl MediaStream {
                             },
                             Some(Control::RequestKeyframe) => outgoing.extend(request_keyframe(&mut client)),
                             Some(Control::Close) | None => {
-                                let _ = tx.send(tungstenite::Message::Close(None)).await;
+                                link.close().await;
                                 close = (1000, "closed by client".into());
                                 break;
                             }
                         },
-                        msg = rx.next() => match msg {
-                            Some(Ok(tungstenite::Message::Text(text))) => match client.apply_text(text.as_str()) {
+                        incoming = async {
+                            match replay.pop_front() {
+                                Some(held) => held,
+                                None => link.recv().await,
+                            }
+                        } => match incoming {
+                            held @ (Incoming::Binary(_) | Incoming::Loss)
+                                if matches!(
+                                    client.phase(),
+                                    MediaPhase::Attaching | MediaPhase::Greeted
+                                ) =>
+                            {
+                                if early.len() < MAX_EARLY_MEDIA {
+                                    early.push_back(held);
+                                } else {
+                                    early_overflowed = true;
+                                }
+                            }
+                            Incoming::Text(text) => match client.apply_text(text.as_str()) {
                                 Ok(event) => {
                                     let item = match event {
                                         MediaEvent::Opened(o) => StreamEvent::Opened(to_json(&o)),
@@ -230,7 +409,7 @@ impl MediaStream {
                                     tracing::debug!(error = %e, "media text ignored");
                                 }
                             },
-                            Some(Ok(tungstenite::Message::Binary(bytes))) => match client.apply_binary(&bytes) {
+                            Incoming::Binary(bytes) => match client.apply_binary(&bytes) {
                                 Ok(Some(MediaEvent::Video { descriptor, payload })) => {
                                     if !seen_frame {
                                         seen_frame = true;
@@ -286,33 +465,39 @@ impl MediaStream {
                                     tracing::debug!(error = %e, "media packet ignored");
                                 }
                             },
-                            Some(Ok(tungstenite::Message::Close(frame))) => {
-                                if let Some(f) = frame {
-                                    close = (u16::from(f.code), f.reason.to_string());
-                                }
+                            Incoming::Loss => {
+                                client.decoder_failed();
+                                outgoing.extend(request_keyframe(&mut client));
+                            }
+                            Incoming::Malformed(e) => {
+                                counters.malformed.fetch_add(1, Ordering::Relaxed);
+                                tracing::debug!(error = %e, "media input ignored");
+                            }
+                            Incoming::Closed(code, reason) => {
+                                close = (code, reason);
                                 break;
                             }
-                            Some(Ok(_)) => {}
-                            Some(Err(e)) => {
-                                close = (1006, e.to_string());
-                                break;
-                            }
-                            None => break,
                         },
                     }
                     if !seen_packet && client.phase() != MediaPhase::Attaching {
                         seen_packet = true;
                         mark("session_opened");
                     }
+                    if !early.is_empty() && client.phase() == MediaPhase::Open {
+                        replay.append(&mut early);
+                        // Media dropped past the cap: resync on a keyframe.
+                        if std::mem::take(&mut early_overflowed) {
+                            replay.push_back(Incoming::Loss);
+                        }
+                    }
                     for text in outgoing {
-                        if tx
-                            .send(tungstenite::Message::Text(text.into()))
-                            .await
-                            .is_err()
-                        {
+                        if !link.send_text(text).await {
                             break;
                         }
                     }
+                }
+                if let Link::Quic { quic, .. } = &link {
+                    quic.close();
                 }
                 closed.store(true, Ordering::SeqCst);
                 *phase.lock().expect("phase") = MediaPhase::Closed;
@@ -405,5 +590,261 @@ impl StreamConnection for MediaStream {
 impl Drop for MediaStream {
     fn drop(&mut self) {
         let _ = self.control.send(Control::Close);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cua_media_protocol::v2::{self, encode_server_text};
+    use cua_media_protocol::{
+        CodecEpoch, FrameSequence, GeometryEpoch, SessionPolicy, SurfaceGeometry, TargetEpoch,
+        VideoCodec, VideoFrameDescriptor, WindowGeometryControl, WindowSessionId, WireHeader,
+    };
+    use cua_media_transport::quic::QuicIdentity;
+
+    const TICKET: &str = "ticket-1";
+
+    fn greeting() -> Vec<String> {
+        [
+            v2::ServerMessage::Hello(v2::Hello::server(Vec::new())),
+            v2::ServerMessage::SessionOpened(v2::SessionOpened {
+                session_id: WindowSessionId("media-1".into()),
+                target: v2::MediaTargetRef::Display {
+                    display_id: "primary".into(),
+                },
+                target_epoch: TargetEpoch(1),
+                geometry_epoch: GeometryEpoch(1),
+                codec_epoch: CodecEpoch(1),
+                geometry: SurfaceGeometry {
+                    width_px: 8,
+                    height_px: 8,
+                    scale_factor: 1.0,
+                },
+                codec: VideoCodec::Bgra,
+                video: true,
+                max_fps: 30,
+                max_dimension: 1920,
+                target_bitrate_kbps: None,
+                capabilities: Vec::new(),
+                action_capabilities: Vec::new(),
+                policy: SessionPolicy::ViewOnly,
+                geometry_control: WindowGeometryControl::ObserveOnly,
+            }),
+        ]
+        .iter()
+        .map(encode_server_text)
+        .collect()
+    }
+
+    fn keyframe(sequence: u64) -> Vec<u8> {
+        cua_media_transport::encode_packet(
+            &WireHeader::Video(VideoFrameDescriptor {
+                session_id: WindowSessionId("media-1".into()),
+                sequence: FrameSequence(sequence),
+                geometry_epoch: GeometryEpoch(1),
+                codec_epoch: CodecEpoch(1),
+                width_px: 8,
+                height_px: 8,
+                capture_timestamp_us: 1,
+                encode_duration_us: None,
+                codec: VideoCodec::Bgra,
+                keyframe: true,
+            }),
+            &[7u8; 8 * 8 * 4],
+        )
+        .unwrap()
+    }
+
+    /// A QUIC media listener that takes [`TICKET`], sends keyframe 1 as
+    /// datagrams before its greeting, then keyframes 2, 3, ... until the
+    /// client goes away.
+    fn serve_quic() -> QuicTarget {
+        let identity = QuicIdentity::generate().unwrap();
+        let endpoint = quinn::Endpoint::server(
+            identity.server_config().unwrap(),
+            "127.0.0.1:0".parse().unwrap(),
+        )
+        .unwrap();
+        let port = endpoint.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            // A client that refuses the certificate never gets here.
+            let Ok(connection) = endpoint.accept().await.unwrap().await else {
+                return;
+            };
+            let (mut send, mut receive) = connection.accept_bi().await.unwrap();
+            let first = cua_media_transport::quic::read_message(&mut receive)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                v2::decode_client_text(&String::from_utf8_lossy(&first)),
+                Ok(v2::ClientMessage::Ticket {
+                    ticket: TICKET.into()
+                })
+            );
+            let max = connection.max_datagram_size().unwrap();
+            // Media overtakes the greeting, as datagrams may.
+            for fragment in
+                cua_media_transport::fragment_video_packet_v2(1, true, &keyframe(1), max).unwrap()
+            {
+                connection.send_datagram(fragment.into()).unwrap();
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            for text in greeting() {
+                cua_media_transport::quic::write_message(&mut send, text.as_bytes())
+                    .await
+                    .unwrap();
+            }
+            for packet_id in 2.. {
+                for fragment in cua_media_transport::fragment_video_packet_v2(
+                    packet_id,
+                    true,
+                    &keyframe(packet_id),
+                    max,
+                )
+                .unwrap()
+                {
+                    if connection.send_datagram(fragment.into()).is_err() {
+                        return;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        });
+        QuicTarget {
+            host: "127.0.0.1".into(),
+            port,
+            certificate_sha256: identity.certificate_sha256(),
+        }
+    }
+
+    /// A `/media` WebSocket that greets and sends one keyframe.
+    async fn serve_ws() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            for text in greeting() {
+                ws.send(tungstenite::Message::Text(text.into()))
+                    .await
+                    .unwrap();
+            }
+            ws.send(tungstenite::Message::Binary(keyframe(1).into()))
+                .await
+                .unwrap();
+            while ws.next().await.is_some() {}
+        });
+        format!("ws://{address}/media?ticket={TICKET}")
+    }
+
+    fn ticket(ws_url: String, quic: Option<QuicTarget>) -> StreamTicket {
+        StreamTicket {
+            space: "direct:127.0.0.1:3211".into(),
+            media_session_id: "media-1".into(),
+            ws_url,
+            ticket: TICKET.into(),
+            ticket_expires_at: None,
+            codec: "bgra".into(),
+            wire_version: 2,
+            frame_size: [8, 8],
+            needs_gateway_headers: false,
+            quic,
+            raw: Default::default(),
+        }
+    }
+
+    struct Frames(tokio::sync::mpsc::UnboundedSender<VideoFrame>);
+
+    impl FrameSink for Frames {
+        fn on_frame(&self, frame: VideoFrame) {
+            let _ = self.0.send(frame);
+        }
+    }
+
+    /// Attaches `ticket` and waits for its first frame.
+    async fn first_frame(ticket: &StreamTicket) -> (MediaStream, VideoFrame) {
+        let (sender, mut frames) = tokio::sync::mpsc::unbounded_channel();
+        let stream = MediaStream::connect(ticket, &[], Arc::new(Frames(sender)), None)
+            .await
+            .unwrap();
+        let frame = tokio::time::timeout(Duration::from_secs(10), frames.recv())
+            .await
+            .expect("a frame within 10 s")
+            .unwrap();
+        (stream, frame)
+    }
+
+    #[tokio::test]
+    async fn a_ticket_with_a_quic_listener_streams_over_quic() {
+        // Nothing listens on the WebSocket: the frame can only come by QUIC.
+        let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ws_url = format!("ws://{}/media", closed.local_addr().unwrap());
+        drop(closed);
+        let (mut stream, frame) = first_frame(&ticket(ws_url, Some(serve_quic()))).await;
+        assert!(frame.keyframe);
+        assert_eq!((frame.width, frame.height), (8, 8));
+        // The keyframe sent before the greeting, held until the session opened.
+        assert_eq!(frame.sequence, 1);
+        assert!(stream.is_open());
+        stream.close(Duration::from_secs(1)).await;
+    }
+
+    #[tokio::test]
+    async fn an_unanswered_quic_listener_falls_back_to_the_websocket() {
+        // A UDP port that takes the handshake and never answers it.
+        let silent = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let quic = QuicTarget {
+            host: "127.0.0.1".into(),
+            port: silent.local_addr().unwrap().port(),
+            certificate_sha256: QuicIdentity::generate().unwrap().certificate_sha256(),
+        };
+        let started = Instant::now();
+        let (mut stream, frame) = first_frame(&ticket(serve_ws().await, Some(quic))).await;
+        assert!(frame.keyframe);
+        assert!(started.elapsed() >= QUIC_ATTACH, "{:?}", started.elapsed());
+        assert!(stream.is_open());
+        stream.close(Duration::from_secs(1)).await;
+    }
+
+    #[tokio::test]
+    async fn a_quic_listener_that_grants_no_stream_gives_up_within_the_deadline() {
+        let identity = QuicIdentity::generate().unwrap();
+        let mut config = identity.server_config().unwrap();
+        let mut transport = quinn::TransportConfig::default();
+        transport.max_concurrent_bidi_streams(0_u8.into());
+        config.transport_config(Arc::new(transport));
+        let endpoint = quinn::Endpoint::server(config, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let quic = QuicTarget {
+            host: "127.0.0.1".into(),
+            port: endpoint.local_addr().unwrap().port(),
+            certificate_sha256: identity.certificate_sha256(),
+        };
+        // The handshake completes; the client's stream never opens.
+        let accepted = tokio::spawn(async move {
+            let connection = endpoint.accept().await.unwrap().await.unwrap();
+            connection.closed().await
+        });
+        let within = Duration::from_millis(500);
+        let started = Instant::now();
+        let attached =
+            tokio::time::timeout(Duration::from_secs(5), attach_quic(&quic, TICKET, within))
+                .await
+                .expect("attach_quic returns within its deadline");
+        assert!(attached.is_err());
+        assert!(started.elapsed() >= within, "{:?}", started.elapsed());
+        accepted.abort();
+    }
+
+    #[tokio::test]
+    async fn a_quic_listener_with_another_certificate_falls_back_to_the_websocket() {
+        let quic = QuicTarget {
+            certificate_sha256: QuicIdentity::generate().unwrap().certificate_sha256(),
+            ..serve_quic()
+        };
+        let (mut stream, frame) = first_frame(&ticket(serve_ws().await, Some(quic))).await;
+        assert!(frame.keyframe);
+        stream.close(Duration::from_secs(1)).await;
     }
 }

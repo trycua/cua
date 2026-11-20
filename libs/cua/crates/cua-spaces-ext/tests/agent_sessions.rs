@@ -701,3 +701,36 @@ async fn agent_add_keeps_brief_and_standby_and_updates_them() {
     assert!(record(&fx, "ada")["policy"].get("standby").is_none());
     assert_eq!(record(&fx, "ada")["brief"], "Ask before you push.");
 }
+
+/// `agent send` to an idle run delivers the message once: the thread entry
+/// that records it is written already claimed, so the dispatcher, which
+/// still reads the run as idle until its runner picks the message up, does
+/// not deliver it again as a `[thread #N from ...]` turn (issue 8216).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_message_sent_to_an_idle_run_is_delivered_once() {
+    let mut fx = setup().await;
+    let p = member(&mut fx, 1).await;
+    // The dispatcher runs as the message is sent (a thread entry wakes it),
+    // and reads the run as idle until its runner picks the message up.
+    let ticking = {
+        let p = p.clone();
+        tokio::spawn(async move {
+            for _ in 0..400 {
+                Box::pin(p.tick()).await;
+                tokio::task::yield_now().await;
+            }
+        })
+    };
+    call(
+        &fx.mcp,
+        "agent_send",
+        json!({"name": "ada", "text": "hello"}),
+    )
+    .await
+    .unwrap();
+    ticking.await.unwrap();
+    assert_eq!(inbox(&fx, 1), vec!["hello".to_string()], "delivered twice");
+    let ts = tasks(&fx).await;
+    assert_eq!(ts.len(), 1, "{ts:?}");
+    assert_eq!(ts[0]["holder"], "ada/1@1");
+}

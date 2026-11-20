@@ -492,9 +492,10 @@ If a tool call surprises you on Linux:
    anything, and one that arrives sooner waits only for the rest of it.
    Retry once the worker has stopped. A worker that never stops, such as
    one blocked on a compositor or X server that stopped answering, keeps
-   every later desktop action refusing until the driver restarts. An
-   `input_busy` that names a pid is different: text input to that process is
-   already running.
+   every later desktop action refusing until the driver restarts. The
+   refusal's `lane` says which kind it is: `{"kind": "desktop"}` here, and
+   `{"kind": "pid", "pid": N}` when text input to that process is already
+   running.
 
 ## Forbidden vectors
 

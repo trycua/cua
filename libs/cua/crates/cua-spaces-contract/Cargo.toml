@@ -1,12 +1,12 @@
 [package]
 name = "cua-spaces-contract"
+description = "The Cua Spaces tool contract: which tools exist, what they need from a Space, and their input schemas (the source of spaces-contract/manifest.json)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
 
 [[bin]]
 name = "cua-spaces-contract-gen"

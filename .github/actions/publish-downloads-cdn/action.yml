@@ -1,0 +1,66 @@
+name: Publish release assets to the downloads CDN
+description: >-
+  Copies every asset of the given GitHub releases to s3://trycua-cua-downloads/<tag>/<asset>
+  (behind CloudFront), checks size and sha256 against GitHub, uploads feeds and manifests last,
+  and invalidates the mutable paths. GitHub Releases stays the source of truth. The caller job
+  must run actions/checkout (with .github/scripts and .github/actions), set
+  `permissions: id-token: write`, `environment: cua-driver-release-signing`, and should use
+  `continue-on-error: true` so a CDN problem never fails a GitHub release.
+inputs:
+  tags:
+    description: Release tags to copy, in order (comma, space or newline separated). Versioned tags first, rolling tags after.
+    required: true
+  dry-run:
+    description: List what would be copied; change nothing and use no AWS credentials.
+    default: "false"
+  prefix:
+    description: Key prefix inside the bucket ("test/" for a rehearsal). Empty for real.
+    default: ""
+  allow-overwrite:
+    description: Let different bytes replace an existing versioned object (a deliberate rebuild).
+    default: "false"
+  follow-refs:
+    description: Also copy releases that a feed names (one level). Release jobs leave this on; the backfill makes it a choice.
+    default: "true"
+  role-arn:
+    description: IAM role to assume through GitHub OIDC.
+    default: arn:aws:iam::296062593712:role/github-actions-cua-downloads-publish
+  github-token:
+    description: Token that can read the repository's releases.
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - name: Assume the downloads publish role
+      if: inputs.dry-run != 'true'
+      uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+      with:
+        role-to-assume: ${{ inputs.role-arn }}
+        aws-region: us-west-2
+        role-session-name: cua-downloads-${{ github.run_id }}
+    - name: Copy the release assets to the CDN
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        TAGS: ${{ inputs.tags }}
+        DRY_RUN: ${{ inputs.dry-run }}
+        PREFIX: ${{ inputs.prefix }}
+        ALLOW_OVERWRITE: ${{ inputs.allow-overwrite }}
+        FOLLOW_REFS: ${{ inputs.follow-refs }}
+      run: |
+        set -uo pipefail
+        args=(--repo "$GITHUB_REPOSITORY" --tags "$TAGS")
+        [ -n "$PREFIX" ] && args+=(--prefix "$PREFIX")
+        [ "$DRY_RUN" = true ] && args+=(--dry-run)
+        [ "$ALLOW_OVERWRITE" = true ] && args+=(--allow-overwrite)
+        [ "$FOLLOW_REFS" = true ] || args+=(--no-follow)
+        if ! python3 .github/scripts/publish_downloads_cdn.py "${args[@]}"; then
+          {
+            echo
+            echo "> **CDN PUBLISH FAILED** for: $TAGS"
+            echo "> The GitHub release is fine and is still the source of truth. The CDN copy is missing or incomplete."
+            echo "> Re-run this job, or run the 'Backfill the downloads CDN' workflow with these tags."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=CDN publish failed::the downloads CDN does not have a complete copy of: $TAGS (GitHub is unaffected)"
+          exit 1
+        fi

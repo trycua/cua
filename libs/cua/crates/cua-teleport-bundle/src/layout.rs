@@ -224,6 +224,72 @@ pub mod chrome {
         }
     }
 
+    /// A Chromium-family browser a Linux guest may carry.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct LinuxBrowser {
+        /// What the browser is called to people and agents (`chromium`).
+        pub name: &'static str,
+        /// The program to start: absolute, or a name on `PATH`.
+        pub program: &'static str,
+        /// Its user-data dir, relative to the home: where a plain launch of
+        /// this browser (no `--user-data-dir`) reads its profile.
+        pub user_data_dir: &'static str,
+    }
+
+    /// The browsers a Linux guest is launched with, in the order preferred.
+    /// Google Chrome first; the Spaces Linux image ships Chromium only, started
+    /// through its wrapper (`/opt/cua/bin/cua-chromium`, which adds the sandbox
+    /// flags the runtime needs) and reading `~/.config/chromium`.
+    pub const LINUX_BROWSERS: &[LinuxBrowser] = &[
+        LinuxBrowser {
+            name: "google-chrome",
+            program: "google-chrome",
+            user_data_dir: LINUX_USER_DATA_DIR,
+        },
+        LinuxBrowser {
+            name: "google-chrome",
+            program: "google-chrome-stable",
+            user_data_dir: LINUX_USER_DATA_DIR,
+        },
+        LinuxBrowser {
+            name: "chromium",
+            program: "/opt/cua/bin/cua-chromium",
+            user_data_dir: ".config/chromium",
+        },
+        LinuxBrowser {
+            name: "chromium",
+            program: "chromium",
+            user_data_dir: ".config/chromium",
+        },
+        LinuxBrowser {
+            name: "chromium",
+            program: "chromium-browser",
+            user_data_dir: ".config/chromium",
+        },
+    ];
+
+    /// Whether `name` is a Chrome profile directory (`Default`, `Profile 1`).
+    pub fn is_profile_dir(name: &str) -> bool {
+        name == "Default" || name.strip_prefix("Profile ").is_some_and(|n| !n.is_empty())
+    }
+
+    /// Where a bundle path lands under `user_data_dir` (home-relative): the
+    /// canonical Linux prefix is replaced and the sender's profile directory
+    /// (`Profile 1`) becomes `Default`, so everything of one capture lives in
+    /// one profile, the one a plain launch opens. Returns the path and the
+    /// sender's profile name when the path was inside one.
+    pub fn land_path<'a>(rel_path: &'a str, user_data_dir: &str) -> (String, Option<&'a str>) {
+        let Some(within) = rel_path.strip_prefix(&format!("{LINUX_USER_DATA_DIR}/")) else {
+            return (rel_path.to_string(), None);
+        };
+        match within.split_once('/') {
+            Some((profile, rest)) if is_profile_dir(profile) => {
+                (format!("{user_data_dir}/Default/{rest}"), Some(profile))
+            }
+            _ => (format!("{user_data_dir}/{within}"), None),
+        }
+    }
+
     /// Where the app is installed on a macOS source (install probe).
     pub const MACOS_APP: &str = "/Applications/Google Chrome.app";
 }
@@ -824,6 +890,38 @@ pub fn landing_path(provider_id: &str, rel_path: &str, platform: Platform) -> Op
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_capture_lands_in_one_profile_whatever_the_sender_profile_was() {
+        use chrome::{LINUX_BROWSERS, land_path};
+        let ud = ".config/chromium";
+        assert_eq!(
+            land_path(".config/google-chrome/Profile 1/Cookies", ud),
+            (".config/chromium/Default/Cookies".into(), Some("Profile 1"))
+        );
+        assert_eq!(
+            land_path(".config/google-chrome/Default/Local Storage/x", ud),
+            (
+                ".config/chromium/Default/Local Storage/x".into(),
+                Some("Default")
+            )
+        );
+        // Not inside a profile: kept (under the destination's dir), no profile.
+        assert_eq!(
+            land_path(".config/google-chrome/Local State", ud),
+            (".config/chromium/Local State".into(), None)
+        );
+        assert_eq!(land_path("other/x", ud), ("other/x".into(), None));
+        assert!(!chrome::is_profile_dir("Profile "));
+        assert!(!chrome::is_profile_dir("Crashpad"));
+        // Chromium (the Spaces image) is a candidate, after Google Chrome.
+        assert_eq!(LINUX_BROWSERS[0].program, "google-chrome");
+        assert!(
+            LINUX_BROWSERS
+                .iter()
+                .any(|b| b.program == "/opt/cua/bin/cua-chromium" && b.name == "chromium")
+        );
+    }
 
     #[test]
     fn provider_ids_are_unique_and_stable() {

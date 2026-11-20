@@ -7,5 +7,11 @@
 // settle. Passing tests return as soon as their condition holds.
 
 import { configure } from "@testing-library/react";
+import { afterEach } from "vitest";
+
+import { resetAddressing } from "@/lib/addressing";
 
 configure({ asyncUtilTimeout: 5_000 });
+
+// Who each Space's composer is talking to is kept per Space; a test never inherits another's.
+afterEach(resetAddressing);

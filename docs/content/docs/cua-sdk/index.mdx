@@ -2,7 +2,7 @@
 title: Cua SDK
 description: Build agentic applications and workflows on isolated Linux, Windows and macOS desktops on your machine, or on any machine that runs cua-spacesd.
 landing:
-  summary: 'Create and drive computers from your own code. Python, TypeScript, Swift and Rust.'
+  summary: 'Create and drive computers from your own code. Python, TypeScript and Rust.'
   cta: Explore Cua SDK
 ---
 
@@ -55,14 +55,14 @@ await sb.delete_();
 </Tabs>
 
 Setup: `cua runtime doctor` shows what this host has and `cua runtime setup`
-installs what is missing ([Local runtimes](/cua-sdk/guides/local-runtimes)).
+installs what is missing ([Choose where sandboxes run](/cua-sdk/guides/local-runtimes)).
 Containers run the host's architecture (others run emulated); macOS runs in
 Lume VMs on Apple silicon.
 
 ## Reach another machine
 
 Any machine that runs [cua-spacesd](/cua-sdk/guides/spacesd), such as a spare
-Mac, a server on your LAN or [Tailscale](/start-here/host-spaces-on-your-spare-mac),
+Mac, a server on your LAN or [Tailscale](/spaces/guides/add-a-computer#use-a-spare-mac-to-host-spaces),
 or a container you started, connects directly by address and env token.
 Nothing is created or deleted:
 
@@ -101,8 +101,12 @@ See [pricing](https://cua.ai/pricing#plans).
 | Python | `cua-sandbox` (`from cua_sandbox import Sandbox`), over the `cua` SDK (`import cua`) |
 | TypeScript | `@trycua/cua` |
 | Rust | `cua-sdk` crate (git dependency), see [Rust crates](/cua-sdk/reference/rust) |
-| Swift | `Cua` (SwiftPM) |
+| Swift, Kotlin | Not yet released |
+| Other languages | gRPC on port 3211, from the [`.proto` files](/cua-sdk/guides/own-harness#other-languages) |
 | CLI | `cua sb ...`, see [Cua CLI](/cua-cli) |
+
+None of them includes an agent: your own code or agent loop drives the
+sandbox. See [Use Cua in your own harness](/cua-sdk/guides/own-harness).
 
 ## How it fits together
 

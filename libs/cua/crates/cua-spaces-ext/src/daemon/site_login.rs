@@ -51,8 +51,7 @@ pub trait Driver: Send + Sync {
     /// Whether this Space is reached through `cua-relay` (`/m/<machine-id>`),
     /// so a `browser_type` of the password crosses a hop this build cannot
     /// yet seal (S1; unlike teleport's bundle upload, a driver call is not a
-    /// byte blob this layer can wrap). `false` (a direct or Fleet-gateway
-    /// connection) by default, so a test double need not implement it.
+    /// byte blob this layer can wrap). `false` (a direct connection) by default, so a test double need not implement it.
     async fn is_relay_routed(&self) -> bool {
         false
     }

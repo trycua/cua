@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Stateful typed MCP carrier. The host supplies only authenticated service bytes.
 
 use std::collections::{HashMap, HashSet};

@@ -25,8 +25,9 @@ export function sessionMethods({ model }: BridgeContext): Handlers {
     "session.get": () => sessionState(model),
     // The browser flow can take minutes: answer now, and `session.changed`
     // follows when it ends.
-    "session.signIn": () => {
-      void model.beginSignIn();
+    "session.signIn": (args) => {
+      // `code`: the page's "Get a code instead" (the browser never got back to the app).
+      void model.beginSignIn(args && (args as { code?: unknown }).code === true ? { code: true } : undefined);
       return sessionState(model);
     },
     "session.signOut": async () => {

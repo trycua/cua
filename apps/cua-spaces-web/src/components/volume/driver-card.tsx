@@ -29,7 +29,7 @@ export function DriverCard({
   const { core } = useBridge();
   const copy = driverCopy(core);
   return (
-    <div className="flex flex-col gap-2" data-driver-card="">
+    <div className="flex flex-col gap-3" data-driver-card="">
       <DriverPreview label={copy.agentsDriverImage} fixedMs={fixedMs} />
       <label className="flex items-center gap-2.5 text-[13px]">
         <Checkbox checked={checked} disabled={disabled} onCheckedChange={(on) => onCheckedChange(Boolean(on))} data-driver-toggle="" />
@@ -56,7 +56,7 @@ export function DriverSummaries({ summaries }: { summaries: AgentSetupSummary[] 
             </span>
           ) : null}
           {s.failed.map((f) => (
-            <span key={f} className="block truncate text-xs text-destructive" data-summary-failed="">
+            <span key={f} className="block text-xs text-pretty break-words text-destructive select-text" data-summary-failed="">
               {f}
             </span>
           ))}
@@ -101,7 +101,7 @@ export function DriverSettingsCard() {
     try {
       setSummaries(await setup.setUp(agents.map((a) => ({ id: a.agent, name: a.name }))));
     } catch (e) {
-      setError(isUnsupported(e) ? "Setting up cua-driver needs the Cua Spaces app on this machine." : e instanceof Error ? e.message : String(e));
+      setError(isUnsupported(e) ? "Setting up cua-driver needs the Cua Spaces app on this computer." : e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -109,15 +109,11 @@ export function DriverSettingsCard() {
 
   const shown = pinned?.summaries ?? summaries;
   return (
-    <div className="flex flex-col gap-3 px-4 py-3.5">
+    <div className="flex flex-col gap-3 px-4 py-4">
       <DriverCard checked={checked} onCheckedChange={setChecked} disabled={busy} fixedMs={pinned?.tMs} />
       <div className="flex items-center justify-between gap-4">
         <p className="text-xs text-muted-foreground">
-          {agents === null
-            ? copy.agentsLooking
-            : agents.length === 0
-              ? copy.agentsNone
-              : `For ${agents.map((a) => a.name).join(", ")}.`}
+          {agents === null ? copy.agentsLooking : agents.length === 0 ? copy.agentsNone : `For ${agents.map((a) => a.name).join(", ")}.`}
         </p>
         <Button variant="outline" size="sm" disabled={!checked || busy || !agents?.length} onClick={() => void run()}>
           {busy ? copy.agentsSettingUp : copy.agentsSetUp}

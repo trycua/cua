@@ -32,9 +32,8 @@ pub const DEFAULT_PATH: &str = "/mcp";
 pub struct McpConfig {
     /// The streamable-HTTP endpoint URL.
     pub url: String,
-    /// Headers to send with every request (Fleet: the gateway bearer and
-    /// claim; the bearer is short-lived, so fetch a fresh config per
-    /// connection).
+    /// Headers to send with every request (a provider's access headers,
+    /// which may be short-lived: fetch a fresh config per connection).
     pub headers: Vec<(String, String)>,
 }
 

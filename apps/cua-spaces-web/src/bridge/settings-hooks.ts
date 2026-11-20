@@ -117,6 +117,8 @@ export interface DevicesHook extends Hook<DevicesData> {
   /** The sheet's Deny or Not Now. */
   deny(): Promise<void>;
   closeApproval(): void;
+  /** "Add machine" on a machine that waits: approves it by id (presence first); throws its failure. */
+  addMachine(deviceId: string): Promise<void>;
   /** The row's Deny. */
   denyDevice(deviceId: string): Promise<void>;
   rename(id: string, name: string): Promise<void>;
@@ -124,7 +126,7 @@ export interface DevicesHook extends Hook<DevicesData> {
   confirmMachine(id: string): Promise<void>;
 }
 
-/** Settings, Devices: this device's enrollment, the account's devices, the access log and both sheets. */
+/** Machines: this machine's trust, the machines waiting to be added, the access log and the trust sheet. */
 export function useDevices(): DevicesHook {
   const r = useFeature<DevicesData>("devices");
   const run = useRun();
@@ -140,6 +142,7 @@ export function useDevices(): DevicesHook {
     approve: () => run((f) => f.approveDevice()),
     deny: () => run((f) => f.denyApproval()),
     closeApproval: () => now((f) => f.closeApproval()),
+    addMachine: (id) => run((f) => f.addMachine(id)),
     denyDevice: (id) => run((f) => f.denyDevice(id)),
     rename: (id, name) => run((f) => f.renameDevice(id, name)),
     revoke: (id) => run((f) => f.revokeDevice(id)),
@@ -172,13 +175,23 @@ export interface NotificationsHook extends Hook<NotificationsData> {
   markAllRead(): Promise<void>;
   /** Marks one entry read (it was opened). */
   markRead(id: string): Promise<void>;
+  /** Deletes one entry for good. */
+  deleteOne(id: string): Promise<void>;
+  /** Deletes every entry for good. */
+  deleteAll(): Promise<void>;
 }
 
 /** The daemon's notifications feed, polled every 5 s while the app is open. */
 export function useNotifications(): NotificationsHook {
   const r = useFeature<NotificationsData>("notifications");
   const run = useRun();
-  return { ...r, markAllRead: () => run((f) => f.markAllRead()), markRead: (id) => run((f) => f.markRead(id)) };
+  return {
+    ...r,
+    markAllRead: () => run((f) => f.markAllRead()),
+    markRead: (id) => run((f) => f.markRead(id)),
+    deleteOne: (id) => run((f) => f.deleteNotifications([id])),
+    deleteAll: () => run((f) => f.deleteAllNotifications()),
+  };
 }
 
 /** Calls `listener` for each entry the core says to announce. */

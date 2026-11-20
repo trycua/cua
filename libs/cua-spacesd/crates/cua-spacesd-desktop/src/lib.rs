@@ -42,6 +42,7 @@ pub mod codec_encoder;
 mod driver_input;
 #[cfg(target_os = "linux")]
 mod encoded_capture;
+pub mod encoder_probe;
 pub mod grpc;
 mod h264_limits;
 #[cfg(target_os = "linux")]
@@ -184,8 +185,10 @@ impl TargetCatalog {
                 continue;
             }
 
-            let handle = TargetHandle(format!("target-{}", uuid::Uuid::new_v4()));
-            let grant = TargetGrant(format!("grant-{}", uuid::Uuid::new_v4()));
+            // From the OS RNG: the workspace's uuid uses a userspace PRNG
+            // whose state a memory snapshot copies into every clone.
+            let handle = TargetHandle(crate::grpc::random_id("target"));
+            let grant = TargetGrant(crate::grpc::random_id("grant"));
             let id = ProviderTargetId {
                 key: BackendTargetKey::new(format!(
                     "macos:{}:{}",
@@ -302,8 +305,8 @@ impl TargetCatalog {
 }
 
 /// A background session reaches a Hyprland window only through the
-/// cua-hyprland-plugin's isolated seats, which admit qualified clients only.
-/// Any other window is refused when the session opens, as X11 refuses a
+/// cua-hyprland-plugin's isolated seats, which reach native Wayland windows
+/// only. Any other window (XWayland) is refused when the session opens, as X11 refuses a
 /// toolkit that drops synthetic events, instead of acknowledging every
 /// batch as undelivered.
 #[cfg(target_os = "linux")]
@@ -313,7 +316,7 @@ fn hyprland_background_admission(native: NativeTarget) -> Result<(), ProviderErr
         return Ok(());
     }
     let pid = u32::try_from(native.pid).unwrap_or(0);
-    hyprland_input::background_admission(pid).map_err(|reason| {
+    hyprland_input::background_admission(pid, native.window_id).map_err(|reason| {
         ProviderError::new(
             ProviderErrorCode::WouldRequireActivation,
             format!(
@@ -1432,7 +1435,7 @@ impl CuaPresenceOverlay {
         #[cfg(target_os = "windows")]
         {
             if platform_windows::overlay::is_enabled(user_key) {
-                return Some(platform_windows::overlay::current_position(user_key));
+                return platform_windows::overlay::current_position(user_key);
             }
             None
         }
@@ -2785,7 +2788,7 @@ mod own_window_tests {
                 height: 100.0,
             },
             layer: 0,
-            z_index: 0,
+            z_index: Some(0),
             is_on_screen: true,
             current_space_id: None,
             on_current_space: None,

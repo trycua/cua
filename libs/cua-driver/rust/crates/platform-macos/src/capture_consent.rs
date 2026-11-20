@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS's one-time direct screen-capture consent (CUA-1792).
 //!
 //! From macOS 15, the first time an app captures the screen without the
@@ -15,17 +18,28 @@
 //!   `~/Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist`,
 //!   keyed by the app bundle's file URL, as soon as the alert is shown. With
 //!   an entry present, later captures (also after the entry's hint date)
-//!   raise nothing.
+//!   raise nothing. An entry keyed by the bundle identifier also counts:
+//!   that is how a managed or pre-provisioned machine (and the hosted CI
+//!   runner) records the approval ahead of time.
 //!
 //! So the driver surfaces the consent in `cua-driver permissions grant`,
 //! where the user expects system prompts (see `check_permissions`), and
 //! skips implicit captures while no entry exists, rather than letting the
 //! alert pop over the user's window in the middle of background work.
+//!
+//! A capture that `permissions grant` verified for this bundle also counts as
+//! consent when the grant recorded that its probe frame raised the alert for
+//! the bundle itself and macOS holds this daemon responsible for itself. On
+//! macOS 26.6 a daemon can find no entry for the bundle after that grant
+//! (#6831), so the approvals file alone would block every capture the user
+//! just allowed.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+use crate::permission_observation::DirectCaptureEvidenceStore;
 
 /// Machine-readable code carried in the capture error.
 pub const CONSENT_REQUIRED_CODE: &str = "direct_capture_consent_required";
@@ -67,7 +81,15 @@ pub fn capture_blocked_reason() -> Option<String> {
         }
     }
     let home = std::env::var_os("HOME")?;
-    match consent_state(&Path::new(&home).join(APPROVALS_RELATIVE_PATH), &bundle) {
+    let home = Path::new(&home);
+    let bundle_id = crate::tools::main_bundle_identifier();
+    let evidence = crate::tools::driver_daemon_direct_capture_evidence_store();
+    match consent_state(
+        &home.join(APPROVALS_RELATIVE_PATH),
+        &bundle,
+        bundle_id.as_deref(),
+        evidence.as_ref(),
+    ) {
         ConsentState::Recorded | ConsentState::Unknown => {
             RECORDED.store(true, Ordering::Relaxed);
             None
@@ -105,14 +127,22 @@ enum ConsentState {
     Unknown,
 }
 
-fn consent_state(approvals: &Path, bundle: &Path) -> ConsentState {
+fn consent_state(
+    approvals: &Path,
+    bundle: &Path,
+    bundle_id: Option<&str>,
+    evidence: Option<&DirectCaptureEvidenceStore>,
+) -> ConsentState {
+    if evidence.is_some_and(DirectCaptureEvidenceStore::records_consent_alert) {
+        return ConsentState::Recorded;
+    }
     let bytes = match std::fs::read(approvals) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return ConsentState::Missing,
         Err(_) => return ConsentState::Unknown,
     };
     match approval_keys(&bytes) {
-        Some(keys) if keys.iter().any(|key| key_names_bundle(key, bundle)) => {
+        Some(keys) if keys.iter().any(|key| key_names_app(key, bundle, bundle_id)) => {
             ConsentState::Recorded
         }
         Some(_) => ConsentState::Missing,
@@ -145,6 +175,12 @@ fn approval_keys(bytes: &[u8]) -> Option<Vec<String>> {
             })
             .collect(),
     )
+}
+
+/// Whether an approvals key names this app: its bundle file URL, as replayd
+/// writes it, or its bundle identifier, as a pre-provisioned approval does.
+fn key_names_app(key: &str, bundle: &Path, bundle_id: Option<&str>) -> bool {
+    bundle_id.is_some_and(|id| !id.is_empty() && key == id) || key_names_bundle(key, bundle)
 }
 
 /// Whether an approvals key (`file:///…/CuaDriver.app/`) names `bundle`.
@@ -197,7 +233,7 @@ fn app_bundle_of(executable: &Path) -> Option<PathBuf> {
 }
 
 /// macOS 15 introduced the direct-capture consent.
-fn macos_has_direct_capture_consent() -> bool {
+pub(crate) fn macos_has_direct_capture_consent() -> bool {
     crate::tools::macos_product_version()
         .and_then(|version| version.split('.').next()?.parse::<u32>().ok())
         .is_some_and(|major| major >= 15)
@@ -265,12 +301,33 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("ScreenCaptureApprovals.plist");
         let bundle = Path::new("/Applications/CuaDriver.app");
+        let id = Some("com.trycua.driver");
 
         let _ = std::fs::remove_file(&file);
-        assert_eq!(consent_state(&file, bundle), ConsentState::Missing);
+        assert_eq!(
+            consent_state(&file, bundle, id, None),
+            ConsentState::Missing
+        );
 
         write_plist(&file, &["file:///Applications/Other.app/"]);
-        assert_eq!(consent_state(&file, bundle), ConsentState::Missing);
+        assert_eq!(
+            consent_state(&file, bundle, id, None),
+            ConsentState::Missing
+        );
+
+        write_plist(&file, &["com.trycua.driver"]);
+        assert_eq!(
+            consent_state(&file, bundle, id, None),
+            ConsentState::Recorded
+        );
+        assert_eq!(
+            consent_state(&file, bundle, None, None),
+            ConsentState::Missing
+        );
+        assert_eq!(
+            consent_state(&file, bundle, Some("com.trycua.driver.local"), None),
+            ConsentState::Missing
+        );
 
         write_plist(
             &file,
@@ -279,10 +336,104 @@ mod tests {
                 "file:///Applications/CuaDriver.app/",
             ],
         );
-        assert_eq!(consent_state(&file, bundle), ConsentState::Recorded);
+        assert_eq!(
+            consent_state(&file, bundle, id, None),
+            ConsentState::Recorded
+        );
 
         std::fs::write(&file, b"not a plist").unwrap();
-        assert_eq!(consent_state(&file, bundle), ConsentState::Unknown);
+        assert_eq!(
+            consent_state(&file, bundle, id, None),
+            ConsentState::Unknown
+        );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_verified_grant_counts_as_consent_without_an_approvals_entry() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let file = home.path().join("ScreenCaptureApprovals.plist");
+        let bundle = Path::new("/Applications/CuaDriver.app");
+        let id = Some("com.trycua.driver");
+        let release = "/Applications/CuaDriver.app/Contents/MacOS/cua-driver";
+        let evidence_for = |executable: &str, attribution: Option<&str>| {
+            crate::tools::consent_evidence_store_for_identity(
+                executable,
+                home.path(),
+                attribution,
+                true,
+            )
+        };
+        let evidence =
+            evidence_for(release, Some("driver-daemon")).expect("release evidence store");
+
+        assert_eq!(
+            consent_state(&file, bundle, id, Some(&evidence)),
+            ConsentState::Missing
+        );
+        write_plist(&file, &["file:///Applications/Other.app/"]);
+        assert_eq!(
+            consent_state(&file, bundle, id, Some(&evidence)),
+            ConsentState::Missing
+        );
+
+        // A grant on macOS 14, or by a process answering to another app,
+        // never raised this bundle's alert.
+        evidence
+            .record_now(false)
+            .expect("record grant verification");
+        assert_eq!(
+            consent_state(&file, bundle, id, Some(&evidence)),
+            ConsentState::Missing
+        );
+
+        evidence
+            .record_now(true)
+            .expect("record grant verification");
+        assert_eq!(
+            consent_state(&file, bundle, id, Some(&evidence)),
+            ConsentState::Recorded
+        );
+        std::fs::remove_file(&file).unwrap();
+        assert_eq!(
+            consent_state(&file, bundle, id, Some(&evidence)),
+            ConsentState::Recorded
+        );
+
+        let local = evidence_for(
+            "/Applications/CuaDriverLocal.app/Contents/MacOS/cua-driver-local",
+            Some("driver-daemon"),
+        )
+        .expect("local evidence store");
+        assert_eq!(
+            consent_state(&file, bundle, id, Some(&local)),
+            ConsentState::Missing
+        );
+
+        // Embedded in a host, or launched by a caller, the alert names that
+        // app, so the driver's own grant does not count.
+        for attribution in [Some("host"), Some("caller"), None] {
+            assert_eq!(
+                consent_state(
+                    &file,
+                    bundle,
+                    id,
+                    evidence_for(release, attribution).as_ref()
+                ),
+                ConsentState::Missing
+            );
+        }
+        // A daemon macOS does not hold responsible for itself raises the
+        // alert for whichever app it answers to.
+        let reparented = crate::tools::consent_evidence_store_for_identity(
+            release,
+            home.path(),
+            Some("driver-daemon"),
+            false,
+        );
+        assert_eq!(
+            consent_state(&file, bundle, id, reparented.as_ref()),
+            ConsentState::Missing
+        );
     }
 }

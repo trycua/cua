@@ -10,7 +10,7 @@ web" recipe:
 
 Deterministic and LLM-free. It starts a sandbox, so it is opt-in:
 
-  CUA_E2E_BROWSE=1 python tests/e2e/browse/e2e_browse.py [--cloud]
+  CUA_E2E_BROWSE=1 python tests/e2e/browse/e2e_browse.py
 
 Environment:
   CUA_BIN            the cua binary (default: `cua` on PATH)
@@ -97,12 +97,12 @@ def find_ref(snapshot: dict, role: str, name: str) -> str:
     raise Step(f"no {role} {name!r} in snapshot: {snapshot.get('outline')}")
 
 
-async def run(cloud: bool, out: pathlib.Path, result: dict) -> dict:
+async def run(out: pathlib.Path, result: dict) -> dict:
     cua = os.environ.get("CUA_BIN", "cua")
     params = StdioServerParameters(command=cua, args=["mcp"], env=dict(os.environ))
     name = f"cua-e2e-browse-{uuid.uuid4().hex[:6]}"
     started = time.monotonic()
-    result.update({"sandbox": name, "location": "cloud" if cloud else "local"})
+    result.update({"sandbox": name, "location": "local"})
     async with stdio_client(params) as (r, w):
         async with ClientSession(r, w) as s:
             await s.initialize()
@@ -124,8 +124,6 @@ async def run(cloud: bool, out: pathlib.Path, result: dict) -> dict:
                 # 2. One step: sandbox + browser, optionally opening a page.
                 external = os.environ.get("CUA_E2E_EXTERNAL", "1") != "0"
                 create = {"browser": True, "name": name}
-                if cloud:
-                    create["on"] = "cloud"
                 if external:
                     create["url"] = "https://example.com"
                 # region docs:create
@@ -238,15 +236,14 @@ def main() -> int:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("--cloud", action="store_true", help="run the sandbox on Cua Fleet (gVisor)")
-    a = p.parse_args()
+    p.parse_args()
     if os.environ.get("CUA_E2E_BROWSE") != "1":
         print("skipped: set CUA_E2E_BROWSE=1 (starts a sandbox)")
         return 0
     out = pathlib.Path(os.environ.get("CUA_E2E_OUT", "."))
     result: dict = {}
     try:
-        asyncio.run(run(a.cloud, out, result))
+        asyncio.run(run(out, result))
     except BaseException as e:  # Step, or an ExceptionGroup around one
         leaves = [e]
         while leaves and isinstance(leaves[0], BaseExceptionGroup):

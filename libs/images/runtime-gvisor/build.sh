@@ -30,6 +30,7 @@ work="$(mktemp -d "${TMPDIR:-/var/tmp}/runtime-gvisor.XXXXXX")"
 mnt="$work/root"
 loop=""
 cleanup() {
+    mountpoint -q "$work/boot" 2>/dev/null && umount "$work/boot"
     mountpoint -q "$mnt" 2>/dev/null && umount "$mnt"
     [ -n "$loop" ] && losetup -d "$loop" 2>/dev/null
     rm -rf "$work"
@@ -64,6 +65,20 @@ install -m 0755 "$work/gvisor/gvisor-bin/gvisor_sentry" "$mnt/usr/local/bin/gvis
 cat > "$mnt/etc/cua-runtime/release.json" <<EOF
 {"image":"runtime-gvisor","version":"$RUNTIME_VERSION","arch":"$arch","base":"colima-core $COLIMA_CORE_VERSION","gvisor":"$GVISOR_VERSION","colima":"$COLIMA_VERSION","lima":"$LIMA_VERSION"}
 EOF
+# arm64: pointer authentication off, so gVisor memory checkpoints restore
+# (gvisor#13542; cua_vmm::managed::AFTER_BOOT explains). The grub.d file
+# keeps it across update-grub; the boot partition's grub.cfg (partition 16)
+# gets it now, so the first boot already has it.
+if [ "$arch" = arm64 ]; then
+    echo 'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT arm64.nopauth"' \
+        > "$mnt/etc/default/grub.d/99-cua-nopauth.cfg"
+    boot="$work/boot"
+    mkdir "$boot"
+    mount "${loop}p16" "$boot"
+    sed -i -E '/^[[:space:]]*linux[[:space:]]/ { / arm64\.nopauth/! s/$/ arm64.nopauth/ }' "$boot/grub/grub.cfg"
+    grep -q 'arm64.nopauth' "$boot/grub/grub.cfg"
+    umount "$boot"
+fi
 # The baked files are the verified ones.
 cmp "$work/gvisor/runsc" "$mnt/usr/local/bin/runsc"
 cmp "$work/gvisor/gvisor-bin/gvisor_sentry" "$mnt/usr/local/bin/gvisor-bin/gvisor_sentry"

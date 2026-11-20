@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Seeded randomness, bit-identical to the motion lab's `rng.js`.
 
 /// FNV-1a over UTF-16 code units, like `rng.js hashString`.

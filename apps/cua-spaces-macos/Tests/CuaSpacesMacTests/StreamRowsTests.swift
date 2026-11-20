@@ -105,7 +105,7 @@ struct StreamRowsTests {
         let m = StreamFixture.model()
         await m.refresh()
         let s = m.section()
-        #expect(s.rows.map(\.label) == ["Desktop (1280\u{d7}800)", "Mozilla Firefox", "Release notes", "xterm",
+        #expect(s.rows.map(\.label) == ["Desktop", "Mozilla Firefox", "Release notes", "xterm",
                                          StreamFixture.longTitle])
         #expect(s.rows[0].resolution == "1280\u{d7}800")
         #expect(s.rows[0].icon == .os(id: "os-ubuntu"))
@@ -146,7 +146,7 @@ struct StreamRowsTests {
         await m.refresh()
         let s = m.section()
         #expect(s.rows.map(\.label) == ["Desktop"])
-        #expect(s.statusText == "No windows: the Space\u{2019}s window host is not up.")
+        #expect(s.statusText == "Can\u{2019}t see this Space\u{2019}s windows yet.")
     }
 
     @Test func fixtureBackendReportsADisplay() async {

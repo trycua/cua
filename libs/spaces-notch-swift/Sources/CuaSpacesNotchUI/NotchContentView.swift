@@ -705,6 +705,20 @@ public struct TileView: View {
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.white.opacity(0.6))
             }
+            if let note = tile.note {
+                // A pinned desktop that cannot be opened now ("Offline", "Not shared"): it stays, dimmed, and says why.
+                Text(note)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(.black.opacity(0.6)))
+            }
+            if tile.pinned {
+                PinnedMark()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(5)
+            }
             if tile.signedIn {
                 SignedInKey()
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
@@ -734,12 +748,27 @@ public struct TileView: View {
     }
 
     private var dot: Color {
+        if tile.note != nil { return .gray }
         switch tile.status {
         case .running, .local: return .green
         case .approval: return .orange
         case .provisioning: return .blue
         case .suspended, .deleting: return .gray
         }
+    }
+}
+
+/// A Space or desktop pinned to the notch: a small pin on its thumbnail.
+struct PinnedMark: View {
+    var body: some View {
+        Image(systemName: "pin.fill")
+            .font(.system(size: 8, weight: .bold))
+            .foregroundStyle(.white)
+            .frame(width: 16, height: 16)
+            .background(Circle().fill(.black.opacity(0.65)))
+            .overlay(Circle().strokeBorder(.white.opacity(0.18), lineWidth: 0.5))
+            .accessibilityLabel("Pinned")
+            .help("Pinned to the notch")
     }
 }
 

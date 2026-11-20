@@ -3,7 +3,7 @@ import Cua
 
 let cua = try Cua.embedded()
 let sb = try await cua.sandboxes().create(options: SandboxCreateOptions(
-    on: "local",  // or "cloud"
+    on: "local",  // or "aws"
     image: try Image.linux(),
     name: "dev",
     waitFor: [ReadinessProbe(service: "env")]  // until its spacesd answers

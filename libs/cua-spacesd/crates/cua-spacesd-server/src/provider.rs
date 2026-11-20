@@ -150,7 +150,7 @@ pub(crate) fn register_stub(routes: &mut tonic::service::Routes, service: &'stat
 
 /// Limitation reported by a driver that is not a host providing Spaces.
 pub const NOT_A_SPACES_HOST: &str =
-    "this machine does not provide Spaces (a host set up with `cua host setup --provide-spaces` does)";
+    "this computer does not provide Spaces (a host set up with `cua host setup --provide-spaces` does)";
 
 /// [`register_stub`] with an explicit feature and limitation.
 pub(crate) fn register_stub_with(

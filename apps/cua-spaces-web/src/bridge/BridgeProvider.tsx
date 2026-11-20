@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { createContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useEffect, useRef, useState, type ReactNode } from "react";
 import type { BridgeMode, DataAdapter } from "./adapter";
 import { createAdapter } from "./adapters";
 import { loadCore, unavailableCore, type CoreClient } from "./core";
@@ -43,8 +43,13 @@ function deferred<T>() {
  * its children at once; hooks report `isLoading` until data arrives.
  */
 export function BridgeProvider({ children, mode, adapter, core, storeOptions }: BridgeProviderProps) {
+  // The first render's `ready` is the one the first store resolves: a
+  // child's effect (it runs before this provider's) may already be waiting
+  // on it (the Machines page's first health check).
+  const firstReady = useRef<ReturnType<typeof deferred<BridgeStore>> | null>(null);
   const [value, setValue] = useState<BridgeContextValue>(() => {
     const d = deferred<BridgeStore>();
+    firstReady.current = d;
     return {
       mode: adapter?.mode ?? mode ?? detectMode(),
       core: core ?? unavailableCore("loading", "loading"),
@@ -56,7 +61,8 @@ export function BridgeProvider({ children, mode, adapter, core, storeOptions }: 
 
   useEffect(() => {
     let live = true;
-    const d = deferred<BridgeStore>();
+    const d = firstReady.current ?? deferred<BridgeStore>();
+    firstReady.current = null;
     const data = adapter ?? createAdapter(mode ?? detectMode());
     let store: BridgeStore | null = null;
     let uninstallParity = () => {};

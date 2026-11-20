@@ -47,31 +47,13 @@ DISPLAY_NAMES = {
     "cua-sdk": "cua SDK",
     "cua-spacesd": "cua-spacesd",
     "sandbox": "Cua Sandbox",
-    "agent": "Cua Agent",
-    "core": "Cua Core",
     "bench": "Cua Bench",
-    "bench-ui": "Cua Bench UI",
-    "som": "Cua SOM",
-    "sandbox-apps": "Cua Sandbox Apps",
-    "train": "Cua Train",
-    "npm-core": "@trycua/core",
-    "npm-playground": "@trycua/playground",
-    "cuabot": "CuaBot",
 }
 # component -> (registry, package); the footer names the exact published version.
 INSTALL = {
     "cua-sdk": (("pypi", "cua"), ("npm", "@trycua/cua")),
     "sandbox": (("pypi", "cua-sandbox"),),
-    "agent": (("pypi", "cua-agent"),),
-    "core": (("pypi", "cua-core"),),
     "bench": (("pypi", "cua-bench"),),
-    "bench-ui": (("pypi", "cua-bench-ui"),),
-    "som": (("pypi", "cua-som"),),
-    "sandbox-apps": (("pypi", "cua-sandbox-apps"),),
-    "train": (("pypi", "cua-train"),),
-    "npm-core": (("npm", "@trycua/core"),),
-    "npm-playground": (("npm", "@trycua/playground"),),
-    "cuabot": (("npm", "cuabot"),),
 }
 
 
@@ -82,16 +64,7 @@ INSTALL = {
 # release the notes come from git alone, so they still list every change; the
 # check that the changelog cites each pull request starts with the next one.
 LEGACY_BASELINE_TAGS = frozenset({
-    "agent-v0.9.0",
-    "core-v0.3.2",
     "bench-v0.3.0",
-    "bench-ui-v0.7.1",
-    "som-v0.1.4",
-    "sandbox-apps-v0.1.2",
-    "train-v0.1.2",
-    "npm-core-v0.1.6",
-    "npm-playground-v0.3.0",
-    "cuabot-v1.0.16",
 })
 
 
@@ -126,9 +99,8 @@ def resolve_tag(config: Mapping[str, Any], tag: str) -> dict[str, Any] | None:
         "version": version,
         "tag": tag,
         "tag_prefix": prefix,
-        # The pinned release-please 17.3.0 has no `additional-paths` support
-        # (the key is ignored), so the changelog covers the package path only.
-        "paths": [path],
+        # release_please_additional_paths.cjs counts these for the changelog too.
+        "paths": [path, *package.get("additional-paths", [])],
         "exclude_paths": [*package.get("exclude-paths", []), *nested],
         "changelog": f"{path}/{package.get('changelog-path', 'CHANGELOG.md')}",
         "self_rendered": component in SELF_RENDERED,
@@ -173,6 +145,13 @@ def render(
         manifest = _build(plan, repo_root, repository, tag, previous, sha, attribution, client, ref)
     finally:
         release_attribution.changelog_references_change = cites_every_change
+    unresolved = manifest.get("unresolvedIdentities") or []
+    if unresolved:
+        print(f"::warning::{len(unresolved)} contributor identities are credited by display name")
+    # Also refreshes the rolling issue when nothing is unresolved, so resolved entries drop off.
+    release_attribution.report_unresolved_identities(
+        client, repository, unresolved, attribution, tag
+    )
     body = release_attribution.render_body(manifest, install_footer(plan["component"], plan["version"]))
     if len(body.encode()) > 125_000:
         raise ReleaseError("rendered GitHub release body exceeds 125,000 bytes")
@@ -228,6 +207,35 @@ def apply(api: Any, repository: str, tag: str, body: str, *, attempts: int = 20,
     return True
 
 
+def untagged_draft(api: Any, repository: str, tag: str) -> dict[str, Any] | None:
+    """The Release Please draft GitHub lists as `untagged-...` for `tag`, if any.
+
+    Release Please titles it `<component>: v<version>`. When its tag does not
+    exist yet, GitHub reports a placeholder `untagged-<hash>` tag, so a lookup
+    by tag misses it and the CD workflow would create a second release for the
+    tag, leaving this draft behind for good.
+    """
+    component, sep, version = tag.rpartition("-v")
+    if not sep or not component:
+        return None
+    title = f"{component}: v{version}"
+    matches: list[dict[str, Any]] = []
+    for page in range(1, 11):
+        releases = list(api.get(f"repos/{repository}/releases?per_page=100&page={page}"))
+        matches.extend(
+            release
+            for release in releases
+            if release.get("draft")
+            and str(release.get("tag_name") or "").startswith("untagged-")
+            and release.get("name") == title
+        )
+        if len(releases) < 100:
+            break
+    if len(matches) > 1:
+        raise ReleaseError(f"expected one untagged draft for {tag}, found {[m.get('id') for m in matches]}")
+    return matches[0] if matches else None
+
+
 def publish_draft(
     api: Any,
     repository: str,
@@ -243,17 +251,19 @@ def publish_draft(
     and never makes a monorepo component the repository-wide Latest release.
     """
     matches = releases_by_tag(api, repository, tag)
-    if not matches:
-        return False
     if len(matches) > 1:
         raise ReleaseError(f"expected one GitHub release for {tag}, found {[m.get('id') for m in matches]}")
-    release = matches[0]
+    release = matches[0] if matches else untagged_draft(api, repository, tag)
+    if release is None:
+        return False
     if asset_dir is not None and asset_dir.is_dir() and any(p.is_file() for p in asset_dir.iterdir()):
         upload_assets(api, repository, release, asset_dir)
     if release.get("draft"):
         fields: dict[str, Any] = {"draft": False, "prerelease": prerelease, "make_latest": "false"}
         if name:
             fields["name"] = name
+        if str(release.get("tag_name") or "").startswith("untagged-"):
+            fields["tag_name"] = tag
         api.patch(f"repos/{repository}/releases/{release['id']}", fields)
         print(f"published the Release Please draft for {tag}")
     else:

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Pure math for packing/unpacking `LPARAM` coordinate pairs in window
 //! messages — `WM_MOUSEMOVE`, `WM_LBUTTONDOWN`, `WM_RBUTTONUP`, and friends.
 //!

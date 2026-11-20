@@ -20,7 +20,7 @@ impl cua_host::AccountTokens for SessionTokens {
     async fn access_token(&self) -> cua_host::Result<String> {
         self.0.get_valid_token(false).await.map_err(|e| {
             cua_host::Error::Unauthenticated(format!(
-                "sign in to Cua to set this machine up through the relay ({e})"
+                "sign in to Cua to set this computer up through the relay ({e})"
             ))
         })
     }

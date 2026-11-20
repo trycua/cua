@@ -25,7 +25,17 @@ vi.mock("../../../../../libs/cua/crates/cua-spacesd-html5/web/src/core/mediaSess
 
 type Call = { method: string; args: Record<string, unknown> };
 
-const TERMINAL = { id: "w-1", appName: "Terminal", title: "cua@space: ~", visible: true, appId: "org.gnome.Terminal", targetEpoch: 3, widthPx: 800, heightPx: 600, pid: 9 };
+const TERMINAL = {
+  id: "w-1",
+  appName: "Terminal",
+  title: "cua@space: ~",
+  visible: true,
+  appId: "org.gnome.Terminal",
+  targetEpoch: 3,
+  widthPx: 800,
+  heightPx: 600,
+  pid: 9,
+};
 
 /** The Electron preload, answering as the shell's bridge does; `open` is the host's panels. */
 function electron() {
@@ -159,6 +169,8 @@ describe("the source picker", () => {
     fireEvent.click(getByText("Full desktop"));
     expect(await findByText("Refresh windows")).toBeTruthy();
     fireEvent.click(await findByText("cua@space: ~"));
-    await waitFor(() => expect(calls.filter((c) => c.method === "spaces.openStream").at(-1)?.args).toEqual({ spaceId: "local:a", tier: "full", windowId: "w-1", epoch: 3 }));
+    await waitFor(() =>
+      expect(calls.filter((c) => c.method === "spaces.openStream").at(-1)?.args).toEqual({ spaceId: "local:a", tier: "full", windowId: "w-1", epoch: 3 }),
+    );
   });
 });

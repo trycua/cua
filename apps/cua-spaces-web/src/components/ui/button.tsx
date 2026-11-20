@@ -13,18 +13,17 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: "border-transparent bg-primary text-primary-foreground shadow-xs hover:bg-primary/90",
-        outline:
-          "border-input bg-card text-foreground shadow-xs hover:bg-accent dark:bg-input/30 dark:hover:bg-input/50",
+        outline: "border-input bg-card text-foreground shadow-xs hover:bg-accent dark:bg-input/30 dark:hover:bg-input/50",
         secondary: "border-transparent bg-secondary text-secondary-foreground hover:bg-accent",
         ghost: "border-transparent text-foreground hover:bg-accent",
         destructive: "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/90",
       },
       size: {
         default: "h-8 px-3",
-        sm: "h-7 rounded-md px-2.5 text-xs",
+        sm: "h-7 px-2.5 text-xs",
         lg: "h-9 px-4",
         icon: "size-8",
-        "icon-sm": "size-7 rounded-md",
+        "icon-sm": "size-7",
       },
     },
     defaultVariants: { variant: "default", size: "default" },

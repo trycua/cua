@@ -246,7 +246,15 @@ async fn create_staging_file(path: &Path) -> std::io::Result<tokio::fs::File> {
 
 fn app_on_path(app: &str) -> bool {
     let candidates: &[&str] = match app {
-        "chrome" => &["google-chrome", "google-chrome-stable", "chrome"],
+        // The Spaces Linux image ships Chromium, which the Chrome importer
+        // lands in and launches when there is no Google Chrome.
+        "chrome" => &[
+            "google-chrome",
+            "google-chrome-stable",
+            "chrome",
+            "chromium",
+            "chromium-browser",
+        ],
         "chromium" => &["chromium", "chromium-browser"],
         "firefox" => &["firefox", "firefox-esr"],
         "vscode" => &["code"],
@@ -450,10 +458,10 @@ impl TeleportService for TeleportServiceImpl {
                     ));
                 };
                 let plaintext = cua_machine_seal::open(
-                    keypair,
+                    &keypair,
                     &import_id,
                     cua_machine_seal::purpose::TELEPORT_BUNDLE,
-                    ctx.seal_replay_guard(),
+                    &ctx.seal_replay_guard(),
                     &envelope,
                 )
                 .map_err(|e| {
@@ -1055,8 +1063,10 @@ mod tests {
         let store = h.service.ledger_store().clone();
         let ledger = store.read("imp-1").unwrap().expect("ledger written");
         assert_eq!(ledger.provider, "chrome");
-        assert_eq!(ledger.files.len(), 1);
+        // The cookies, and the note that a signed-in browser is available.
+        assert_eq!(ledger.files.len(), 2, "{:?}", ledger.files);
         assert!(ledger.files[0].ends_with("Default/Cookies"));
+        assert!(ledger.files[1].ends_with(".cua/teleport/signed-in-browser.json"));
         #[cfg(unix)]
         {
             assert_eq!(mode(&h.ledger), 0o700);

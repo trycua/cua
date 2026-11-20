@@ -15,6 +15,7 @@ use super::review::{
     VaultSource,
 };
 use crate::keyvault::wire::KvInventory;
+use crate::message::Msg;
 use crate::util::{contains_word, to_fixed};
 use serde::{Deserialize, Serialize};
 
@@ -81,24 +82,22 @@ pub enum SensitiveGroup {
 }
 
 impl SensitiveGroup {
-    /// The checkbox label.
-    pub fn label(self) -> &'static str {
-        match self {
-            SensitiveGroup::SignIns => "Keep me signed in",
-            SensitiveGroup::Passwords => "Saved passwords",
-            SensitiveGroup::History => "Browsing history",
-        }
+    /// The checkbox label (`teleport.sensitive.<group>.label`).
+    pub fn label(self) -> Msg {
+        Msg::new(match self {
+            SensitiveGroup::SignIns => "teleport.sensitive.sign_ins.label",
+            SensitiveGroup::Passwords => "teleport.sensitive.passwords.label",
+            SensitiveGroup::History => "teleport.sensitive.history.label",
+        })
     }
 
-    /// The line under it.
-    pub fn detail(self) -> &'static str {
-        match self {
-            SensitiveGroup::SignIns => "Sends the session cookies.",
-            SensitiveGroup::Passwords => "Sends the passwords saved in the app.",
-            SensitiveGroup::History => {
-                "Sends the history of pages visited, and the bookmarks where the browser keeps them together."
-            }
-        }
+    /// The line under it (`teleport.sensitive.<group>.detail`).
+    pub fn detail(self) -> Msg {
+        Msg::new(match self {
+            SensitiveGroup::SignIns => "teleport.sensitive.sign_ins.detail",
+            SensitiveGroup::Passwords => "teleport.sensitive.passwords.detail",
+            SensitiveGroup::History => "teleport.sensitive.history.detail",
+        })
     }
 }
 
@@ -109,9 +108,9 @@ pub struct SensitiveOption {
     /// The group.
     pub group: SensitiveGroup,
     /// Label.
-    pub label: String,
+    pub label: Msg,
     /// The line under the label.
-    pub detail: String,
+    pub detail: Msg,
     /// Checked.
     pub checked: bool,
 }
@@ -348,11 +347,24 @@ pub struct InstallCuaPrompt {
 
 /// Where people install Cua.
 pub const CUA_INSTALL_URL: &str = "https://cua.ai/install";
-/// Opens the Keyvault page of an installed Cua app.
-pub const CUA_OPEN_URL: &str = "cua://keyvault";
+// The "Open Cua" button opens the Keyvault page of this process's channel's
+// app, `cua://keyvault` or `cua-local://keyvault` (`CuaChannel::keyvault_url`).
 
 /// The prompt when `texts` carry the Keyvault's `requires_cua_app` refusal.
 pub fn requires_cua_app(texts: &[String], installed_flag: bool) -> Option<InstallCuaPrompt> {
+    requires_cua_app_for(
+        cua_home::channel::CuaChannel::current(),
+        texts,
+        installed_flag,
+    )
+}
+
+/// [`requires_cua_app`] for `channel`'s app.
+fn requires_cua_app_for(
+    channel: cua_home::channel::CuaChannel,
+    texts: &[String],
+    installed_flag: bool,
+) -> Option<InstallCuaPrompt> {
     if !texts
         .iter()
         .any(|t| contains_word(t, "requires_cua_app") || contains_word(t, "RequiresCuaApp"))
@@ -370,7 +382,7 @@ pub fn requires_cua_app(texts: &[String], installed_flag: bool) -> Option<Instal
             title: "Open Cua to teleport your session".into(),
             message: "The Cua app keeps your logins in its Keyvault and asks you before sharing them. Open it, then try again.".into(),
             action_label: "Open Cua".into(),
-            url: CUA_OPEN_URL.into(),
+            url: channel.keyvault_url(),
         }
     } else {
         InstallCuaPrompt {
@@ -772,8 +784,8 @@ pub fn sensitive_options(s: &PickerState) -> Vec<SensitiveOption> {
         .flat_map(|e| e.sensitive_groups.iter())
         .map(|&group| SensitiveOption {
             group,
-            label: group.label().into(),
-            detail: group.detail().into(),
+            label: group.label(),
+            detail: group.detail(),
             checked: s.sensitive.contains(&group),
         })
         .collect()
@@ -1688,14 +1700,16 @@ mod tests {
             },
         );
         let opts = sensitive_options(&s);
-        let labels: Vec<(&str, bool)> =
-            opts.iter().map(|o| (o.label.as_str(), o.checked)).collect();
+        let labels: Vec<(&str, bool)> = opts
+            .iter()
+            .map(|o| (o.label.code.as_str(), o.checked))
+            .collect();
         assert_eq!(
             labels,
             [
-                ("Keep me signed in", true),
-                ("Saved passwords", false),
-                ("Browsing history", false)
+                ("teleport.sensitive.sign_ins.label", true),
+                ("teleport.sensitive.passwords.label", false),
+                ("teleport.sensitive.history.label", false)
             ]
         );
         assert_eq!(plan_sensitive(&s), [SensitiveGroup::SignIns]);
@@ -1771,8 +1785,25 @@ mod tests {
         )
         .unwrap();
         assert!(p.installed);
-        assert_eq!(p.url, CUA_OPEN_URL);
+        assert_eq!(p.url, cua_home::channel::CuaChannel::current_keyvault_url());
         assert!(requires_cua_app(&["xrequires_cua_app".into()], false).is_none());
+    }
+
+    #[test]
+    fn the_open_cua_button_opens_the_channels_app() {
+        use cua_home::channel::CuaChannel;
+        let texts = ["requires_cua_app: installed but not running".to_string()];
+        let url = |c| requires_cua_app_for(c, &texts, false).unwrap().url;
+        assert_eq!(url(CuaChannel::Stable), "cua://keyvault");
+        // Local opens Cua Spaces Local, never the released app.
+        assert_eq!(url(CuaChannel::Local), "cua-local://keyvault");
+        // Not installed: the install link, whichever channel.
+        let texts = ["requires_cua_app".to_string()];
+        for c in CuaChannel::ALL {
+            let p = requires_cua_app_for(c, &texts, false).unwrap();
+            assert!(!p.installed);
+            assert_eq!(p.url, CUA_INSTALL_URL);
+        }
     }
 
     fn chrome_entry() -> CatalogEntry {

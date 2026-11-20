@@ -1,0 +1,4 @@
+{"ts":"2026-10-24T16:59:01Z","action":"connect","provider":"aws","kind":"","id":"","space":"","actor":"user","outcome":"ok","detail":"AWS · us-west-2 ttl 4h"}
+{"ts":"2026-10-24T17:01:31Z","action":"connect","provider":"hetzner","kind":"","id":"","space":"","actor":"user","outcome":"ok","detail":"Hetzner · fsn1 ttl 6h"}
+{"ts":"2026-10-24T17:01:31Z","action":"host_recorded","provider":"hetzner","kind":"instance","id":"cua-host-hetzner-1-df8358","space":"hetzner-1","actor":"pool","outcome":"ok","detail":"cx23 in fsn1, recorded before the cloud call"}
+{"ts":"2026-10-24T17:01:31Z","action":"host_created","provider":"hetzner","kind":"instance","id":"1002","space":"hetzner-1","actor":"pool","outcome":"ok","detail":"cx23 in fsn1, ttl 24 h"}

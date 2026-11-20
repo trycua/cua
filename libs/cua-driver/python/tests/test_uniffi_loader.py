@@ -95,6 +95,17 @@ class GeneratedOptionsTests(unittest.TestCase):
             EmbeddedDriverHostOptions(**required, no_overlay=True).no_overlay
         )
 
+    def test_embedded_diagnostics_record_is_public(self) -> None:
+        from cua_driver import EmbeddedDriverDiagnostics
+
+        diagnostics = EmbeddedDriverDiagnostics(
+            lifecycle_phase="startup",
+            exit_code=7,
+            stderr_tail="failed",
+            stderr_truncated=False,
+        )
+        self.assertEqual(diagnostics.exit_code, 7)
+
 
 @unittest.skipUnless(LIBRARY.exists(), "host-native UniFFI library is not staged")
 @unittest.skipIf(os.name == "nt", "Unix socket fixture")
@@ -131,7 +142,7 @@ while True:
             if request["method"] == "metadata":
                 result = {
                     "driver_version": "0.10.0",
-                    "contract_version": "0.8.0",
+                    "contract_version": "0.9.0",
                     "tools_list_schema_version": "1",
                     "capability_version": "1",
                     "mcp_protocol_version": "2025-06-18",
@@ -219,7 +230,7 @@ except FileNotFoundError:
                         if request["method"] == "metadata":
                             result = {
                                 "driver_version": "0.12.6",
-                                "contract_version": "0.8.0",
+                                "contract_version": "0.9.0",
                                 "tools_list_schema_version": "1",
                                 "capability_version": "1",
                                 "mcp_protocol_version": "2025-06-18",
@@ -287,10 +298,8 @@ except FileNotFoundError:
             driver = CuaDriver.connect(socket_path)
             expected_methods = {
                 "start_session",
-                "escalate_session",
                 "get_session",
                 "list_sessions",
-                "get_session_state",
                 "end_session",
                 "get_desktop_state",
                 "get_screen_size",
@@ -399,7 +408,7 @@ except FileNotFoundError:
         from cua_driver import CuaDriver, DriverExecutionMode
 
         async def scenario() -> None:
-            driver = CuaDriver.create()
+            driver = CuaDriver.create(embedded=True)
             self.assertEqual(driver.execution_mode(), DriverExecutionMode.EMBEDDED)
             self.assertEqual(driver.socket_path(), "")
             self.assertTrue(driver.is_available())

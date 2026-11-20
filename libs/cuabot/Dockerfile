@@ -24,6 +24,14 @@ RUN apt-get update && apt-get install -y \
     git \
     dos2unix
 
+# CUA-1948: the compromised eMudhra intermediates. Ubuntu's ca-certificates >= 20260816ubuntu0.<release>.1 drops the
+# roots they chain to; Debian has not shipped that yet, so disable both roots explicitly (a no-op once they are gone).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && sed -i -E 's#^(mozilla/(emSign_ECC_Root_CA_-_G3|Comodo_AAA_Services_root)\.crt)$#!\1#' /etc/ca-certificates.conf \
+ && update-ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 # Install xpra from official repo (must be v6+)
 RUN apt-get update \
     && wget -O /usr/share/keyrings/xpra.asc https://xpra.org/xpra.asc \
@@ -104,16 +112,28 @@ RUN ln -sf /home/user/android-sdk/platform-tools/adb /usr/local/bin/adb \
          ln -sf /home/user/android-sdk/emulator/emulator /usr/local/bin/emulator; \
        fi
 
-# Install Chromium from xtradeb PPA (avoids the snap Ubuntu ships)
-RUN add-apt-repository ppa:xtradeb/apps -y \
-    && apt-get update \
-    && apt-get install -y chromium \
+# Chromium: the Playwright build pinned below, the same on amd64 and arm64.
+# The xtradeb PPA was unpinned and lagged Chrome security releases (156 while
+# 158.0.8127.36 fixed CVE-2026-131037 and CVE-2026-131043). Keep
+# PLAYWRIGHT_VERSION in step with libs/cuabot/package.json; the build fails if
+# the browser is older than MIN_CHROMIUM_MAJOR.
+ARG PLAYWRIGHT_VERSION=1.65.1
+ARG MIN_CHROMIUM_MAJOR=158
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
+RUN npm install -g "playwright@${PLAYWRIGHT_VERSION}" \
+    && playwright install --with-deps chromium \
+    && chmod -R a+rX /opt/pw-browsers \
+    && CHROME_BIN="$(ls -d /opt/pw-browsers/chromium-*/chrome-linux*/chrome | head -1)" \
+    && ln -sf "$CHROME_BIN" /usr/bin/chromium-bin \
+    && MAJOR="$(/usr/bin/chromium-bin --version | grep -oE '[0-9]+' | head -1)" \
+    && echo "Chromium major: $MAJOR" \
+    && if [ "$MAJOR" -lt "$MIN_CHROMIUM_MAJOR" ]; then echo "ERROR: Chromium $MAJOR < $MIN_CHROMIUM_MAJOR"; exit 1; fi \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Create chromium wrapper that adds --no-sandbox (required in container)
-RUN mv /usr/bin/chromium /usr/bin/chromium-bin \
-    && printf '#!/bin/bash\nexec /usr/bin/chromium-bin --no-sandbox "$@"' > /usr/bin/chromium \
-    && chmod +x /usr/bin/chromium
+RUN printf '#!/bin/bash\nexec /usr/bin/chromium-bin --no-sandbox "$@"' > /usr/bin/chromium \
+    && chmod +x /usr/bin/chromium \
+    && printf '[Desktop Entry]\nName=Chromium\nExec=/usr/bin/chromium %%U\nType=Application\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\n' > /usr/share/applications/chromium.desktop
 
 # Setup dbus and create runtime directories
 RUN mkdir -p /run/dbus /tmp/runtime-user \
@@ -132,14 +152,10 @@ WORKDIR /home/user
 
 ENV PATH="/home/user/.local/bin:${PATH}"
 
-# Install agent-browser's browser as user. Chrome for Testing has no Linux
-# arm64 build, so on arm64 agent-browser drives the system Chromium above.
-RUN if [ "$(dpkg --print-architecture)" = arm64 ]; then \
-      mkdir -p ~/.agent-browser \
-      && printf '{"executablePath": "/usr/bin/chromium"}\n' > ~/.agent-browser/config.json; \
-    else \
-      agent-browser install; \
-    fi
+# agent-browser drives the pinned Chromium above on every architecture, so it
+# never downloads its own (unpinned) browser.
+RUN mkdir -p ~/.agent-browser \
+    && printf '{"executablePath": "/usr/bin/chromium"}\n' > ~/.agent-browser/config.json
 
 # Set Chromium as default browser (needed for some agent CLI onboardings)
 RUN xdg-settings set default-web-browser chromium.desktop 2>/dev/null || true

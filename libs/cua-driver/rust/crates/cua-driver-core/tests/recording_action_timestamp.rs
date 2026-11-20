@@ -1,6 +1,9 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use cua_driver_core::recording::{
     now_ms, set_ax_snapshot_fn, set_element_bounds_fn, set_screenshot_fn, RecordingCaller,
-    RecordingSession,
+    RecordingSession, StopBy,
 };
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -36,7 +39,7 @@ fn action_json_timestamp_is_the_documented_iso_8601_wall_clock_time() {
         .unwrap();
     std::thread::sleep(Duration::from_millis(5));
     recording.finish_turn_with_outcome(pending, "Pressed a", None, false);
-    recording.stop_owner(None).unwrap();
+    recording.stop(StopBy::Anyone).unwrap();
     let latest = OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000;
 
     let recorded: Value = serde_json::from_slice(

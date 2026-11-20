@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 #![cfg(target_os = "windows")]
 
 //! An elevated Windows Driver must not hand its administrator token to the

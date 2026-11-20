@@ -66,8 +66,8 @@ RUN echo 'Server = https://mirror.omarchy.org/$repo/os/$arch' >/etc/pacman.d/mir
  && pacman-key --init \
  && pacman-key --populate archlinux \
  && pacman -Sy --noconfirm archlinux-keyring \
- && curl -fsSL --retry 5 -o "/tmp/$OMARCHY_KEYRING" "https://pkgs.omarchy.org/edge/x86_64/$OMARCHY_KEYRING" \
- && curl -fsSL --retry 5 -o "/tmp/$OMARCHY_KEYRING.sig" "https://pkgs.omarchy.org/edge/x86_64/$OMARCHY_KEYRING.sig" \
+ && curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "/tmp/$OMARCHY_KEYRING" "https://pkgs.omarchy.org/edge/x86_64/$OMARCHY_KEYRING" \
+ && curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "/tmp/$OMARCHY_KEYRING.sig" "https://pkgs.omarchy.org/edge/x86_64/$OMARCHY_KEYRING.sig" \
  && echo "$OMARCHY_KEYRING_SHA256  /tmp/$OMARCHY_KEYRING" | sha256sum -c - \
  && install -d /usr/share/pacman/keyrings \
  && for f in omarchy.gpg omarchy-trusted omarchy-revoked; do \
@@ -89,10 +89,37 @@ RUN set -eu; \
       [ "$attempt" = 3 ] && exit 1; echo "pacman attempt $attempt failed; retrying" >&2; sleep 5; done; \
     if [ "$OMARCHY_PACKAGES" = full ]; then \
       pacman -S --noconfirm --needed $(sed 's/#.*//' /usr/share/omarchy/install/omarchy-base.packages | xargs); fi; \
+    want="$(pacman -Qi cua-hyprland-plugin | awk -F': ' '/^Depends On/{print $2}' | tr -s ' ' '\n' | sed -n 's/^hyprland=//p')"; \
+    have="$(pacman -Q hyprland | cut -d' ' -f2)"; \
+    if [ -n "$want" ] && [ "$want" != "$have" ]; then \
+      echo "ERROR: cua-hyprland-plugin pins hyprland=$want but hyprland $have is installed; the plugin must be rebuilt for the Hyprland build Omarchy ships." >&2; exit 1; fi; \
     pacman -Q omarchy-dev omarchy-settings-dev cua-driver-bin cua-hyprland-plugin hyprland; \
     test -x /usr/bin/cua-driver; test -f /usr/lib/cua/hyprland/cua-hyprland-plugin.so; \
     yes | pacman -Scc >/dev/null; rm -f /tmp/packages.desktop; \
+    install -d /etc/cua-image; \
+    cp /etc/pacman.d/mirrorlist /etc/cua-image/pacman-mirrorlist.build; \
     mv /etc/pacman.d/mirrorlist.omarchy /etc/pacman.d/mirrorlist
+
+# CUA-1948: the compromised eMudhra intermediates. Arch's ca-certificates-mozilla
+# 3.131.1-1 drops the roots they chain to; an older archive snapshot may not have
+# it yet, so block them explicitly (a no-op once they are gone).
+COPY omarchy/files/distrust-emudhra.sh /tmp/distrust-emudhra.sh
+RUN sh /tmp/distrust-emudhra.sh && rm -f /tmp/distrust-emudhra.sh
+
+# Stopgap (CUA-3107) until cua-hyprland-plugin is qualified for Hyprland 0.57:
+# the plugin pins hyprland=0.56.2-4, but the Omarchy edge config (omarchy-dev,
+# which has no old versions to pin) moved to 0.57 on 2026-11-01 and sets
+# misc.bell_sound, a key 0.56 does not have. Hyprland 0.56 then rejects the
+# whole hl.config block in looknfeel.lua (focus_on_activate, dwindle,
+# cursor, ...) and shows a config-error bar over the desktop, and the doctor's
+# grid fixture never shows in a screenshot. Drop only that key, and only while
+# the installed Hyprland is older than 0.57.
+RUN set -eu; \
+    hv="$(pacman -Q hyprland | cut -d' ' -f2)"; \
+    if [ "$(vercmp "$hv" 0.57.0)" -lt 0 ]; then \
+      grep -rl 'bell_sound' /usr/share/omarchy/default/hypr | xargs -r sed -i '/^[[:space:]]*bell_sound[[:space:]]*=/d'; \
+      if grep -rn 'bell_sound' /usr/share/omarchy/default/hypr; then echo "ERROR: misc.bell_sound is still set for Hyprland $hv" >&2; exit 1; fi; \
+    fi
 
 # The desktop user (uid 1000, like every libs/images desktop), seeded from
 # Omarchy's /etc/skel and its unattended setup: the default theme applied
@@ -135,7 +162,7 @@ RUN --mount=type=bind,source=linux/dist,target=/dist \
     if [ -x "$bin" ]; then ldd "$bin" | grep 'not found' && exit 1 || true; fi; \
     mkdir -p /etc/cua-image; echo "$CUA_SPACESD_SOURCE" >/etc/cua-image/spacesd-source
 
-# Token handling, Fleet claim token sync and the in-guest fixtures are shared
+# Token handling, claim token sync and the in-guest fixtures are shared
 # with libs/images/linux; the session glue and units are Omarchy's own.
 COPY linux/files/ensure-env-token.sh linux/files/env-token-mode.sh \
      linux/files/start-spacesd.sh linux/files/start-token-sync.sh \

@@ -1,0 +1,77 @@
+---
+title: Computers and Spaces
+description: 'How computers, their shared desktops and Spaces relate: one list of computers, the state on each row, and the sandbox Space you actually work in.'
+---
+
+Cua Spaces has two things to know: **computers** and **Spaces**. A computer
+provides Spaces. A Space is the isolated sandbox where work happens.
+
+| Name | What it is | Where you see or use it |
+| --- | --- | --- |
+| Computer | A Mac, Windows or Linux computer you added to your account, by signing in on it or with **Add a computer**. It can provide Spaces, share its own desktop, or both. | The **Computers** tab. `--on host:<machine-id>` creates new Spaces on it. |
+| Space | An isolated sandbox: an image plus a kind (`container`, `vm` or `microvm`; containers use gVisor where installed). See [Space kinds](/spaces/concepts/space-kinds). | The **Spaces** tab. `local:<name>` on this computer, or its own `relay:` id when it runs on another computer, with `host` naming the computer that runs it. A computer you added by address (set up with `--direct`, no relay) has a `direct:<host:port>` id. |
+| A computer's shared desktop | The computer's own screen, input, shell and files, shown as a Space while **Let other computers control this desktop** is on. It is not a sandbox. | `relay:<machine-id>` for a computer set up on the relay. A direct host is its own `direct:<host:port>` Space, added with `cua spaces add <host:port> --host`. |
+
+## One list of computers
+
+Sign in on a computer and it joins your account. Every computer you own appears
+in the **Computers** tab on all the others. There is no second list to keep in
+step: a computer's state is a line on its row, and what you can do to it is on its page.
+
+The state on a row is one of these:
+
+- **Online** or **Offline**.
+- **Desktop shared**, or **Desktop and 2 Spaces** when it also provides Spaces.
+  The shared desktop is not counted among the Spaces.
+- **Signed in, not sharing**: you signed in on it, but it neither shares its
+  desktop nor provides Spaces. **New Space** never offers it as a place to run.
+- **Waiting for you**: a computer asking to join your account. Its page asks
+  **Add this computer?** with **Add computer** and **Not me**.
+
+Computers you have not seen for 30 days collapse into **Offline for 30+ days**,
+and computers your team shares appear under **Team computers**.
+
+Open a computer to rename it, to turn its two switches on or off, to see the
+Spaces on it, to press **New Space here**, to read its **Details**, or to remove
+it with **Remove from account**. Another computer's switches are read only: change
+them on that computer.
+
+## What a computer provides
+
+Two switches decide what a computer does, and each works on its own:
+
+- **Let other computers control this desktop** shows the computer's own screen as
+  a Space for your other computers.
+- **Let other computers create Spaces here** lets your other computers, and
+  teammates you share it with as editors, create sandbox Spaces on it.
+
+A computer that only provides Spaces keeps its own desktop private. A computer
+that shares nothing is simply signed in.
+
+## One computer, two records
+
+Behind the list, a computer can have two records: the relay's record of a computer
+that shares its desktop or provides Spaces (set up with **Add a computer** or
+`cua host setup`), and the record of a sign-in on it (made by `cua auth login`
+or the app). They describe one computer, and the **Computers** tab joins them into
+one row when it can match them safely, for example by the same id or matching
+names. If the match is unclear, such as two Macs with the same name, they stay as
+separate rows. The `cua devices` commands manage the sign-in record, and
+`cua spaces rm` removes a computer that is gone, and keeps its Spaces on your account (detached) unless you pass `--delete-spaces`.
+
+A computer that only hosts, set up with `--direct` or with its own token, can't
+reach your other computers: signing in is what lets a computer see them.
+
+See [Add a computer](/spaces/guides/add-a-computer) for the two switches and how
+to add one, and [How Spaces works](/spaces/concepts/how-spaces-works#space-ids)
+for Space ids.
+
+## Your default Space
+
+Your account can name one Space as its default: where "my Space" goes when you do not say. The
+relay keeps it, so the app, `cua`, your phone and your agents all agree. If the default is
+offline, they try the order you set (or, by default, every online computer, oldest first), and
+then this computer. `cua spaces default` shows which one it picks and why, `cua spaces default
+<space>` sets it, and `--clear`, `--fallback a,b` and `--no-fallback` change the rest.
+`cua spaces ls --json` and the `list_spaces` tool mark it with `"default": true`, and give each
+Space a `parent`: the computer that provides it, or null for a computer.

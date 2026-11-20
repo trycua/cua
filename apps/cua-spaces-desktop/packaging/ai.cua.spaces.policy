@@ -15,6 +15,13 @@
 
   The messages are shown as written: polkit fills a message's placeholders
   only from details, which it takes from root alone; nothing that asks is root.
+  allow_any is auth_self too: polkit files a session with no seat (xrdp,
+  VNC and other remote desktops, the usual way to reach a Linux cloud VM)
+  under "any", so with "no" there the check was refused at once, with no
+  prompt, and sharing always failed (CUA-1725). The prompt still needs the
+  user's own password at an agent in the session that asks. allow_inactive
+  stays "no".
+
   A comment here must not hold two hyphens in a row (XML).
 -->
 <policyconfig>
@@ -24,7 +31,7 @@
     <description>Confirm access to the Cua Keyvault</description>
     <message>Confirm it is you to use the Cua Keyvault</message>
     <defaults>
-      <allow_any>no</allow_any>
+      <allow_any>auth_self</allow_any>
       <allow_inactive>no</allow_inactive>
       <allow_active>auth_self</allow_active>
     </defaults>
@@ -33,7 +40,7 @@
     <description>Approve a device for your Cua account</description>
     <message>Confirm it is you to approve a device for your Cua account</message>
     <defaults>
-      <allow_any>no</allow_any>
+      <allow_any>auth_self</allow_any>
       <allow_inactive>no</allow_inactive>
       <allow_active>auth_self</allow_active>
     </defaults>

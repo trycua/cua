@@ -90,35 +90,31 @@ struct LoginItemTests {
         #expect(general(m).first?.enabled == false)
     }
 
+    /// The page's Done checkbox arrives with `onboarding.complete`.
     @Test func doneAppliesTheCheckbox() async {
         let ticked = FixtureLoginItem()
         let a = ViewModelTests().makeModel(loginItem: ticked)
-        for action: AppOnboardingAction in [.start, .signinDone, .agentsDone(configured: []), .presentationDone,
-                                            .driveContinue, .modeChosen(mode: .host)] {
-            a.onboarding.send(action)
-        }
-        #expect(a.onboarding.view.launchAtLogin?.checked == true)
-        a.onboarding.finish()
+        a.onboarding.finish(mode: .host, launchAtLogin: true)
         #expect(ticked.calls == ["register"])
         #expect(a.settings.launchAtLogin == true)
 
         let unticked = FixtureLoginItem()
         let b = ViewModelTests().makeModel(loginItem: unticked)
-        for a: AppOnboardingAction in [.start, .signinDone, .agentsDone(configured: []), .presentationDone,
-                                       .driveContinue, .modeChosen(mode: .client)] {
-            b.onboarding.send(a)
-        }
-        #expect(b.onboarding.view.launchAtLogin?.checked == true)
-        b.onboarding.send(.launchAtLoginToggled(on: false))
-        #expect(b.onboarding.view.launchAtLogin?.checked == false)
-        b.onboarding.finish()
+        b.onboarding.finish(mode: .client, launchAtLogin: false)
         #expect(unticked.calls == ["unregister"])
         #expect(b.settings.launchAtLogin == false)
+
+        // No answer: nothing changes (the launch rule decides later).
+        let silent = FixtureLoginItem()
+        let c = ViewModelTests().makeModel(loginItem: silent)
+        c.onboarding.finish()
+        #expect(silent.calls.isEmpty)
+        #expect(c.settings.launchAtLogin == nil)
     }
 
     /// macOS shows "Login Item Added" the moment an app registers. Nothing
-    /// registers on a fresh install until the user presses Start: not the
-    /// first launch, not walking the pages, not ticking or unticking the box.
+    /// registers on a fresh install until the first run finishes: not the
+    /// first launch, not the page's walk through its steps.
     @Test func nothingRegistersBeforeStart() async {
         let item = FixtureLoginItem()
         let m = ViewModelTests().makeModel(loginItem: item)
@@ -126,16 +122,10 @@ struct LoginItemTests {
         await m.applyLaunchAtLogin()
         m.readLoginItem()
         #expect(item.calls.isEmpty, "the first launch registers nothing")
-        for action: AppOnboardingAction in [.start, .signinDone, .agentsDone(configured: []), .presentationDone,
-                                            .driveContinue, .modeChosen(mode: .host)] {
-            m.onboarding.send(action)
-            #expect(item.calls.isEmpty, "\(action) registers nothing")
-        }
-        m.onboarding.send(.launchAtLoginToggled(on: false))
-        m.onboarding.send(.launchAtLoginToggled(on: true))
+        m.onboarding.restart()
         await m.applyLaunchAtLogin()
-        #expect(item.calls.isEmpty, "the Done checkbox only records the choice")
-        m.onboarding.finish()
+        #expect(item.calls.isEmpty, "showing the first run again registers nothing")
+        m.onboarding.finish(mode: .host, launchAtLogin: true)
         #expect(item.calls == ["register"], "Start registers it, once")
     }
 

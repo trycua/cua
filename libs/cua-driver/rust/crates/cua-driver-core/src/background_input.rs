@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Pure exact-target decisions for macOS-style background input (v1).
 //!
 //! Background mutation must carry one exact `(pid, CGWindowID)` target from
@@ -42,6 +45,11 @@ pub enum ElementAncestry {
     /// The live element ascends to an AX window whose CGWindowID is the
     /// requested one.
     ProvenDescendant,
+    /// The requested window's own AX subtree lists the element's container,
+    /// but the element draws in a separate WindowServer window and names no
+    /// window upward (a Mac Catalyst pop-up's menu). A semantic AX action
+    /// reaches it; pointer and key input routed to the window do not.
+    ProvenSemanticOnly,
     /// The live element ascends to a different window of the same process.
     OutsideTargetWindow,
     /// Ancestry could not be resolved (dead element, SPI failure). An address
@@ -74,6 +82,12 @@ pub struct BackgroundTargetFacts {
     pub competing_keyboard_destinations: usize,
     /// Ancestry proof for an explicitly addressed element, when one exists.
     pub element: ElementAncestry,
+    /// The login session reports its screen as locked (macOS: the screen
+    /// saver, display sleep or a lock put the session behind the lock
+    /// screen). The lock screen owns input while this holds and every app's
+    /// accessibility windows read as empty, so no route can reach the target.
+    /// `false` when the platform cannot tell; the other facts then decide.
+    pub screen_locked: bool,
 }
 
 /// The background action classes v1 distinguishes. Route order and trust are
@@ -120,7 +134,20 @@ pub mod refusal_codes {
     pub const MINIMIZED_OR_HIDDEN: &str = "minimized_or_hidden_window";
     pub const SAME_PID_KEYBOARD_AMBIGUITY: &str = "same_pid_keyboard_ambiguity";
     pub const ELEMENT_OUTSIDE_TARGET_WINDOW: &str = "element_outside_target_window";
+    pub const SCREEN_LOCKED: &str = "screen_locked";
 }
+
+/// Shown with every `screen_locked` refusal: what happened and how to keep it
+/// from happening while an agent works. Never advises foreground input, which
+/// would land on the lock screen.
+pub const SCREEN_LOCKED_HINT: &str = "the screen is locked or showing the screen saver, \
+     which also happens when the screen saver starts or the display sleeps with no password \
+     required. While it lasts, macOS hides every app's windows from accessibility and sends \
+     input to the lock screen, so Cua Driver refuses instead of acting; screenshots still \
+     work. Wake and unlock the Mac, then retry. Cua Driver keeps the display awake for 10 \
+     minutes after each tool call (CUA_DRIVER_KEEP_DISPLAY_AWAKE sets the seconds, 0 turns \
+     it off), so this usually means the Mac sat idle between agent turns; running \
+     `caffeinate -d` keeps it awake for longer";
 
 /// A typed refusal: no actuator ran and none may run for this decision.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -184,7 +211,8 @@ fn refuse(
 /// - a target absent from fresh `AXWindows` (off-Space or AX-unresolved) is
 ///   observation-only;
 /// - an addressed element must prove ancestry to the requested window for
-///   every route, including semantic AX;
+///   every route, including semantic AX; an element proven only for semantic
+///   AX (it draws in a window of its own) refuses every other route;
 /// - semantic AX actions remain available for minimized/hidden targets;
 /// - the routed pointer requires a visible (possibly occluded) target; and
 /// - process-scoped keyboard additionally requires that the target is the
@@ -221,8 +249,36 @@ pub fn decide_background_input(
         WindowServerOwnership::SamePid => {}
     }
 
+    // A locked session hides every app's AX windows, so the AX checks below
+    // would misreport it as an off-Space window and advise foreground input,
+    // which would land on the lock screen. Report the real cause first.
+    if facts.screen_locked {
+        return refuse(
+            refusal_codes::SCREEN_LOCKED,
+            format!(
+                "window {} cannot receive input: {SCREEN_LOCKED_HINT}",
+                target.window_id
+            ),
+            None,
+        );
+    }
+
     match facts.element {
         ElementAncestry::NotAddressed | ElementAncestry::ProvenDescendant => {}
+        ElementAncestry::ProvenSemanticOnly if action == BackgroundAction::AxSemantic => {}
+        ElementAncestry::ProvenSemanticOnly => {
+            return refuse(
+                refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW,
+                format!(
+                    "the addressed element is listed by window {} but draws in a window \
+                     of its own (a pop-up menu), so pointer and key input routed to window \
+                     {} cannot reach it; act on it by element (click or set_value with its \
+                     element_token)",
+                    target.window_id, target.window_id
+                ),
+                Some("accessibility"),
+            );
+        }
         ElementAncestry::OutsideTargetWindow | ElementAncestry::Unproven => {
             return refuse(
                 refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW,
@@ -328,6 +384,7 @@ fn exact_window_status(facts: &BackgroundTargetFacts) -> &'static str {
     match &facts.window_server {
         WindowServerOwnership::NotFound => "not_found",
         WindowServerOwnership::ForeignPid { .. } => "owner_mismatch",
+        WindowServerOwnership::SamePid if facts.screen_locked => "screen_locked",
         WindowServerOwnership::SamePid if facts.ax_window_present => "matched",
         WindowServerOwnership::SamePid => "ax_unresolved",
     }
@@ -340,11 +397,18 @@ fn exact_window_status(facts: &BackgroundTargetFacts) -> &'static str {
 /// proven, not that a future call is guaranteed to succeed; every action
 /// revalidates instead of trusting this report. The report contains no window
 /// titles, control values, or private symbol addresses.
+///
+/// `keyboard_action` is the class the platform's window-addressed keyboard
+/// tools are gated as (`ExactWindowKeys` where the key-window transport
+/// exists, else `GenericKey`), so the `pid_keyboard` route reports what those
+/// tools would decide rather than a stricter class they never use.
 pub fn background_input_capability_report(
     target: ExactWindowTarget,
     facts: &BackgroundTargetFacts,
+    keyboard_action: BackgroundAction,
     one_shot_capture_available: Option<bool>,
 ) -> Value {
+    debug_assert!(keyboard_action.is_pid_keyboard());
     let route_entry = |route: &str, action: BackgroundAction| -> Value {
         match decide_background_input(target, facts, action) {
             BackgroundInputDecision::Execute { .. } => {
@@ -364,7 +428,7 @@ pub fn background_input_capability_report(
         "routes": [
             route_entry("accessibility", BackgroundAction::AxSemantic),
             route_entry("window_pointer", BackgroundAction::WindowPointer),
-            route_entry("pid_keyboard", BackgroundAction::GenericKey),
+            route_entry("pid_keyboard", keyboard_action),
         ],
         "observation": {
             "one_shot_capture": match one_shot_capture_available {
@@ -394,6 +458,7 @@ mod tests {
             app_hidden: Some(false),
             competing_keyboard_destinations: 0,
             element: ElementAncestry::NotAddressed,
+            screen_locked: false,
         }
     }
 
@@ -647,6 +712,43 @@ mod tests {
         assert!(decide_background_input(TARGET, &facts, BackgroundAction::AxSemantic).is_execute());
     }
 
+    /// A Catalyst pop-up menu item is listed by the window but draws in its
+    /// own: a semantic AX action reaches it, routed pointer and keys do not.
+    #[test]
+    fn semantic_only_element_admits_only_semantic_ax() {
+        let facts = BackgroundTargetFacts {
+            element: ElementAncestry::ProvenSemanticOnly,
+            ..matched_facts()
+        };
+        assert!(decide_background_input(TARGET, &facts, BackgroundAction::AxSemantic).is_execute());
+        for action in [
+            BackgroundAction::WindowPointer,
+            BackgroundAction::InsertText,
+            BackgroundAction::GenericKey,
+            BackgroundAction::ExactWindowKeys,
+        ] {
+            match decide_background_input(TARGET, &facts, action) {
+                BackgroundInputDecision::Refuse(refusal) => {
+                    assert_eq!(refusal.code, refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW);
+                    assert_eq!(refusal.advice, Some("accessibility"), "{action:?}");
+                }
+                other => panic!("{action:?} expected a refusal, got {other:?}"),
+            }
+        }
+        let off_space = BackgroundTargetFacts {
+            ax_window_present: false,
+            ..facts
+        };
+        assert_eq!(
+            code_of(decide_background_input(
+                TARGET,
+                &off_space,
+                BackgroundAction::AxSemantic
+            )),
+            refusal_codes::OFF_SPACE_OR_AX_UNRESOLVED
+        );
+    }
+
     /// Refusal precedence: exactness failures are reported before state or
     /// cardinality failures so the caller fixes the most fundamental fact.
     #[test]
@@ -658,6 +760,7 @@ mod tests {
             app_hidden: Some(true),
             competing_keyboard_destinations: 3,
             element: ElementAncestry::OutsideTargetWindow,
+            screen_locked: false,
         };
         assert_eq!(
             code_of(decide_background_input(
@@ -707,7 +810,12 @@ mod tests {
 
     #[test]
     fn capability_report_shape_is_stable() {
-        let report = background_input_capability_report(TARGET, &matched_facts(), Some(true));
+        let report = background_input_capability_report(
+            TARGET,
+            &matched_facts(),
+            BackgroundAction::GenericKey,
+            Some(true),
+        );
         assert_eq!(report["exact_window"]["status"], "matched");
         assert_eq!(report["exact_window"]["pid"], 42);
         assert_eq!(report["exact_window"]["window_id"], 700);
@@ -725,7 +833,12 @@ mod tests {
             ax_window_present: false,
             ..matched_facts()
         };
-        let report = background_input_capability_report(TARGET, &facts, Some(false));
+        let report = background_input_capability_report(
+            TARGET,
+            &facts,
+            BackgroundAction::GenericKey,
+            Some(false),
+        );
         assert_eq!(report["exact_window"]["status"], "ax_unresolved");
         for route in report["routes"].as_array().unwrap() {
             assert_eq!(route["status"], "refused");
@@ -737,7 +850,12 @@ mod tests {
             competing_keyboard_destinations: 1,
             ..matched_facts()
         };
-        let report = background_input_capability_report(TARGET, &two_windows, None);
+        let report = background_input_capability_report(
+            TARGET,
+            &two_windows,
+            BackgroundAction::GenericKey,
+            None,
+        );
         assert_eq!(report["routes"][0]["status"], "available");
         assert_eq!(report["routes"][2]["status"], "refused");
         assert_eq!(
@@ -745,5 +863,108 @@ mod tests {
             refusal_codes::SAME_PID_KEYBOARD_AMBIGUITY
         );
         assert_eq!(report["observation"]["one_shot_capture"], "unknown");
+    }
+
+    /// #4241: Chrome with one browser window and its omnibox popup open. The
+    /// popup is a second same-pid destination, so the generic class refuses,
+    /// but window-addressed keyboard tools are gated as `ExactWindowKeys`
+    /// where that transport exists. The report must say what those tools
+    /// will do, not send the agent to foreground for nothing.
+    #[test]
+    fn capability_report_judges_pid_keyboard_as_the_tools_gate_it() {
+        let popup_open = BackgroundTargetFacts {
+            competing_keyboard_destinations: 1,
+            ..matched_facts()
+        };
+        let exact = background_input_capability_report(
+            TARGET,
+            &popup_open,
+            BackgroundAction::ExactWindowKeys,
+            Some(true),
+        );
+        assert_eq!(exact["routes"][2]["route"], "pid_keyboard");
+        assert_eq!(exact["routes"][2]["status"], "available");
+
+        let generic = background_input_capability_report(
+            TARGET,
+            &popup_open,
+            BackgroundAction::GenericKey,
+            Some(true),
+        );
+        assert_eq!(generic["routes"][2]["status"], "refused");
+        assert_eq!(
+            generic["routes"][2]["reason"],
+            refusal_codes::SAME_PID_KEYBOARD_AMBIGUITY
+        );
+
+        // The exact-window class still reports every other guard.
+        let minimized = BackgroundTargetFacts {
+            target_minimized: Some(true),
+            ..popup_open
+        };
+        let report = background_input_capability_report(
+            TARGET,
+            &minimized,
+            BackgroundAction::ExactWindowKeys,
+            Some(true),
+        );
+        assert_eq!(report["routes"][2]["status"], "refused");
+        assert_eq!(
+            report["routes"][2]["reason"],
+            refusal_codes::MINIMIZED_OR_HIDDEN
+        );
+    }
+
+    /// A locked session (screen saver or display sleep) empties every app's
+    /// AXWindows. Every route refuses with `screen_locked`, not the misleading
+    /// off-Space code, and no refusal advises foreground input, which would
+    /// reach the lock screen.
+    #[test]
+    fn locked_screen_refuses_every_route_without_foreground_advice() {
+        let facts = BackgroundTargetFacts {
+            screen_locked: true,
+            ax_window_present: false,
+            element: ElementAncestry::Unproven,
+            ..matched_facts()
+        };
+        for action in ALL_ACTIONS {
+            match decide_background_input(TARGET, &facts, action) {
+                BackgroundInputDecision::Refuse(refusal) => {
+                    assert_eq!(refusal.code, refusal_codes::SCREEN_LOCKED, "{action:?}");
+                    assert_eq!(refusal.advice, None, "{action:?}");
+                    assert!(refusal.reason.contains("display sleeps"));
+                }
+                BackgroundInputDecision::Execute { .. } => panic!("{action:?} must refuse"),
+            }
+        }
+        let report = background_input_capability_report(
+            TARGET,
+            &facts,
+            BackgroundAction::GenericKey,
+            Some(true),
+        );
+        assert_eq!(report["exact_window"]["status"], "screen_locked");
+        for route in report["routes"].as_array().unwrap() {
+            assert_eq!(route["reason"], refusal_codes::SCREEN_LOCKED);
+        }
+    }
+
+    /// A stale or foreign window id is still reported as such while locked:
+    /// re-targeting is needed either way.
+    #[test]
+    fn ownership_failures_precede_the_lock() {
+        let facts = BackgroundTargetFacts {
+            window_server: WindowServerOwnership::NotFound,
+            screen_locked: true,
+            ..matched_facts()
+        };
+        assert_eq!(
+            code_of(decide_background_input(
+                TARGET,
+                &facts,
+                BackgroundAction::AxSemantic
+            )),
+            refusal_codes::WINDOW_NOT_FOUND
+        );
     }
 }

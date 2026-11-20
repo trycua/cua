@@ -147,6 +147,19 @@ public actor SpacesConnection {
         return handle
     }
 
+    /// When a viewer may send this computer's clipboard to `id` (`viewing`,
+    /// `ask` or `off`; empty is `viewing`), from its record now: a handle's
+    /// info is a connection-time snapshot. `nil` when this connection is not
+    /// backed by the cua SDK.
+    public func clipboardSetting(_ id: SpaceID) async throws -> String? {
+        guard let native else { return nil }
+        do {
+            return try await native.resolve(space: id.rawValue).clipboard
+        } catch let error as CuaError {
+            throw SpacesError(cua: error, tool: "resolve")
+        }
+    }
+
     // MARK: - Spaces
 
     /// Every Space the account can see, from every provider.
@@ -175,6 +188,37 @@ public actor SpacesConnection {
             throw SpacesError.spaceUnavailable(id, "phase is \(info.rawPhase), not ready")
         }
         return try await space(for: info)
+    }
+
+    /// A handle for streaming `id`, without `attach(to:)`'s costs.
+    ///
+    /// `attach(to:)` lists every Space the account can see, which waits for
+    /// the relay directory and the team facts (a slow or unreachable relay
+    /// delayed, or failed, opening the desktop of a Space on this Mac), then
+    /// asks the guest for its `$HOME`, which a stream never uses. This
+    /// resolves just the one Space in the SDK (its own connection cache and
+    /// relay presence check decide whether to dial again) and takes its
+    /// facts from that handshake. A Space the SDK cannot resolve (still
+    /// being created, not registered, or no cua SDK behind this connection)
+    /// takes the `attach(to:requireReady:)` path, whose errors say why.
+    public func attachForStream(to id: SpaceID) async throws -> Space {
+        guard let handle = try? await resolveFresh(id) else {
+            return try await attach(to: id, requireReady: false)
+        }
+        let facts = handle.info()
+        let info = SpaceInfo(id: id, provider: SpaceProvider(rawProvider: facts.provider),
+                             operatingSystem: facts.os, state: .ready, rawPhase: "ready", ipAddress: nil)
+        return Space(info: info, connection: self)
+    }
+
+    /// Resolves `id` in the SDK again (cheap: the SDK keeps its own live
+    /// connection per Space) and keeps the handle.
+    private func resolveFresh(_ id: SpaceID) async throws -> CuaSDK.Space? {
+        guard let native else { return nil }
+        await dropCachesFromAnotherDaemon()
+        let handle = try await native.space(space: id.rawValue)
+        handles[id] = handle
+        return handle
     }
 
     /// A handle, with the guest's real `$HOME` when the SDK can ask for it.
@@ -240,8 +284,8 @@ public actor SpacesConnection {
 
     /// Turn a Space off the way its provider can: a local container or QEMU
     /// VM is suspended (its memory is kept), a Lume VM or a Space one of
-    /// your machines provides or one in your own cloud (AWS, Google Cloud)
-    /// is stopped (its disk is kept). Fleet cloud Spaces, Modal sandboxes
+    /// your machines provides or one in your own cloud (AWS, Google Cloud, Hetzner)
+    /// is stopped (its disk is kept). Modal sandboxes
     /// and Spaces added by address cannot. Returns `space`, `state`,
     /// `power` and `message`.
     @discardableResult

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Which anonymous usage events a UI step means, from the app core
+ * Which usage events a UI step means, from the app core
  * (`telemetry::*`): the first run's pages, Space creates, Settings, Storage,
  * the Share sheet and enrolling this device. The shell sends the signals
  * (`telemetry_record_signals`); the SwiftUI app derives and sends the same
@@ -43,11 +43,13 @@ export type TelemetrySignal =
       mountMethod: string;
       outcome: string;
     }
-  | { type: "share"; action: string; role: string; outcome: string }
+  | { type: "share"; action: string; role: string; outcome: string; errorKind: string; failedStage: string }
   | { type: "app-update"; action: string; channel: string; trigger: string }
   | { type: "device-enroll"; method: string; outcome: string }
   | { type: "experiment"; action: "experiment_on" | "experiment_off"; experiment: string }
-  | { type: "experiments-on"; experiments: string[] };
+  | { type: "experiments-on"; experiments: string[] }
+  | { type: "plan-limit-shown"; surface: string; kind: string; plan: string }
+  | { type: "upgrade-link-opened"; surface: string; kind: string; plan: string };
 
 /** A fixed feature name as a signal. */
 export function featureSignals(feature: string): TelemetrySignal[] {

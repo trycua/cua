@@ -34,7 +34,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting… 1%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -52,7 +51,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-macos macOS Space [Starting] 10 1%"
+          "os-macos macOS Space [spaces.status.starting] 10 1%"
         ],
         "tiles": [
           "os-macos macOS Space, macOS, Mac mini, Starting 10 Starting…"
@@ -77,7 +76,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting… 1%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -95,7 +93,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-macos macOS Space [Starting] 10 1%"
+          "os-macos macOS Space [spaces.status.starting] 10 1%"
         ],
         "tiles": [
           "os-macos macOS Space, macOS, Mac mini, Starting 10 Starting…"
@@ -120,7 +118,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Downloading macOS (first time only)…",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -138,7 +135,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-macos macOS Space [Starting] 13 1%"
+          "os-macos macOS Space [spaces.status.starting] 13 1%"
         ],
         "tiles": [
           "os-macos macOS Space, macOS, Mac mini, Starting 13 Downloading macOS (first time only)…"
@@ -163,7 +160,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Downloading macOS (first time only)…",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -181,7 +177,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-macos macOS Space [Starting] 358 35%"
+          "os-macos macOS Space [spaces.status.starting] 358 35%"
         ],
         "tiles": [
           "os-macos macOS Space, macOS, Mac mini, Starting 358 Downloading macOS (first time only)…"
@@ -206,7 +202,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Downloading macOS (first time only)…",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -224,7 +219,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-macos macOS Space [Starting] 358 35%"
+          "os-macos macOS Space [spaces.status.starting] 358 35%"
         ],
         "tiles": [
           "os-macos macOS Space, macOS, Mac mini, Starting 358 Downloading macOS (first time only)…"
@@ -249,7 +244,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Downloading macOS (first time only)…",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -267,7 +261,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-macos macOS Space [Starting] 847 84%"
+          "os-macos macOS Space [spaces.status.starting] 847 84%"
         ],
         "tiles": [
           "os-macos macOS Space, macOS, Mac mini, Starting 847 Downloading macOS (first time only)…"
@@ -292,7 +286,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Preparing the disk… 84%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -310,7 +303,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-macos macOS Space [Starting] 847 84%"
+          "os-macos macOS Space [spaces.status.starting] 847 84%"
         ],
         "tiles": [
           "os-macos macOS Space, macOS, Mac mini, Starting 847 Preparing the disk…"
@@ -335,7 +328,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Booting macOS… 86%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -353,7 +345,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-macos macOS Space [Starting] 861 86%"
+          "os-macos macOS Space [spaces.status.starting] 861 86%"
         ],
         "tiles": [
           "os-macos macOS Space, macOS, Mac mini, Starting 861 Booting macOS…"
@@ -378,7 +370,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Booting macOS… 88%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -396,7 +387,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-macos macOS Space [Starting] 881 88%"
+          "os-macos macOS Space [spaces.status.starting] 881 88%"
         ],
         "tiles": [
           "os-macos macOS Space, macOS, Mac mini, Starting 881 Booting macOS…"
@@ -421,7 +412,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting Cua inside the Space… 90%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -439,7 +429,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-macos macOS Space [Starting] 902 90%"
+          "os-macos macOS Space [spaces.status.starting] 902 90%"
         ],
         "tiles": [
           "os-macos macOS Space, macOS, Mac mini, Starting 902 Starting Cua inside the Space…"
@@ -464,7 +454,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Connecting… 98%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -482,7 +471,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-macos macOS Space [Starting] 986 98%"
+          "os-macos macOS Space [spaces.status.starting] 986 98%"
         ],
         "tiles": [
           "os-macos macOS Space, macOS, Mac mini, Starting 986 Connecting…"
@@ -507,7 +496,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting… 1%",
               "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -529,7 +517,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Connecting… 98%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -548,8 +535,8 @@
         ],
         "pending": true,
         "rows": [
-          "os-ubuntu New Space [Starting] 10 1%",
-          "os-macos macOS Space [Starting] 986 98%"
+          "os-ubuntu New Space [spaces.status.starting] 10 1%",
+          "os-macos macOS Space [spaces.status.starting] 986 98%"
         ],
         "tiles": [
           "os-ubuntu New Space, Linux, This Mac, Starting 10 Starting…",
@@ -575,7 +562,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Downloading image…",
               "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -597,7 +583,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Connecting… 98%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -616,8 +601,8 @@
         ],
         "pending": true,
         "rows": [
-          "os-ubuntu New Space [Starting] 291 29%",
-          "os-macos macOS Space [Starting] 986 98%"
+          "os-ubuntu New Space [spaces.status.starting] 291 29%",
+          "os-macos macOS Space [spaces.status.starting] 986 98%"
         ],
         "tiles": [
           "os-ubuntu New Space, Linux, This Mac, Starting 291 Downloading image…",
@@ -643,7 +628,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Preparing the disk… 53%",
               "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -665,7 +649,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Connecting… 98%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -684,8 +667,8 @@
         ],
         "pending": true,
         "rows": [
-          "os-ubuntu New Space [Starting] 538 53%",
-          "os-macos macOS Space [Starting] 986 98%"
+          "os-ubuntu New Space [spaces.status.starting] 538 53%",
+          "os-macos macOS Space [spaces.status.starting] 986 98%"
         ],
         "tiles": [
           "os-ubuntu New Space, Linux, This Mac, Starting 538 Preparing the disk…",
@@ -711,7 +694,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Booting Linux… 53%",
               "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -733,7 +715,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Connecting… 98%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -752,8 +733,8 @@
         ],
         "pending": true,
         "rows": [
-          "os-ubuntu New Space [Starting] 538 53%",
-          "os-macos macOS Space [Starting] 986 98%"
+          "os-ubuntu New Space [spaces.status.starting] 538 53%",
+          "os-macos macOS Space [spaces.status.starting] 986 98%"
         ],
         "tiles": [
           "os-ubuntu New Space, Linux, This Mac, Starting 538 Booting Linux…",
@@ -779,7 +760,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting… 1%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -801,7 +781,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Booting Linux… 53%",
               "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -823,7 +802,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Connecting… 98%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -843,9 +821,9 @@
         ],
         "pending": true,
         "rows": [
-          "os-ubuntu box [Starting] 10 1%",
-          "os-ubuntu New Space [Starting] 538 53%",
-          "os-macos macOS Space [Starting] 986 98%"
+          "os-ubuntu box [spaces.status.starting] 10 1%",
+          "os-ubuntu New Space [spaces.status.starting] 538 53%",
+          "os-macos macOS Space [spaces.status.starting] 986 98%"
         ],
         "tiles": [
           "os-ubuntu box, Linux, This Mac, Starting 10 Starting…",
@@ -872,7 +850,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Creating the container… 5%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -894,7 +871,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Booting Linux… 53%",
               "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -916,7 +892,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Connecting… 98%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -936,9 +911,9 @@
         ],
         "pending": true,
         "rows": [
-          "os-ubuntu box [Starting] 59 5%",
-          "os-ubuntu New Space [Starting] 538 53%",
-          "os-macos macOS Space [Starting] 986 98%"
+          "os-ubuntu box [spaces.status.starting] 59 5%",
+          "os-ubuntu New Space [spaces.status.starting] 538 53%",
+          "os-macos macOS Space [spaces.status.starting] 986 98%"
         ],
         "tiles": [
           "os-ubuntu box, Linux, This Mac, Starting 59 Creating the container…",
@@ -965,7 +940,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting the container… 12%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -987,7 +961,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Booting Linux… 53%",
               "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1009,7 +982,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Connecting… 98%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1029,9 +1001,9 @@
         ],
         "pending": true,
         "rows": [
-          "os-ubuntu box [Starting] 127 12%",
-          "os-ubuntu New Space [Starting] 538 53%",
-          "os-macos macOS Space [Starting] 986 98%"
+          "os-ubuntu box [spaces.status.starting] 127 12%",
+          "os-ubuntu New Space [spaces.status.starting] 538 53%",
+          "os-macos macOS Space [spaces.status.starting] 986 98%"
         ],
         "tiles": [
           "os-ubuntu box, Linux, This Mac, Starting 127 Starting the container…",
@@ -1058,7 +1030,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting Cua inside the Space… 17%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1080,7 +1051,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Booting Linux… 53%",
               "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1102,7 +1072,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Connecting… 98%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1122,9 +1091,9 @@
         ],
         "pending": true,
         "rows": [
-          "os-ubuntu box [Starting] 172 17%",
-          "os-ubuntu New Space [Starting] 538 53%",
-          "os-macos macOS Space [Starting] 986 98%"
+          "os-ubuntu box [spaces.status.starting] 172 17%",
+          "os-ubuntu New Space [spaces.status.starting] 538 53%",
+          "os-macos macOS Space [spaces.status.starting] 986 98%"
         ],
         "tiles": [
           "os-ubuntu box, Linux, This Mac, Starting 172 Starting Cua inside the Space…",
@@ -1151,7 +1120,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Starting Cua inside the Space… 17%",
               "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1173,7 +1141,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Booting Linux… 53%",
               "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1195,7 +1162,6 @@
               "Open (off)"
             ],
             "canStream": false,
-            "creditNotice": null,
             "facts": [
               "Status: Connecting… 98%",
               "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -1215,9 +1181,9 @@
         ],
         "pending": true,
         "rows": [
-          "os-ubuntu box [Starting] 172 17%",
-          "os-ubuntu New Space [Starting] 538 53%",
-          "os-macos macOS Space [Starting] 986 98%"
+          "os-ubuntu box [spaces.status.starting] 172 17%",
+          "os-ubuntu New Space [spaces.status.starting] 538 53%",
+          "os-macos macOS Space [spaces.status.starting] 986 98%"
         ],
         "tiles": [
           "os-ubuntu box, Linux, This Mac, Starting 172 Starting Cua inside the Space…",

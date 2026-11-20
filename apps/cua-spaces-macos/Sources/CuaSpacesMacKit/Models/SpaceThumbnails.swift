@@ -154,15 +154,35 @@ public final class SpaceThumbnails {
         keeping?.cancel()
         let interval = TimeInterval(Self.policy.backgroundIntervalMs) / 1000
         keeping = Task { @MainActor [weak self] in
+            var cursor = 0
             while !Task.isCancelled {
                 if let self, active() {
-                    for id in running() {
+                    // A sweep refreshes at most `sweepLimit` Spaces, picking up where the last one
+                    // stopped: with 256 running Spaces that is a few screenshots a second to each of
+                    // the machines, not all of them every interval.
+                    let sweep = Self.sweep(running(), from: cursor, limit: Self.sweepLimit)
+                    cursor = sweep.next
+                    for id in sweep.ids {
                         _ = await self.refresh(id, maxAge: interval)
                     }
                 }
                 try? await Task.sleep(for: .seconds(interval))
             }
         }
+    }
+
+    /// The most Spaces one background sweep refreshes.
+    public static let sweepLimit = 32
+
+    /// The Spaces to refresh now: up to `limit` of `ids` from position `from`
+    /// on, wrapping, and where the next sweep starts. A list that fits is all
+    /// of it, every time.
+    public static func sweep(_ ids: [String], from: Int, limit: Int) -> (ids: [String], next: Int) {
+        guard !ids.isEmpty, limit > 0 else { return ([], 0) }
+        if ids.count <= limit { return (ids, 0) }
+        let start = from % ids.count
+        let take = (0..<limit).map { ids[(start + $0) % ids.count] }
+        return (take, (start + limit) % ids.count)
     }
 
     /// Visible and not saving power.

@@ -15,13 +15,7 @@
 //! `a/b`); AWS S3 and R2 can. The drive layout never needs both.
 //!
 //! Credentials come from a [`CredentialSource`]: static keys for MinIO or a
-//! bring-your-own bucket, or [`CloudVendor`], which asks the Cua cloud for
-//! short-lived keys scoped to the session's folders (trycua/cloud: STS
-//! AssumeRole with a session policy per prefix set, 15 to 60 minutes, at
-//! most 12 prefixes). The cloud vendor is off unless it is configured
-//! explicitly (see [`crate::config`]); the server answers `drive_disabled`
-//! (404) while its flag is off and `drive_unavailable` (503) while it has no
-//! bucket.
+//! bring-your-own bucket (see [`crate::config`]).
 
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
@@ -39,8 +33,6 @@ use crate::{Error, Result, now_ms};
 
 /// Objects listed at most by one `list` (a guard against runaway listings).
 pub const MAX_LIST: usize = 200_000;
-/// Refresh vended credentials this long before they expire.
-pub const REFRESH_BEFORE: Duration = Duration::from_secs(120);
 
 /// Where the bucket is.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,188 +97,6 @@ pub struct StaticCredentials(pub S3Credentials);
 impl CredentialSource for StaticCredentials {
     async fn credentials(&self) -> Result<S3Credentials> {
         Ok(self.0.clone())
-    }
-}
-
-/// A bearer token for the Cua cloud API.
-#[async_trait::async_trait]
-pub trait TokenSource: Send + Sync {
-    async fn token(&self) -> Result<String>;
-}
-
-/// `POST /api/drive/credentials` body.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VendRequest {
-    /// `user`, `agent:<name>` or `space:<id>`.
-    pub principal: String,
-    #[serde(default)]
-    pub space: Option<String>,
-    pub ttl_secs: u64,
-}
-
-/// One folder the vended keys reach.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VendedPrefix {
-    pub prefix: String,
-    /// `r` or `rw`.
-    pub mode: String,
-}
-
-/// `POST /api/drive/credentials` response.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Vended {
-    pub endpoint: String,
-    pub region: String,
-    pub bucket: String,
-    pub root: String,
-    pub access_key_id: String,
-    pub secret_access_key: String,
-    #[serde(default)]
-    pub session_token: Option<String>,
-    /// RFC 3339.
-    pub expires_at: String,
-    #[serde(default)]
-    pub prefixes: Vec<VendedPrefix>,
-}
-
-impl std::fmt::Debug for Vended {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Vended")
-            .field("endpoint", &self.endpoint)
-            .field("bucket", &self.bucket)
-            .field("root", &self.root)
-            .field("expires_at", &self.expires_at)
-            .field("prefixes", &self.prefixes)
-            .finish_non_exhaustive()
-    }
-}
-
-impl Vended {
-    /// The bucket these keys reach.
-    pub fn config(&self) -> S3Config {
-        S3Config {
-            endpoint: Some(self.endpoint.clone()),
-            region: self.region.clone(),
-            bucket: self.bucket.clone(),
-            root: self.root.clone(),
-            path_style: false,
-        }
-    }
-
-    fn credentials(&self) -> Result<S3Credentials> {
-        Ok(S3Credentials {
-            access_key_id: self.access_key_id.clone(),
-            secret_access_key: self.secret_access_key.clone(),
-            session_token: self.session_token.clone(),
-            expires_ms: Some(parse_rfc3339_ms(&self.expires_at)?),
-        })
-    }
-}
-
-/// Parses `2026-09-29T12:00:00Z` (or with a fraction / offset) to Unix ms.
-pub fn parse_rfc3339_ms(s: &str) -> Result<u64> {
-    let dt = aws_smithy_types::DateTime::from_str(s, aws_smithy_types::date_time::Format::DateTime)
-        .map_err(|e| Error::Backend(format!("expires_at {s:?}: {e}")))?;
-    dt.to_millis()
-        .map(|ms| ms.max(0) as u64)
-        .map_err(|e| Error::Backend(format!("expires_at {s:?}: {e}")))
-}
-
-/// Short-lived keys from the Cua cloud, scoped to one session's folders.
-pub struct CloudVendor {
-    http: reqwest::Client,
-    api: String,
-    tokens: Arc<dyn TokenSource>,
-    request: VendRequest,
-    cache: tokio::sync::Mutex<Option<Vended>>,
-}
-
-impl CloudVendor {
-    /// A vendor for `request` against the API at `api` (the cyclops-cs base
-    /// URL the Fleet client uses).
-    pub fn new(
-        api: &str,
-        tokens: Arc<dyn TokenSource>,
-        request: VendRequest,
-    ) -> Result<CloudVendor> {
-        let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(|e| Error::Backend(format!("http client: {e}")))?;
-        Ok(CloudVendor {
-            http,
-            api: api.trim_end_matches('/').to_string(),
-            tokens,
-            request,
-            cache: tokio::sync::Mutex::new(None),
-        })
-    }
-
-    /// The URL keys are vended from.
-    pub fn url(&self) -> String {
-        format!("{}/api/drive/credentials", self.api)
-    }
-
-    /// Asks the cloud for fresh keys.
-    pub async fn vend(&self) -> Result<Vended> {
-        let token = self.tokens.token().await?;
-        let resp = self
-            .http
-            .post(self.url())
-            .bearer_auth(token)
-            .json(&self.request)
-            .send()
-            .await
-            .map_err(|e| Error::Backend(format!("drive credentials: {e}")))?;
-        let status = resp.status();
-        let body = resp
-            .bytes()
-            .await
-            .map_err(|e| Error::Backend(format!("drive credentials: {e}")))?;
-        if status.is_success() {
-            return serde_json::from_slice(&body)
-                .map_err(|e| Error::Backend(format!("drive credentials: {e}")));
-        }
-        let kind = serde_json::from_slice::<serde_json::Value>(&body)
-            .ok()
-            .and_then(|v| v["error"].as_str().map(str::to_string))
-            .unwrap_or_default();
-        Err(match (status.as_u16(), kind.as_str()) {
-            (404, "drive_disabled") => Error::Forbidden(
-                "Cua Volume is not enabled for this account in the cloud (drive_disabled)".into(),
-            ),
-            (503, "drive_unavailable") => Error::Backend(
-                "Cua Volume is enabled but the cloud has no storage configured yet (drive_unavailable)"
-                    .into(),
-            ),
-            (422, _) => Error::Invalid(format!(
-                "drive credentials: the session reaches too many folders for one key ({kind})"
-            )),
-            (401 | 403, _) => Error::Forbidden(format!("drive credentials refused ({status})")),
-            _ => Error::Backend(format!("drive credentials: HTTP {status} {kind}")),
-        })
-    }
-
-    /// The cached keys, refreshed when they are within [`REFRESH_BEFORE`]
-    /// of expiring.
-    pub async fn current(&self) -> Result<Vended> {
-        let mut c = self.cache.lock().await;
-        if let Some(v) = c.as_ref()
-            && let Ok(exp) = parse_rfc3339_ms(&v.expires_at)
-            && exp > now_ms() + REFRESH_BEFORE.as_millis() as u64
-        {
-            return Ok(v.clone());
-        }
-        let v = self.vend().await?;
-        *c = Some(v.clone());
-        Ok(v)
-    }
-}
-
-#[async_trait::async_trait]
-impl CredentialSource for CloudVendor {
-    async fn credentials(&self) -> Result<S3Credentials> {
-        self.current().await?.credentials()
     }
 }
 
@@ -416,13 +226,6 @@ impl S3Backend {
             client: Client::from_conf(b.build()),
             config: S3Config { root, ..config },
         })
-    }
-
-    /// A backend on the Cua cloud's bucket, with keys vended for
-    /// `vendor`'s session (the first vend learns where the bucket is).
-    pub async fn cloud(vendor: Arc<CloudVendor>) -> Result<S3Backend> {
-        let v = vendor.current().await?;
-        S3Backend::new(v.config(), vendor)
     }
 
     pub fn config(&self) -> &S3Config {
@@ -1109,84 +912,15 @@ impl S3Backend {
     }
 }
 
-/// The Cua cloud's bucket, opened on first use: the first vend says where
-/// the bucket is, so a runtime can be built without network I/O.
-pub struct CloudBackend {
-    vendor: Arc<CloudVendor>,
-    inner: tokio::sync::OnceCell<S3Backend>,
-}
-
-impl CloudBackend {
-    pub fn new(vendor: Arc<CloudVendor>) -> CloudBackend {
-        CloudBackend {
-            vendor,
-            inner: tokio::sync::OnceCell::new(),
-        }
-    }
-
-    async fn s3(&self) -> Result<&S3Backend> {
-        self.inner
-            .get_or_try_init(|| S3Backend::cloud(self.vendor.clone()))
-            .await
-    }
-}
-
-#[async_trait::async_trait]
-impl Backend for CloudBackend {
-    fn kind(&self) -> &'static str {
-        "cloud"
-    }
-    async fn put(&self, key: &str, bytes: Vec<u8>, cond: Condition) -> Result<ObjectMeta> {
-        self.s3().await?.put(key, bytes, cond).await
-    }
-    async fn get(&self, key: &str, version: Option<&str>) -> Result<(Vec<u8>, ObjectMeta)> {
-        self.s3().await?.get(key, version).await
-    }
-    async fn head(&self, key: &str) -> Result<Option<ObjectMeta>> {
-        self.s3().await?.head(key).await
-    }
-    async fn list(&self, prefix: &str) -> Result<Vec<ObjectMeta>> {
-        self.s3().await?.list(prefix).await
-    }
-    async fn delete(&self, key: &str, cond: Condition) -> Result<()> {
-        self.s3().await?.delete(key, cond).await
-    }
-    async fn versions(&self, key: &str) -> Result<Vec<VersionInfo>> {
-        self.s3().await?.versions(key).await
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn config_and_vended_shapes() {
+    fn config_shape() {
         let c: S3Config = serde_json::from_str(r#"{"bucket":"b"}"#).unwrap();
         assert_eq!(c.region, "us-east-1");
         assert!(!c.path_style);
-        let v: Vended = serde_json::from_str(
-            r#"{"endpoint":"https://x.r2.example","region":"auto","bucket":"cua-volume",
-                "root":"acct-1/","access_key_id":"AK","secret_access_key":"SECRETVALUE",
-                "session_token":"TOKENVALUE","expires_at":"2026-09-29T12:00:00Z",
-                "prefixes":[{"prefix":"public/","mode":"r"}]}"#,
-        )
-        .unwrap();
-        assert_eq!(v.config().root, "acct-1/");
-        let dbg = format!("{v:?} {:?}", v.credentials().unwrap());
-        assert!(
-            !dbg.contains("SECRETVALUE") && !dbg.contains("TOKENVALUE"),
-            "{dbg}"
-        );
-        assert_eq!(
-            parse_rfc3339_ms("2026-09-29T12:00:00Z").unwrap(),
-            1_790_683_200_000
-        );
-        assert_eq!(
-            parse_rfc3339_ms("2026-09-29T12:00:00.500Z").unwrap(),
-            1_790_683_200_500
-        );
-        assert!(parse_rfc3339_ms("yesterday").is_err());
     }
 
     #[test]
@@ -1221,102 +955,5 @@ mod tests {
             )
             .is_err()
         );
-    }
-
-    struct Tok;
-    #[async_trait::async_trait]
-    impl TokenSource for Tok {
-        async fn token(&self) -> Result<String> {
-            Ok("bearer-x".into())
-        }
-    }
-
-    /// A one-shot HTTP server answering every request with `status` and
-    /// `body`, recording the requests it saw.
-    async fn serve(status: u16, body: String) -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = l.local_addr().unwrap();
-        let seen = Arc::new(std::sync::Mutex::new(vec![]));
-        let seen2 = seen.clone();
-        tokio::spawn(async move {
-            for _ in 0..4 {
-                let Ok((mut s, _)) = l.accept().await else {
-                    return;
-                };
-                let mut buf = vec![0u8; 16 * 1024];
-                let n = s.read(&mut buf).await.unwrap_or(0);
-                seen2
-                    .lock()
-                    .unwrap()
-                    .push(String::from_utf8_lossy(&buf[..n]).into_owned());
-                let resp = format!(
-                    "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                let _ = s.write_all(resp.as_bytes()).await;
-            }
-        });
-        (format!("http://{addr}"), seen)
-    }
-
-    #[tokio::test]
-    async fn the_vendor_speaks_the_contract_and_caches() {
-        let body = serde_json::json!({
-            "endpoint":"https://x.example","region":"auto","bucket":"b","root":"acct/",
-            "access_key_id":"AK","secret_access_key":"SK","session_token":"ST",
-            "expires_at":"2999-01-01T00:00:00Z","prefixes":[{"prefix":"agents/ada/","mode":"rw"}]
-        })
-        .to_string();
-        let (api, seen) = serve(200, body).await;
-        let v = CloudVendor::new(
-            &api,
-            Arc::new(Tok),
-            VendRequest {
-                principal: "agent:ada".into(),
-                space: Some("cloud:ada".into()),
-                ttl_secs: 900,
-            },
-        )
-        .unwrap();
-        let c = v.credentials().await.unwrap();
-        assert_eq!(c.session_token.as_deref(), Some("ST"));
-        v.credentials().await.unwrap();
-        let seen = seen.lock().unwrap();
-        assert_eq!(seen.len(), 1, "cached until near expiry");
-        assert!(
-            seen[0].starts_with("POST /api/drive/credentials"),
-            "{}",
-            seen[0]
-        );
-        assert!(
-            seen[0]
-                .to_ascii_lowercase()
-                .contains("authorization: bearer bearer-x")
-        );
-        assert!(
-            seen[0].contains(r#""principal":"agent:ada""#),
-            "{}",
-            seen[0]
-        );
-        assert!(seen[0].contains(r#""ttl_secs":900"#));
-    }
-
-    #[tokio::test]
-    async fn a_disabled_cloud_says_so() {
-        let (api, _) = serve(404, r#"{"error":"drive_disabled"}"#.into()).await;
-        let v = CloudVendor::new(
-            &api,
-            Arc::new(Tok),
-            VendRequest {
-                principal: "user".into(),
-                space: None,
-                ttl_secs: 900,
-            },
-        )
-        .unwrap();
-        let e = v.vend().await.unwrap_err();
-        assert_eq!(e.tag(), "forbidden");
-        assert!(e.to_string().contains("drive_disabled"), "{e}");
     }
 }

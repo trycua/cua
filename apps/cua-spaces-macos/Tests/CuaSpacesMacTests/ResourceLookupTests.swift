@@ -13,6 +13,7 @@ struct ResourceLookupTests {
     @Test func theResourcesLoad() {
         #expect(ModuleResources.bundle != nil)
         #expect(StackMark.image != nil)
+        #expect(CuaKey.image != nil)
         #expect(ModuleResources.url(forResource: "tray-template@2x", withExtension: "png") != nil)
     }
 

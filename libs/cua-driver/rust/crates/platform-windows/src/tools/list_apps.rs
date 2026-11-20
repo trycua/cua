@@ -83,11 +83,13 @@ impl Tool for ListAppsTool {
             let running_pids = running_app_pids(&wins, crate::win32::hosted_app_pid);
 
             let t1 = std::time::Instant::now();
+            // A foreground ApplicationFrameHost frame makes the app it hosts
+            // the active one, not the host.
             let foreground_pid = unsafe {
                 let fg = GetForegroundWindow();
                 let mut pid = 0u32;
                 let _ = GetWindowThreadProcessId(fg, Some(&mut pid));
-                pid
+                crate::win32::hosted_app_pid(pid, fg.0 as u64).unwrap_or(pid)
             };
             tracing::debug!(target: "list_apps", "step 2 fg-window: pid={} ({}ms)", foreground_pid, t1.elapsed().as_millis());
 

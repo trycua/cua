@@ -16,6 +16,33 @@ use super::impl_::{
     position_keyboard_cursor, resolve_onscreen_point_with_scroll, ToolState,
 };
 
+/// The admitted control's own HWND, for a background key posted without focus
+/// preparation. UIA SetFocus can activate the frame even under
+/// WS_EX_NOACTIVATE (#4843), so a control with no HWND of its own in the
+/// admitted window has no safe background target.
+fn native_background_key_target(
+    element: &crate::uia::snapshot::RetainedElement,
+    owner: u64,
+    pid: u32,
+) -> anyhow::Result<u64> {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsChild};
+
+    let target = element
+        .native_window_handle()
+        .ok_or_else(|| anyhow::anyhow!("the element has no native window to post keys to"))?;
+    let native = HWND(target as *mut _);
+    let mut target_pid = 0;
+    let thread = unsafe { GetWindowThreadProcessId(native, Some(&mut target_pid)) };
+    if thread == 0
+        || target_pid != pid
+        || (target != owner && !unsafe { IsChild(HWND(owner as *mut _), native).as_bool() })
+    {
+        anyhow::bail!("the element's native window is outside the admitted window");
+    }
+    Ok(target)
+}
+
 fn screen_to_bitmap(hwnd: u64, sx: i32, sy: i32) -> (i32, i32) {
     let (origin_x, origin_y) = bitmap_to_screen(hwnd, 0, 0);
     (sx - origin_x, sy - origin_y)
@@ -35,17 +62,21 @@ impl Tool for PressKeyTool {
             name: "press_key".into(),
             // Description ported from Swift `PressKeyTool.swift` with
             // Windows-specific transport note (PostMessage WM_KEYDOWN/UP).
-            description: "Press and release a single key, delivered directly to the target pid's \
-                top-level window via PostMessage(WM_KEYDOWN/WM_KEYUP). The target does NOT need \
-                to be frontmost — no focus steal.\n\n\
+            description: "Press and release a single key. Background delivery uses \
+                PostMessage(WM_KEYDOWN/WM_KEYUP) without fronting the target; explicit \
+                foreground delivery uses SendInput.\n\n\
                 Optional `window_id` selects a specific HWND when the pid owns more than one; \
                 without it the first visible top-level window for the pid is used.\n\n\
                 Key vocabulary: return, tab, escape, up/down/left/right, space, delete, home, \
                 end, pageup, pagedown, f1-f12, plus any letter or digit. Optional `modifiers` \
                 array takes ctrl/shift/alt/win. For true combinations (ctrl+c), `hotkey` is a \
                 cleaner surface.\n\n\
-                `element_token` focuses the cached UIA element before sending the key; the \
-                top-level window remains backgrounded when delivery_mode is background.".into(),
+                `element_token` addresses the cached UIA control. Foreground delivery focuses \
+                it before sending the key. Background native-control delivery posts to its \
+                exact HWND without focus preparation, or returns background_unavailable when \
+                no safe exact target exists. Embedded WebView elements retain their background \
+                focus-click route; do not rely on a native background key establishing focus \
+                for later keys without an element_token.".into(),
             input_schema: json!({
                 "type":"object","required":["key"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
@@ -195,6 +226,41 @@ impl Tool for PressKeyTool {
             return crate::input::delivery::background_unavailable_error(hwnd, event_kind);
         }
 
+        // Embedded WebView hosts take an element key through their focus-click
+        // route below. Every other background element key goes to the
+        // control's own HWND, resolved here so a refusal precedes any effect.
+        let background_webview_focus = elem_idx.is_some()
+            && delivery == DeliveryMode::Background
+            && crate::input::has_chromium_descendant(hwnd);
+        let native_key_target = if elem_idx.is_some()
+            && delivery == DeliveryMode::Background
+            && !background_webview_focus
+        {
+            let target = tokio::task::spawn_blocking({
+                let admitted = admitted.clone();
+                move || {
+                    admitted
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("missing admitted element"))
+                        .and_then(|element| native_background_key_target(element, hwnd, pid))
+                }
+            })
+            .await;
+            match target {
+                Ok(Ok(target)) => Some(target),
+                Ok(Err(cause)) => {
+                    return crate::input::delivery::background_unavailable_error_with_cause(
+                        hwnd,
+                        event_kind,
+                        cause.to_string(),
+                    )
+                }
+                Err(e) => return ToolResult::error(format!("key target task failed: {e}")),
+            }
+        } else {
+            None
+        };
+
         // The px form's focus click already moved the cursor. Otherwise place
         // a named session's cursor so a keyboard-first session stays visible.
         if !px_focus {
@@ -204,16 +270,12 @@ impl Tool for PressKeyTool {
             position_keyboard_cursor(&self.state, &args, hwnd, element_center).await;
         }
 
-        // W1: an element-addressed key needs the control's actual focus
-        // target, not merely its owning top-level HWND. Embedded WebView hosts
-        // can activate their frame from UIA SetFocus even under
-        // WS_EX_NOACTIVATE. Their proven-safe pixel route establishes renderer
-        // focus with a posted click, so reuse that route at the AX element's
-        // cached center.
-        let background_webview_focus = elem_idx.is_some()
-            && delivery == DeliveryMode::Background
-            && crate::input::has_chromium_descendant(hwnd);
-        let mut noact = if elem_idx.is_some() && delivery == DeliveryMode::Background {
+        // Embedded WebView keys need the renderer's actual focus target,
+        // not merely the owning top-level HWND. These hosts can activate their
+        // frame from UIA SetFocus even under WS_EX_NOACTIVATE. Their
+        // proven-safe pixel route establishes renderer focus with a posted
+        // click, so reuse that route at the AX element's cached center.
+        let mut noact = if background_webview_focus {
             Some(crate::input::NoActivateGuard::arm(
                 windows::Win32::Foundation::HWND(hwnd as *mut _),
             ))
@@ -259,32 +321,6 @@ impl Tool for PressKeyTool {
             {
                 return error;
             }
-        } else if elem_idx.is_some() && delivery != DeliveryMode::Foreground {
-            let focused = tokio::task::spawn_blocking({
-                let admitted = admitted.clone();
-                move || {
-                    let _admission = &admitted;
-                    crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || {
-                        admitted
-                            .as_ref()
-                            .ok_or_else(|| anyhow::anyhow!("missing admitted element"))
-                            .and_then(|element| element.focus_element())
-                    })
-                }
-            })
-            .await;
-            match focused {
-                Ok(Ok(())) => {
-                    if delivery == DeliveryMode::Background {
-                        let _ = crate::input::wait_for_focused_descendant(
-                            hwnd,
-                            std::time::Duration::from_millis(500),
-                        );
-                    }
-                }
-                Ok(Err(e)) => return ToolResult::error(e.to_string()),
-                Err(e) => return ToolResult::error(format!("UIA focus task failed: {e}")),
-            }
         }
         let key_display = key.clone();
         // Foreground: send_key_synthesized takes the SetForegroundWindow path.
@@ -322,7 +358,10 @@ impl Tool for PressKeyTool {
             move || {
                 let _admission = &admitted;
                 let m: Vec<&str> = mods.iter().map(String::as_str).collect();
-                crate::input::post_key(hwnd, &key, &m)
+                match native_key_target {
+                    Some(target) => crate::input::keyboard::post_key_to_hwnd(target, &key, &m),
+                    None => crate::input::post_key(hwnd, &key, &m),
+                }
             }
         })
         .await;

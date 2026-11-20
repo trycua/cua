@@ -559,6 +559,14 @@ struct Markers {
     ports: HashMap<u16, usize>,
 }
 
+/// Which holders of a shared socket still keep it in use. The grant registry
+/// answers this: a grant parked past its idle bound holds the socket only
+/// until its reaper runs, and no grant may join the socket through it.
+pub(crate) trait SharedSocketHolders: Send + Sync {
+    /// Whether any of `holders` keeps the socket usable at `now`.
+    fn keep_in_use(&self, holders: &HashSet<u64>, now: Instant) -> bool;
+}
+
 struct PoolInner {
     conns: Mutex<HashMap<String, PoolEntry>>,
     /// Serializes every browser-level dial for grant-owned sockets so two
@@ -566,6 +574,7 @@ struct PoolInner {
     dial_gate: Mutex<()>,
     markers: StdMutex<Markers>,
     absolute_ttl: Duration,
+    holders: Option<Arc<dyn SharedSocketHolders>>,
 }
 
 impl PoolInner {
@@ -616,7 +625,8 @@ impl PoolInner {
     }
 
     /// Return the live shared socket for `url`, dropping it first when it is
-    /// closed or past its bounds.
+    /// closed, past its absolute bound, or held only by grants parked past
+    /// their idle bound. Runs under the entry lock, right before a holder joins.
     fn live_shared<'a>(
         &self,
         conns: &'a mut HashMap<String, PoolEntry>,
@@ -625,7 +635,12 @@ impl PoolInner {
     ) -> Option<&'a mut PoolEntry> {
         let stale = conns.get(url).is_some_and(|entry| {
             entry.shared.as_ref().is_some_and(|shared| {
-                entry.conn.is_closed() || shared.expired(now, self.absolute_ttl)
+                entry.conn.is_closed()
+                    || shared.expired(now, self.absolute_ttl)
+                    || self
+                        .holders
+                        .as_ref()
+                        .is_some_and(|holders| !holders.keep_in_use(&shared.holders, now))
             })
         });
         if stale {
@@ -662,16 +677,28 @@ impl CdpPool {
     }
 
     pub fn new() -> Self {
-        Self::with_shared_socket_absolute_ttl(SHARED_SOCKET_ABSOLUTE_TTL)
+        Self::build(SHARED_SOCKET_ABSOLUTE_TTL, None)
     }
 
-    pub(crate) fn with_shared_socket_absolute_ttl(absolute_ttl: Duration) -> Self {
+    /// A pool whose shared sockets are reused only while `holders` says a
+    /// holder keeps them in use.
+    pub(crate) fn with_shared_socket_holders(holders: Arc<dyn SharedSocketHolders>) -> Self {
+        Self::build(SHARED_SOCKET_ABSOLUTE_TTL, Some(holders))
+    }
+
+    #[cfg(test)]
+    fn with_shared_socket_absolute_ttl(absolute_ttl: Duration) -> Self {
+        Self::build(absolute_ttl, None)
+    }
+
+    fn build(absolute_ttl: Duration, holders: Option<Arc<dyn SharedSocketHolders>>) -> Self {
         Self {
             inner: Arc::new(PoolInner {
                 conns: Mutex::new(HashMap::new()),
                 dial_gate: Mutex::new(()),
                 markers: StdMutex::new(Markers::default()),
                 absolute_ttl,
+                holders,
             }),
         }
     }
@@ -1058,6 +1085,25 @@ mod tests {
         let fresh = pool.claim_existing(&url, 2).await.unwrap();
         assert!(!Arc::ptr_eq(&old, &fresh));
         assert_eq!(dials.load(Ordering::SeqCst), 2);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_socket_no_holder_keeps_in_use_is_not_joined() {
+        struct Retired(u64);
+        impl SharedSocketHolders for Retired {
+            fn keep_in_use(&self, holders: &HashSet<u64>, _now: Instant) -> bool {
+                holders.iter().any(|generation| *generation != self.0)
+            }
+        }
+        let (url, dials, server) = counting_browser().await;
+        let pool = CdpPool::with_shared_socket_holders(Arc::new(Retired(1)));
+        let retired = pool.claim_existing(&url, 1).await.unwrap();
+        let fresh = pool.claim_existing(&url, 2).await.unwrap();
+        assert!(!Arc::ptr_eq(&retired, &fresh));
+        assert_eq!(dials.load(Ordering::SeqCst), 2);
+        let joined = pool.claim_existing(&url, 3).await.unwrap();
+        assert!(Arc::ptr_eq(&fresh, &joined), "a holder in use is joined");
         server.abort();
     }
 

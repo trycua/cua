@@ -435,6 +435,19 @@ impl ExistingProfileGrants {
     }
 }
 
+impl super::cdp_ws::SharedSocketHolders for ExistingProfileGrants {
+    fn keep_in_use(&self, holders: &std::collections::HashSet<u64>, now: Instant) -> bool {
+        let registry = self.inner.lock().unwrap();
+        holders.iter().any(|generation| {
+            !registry.ended.iter().any(|grant| {
+                grant.generation == *generation
+                    && matches!(grant.attachment, Attachment::Parked { since }
+                        if now.duration_since(since) > self.parked_idle_ttl)
+            })
+        })
+    }
+}
+
 /// What ending a session hands back to the caller.
 pub(crate) struct SessionEnd {
     /// Grants now parked on their socket, as they were before parking.
@@ -898,6 +911,25 @@ mod tests {
             live(&grants, "a").reconnect_attempts_remaining,
             MAX_RECONNECT_ATTEMPTS,
             "a refused attempt spends no reconnect"
+        );
+    }
+
+    #[test]
+    fn a_grant_parked_past_its_idle_bound_keeps_no_socket_in_use() {
+        use super::super::cdp_ws::SharedSocketHolders;
+        let grants = ExistingProfileGrants::new();
+        let parked = mint(&grants, "a", false);
+        grants.end_session("a");
+        let attached = mint(&grants, "b", false);
+        let now = Instant::now();
+        let later = now + GRANT_IDLE_TTL + Duration::from_secs(1);
+        let only_parked = std::collections::HashSet::from([parked.generation]);
+        assert!(grants.keep_in_use(&only_parked, now));
+        assert!(!grants.keep_in_use(&only_parked, later));
+        let both = std::collections::HashSet::from([parked.generation, attached.generation]);
+        assert!(
+            grants.keep_in_use(&both, later),
+            "an attached holder keeps it"
         );
     }
 }

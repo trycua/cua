@@ -87,7 +87,7 @@ pub struct BrowserEngine {
     pub(crate) pool: CdpPool,
     pub(crate) managed_browsers: ManagedBrowsers,
     pub(crate) isolated_launch_breaker: IsolatedLaunchBreaker,
-    pub(crate) existing_profile_grants: ExistingProfileGrants,
+    pub(crate) existing_profile_grants: Arc<ExistingProfileGrants>,
     pub(crate) approval_broker: Arc<crate::consent::ApprovalBroker>,
     pub(crate) protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
     mutation_gates: MutationGates,
@@ -765,13 +765,14 @@ impl BrowserEngine {
         approval_broker: Arc<crate::consent::ApprovalBroker>,
         protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
     ) -> Arc<Self> {
+        let existing_profile_grants = Arc::new(ExistingProfileGrants::new());
         let engine = Arc::new_cyclic(|weak_self| Self {
             platform,
             store: BrowserStore::new(),
-            pool: CdpPool::new(),
+            pool: CdpPool::with_shared_socket_holders(existing_profile_grants.clone()),
             managed_browsers: Default::default(),
             isolated_launch_breaker: Default::default(),
-            existing_profile_grants: ExistingProfileGrants::new(),
+            existing_profile_grants,
             approval_broker,
             protected_resource_ownership,
             mutation_gates: MutationGates::new(),
@@ -979,10 +980,8 @@ impl BrowserEngine {
         }
     }
 
-    /// End the parked grants past their idle bound. Runs before any grant
-    /// joins a pooled socket, so a join never revives a socket whose parking
-    /// bound passed before its reaper woke.
-    pub(crate) async fn end_idle_parked(&self) {
+    /// End the parked grants past their idle bound.
+    async fn end_idle_parked(&self) {
         for parked in self
             .existing_profile_grants
             .take_idle_parked(std::time::Instant::now())
@@ -1160,7 +1159,6 @@ impl BrowserEngine {
             let attempt = super::grant::MAX_RECONNECT_ATTEMPTS
                 .saturating_sub(grant.reconnect_attempts_remaining)
                 .saturating_add(1);
-            self.end_idle_parked().await;
             let mut reconnect = Box::pin(self.pool.reconnect_existing(
                 &endpoint.ws_url,
                 old_generation,

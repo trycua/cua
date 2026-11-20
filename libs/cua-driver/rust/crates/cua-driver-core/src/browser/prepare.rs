@@ -1796,7 +1796,6 @@ impl BrowserEngine {
             || previous_grant
                 .as_ref()
                 .is_some_and(|grant| grant.cleanup_remote_debugging);
-        self.end_idle_parked().await;
         let grant = self.existing_profile_grants.mint(
             &request.session,
             request.transport_session.as_deref(),

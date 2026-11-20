@@ -89,8 +89,10 @@ Spec == Init /\ [][Next]_vars
 
 \* LR1. No new episode is bound to a transport after it has closed.
 LR1 == ~lateBound
-\* LR2. A label that only a closed transport names, and that nobody ended
-\* with end_session, can be claimed by another transport once A's close has
-\* finished.
+\* LR2. A label whose only trace is a tombstone naming a closed transport, and
+\* that nobody ended with end_session, can be claimed by another transport once
+\* A's close has finished. A live record bound to A after its close is LR1's
+\* breach: it blocks the label until the idle sweep tombstones it, and LR2
+\* applies from then.
 LR2 == (aStep = "done" /\ rec = "none" /\ tomb = "A") => aMarked
 ====

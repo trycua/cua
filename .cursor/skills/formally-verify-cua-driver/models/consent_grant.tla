@@ -28,13 +28,15 @@ CONSTANTS InsertCheck
 VARIABLES ep, live, cleanup, grant, pc, askEp, revokedSince, usedStale, askedEnded
 vars == <<ep, live, cleanup, grant, pc, askEp, revokedSince, usedStale, askedEnded>>
 \* ep: the label's current episode (1 or 2). live: it is live.
-\* cleanup: the episode has ended and its cleanup hooks have not run yet.
+\* cleanup: the ended episode's cleanup: "none" (finished, or no end) |
+\*     "pending" (registered, consent hook not run) | "revoked" (the consent
+\*     hook ran; other hooks may still run).
 \* grant: 0 (none) or the episode the grant in the map was approved in.
 \* pc: the call: "idle" | "queued" (waiting for the admission mutex) |
 \*     "prompting" (provider showing the consent prompt) | "done"
 \* askEp: the episode the prompt was asked in.
 
-Init == /\ ep = 1 /\ live = TRUE /\ cleanup = FALSE /\ grant = 0 /\ pc = "idle" /\ askEp = 0
+Init == /\ ep = 1 /\ live = TRUE /\ cleanup = "none" /\ grant = 0 /\ pc = "idle" /\ askEp = 0
         /\ revokedSince = FALSE /\ usedStale = FALSE /\ askedEnded = FALSE
 
 \* authorize starts and the first lookup misses; it waits for the admission
@@ -64,30 +66,35 @@ Accept == /\ pc = "prompting" /\ pc' = "done"
 \* The session ends (end_session, its transport closes, or the idle sweep):
 \* mark_session_ended (session.rs:1477-1566) publishes the tombstone and, under
 \* the same ended_sessions lock, registers the episode's cleanup.
-SessionEnds == /\ live /\ live' = FALSE /\ cleanup' = TRUE
+SessionEnds == /\ live /\ live' = FALSE /\ cleanup' = "pending"
                /\ UNCHANGED <<ep, grant, pc, askEp, revokedSince, usedStale, askedEnded>>
 \* finish_session_end then runs the cleanup hooks (retry_session_cleanup
 \* :1598); the consent hook calls revoke_session (tool.rs:1374), which takes
 \* only the grants mutex, not the admission mutex a prompt holds.
-Revoke == /\ cleanup /\ cleanup' = FALSE /\ grant' = 0 /\ revokedSince' = TRUE
+Revoke == /\ cleanup = "pending" /\ cleanup' = "revoked" /\ grant' = 0
+          /\ revokedSince' = TRUE
           /\ UNCHANGED <<ep, live, pc, askEp, usedStale, askedEnded>>
+\* The last hook finishes and retry_session_cleanup removes the episode's
+\* cleanup progress (:1669-1675); only then may the label revive.
+CleanupDone == /\ cleanup = "revoked" /\ cleanup' = "none"
+               /\ UNCHANGED <<ep, live, grant, pc, askEp, revokedSince, usedStale, askedEnded>>
 \* start_session on the same label from the same transport, or the next call
 \* of an idle-reclaimed session: a new episode with the same grant key
 \* (resource_grant_key :561-581 has no episode in it). Revival is refused
 \* while the ended episode's cleanup is pending (cleanup_pending, read under
 \* the ended_sessions lock: session.rs:502, :686).
-Revive == /\ ~live /\ ~cleanup /\ ep = 1 /\ live' = TRUE /\ ep' = 2
+Revive == /\ ~live /\ cleanup = "none" /\ ep = 1 /\ live' = TRUE /\ ep' = 2
           /\ UNCHANGED <<cleanup, grant, pc, askEp, revokedSince, usedStale, askedEnded>>
 NextCall == /\ pc = "done" /\ pc' = "idle"
             /\ UNCHANGED <<ep, live, cleanup, grant, askEp, revokedSince, usedStale, askedEnded>>
 
-Next == Ask \/ Admit \/ UseGrant \/ Accept \/ SessionEnds \/ Revoke \/ Revive \/ NextCall
+Next == Ask \/ Admit \/ UseGrant \/ Accept \/ SessionEnds \/ Revoke \/ CleanupDone \/ Revive \/ NextCall
 Spec == Init /\ [][Next]_vars
 
 \* CG1. No grant outlives the cleanup of the episode it was approved in. It
-\* applies once cleanup has run: between the tombstone and revoke_session the
-\* ended episode's own grant may still be in the map.
-CG1 == grant # 0 => (grant = ep /\ (live \/ cleanup))
+\* applies once cleanup has finished: until then the ended episode's own grant
+\* may still be in the map, and revival is refused.
+CG1 == grant # 0 => (grant = ep /\ (live \/ cleanup # "none"))
 \* CG2. No call is let through on a grant from an earlier episode.
 CG2 == ~usedStale
 ====

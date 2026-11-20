@@ -509,6 +509,22 @@ describe("MediaSession in the Electron shell (hardware decode, keys, scrolls, ti
     ]);
   });
 
+  it("keeps a right command key held through a focus change as Super", async () => {
+    const { socket, canvas } = start({ metaAsControl: true });
+    handshake(socket);
+    const key = (type: string, init: KeyboardEventInit) => canvas.dispatchEvent(new KeyboardEvent(type, init));
+    key("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
+    canvas.dispatchEvent(new FocusEvent("blur"));
+    key("keydown", { key: "w", code: "KeyW", metaKey: true });
+    await Promise.resolve();
+    const events = socket.of("interactive_input").flatMap((m) => m.payload!.events as Array<Record<string, unknown>>);
+    expect(events.map((e) => [e.key, e.state, e.modifiers])).toEqual([
+      ["meta", "down", ["command"]],
+      ["meta", "up", []],
+      ["w", "down", ["command"]],
+    ]);
+  });
+
   it("sends a ⌘ chord whole from a Mac, whose key-up Chromium never fires", async () => {
     const { socket, canvas } = start({ wholeCommandChords: true });
     handshake(socket);

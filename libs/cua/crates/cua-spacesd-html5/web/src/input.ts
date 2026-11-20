@@ -70,6 +70,7 @@ const NAMED = new Set([
 ]);
 
 const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "Meta", "AltGraph"]);
+const COMMAND_CODES = new Set(["MetaLeft", "MetaRight"]);
 
 /** Options for mapping one key event. */
 export interface KeyMapOptions {
@@ -213,6 +214,10 @@ export class InputController {
   private touchMode: "none" | "pointer" | "scroll" | "longpress" = "none";
   private pendingPaste: { resolve: () => void; timer: number } | null = null;
   private readonly heldKeys = new Map<string, InteractiveInputEvent>();
+  // The ⌘ keys held (`MetaLeft`, `MetaRight`), kept through a focus change;
+  // `commandsUnsure` once focus left, when a ⌘ may have been released elsewhere.
+  private readonly commands = new Set<string>();
+  private commandsUnsure = false;
   enabled = true;
 
   constructor(private readonly options: InputControllerOptions) {
@@ -246,11 +251,19 @@ export class InputController {
     this.heldKeys.clear();
   }
 
-  /** Whether a key with `code` is part of a Super chord for a guest that
-   * takes ⌘ as Control: the right ⌘ held without the left one is its Super. */
-  private isSuper(code: string): boolean {
-    const held = (meta: string) => code === meta || this.heldKeys.has(meta);
-    return this.options.keyOptions().metaAsControl && held("MetaRight") && !held("MetaLeft");
+  /** Whether a key is part of a Super chord for a guest that takes ⌘ as
+   * Control: the right ⌘ held without the left one is its Super. */
+  private isSuper(): boolean {
+    return this.options.keyOptions().metaAsControl && this.commands.has("MetaRight") && !this.commands.has("MetaLeft");
+  }
+
+  private trackCommands(event: KeyboardEvent): void {
+    const command = COMMAND_CODES.has(event.code);
+    if (!event.metaKey || (this.commandsUnsure && command)) {
+      this.commands.clear();
+      this.commandsUnsure = false;
+    }
+    if (command) this.commands.add(event.code);
   }
 
   private keyOptions(superKey: boolean): KeyMapOptions {
@@ -283,7 +296,8 @@ export class InputController {
     const textarea = this.textarea;
 
     this.on(textarea, "keydown", (event) => {
-      const superKey = this.isSuper(event.code);
+      this.trackCommands(event);
+      const superKey = this.isSuper();
       const mapped = mapKey(event, "down", this.keyOptions(superKey));
       if (!mapped) return; // text arrives through beforeinput
       // A Super chord is the guest's shortcut, never the host clipboard's.
@@ -305,6 +319,8 @@ export class InputController {
     this.on(textarea, "keyup", (event) => {
       // Release exactly what went down for this physical key, even if the
       // modifiers changed in between (Ctrl released before C).
+      const superKey = this.isSuper();
+      this.commands.delete(event.code);
       const held = this.heldKeys.get(event.code || event.key);
       if (held && held.kind === "key") {
         event.preventDefault();
@@ -312,7 +328,7 @@ export class InputController {
         this.send({ ...held, state: "up", repeat: false });
         return;
       }
-      const mapped = mapKey(event, "up", this.keyOptions(this.isSuper(event.code)));
+      const mapped = mapKey(event, "up", this.keyOptions(superKey));
       if (!mapped || !MODIFIER_KEYS.has(event.key)) return;
       event.preventDefault();
       this.send(mapped);
@@ -339,7 +355,10 @@ export class InputController {
       event.preventDefault();
       void this.pasted(event as ClipboardEvent);
     });
-    this.on(textarea, "blur", () => this.releaseAll());
+    this.on(textarea, "blur", () => {
+      this.releaseAll();
+      this.commandsUnsure = this.commands.size > 0;
+    });
 
     // Pointer (mouse, pen, touch).
     this.on(surface, "pointerdown", (event) => {

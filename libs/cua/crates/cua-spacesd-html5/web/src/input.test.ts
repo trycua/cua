@@ -76,6 +76,45 @@ describe("keyboard mapping", () => {
     ]);
   });
 
+  it("keeps the side of a Cmd held through a focus change", () => {
+    const sent: InteractiveInputEvent[] = [];
+    const surface = document.createElement("div");
+    const controller = new InputController({
+      surface,
+      screen: () => surface,
+      emit: (event) => sent.push(event),
+      keyOptions: () => ({ metaAsControl: true }),
+    });
+    const press = (type: string, init: KeyboardEventInit) => controller.textarea.dispatchEvent(new KeyboardEvent(type, init));
+    const blur = () => controller.textarea.dispatchEvent(new FocusEvent("blur"));
+    // The right Cmd held through the change is still Super.
+    press("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
+    blur();
+    press("keydown", { key: "w", code: "KeyW", metaKey: true });
+    press("keyup", { key: "w", code: "KeyW", metaKey: true });
+    press("keyup", { key: "Meta", code: "MetaRight" });
+    // A left Cmd released while unfocused no longer turns the right one into Control.
+    press("keydown", { key: "Meta", code: "MetaLeft", metaKey: true });
+    blur();
+    press("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
+    press("keydown", { key: "w", code: "KeyW", metaKey: true });
+    controller.dispose();
+    expect(sent.map((e) => (e.kind === "key" ? [e.key, e.state, e.modifiers] : e.kind))).toEqual([
+      ["meta", "down", []],
+      ["meta", "up", []],
+      ["w", "down", ["command"]],
+      ["w", "up", ["command"]],
+      ["meta", "up", []],
+      ["control", "down", []],
+      ["control", "up", []],
+      ["meta", "down", []],
+      ["w", "down", ["command"]],
+      // dispose() releases what is still held.
+      ["meta", "up", []],
+      ["w", "up", ["command"]],
+    ]);
+  });
+
   it("sends a Super chord to the guest, not through the host clipboard", () => {
     const sent: InteractiveInputEvent[] = [];
     let pastes = 0;

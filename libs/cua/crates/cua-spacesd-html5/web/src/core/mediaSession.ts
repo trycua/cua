@@ -762,6 +762,9 @@ export class MediaSession {
     );
     // The ⌘ keys held (`MetaLeft`, `MetaRight`): the right one alone is Super.
     const commands = new Set<string>();
+    // Set once the canvas lost focus: a ⌘ may have been released elsewhere,
+    // so the next ⌘ pressed here replaces what `commands` holds.
+    let unsure = false;
     // Whether each held key went down as Control, so it is released as the
     // same guest key even if the other ⌘ changed in between.
     const asControl = new Map<string, boolean>();
@@ -770,7 +773,10 @@ export class MediaSession {
     };
     on("keydown", (event) => {
       event.preventDefault();
-      if (!event.metaKey) commands.clear();
+      if (!event.metaKey || (unsure && COMMAND_CODES.has(event.code))) {
+        commands.clear();
+        unsure = false;
+      }
       if (COMMAND_CODES.has(event.code)) commands.add(event.code);
       const superKey = commands.has("MetaRight") && !commands.has("MetaLeft");
       const control = !!this.options.metaAsControl && !superKey;
@@ -784,14 +790,15 @@ export class MediaSession {
       asControl.delete(event.code);
       commands.delete(event.code);
     });
-    // A ⌘ released while the canvas was unfocused sends no keyup here:
-    // release the ones still held, so the next right ⌘ alone is Super again.
+    // Keys released while the canvas is unfocused send no keyup here:
+    // release each ⌘ on the guest now. A ⌘ still held when focus returns
+    // keeps its side for the next chord.
     on("blur", () => {
       for (const code of commands) {
         send({ kind: "key", key: "meta", state: "up", modifiers: [], repeat: false }, asControl.get(code) ?? !!this.options.metaAsControl);
+        asControl.delete(code);
       }
-      commands.clear();
-      asControl.clear();
+      unsure = commands.size > 0;
     });
   }
 }

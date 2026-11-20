@@ -7,14 +7,10 @@
 //! by its executable path. When a second process started from that path
 //! connects, `replayd` cancels the first one's connection; ReplayKit in the
 //! first reconnects at once, which cancels the second one's, and so on for as
-//! long as both live.
-//!
-//! Measured on macOS 26.7 (M3) with two daemons from one binary: about 1,000
-//! reconnects a second, `replayd` at 60 to 77% of a core, each daemon at 10 to
-//! 14% and growing 0.5 to 0.9 MB a second while idle, and every
-//! ScreenCaptureKit call of both timing out. Two processes whose executable
-//! is an app's `Contents/MacOS` one do not collide; a binary elsewhere inside
-//! an app (`Contents/Resources`, `Contents/Helpers`) does.
+//! long as both live: `replayd` spins, both processes grow while idle, and
+//! their ScreenCaptureKit calls time out. Two processes whose executable is
+//! an app's `Contents/MacOS` one do not collide; a binary elsewhere inside an
+//! app (`Contents/Resources`, `Contents/Helpers`) does.
 //!
 //! So such a process claims its executable path before its first
 //! ScreenCaptureKit call and keeps the claim for life, as ReplayKit keeps its

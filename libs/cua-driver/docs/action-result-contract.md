@@ -101,7 +101,7 @@ The invariants are:
 - `refused` has neither delivery nor evidence;
 - `error` appears only on `refused`.
 
-Contract 0.9 adds `committed` separately from delivery and value readback
+Contract 0.10 adds `committed` separately from delivery and value readback
 (RFC #4009). On macOS, `set_value` retypes native non-secure single-line
 bound fields, selecting the old value in UTF-16 units, then ends editing.
 `committed` means the typed value survived and the control lost keyboard

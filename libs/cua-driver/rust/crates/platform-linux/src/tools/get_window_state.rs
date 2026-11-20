@@ -154,28 +154,45 @@ mod megapixel_cap_tests {
 /// window's top-left pixel, and the X11 pixels per frame unit. Chromium under
 /// a device scale reports its AT-SPI extents in DIPs while its X11 window, and
 /// the capture of it, are in device pixels; its top-level frame is then the
-/// X11 window rectangle divided by that scale. Frames in X11 pixels give the
-/// window origin and 1.
-fn atspi_frame_space(window: (i32, i32, i32, i32), elements: &[Value]) -> ((f64, f64), f64) {
+/// X11 window rectangle divided by that scale. Only a window-scoped tree's own
+/// top-level frame (the shallowest) can show the scale: an application-wide
+/// tree may hold other windows' frames. Otherwise the window origin and 1.
+fn atspi_frame_space(
+    window: (i32, i32, i32, i32),
+    elements: &[Value],
+    window_scoped: bool,
+) -> ((f64, f64), f64) {
     let (wx, wy, ww, wh) = window;
-    let top_level_scale = |entry: &Value| {
-        let role = entry["role"].as_str()?.to_ascii_lowercase();
-        if !matches!(role.as_str(), "frame" | "window" | "dialog") {
-            return None;
-        }
-        let frame = &entry["frame"];
-        let [x, y, w, h] = ["x", "y", "w", "h"].map(|key| frame[key].as_f64());
-        let (x, y, w, h) = (x?, y?, w?, h?);
-        if w <= 0.0 || h <= 0.0 {
-            return None;
-        }
-        let scale = f64::from(ww) / w;
-        // A frame unit spans `scale` pixels, so rounding moves each edge by
-        // less than one unit.
-        let fits = |frame: f64, window: i32| (frame * scale - f64::from(window)).abs() <= scale;
-        (scale > 1.0 && fits(h, wh) && fits(x, wx) && fits(y, wy)).then_some(scale)
-    };
-    let scale = elements.iter().find_map(top_level_scale).unwrap_or(1.0);
+    let top_level = window_scoped
+        .then(|| {
+            elements
+                .iter()
+                .filter(|entry| {
+                    entry["role"].as_str().is_some_and(|role| {
+                        matches!(
+                            role.to_ascii_lowercase().as_str(),
+                            "frame" | "window" | "dialog"
+                        )
+                    }) && entry.get("frame").is_some()
+                })
+                .min_by_key(|entry| entry["depth"].as_u64().unwrap_or(u64::MAX))
+        })
+        .flatten();
+    let scale = top_level
+        .and_then(|entry| {
+            let frame = &entry["frame"];
+            let [x, y, w, h] = ["x", "y", "w", "h"].map(|key| frame[key].as_f64());
+            let (x, y, w, h) = (x?, y?, w?, h?);
+            if w <= 0.0 || h <= 0.0 {
+                return None;
+            }
+            let scale = f64::from(ww) / w;
+            // A frame unit spans `scale` pixels, so rounding moves each edge
+            // by less than one unit.
+            let fits = |frame: f64, window: i32| (frame * scale - f64::from(window)).abs() <= scale;
+            (scale > 1.0 && fits(h, wh) && fits(x, wx) && fits(y, wy)).then_some(scale)
+        })
+        .unwrap_or(1.0);
     ((f64::from(wx) / scale, f64::from(wy) / scale), scale)
 }
 
@@ -188,8 +205,9 @@ mod atspi_frame_space_tests {
     fn frames(
         window: (i32, i32, i32, i32),
         elements: Vec<serde_json::Value>,
+        window_scoped: bool,
     ) -> Vec<serde_json::Value> {
-        let (origin, unit) = atspi_frame_space(window, &elements);
+        let (origin, unit) = atspi_frame_space(window, &elements, window_scoped);
         with_screenshot_frames(elements, origin, unit)
             .into_iter()
             .map(|entry| entry["screenshot_frame"].clone())
@@ -201,11 +219,11 @@ mod atspi_frame_space_tests {
     #[test]
     fn dip_frames_map_onto_the_device_pixel_capture() {
         let elements = vec![
-            json!({"role": "frame", "frame": {"x": 520, "y": 220, "w": 920, "h": 680}}),
-            json!({"role": "push button", "frame": {"x": 1390, "y": 220, "w": 50, "h": 30}}),
+            json!({"role": "frame", "depth": 0, "frame": {"x": 520, "y": 220, "w": 920, "h": 680}}),
+            json!({"role": "push button", "depth": 1, "frame": {"x": 1390, "y": 220, "w": 50, "h": 30}}),
         ];
         assert_eq!(
-            frames((1040, 440, 1840, 1360), elements),
+            frames((1040, 440, 1840, 1360), elements, true),
             vec![
                 json!({"x": 0, "y": 0, "w": 1840, "h": 1360}),
                 json!({"x": 1740, "y": 0, "w": 100, "h": 60}),
@@ -216,11 +234,11 @@ mod atspi_frame_space_tests {
     #[test]
     fn pixel_frames_keep_the_window_origin() {
         let elements = vec![
-            json!({"role": "frame", "frame": {"x": 520, "y": 220, "w": 920, "h": 680}}),
-            json!({"role": "push button", "frame": {"x": 1390, "y": 220, "w": 50, "h": 30}}),
+            json!({"role": "frame", "depth": 0, "frame": {"x": 520, "y": 220, "w": 920, "h": 680}}),
+            json!({"role": "push button", "depth": 1, "frame": {"x": 1390, "y": 220, "w": 50, "h": 30}}),
         ];
         assert_eq!(
-            frames((520, 220, 920, 680), elements),
+            frames((520, 220, 920, 680), elements, true),
             vec![
                 json!({"x": 0, "y": 0, "w": 920, "h": 680}),
                 json!({"x": 870, "y": 0, "w": 50, "h": 30}),
@@ -233,12 +251,32 @@ mod atspi_frame_space_tests {
         // A dialog half the window's size that does not sit at half its
         // origin belongs to another window, not a scaled copy of this one.
         let elements = vec![
-            json!({"role": "dialog", "frame": {"x": 700, "y": 400, "w": 460, "h": 340}}),
-            json!({"role": "push button", "frame": {"x": 720, "y": 420, "w": 50, "h": 30}}),
+            json!({"role": "dialog", "depth": 0, "frame": {"x": 700, "y": 400, "w": 460, "h": 340}}),
+            json!({"role": "push button", "depth": 1, "frame": {"x": 720, "y": 420, "w": 50, "h": 30}}),
         ];
         assert_eq!(
-            frames((520, 220, 920, 680), elements)[1],
+            frames((520, 220, 920, 680), elements, true)[1],
             json!({"x": 200, "y": 200, "w": 50, "h": 30})
+        );
+    }
+
+    #[test]
+    fn only_the_window_s_own_frame_shows_a_device_scale() {
+        // The window's frame matches its X11 rectangle; a half-size dialog
+        // at its origin is not this window's frame in DIPs.
+        let elements = vec![
+            json!({"role": "frame", "depth": 0, "frame": {"x": 0, "y": 0, "w": 1920, "h": 1080}}),
+            json!({"role": "dialog", "depth": 1, "frame": {"x": 0, "y": 0, "w": 960, "h": 540}}),
+        ];
+        assert_eq!(
+            frames((0, 0, 1920, 1080), elements.clone(), true)[0],
+            json!({"x": 0, "y": 0, "w": 1920, "h": 1080})
+        );
+        // An application-wide tree may hold another window's frame first.
+        let other_window_first = elements.into_iter().rev().collect();
+        assert_eq!(
+            frames((0, 0, 1920, 1080), other_window_first, false)[1],
+            json!({"x": 0, "y": 0, "w": 1920, "h": 1080})
         );
     }
 }
@@ -987,7 +1025,9 @@ impl Tool for GetWindowStateTool {
                     );
                     let elements = framed_elements_first(elements);
                     let frame_space = match x11_window {
-                        Some(window) => Some(atspi_frame_space(window, &elements)),
+                        Some(window) => {
+                            Some(atspi_frame_space(window, &elements, tr.window_scoped))
+                        }
                         None => popup_meta
                             .as_ref()
                             .map(|popup| ((f64::from(popup.x), f64::from(popup.y)), 1.0)),

@@ -166,8 +166,9 @@ pub(crate) fn tail(s: &str, max: usize) -> String {
     }
 }
 
-/// OpenSSH-based [`GuestExec`]. Uses the system `ssh` client so it honours the
-/// user's ssh config/agent and needs no extra crypto dependencies.
+/// OpenSSH-based [`GuestExec`]. Uses the system `ssh` client so it needs no
+/// extra crypto dependencies; a key login honours the user's ssh
+/// config/agent, a password login ([`SshExec::password`]) reads no config.
 #[derive(Clone)]
 pub struct SshExec {
     pub host: String,
@@ -177,7 +178,8 @@ pub struct SshExec {
     /// Password login instead of keys, for images that only allow one
     /// (a macOS Lume guest's `lume`/`lume`). Ignored when `private_key` is
     /// set. Handed to `ssh` through a private `SSH_ASKPASS` helper
-    /// ([`Askpass`]), never on its command line or in its environment.
+    /// ([`Askpass`]), never on its command line or in its environment, and
+    /// with the user's ssh config ignored (`-F /dev/null`).
     pub password: Option<String>,
     pub connect_timeout: Duration,
 }
@@ -255,7 +257,11 @@ impl SshExec {
             // helper answers; one try, and keys never offered instead. The
             // methods are switched on explicitly (a hardened ssh config may
             // turn them off for every host), and a shared connection is
-            // never reused: loopback forward ports are recycled.
+            // never reused: loopback forward ports are recycled. No ssh
+            // config is read at all: a `Host *` block could still send the
+            // password elsewhere (`ProxyCommand`, `HostName`).
+            args.push("-F".into());
+            args.push("/dev/null".into());
             for o in [
                 "BatchMode=no",
                 "PubkeyAuthentication=no",
@@ -307,7 +313,7 @@ impl SshExec {
 }
 
 impl SshExec {
-    fn argv(&self, req: &ExecRequest) -> Vec<String> {
+    pub(crate) fn argv(&self, req: &ExecRequest) -> Vec<String> {
         let mut argv = self.ssh_args();
         argv.push("--".into());
         argv.push(format!("/bin/sh -c {}", shell_quote(&remote_script(req))));
@@ -615,6 +621,8 @@ mod tests {
         assert!(a.contains(&"StrictHostKeyChecking=no".to_string()));
         assert_eq!(a.last().unwrap(), "debian@127.0.0.1");
         assert!(a.contains(&"BatchMode=yes".to_string()));
+        // A key login keeps the user's ssh config (agent, jump hosts).
+        assert!(!a.contains(&"-F".to_string()), "{a:?}");
     }
 
     #[test]
@@ -634,6 +642,8 @@ mod tests {
         ] {
             assert!(a.contains(&o.to_string()), "{o} missing from {a:?}");
         }
+        // The user's ssh config is never read for a password login.
+        assert!(a.windows(2).any(|w| w == ["-F", "/dev/null"]), "{a:?}");
         assert!(!a.iter().any(|x| x.contains("s3cret-pw")), "{a:?}");
         assert_eq!(a.last().unwrap(), "lume@127.0.0.1");
         // A key wins over a password: the login stays non-interactive.
@@ -642,6 +652,7 @@ mod tests {
             .password("pw");
         assert!(s.login_password().is_none());
         assert!(s.ssh_args().contains(&"BatchMode=yes".to_string()));
+        assert!(!s.ssh_args().contains(&"-F".to_string()));
         let debug = format!("{s:?}");
         assert!(
             debug.contains("<redacted>") && !debug.contains("\"pw\""),

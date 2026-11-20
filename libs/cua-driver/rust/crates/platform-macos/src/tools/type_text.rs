@@ -479,8 +479,7 @@ impl Tool for TypeTextTool {
                 // chrome (address bar, toolbar) stays trusted. Probe ONLY when a
                 // path with AXValue-only verification would otherwise confirm, so
                 // native types and already-unverified deliveries pay nothing.
-                let target_is_web_content = verified
-                    && path_has_untrusted_web_readback(path)
+                let target_is_web_content = probes_web_area(path, verified, is_terminal_target)
                     && target_in_web_area(pid, element_ptr, window_id);
                 let verification = surface_verification(path, verified, target_is_web_content);
                 let verified = verification.verified;
@@ -780,6 +779,11 @@ fn synthesis_refusal_result(
 
 fn path_has_untrusted_web_readback(path: &str) -> bool {
     path == PATH_AX || path == PATH_KEY_EVENTS || path == PATH_KEY_EVENTS_FG
+}
+
+/// A terminal has no web area, so its read-back is never reclassified as web content.
+fn probes_web_area(path: &str, verified: bool, is_terminal_target: bool) -> bool {
+    verified && !is_terminal_target && path_has_untrusted_web_readback(path)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2747,6 +2751,15 @@ mod tests {
             ),
             (false, None),
         );
+    }
+
+    #[test]
+    fn a_terminal_read_back_is_never_probed_for_web_content() {
+        for path in [PATH_AX, PATH_KEY_EVENTS, PATH_KEY_EVENTS_FG] {
+            assert!(!probes_web_area(path, true, true), "path={path}");
+            assert!(probes_web_area(path, true, false), "path={path}");
+            assert!(!probes_web_area(path, false, false), "path={path}");
+        }
     }
 
     #[test]

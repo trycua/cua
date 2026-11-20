@@ -95,7 +95,8 @@ pub const FOREGROUND_RETRY_SUGGESTION: &str =
 /// holds `code`, the shared [`FOREGROUND_RETRY_SUGGESTION`], and an
 /// `escalation` that recommends `foreground` for `escalation_reason`, plus
 /// every field of the `fields` object. `fields` cannot override those
-/// contract keys.
+/// contract keys. `effect` is `refused` unless `fields` names the effect of
+/// input that was already sent.
 pub fn background_unavailable_result(
     message: impl Into<String>,
     code: &str,
@@ -126,6 +127,9 @@ pub fn background_unavailable_result_with_suggestion(
         Value::Object(fields) => fields,
         _ => serde_json::Map::new(),
     };
+    structured
+        .entry("effect")
+        .or_insert_with(|| json!("refused"));
     structured.insert("code".to_owned(), json!(code));
     structured.insert("suggestion".to_owned(), json!(suggestion));
     structured.insert(
@@ -221,6 +225,28 @@ mod tests {
     }
 
     #[test]
+    fn background_unavailable_result_is_recorded_as_a_refusal() {
+        let result = background_unavailable_result(
+            "Background delivery is not available.",
+            "background_unavailable",
+            "background input is dropped by this surface",
+            json!({"event_kind": "keystroke"}),
+        );
+        let record = crate::action_record::ActionExecutionRecord::from_legacy(
+            "press_key",
+            &json!({"pid": 1, "window_id": 2, "key": "f5", "delivery_mode": "background"}),
+            result.structured_content.as_ref().unwrap(),
+        )
+        .expect("a background refusal normalizes");
+        let public = record.public_result().expect("a refusal projects");
+        assert_eq!(public.effect, cua_driver_contract::ActionEffect::Refused);
+        assert_eq!(
+            public.error.map(|error| error.code),
+            Some("background_unavailable".to_owned())
+        );
+    }
+
+    #[test]
     fn background_unavailable_result_carries_the_foreground_escalation() {
         let result = background_unavailable_result(
             "Background delivery is not available.",
@@ -236,6 +262,7 @@ mod tests {
         assert_eq!(
             result.structured_content,
             Some(json!({
+                "effect": "refused",
                 "code": "background_occluded",
                 "event_kind": "mouse_click",
                 "suggestion": "Retry this action with delivery_mode:\"foreground\".",

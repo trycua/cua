@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.30.0](https://github.com/trycua/cua/compare/cua-sdk-v0.29.4...cua-sdk-v0.30.0) (2026-11-20)
+
+
+### Features
+
+* **spaces:** send Super from the right ⌘ to Linux and Windows Spaces ([#8236](https://github.com/trycua/cua/issues/8236)) ([711bb76](https://github.com/trycua/cua/commit/711bb769f2a6162e723257b878d76a218877ebd2))
+
 ## [0.29.4](https://github.com/trycua/cua/compare/cua-sdk-v0.29.3...cua-sdk-v0.29.4) (2026-11-20)
 
 

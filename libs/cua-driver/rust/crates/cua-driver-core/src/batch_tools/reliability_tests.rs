@@ -711,6 +711,7 @@ async fn a_found_again_target_refused_in_the_background_falls_back_on_its_fresh_
                 "{text}"
             );
             assert!(!text.contains("ran in the foreground"), "{text}");
+            assert!(!text.contains("acted on"), "{text}");
         } else {
             assert_ne!(result.is_error, Some(true), "{text}");
             assert_eq!(state.clicked, vec!["Cinder decision LHP-CINDER"]);

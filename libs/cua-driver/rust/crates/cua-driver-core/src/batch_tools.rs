@@ -1549,7 +1549,7 @@ async fn refind_stale_target(
     Some((
         retry,
         format!(
-            "element {token} went stale (the window changed); acted on the same {role} \"{label}\", found again as {}",
+            "element {token} went stale (the window changed); found the same {role} \"{label}\" again as {}",
             found.describe()
         ),
     ))

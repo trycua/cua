@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.39.9](https://github.com/trycua/cua/compare/cua-spaces-v0.39.8...cua-spaces-v0.39.9) (2026-11-20)
+
+
+### Bug Fixes
+
+* **cua-host:** set the Windows host up over SSH, and say when nothing will start it after a restart ([#8274](https://github.com/trycua/cua/issues/8274)) ([3770bdb](https://github.com/trycua/cua/commit/3770bdb67a2638b3b6f0b64c112e7f51ccb77312))
+
+## [0.39.8](https://github.com/trycua/cua/compare/cua-spaces-v0.39.7...cua-spaces-v0.39.8) (2026-11-20)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.29.3 in Cua Spaces ([#8341](https://github.com/trycua/cua/issues/8341)) ([a77c6b4](https://github.com/trycua/cua/commit/a77c6b454605548ac10b365f87ada1b9fbb998e8))
+
 ## [0.39.7](https://github.com/trycua/cua/compare/cua-spaces-v0.39.6...cua-spaces-v0.39.7) (2026-11-20)
 
 

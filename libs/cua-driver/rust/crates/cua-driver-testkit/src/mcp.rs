@@ -33,6 +33,7 @@ pub struct McpDriver {
     rx: Receiver<String>,
     next_id: u32,
     recording_dir: Option<PathBuf>,
+    recording_state_timeout_ms: Option<u64>,
     behavior_video: BehaviorVideo,
 }
 
@@ -267,6 +268,7 @@ impl McpDriver {
             rx,
             next_id: 2,
             recording_dir: None,
+            recording_state_timeout_ms: None,
             behavior_video: BehaviorVideo::NotStarted,
         };
         d.initialize();
@@ -366,6 +368,15 @@ impl McpDriver {
         }
     }
 
+    /// Configure the per-turn application-state budget before behavioral capture starts.
+    pub fn set_behavior_recording_state_timeout_ms(&mut self, timeout_ms: u64) {
+        assert!(
+            self.behavior_video == BehaviorVideo::NotStarted,
+            "configure the state timeout before behavioral recording starts"
+        );
+        self.recording_state_timeout_ms = Some(timeout_ms);
+    }
+
     /// Begin the behavioral clip after fixture readiness and foreground or
     /// background posture have been established. The settle interval gives
     /// the video backend time to encode a visible baseline before dispatch.
@@ -388,14 +399,15 @@ impl McpDriver {
         if self.behavior_video != BehaviorVideo::NotStarted {
             return;
         }
-        let response = self.call(
-            "start_recording",
-            serde_json::json!({
-                "output_dir": output_dir.to_string_lossy(),
-                "record_video": true,
-                "include_accessibility_tree": include_accessibility_tree
-            }),
-        );
+        let mut args = serde_json::json!({
+            "output_dir": output_dir.to_string_lossy(),
+            "record_video": true,
+            "include_accessibility_tree": include_accessibility_tree
+        });
+        if let Some(timeout_ms) = self.recording_state_timeout_ms {
+            args["state_timeout_ms"] = timeout_ms.into();
+        }
+        let response = self.call("start_recording", args);
         let video_active = response.structured()["video_active"]
             .as_bool()
             .unwrap_or(false);
@@ -716,6 +728,7 @@ mod tests {
             rx,
             next_id: 2,
             recording_dir: Some(dir.path().to_owned()),
+            recording_state_timeout_ms: None,
             behavior_video: BehaviorVideo::NotStarted,
         };
         tx.send(

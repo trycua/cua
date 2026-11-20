@@ -1215,6 +1215,13 @@ pub(super) fn is_browser_pid(pid: i32) -> bool {
     crate::browser::browser_js::BrowserJs::supports(&bundle_id) || is_chromium_identity(&bundle_id)
 }
 
+/// Whether `pid` runs a Chromium renderer: a Chrome-family browser or an
+/// Electron app.
+pub(super) fn is_chromium_embedder(pid: i32) -> bool {
+    let bundle_id = apps::bundle_id_for_pid(pid).unwrap_or_default();
+    is_chromium_identity(&bundle_id) || crate::browser::electron_js::ElectronJs::is_electron(pid)
+}
+
 pub(crate) fn is_chromium_identity(bundle_id: &str) -> bool {
     bundle_id
         .to_ascii_lowercase()
@@ -2264,7 +2271,7 @@ mod tests {
             0,
             /*is_terminal_target=*/ true,
             KeyboardRoute {
-                delivery_mode: super::super::DeliveryMode::Background,
+                delivery_mode: super::super::DeliveryMode::BackgroundPreferred,
                 window_id: Some(7),
                 keyboard_policy: BackgroundKeyboardPolicy::SemanticOnly(refusal.clone()),
                 explicit_target: false,
@@ -2289,7 +2296,7 @@ mod tests {
             0,
             /*is_terminal_target=*/ false,
             KeyboardRoute {
-                delivery_mode: super::super::DeliveryMode::Background,
+                delivery_mode: super::super::DeliveryMode::BackgroundPreferred,
                 window_id: Some(7),
                 keyboard_policy: BackgroundKeyboardPolicy::Allowed,
                 explicit_target: false,
@@ -2334,7 +2341,7 @@ mod tests {
             0,
             /*is_terminal_target=*/ true,
             KeyboardRoute {
-                delivery_mode: super::super::DeliveryMode::Background,
+                delivery_mode: super::super::DeliveryMode::BackgroundPreferred,
                 window_id: None,
                 keyboard_policy: BackgroundKeyboardPolicy::Allowed,
                 explicit_target: false,
@@ -2794,7 +2801,7 @@ mod tests {
     #[test]
     fn electron_web_ax_background_refuses_before_synthesis() {
         let refusal = electron_background_ax_refusal(
-            crate::tools::DeliveryMode::Background,
+            crate::tools::DeliveryMode::BackgroundPreferred,
             true,
             false,
             true,
@@ -2811,14 +2818,14 @@ mod tests {
         )
         .is_none());
         assert!(electron_background_ax_refusal(
-            crate::tools::DeliveryMode::Background,
+            crate::tools::DeliveryMode::BackgroundPreferred,
             false,
             true,
             true,
         )
         .is_none());
         assert!(electron_background_ax_refusal(
-            crate::tools::DeliveryMode::Background,
+            crate::tools::DeliveryMode::BackgroundPreferred,
             true,
             false,
             false,

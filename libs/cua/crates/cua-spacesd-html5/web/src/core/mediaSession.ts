@@ -784,6 +784,15 @@ export class MediaSession {
       asControl.delete(event.code);
       commands.delete(event.code);
     });
+    // A ⌘ released while the canvas was unfocused sends no keyup here:
+    // release the ones still held, so the next right ⌘ alone is Super again.
+    on("blur", () => {
+      for (const code of commands) {
+        send({ kind: "key", key: "meta", state: "up", modifiers: [], repeat: false }, asControl.get(code) ?? !!this.options.metaAsControl);
+      }
+      commands.clear();
+      asControl.clear();
+    });
   }
 }
 

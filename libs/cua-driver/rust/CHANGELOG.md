@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.55.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.55.3...cua-driver-rs-v0.55.4) (2026-11-20)
+
+
+### Bug Fixes
+
+* **cua-driver:** stop only serve daemons on Linux update and append PATH once ([#8343](https://github.com/trycua/cua/issues/8343)) ([2dae431](https://github.com/trycua/cua/commit/2dae4316b9c3e49362ac89e558a316c40372a9cd))
+
 ## [0.55.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.55.2...cua-driver-rs-v0.55.3) (2026-11-20)
 
 

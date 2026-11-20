@@ -299,7 +299,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
 
   it("checks spaces.fixRuntime's action, and has no runtime fix off Windows", async () => {
     await expect(call("spaces.fixRuntime", { action: "reboot" })).rejects.toMatchObject({ code: "bad_args" });
-    await expect(call("spaces.fixRuntime", { action: "start-docker" })).rejects.toMatchObject({ code: "unsupported" });
+    await expect(call("spaces.fixRuntime", { action: "setup-wsl" })).rejects.toMatchObject({ code: "unsupported" });
   });
 
   it("answers New Space's options while starting and once ready", () => {

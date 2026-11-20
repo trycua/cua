@@ -24,15 +24,6 @@ use crate::ax::tree::{
     walk_native_chrome_bounded, walk_tree, AXNode, TreeWalkResult, DEFAULT_MAX_ELEMENTS,
 };
 
-/// Products whose remote-debugging checkbox can ignore AXPress, so a single
-/// foreground-assisted click on the exact control is allowed as a fallback.
-fn uses_trusted_checkbox_fallback(product: BrowserProduct) -> bool {
-    matches!(
-        product,
-        BrowserProduct::MicrosoftEdge | BrowserProduct::Brave
-    )
-}
-
 /// How long one setup step waits for the browser's accessibility tree to
 /// show its effect (a new tab, an omnibox suggestion, a checkbox rollback).
 /// Each wait polls and returns as soon as the change appears, so this only
@@ -1179,7 +1170,7 @@ impl SetupUiHandle {
                                 } else {
                                     Some(false)
                                 }
-                            } else if uses_trusted_checkbox_fallback(self.descriptor.product)
+                            } else if self.descriptor.product == BrowserProduct::MicrosoftEdge
                                 && !trusted_fallback_attempted
                             {
                                 let center =
@@ -1853,7 +1844,7 @@ fn set_remote_debugging(
                             continue;
                         }
 
-                        if uses_trusted_checkbox_fallback(descriptor.product)
+                        if descriptor.product == BrowserProduct::MicrosoftEdge
                             && !handle.trusted_checkbox_fallback_attempted
                         {
                             let center =
@@ -2060,22 +2051,6 @@ mod tests {
             SETUP_UI_UPDATE_TIMEOUT
                 <= cua_driver_core::browser::EXISTING_PROFILE_SETUP_READY_TIMEOUT
         );
-    }
-
-    #[test]
-    fn trusted_checkbox_fallback_is_limited_to_edge_and_brave() {
-        assert!(uses_trusted_checkbox_fallback(
-            BrowserProduct::MicrosoftEdge
-        ));
-        assert!(uses_trusted_checkbox_fallback(BrowserProduct::Brave));
-        for product in [
-            BrowserProduct::GoogleChrome,
-            BrowserProduct::Chromium,
-            BrowserProduct::Vivaldi,
-            BrowserProduct::Other,
-        ] {
-            assert!(!uses_trusted_checkbox_fallback(product));
-        }
     }
 
     fn node(role: &str, title: Option<&str>, value: Option<&str>, actions: &[&str]) -> AXNode {

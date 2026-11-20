@@ -234,8 +234,12 @@ ids are invalid. The grant lives in memory: it expires after 30 minutes idle or
 off Chrome's remote-debugging setting; do that in Chrome.
 
 Supported: Chrome and Edge on macOS, Windows, and Linux X11; Chrome on GNOME
-Wayland; Chrome, Edge, and Chromium on Sway; Brave on macOS, Windows, and
-Linux X11. On Linux, start the browser
+Wayland; Chrome, Edge, and Chromium on Sway; Brave on Windows and Linux X11.
+On macOS the driver attaches to Brave only when its remote debugging is
+already on: it does not run setup for Brave there, because a refused setup
+could leave remote debugging on. Turn on **Allow remote debugging for this
+browser instance** at `brave://inspect/#remote-debugging` yourself, then call
+`browser_prepare` again. On Linux, start the browser
 with `--force-renderer-accessibility`. On macOS, setup recognizes English UI labels only. On Windows, setup does not depend on the UI language. On Linux, setup accepts a localized browser, but the browser's internal setup page must show its English heading and checkbox.
 
 On macOS 27 and later, reading the Chrome, Edge, and Brave profile folders needs Full

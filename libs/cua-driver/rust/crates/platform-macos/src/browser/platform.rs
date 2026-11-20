@@ -29,6 +29,19 @@ use serde::Serialize;
 
 const CONSENT_CLEANUP_PASSES: usize = 20;
 
+/// Brave's macOS setup has turned remote debugging on, refused, and then
+/// failed to turn it back off (Brave 1.87, macOS 27), so setup refuses before
+/// touching Brave's UI until a refusal run proves the rollback. A Brave whose
+/// remote debugging is already on still attaches.
+fn unproven_setup_refusal(product: BrowserProduct) -> Option<BrowserRefusal> {
+    (product == BrowserProduct::Brave).then(|| {
+        BrowserRefusal::new(
+            BrowserRefusalCode::BrowserRequiresSetup,
+            "the driver does not turn on Brave's remote debugging on macOS: open brave://inspect/#remote-debugging in Brave, turn on Allow remote debugging for this browser instance, then call browser_prepare again",
+        )
+    })
+}
+
 #[derive(Clone, Debug, Serialize)]
 struct ConsentSurfaceEvidence {
     window_id: u32,
@@ -1204,6 +1217,9 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         &self,
         request: ExistingProfileSetupRequest,
     ) -> Result<ExistingProfileSetupOutcome, BrowserRefusal> {
+        if let Some(refusal) = unproven_setup_refusal(request.browser) {
+            return Err(refusal);
+        }
         let descriptor = existing_profile_setup_descriptor(request.browser).ok_or_else(|| {
             BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
@@ -1960,6 +1976,22 @@ mod tests {
                     == default_user_data_dir(product).is_some(),
                 "{product:?}: setup descriptor and profile root must be supported together"
             );
+        }
+    }
+
+    #[test]
+    fn brave_setup_refuses_before_touching_its_ui() {
+        let refusal = unproven_setup_refusal(BrowserProduct::Brave).expect("Brave setup refuses");
+        assert_eq!(refusal.code, BrowserRefusalCode::BrowserRequiresSetup);
+        assert!(refusal
+            .message
+            .contains("brave://inspect/#remote-debugging"));
+        for product in [
+            BrowserProduct::GoogleChrome,
+            BrowserProduct::Chromium,
+            BrowserProduct::MicrosoftEdge,
+        ] {
+            assert!(unproven_setup_refusal(product).is_none(), "{product:?}");
         }
     }
 

@@ -14,7 +14,9 @@
 //!
 //! Before reading a submenu the window gets the `WM_INITMENUPOPUP` it would
 //! get just before the submenu opened, so the app can enable, gray or add
-//! items as it does for a real open.
+//! items as it does for a real open; an app that does not answer it is
+//! refused, since its menu state may be stale. A menu bar with the
+//! `MNS_NOTIFYBYPOS` style gets the `WM_MENUCOMMAND` it expects instead.
 
 /// Why a menu path could not be resolved through the window's `HMENU`.
 #[derive(Debug, PartialEq, Eq)]
@@ -45,8 +47,37 @@ pub(crate) struct MenuItem {
 pub(crate) enum MenuStep {
     /// Descend into the submenu at this position.
     Submenu(usize),
-    /// Post this command identifier.
+    /// Dispatch the command item at this position.
+    Command(usize),
+}
+
+/// The message that runs a menu command, as the menu loop sends it.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum MenuDispatch {
+    /// `WM_COMMAND` with the item's identifier.
     Command(u16),
+    /// `WM_MENUCOMMAND` with the item's position, for a menu with the
+    /// `MNS_NOTIFYBYPOS` style.
+    ByPosition(usize),
+}
+
+/// How the item at `position` with identifier `id` is dispatched.
+pub(crate) fn menu_dispatch(
+    notify_by_position: bool,
+    position: usize,
+    id: u32,
+    depth: usize,
+) -> Result<MenuDispatch, MenuCommandError> {
+    if notify_by_position {
+        return Ok(MenuDispatch::ByPosition(position));
+    }
+    // WM_COMMAND carries a 16-bit identifier; a wider one is not a command the
+    // menu loop could send either.
+    u16::try_from(id).map(MenuDispatch::Command).map_err(|_| {
+        MenuCommandError::MustOpen(format!(
+            "menu path segment {depth} has no 16-bit command identifier"
+        ))
+    })
 }
 
 /// The label UI Automation names a Win32 menu item by: the mnemonic `&`
@@ -119,26 +150,33 @@ pub(crate) fn resolve_step(
         (true, true) => Err(MenuCommandError::Path(format!(
             "menu path segment {depth} is a submenu, not a command"
         ))),
-        // WM_COMMAND carries a 16-bit identifier; a wider one is not a
-        // command the menu loop could send either.
-        (true, false) => u16::try_from(item.id).map(MenuStep::Command).map_err(|_| {
-            MenuCommandError::MustOpen(format!(
-                "menu path segment {depth} has no 16-bit command identifier"
-            ))
-        }),
+        (true, false) => Ok(MenuStep::Command(position)),
     }
 }
 
 #[cfg(target_os = "windows")]
 mod native {
-    use super::{resolve_step, MenuCommandError, MenuItem, MenuStep};
+    use super::{menu_dispatch, resolve_step, MenuCommandError, MenuDispatch, MenuItem, MenuStep};
     use windows::core::PWSTR;
     use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetMenu, GetMenuItemCount, GetMenuItemInfoW, PostMessageW, SendMessageTimeoutW, HMENU,
-        MENUITEMINFOW, MFS_DISABLED, MFT_BITMAP, MFT_OWNERDRAW, MFT_SEPARATOR, MIIM_FTYPE, MIIM_ID,
-        MIIM_STATE, MIIM_STRING, MIIM_SUBMENU, SMTO_ABORTIFHUNG, WM_COMMAND, WM_INITMENUPOPUP,
+        GetMenu, GetMenuInfo, GetMenuItemCount, GetMenuItemInfoW, PostMessageW,
+        SendMessageTimeoutW, HMENU, MENUINFO, MENUITEMINFOW, MFS_DISABLED, MFT_BITMAP,
+        MFT_OWNERDRAW, MFT_SEPARATOR, MIIM_FTYPE, MIIM_ID, MIIM_STATE, MIIM_STRING, MIIM_SUBMENU,
+        MIM_STYLE, MNS_NOTIFYBYPOS, SMTO_ABORTIFHUNG, WM_COMMAND, WM_INITMENUPOPUP, WM_MENUCOMMAND,
     };
+
+    fn notifies_by_position(menu: HMENU) -> Result<bool, MenuCommandError> {
+        let mut info = MENUINFO {
+            cbSize: std::mem::size_of::<MENUINFO>() as u32,
+            fMask: MIM_STYLE,
+            ..Default::default()
+        };
+        unsafe { GetMenuInfo(menu, &mut info) }.map_err(|error| {
+            MenuCommandError::MustOpen(format!("the menu's style could not be read: {error}"))
+        })?;
+        Ok((info.dwStyle & MNS_NOTIFYBYPOS).0 != 0)
+    }
 
     fn read_items(menu: HMENU) -> Result<Vec<(MenuItem, HMENU)>, MenuCommandError> {
         let count = unsafe { GetMenuItemCount(menu) };
@@ -189,7 +227,8 @@ mod native {
     }
 
     /// Resolve `path` through `hwnd`'s menu bar and post the final item's
-    /// `WM_COMMAND`. Never opens a menu or activates the window.
+    /// `WM_COMMAND` (or `WM_MENUCOMMAND`). Never opens a menu or activates
+    /// the window.
     pub(crate) fn post_menu_command(hwnd: u64, path: &[String]) -> Result<(), MenuCommandError> {
         let window = HWND(hwnd as usize as *mut _);
         let mut menu = unsafe { GetMenu(window) };
@@ -200,6 +239,7 @@ mod native {
                     .into(),
             ));
         }
+        let bar_notifies_by_position = notifies_by_position(menu)?;
         for (depth, segment) in path.iter().enumerate() {
             let items = read_items(menu)?;
             let plain: Vec<MenuItem> = items.iter().map(|(item, _)| item.clone()).collect();
@@ -209,7 +249,7 @@ mod native {
                     let mut result = 0usize;
                     // The app enables, grays or fills the submenu here, as it
                     // does just before a real open.
-                    unsafe {
+                    let answered = unsafe {
                         SendMessageTimeoutW(
                             window,
                             WM_INITMENUPOPUP,
@@ -220,10 +260,29 @@ mod native {
                             Some(&mut result),
                         )
                     };
+                    if answered.0 == 0 {
+                        return Err(MenuCommandError::MustOpen(format!(
+                            "the window did not answer the initialization of menu path \
+                             segment {depth}, so its menu state may be stale"
+                        )));
+                    }
                 }
-                MenuStep::Command(id) => {
+                MenuStep::Command(position) => {
+                    let notify_by_position =
+                        bar_notifies_by_position || notifies_by_position(menu)?;
+                    let (message, wparam, lparam) = match menu_dispatch(
+                        notify_by_position,
+                        position,
+                        items[position].0.id,
+                        depth,
+                    )? {
+                        MenuDispatch::Command(id) => (WM_COMMAND, id as usize, 0),
+                        MenuDispatch::ByPosition(position) => {
+                            (WM_MENUCOMMAND, position, menu.0 as isize)
+                        }
+                    };
                     return unsafe {
-                        PostMessageW(window, WM_COMMAND, WPARAM(id as usize), LPARAM(0))
+                        PostMessageW(window, message, WPARAM(wparam), LPARAM(lparam))
                     }
                     .map_err(|error| {
                         MenuCommandError::MustOpen(format!(
@@ -291,7 +350,7 @@ mod tests {
         ];
         assert_eq!(
             resolve_step(&edit, "Select All", 1, true),
-            Ok(MenuStep::Command(25))
+            Ok(MenuStep::Command(2))
         );
     }
 
@@ -309,8 +368,20 @@ mod tests {
             resolve_step(&owner_drawn, "Paste", 1, true),
             Err(MenuCommandError::MustOpen(detail)) if detail.contains("draws its own items")
         ));
+    }
+
+    #[test]
+    fn a_command_is_dispatched_as_its_menu_expects() {
+        assert_eq!(
+            menu_dispatch(false, 2, 25, 1),
+            Ok(MenuDispatch::Command(25))
+        );
+        assert_eq!(
+            menu_dispatch(true, 2, 0x1_0000, 1),
+            Ok(MenuDispatch::ByPosition(2))
+        );
         assert!(matches!(
-            resolve_step(&[command("Big", 0x1_0000)], "Big", 0, true),
+            menu_dispatch(false, 0, 0x1_0000, 1),
             Err(MenuCommandError::MustOpen(_))
         ));
     }

@@ -47,10 +47,10 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 3.3–7.3 GB initially; grows with use (download 1.1 GB); includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
+          "Disk: 3.5–7.8 GB initially; grows with use (download 1.2 GB); includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
-        "resourcesError": "Not enough space on Colima: needs 9.4 GB, 3.0 GB available.",
+        "resourcesError": "Not enough space on Colima: needs 9.7 GB, 3.0 GB available.",
         "runtime": "auto",
         "runtimes": [
           "auto",
@@ -103,10 +103,10 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 3.3–7.3 GB initially; grows with use (download 1.1 GB); includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
+          "Disk: 3.5–7.8 GB initially; grows with use (download 1.2 GB); includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
-        "resourcesError": "Not enough space on Colima: needs 9.4 GB, 3.0 GB available.",
+        "resourcesError": "Not enough space on Colima: needs 9.7 GB, 3.0 GB available.",
         "runtime": "auto",
         "runtimes": [
           "auto",
@@ -163,10 +163,10 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 3.3–7.3 GB initially; grows with use (download 1.1 GB); includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
+          "Disk: 3.5–7.8 GB initially; grows with use (download 1.2 GB); includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
-        "resourcesError": "Not enough space on Colima: needs 9.4 GB, 3.0 GB available.",
+        "resourcesError": "Not enough space on Colima: needs 9.7 GB, 3.0 GB available.",
         "runtime": "auto",
         "runtimes": [
           "auto",
@@ -223,7 +223,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 1.6–3.3 GB initially; grows with use; includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
+          "Disk: 1.8–3.7 GB initially; grows with use; includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
         "resourcesError": "Not enough space on Colima: needs 5.4 GB, 3.0 GB available.",
@@ -279,7 +279,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 1.6–3.3 GB initially; grows with use; includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
+          "Disk: 1.8–3.7 GB initially; grows with use; includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
         "resourcesError": "Not enough space on Colima: needs 5.4 GB, 3.0 GB available.",
@@ -339,7 +339,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 1.6–3.3 GB initially; grows with use; includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
+          "Disk: 1.8–3.7 GB initially; grows with use; includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
         "resourcesError": "Not enough space on Colima: needs 5.4 GB, 3.0 GB available.",
@@ -363,7 +363,7 @@
         },
         "canContinue": true,
         "cpusText": "2 cores",
-        "disk": "20 GB (20-500) ~Uses about 1.2 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "20 GB (20-500) ~Uses about 1.3 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "os: System",
           "image: Image [ghcr.io/org/app:tag]",
@@ -422,7 +422,7 @@
         },
         "canContinue": true,
         "cpusText": "2 cores",
-        "disk": "20 GB (20-500) ~Uses about 1.2 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "20 GB (20-500) ~Uses about 1.3 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -478,7 +478,7 @@
         },
         "canContinue": true,
         "cpusText": "2 cores",
-        "disk": "64 GB (20-500) [Reset] ~The disk will be resized to 64 GB after downloading. Uses about 1.2 GB on this Mac at first, up to 64 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "64 GB (20-500) [Reset] ~The disk will be resized to 64 GB after downloading. Uses about 1.3 GB on this Mac at first, up to 64 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -534,7 +534,7 @@
         },
         "canContinue": true,
         "cpusText": "2 cores",
-        "disk": "20 GB (20-500) ~Uses about 1.2 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "20 GB (20-500) ~Uses about 1.3 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -590,7 +590,7 @@
         },
         "canContinue": true,
         "cpusText": "2 cores",
-        "disk": "20 GB (20-500) ~Uses about 1.2 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "20 GB (20-500) ~Uses about 1.3 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -647,7 +647,7 @@
         },
         "canContinue": false,
         "cpusText": "2 cores",
-        "disk": "20 GB (20-500) ~Uses about 1.2 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "20 GB (20-500) ~Uses about 1.3 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -704,7 +704,7 @@
         },
         "canContinue": false,
         "cpusText": "2 cores",
-        "disk": "20 GB (20-500) ~Uses about 1.2 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "20 GB (20-500) ~Uses about 1.3 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -761,7 +761,7 @@
         },
         "canContinue": true,
         "cpusText": "2 cores",
-        "disk": "20 GB (20-500) ~Uses about 1.2 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "20 GB (20-500) ~Uses about 1.3 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -818,7 +818,7 @@
         },
         "canContinue": true,
         "cpusText": "2 cores",
-        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.2 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.3 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -874,7 +874,7 @@
         },
         "canContinue": true,
         "cpusText": "2 cores",
-        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.2 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.3 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -931,7 +931,7 @@
         },
         "canContinue": false,
         "cpusText": "2 cores",
-        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.2 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.3 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "cpus: CPU cores !Choose 1 to 8 cores.",
           "memory: Memory",
@@ -988,7 +988,7 @@
         },
         "canContinue": false,
         "cpusText": "2 cores",
-        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.2 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.3 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "cpus: CPU cores !Choose 1 to 8 cores.",
           "memory: Memory",
@@ -1045,7 +1045,7 @@
         },
         "canContinue": true,
         "cpusText": "2 cores",
-        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.2 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.3 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -1101,7 +1101,7 @@
         },
         "canContinue": true,
         "cpusText": "2 cores",
-        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.2 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.3 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -1158,7 +1158,7 @@
         },
         "canContinue": false,
         "cpusText": "2 cores",
-        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.2 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.3 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory !Enter a whole number.",
@@ -1215,7 +1215,7 @@
         },
         "canContinue": true,
         "cpusText": "2 cores",
-        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.2 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.3 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -1272,7 +1272,7 @@
         },
         "canContinue": true,
         "cpusText": "2 cores",
-        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.2 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.3 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -1328,7 +1328,7 @@
         },
         "canContinue": true,
         "cpusText": "2 cores",
-        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.2 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "80 GB (20-500) [Reset] ~The disk will be resized to 80 GB after downloading. Uses about 1.3 GB on this Mac at first, up to 80 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "os: System",
           "image: Image [ghcr.io/org/app:tag]",

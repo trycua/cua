@@ -516,12 +516,18 @@ describe("MediaSession in the Electron shell (hardware decode, keys, scrolls, ti
     key("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
     canvas.dispatchEvent(new FocusEvent("blur"));
     key("keydown", { key: "w", code: "KeyW", metaKey: true });
+    key("keyup", { key: "w", code: "KeyW", metaKey: true });
+    // Blur already released it on the guest: its late key-up leaves the left ⌘ held.
+    key("keydown", { key: "Meta", code: "MetaLeft", metaKey: true });
+    key("keyup", { key: "Meta", code: "MetaRight", metaKey: true });
     await Promise.resolve();
     const events = socket.of("interactive_input").flatMap((m) => m.payload!.events as Array<Record<string, unknown>>);
     expect(events.map((e) => [e.key, e.state, e.modifiers])).toEqual([
       ["meta", "down", ["command"]],
       ["meta", "up", []],
       ["w", "down", ["command"]],
+      ["w", "up", ["command"]],
+      ["control", "down", ["control"]],
     ]);
   });
 

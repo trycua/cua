@@ -328,6 +328,9 @@ export class InputController {
         this.send({ ...held, state: "up", repeat: false });
         return;
       }
+      // A ⌘ whose press was never sent, or was released on blur, is not
+      // held on the guest.
+      if (COMMAND_CODES.has(event.code)) return;
       const mapped = mapKey(event, "up", this.keyOptions(superKey));
       if (!mapped || !MODIFIER_KEYS.has(event.key)) return;
       event.preventDefault();

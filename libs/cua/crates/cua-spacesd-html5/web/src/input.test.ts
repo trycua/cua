@@ -92,7 +92,10 @@ describe("keyboard mapping", () => {
     blur();
     press("keydown", { key: "w", code: "KeyW", metaKey: true });
     press("keyup", { key: "w", code: "KeyW", metaKey: true });
-    press("keyup", { key: "Meta", code: "MetaRight" });
+    // Blur already released it on the guest: its late key-up leaves the left Cmd held.
+    press("keydown", { key: "Meta", code: "MetaLeft", metaKey: true });
+    press("keyup", { key: "Meta", code: "MetaRight", metaKey: true });
+    press("keyup", { key: "Meta", code: "MetaLeft" });
     // A left Cmd released while unfocused no longer turns the right one into Control.
     press("keydown", { key: "Meta", code: "MetaLeft", metaKey: true });
     blur();
@@ -104,7 +107,8 @@ describe("keyboard mapping", () => {
       ["meta", "up", []],
       ["w", "down", ["command"]],
       ["w", "up", ["command"]],
-      ["meta", "up", []],
+      ["control", "down", []],
+      ["control", "up", []],
       ["control", "down", []],
       ["control", "up", []],
       ["meta", "down", []],

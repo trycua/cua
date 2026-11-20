@@ -786,9 +786,13 @@ export class MediaSession {
     });
     on("keyup", (event) => {
       event.preventDefault();
-      send(keyEventToInput(event, "up"), asControl.get(event.code) ?? !!this.options.metaAsControl);
-      asControl.delete(event.code);
       commands.delete(event.code);
+      // A ⌘ whose press was never sent, or was released on blur, is not
+      // held on the guest.
+      const control = asControl.get(event.code);
+      if (control === undefined && COMMAND_CODES.has(event.code)) return;
+      send(keyEventToInput(event, "up"), control ?? !!this.options.metaAsControl);
+      asControl.delete(event.code);
     });
     // Keys released while the canvas is unfocused send no keyup here:
     // release each ⌘ on the guest now. A ⌘ still held when focus returns

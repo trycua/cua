@@ -25,7 +25,7 @@
     "additionalProperties": false,
     "properties": {
      "app": {
-      "description": "Only windows of apps whose name contains this text (case-insensitive), or whose bundle id equals it. Prefer this or `pid` over an unfiltered call, which returns every window on the host.",
+      "description": "Only windows of apps with a name that contains this text (case-insensitive), or whose bundle id equals it. On macOS an app answers to its shown, possibly localized name and to its bundle's own name, so `Calculator` matches on every system language. Prefer this or `pid` over an unfiltered call, which returns every window on the host.",
       "type": "string"
      },
      "on_screen_only": {

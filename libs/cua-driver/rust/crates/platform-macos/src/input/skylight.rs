@@ -207,18 +207,87 @@ impl Drop for WindowKeyScope {
         match self.primed {
             KeyPrime::AlreadyKey => {}
             KeyPrime::KeyRecords => {
-                if post_window_key_records(self.pid, Some(self.target), previous)
-                    && self.confirm_hand_back
-                {
-                    await_key_focus(self.pid, previous, std::time::Duration::from_millis(400));
+                let posted = post_window_key_records(self.pid, Some(self.target), previous);
+                if self.confirm_hand_back {
+                    let settled = (posted
+                        && await_key_focus(
+                            self.pid,
+                            previous,
+                            std::time::Duration::from_millis(400),
+                        ))
+                        || (set_app_focused_window(self.pid, previous)
+                            && await_key_focus(
+                                self.pid,
+                                previous,
+                                std::time::Duration::from_millis(200),
+                            ));
+                    record_hand_back(self.pid, self.target, settled);
                 }
             }
             KeyPrime::AxFocusedWindow => {
-                if set_app_focused_window(self.pid, previous) && self.confirm_hand_back {
-                    await_key_focus(self.pid, previous, std::time::Duration::from_millis(200));
+                let posted = set_app_focused_window(self.pid, previous);
+                if self.confirm_hand_back {
+                    let settled = posted
+                        && await_key_focus(
+                            self.pid,
+                            previous,
+                            std::time::Duration::from_millis(200),
+                        );
+                    record_hand_back(self.pid, self.target, settled);
                 }
             }
         }
+    }
+}
+
+/// Per pid, the window a confirmed scope ([`WindowKeyScope::confirm_hand_back`])
+/// made key and could not confirm handing key back from.
+fn unconfirmed_hand_backs() -> &'static std::sync::Mutex<std::collections::HashMap<pid_t, u32>> {
+    static PENDING: OnceLock<std::sync::Mutex<std::collections::HashMap<pid_t, u32>>> =
+        OnceLock::new();
+    PENDING.get_or_init(Default::default)
+}
+
+fn record_hand_back(pid: pid_t, target: u32, settled: bool) {
+    let mut pending = unconfirmed_hand_backs()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if settled {
+        pending.remove(&pid);
+    } else {
+        pending.insert(pid, target);
+    }
+}
+
+/// `Err(window)` while `pid`'s key window is still `window`, which a confirmed
+/// scope made key and could not confirm handing key back from: that window is
+/// not the user's key window, whatever the app reports. Waits briefly for a
+/// late hand-back, and clears once key has left that window.
+pub fn settle_hand_back(pid: pid_t) -> Result<(), u32> {
+    let pending = unconfirmed_hand_backs()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(&pid)
+        .copied();
+    let Some(target) = pending else {
+        return Ok(());
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(400);
+    loop {
+        let key = key_focus_of_pid(pid).window.map(|window| window.own);
+        if key != Some(target) {
+            let mut pending = unconfirmed_hand_backs()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if pending.get(&pid) == Some(&target) {
+                pending.remove(&pid);
+            }
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(target);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(40));
     }
 }
 
@@ -311,10 +380,17 @@ pub fn post_window_key_records(pid: pid_t, current: Option<u32>, target: u32) ->
 /// The make-key records are handled on the app's main thread, so the change
 /// trails the post; a never-active LibreOffice shows it last, when a focused
 /// element appears. The caller re-reads and decides.
-fn await_key_focus(pid: pid_t, target: u32, budget: std::time::Duration) {
+/// Whether `target` settled as `pid`'s key window within `budget`.
+fn await_key_focus(pid: pid_t, target: u32, budget: std::time::Duration) -> bool {
     std::thread::sleep(KEY_RECORD_SETTLE);
     let deadline = std::time::Instant::now() + budget;
-    while !key_focus_of_pid(pid).settled_on(target) && std::time::Instant::now() < deadline {
+    loop {
+        if key_focus_of_pid(pid).settled_on(target) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
         std::thread::sleep(std::time::Duration::from_millis(40));
     }
 }

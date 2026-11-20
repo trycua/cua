@@ -591,23 +591,45 @@ async fn run_admitted<T: Send + 'static>(
 }
 
 /// What a menu press holds until the call and every worker it started have
-/// returned. Fields drop in order: key goes back to the user's window, and
-/// the app confirms it, before the pid's mutation lease and the desktop lane
-/// are released.
+/// returned. Key goes back to the user's window, and the app confirms it,
+/// before the pid's mutation lease and the desktop lane are released.
 pub(super) struct PressHold {
-    _key: Option<crate::input::skylight::WindowKeyScope>,
-    _mutation: Arc<super::BackgroundMutationLease>,
-    _lane: Option<cua_driver_core::tool::DesktopLease>,
+    key: Option<crate::input::skylight::WindowKeyScope>,
+    leases: Option<(
+        Arc<super::BackgroundMutationLease>,
+        Option<cua_driver_core::tool::DesktopLease>,
+    )>,
 }
 
 impl PressHold {
     /// Hold only `mutation` (and this task's desktop lane): no key change.
     pub(super) fn new(mutation: Arc<super::BackgroundMutationLease>) -> Arc<Self> {
         Arc::new(Self {
-            _key: None,
-            _mutation: mutation,
-            _lane: cua_driver_core::tool::DesktopLease::current(),
+            key: None,
+            leases: Some((mutation, cua_driver_core::tool::DesktopLease::current())),
         })
+    }
+}
+
+impl Drop for PressHold {
+    fn drop(&mut self) {
+        let Some(key) = self.key.take() else {
+            return;
+        };
+        let leases = self.leases.take();
+        // The hand-back waits on the app. The last holder may be a dropped
+        // call's future on a runtime thread, so the wait goes to the blocking
+        // pool, and the leases go with it.
+        let hand_back = move || {
+            drop(key);
+            drop(leases);
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn_blocking(hand_back);
+            }
+            Err(_) => hand_back(),
+        }
     }
 }
 
@@ -1157,6 +1179,16 @@ fn not_made_key(reason: &str) -> String {
     )
 }
 
+/// Why no window of the frontmost app is pressed while key has not been
+/// confirmed back from `stale`, the window an earlier call made key.
+fn hand_back_pending(stale: u32) -> String {
+    format!(
+        "belongs to the app the user is using, and key has not been confirmed back to the \
+         user's window from window {stale}, which an earlier invoke_menu call made key, so \
+         the user's key window is not known"
+    )
+}
+
 /// Why a window of the frontmost app was not pressed when that app's key
 /// window cannot be read ([`MenuRoute::KeyWindowUnknown`]).
 fn key_window_unknown(front_known: bool) -> &'static str {
@@ -1185,9 +1217,8 @@ async fn key_scope_behind_users_window(
             scope.map(|mut key| {
                 key.confirm_hand_back();
                 Arc::new(PressHold {
-                    _key: Some(key),
-                    _mutation: mutation,
-                    _lane: lane,
+                    key: Some(key),
+                    leases: Some((mutation, lane)),
                 })
             })
         })
@@ -1272,27 +1303,35 @@ impl Tool for InvokeMenuTool {
         // window and send that window down the raising path, or overlap this
         // call's scope and hand key back to the wrong window.
         let mutation = Arc::new(super::acquire_background_mutation(pid).await);
-        let (target_in_front, on_current_space, key_window, front_window) =
-            tokio::task::spawn_blocking(move || {
-                if live_frontmost_app().or_else(crate::apps::frontmost_pid) != Some(pid) {
-                    return (false, None, None, None);
-                }
-                let on_current_space = crate::windows::window_on_current_space_by_id(window_id);
-                let key_window =
-                    crate::ax::bindings::focused_window_id_of_pid(pid).map(|window| window.own);
-                // The window order stands in only when the key window cannot be read.
-                let front_window = key_window
-                    .is_none()
-                    .then(|| {
-                        crate::input::skylight::app_window_order(pid)
-                            .first()
-                            .copied()
-                    })
-                    .flatten();
-                (true, on_current_space, key_window, front_window)
-            })
-            .await
-            .unwrap_or((false, None, None, None));
+        let facts = tokio::task::spawn_blocking(move || {
+            if live_frontmost_app().or_else(crate::apps::frontmost_pid) != Some(pid) {
+                return Ok((false, None, None, None));
+            }
+            // An earlier call's hand-back that the app has not confirmed
+            // leaves its window reported as key: it is not the user's.
+            crate::input::skylight::settle_hand_back(pid)?;
+            let on_current_space = crate::windows::window_on_current_space_by_id(window_id);
+            let key_window =
+                crate::ax::bindings::focused_window_id_of_pid(pid).map(|window| window.own);
+            // The window order stands in only when the key window cannot be read.
+            let front_window = key_window
+                .is_none()
+                .then(|| {
+                    crate::input::skylight::app_window_order(pid)
+                        .first()
+                        .copied()
+                })
+                .flatten();
+            Ok((true, on_current_space, key_window, front_window))
+        })
+        .await
+        .unwrap_or(Ok((false, None, None, None)));
+        let (target_in_front, on_current_space, key_window, front_window) = match facts {
+            Ok(facts) => facts,
+            Err(stale) => {
+                return behind_users_window_refusal(pid, window_id, &hand_back_pending(stale));
+            }
+        };
         match menu_route(
             target_in_front,
             on_current_space,
@@ -1317,18 +1356,14 @@ impl Tool for InvokeMenuTool {
                         Ok(hold) => hold,
                         Err(refused) => return refused,
                     };
-                let result = run_in_background(
+                return run_in_background(
                     pid,
                     window_id,
                     path,
                     MenuRequest::PathBehindUsersWindow,
-                    hold.clone(),
+                    hold,
                 )
                 .await;
-                // The last holder hands key back and waits for the app to
-                // confirm it: off the runtime, and before the lease goes.
-                let _ = tokio::task::spawn_blocking(move || drop(hold)).await;
-                return result;
             }
             MenuRoute::KeyWindowInFront => {}
         }
@@ -1752,6 +1787,14 @@ mod tests {
             menu_route(true, None, None, None, 42),
             MenuRoute::KeyWindowUnknown { front_known: false }
         );
+    }
+
+    #[test]
+    fn an_unconfirmed_hand_back_is_refused_with_bring_to_front() {
+        let result = behind_users_window_refusal(7, 42, &hand_back_pending(41));
+        let reason = assert_refused_with_bring_to_front(result);
+        assert!(reason.contains("from window 41"));
+        assert!(reason.contains("Nothing was invoked"));
     }
 
     fn assert_refused_with_bring_to_front(result: ToolResult) -> String {

@@ -663,7 +663,7 @@ impl HubCaptureSink {
 
 impl CaptureSink for HubCaptureSink {
     fn on_event(&self, event: CaptureEvent) {
-        let active = self
+        let mut active = self
             .active_generation
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -724,6 +724,9 @@ impl CaptureSink for HubCaptureSink {
             }
             CaptureEvent::Resumed => self.hub.mark_live_source(self.target.clone()),
             CaptureEvent::Closed => {
+                // Retire this sink first: a frame callback can still be
+                // delivering, and it must not bring the target back (#5376).
+                *active = active.wrapping_add(1);
                 self.hub.mark_target_closed(&self.target);
             }
         }

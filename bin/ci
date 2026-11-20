@@ -15,7 +15,9 @@ workflow stops running one of them, so the two cannot drift apart unseen.
                          generators), then check again
   bin/ci --list          show the plan without running it
   bin/ci --only ID,...   run only these checks (ids from --list)
-  bin/ci --signoff       after a green run, set the `local-ci` commit status
+  bin/ci --signoff       after a green run, set the `local-ci` commit status. `bin/ci --quick --signoff` is
+                         the normal sign-off: --quick leaves the build tier to GitHub CI by design, and the
+                         status says so. A check skipped because a tool is missing still blocks a sign-off.
   bin/ci --install-hook  run bin/ci before every git push (opt-in)
 
 Disk safety: heavy checks (cargo test/clippy/build, cross-target checks) run one
@@ -120,6 +122,10 @@ class Check:
     isolate_home: bool = False  # run with an empty HOME, as on a fresh CI runner
     classify: Optional[Callable[[str, int], Tuple[str, str]]] = None  # (log, rc) -> (status, detail)
     skip_reason: Optional[str] = None  # planned but cannot run here
+    # Why it is skipped. "profile": the chosen mode leaves it to GitHub CI on purpose (--quick skips the build tier);
+    # that is part of the mode's contract and does not stop a sign-off. "unavailable": this machine cannot run a
+    # check the mode requires (tool missing, low disk, guard tripped), so the run proves less than the mode promises.
+    skip_kind: str = "unavailable"
 
 
 @dataclass
@@ -865,9 +871,13 @@ def static_checks(changes: Changes, ctx: "Context") -> List[Check]:
                       ci=(("ci-cua-spaces-macos.yml", "node libs/spaces-app-swift/scripts/generate-bindings.mjs --check --skip-build"),)))
 
     # Self-tests for this tool and the CI helper scripts.
-    if changes.touches(r"^(bin/ci$|scripts/ci/|scripts/spdx-headers\.py$|\.github/workflows/)"):
+    if changes.touches(r"^(bin/ci$|scripts/ci/|scripts/spdx-headers\.py$|\.github/workflows/|.*\.sh$)"):
         add(Check("bin-ci-tests", "bin/ci tests and workflow sync", "python3 -m unittest discover -s scripts/ci/tests -q && python3 bin/ci --verify-sync",
                   ci=(("ci-test-scripts.yml", "python3 -m unittest discover -s scripts/ci/tests"),)))
+    if changes.touches(r"^libs/cua-driver/examples/action-read-overlap/"):
+        add(Check("read-overlap-tests", "action and read overlap example tests",
+                  "python3 -m unittest discover -s libs/cua-driver/examples/action-read-overlap -p 'test_*.py' -q",
+                  ci=(("ci-test-scripts.yml", "python3 -m unittest discover -s libs/cua-driver/examples/action-read-overlap"),)))
     if changes.touches(r"^\.github/scripts/"):
         add(Check("gh-scripts-tests", ".github/scripts tests",
                   "cd .github/scripts && uv run --no-project -q --with pytest --with cryptography --with jsonschema --with pyyaml --with toml pytest tests/ -q",
@@ -976,6 +986,14 @@ def rust_checks(changes: Changes, ctx: "Context") -> List[Check]:
                          clippy_cmd, cwd=root,
                          tools=("cargo",), group=group, tier="build",
                          hint="fix the warnings above; `cargo clippy --fix --allow-dirty` applies the machine-applicable ones"))
+        if root == "libs/cua" and (changes.full or "cua-vmm" in names):
+            # cua-vmm's backends are features; other crates build it with only some on
+            # (cua-ci: just `lume`), so each one alone must lint clean.
+            vmm = "cargo clippy --locked -p cua-vmm --all-targets --no-default-features"
+            out.append(Check(f"rust-vmm-features:{root}", "clippy -D warnings (cua-vmm, each backend feature alone)",
+                             " && ".join(f"{vmm}{f} -- -D warnings" for f in ("", " --features lume", " --features container")),
+                             cwd=root, tools=("cargo",), group=group, tier="build",
+                             hint="gate code that needs a backend feature with #[cfg(feature = \"...\")] (and its else path)"))
         lane = windows_lane(root)
         if lane:
             args, lane_pkgs = lane
@@ -1096,6 +1114,7 @@ def build_plan(changes: Changes, ctx: Context) -> List[Check]:
             continue
         if ctx.args.quick and c.tier != "quick":
             c.skip_reason = "--quick"
+            c.skip_kind = "profile"
             continue
         missing = [t for t in c.tools if not have(t)]
         if missing and c.id.split(":")[0] in REQUIRED_TOOL_CHECKS:
@@ -1334,7 +1353,10 @@ def save_state(results: List[Result], mode: str, seconds: float) -> dict:
         "seconds": round(seconds, 1),
         "passed": [r.check.id for r in results if r.status in ("pass", "fixed")],
         "failed": [r.check.id for r in results if r.status == "FAIL"],
-        "skipped": [r.check.id for r in results if r.status == "skip"],
+        # Skips that mean the run proved less than its mode promises (a missing tool, low disk): they block a sign-off.
+        "skipped": [r.check.id for r in results if r.status == "skip" and r.check.skip_kind != "profile"],
+        # Checks the mode leaves to GitHub CI by design (the build tier under --quick); recorded, never blocking.
+        "deferred": [r.check.id for r in results if r.status == "skip" and r.check.skip_kind == "profile"],
         "at": int(time.time()),
     }
     (state_dir() / "last-run.json").write_text(json.dumps(data, indent=2))
@@ -1348,7 +1370,9 @@ def github_repo() -> Optional[str]:
 
 
 def signoff(state: dict) -> int:
-    if state["failed"] or not state["passed"]:
+    # A quick run whose every check is a build-tier one has nothing to run locally: GitHub CI runs them all.
+    nothing_to_run = not state["passed"] and not (state["mode"] == "quick" and state.get("deferred"))
+    if state["failed"] or nothing_to_run:
         print("bin/ci: not signing off: the run is not green")
         return 1
     if not state["clean"]:
@@ -1362,6 +1386,8 @@ def signoff(state: dict) -> int:
         print("bin/ci: not signing off: needs the gh CLI and a GitHub origin")
         return 1
     desc = f"bin/ci {state['mode']}: {len(state['passed'])} checks passed in {fmt_secs(state['seconds'])} ({sys.platform})"
+    if state.get("deferred"):
+        desc += f"; {len(state['deferred'])} build check(s) left to CI"
     out = subprocess.run(["gh", "api", "-X", "POST", f"repos/{repo}/statuses/{state['head']}", "-f", "state=success",
                           "-f", f"context={STATUS_CONTEXT}", "-f", f"description={desc[:140]}"], capture_output=True, text=True)
     if out.returncode != 0:
@@ -1458,7 +1484,7 @@ def all_check_refs() -> List[Tuple[str, str, str]]:
         def crate_trigger(self, *a):
             return True
 
-    full = Changes("HEAD", "HEAD", ["x.rs", "x.py", ".github/workflows/x.yml", "Cargo.toml", "docs/content/x.mdx", "libs/cua/crates/cua-sdk/x.rs", ".github/scripts/x.py", "libs/cua-driver/x.rs", "scripts/images/x.py", "bin/ci"], full=False)
+    full = Changes("HEAD", "HEAD", ["x.rs", "x.py", ".github/workflows/x.yml", "Cargo.toml", "docs/content/x.mdx", "libs/cua/crates/cua-sdk/x.rs", ".github/scripts/x.py", "libs/cua-driver/x.rs", "scripts/images/x.py", "bin/ci", "libs/cua-driver/examples/action-read-overlap/x.py"], full=False)
     refs = []
     for c in static_checks(full, Dummy()):  # type: ignore[arg-type]
         refs.extend((c.id, wf, text) for wf, text in c.ci)

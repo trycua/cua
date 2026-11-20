@@ -90,7 +90,10 @@ pre-push hook. `CUA_LOCAL_CI_ARGS="--quick"` changes what the hook runs.
 
 After a green run on a clean tree, `bin/ci --signoff` sets the `local-ci` commit status on `HEAD` through
 `gh api`. If the commit is not on GitHub yet, push and run it again: it reuses the green run. It refuses to
-sign off a run that failed or skipped a check. Sign off again after every new commit.
+sign off a run that failed, or that skipped a check because this machine could not run it (a missing tool, low disk).
+`bin/ci --quick --signoff` is the normal sign-off: `--quick` leaves the build tier (cargo builds, generated bindings)
+to GitHub CI on purpose, so those checks do not block it; the status description says how many were left to CI.
+`--full` has no such allowance: every check must run. Sign off again after every new commit.
 
 `ci-gate` requires a sign-off on the head commit of **every pull request**, whoever opens it. The author,
 labels and commit trailers are not read.
@@ -201,10 +204,21 @@ result. That is cheaper than running everything, and it is the same rule as a pu
 will land on `main`. In a `merge_group` run, `github.event_name` is not `pull_request`, so those lanes run their
 `main` jobs too.
 
-This is off until the repository variable `CI_QUEUE_RUNS` is `true`. While it is off, `merge_group` runs skip
-every job and the gate in the queue re-reads the pull request's own results, as before. When it is on, the
-gate judges a workflow by its queue run where it has one (with at least one job not skipped) and by the pull
-request's run otherwise. Turn it on after one queue entry has gone through green with it on.
+Only the workflows listed under `queue` in `.github/ci-areas.json` (read from the queue's base commit) run in
+the queue, and each runs there only its push-only jobs that fit the queue's 60-minute timeout. The pull
+request already ran the rest. Every other `merge_group` run skips, and the gate reads that workflow's pull
+request run.
+
+| Workflow | Runs in the queue | Waits for the run after merge |
+| --- | --- | --- |
+| `E2E: Cua Driver release gate` (gated paths) | every Linux lane; Windows native, capture and installer | Windows shared Electron + Tauri (the PR's quick lane ran its Electron cells), hosted macOS, standalone browsers |
+
+`CI: cua SDK` is not in the list: its Windows rust leg takes longer than the queue's timeout (its long test step
+compiles for 26 to 31 minutes and runs for about 17), so it runs after merge.
+
+The gate judges each queue run in addition to the pull request's run, never instead of it, so a queue run whose
+jobs were all skipped cannot hide a failing pull request run. The repository variable `CI_QUEUE_RUNS` set to
+`true` runs every workflow the change reaches instead of only the `queue` list.
 
 ### When a rerun turns green
 

@@ -470,21 +470,16 @@ async fn invoke_daemon_tool(
         if !is_session_lifecycle_tool(&tool_name)
             && sdk.is_session_ended(sid, req.session_id.as_deref())
         {
-            observe_daemon_error(observation, 1);
             // An unnamed call's lifecycle id is the transport session, which
             // is not a label the caller can pass back to start_session.
-            let recovery = if req.session_id.as_deref() == Some(sid.as_str()) {
-                "Call start_session without a session label to start a new unnamed session."
-                    .to_owned()
-            } else {
-                format!(
-                    "Call start_session with session '{sid}' to start it again, or use a new session label."
-                )
-            };
-            return DaemonResponse::err(
-                format!("session has ended; tool call '{tool_name}' was rejected. {recovery}"),
-                1,
-            );
+            let public_label = (req.session_id.as_deref() != Some(sid.as_str())).then_some(sid);
+            // The same tool result the in-process runtime returns, so every
+            // socket client can branch on the `session_ended` code.
+            let refusal = serde_json::to_value(cua_driver_core::tool::session_ended_refusal(
+                public_label.map(String::as_str),
+            ))
+            .expect("tool result is serializable");
+            return DaemonResponse::ok(observe_daemon_result(observation, None, refusal));
         }
     }
 
@@ -683,6 +678,21 @@ fn prepare_embedded_socket_path(
         ),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error.into()),
+    }
+}
+
+/// Resolve once an update has replaced the executable this daemon runs.
+/// macOS checks the TCC grants of a daemon left running the old image against
+/// an install that is gone, so its permission gate never opens (#7461). The
+/// daemon exits instead; launchd or the next client launch starts the new one.
+#[cfg(target_os = "macos")]
+async fn wait_for_executable_replacement() {
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
+    loop {
+        interval.tick().await;
+        if platform_macos::running_image::was_replaced() {
+            return;
+        }
     }
 }
 
@@ -1076,6 +1086,17 @@ pub async fn run_serve(
         }
     };
     tokio::pin!(parent_liveness);
+    // An embedded host owns this process's lifetime, so only a standalone
+    // daemon steps aside for an updated install.
+    let executable_replaced = async {
+        #[cfg(target_os = "macos")]
+        if !embedded {
+            wait_for_executable_replacement().await;
+            return;
+        }
+        std::future::pending::<()>().await;
+    };
+    tokio::pin!(executable_replaced);
 
     // Idle-session and recording maintenance is owned by the SDK runtime so
     // direct embedded applications and daemon-backed clients behave alike.
@@ -1478,6 +1499,12 @@ pub async fn run_serve(
             }
             _ = &mut parent_liveness => {
                 eprintln!("Cua Driver embedded host closed its lifetime pipe; shutting down.");
+                break;
+            }
+            _ = &mut executable_replaced => {
+                eprintln!(
+                    "Cua Driver was updated on disk; shutting down so the next launch runs the new install."
+                );
                 break;
             }
         }
@@ -2733,7 +2760,7 @@ mod socket_tests {
 
     #[test]
     fn every_local_service_socket_is_forced_private() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
         let socket = directory.path().join("driver.sock");
         let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
         std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o770)).unwrap();
@@ -2747,7 +2774,7 @@ mod socket_tests {
 
     #[test]
     fn a_second_standalone_launch_cannot_take_a_held_socket() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
         let socket = directory.path().join("driver.sock");
         let socket = socket.to_str().unwrap();
         let first = super::claim_standalone_socket(socket).unwrap();
@@ -2763,7 +2790,7 @@ mod socket_tests {
 
     #[test]
     fn cleanup_preserves_a_replacement_socket() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
         let socket = directory.path().join("driver.sock");
         let first = std::os::unix::net::UnixListener::bind(&socket).unwrap();
         let first_identity = socket_identity(socket.to_str().unwrap()).unwrap();
@@ -2832,6 +2859,20 @@ mod gate_tests {
             PROBE_INVOCATIONS.fetch_add(1, Ordering::SeqCst);
             ToolResult::text("probe ran")
         }
+    }
+
+    /// The `(code, message)` of a `session_ended`-style refusal: a daemon
+    /// `ok` envelope carrying the tool result the in-process runtime returns.
+    fn ended_refusal(resp: &cua_driver_core::daemon::DaemonResponse) -> Option<(&str, &str)> {
+        let result = resp.result.as_ref().filter(|_| resp.ok)?;
+        if result.get("isError") != Some(&Value::Bool(true)) {
+            return None;
+        }
+        let refusal = result.pointer("/structuredContent/refusal")?;
+        Some((
+            refusal.get("code")?.as_str()?,
+            refusal.get("message")?.as_str()?,
+        ))
     }
 
     fn call_req(sid: Option<&str>) -> DaemonRequest {
@@ -2962,14 +3003,13 @@ mod gate_tests {
                 .await
                 .unwrap()
                 .expect("ended call response");
-        assert!(
-            !resp.ok,
-            "ended-session call must be rejected loudly (not ok)"
-        );
-        assert!(
-            resp.error.as_deref().unwrap_or("").contains("has ended"),
-            "rejection must explain the session ended; got {:?}",
-            resp.error
+        assert_eq!(
+            ended_refusal(&resp),
+            Some((
+                "session_ended",
+                "this transport's unnamed session has ended; call start_session without a session label to start a new one",
+            )),
+            "ended-session call must be refused with the session_ended code; got {resp:?}"
         );
         assert_eq!(
             PROBE_INVOCATIONS.load(Ordering::SeqCst),
@@ -3038,9 +3078,10 @@ mod gate_tests {
                 .await
                 .unwrap()
                 .expect("bulk-revoked call response");
-        assert!(
-            !resp.ok,
-            "bulk-revoked session call must preserve the loud legacy transport refusal"
+        assert_eq!(
+            ended_refusal(&resp).map(|(code, _)| code),
+            Some("session_ended"),
+            "bulk-revoked session call must be refused as ended; got {resp:?}"
         );
         assert_eq!(
             PROBE_INVOCATIONS.load(Ordering::SeqCst),
@@ -3172,17 +3213,17 @@ mod gate_tests {
             &send("call", Some("end_session"), Some("done"), a).await
         ));
         let ended = send("call", Some("probe"), Some("done"), a).await;
-        assert!(
-            !ended.ok,
-            "an explicit end stays terminal for its live owner"
+        assert_eq!(
+            ended_refusal(&ended).map(|(code, _)| code),
+            Some("session_ended"),
+            "an explicit end stays terminal for its live owner: {ended:?}"
         );
-        assert!(ended.error.as_deref().unwrap_or("").contains("has ended"));
 
         // A's process exits: its control connection ends its transport.
         assert!(send("session_end", None, None, a).await.ok);
         let late = send("call", Some("probe"), Some("calc"), a).await;
         assert!(
-            !late.ok,
+            !ran(&late),
             "a late call from the closed transport stays refused"
         );
         assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 2);
@@ -3194,12 +3235,14 @@ mod gate_tests {
         // The label A ended explicitly stays refused for ordinary calls after
         // A closed, and any other transport may restart it with start_session.
         let still_ended = send("call", Some("probe"), Some("done"), b).await;
-        assert!(!still_ended.ok, "{:?}", still_ended.result);
-        assert!(still_ended
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("start_session"));
+        assert_eq!(
+            ended_refusal(&still_ended),
+            Some((
+                "session_ended",
+                "session 'done' has ended; call start_session with session 'done' to start it again, or use a new session label",
+            )),
+            "{still_ended:?}"
+        );
         assert!(ran(
             &send("call", Some("start_session"), Some("done"), b).await
         ));
@@ -3214,6 +3257,122 @@ mod gate_tests {
         assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 4);
 
         let _ = send("shutdown", None, None, a).await;
+        let _ = server.await;
+        let _ = std::fs::remove_file(&socket);
+    }
+
+    /// A label a live `cua-driver mcp` process started is refused to a
+    /// `cua-driver call` as held by another connection, not as ended, and
+    /// runs for the CLI once the MCP process has closed (#4724).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_live_label_held_by_another_transport_is_refused_as_owned_not_ended() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        PROBE_INVOCATIONS.store(0, Ordering::SeqCst);
+
+        let driver =
+            cua_driver_sdk::CuaDriver::create_for_host(cua_driver_sdk::DriverHostOptions {
+                cursor: cursor_overlay::CursorConfig {
+                    enabled: false,
+                    ..cursor_overlay::CursorConfig::default()
+                },
+                host_owns_permission_ux: false,
+                host_bundle_id: None,
+                claude_code_compatibility: false,
+                prepare_desktop_environment: false,
+                register_host_tools: Some(register_probe),
+                authorization_host: None,
+                activity_observer: None,
+            });
+        let sdk = crate::sdk_adapter::SdkAdapter::load(driver)
+            .await
+            .expect("SDK adapter");
+        let socket = format!(
+            "/tmp/cua-driver-owned-test-{}-{}.sock",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let socket_for_server = socket.clone();
+        let server = tokio::spawn(async move {
+            let _ = run_serve(sdk, &socket_for_server, None).await;
+        });
+        for _ in 0..100 {
+            if std::path::Path::new(&socket).exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        let send = |method: &str, name: Option<&str>, label: Option<&str>, transport: &str| {
+            let socket = socket.clone();
+            let request = DaemonRequest {
+                method: method.into(),
+                name: name.map(str::to_owned),
+                args: label.map(|label| serde_json::json!({ "session": label })),
+                session_id: Some(transport.to_owned()),
+                observation_origin: None,
+                client_kind: None,
+            };
+            async move {
+                tokio::task::spawn_blocking(move || send_request(&socket, &request))
+                    .await
+                    .unwrap()
+                    .expect("daemon response")
+            }
+        };
+        let refusal = |resp: &cua_driver_core::daemon::DaemonResponse| {
+            assert!(resp.ok, "{resp:?}");
+            let result = resp.result.clone().expect("tool result");
+            assert_eq!(result.get("isError"), Some(&Value::Bool(true)), "{result}");
+            result
+                .pointer("/structuredContent/refusal")
+                .cloned()
+                .unwrap_or_else(|| panic!("no refusal in {result}"))
+        };
+        // The transport ids `cua-driver mcp` and `cua-driver call` send.
+        let (mcp, cli) = ("mcp-owned-test-4724", "cli-owned-test-4724");
+
+        let started = send("call", Some("start_session"), Some("ra-transport"), mcp).await;
+        assert!(started.ok, "{started:?}");
+        assert!(
+            send("call", Some("probe"), Some("ra-transport"), mcp)
+                .await
+                .ok
+        );
+        assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 1);
+
+        let foreign = refusal(&send("call", Some("probe"), Some("ra-transport"), cli).await);
+        assert_eq!(
+            foreign,
+            serde_json::json!({
+                "code": "session_owned_by_other_transport",
+                "message": "session 'ra-transport' is live on another connection (mcp_stdio); make this call from that connection, or use a new session label here",
+                "owner_transport": "mcp_stdio",
+            })
+        );
+        assert_eq!(
+            PROBE_INVOCATIONS.load(Ordering::SeqCst),
+            1,
+            "the refused call must not run the tool"
+        );
+
+        // Once the MCP process closes, the CLI's next call starts the label.
+        assert!(send("session_end", None, None, mcp).await.ok);
+        let after = send("call", Some("probe"), Some("ra-transport"), cli).await;
+        assert!(after.ok, "{after:?}");
+        assert_ne!(
+            after
+                .result
+                .as_ref()
+                .and_then(|result| result.get("isError")),
+            Some(&Value::Bool(true)),
+            "{after:?}"
+        );
+        assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 2);
+
+        let _ = send("shutdown", None, None, cli).await;
         let _ = server.await;
         let _ = std::fs::remove_file(&socket);
     }
@@ -3346,9 +3505,15 @@ mod permission_gate_tests {
         );
 
         driver.set_awaiting_permissions(false);
-        for ((label, call), (code, text)) in refusals().into_iter().zip([
+        let [unknown, ended_session, failed_authorization] = refusals();
+        let ended_refused = send(ended_session.1).await;
+        assert!(ended_refused.ok, "{:?}", ended_refused.error);
+        assert_eq!(
+            ended_refused.result.as_ref().and_then(refusal_code),
+            Some("session_ended")
+        );
+        for ((label, call), (code, text)) in [unknown, failed_authorization].into_iter().zip([
             (64, "Unknown tool: no_such_tool"),
-            (1, "has ended"),
             (1, "own authorization process"),
         ]) {
             let refused = send(call).await;

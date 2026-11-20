@@ -122,6 +122,25 @@ Spaces. A Mac or Windows Space needs a Mac or a Windows computer.
 The server now appears in **Computers**. Setup installs it as a background
 service, so it comes back after a restart.
 
+### What a computer with no screen needs
+
+A fresh Ubuntu 24.04 server needs a few more things than a desktop does.
+`cua host status` and `cua doctor` name each one that is missing and print the
+fix.
+
+| What | Why | Fix |
+|---|---|---|
+| Linger for your user | Setup installs the service as a systemd user unit. systemd stops a user's units when their last login session ends, so the computer goes offline when your ssh session closes. Setup turns linger on when it is allowed to without a password and says so when it is not. | `sudo loginctl enable-linger $USER` |
+| X libraries | The desktop driver needs them even on a computer with no desktop. Setup stops and names what is missing. | `sudo apt-get install libxi6 libxtst6 libx11-6 libxcb1` |
+| `passt` | QEMU Spaces (virtual machines) get their network from `pasta`, which is in the `passt` package. | `sudo apt-get install passt`. `cua runtime setup qemu` installs it for you when `sudo` needs no password. |
+| Permission for `pasta`'s user namespace | Ubuntu 24.04 sets `kernel.apparmor_restrict_unprivileged_userns=1`, which blocks programs without an AppArmor profile that grants `userns`. `cua runtime doctor` runs `pasta` once to check and names this when it is blocked. | Add an AppArmor profile that grants `userns` to `/usr/bin/pasta`, or `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` and keep that line in `/etc/sysctl.d/`. Setup cannot change it for you. |
+
+Container Spaces need only Docker. `passt` and the namespace permission matter
+for QEMU Spaces.
+
+Setup shows its options for a direct connection (`--direct ip:port`) under
+`cua help advanced`.
+
 If the server only runs Spaces and you don't want to share its own desktop,
 add `--share spaces` to the setup command.
 

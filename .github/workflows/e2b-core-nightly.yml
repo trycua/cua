@@ -102,7 +102,7 @@ jobs:
             } >>"$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          sudo chmod 666 /dev/kvm
+          "$GITHUB_WORKSPACE/scripts/images/enable-kvm.sh" --require
           ls -l /dev/kvm; nproc; free -h
       - uses: ./.github/actions/linux-rust-prep
         with:
@@ -124,7 +124,7 @@ jobs:
           sudo apt-get install -y -qq --no-install-recommends \
             qemu-utils qemu-system-x86 ovmf genisoimage
           # Installing QEMU puts /dev/kvm back to root:kvm 0660 (udev).
-          sudo chmod 666 /dev/kvm
+          "$GITHUB_WORKSPACE/scripts/images/enable-kvm.sh" --require
       - name: Build the Linux reference disk (with a freshly built cua-spacesd)
         working-directory: libs/images
         run: |

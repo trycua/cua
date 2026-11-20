@@ -519,7 +519,8 @@ export class LiveAgentSetup implements AgentSetupRunning {
   }
 
   async connectJson(agents: string[], signIn: boolean, skills: boolean, mcp: boolean): Promise<string> {
-    return this.inner.connectJson(agents, this.server, skills, mcp, signIn);
+    // This app carries no Cua Driver: Connect has no driver part here (`agents.connect`'s `driver` is ignored).
+    return this.inner.connectJson(agents, this.server, skills, mcp, signIn, undefined, undefined);
   }
 
   async disconnectPartsJson(agents: string[], skills: boolean, mcp: boolean, signIn: boolean): Promise<string> {

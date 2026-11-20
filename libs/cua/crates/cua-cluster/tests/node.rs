@@ -480,3 +480,50 @@ async fn idle_capacity_is_reclaimed_before_a_job_is_refused() {
     let acks = jobs.run_batch(vec![spec("d", 1, &["hang"])], "s").await;
     assert_eq!(acks[0].outcome, "rejected");
 }
+
+/// An executor that keeps `vm` from jobs only (as a Linux host does): the
+/// host's status lists what it creates as Spaces (so Spaces and forks place
+/// there), while a job that asks for `vm` is refused up front.
+struct VmNotForJobs(FakeExec);
+
+#[async_trait::async_trait]
+impl cua_cluster::node::JobExecutor for VmNotForJobs {
+    async fn run(
+        &self,
+        job: &cua_cluster::JobSpec,
+        space: &str,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> cua_cluster::node::ExecOutcome {
+        self.0.run(job, space, cancel).await
+    }
+    async fn remove_space(&self, space: &str) {
+        self.0.remove_space(space).await
+    }
+    fn offers(&self) -> cua_cluster::node::Offers {
+        let mut o = self.0.offers();
+        o.kinds.retain(|k| k != "vm");
+        o
+    }
+    fn space_offers(&self) -> cua_cluster::node::Offers {
+        self.0.offers()
+    }
+}
+
+#[tokio::test]
+async fn status_lists_the_kinds_it_creates_as_spaces_and_jobs_refuse_the_rest() {
+    let dir = tempfile::tempdir().unwrap();
+    let jobs = NodeJobs::open(
+        config(dir.path(), 2),
+        Arc::new(VmNotForJobs(FakeExec::new())),
+    )
+    .unwrap();
+    assert_eq!(jobs.status().kinds, ["container", "vm"]);
+    let mut vm = spec("v", 1, &["echo"]);
+    vm.kind = "vm".into();
+    let r = jobs.run_batch(vec![vm], "s").await;
+    assert!(
+        r[0].reason.contains("does not create vm Spaces"),
+        "{}",
+        r[0].reason
+    );
+}

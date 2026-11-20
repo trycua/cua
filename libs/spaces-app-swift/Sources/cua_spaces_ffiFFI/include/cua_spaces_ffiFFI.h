@@ -2416,6 +2416,11 @@ uint64_t uniffi_cua_spaces_ffi_fn_func_app_confirm_presence(RustBuffer reason
 uint64_t uniffi_cua_spaces_ffi_fn_func_teleport(uint64_t cua, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_WINDOWS_USE_ISO
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_WINDOWS_USE_ISO
+RustBuffer uniffi_cua_spaces_ffi_fn_func_windows_use_iso(RustBuffer image, RustBuffer path, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_FFI_CUA_SPACES_FFI_RUSTBUFFER_ALLOC
 #define UNIFFI_FFIDEF_FFI_CUA_SPACES_FFI_RUSTBUFFER_ALLOC
 RustBuffer ffi_cua_spaces_ffi_rustbuffer_alloc(uint64_t size, RustCallStatus *_Nonnull out_status
@@ -4749,6 +4754,12 @@ uint16_t uniffi_cua_spaces_ffi_checksum_func_app_confirm_presence(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_TELEPORT
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_TELEPORT
 uint16_t uniffi_cua_spaces_ffi_checksum_func_teleport(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_WINDOWS_USE_ISO
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_WINDOWS_USE_ISO
+uint16_t uniffi_cua_spaces_ffi_checksum_func_windows_use_iso(void
 
 );
 #endif

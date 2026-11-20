@@ -480,6 +480,15 @@ Because `get_session_state` is a low-risk read-only alias, it remains available
 through this breaking release and may be retained longer. Its earliest removal
 requires separate release notes and SDK usage evidence.
 
+> **Implementation note (12 Nov 2026).** `escalate_session` and
+> `get_session_state` were removed ahead of the rest of this breaking release,
+> after the deprecation window passed and a search of our own repositories found
+> no callers. Both tools, their generated SDK methods and the escalation
+> telemetry fields are gone, and calling either name now returns the ordinary
+> unknown-tool error (no `tool_removed` tombstone was added). `auto` sessions
+> stay window-scoped. Session-level `capture_scope` on `start_session` is still
+> accepted and is the remaining follow-up.
+
 Rollback during the additive stage disables implicit creation and new
 per-call surfaces while leaving legacy calls intact. Once the breaking release
 ships, rollback follows the normal component-version path and does not require

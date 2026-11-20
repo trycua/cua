@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.2](https://github.com/trycua/cua/compare/lume-v0.7.1...lume-v0.7.2) (2026-11-12)
+
+
+### Bug Fixes
+
+* **lume:** draw CLI logs and progress through one console ([#7466](https://github.com/trycua/cua/issues/7466)) ([e9756ea](https://github.com/trycua/cua/commit/e9756eadbf605fa3c6a874d92d0c77c8bb8327e7))
+
+## [0.7.1](https://github.com/trycua/cua/compare/lume-v0.7.0...lume-v0.7.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **lume:** refuse writable VM starts when host free space is unsafe ([#7457](https://github.com/trycua/cua/issues/7457)) ([a8f7ab2](https://github.com/trycua/cua/commit/a8f7ab2df35096ea3cf67d4773efd01c23e84da4)), closes [#2767](https://github.com/trycua/cua/issues/2767)
+
 ## [0.7.0](https://github.com/trycua/cua/compare/lume-v0.6.1...lume-v0.7.0) (2026-11-06)
 
 

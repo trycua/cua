@@ -1,5 +1,75 @@
 # Changelog
 
+## [0.4.15](https://github.com/trycua/cua/compare/bench-v0.4.14...bench-v0.4.15) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** python security bumps (Twisted, pypdf, filelock, virtualenv, litellm, transformers, pyasn1, GitPython, fsspec, joserfc, black, langgraph-sdk) ([#8312](https://github.com/trycua/cua/issues/8312)) ([ee59258](https://github.com/trycua/cua/commit/ee592588b4a6ff6fc8ea929a4354dcb62c64076f))
+
+## [0.4.14](https://github.com/trycua/cua/compare/bench-v0.4.13...bench-v0.4.14) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** bump mcp to 1.30.0+ (GHSA-qx49-fqc8-xw99) ([#8300](https://github.com/trycua/cua/issues/8300)) ([3d9c32f](https://github.com/trycua/cua/commit/3d9c32fc21e9e9326b330da26e230f8f56c69c0b))
+
+## [0.4.13](https://github.com/trycua/cua/compare/bench-v0.4.12...bench-v0.4.13) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** bump aiohttp to 3.14.5 (44 Dependabot alerts) ([#8309](https://github.com/trycua/cua/issues/8309)) ([006c897](https://github.com/trycua/cua/commit/006c897412aef0820e43a67beab8fe262a4a9886))
+
+## [0.4.12](https://github.com/trycua/cua/compare/bench-v0.4.11...bench-v0.4.12) (2026-11-19)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** accept cua-driver 0.55 ([#8210](https://github.com/trycua/cua/issues/8210)) ([53df2e4](https://github.com/trycua/cua/commit/53df2e420a143ab4eb56e433c923c02e00c652e5))
+
+## [0.4.11](https://github.com/trycua/cua/compare/bench-v0.4.10...bench-v0.4.11) (2026-11-18)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** accept cua-driver 0.54 ([#8162](https://github.com/trycua/cua/issues/8162)) ([d4de173](https://github.com/trycua/cua/commit/d4de1736c29f754ae5b0cf607f8fc227118a0698))
+
+## [0.4.10](https://github.com/trycua/cua/compare/bench-v0.4.9...bench-v0.4.10) (2026-11-17)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** accept cua-driver 0.53 ([#8042](https://github.com/trycua/cua/issues/8042)) ([fcc16eb](https://github.com/trycua/cua/commit/fcc16ebb629eb20a9f1279421185620ca14aa0e5))
+
+## [0.4.9](https://github.com/trycua/cua/compare/bench-v0.4.8...bench-v0.4.9) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-bench:** four cua-bench fixes re-landed from [#4561](https://github.com/trycua/cua/issues/4561) to [#4564](https://github.com/trycua/cua/issues/4564) ([#7849](https://github.com/trycua/cua/issues/7849)) ([6d66549](https://github.com/trycua/cua/commit/6d665496c9209dbbfd2dd472ccc3f36e9a23ff01))
+
+## [0.4.8](https://github.com/trycua/cua/compare/bench-v0.4.7...bench-v0.4.8) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** allow cua-driver 0.52 in the driver extra ([#7840](https://github.com/trycua/cua/issues/7840)) ([a7d3173](https://github.com/trycua/cua/commit/a7d317373f80372c0bc93a130c0e22f5383ba61d))
+
+## [0.4.7](https://github.com/trycua/cua/compare/bench-v0.4.6...bench-v0.4.7) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** allow cua-driver 0.51 ([#7781](https://github.com/trycua/cua/issues/7781)) ([1569bea](https://github.com/trycua/cua/commit/1569bea5977d61d38b5f341bb7632cc809e2f464))
+
+## [0.4.6](https://github.com/trycua/cua/compare/bench-v0.4.5...bench-v0.4.6) (2026-11-14)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** allow cua-driver 0.50 ([#7767](https://github.com/trycua/cua/issues/7767)) ([e31ab77](https://github.com/trycua/cua/commit/e31ab7705de2806bd22492b70867cb5fb767f224))
+
 ## [0.4.5](https://github.com/trycua/cua/compare/bench-v0.4.4...bench-v0.4.5) (2026-11-14)
 
 

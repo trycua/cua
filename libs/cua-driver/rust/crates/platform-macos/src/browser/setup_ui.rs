@@ -2090,6 +2090,7 @@ mod tests {
             identifier: None,
             help: None,
             actions: actions.iter().map(|value| (*value).to_owned()).collect(),
+            custom_actions: vec![],
             element_ptr: 7,
             depth: 0,
             parent_element_index: None,
@@ -2119,6 +2120,7 @@ mod tests {
             depth_truncated: false,
             walk: cua_driver_core::walk_budget::WalkBudget::nodes_only(0).outcome(),
             window_scope: Some(crate::ax::WindowScope::Matched),
+            ax_enumeration: None,
         }
     }
 
@@ -2455,6 +2457,7 @@ mod tests {
                 std::time::Duration::from_millis(1000),
             ),
             window_scope: Some(crate::ax::WindowScope::Matched),
+            ax_enumeration: None,
         };
         assert!(
             exact_pixel_setup_checkbox(0, &truncated, 0, chrome(), false)

@@ -43,6 +43,8 @@ fn serve_command(
         ])
         .envs(state.env())
         .env("DBUS_SESSION_BUS_ADDRESS", session_bus_address)
+        // A desktop shell's address names a bus these tests do not own.
+        .env_remove("AT_SPI_BUS_ADDRESS")
         // A developer shell may export NO_AT_BRIDGE=1, which makes the driver
         // skip AT-SPI startup entirely; these tests exist to exercise it.
         .env_remove("NO_AT_BRIDGE")
@@ -378,4 +380,86 @@ async fn accessibility_connection_keeps_draining_events_through_application_chur
         queued, 0,
         "{queued} messages stayed queued at the bus for cua-driver's accessibility connection: it stopped reading after application churn"
     );
+}
+
+/// A private accessibility bus with a registry that records which connection
+/// registered for which event.
+async fn start_recording_registry(
+    reaper: &mut ChildReaper,
+    directory: &Path,
+    name: &str,
+) -> (String, zbus::Connection, Arc<Mutex<Vec<(String, String)>>>) {
+    let address = start_private_bus(reaper, directory, name)
+        .expect("a further private bus starts once the first did");
+    let registrations = Arc::new(Mutex::new(Vec::new()));
+    let connection = connect(&address)
+        .name("org.a11y.atspi.Registry")
+        .expect("registry name")
+        .serve_at(
+            "/org/a11y/atspi/registry",
+            Registry {
+                registrations: registrations.clone(),
+            },
+        )
+        .expect("serve registry")
+        .serve_at("/org/a11y/atspi/accessible/root", DesktopRoot)
+        .expect("serve desktop root")
+        .build()
+        .await
+        .expect("own org.a11y.atspi.Registry on a private accessibility bus");
+    (address, connection, registrations)
+}
+
+/// Toolkit bridges and pyatspi join the bus named by `AT_SPI_BUS_ADDRESS`
+/// before they ask `org.a11y.Bus`. When the two disagree the driver must listen where the applications registered,
+/// or every walk times out against a registry with no applications (#4874).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn listener_joins_the_accessibility_bus_the_session_environment_names() {
+    let directory = tempfile::Builder::new()
+        .prefix("cua-atspi-address-")
+        .tempdir_in("/tmp")
+        .expect("temporary bus-address test directory");
+    let state = IsolatedStateRoot::new().expect("isolated driver state root");
+    let mut reaper = ChildReaper::new();
+    let Some(session_bus_address) = start_private_bus(&mut reaper, directory.path(), "session")
+    else {
+        return;
+    };
+    let (launcher_bus_address, _launcher_bus, launcher_registrations) =
+        start_recording_registry(&mut reaper, directory.path(), "launcher-a11y").await;
+    let (application_bus_address, _application_bus, application_registrations) =
+        start_recording_registry(&mut reaper, directory.path(), "application-a11y").await;
+    let _session_bus = connect(&session_bus_address)
+        .name("org.a11y.Bus")
+        .expect("launcher name")
+        .serve_at(
+            "/org/a11y/bus",
+            AccessibilityBusLauncher {
+                accessibility_bus_address: launcher_bus_address,
+            },
+        )
+        .expect("serve launcher")
+        .build()
+        .await
+        .expect("own org.a11y.Bus on the private session bus");
+
+    let daemon_socket = directory.path().join("driver.sock");
+    let mut command = serve_command(&daemon_socket, &session_bus_address, &state);
+    command.env("AT_SPI_BUS_ADDRESS", &application_bus_address);
+    reaper.push(spawn_in_job(&mut command).expect("spawn cua-driver serve"));
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while application_registrations.lock().unwrap().is_empty() {
+        assert!(
+            launcher_registrations.lock().unwrap().is_empty(),
+            "cua-driver registered its AT-SPI listener on the bus org.a11y.Bus named, \
+             not the AT_SPI_BUS_ADDRESS bus the applications use"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "cua-driver never registered an AT-SPI listener on the AT_SPI_BUS_ADDRESS bus"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(launcher_registrations.lock().unwrap().is_empty());
 }

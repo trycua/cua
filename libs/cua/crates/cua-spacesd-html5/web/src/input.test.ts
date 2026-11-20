@@ -141,7 +141,10 @@ describe("keyboard mapping", () => {
     // Sent whole: Chromium may send no key-up for V, and a late one adds nothing.
     press("keydown", { key: "c", code: "KeyC", metaKey: true });
     press("keyup", { key: "c", code: "KeyC", metaKey: true });
-    press("keyup", { key: "Meta", code: "MetaRight" });
+    // A modifier stays held until its own key-up.
+    press("keydown", { key: "Shift", code: "ShiftLeft", metaKey: true, shiftKey: true });
+    press("keyup", { key: "Meta", code: "MetaRight", shiftKey: true });
+    press("keyup", { key: "Shift", code: "ShiftLeft" });
     controller.dispose();
     expect(pastes).toBe(0);
     expect(copies).toBe(0);
@@ -151,7 +154,9 @@ describe("keyboard mapping", () => {
       ["v", "up", ["command"]],
       ["c", "down", ["command"]],
       ["c", "up", ["command"]],
+      ["shift", "down", []],
       ["meta", "up", []],
+      ["shift", "up", []],
     ]);
   });
 

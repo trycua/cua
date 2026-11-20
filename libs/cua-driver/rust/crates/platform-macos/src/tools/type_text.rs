@@ -1245,16 +1245,14 @@ fn cgevent_type_verified(
     // selection would have the rest replace what landed.
     if let (true, TypedProgress::Partial(done)) = (batched, progress) {
         let resumes = before.zip(selection).is_some_and(|(before, selection)| {
-            let current = element_ptr_and_idx
-                .and_then(|(ptr, _)| unsafe { selected_range(ptr as AXUIElementRef) });
-            tail_resumes_at_caret(
-                before,
-                selection,
-                text,
-                done,
-                read_trusted().as_deref(),
-                current,
-            )
+            // The trust checks run inside the value read, so the caret is read
+            // right after it: both describe the field as it is now.
+            let value = read_trusted();
+            let current = value.as_ref().and_then(|_| {
+                element_ptr_and_idx
+                    .and_then(|(ptr, _)| unsafe { selected_range(ptr as AXUIElementRef) })
+            });
+            tail_resumes_at_caret(before, selection, text, done, value.as_deref(), current)
         });
         if resumes && done > 0 && done < text.chars().count() {
             let tail: String = text.chars().skip(done).collect();

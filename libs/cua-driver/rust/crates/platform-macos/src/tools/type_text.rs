@@ -39,6 +39,7 @@ use crate::ax::bindings::{
     copy_string_attr, focused_element_of_pid, kAXErrorSuccess, set_string_attr, AXUIElementRef,
 };
 use crate::focus_guard;
+use crate::input::ax_actions::KeyFocusUnconfirmed;
 use crate::window_change_detector::WindowChangeDetector;
 use core_foundation::base::CFRelease;
 use cua_driver_core::background_input::BackgroundRefusal;
@@ -426,6 +427,9 @@ impl Tool for TypeTextTool {
                 refusal,
                 ax_attempt,
             })) => return synthesis_refusal_result(path, &refusal, ax_attempt),
+            Ok(Ok(TypeTextDelivery::FocusUnconfirmed { ax_attempt })) => {
+                return focus_unconfirmed_result(char_count, ax_attempt)
+            }
             Ok(Ok(TypeTextDelivery::Typed(outcome))) => Ok(Ok(outcome)),
             Ok(Err(error)) => Ok(Err(error)),
             Err(error) => Err(error),
@@ -746,6 +750,47 @@ fn synthesis_refusal_result(
     ToolResult::error(message).with_structured(structured)
 }
 
+fn focus_unconfirmed_result(requested_chars: usize, ax_attempt: AxAttempt) -> ToolResult {
+    // The keys were never posted, but an unobservable AX write before them
+    // may still have landed, so only a clean AX miss is safe to retry.
+    let retryable = ax_attempt != AxAttempt::Unverifiable;
+    let (recommended, hint) = if retryable {
+        (
+            "px",
+            "The addressed element did not take keyboard focus, so no key was sent. Type into \
+             the field with the pixel form (x,y), or re-call with delivery_mode:\"foreground\" \
+             only if the user allows the window to come forward.",
+        )
+    } else {
+        (
+            "verify_state",
+            "No key was sent because the addressed element did not take keyboard focus, but the \
+             AX insert before that could not be observed. Read the window before typing again, \
+             then type any missing text with the pixel form (x,y).",
+        )
+    };
+    let mut structured = serde_json::json!({
+        "code": "target_focus_unconfirmed",
+        "path": PATH_KEY_EVENTS,
+        "effect": if retryable { "refused" } else { "indeterminate" },
+        "requested_chars": requested_chars,
+        "dispatched": false,
+        "synthesized_chars": 0,
+        "atomic_ax_effect": ax_attempt.as_str(),
+        "retryable": retryable,
+        "hint": hint,
+        "escalation": { "recommended": recommended, "reason": hint },
+    });
+    if retryable {
+        structured["delivered_chars"] = serde_json::json!(0);
+        structured["retry_from_character"] = serde_json::json!(0);
+    }
+    ToolResult::error(
+        "type_text refused: the addressed element did not acquire keyboard focus; no key was sent",
+    )
+    .with_structured(structured)
+}
+
 fn path_has_untrusted_web_readback(path: &str) -> bool {
     path == PATH_AX || path == PATH_KEY_EVENTS || path == PATH_KEY_EVENTS_FG
 }
@@ -866,6 +911,10 @@ enum TypeTextDelivery {
     SynthesisRefused {
         path: &'static str,
         refusal: SynthesisRefusal,
+        ax_attempt: AxAttempt,
+    },
+    /// The addressed element never took keyboard focus, so no key was posted.
+    FocusUnconfirmed {
         ax_attempt: AxAttempt,
     },
 }
@@ -1254,6 +1303,20 @@ fn await_front_settled(pid: i32, window_id: u32) -> bool {
 const FRONT_SETTLE_STABLE: std::time::Duration = std::time::Duration::from_millis(250);
 const FRONT_SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1500);
 
+/// How `cgevent_type_verified` puts focus on the addressed element before
+/// posting keys.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KeyFocus {
+    /// After a front transition: focus, re-apply once if it did not stick,
+    /// then wait `settle_ms` before the first key.
+    Foreground { settle_ms: u64 },
+    /// Focus best-effort and post at once.
+    Background,
+    /// Post only once the element reads back as focused; otherwise fail with
+    /// `KeyFocusUnconfirmed` before any key is sent.
+    Confirmed,
+}
+
 /// Type via CGEvent keystrokes at the current insertion point, then verify by
 /// read-back. `type_text` is deliberately non-idempotent: it must never clear
 /// an existing value merely because AX cannot read that value back.
@@ -1263,9 +1326,13 @@ fn cgevent_type_verified(
     delay_ms: u64,
     before: Option<&str>,
     element_ptr_and_idx: Option<(usize, Option<usize>)>,
-    settle_ms: u64,
+    key_focus: KeyFocus,
     window_id: Option<u32>,
 ) -> anyhow::Result<(bool, Option<usize>)> {
+    let settle_ms = match key_focus {
+        KeyFocus::Foreground { settle_ms } => settle_ms,
+        KeyFocus::Background | KeyFocus::Confirmed => 0,
+    };
     // Focus the target element so the keystrokes land in IT. Critical in
     // foreground mode: a freshly-fronted window's keyboard focus may be on the
     // search box or nowhere, so without this the text goes into the void (or the
@@ -1276,23 +1343,39 @@ fn cgevent_type_verified(
     // window's remembered first responder by now and this write lands *after*
     // it rather than being clobbered by it. Re-applying once on a failed
     // read-back covers apps that install their responder slightly late.
-    if let Some((ptr, _)) = element_ptr_and_idx {
-        let _ = crate::input::ax_actions::focus_element(ptr);
-        if settle_ms > 0 && !crate::input::ax_actions::is_element_focused(pid, ptr) {
-            std::thread::sleep(FOCUS_REAPPLY_DELAY);
+    //
+    // With `KeyFocus::Confirmed`, the keys are posted only once the element reads
+    // back as focused. Process-scoped keys land in whatever element holds
+    // focus: when a web field kept focus on its sibling, the text typed for
+    // Subject went into To and the Subject read-back saw nothing (#5182).
+    // Refusing before any key is sent keeps a retry safe.
+    let confirmed_target = match element_ptr_and_idx {
+        Some((ptr, _)) if key_focus == KeyFocus::Confirmed => Some(ptr),
+        Some((ptr, _)) => {
             let _ = crate::input::ax_actions::focus_element(ptr);
+            if settle_ms > 0 && !crate::input::ax_actions::is_element_focused(pid, ptr) {
+                std::thread::sleep(FOCUS_REAPPLY_DELAY);
+                let _ = crate::input::ax_actions::focus_element(ptr);
+            }
+            None
         }
-    }
-    // First-keystroke settle (foreground rung only — caller passes `settle_ms > 0`).
+        None => None,
+    };
+    // First-keystroke settle (foreground rung only).
     // Even once the window is front and the element focused, the surface isn't
     // ready to accept input for a few tens of ms, so the FIRST synthesized
     // character gets eaten: typing "i love u" rendered "love u" (the leading
     // "i " was dropped). A short sleep here covers that. Background/terminal call
-    // sites pass 0 — they have no front transition and must not pay this latency.
+    // sites have no front transition and must not pay this latency.
     if settle_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
-    crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)?;
+    crate::input::ax_actions::with_confirmed_key_focus(
+        confirmed_target,
+        crate::input::ax_actions::focus_element,
+        |target| crate::input::ax_actions::element_has_keyboard_focus(pid, target),
+        || crate::input::keyboard::type_text_with_delay(pid, text, delay_ms),
+    )?;
     let batched = delay_ms == 0;
 
     // CGEvent posting is asynchronous with respect to the renderer. In
@@ -1531,7 +1614,9 @@ fn type_text_in_key_window(
                 delay_ms,
                 before.as_deref(),
                 element,
-                foreground_settle_ms,
+                KeyFocus::Foreground {
+                    settle_ms: foreground_settle_ms,
+                },
                 window_id,
             )
         };
@@ -1658,7 +1743,7 @@ fn type_text_in_key_window(
             delay_ms,
             before.as_deref(),
             element_ptr_and_idx,
-            /*settle_ms=*/ 0,
+            KeyFocus::Background,
             window_id,
         )?;
         return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
@@ -1876,15 +1961,21 @@ fn type_text_in_key_window(
     // --- Background rung 2: CGEvent keystrokes with read-back. ---
     // Never clear here: a partial AX write is rare, and clearing would violate
     // insert-at-cursor semantics.
-    let (verified, delivered_chars) = cgevent_type_verified(
+    let typed = cgevent_type_verified(
         pid,
         text,
         delay_ms,
         before.as_deref(),
         element_ptr_and_idx,
-        /*settle_ms=*/ 0,
+        KeyFocus::Confirmed,
         window_id,
-    )?;
+    );
+    let (verified, delivered_chars) = match typed {
+        Err(error) if error.is::<KeyFocusUnconfirmed>() => {
+            return Ok(TypeTextDelivery::FocusUnconfirmed { ax_attempt });
+        }
+        typed => typed?,
+    };
     Ok(TypeTextDelivery::Typed(TypeTextOutcome {
         detail: format!(" via CGEvent ({delay_ms}ms delay)"),
         path: PATH_KEY_EVENTS,
@@ -2292,6 +2383,35 @@ mod tests {
         assert_eq!(indeterminate["synthesized_chars"], 0);
         assert_eq!(indeterminate["retryable"], false);
         assert_eq!(indeterminate["escalation"]["recommended"], "verify_state");
+    }
+
+    #[test]
+    fn unfocused_target_refuses_before_any_key_and_keeps_retry_safe() {
+        // #5182: the AXFocused write did not move focus to Safari's Subject
+        // field. The refusal must say no key was sent, and only offer a
+        // retry when the AX attempt before the keys is known not to have landed.
+        let refused = focus_unconfirmed_result(34, AxAttempt::Unchanged);
+        assert_eq!(refused.is_error, Some(true));
+        let refused = refused.structured_content.expect("structured refusal");
+        assert_eq!(refused["code"], "target_focus_unconfirmed");
+        assert_eq!(refused["effect"], "refused");
+        assert_eq!(refused["dispatched"], false);
+        assert_eq!(refused["synthesized_chars"], 0);
+        assert_eq!(refused["delivered_chars"], 0);
+        assert_eq!(refused["retry_from_character"], 0);
+        assert_eq!(refused["retryable"], true);
+        assert_eq!(refused["escalation"]["recommended"], "px");
+
+        let web = focus_unconfirmed_result(34, AxAttempt::Unverifiable);
+        let web = web.structured_content.expect("structured result");
+        assert_eq!(web["code"], "target_focus_unconfirmed");
+        assert_eq!(web["effect"], "indeterminate");
+        assert_eq!(web["dispatched"], false);
+        assert_eq!(web["atomic_ax_effect"], "unverifiable");
+        assert!(web.get("delivered_chars").is_none());
+        assert!(web.get("retry_from_character").is_none());
+        assert_eq!(web["retryable"], false);
+        assert_eq!(web["escalation"]["recommended"], "verify_state");
     }
 
     #[test]

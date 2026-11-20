@@ -267,6 +267,16 @@ const GUEST_IP: &str = "10.0.3.15";
 const MACOS_GUEST_USER: &str = "lume";
 const MACOS_GUEST_PASSWORD: &str = "lume";
 
+/// An SSH login to a macOS guest through its gateway's loopback forward of
+/// port 22; `None` when the gateway forwards no SSH.
+fn ssh_over_gateway(gw: &LumeGateway) -> Option<crate::exec::SshExec> {
+    let port = *gw.ports.get(&22)?;
+    Some(
+        crate::exec::SshExec::new("127.0.0.1", port, MACOS_GUEST_USER)
+            .password(MACOS_GUEST_PASSWORD),
+    )
+}
+
 /// Whether a VM with `settings` runs behind a gateway: under the secure
 /// default, unless the user chose No protection.
 fn protected(settings: &crate::network::NetworkSettings) -> bool {
@@ -429,15 +439,14 @@ pub fn warm_vm_names(base: &str) -> [String; 2] {
 }
 
 /// Sets the macOS guest `vm`'s host names (computer, local and DNS) to
-/// `name` ([`macos_hostname`]) in the background, through `lume ssh` and
-/// the image's `lume` account: a VM resumed from a state other VMs share
-/// (a warm state, a checkpoint) or a claimed pool member would otherwise
-/// keep the name it was saved with. Bounded retries while SSH comes up;
-/// failures are logged, never fatal.
-fn set_macos_hostname_later(lume: Option<LumeCmd>, vm: &str, name: &str) {
-    let Some(lume) = lume else { return };
+/// `name` ([`macos_hostname`]) in the background, through `exec`
+/// ([`LumeRuntime::macos_command_exec`]) and the image's `lume` account: a
+/// VM resumed from a state other VMs share (a warm state, a checkpoint) or
+/// a claimed pool member would otherwise keep the name it was saved with.
+/// Bounded retries while SSH comes up; failures are logged, never fatal.
+fn set_macos_hostname_later(exec: Option<Arc<dyn GuestExec>>, vm: &str, name: &str) {
+    let Some(exec) = exec else { return };
     let host = macos_hostname(name);
-    let exec = lume_ssh_prefix(&lume, vm);
     let vm = vm.to_string();
     crate::cleanup::spawn(async move {
         let script = format!(
@@ -1254,13 +1263,25 @@ impl LumeRuntime {
     /// serve such a VM: it looks the guest up in vmnet's DHCP leases (the
     /// gateway hands out its own), and the guest's address is not
     /// reachable from the host anyway. `None` for a VM on Apple's NAT,
-    /// which keeps using `lume ssh`.
+    /// which keeps using `lume ssh`, and for a gateway that is no longer
+    /// running: its loopback port may since belong to another VM's gateway.
     fn gateway_ssh(&self, name: &str) -> Option<crate::exec::SshExec> {
-        let port = *self.load_gateway(name)?.ports.get(&22)?;
-        Some(
-            crate::exec::SshExec::new("127.0.0.1", port, MACOS_GUEST_USER)
-                .password(MACOS_GUEST_PASSWORD),
-        )
+        let gw = self.load_gateway(name)?;
+        if !crate::netgw::gateway_running(&self.cfg.root.join(name)) {
+            return None;
+        }
+        ssh_over_gateway(&gw)
+    }
+
+    /// The channel for background guest commands in the macOS VM `name`
+    /// (its host names): [`Self::gateway_ssh`] behind a gateway, else
+    /// `lume ssh`; `None` when neither is available (logged).
+    fn macos_command_exec(&self, name: &str) -> Option<Arc<dyn GuestExec>> {
+        if let Some(ssh) = self.gateway_ssh(name) {
+            return Some(Arc::new(ssh));
+        }
+        self.lume_or_log()
+            .map(|l| Arc::new(lume_ssh_prefix(&l, name)) as Arc<dyn GuestExec>)
     }
 
     /// `ep` as the host reaches a VM behind its gateway: on loopback,
@@ -2176,7 +2197,7 @@ pub async fn apply_macos_env(
     Err(VmmError::Timeout {
         name: name.to_string(),
         secs: budget.as_secs(),
-        detail: format!("could not set the sandbox environment over `lume ssh`: {last}"),
+        detail: format!("could not set the sandbox environment over SSH: {last}"),
     })
 }
 
@@ -2450,7 +2471,11 @@ impl LumeRuntime {
                     self.wait_restored(&spec.name).await;
                     tracing::info!(vm = %spec.name, warm = %warm, "resumed a new Space from the image's warm state");
                     let inst = self.finish_start(spec, true).await?;
-                    set_macos_hostname_later(self.lume_or_log(), &spec.name, &spec.name);
+                    set_macos_hostname_later(
+                        self.macos_command_exec(&spec.name),
+                        &spec.name,
+                        &spec.name,
+                    );
                     return Ok(inst);
                 }
                 // APFS clonefile: copy-on-write, so the clone costs only what
@@ -2542,7 +2567,7 @@ impl LumeRuntime {
         }
         let inst = self.finish_start(spec, macos_booted).await?;
         if resumes_state && macos_booted {
-            set_macos_hostname_later(self.lume_or_log(), &spec.name, &spec.name);
+            set_macos_hostname_later(self.macos_command_exec(&spec.name), &spec.name, &spec.name);
         }
         Ok(inst)
     }
@@ -3060,7 +3085,7 @@ impl Runtime for LumeRuntime {
             .ok_or_else(|| VmmError::NotFound(new_name.into()))?;
         if vm.os.eq_ignore_ascii_case("macos") {
             set_macos_hostname_later(
-                self.lume_or_log(),
+                self.macos_command_exec(new_name),
                 new_name,
                 identity.hostname.as_deref().unwrap_or(new_name),
             );
@@ -3282,10 +3307,11 @@ impl Runtime for LumeRuntime {
         ))
     }
 
-    /// [`LumeSshExec`] (`lume ssh <vm>`) for macOS guests (password auth
-    /// handled by lume; stdout and stderr kept apart, no stdin);
-    /// Linux disk VMs use the SSH endpoint from their spec, so callers should
-    /// build an [`crate::SshExec`] from `Instance::endpoints.ssh`.
+    /// For macOS guests: an SSH login through the VM's gateway when it runs
+    /// behind one ([`Self::gateway_ssh`]), else [`LumeSshExec`] (`lume ssh
+    /// <vm>`, password auth handled by lume; stdout and stderr kept apart,
+    /// no stdin). Linux disk VMs use the SSH endpoint from their spec, so
+    /// callers should build an [`crate::SshExec`] from `Instance::endpoints.ssh`.
     async fn guest_exec(&self, name: &str) -> Result<Option<Arc<dyn GuestExec>>> {
         self.ensure_serving().await?;
         let vm = self
@@ -3294,6 +3320,9 @@ impl Runtime for LumeRuntime {
             .await?
             .ok_or_else(|| VmmError::NotFound(name.into()))?;
         if vm.os.eq_ignore_ascii_case("macos") {
+            // As in `endpoints`: a gateway that ended is restarted first, so
+            // its forward is the VM's own.
+            self.mend_gateway(name, vm).await?;
             if let Some(ssh) = self.gateway_ssh(name) {
                 return Ok(Some(Arc::new(ssh)));
             }
@@ -4465,7 +4494,10 @@ mod tests {
             ports: [(22, 50022), (3211, 50211)].into(),
         };
         std::fs::write(rt.gateway_file("m"), serde_json::to_vec(&gw).unwrap()).unwrap();
-        let ssh = rt.gateway_ssh("m").unwrap();
+        // A gateway that is not running (no live `cua-netgw` pid): its port
+        // may since be another VM's, so it is never dialled.
+        assert!(rt.gateway_ssh("m").is_none());
+        let ssh = ssh_over_gateway(&gw).unwrap();
         assert_eq!((ssh.host.as_str(), ssh.port), ("127.0.0.1", 50022));
         assert_eq!(ssh.user, "lume");
         assert_eq!(ssh.password.as_deref(), Some("lume"));

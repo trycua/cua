@@ -230,6 +230,7 @@ impl SshExec {
     pub fn from_endpoint(ep: &crate::types::SshEndpoint) -> Self {
         let mut s = Self::new(ep.host.clone(), ep.port, ep.user.clone());
         s.private_key = ep.private_key.clone();
+        s.password = ep.password.clone();
         s
     }
 
@@ -251,12 +252,19 @@ impl SshExec {
         ];
         if self.login_password().is_some() {
             // `BatchMode=yes` would refuse the password prompt the askpass
-            // helper answers; one try, and keys never offered instead.
+            // helper answers; one try, and keys never offered instead. The
+            // methods are switched on explicitly (a hardened ssh config may
+            // turn them off for every host), and a shared connection is
+            // never reused: loopback forward ports are recycled.
             for o in [
                 "BatchMode=no",
                 "PubkeyAuthentication=no",
+                "PasswordAuthentication=yes",
+                "KbdInteractiveAuthentication=yes",
                 "PreferredAuthentications=password,keyboard-interactive",
                 "NumberOfPasswordPrompts=1",
+                "ControlMaster=no",
+                "ControlPath=none",
             ] {
                 args.push("-o".into());
                 args.push(o.into());
@@ -369,8 +377,14 @@ impl Askpass {
             open.mode(0o700);
         }
         use std::io::Write as _;
-        open.open(dir.path().join(Self::SCRIPT))?
-            .write_all(script.as_bytes())?;
+        let path = dir.path().join(Self::SCRIPT);
+        open.open(&path)?.write_all(script.as_bytes())?;
+        // `mode` above is masked by the umask; ssh needs the execute bit.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))?;
+        }
         Ok(Self { dir })
     }
 
@@ -606,20 +620,22 @@ mod tests {
     #[test]
     fn a_password_login_lets_askpass_answer_and_offers_no_keys() {
         let a = SshExec::new("127.0.0.1", 50022, "lume")
-            .password("lume")
+            .password("s3cret-pw")
             .ssh_args();
         assert!(!a.contains(&"BatchMode=yes".to_string()));
         for o in [
             "BatchMode=no",
             "PubkeyAuthentication=no",
+            // Over a config that turns password logins off for every host.
+            "PasswordAuthentication=yes",
+            "KbdInteractiveAuthentication=yes",
             "NumberOfPasswordPrompts=1",
+            "ControlPath=none",
         ] {
             assert!(a.contains(&o.to_string()), "{o} missing from {a:?}");
         }
-        assert!(
-            !a.iter()
-                .any(|x| x.contains("lume") && x != "lume@127.0.0.1")
-        );
+        assert!(!a.iter().any(|x| x.contains("s3cret-pw")), "{a:?}");
+        assert_eq!(a.last().unwrap(), "lume@127.0.0.1");
         // A key wins over a password: the login stays non-interactive.
         let s = SshExec::new("127.0.0.1", 2222, "debian")
             .key("/tmp/k")
@@ -656,6 +672,29 @@ mod tests {
         assert_eq!(String::from_utf8(out.stdout).unwrap(), format!("{pw}\n"));
         drop(askpass);
         assert!(!script.exists());
+    }
+
+    #[tokio::test]
+    async fn the_extra_environment_reaches_the_program() {
+        let env = [("SSH_ASKPASS_REQUIRE".to_string(), "force".to_string())];
+        let script = vec![
+            "-c".to_string(),
+            "printf %s \"$SSH_ASKPASS_REQUIRE\"".into(),
+        ];
+        let out = run_with_stdin_env("/bin/sh", &script, &env, None, None)
+            .await
+            .unwrap();
+        assert_eq!(out.stdout_str(), "force");
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let code = run_streaming_env("/bin/sh", &script, &env, None, None, tx)
+            .await
+            .unwrap();
+        assert_eq!(code, 0);
+        let mut got = Vec::new();
+        while let Some(ExecChunk::Stdout(b)) = rx.recv().await {
+            got.extend(b);
+        }
+        assert_eq!(got, b"force");
     }
 
     #[tokio::test]

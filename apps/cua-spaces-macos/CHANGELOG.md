@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.40.0](https://github.com/trycua/cua/compare/cua-spaces-v0.39.11...cua-spaces-v0.40.0) (2026-11-20)
+
+
+### Features
+
+* **spaces:** send Super from the right ⌘ to Linux and Windows Spaces ([#8236](https://github.com/trycua/cua/issues/8236)) ([711bb76](https://github.com/trycua/cua/commit/711bb769f2a6162e723257b878d76a218877ebd2))
+
 ## [0.39.11](https://github.com/trycua/cua/compare/cua-spaces-v0.39.10...cua-spaces-v0.39.11) (2026-11-20)
 
 

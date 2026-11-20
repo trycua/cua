@@ -21,6 +21,7 @@
  */
 
 import { AudioPlayer, type AudioConfigMessage } from "./audio";
+import { CommandKeys } from "./commandKeys";
 
 export type { AudioConfigMessage };
 import { avcCodecFromAnnexB } from "./h264";
@@ -100,7 +101,8 @@ export interface MediaSessionOptions {
    * rebuilt in software from the next keyframe. */
   hardwareAcceleration?: HardwareAcceleration;
   /** Send the host's ⌘ as Control (a Mac viewing a Linux or Windows guest,
-   * where ⌘ would arrive as Super: ⌘C would type "c"). */
+   * where ⌘ would arrive as Super: ⌘C would type "c"). The right ⌘ held
+   * without the left one still goes as Super, for Super shortcuts. */
   metaAsControl?: boolean;
   /** Send a ⌘ chord's press and release together (a Mac host): Chromium
    * does not fire the key-up of a key pressed with ⌘ held, and a press with
@@ -759,18 +761,24 @@ export class MediaSession {
       },
       { passive: false },
     );
+    const commands = new CommandKeys(() => !!this.options.metaAsControl);
     const send = (input: InteractiveInputEvent | null) => {
-      if (input) this.queueInput(this.options.metaAsControl ? commandAsControl(input) : input);
+      if (input) this.queueInput(this.options.metaAsControl && !commands.isSuper ? commandAsControl(input) : input);
     };
-    on("keydown", (event) => {
+    const key = (event: KeyboardEvent, state: "down" | "up") => {
       event.preventDefault();
-      send(keyEventToInput(event, "down"));
-      if (this.options.wholeCommandChords && event.metaKey && !MODIFIER_KEYS.has(event.key)) send(keyEventToInput(event, "up"));
-    });
-    on("keyup", (event) => {
-      event.preventDefault();
-      const input = keyEventToInput(event, "up");
-      if (input) this.queueInput(this.options.metaAsControl ? commandAsControl(input) : input);
+      for (const input of commands.key(event, state)) this.queueInput(input);
+      if (CommandKeys.isCommand(event.code)) return;
+      send(keyEventToInput(event, state));
+      if (state === "down" && this.options.wholeCommandChords && event.metaKey && !MODIFIER_KEYS.has(event.key)) {
+        send(keyEventToInput(event, "up"));
+      }
+    };
+    on("keydown", (event) => key(event, "down"));
+    on("keyup", (event) => key(event, "up"));
+    // Keys released while the canvas is unfocused send no keyup here.
+    on("blur", () => {
+      for (const input of commands.release()) this.queueInput(input);
     });
   }
 }

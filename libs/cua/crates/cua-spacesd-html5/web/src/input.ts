@@ -18,6 +18,7 @@
  * right click, two fingers scroll, one-finger drag drags.
  */
 
+import { CommandKeys } from "./core/commandKeys";
 import {
   modifiersOf,
   normalizePoint,
@@ -71,9 +72,13 @@ const NAMED = new Set([
 
 const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "Meta", "AltGraph"]);
 
+/** How long a paste chord waits for its clipboard, as in the native viewer. */
+const PASTE_WAIT_MS = 2000;
+
 /** Options for mapping one key event. */
 export interface KeyMapOptions {
-  /** Send the host's Cmd as Ctrl (a Mac viewing a Linux or Windows guest). */
+  /** Send the host's Cmd as Ctrl (a Mac viewing a Linux or Windows guest).
+   * The input controller keeps the right Cmd held alone as Super. */
   metaAsControl: boolean;
 }
 
@@ -210,8 +215,9 @@ export class InputController {
   private readonly touches = new Map<number, Touch>();
   private longPress: number | null = null;
   private touchMode: "none" | "pointer" | "scroll" | "longpress" = "none";
-  private pendingPaste: { resolve: () => void; timer: number } | null = null;
+  private pendingPaste: { resolve: () => void; timer: number; armed: boolean; after: Array<() => void> } | null = null;
   private readonly heldKeys = new Map<string, InteractiveInputEvent>();
+  private readonly commands = new CommandKeys(() => this.options.keyOptions().metaAsControl);
   enabled = true;
 
   constructor(private readonly options: InputControllerOptions) {
@@ -232,6 +238,7 @@ export class InputController {
   }
 
   dispose(): void {
+    this.pendingPaste?.resolve();
     this.releaseAll();
     for (const off of this.off.splice(0)) off();
     this.textarea.remove();
@@ -243,10 +250,33 @@ export class InputController {
       if (event.kind === "key") this.send({ ...event, state: "up", repeat: false });
     }
     this.heldKeys.clear();
+    this.sendCommands(this.commands.release());
+  }
+
+  private keyOptions(superKey: boolean): KeyMapOptions {
+    const options = this.options.keyOptions();
+    return superKey ? { ...options, metaAsControl: false } : options;
+  }
+
+  /** The guest's ⌘ keys, behind a held paste chord so they reach the guest
+   * after it: Super restored before Control+V would turn it into Super+Control+V. */
+  private sendCommands(events: InteractiveInputEvent[]): void {
+    if (events.length === 0) return;
+    if (this.pendingPaste) this.pendingPaste.after.push(() => events.forEach((event) => this.send(event)));
+    else for (const event of events) this.send(event);
+  }
+
+  /** Runs `act` now, or once a held paste chord is sent when something
+   * already waits behind it, so input keeps its order against the guest's ⌘
+   * keys. */
+  private inOrder(act: () => void): void {
+    if (this.pendingPaste?.after.length) this.pendingPaste.after.push(act);
+    else act();
   }
 
   private send(event: InteractiveInputEvent): void {
     if (!this.enabled) return;
+    if (this.pendingPaste?.after.length) return this.inOrder(() => this.send(event));
     this.options.emit(event);
     this.options.onAction?.(event);
   }
@@ -270,9 +300,25 @@ export class InputController {
     const textarea = this.textarea;
 
     this.on(textarea, "keydown", (event) => {
-      const mapped = mapKey(event, "down", this.options.keyOptions());
+      this.sendCommands(this.commands.key(event, "down"));
+      if (CommandKeys.isCommand(event.code)) return event.preventDefault();
+      // The right ⌘ alone is the guest's Super, never Control.
+      const superKey = this.commands.isSuper;
+      const mapped = mapKey(event, "down", this.keyOptions(superKey));
       if (!mapped) return; // text arrives through beforeinput
-      const isPaste = mapped.kind === "key" && mapped.key === "v" && mapped.modifiers.length > 0 && this.options.onPaste;
+      // A Super chord is the guest's shortcut, never the host clipboard's.
+      const chord = mapped.kind === "key" && mapped.modifiers.length > 0 && !superKey;
+      const isPaste = chord && mapped.key === "v" && this.options.onPaste;
+      if (isPaste && this.pendingPaste) {
+        // Queued whole behind the paste waiting for the clipboard, whose host
+        // clipboard is the one this paste would send.
+        event.preventDefault();
+        this.pendingPaste.after.push(() => {
+          this.send(mapped);
+          this.send({ ...mapped, state: "up", repeat: false });
+        });
+        return;
+      }
       if (isPaste) {
         // Let the browser fire `paste` (it carries the host clipboard without
         // a permission prompt); the keys follow once the guest has it.
@@ -280,13 +326,22 @@ export class InputController {
         return;
       }
       event.preventDefault();
+      if (superKey && mapped.kind === "key" && !MODIFIER_KEYS.has(event.key)) {
+        // Whole, since Chromium may send no key-up for a key pressed with ⌘ held.
+        this.send(mapped);
+        this.send({ ...mapped, state: "up", repeat: false });
+        return;
+      }
       if (mapped.kind === "key") this.heldKeys.set(event.code || mapped.key, mapped);
       this.send(mapped);
-      if (mapped.kind === "key" && (mapped.key === "c" || mapped.key === "x") && mapped.modifiers.length > 0) {
-        this.options.onCopyShortcut?.();
+      if (chord && (mapped.key === "c" || mapped.key === "x")) {
+        // After the copy reaches the guest.
+        this.inOrder(() => this.options.onCopyShortcut?.());
       }
     });
     this.on(textarea, "keyup", (event) => {
+      this.sendCommands(this.commands.key(event, "up"));
+      if (CommandKeys.isCommand(event.code)) return event.preventDefault();
       // Release exactly what went down for this physical key, even if the
       // modifiers changed in between (Ctrl released before C).
       const held = this.heldKeys.get(event.code || event.key);
@@ -296,7 +351,7 @@ export class InputController {
         this.send({ ...held, state: "up", repeat: false });
         return;
       }
-      const mapped = mapKey(event, "up", this.options.keyOptions());
+      const mapped = mapKey(event, "up", this.keyOptions(this.commands.isSuper));
       if (!mapped || !MODIFIER_KEYS.has(event.key)) return;
       event.preventDefault();
       this.send(mapped);
@@ -403,21 +458,32 @@ export class InputController {
 
   private holdForPaste(keyEvent: InteractiveInputEvent): void {
     // Up to 300 ms for the `paste` event (none comes when the host clipboard
-    // is empty or the engine withholds it); the keys go out either way.
-    if (this.pendingPaste) window.clearTimeout(this.pendingPaste.timer);
+    // is empty or the engine withholds it); the keys go out either way,
+    // followed by the ⌘ changes and the input held behind them.
+    const after: Array<() => void> = [];
     const release = () => {
+      if (this.pendingPaste?.after !== after) return;
+      window.clearTimeout(this.pendingPaste.timer);
       this.pendingPaste = null;
-      if (keyEvent.kind !== "key") return;
-      this.send(keyEvent);
-      this.send({ ...keyEvent, state: "up", repeat: false });
+      if (keyEvent.kind === "key") {
+        this.send(keyEvent);
+        this.send({ ...keyEvent, state: "up", repeat: false });
+      }
+      for (const act of after) act();
     };
     const timer = window.setTimeout(release, 300);
-    this.pendingPaste = { resolve: release, timer };
+    this.pendingPaste = { resolve: release, timer, armed: false, after };
   }
 
   private async pasted(event: ClipboardEvent): Promise<void> {
     const pending = this.pendingPaste;
-    if (pending) window.clearTimeout(pending.timer);
+    if (pending && !pending.armed) {
+      // At most PASTE_WAIT_MS for the clipboard to reach the guest, so a
+      // slow or failed transfer still delivers the keys.
+      pending.armed = true;
+      window.clearTimeout(pending.timer);
+      pending.timer = window.setTimeout(pending.resolve, PASTE_WAIT_MS);
+    }
     try {
       await this.options.onPaste?.(event);
     } finally {

@@ -704,6 +704,12 @@ public final class LiveStreamSession: ObservableObject {
     /// at most `pasteWait`, so a slow or failed transfer still delivers the
     /// keys, in order.
     public func paste(_ events: [InteractiveInputEvent], text: String) {
+        // Right ⌘V is Super+V on a guest that takes ⌘ as Control: its own
+        // shortcut, not a paste of this Mac's clipboard.
+        if provider.commandAsControl, events.contains(where: \.hasSuper) {
+            send(events)
+            return
+        }
         if heldInput != nil {
             heldInput?.append(.paste(events, text))
             return

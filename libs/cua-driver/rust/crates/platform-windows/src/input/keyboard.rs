@@ -1089,7 +1089,7 @@ fn modifier_vk(name: &str) -> Option<VIRTUAL_KEY> {
         "ctrl" | "control" => Some(VK_CONTROL),
         "shift" => Some(VK_SHIFT),
         "alt" | "menu" | "option" => Some(VK_MENU),
-        "win" | "meta" | "windows" | "cmd" | "command" => Some(VK_LWIN),
+        "win" | "meta" | "windows" | "cmd" | "command" | "super" => Some(VK_LWIN),
         _ => None,
     }
 }
@@ -1212,7 +1212,7 @@ fn key_name_to_vk(key: &str) -> Result<VIRTUAL_KEY> {
         "ctrl" | "control" => VK_CONTROL,
         "shift" => VK_SHIFT,
         "alt" => VK_MENU,
-        "win" | "windows" | "meta" | "command" | "cmd" => VK_LWIN,
+        "win" | "windows" | "meta" | "command" | "cmd" | "super" => VK_LWIN,
         "capslock" => VK_CAPITAL,
         "numlock" => VK_NUMLOCK,
         _ => {
@@ -1248,6 +1248,15 @@ mod extended_key_tests {
             let flags = unsafe { input.Anonymous.ki.dwFlags };
             assert_ne!(flags.0 & KEYEVENTF_EXTENDEDKEY.0, 0, "{flags:?}");
         }
+    }
+
+    #[test]
+    fn super_names_the_windows_key() {
+        // cua-spacesd sends a viewer's Command or Super as "super" (the X11
+        // name), as a key and as a modifier; the other platforms accept it.
+        use windows::Win32::UI::Input::KeyboardAndMouse::VK_LWIN;
+        assert_eq!(modifier_vk("super"), Some(VK_LWIN));
+        assert_eq!(key_name_to_vk("super").unwrap(), VK_LWIN);
     }
 }
 

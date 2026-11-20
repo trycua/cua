@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { chord, mapBeforeInput, mapKey, shortcutKey, type KeyLike } from "./input";
+import { chord, InputController, mapBeforeInput, mapKey, shortcutKey, type KeyLike } from "./input";
+import type { InteractiveInputEvent } from "./core/mediaWire";
 
 const key = (over: Partial<KeyLike>): KeyLike => ({
   key: "a",
@@ -42,6 +43,204 @@ describe("keyboard mapping", () => {
     const mac = { metaAsControl: true };
     expect(mapKey(key({ key: "v", code: "KeyV", metaKey: true }), "down", mac)).toMatchObject({ key: "v", modifiers: ["control"] });
     expect(mapKey(key({ key: "Meta", code: "MetaLeft", metaKey: true }), "down", mac)).toMatchObject({ key: "control" });
+  });
+
+  it("keeps the right Cmd held alone as Super for non-Mac guests", () => {
+    const sent: InteractiveInputEvent[] = [];
+    const surface = document.createElement("div");
+    const controller = new InputController({
+      surface,
+      screen: () => surface,
+      emit: (event) => sent.push(event),
+      keyOptions: () => ({ metaAsControl: true }),
+    });
+    const press = (type: string, init: KeyboardEventInit) => controller.textarea.dispatchEvent(new KeyboardEvent(type, init));
+    press("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
+    press("keydown", { key: "w", code: "KeyW", metaKey: true });
+    press("keyup", { key: "w", code: "KeyW", metaKey: true });
+    press("keydown", { key: "Meta", code: "MetaLeft", metaKey: true });
+    press("keydown", { key: "c", code: "KeyC", metaKey: true });
+    controller.textarea.dispatchEvent(new FocusEvent("blur"));
+    press("keyup", { key: "Meta", code: "MetaLeft" });
+    press("keyup", { key: "Meta", code: "MetaRight" });
+    controller.dispose();
+    expect(sent.map((e) => (e.kind === "key" ? [e.key, e.state, e.modifiers] : e.kind))).toEqual([
+      ["meta", "down", []],
+      ["w", "down", ["command"]],
+      ["w", "up", ["command"]],
+      ["meta", "up", []],
+      ["control", "down", []],
+      ["c", "down", ["control"]],
+      // Focus loss releases everything; the late key-ups send nothing more.
+      ["c", "up", ["control"]],
+      ["control", "up", []],
+    ]);
+  });
+
+  it("sends keys pressed during a paste after its chord", async () => {
+    const sent: InteractiveInputEvent[] = [];
+    let landed = () => {};
+    let pastes = 0;
+    let copies = 0;
+    const surface = document.createElement("div");
+    const controller = new InputController({
+      surface,
+      screen: () => surface,
+      emit: (event) => sent.push(event),
+      keyOptions: () => ({ metaAsControl: true }),
+      onPaste: () => {
+        pastes++;
+        return new Promise<void>((resolve) => (landed = resolve));
+      },
+      onCopyShortcut: () => void copies++,
+    });
+    const press = (type: string, init: KeyboardEventInit) =>
+      controller.textarea.dispatchEvent(new KeyboardEvent(type, { ...init, cancelable: true }));
+    press("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
+    press("keydown", { key: "Meta", code: "MetaLeft", metaKey: true });
+    // Not cancelled: the browser fires `paste`, and the chord waits for the clipboard.
+    expect(press("keydown", { key: "v", code: "KeyV", metaKey: true })).toBe(true);
+    controller.textarea.dispatchEvent(new Event("paste"));
+    press("keyup", { key: "v", code: "KeyV", metaKey: true });
+    // While nothing waits behind the paste, other keys go at once, as before:
+    // a copy reaches the guest before its poll.
+    press("keydown", { key: "c", code: "KeyC", metaKey: true });
+    expect(copies).toBe(1);
+    press("keyup", { key: "c", code: "KeyC", metaKey: true });
+    // A second paste meanwhile waits for the same clipboard, whole: Chromium
+    // may send no key-up for a key pressed with ⌘ held.
+    expect(press("keydown", { key: "v", code: "KeyV", metaKey: true })).toBe(false);
+    press("keyup", { key: "Meta", code: "MetaLeft", metaKey: true });
+    expect(sent.map((e) => (e.kind === "key" ? `${e.key} ${e.state}` : e.kind))).toEqual([
+      "meta down",
+      "meta up",
+      "control down",
+      "c down",
+      "c up",
+    ]);
+    landed();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.dispose();
+    expect(pastes).toBe(1);
+    expect(sent.map((e) => (e.kind === "key" ? [e.key, e.state, e.modifiers] : e.kind)).slice(5)).toEqual([
+      ["v", "down", ["control"]],
+      ["v", "up", ["control"]],
+      ["v", "down", ["control"]],
+      ["v", "up", ["control"]],
+      ["control", "up", []],
+      ["meta", "down", []],
+      ["meta", "up", []],
+    ]);
+  });
+
+  it("keeps a Super chord behind the ⌘ change it follows during a paste", async () => {
+    const sent: InteractiveInputEvent[] = [];
+    let landed = () => {};
+    const surface = document.createElement("div");
+    const controller = new InputController({
+      surface,
+      screen: () => surface,
+      emit: (event) => sent.push(event),
+      keyOptions: () => ({ metaAsControl: true }),
+      onPaste: () => new Promise<void>((resolve) => (landed = resolve)),
+    });
+    const press = (type: string, init: KeyboardEventInit) => controller.textarea.dispatchEvent(new KeyboardEvent(type, init));
+    press("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
+    press("keydown", { key: "Meta", code: "MetaLeft", metaKey: true });
+    press("keydown", { key: "v", code: "KeyV", metaKey: true });
+    controller.textarea.dispatchEvent(new Event("paste"));
+    press("keyup", { key: "Meta", code: "MetaLeft", metaKey: true });
+    press("keydown", { key: "w", code: "KeyW", metaKey: true });
+    landed();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.dispose();
+    expect(sent.map((e) => (e.kind === "key" ? `${e.key} ${e.state}` : e.kind))).toEqual([
+      "meta down",
+      "meta up",
+      "control down",
+      "v down",
+      "v up",
+      "control up",
+      "meta down",
+      "w down",
+      "w up",
+      "meta up",
+    ]);
+  });
+
+  it("sends a paste's keys once its clipboard has waited too long", () => {
+    vi.useFakeTimers();
+    try {
+      const sent: InteractiveInputEvent[] = [];
+      const surface = document.createElement("div");
+      const controller = new InputController({
+        surface,
+        screen: () => surface,
+        emit: (event) => sent.push(event),
+        keyOptions: () => ({ metaAsControl: true }),
+        onPaste: () => new Promise<void>(() => {}),
+      });
+      const press = (type: string, init: KeyboardEventInit) => controller.textarea.dispatchEvent(new KeyboardEvent(type, init));
+      press("keydown", { key: "Meta", code: "MetaLeft", metaKey: true });
+      press("keydown", { key: "v", code: "KeyV", metaKey: true });
+      controller.textarea.dispatchEvent(new Event("paste"));
+      press("keyup", { key: "Meta", code: "MetaLeft" });
+      vi.advanceTimersByTime(1000);
+      // Another `paste` (the context menu) does not restart the wait.
+      controller.textarea.dispatchEvent(new Event("paste"));
+      vi.advanceTimersByTime(999);
+      expect(sent.map((e) => (e.kind === "key" ? `${e.key} ${e.state}` : e.kind))).toEqual(["control down"]);
+      vi.advanceTimersByTime(1);
+      expect(sent.map((e) => (e.kind === "key" ? `${e.key} ${e.state}` : e.kind))).toEqual([
+        "control down",
+        "v down",
+        "v up",
+        "control up",
+      ]);
+      controller.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("sends a Super chord to the guest, not through the host clipboard", () => {
+    const sent: InteractiveInputEvent[] = [];
+    let pastes = 0;
+    let copies = 0;
+    const surface = document.createElement("div");
+    const controller = new InputController({
+      surface,
+      screen: () => surface,
+      emit: (event) => sent.push(event),
+      keyOptions: () => ({ metaAsControl: true }),
+      onPaste: () => void pastes++,
+      onCopyShortcut: () => void copies++,
+    });
+    const press = (type: string, init: KeyboardEventInit) =>
+      controller.textarea.dispatchEvent(new KeyboardEvent(type, { ...init, cancelable: true }));
+    press("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
+    // Cancelled, so the browser fires no `paste` for the host clipboard.
+    expect(press("keydown", { key: "v", code: "KeyV", metaKey: true })).toBe(false);
+    // Sent whole: Chromium may send no key-up for V, and a late one adds nothing.
+    press("keydown", { key: "c", code: "KeyC", metaKey: true });
+    press("keyup", { key: "c", code: "KeyC", metaKey: true });
+    // A modifier stays held until its own key-up.
+    press("keydown", { key: "Shift", code: "ShiftLeft", metaKey: true, shiftKey: true });
+    press("keyup", { key: "Meta", code: "MetaRight", shiftKey: true });
+    press("keyup", { key: "Shift", code: "ShiftLeft" });
+    controller.dispose();
+    expect(pastes).toBe(0);
+    expect(copies).toBe(0);
+    expect(sent.map((e) => (e.kind === "key" ? [e.key, e.state, e.modifiers] : e.kind))).toEqual([
+      ["meta", "down", []],
+      ["v", "down", ["command"]],
+      ["v", "up", ["command"]],
+      ["c", "down", ["command"]],
+      ["c", "up", ["command"]],
+      ["shift", "down", []],
+      ["meta", "up", []],
+      ["shift", "up", []],
+    ]);
   });
 
   it("treats AltGr and IME composition as text", () => {

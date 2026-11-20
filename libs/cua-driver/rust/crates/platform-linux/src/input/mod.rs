@@ -3715,21 +3715,35 @@ impl Drop for Delivered {
 
 fn release_abandoned(action: Arc<action::Action>, presses: Vec<(u8, u8)>) -> Result<()> {
     use x11rb::protocol::xtest::ConnectionExt as _;
+    send_abandoned(action, "releases", move |conn| {
+        for &(kind, detail) in presses.iter().rev() {
+            conn.xtest_fake_input(kind, detail, 0, x11rb::NONE, 0, 0, 0)?;
+        }
+        Ok(())
+    })
+}
+
+/// Run an abandoned call's cleanup `send` on a fresh connection, from a thread
+/// that holds the call's [`action::Action`], and with it the desktop, until the
+/// server has taken it. Waits for that at most [`ABANDONED_RELEASE_WAIT`].
+fn send_abandoned(
+    action: Arc<action::Action>,
+    what: &'static str,
+    send: impl FnOnce(&RustConnection) -> Result<()> + Send + 'static,
+) -> Result<()> {
     let (done, finished) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let _desktop = action;
-        let released = (|| -> Result<()> {
+        let sent = (|| -> Result<()> {
             let (conn, _) = RustConnection::connect(None)?;
-            for &(kind, detail) in presses.iter().rev() {
-                conn.xtest_fake_input(kind, detail, 0, x11rb::NONE, 0, 0, 0)?;
-            }
+            send(&conn)?;
             conn.get_input_focus()?.reply()?;
             Ok(())
         })();
-        let _ = done.send(released);
+        let _ = done.send(sent);
     });
     finished.recv_timeout(ABANDONED_RELEASE_WAIT).map_err(|_| {
-        anyhow!("the X server did not take the releases within {ABANDONED_RELEASE_WAIT:?}")
+        anyhow!("the X server did not take the {what} within {ABANDONED_RELEASE_WAIT:?}")
     })?
 }
 
@@ -4197,7 +4211,9 @@ fn type_text_xtest(conn: &RustConnection, text: &str, pacing: TypePacing) -> Res
 
 /// Clears a locked Lock modifier for the life of the guard and locks it again
 /// on drop. It sets the XKB lock state directly rather than tapping the Lock
-/// key, since a tap does not toggle Lock while that key is held down.
+/// key, since a tap does not toggle Lock while that key is held down. When the
+/// call was abandoned, its connection is shut, so the drop locks Lock again on
+/// a fresh one, as [`Delivered`] does for held keys.
 struct CapsLockOff<'a> {
     conn: &'a RustConnection,
 }
@@ -4247,7 +4263,23 @@ impl<'a> CapsLockOff<'a> {
 
 impl Drop for CapsLockOff<'_> {
     fn drop(&mut self) {
-        let _ = Self::set_locked(self.conn, true);
+        let restored = Self::set_locked(self.conn, true)
+            .map_err(anyhow::Error::from)
+            .and_then(|()| Ok(self.conn.get_input_focus()?.reply()?));
+        if restored.is_ok() {
+            return;
+        }
+        let Some(action) = action::current().filter(|action| action.is_abandoned()) else {
+            return;
+        };
+        let restored = send_abandoned(action, "Caps Lock restore", |conn| {
+            use x11rb::protocol::xkb::ConnectionExt as _;
+            conn.xkb_use_extension(1, 0)?.reply()?;
+            Ok(Self::set_locked(conn, true)?)
+        });
+        if let Err(error) = restored {
+            tracing::warn!("restoring Caps Lock after an abandoned call failed: {error:#}");
+        }
     }
 }
 
@@ -5222,6 +5254,58 @@ mod caps_lock_tests {
         }
     }
 
+    /// A private Xvfb and its display name.
+    fn xvfb() -> (Server, String) {
+        let mut server = Server(
+            Command::new("Xvfb")
+                .args(["-displayfd", "1", "-nolisten", "tcp"])
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("install xvfb to run caps lock tests"),
+        );
+        let mut number = String::new();
+        BufReader::new(server.0.stdout.take().unwrap())
+            .read_line(&mut number)
+            .unwrap();
+        (server, format!(":{}", number.trim()))
+    }
+
+    /// Xvfb runs without access control, so connect with no auth rather than
+    /// reading the host's XAUTHORITY.
+    fn connect(display: &str) -> RustConnection {
+        use x11rb::protocol::xkb::ConnectionExt as _;
+        let address = ConnectAddress::Socket(format!("/tmp/.X11-unix/X{}", &display[1..]));
+        let (stream, _) = DefaultStream::connect(&address).unwrap();
+        let conn =
+            RustConnection::connect_to_stream_with_auth_info(stream, 0, vec![], vec![]).unwrap();
+        assert!(
+            conn.xkb_use_extension(1, 0)
+                .unwrap()
+                .reply()
+                .unwrap()
+                .supported
+        );
+        conn
+    }
+
+    /// Lock Caps Lock with a tap of the first Lock-modifier key.
+    fn lock_caps(conn: &RustConnection) -> u8 {
+        let modmap = conn.get_modifier_mapping().unwrap().reply().unwrap();
+        let kpm = modmap.keycodes_per_modifier() as usize;
+        let lock = modmap.keycodes[kpm..2 * kpm]
+            .iter()
+            .copied()
+            .find(|&k| k != 0)
+            .unwrap();
+        for kind in [KEY_PRESS_EVENT, KEY_RELEASE_EVENT] {
+            conn.xtest_fake_input(kind, lock, 0, x11rb::NONE, 0, 0, 0)
+                .unwrap();
+        }
+        conn.get_input_focus().unwrap().reply().unwrap();
+        assert!(locked(conn));
+        lock
+    }
+
     fn locked(conn: &RustConnection) -> bool {
         use x11rb::protocol::xkb::{self, ConnectionExt as _};
         let state = conn.xkb_get_state(xkb::ID::USE_CORE_KBD.into());
@@ -5234,33 +5318,9 @@ mod caps_lock_tests {
     /// Returns the ASCII text the KeyPress events decode to, whether any of
     /// them carried Lock, and whether Lock is locked at the end.
     fn type_under_caps_lock(held: bool) -> (String, bool, bool) {
-        use x11rb::protocol::xkb::ConnectionExt as _;
-        let mut server = Server(
-            Command::new("Xvfb")
-                .args(["-displayfd", "1", "-nolisten", "tcp"])
-                .stdout(Stdio::piped())
-                .spawn()
-                .expect("install xvfb to run caps lock tests"),
-        );
-        let mut number = String::new();
-        BufReader::new(server.0.stdout.take().unwrap())
-            .read_line(&mut number)
-            .unwrap();
-        // Xvfb runs without access control, so connect with no auth rather
-        // than reading the host's XAUTHORITY.
-        let address = ConnectAddress::Socket(format!("/tmp/.X11-unix/X{}", number.trim()));
-        let (stream, _) = DefaultStream::connect(&address).unwrap();
-        let screen = 0;
-        let conn = RustConnection::connect_to_stream_with_auth_info(stream, screen, vec![], vec![])
-            .unwrap();
-        assert!(
-            conn.xkb_use_extension(1, 0)
-                .unwrap()
-                .reply()
-                .unwrap()
-                .supported
-        );
-        let root = conn.setup().roots[screen].root;
+        let (_server, display) = xvfb();
+        let conn = connect(&display);
+        let root = conn.setup().roots[0].root;
         let win = conn.generate_id().unwrap();
         conn.create_window(
             0,
@@ -5332,6 +5392,30 @@ mod caps_lock_tests {
     #[test]
     fn xtest_typing_keeps_case_under_caps_lock() {
         assert_eq!(type_under_caps_lock(false), ("Hello".into(), false, true));
+    }
+
+    #[test]
+    fn abandoned_xtest_typing_restores_caps_lock() {
+        let (_server, display) = xvfb();
+        let observer = connect(&display);
+        lock_caps(&observer);
+        let _display = crate::test_env::x11_display(&display);
+        let action = action::Action::new(Duration::from_secs(60));
+        let typing = {
+            let action = action.clone();
+            std::thread::spawn(move || {
+                let _bound = action::bind(action);
+                send_type_text_xtest_paced("typed slowly", TypePacing { delay_ms: 200 })
+            })
+        };
+        let cleared_by = Instant::now() + Duration::from_secs(2);
+        while locked(&observer) {
+            assert!(Instant::now() < cleared_by, "typing never cleared Lock");
+            sleep(Duration::from_millis(20));
+        }
+        action.abandon();
+        typing.join().unwrap().unwrap_err();
+        assert!(locked(&observer), "the abandoned typing left Lock off");
     }
 
     #[test]

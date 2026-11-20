@@ -167,7 +167,7 @@ async fn web_ax_focus_point(
             pid,
             Some((web_element.as_ptr(), Some(index))),
             Some(window_id),
-        )
+        ) == Some(true)
     })
     .await
     .unwrap_or(true);
@@ -713,6 +713,19 @@ fn delivered_structured(foreground: bool) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_ancestry_does_not_classify_an_ax_target_as_web_content() {
+        let element = unsafe { crate::ax::bindings::AXUIElementCreateApplication(-1) };
+        assert!(!element.is_null());
+        let is_web = super::super::type_text::target_in_web_area(
+            -1,
+            Some((element as usize, None)),
+            Some(7),
+        );
+        unsafe { core_foundation::base::CFRelease(element as _) };
+        assert_eq!(is_web, None);
+    }
 
     #[test]
     fn hotkey_discloses_background_save_automation_consent() {

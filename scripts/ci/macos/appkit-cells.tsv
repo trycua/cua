@@ -13,6 +13,11 @@ macos-appkit-press-key-commit-ax-foreground	harness_appkit_element_foreground_pr
 macos-appkit-press-key-chord-ax-foreground	harness_appkit_foreground_press_key_chord_carries_its_modifiers
 macos-appkit-modified-click-selection-ax-foreground	harness_appkit_modified_click_preserves_selection
 macos-appkit-type-text-ax-background	harness_appkit_type_text_background
+macos-appkit-type-text-native-readback-ax-background	text_outcomes::harness_appkit_text_outcome_native_is_confirmed
+macos-appkit-type-text-stale-readback-ax-background	text_outcomes::harness_appkit_text_outcome_stale_stays_unverifiable
+macos-appkit-type-text-unsupported-readback-ax-background	text_outcomes::harness_appkit_text_outcome_unsupported_is_typed
+macos-appkit-type-text-unsettable-readback-ax-background	text_outcomes::harness_appkit_text_outcome_unsettable_is_typed
+macos-appkit-type-text-lagging-readback-ax-background	text_outcomes::harness_appkit_text_outcome_lagging_is_confirmed
 macos-appkit-scroll-ax-foreground	harness_appkit_scroll_foreground
 macos-appkit-scroll-ax-background	harness_appkit_scroll_background
 macos-appkit-left-click-ax-background	harness_appkit_counter

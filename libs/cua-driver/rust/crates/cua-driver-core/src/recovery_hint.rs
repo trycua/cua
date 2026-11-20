@@ -539,10 +539,12 @@ static RULES: &[Rule] = &[
                 .and_then(Value::as_u64)
                 .map(|n| format!("Only the first {n} characters landed. "))
                 .unwrap_or_default();
-            RecoveryHint::new(format!(
-                "{delivered}Read the field to confirm, then type only the missing rest; do not resend it all."
-            ))
-            .call(c.read_changes())
+            let next = if c.structured.get("retryable") == Some(&Value::Bool(false)) {
+                "Read the field to confirm; do not type the rest automatically."
+            } else {
+                "Read the field to confirm, then type only the missing rest; do not resend it all."
+            };
+            RecoveryHint::new(format!("{delivered}{next}")).call(c.read_changes())
         },
     },
     Rule {
@@ -1067,8 +1069,9 @@ fn effect_hint(c: &Ctx, effect: &str) -> Option<RecoveryHint> {
              control or menu instead."
         }
         ("type_text" | "type_text_chars", _) => {
-            "The text was delivered but not read back. Read the field before typing again, or it may be \
-             duplicated."
+            "Reobserve/verify the intended postcondition. Seeing the expected text confirms the earlier \
+             write. If the effect is still absent or ambiguous, keep the prior action outcome unknown; do \
+             not replay automatically."
         }
         ("press_key" | "hotkey", _) => {
             "The key was sent but its effect is not confirmed. Read what changed before sending it again."

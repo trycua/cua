@@ -1009,6 +1009,9 @@ APPKIT_SNAPSHOT_PUBLICATION = (
     REPO_ROOT
     / "libs/cua-driver/rust/crates/cua-driver-e2e/tests/support/appkit_snapshot_publication.rs"
 )
+APPKIT_TEXT_OUTCOMES = (
+    REPO_ROOT / "libs/cua-driver/rust/crates/cua-driver-e2e/tests/support/appkit_text_outcomes.rs"
+)
 
 
 def _appkit_rows() -> list[list[str]]:
@@ -1031,7 +1034,7 @@ def test_appkit_manifest_registers_every_ignored_appkit_test_once() -> None:
     assert len(set(tests)) == len(tests)
     expected = _ignored_tests(APPKIT_TESTS) | {
         f"snapshot_publication::{name}" for name in _ignored_tests(APPKIT_SNAPSHOT_PUBLICATION)
-    }
+    } | {f"text_outcomes::{name}" for name in _ignored_tests(APPKIT_TEXT_OUTCOMES)}
     assert set(tests) == expected
 
 

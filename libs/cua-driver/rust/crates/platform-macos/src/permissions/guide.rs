@@ -88,6 +88,7 @@ pub struct StepCopy {
     pub note: &'static str,
 }
 
+pub const APP_NAME: &str = "Cua Driver";
 pub const WINDOW_TITLE: &str = "Set up Cua Driver";
 pub const DONE_TITLE: &str = "All set. Cua Driver can now use this Mac.";
 pub const OPEN_SETTINGS_BUTTON: &str = "Open System Settings";
@@ -97,6 +98,10 @@ pub const TILE_NAME: &str = "Cua Driver";
 pub const TILE_DRAG_LABEL: &str = "Drag";
 pub const WAITING_LINE: &str = "Waiting for the switch to turn on…";
 pub const TURNED_ON_LINE: &str = "Turned on.";
+
+pub fn for_app(text: &str, app: &str) -> String {
+    text.replace(APP_NAME, app)
+}
 
 /// What the guide must do after reading a status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -538,6 +543,29 @@ mod tests {
             .copy()
             .note
             .contains("Quit & Reopen"));
+    }
+
+    #[test]
+    fn every_name_in_the_copy_follows_the_host_app() {
+        let mut all = vec![WINDOW_TITLE, DONE_TITLE, DRAG_HINT, TILE_NAME];
+        for step in [
+            GuideStep::Accessibility,
+            GuideStep::ScreenRecording,
+            GuideStep::Done,
+        ] {
+            let c = step.copy();
+            all.extend([c.title, c.why, c.how, c.note]);
+        }
+        for text in all {
+            let named = for_app(text, "Host App");
+            assert!(!named.contains(APP_NAME), "{named:?}");
+            assert_eq!(for_app(text, APP_NAME), text);
+        }
+        assert_eq!(
+            for_app(GuideStep::Accessibility.copy().how, "Host App"),
+            "In System Settings, turn on the switch next to Host App."
+        );
+        assert_eq!(for_app(TILE_NAME, "Host App"), "Host App");
     }
 
     #[test]

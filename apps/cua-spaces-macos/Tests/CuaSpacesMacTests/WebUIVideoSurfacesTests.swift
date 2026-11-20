@@ -242,7 +242,7 @@ struct WebUIVideoSurfacesTests {
         #expect(s.stats().isEmpty)
     }
 
-    @Test func aTileTakesNoInputAndTheViewerTakesPointerInput() {
+    @Test func aTileAndAHiddenViewerTakeNoPointerInput() {
         let host = Host()
         let s = surfaces(host) { _, _ in OfflineStreamSourceProvider() }
         s.handle(message([entry("t", space: "a", tier: "tile", interactive: false), entry("v", space: "b")]))
@@ -254,8 +254,42 @@ struct WebUIVideoSurfacesTests {
         #expect(tile.hitTest(NSPoint(x: 100, y: 100)) == nil)
         // A viewer that isn't showing isn't either.
         #expect(viewer.hitTest(NSPoint(x: 100, y: 100)) == nil)
+    }
+
+    /// A click on the viewer, routed as the window routes it (a hit test from
+    /// its frame view, through the web view), goes to the Space as a move, a
+    /// down and an up at the clicked point, as keys do (#4676).
+    @Test func aClickOnTheViewerThroughTheWindowGoesToTheSpace() throws {
+        let host = Host()
+        let s = surfaces(host) { _, _ in OfflineStreamSourceProvider() }
+        s.handle(message([entry("v", space: "b")]))
+        let viewer = try #require(s.surfaces["v"]).view
         viewer.isHidden = false
-        #expect(viewer.hitTest(NSPoint(x: 100, y: 100)) === viewer.input)
+        viewer.input.surfaceSize = CGSize(width: 1280, height: 800)
+        var sent: [InteractiveInputEvent] = []
+        viewer.input.onInput = { sent += $0 }
+
+        let inView = viewer.input.geometry.point(forNormalized: CGPoint(x: 0.25, y: 0.75))
+        let inWindow = viewer.input.convert(inView, to: nil)
+        let frameView = try #require(host.window.contentView?.superview)
+        let hit = try #require(frameView.hitTest(inWindow))
+        #expect(hit === viewer.input, "the click lands on \(hit), not the viewer")
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = try #require(NSEvent.mouseEvent(with: type, location: inWindow, modifierFlags: [], timestamp: 0,
+                                                        windowNumber: host.window.windowNumber, context: nil,
+                                                        eventNumber: 0, clickCount: 1, pressure: 1))
+            type == .leftMouseDown ? hit.mouseDown(with: event) : hit.mouseUp(with: event)
+        }
+
+        let pointers = sent.compactMap { event -> (PointerPhase, PointerButton?, Double, Double)? in
+            guard case let .pointer(phase, button, x, y, _) = event else { return nil }
+            return (phase, button, x, y)
+        }
+        #expect(pointers.map(\.0) == [.move, .down, .up], "\(sent.map(\.json))")
+        #expect(pointers.map(\.1) == [nil, .left, .left])
+        for (_, _, x, y) in pointers {
+            #expect(abs(x - 0.25) < 0.002 && abs(y - 0.75) < 0.002, "\(x), \(y)")
+        }
     }
 
     /// 64×48, an IDR (with SPS/PPS) then a P frame.

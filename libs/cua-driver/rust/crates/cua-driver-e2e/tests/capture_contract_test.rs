@@ -665,6 +665,24 @@ fn background_screenshot_preserves_desktop() {
             .expect("required source-built driver did not start");
         *evidence = recording_evidence(driver.recording_dir());
         let (pid, wid) = launch(&mut driver).expect("required WPF capture harness did not start");
+        let ready = snapshot_settled_default(&mut driver, pid, wid);
+        assert!(tree_has_marker(&ready) && has_image(&ready));
+        let (reference, reference_width, reference_height) =
+            platform_windows::wgc::screenshot_window_via_wgc_software(wid)
+                .expect("WARP must capture the visible WPF window");
+        assert!(reference_width > 0 && reference_height > 0);
+        assert_eq!(
+            reference.len(),
+            reference_width as usize * reference_height as usize * 4
+        );
+        assert!(
+            reference
+                .chunks_exact(4)
+                .filter(|pixel| pixel[..3] != [0, 0, 0])
+                .count()
+                > reference.len() / 40,
+            "visible WARP capture must contain WPF pixels"
+        );
         let sentinel = ForegroundSentinel::launch(&mut driver);
         sentinel
             .assert_background_posture(TargetWindow {
@@ -682,21 +700,24 @@ fn background_screenshot_preserves_desktop() {
                 },
             )
             .expect("re-establish capture background posture after recording setup");
-        let (response, mut passed) = sentinel
+        let ((response, (warp_pixels, warp_width, warp_height)), mut passed) = sentinel
             .observe_background(
                 TargetWindow {
                     pid,
                     native_id: wid,
                 },
                 || {
-                    driver.call(
+                    let response = driver.call(
                         "get_window_state",
                         serde_json::json!({
                             "pid": pid as i64,
                             "window_id": wid,
                             "capture_mode": "vision"
                         }),
-                    )
+                    );
+                    let warp = platform_windows::wgc::screenshot_window_via_wgc_software(wid)
+                        .expect("WARP must capture the covered WPF window");
+                    (response, warp)
                 },
             )
             .unwrap_or_else(|error| panic!("background screenshot disturbed the desktop: {error}"));
@@ -708,6 +729,20 @@ fn background_screenshot_preserves_desktop() {
         assert!(
             has_image(&response),
             "background screenshot returned no image"
+        );
+        assert_eq!(
+            (warp_width, warp_height),
+            (reference_width, reference_height)
+        );
+        assert_eq!(warp_pixels.len(), reference.len());
+        let unchanged = reference
+            .chunks_exact(4)
+            .zip(warp_pixels.chunks_exact(4))
+            .filter(|(before, after)| before[..3] == after[..3])
+            .count();
+        assert!(
+            unchanged > reference.len() / 8,
+            "WARP must capture the WPF window, not the covering sentinel"
         );
         for required in [
             OracleKind::Focus,
@@ -887,6 +922,143 @@ fn occluded_cua_compositor_window_capture_is_fresh() {
             );
         }
         passed.extend([OracleKind::Pixels, OracleKind::FixtureState]);
+        Observation::delivered(passed, Evidence::default())
+    });
+}
+
+/// On the nested cua-compositor, a background PX `type_text` aims at the
+/// pixel of the window's own screenshot, even when that screenshot is
+/// downscaled: the point must land on the field in the screenshot, not on
+/// whatever sits at the same number in window pixels. Without a screenshot of
+/// the window, the point is refused before anything is clicked or typed.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore]
+fn downscaled_cua_compositor_px_type_text_reaches_the_field() {
+    if std::env::var_os("CUA_INJECT_SOCKET").is_none() {
+        return;
+    }
+    let case = cua_driver_testkit::e2e::CaseSpec::delivered(
+        "linux-gtk3-type-text-px-background-downscaled",
+        "gtk3",
+        "gtk3",
+        "type_text",
+        Targeting::Px,
+        cua_driver_testkit::e2e::Delivery::Background,
+        cua_driver_testkit::e2e::Scope::Window,
+        DriverRoute::WindowState,
+        vec![
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+        ],
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = test_driver(&cell_id).expect("start exact source-built driver");
+        *evidence = recording_evidence(driver.recording_dir());
+        let (pid, wid) = launch(&mut driver).expect("required capture harness did not launch");
+        let target = TargetWindow {
+            pid,
+            native_id: wid,
+        };
+        let tree = snapshot_settled_tree_only(&mut driver, pid, wid);
+        assert!(tree_has_marker(&tree), "fixture tree never settled");
+        let text = "cua-downscaled";
+        let type_at = |driver: &mut McpDriver, x: f64, y: f64| {
+            driver.call(
+                "type_text",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "x": x,
+                    "y": y,
+                    "text": text,
+                    "delivery_mode": "background"
+                }),
+            )
+        };
+
+        // The tree-only read published no screenshot frame.
+        let refused = type_at(&mut driver, 10.0, 10.0);
+        assert_eq!(
+            refused.structured()["code"],
+            "screenshot_context_missing",
+            "a PX point read off no screenshot must be refused: {}",
+            refused.text()
+        );
+
+        let sentinel = ForegroundSentinel::launch(&mut driver);
+        sentinel
+            .assert_background_posture(target)
+            .expect("the sentinel covers the fixture");
+        driver.start_behavior_recording();
+        sentinel
+            .prepare_background_observation(&mut driver, target)
+            .expect("re-establish background posture after recording setup");
+        let (after, passed) = sentinel
+            .observe_background(target, || {
+                // Half the window's width, so screenshot and window pixels differ.
+                let shot = driver.call(
+                    "get_window_state",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": wid,
+                        "max_image_dimension": 300
+                    }),
+                );
+                let width = shot.structured()["screenshot_width"]
+                    .as_f64()
+                    .unwrap_or_else(|| panic!("no screenshot: {}", shot.text()));
+                let original = shot.structured()["screenshot_original_width"]
+                    .as_f64()
+                    .unwrap_or(width);
+                assert!(
+                    original >= width * 1.5,
+                    "the screenshot was not downscaled: {width} of {original}"
+                );
+                // Screen frame -> window-local -> screenshot pixels.
+                let structured = shot.structured();
+                let field = structured["elements"]
+                    .as_array()
+                    .and_then(|elements| {
+                        elements
+                            .iter()
+                            .find(|element| element["label"].as_str() == Some("txt-input"))
+                    })
+                    .map(|element| element["frame"].clone())
+                    .unwrap_or_else(|| panic!("txt-input has no frame: {}", shot.raw));
+                let number = |value: &serde_json::Value, key: &str| {
+                    value[key]
+                        .as_f64()
+                        .unwrap_or_else(|| panic!("{key} missing from {value}"))
+                };
+                let bounds = &structured["window_bounds"];
+                let scale = width / original;
+                let typed = type_at(
+                    &mut driver,
+                    (number(&field, "x") + number(&field, "w") / 2.0 - number(bounds, "x")) * scale,
+                    (number(&field, "y") + number(&field, "h") / 2.0 - number(bounds, "y")) * scale,
+                );
+                assert!(!typed.is_error(), "PX type_text failed: {}", typed.text());
+                let expected = format!("mirror={text}");
+                let deadline = Instant::now() + Duration::from_secs(5);
+                loop {
+                    let state = snapshot_settled_tree_only(&mut driver, pid, wid);
+                    if state.tree_text().contains(&expected) || Instant::now() >= deadline {
+                        break state;
+                    }
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+            })
+            .unwrap_or_else(|error| panic!("PX type_text disturbed the desktop: {error}"));
+        assert!(
+            after.tree_text().contains(&format!("mirror={text}")),
+            "the text never reached the field the screenshot pixel names"
+        );
+        let mut passed = passed;
+        passed.push(OracleKind::FixtureState);
         Observation::delivered(passed, Evidence::default())
     });
 }

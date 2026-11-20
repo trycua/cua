@@ -300,10 +300,10 @@ impl Tool for DragTool {
                          from screen ({sx_from},{sy_from}) → ({sx_to},{sy_to}) \
                          (delivery_mode:background, PostMessage would have been dropped)."
                 )),
-                Ok(Err(e)) => crate::input::delivery::background_unavailable_error_with_cause(
+                Ok(Err(e)) => crate::input::delivery::background_injection_error(
                     hwnd,
                     EventKind::MouseMove,
-                    e.to_string(),
+                    &e,
                 ),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };

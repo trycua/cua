@@ -9,7 +9,7 @@
 //! failures are unverifiable and must not be retried through another route.
 
 use std::sync::{
-    atomic::{AtomicBool, AtomicU8, Ordering},
+    atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
     Arc,
 };
 
@@ -37,6 +37,9 @@ pub(crate) enum FocusedDocumentTypeOutcome {
 const MAX_TYPED_DOCUMENT_UNITS: i32 = 1 << 20;
 
 static PENDING_WRITE: AtomicBool = AtomicBool::new(false);
+/// The window the running probe is for, or 0. The gate is process-wide, so a
+/// probe still stuck in another app's provider says nothing about this target.
+static PROBE_TARGET: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn try_type_focused_document_append(
     target_hwnd: u64,
@@ -51,6 +54,7 @@ pub(crate) fn try_type_focused_document_append(
     let state = Arc::new(AtomicU8::new(0));
     let worker_state = Arc::clone(&state);
     match run_focused_document_uia(move |cancelled| {
+        PROBE_TARGET.store(target_hwnd, Ordering::Release);
         let outcome = try_type_focused_document_append_unbounded(
             target_hwnd,
             expected_pid,
@@ -59,6 +63,7 @@ pub(crate) fn try_type_focused_document_append(
             &worker_state,
         );
         PENDING_WRITE.store(false, Ordering::Release);
+        PROBE_TARGET.store(0, Ordering::Release);
         outcome
     }) {
         Ok(outcome) => outcome,
@@ -68,6 +73,7 @@ pub(crate) fn try_type_focused_document_append(
                 .compare_exchange(0, 2, Ordering::AcqRel, Ordering::Acquire)
                 .unwrap_or_else(|state| state),
             PENDING_WRITE.load(Ordering::Acquire),
+            PROBE_TARGET.load(Ordering::Acquire) == target_hwnd,
         ),
     }
 }
@@ -468,16 +474,18 @@ fn focused_document_worker_error(
     error: UiaDeadlineError,
     state: u8,
     pending_write: bool,
+    probe_is_for_target: bool,
 ) -> FocusedDocumentTypeOutcome {
     if pending_write {
         return FocusedDocumentTypeOutcome::Unknown("focused UIA write is still in flight");
     }
     if state == 0 {
         return match error {
-            UiaDeadlineError::Timeout | UiaDeadlineError::Busy => {
-                FocusedDocumentTypeOutcome::Unanswered
+            UiaDeadlineError::Timeout => FocusedDocumentTypeOutcome::Unanswered,
+            UiaDeadlineError::Busy if probe_is_for_target => FocusedDocumentTypeOutcome::Unanswered,
+            UiaDeadlineError::Busy | UiaDeadlineError::Unavailable => {
+                FocusedDocumentTypeOutcome::NotApplicable
             }
-            UiaDeadlineError::Unavailable => FocusedDocumentTypeOutcome::NotApplicable,
         };
     }
     match error {
@@ -577,19 +585,15 @@ mod tests {
     #[test]
     fn busy_during_pending_write_disallows_native_fallback() {
         assert!(matches!(
-            focused_document_worker_error(UiaDeadlineError::Busy, 0, true),
+            focused_document_worker_error(UiaDeadlineError::Busy, 0, true, true),
             FocusedDocumentTypeOutcome::Unknown(_)
         ));
-        assert_eq!(
-            focused_document_worker_error(UiaDeadlineError::Busy, 0, false),
-            FocusedDocumentTypeOutcome::Unanswered
-        );
     }
 
     #[test]
     fn an_unavailable_worker_before_the_write_allows_native_fallback() {
         assert_eq!(
-            focused_document_worker_error(UiaDeadlineError::Unavailable, 0, false),
+            focused_document_worker_error(UiaDeadlineError::Unavailable, 0, false, true),
             FocusedDocumentTypeOutcome::NotApplicable
         );
     }
@@ -598,17 +602,25 @@ mod tests {
     fn a_probe_past_its_deadline_or_still_running_before_the_write_sends_no_keys() {
         for error in [UiaDeadlineError::Timeout, UiaDeadlineError::Busy] {
             assert_eq!(
-                focused_document_worker_error(error, 0, false),
+                focused_document_worker_error(error, 0, false, true),
                 FocusedDocumentTypeOutcome::Unanswered
             );
         }
     }
 
     #[test]
+    fn a_probe_still_running_for_another_window_allows_native_fallback() {
+        assert_eq!(
+            focused_document_worker_error(UiaDeadlineError::Busy, 0, false, false),
+            FocusedDocumentTypeOutcome::NotApplicable
+        );
+    }
+
+    #[test]
     fn worker_errors_after_write_never_enable_a_second_input_route() {
         for error in [UiaDeadlineError::Timeout, UiaDeadlineError::Unavailable] {
             assert!(matches!(
-                focused_document_worker_error(error, 1, false),
+                focused_document_worker_error(error, 1, false, true),
                 FocusedDocumentTypeOutcome::Unknown(_)
             ));
         }

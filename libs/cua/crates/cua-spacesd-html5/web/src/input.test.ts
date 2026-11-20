@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { chord, InputController, mapBeforeInput, mapKey, shortcutKey, type KeyLike } from "./input";
 import type { InteractiveInputEvent } from "./core/mediaWire";
@@ -118,6 +118,38 @@ describe("keyboard mapping", () => {
       ["meta", "down", []],
       ["meta", "up", []],
     ]);
+  });
+
+  it("sends a paste's keys once its clipboard has waited too long", () => {
+    vi.useFakeTimers();
+    try {
+      const sent: InteractiveInputEvent[] = [];
+      const surface = document.createElement("div");
+      const controller = new InputController({
+        surface,
+        screen: () => surface,
+        emit: (event) => sent.push(event),
+        keyOptions: () => ({ metaAsControl: true }),
+        onPaste: () => new Promise<void>(() => {}),
+      });
+      const press = (type: string, init: KeyboardEventInit) => controller.textarea.dispatchEvent(new KeyboardEvent(type, init));
+      press("keydown", { key: "Meta", code: "MetaLeft", metaKey: true });
+      press("keydown", { key: "v", code: "KeyV", metaKey: true });
+      controller.textarea.dispatchEvent(new Event("paste"));
+      press("keyup", { key: "Meta", code: "MetaLeft" });
+      vi.advanceTimersByTime(1999);
+      expect(sent.map((e) => (e.kind === "key" ? `${e.key} ${e.state}` : e.kind))).toEqual(["control down"]);
+      vi.advanceTimersByTime(1);
+      expect(sent.map((e) => (e.kind === "key" ? `${e.key} ${e.state}` : e.kind))).toEqual([
+        "control down",
+        "v down",
+        "v up",
+        "control up",
+      ]);
+      controller.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("sends a Super chord to the guest, not through the host clipboard", () => {

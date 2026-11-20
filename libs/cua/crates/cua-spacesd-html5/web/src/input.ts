@@ -72,6 +72,9 @@ const NAMED = new Set([
 
 const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "Meta", "AltGraph"]);
 
+/** How long a paste chord waits for its clipboard, as in the native viewer. */
+const PASTE_WAIT_MS = 2000;
+
 /** Options for mapping one key event. */
 export interface KeyMapOptions {
   /** Send the host's Cmd as Ctrl (a Mac viewing a Linux or Windows guest).
@@ -444,7 +447,7 @@ export class InputController {
     const after: InteractiveInputEvent[] = [];
     const release = () => {
       if (this.pendingPaste?.after !== after) return;
-      window.clearTimeout(timer);
+      window.clearTimeout(this.pendingPaste.timer);
       this.pendingPaste = null;
       if (keyEvent.kind === "key") {
         this.send(keyEvent);
@@ -458,7 +461,12 @@ export class InputController {
 
   private async pasted(event: ClipboardEvent): Promise<void> {
     const pending = this.pendingPaste;
-    if (pending) window.clearTimeout(pending.timer);
+    if (pending) {
+      // At most PASTE_WAIT_MS for the clipboard to reach the guest, so a
+      // slow or failed transfer still delivers the keys.
+      window.clearTimeout(pending.timer);
+      pending.timer = window.setTimeout(pending.resolve, PASTE_WAIT_MS);
+    }
     try {
       await this.options.onPaste?.(event);
     } finally {

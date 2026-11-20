@@ -1373,7 +1373,8 @@ impl SetupUiHandle {
         }
         let deadline = Instant::now() + EXISTING_PROFILE_SETUP_READY_TIMEOUT;
         loop {
-            let tree = window_scoped_tree(self.pid, self.window_id)
+            let tree = self
+                .scoped_walk()
                 .map_err(|error| anyhow::anyhow!(error.message))?;
             let scan = scan_tabs(&tree).map_err(|error| anyhow::anyhow!(error.message))?;
             if !scan.truncated && !scan.unidentified && !scan.objects.contains(&owned) {
@@ -1394,6 +1395,13 @@ impl SetupUiHandle {
         self.reports_document_uri |= !document_uris(&tree.nodes).is_empty();
     }
 
+    /// A window-scoped walk that also feeds [`Self::observe_document_uris`].
+    fn scoped_walk(&mut self) -> Result<AtspiTreeResult, BrowserRefusal> {
+        let tree = window_scoped_tree(self.pid, self.window_id)?;
+        self.observe_document_uris(&tree);
+        Ok(tree)
+    }
+
     fn require_owned_selected_tab(&self, tree: &AtspiTreeResult) -> Result<(), BrowserRefusal> {
         let owned = self.owned_setup_tab.as_ref().ok_or_else(|| {
             BrowserRefusal::new(
@@ -1410,8 +1418,8 @@ impl SetupUiHandle {
         Ok(())
     }
 
-    fn owned_tab_tree(&self) -> Result<AtspiTreeResult, BrowserRefusal> {
-        let tree = window_scoped_tree(self.pid, self.window_id)?;
+    fn owned_tab_tree(&mut self) -> Result<AtspiTreeResult, BrowserRefusal> {
+        let tree = self.scoped_walk()?;
         self.require_owned_selected_tab(&tree)?;
         Ok(tree)
     }
@@ -1453,7 +1461,7 @@ impl SetupUiHandle {
         if !(self.enabled_remote_debugging || (self.enable_attempted && self.enabling)) {
             return true;
         }
-        let Ok(tree) = window_scoped_tree(self.pid, self.window_id) else {
+        let Ok(tree) = self.scoped_walk() else {
             return false;
         };
         let restored =
@@ -1470,19 +1478,12 @@ impl SetupUiHandle {
                 });
         let deadline = Instant::now() + Duration::from_secs(1);
         while restored && self.input.check().is_ok() {
-            if window_scoped_tree(self.pid, self.window_id)
-                .ok()
-                .and_then(|tree| {
-                    exact_setup_checkbox(
-                        &tree.nodes,
-                        self.descriptor,
-                        self.trusted_setup_navigation,
-                    )
+            if self.scoped_walk().ok().and_then(|tree| {
+                exact_setup_checkbox(&tree.nodes, self.descriptor, self.trusted_setup_navigation)
                     .ok()
                     .flatten()
                     .map(|node| node.checked == Some(false))
-                })
-                == Some(true)
+            }) == Some(true)
             {
                 self.enabled_remote_debugging = false;
                 return true;
@@ -1532,7 +1533,7 @@ impl SetupUiHandle {
             self.armed = false;
             return Ok(None);
         }
-        let tree = match window_scoped_tree(self.pid, self.window_id) {
+        let tree = match self.scoped_walk() {
             Ok(tree) => tree,
             Err(error) => return Err(self.abort(error)),
         };
@@ -1564,7 +1565,7 @@ impl SetupUiHandle {
         if !self.opened_setup_page {
             return None;
         }
-        let Ok(tree) = window_scoped_tree(self.pid, self.window_id) else {
+        let Ok(tree) = self.scoped_walk() else {
             return Some(false);
         };
         Some(

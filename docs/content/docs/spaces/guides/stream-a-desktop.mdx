@@ -93,7 +93,7 @@ Agents use the MCP tool `stream_endpoint`. A Space without `desktop_stream`,
 | | Details |
 |---|---|
 | WebSocket `/media?ticket=...` on 3211 | Default. Works through the relay and browsers. |
-| QUIC (ALPN `rcdp/2`) on UDP 3212 | Lower latency when you reach the guest directly; certificate pinned from `OpenMedia`. |
+| QUIC (ALPN `rcdp/2`) on UDP 3212 | Lower latency when you reach the guest directly; certificate pinned from `OpenMedia`. A Space added by its address (`direct:<host:port>`) streams over it from the SDK and Cua Spaces when the guest offers `quic_media`, and attaches by the WebSocket when UDP 3212 does not answer within 3 s. |
 | Video | H.264 (Annex B, SPS/PPS on every keyframe). Encode: VideoToolbox (hardware) on macOS, OpenH264 (software) in Linux Spaces. SDK decode: VideoToolbox (hardware) on macOS, OpenH264 elsewhere. Browser viewers decode with WebCodecs. |
 | Audio | Opus 48 kHz stereo, 20 ms frames, same clock as video (A/V skew within ±40 ms). |
 

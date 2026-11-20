@@ -327,7 +327,11 @@ pub fn probe_in_child(
             Ok(Some(status)) => break Some(status),
             Ok(None) if started.elapsed() > timeout => {
                 let _ = child.kill();
-                let _ = child.wait();
+                // A child stuck in an uninterruptible driver call dies only
+                // when the call returns: reap it on its own thread.
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
                 break None;
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(5)),

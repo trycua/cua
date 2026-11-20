@@ -86,9 +86,68 @@ pub fn resident_bytes() -> Option<u64> {
     }
 }
 
+/// Set once the binary runs on jemalloc ([`use_jemalloc`]).
+#[cfg(unix)]
+static JEMALLOC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Called by the `cua-relay` binary, whose global allocator is jemalloc:
+/// starts jemalloc's background thread, which returns freed pages to the
+/// system on a timer even while the relay is idle, and turns on the
+/// `cua_relay_heap_*` gauges.
+///
+/// Why not the system allocator: the relay frees a lot from many threads
+/// (each reconnect, every registry write, every network map pass), and
+/// glibc malloc kept most of it in fragmented per-thread arenas. On 20 Nov
+/// 2026 relay.cua.ai held ~3 GiB after 5 h with 30 open streams and no
+/// table growing. The gauges tell the two apart from now on: a real leak
+/// grows `cua_relay_heap_allocated_bytes`; fragmentation grows only the
+/// gap between it and `cua_relay_process_resident_bytes`.
+#[cfg(unix)]
+pub fn use_jemalloc() {
+    // Background purging is a Linux feature of jemalloc; elsewhere the
+    // purge happens on allocator activity instead.
+    if let Err(e) = tikv_jemalloc_ctl::background_thread::write(true) {
+        tracing::debug!(%e, "jemalloc background thread not available");
+    }
+    JEMALLOC.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// jemalloc's own view: bytes in live allocations, bytes in pages it holds
+/// resident, and bytes of address space it keeps mapped for reuse.
+#[cfg(unix)]
+fn heap_stats() -> Option<(u64, u64, u64)> {
+    use tikv_jemalloc_ctl::{epoch, stats};
+    if !JEMALLOC.load(std::sync::atomic::Ordering::Relaxed) {
+        return None;
+    }
+    epoch::advance().ok()?;
+    Some((
+        stats::allocated::read().ok()? as u64,
+        stats::resident::read().ok()? as u64,
+        stats::retained::read().ok()? as u64,
+    ))
+}
+#[cfg(not(unix))]
+fn heap_stats() -> Option<(u64, u64, u64)> {
+    None
+}
+
 /// Prometheus text for the memory gauges (those the platform reports).
 pub(crate) fn metrics() -> String {
     let mut out = String::new();
+    if let Some((allocated, resident, retained)) = heap_stats() {
+        out.push_str(&format!(
+            "# HELP cua_relay_heap_allocated_bytes Bytes in live heap allocations (jemalloc).\n\
+             # TYPE cua_relay_heap_allocated_bytes gauge\n\
+             cua_relay_heap_allocated_bytes {allocated}\n\
+             # HELP cua_relay_heap_resident_bytes Bytes in pages the allocator holds resident (jemalloc).\n\
+             # TYPE cua_relay_heap_resident_bytes gauge\n\
+             cua_relay_heap_resident_bytes {resident}\n\
+             # HELP cua_relay_heap_retained_bytes Address space the allocator keeps mapped for reuse, not resident (jemalloc).\n\
+             # TYPE cua_relay_heap_retained_bytes gauge\n\
+             cua_relay_heap_retained_bytes {retained}\n"
+        ));
+    }
     if let Some(rss) = resident_bytes() {
         out.push_str(&format!(
             "# HELP cua_relay_process_resident_bytes Resident set size of the relay process.\n\

@@ -40,14 +40,18 @@
 //! off the async workers); a new node waits for the write that covers it
 //! before it is welcomed, and a pairing is confirmed only once saved. A
 //! failed write is counted and reported ([`crate::storage`]) and retried
-//! with backoff. The registry is also soft state: every node registers
+//! with backoff. A change to nothing but when a node was last seen (every
+//! reconnect, disconnect and endpoint report) is written at most once per
+//! [`LAST_SEEN_SAVE_EVERY`] and at shutdown: rewriting the whole registry
+//! for each one kept the relay serializing megabytes several times a second
+//! under reconnect churn (20 Nov 2026). The registry is also soft state: every node registers
 //! again when it reconnects, so a lost write costs at most a reconnect.
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::hash::{Hash as _, Hasher as _};
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -114,6 +118,16 @@ enum LimitedLog {
     /// Already logged this interval.
     Quiet,
 }
+
+/// Most time a change to only `last_seen` waits before the registry is
+/// written. `last_seen` decides when a node is forgotten
+/// ([`FORGET_AFTER_SECS`], 30 days), so minutes of it lost to a crash do
+/// not matter; a clean shutdown writes it anyway.
+pub const LAST_SEEN_SAVE_EVERY: Duration = Duration::from_secs(300);
+
+/// Per-connection WebSocket read buffer: room for a few relayed packets
+/// (a larger message grows it for that read).
+const MESH_READ_BUFFER: usize = 16 * 1024;
 
 /// Least time between two network map recomputations.
 const RECOMPUTE_GAP: Duration = Duration::from_millis(250);
@@ -302,6 +316,9 @@ pub struct MeshState {
     /// ... and the last one done: (the counter it covered, whether it was
     /// written).
     saved: tokio::sync::watch::Sender<(u64, bool)>,
+    /// Only `last_seen` changed since the last write (see
+    /// [`LAST_SEEN_SAVE_EVERY`]).
+    stale: AtomicBool,
 }
 
 impl std::fmt::Debug for MeshState {
@@ -369,6 +386,7 @@ impl MeshState {
             storage,
             save_asked: AtomicU64::new(0),
             saved: tokio::sync::watch::channel((0, true)).0,
+            stale: AtomicBool::new(false),
         })
     }
 
@@ -524,6 +542,26 @@ impl MeshState {
         })
     }
 
+    /// Notes a change to only `last_seen`: written within
+    /// [`LAST_SEEN_SAVE_EVERY`], with the next full write, or at shutdown.
+    fn touched(&self) {
+        self.stale.store(true, Ordering::Relaxed);
+    }
+
+    /// Writes the registry if only `last_seen` changed since the last write
+    /// (blocking; at shutdown). Returns whether a write was due.
+    pub fn flush_last_seen(&self) -> bool {
+        if self.path.is_none() || !self.stale.swap(false, Ordering::Relaxed) {
+            return false;
+        }
+        let written = self.save_now();
+        self.storage.record(store::MESH, &written);
+        if written.is_err() {
+            self.stale.store(true, Ordering::Relaxed);
+        }
+        true
+    }
+
     /// Writes the registry now (blocking).
     fn save_now(&self) -> std::io::Result<()> {
         let Some(path) = &self.path else {
@@ -665,10 +703,23 @@ pub fn spawn(relay: &Relay) {
     let r = relay.clone();
     tokio::spawn(async move {
         let mut backoff = Duration::from_secs(1);
+        let mut last_seen = tokio::time::interval(LAST_SEEN_SAVE_EVERY);
+        last_seen.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        last_seen.tick().await; // the first tick is immediate
         loop {
-            r.mesh.dirty.notified().await;
-            // Coalesce bursts (connects, endpoint updates) into one write.
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            tokio::select! {
+                () = r.mesh.dirty.notified() => {
+                    // Coalesce bursts (new nodes, pairings) into one write.
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                }
+                _ = last_seen.tick() => {
+                    if !r.mesh.stale.load(Ordering::Relaxed) {
+                        continue;
+                    }
+                }
+            }
+            // This write carries every `last_seen` noted so far.
+            r.mesh.stale.store(false, Ordering::Relaxed);
             let asked = r.mesh.save_asked.load(Ordering::SeqCst);
             let mesh = r.mesh.clone();
             let written = tokio::task::spawn_blocking(move || mesh.save_now())
@@ -1173,6 +1224,10 @@ pub(crate) async fn connect(
         .map_or_else(|| "none".to_owned(), |ua| ua.chars().take(80).collect());
     upgrade
         .max_message_size(proto::MAX_RELAY_PACKET + 64)
+        // Mesh frames are a WireGuard packet or a small control message; the
+        // WebSocket default (128 KiB, allocated per connection up front)
+        // made each idle node cost the relay ~150 KiB.
+        .read_buffer_size(MESH_READ_BUFFER)
         .on_upgrade(move |socket| async move { session(relay, owner, agent, socket).await })
 }
 
@@ -1421,7 +1476,7 @@ async fn session(relay: Relay, owner: Owner, agent: String, socket: WebSocket) {
             tracing::warn!(node = %node_key, "mesh node welcomed before it could be saved");
         }
     } else {
-        mesh.dirty.notify_one();
+        mesh.touched();
     }
     let mode = match &owner {
         Owner::Machine { registrant, .. } if registrant.starts_with("static:") => Mode::Static,
@@ -1581,7 +1636,9 @@ async fn session(relay: Relay, owner: Owner, agent: String, socket: WebSocket) {
             n.last_seen = crate::assertion::now_secs();
         }
     }
-    mesh.dirty.notify_one();
+    // What a departure changes on disk is `last_seen` at most: forgotten
+    // nodes (ephemeral, unpaired static) are never written.
+    mesh.touched();
     mesh.changed();
     tracing::info!(node = %node_key.short(), "mesh node disconnected");
 }
@@ -1660,7 +1717,8 @@ fn control(
                 n.endpoints = endpoints.into_iter().take(32).collect();
                 n.last_seen = crate::assertion::now_secs();
             }
-            mesh.dirty.notify_one();
+            // Endpoints are never written: only `last_seen` changed on disk.
+            mesh.touched();
             mesh.changed();
         }
         ClientMsg::Pair {

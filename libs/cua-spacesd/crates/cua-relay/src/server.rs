@@ -1086,8 +1086,10 @@ impl Relay {
             handle.disconnect_all();
             handle.mesh.disconnect_all();
             tracing::info!(machines, mesh, "closed machine and mesh connections");
-            // Keep the last minutes of usage across a restart.
+            // Keep the last minutes of usage and of mesh `last_seen`
+            // across a restart.
             handle.meter.persist(true);
+            handle.mesh.flush_last_seen();
         })
         .await
     }
@@ -1117,8 +1119,10 @@ impl Relay {
                 handle.disconnect_all();
                 handle.mesh.disconnect_all();
                 tracing::info!(machines, mesh, "closed machine and mesh connections");
-                // Keep the last minutes of usage across a restart.
+                // Keep the last minutes of usage and of mesh `last_seen`
+                // across a restart.
                 handle.meter.persist(true);
+                handle.mesh.flush_last_seen();
             }
         };
         tokio::pin!(stop);
@@ -1539,7 +1543,16 @@ async fn machine_connect_inner(
                 return;
             }
             if let Some(old) = replaced {
-                tracing::info!(machine = %id, "replacing previous session");
+                // Both versions and the old session's age: two installs that
+                // share one computer id (and replace each other every few
+                // seconds) show as two versions alternating.
+                tracing::info!(
+                    machine = %id,
+                    version = %machine.version,
+                    old_version = %old.version,
+                    old_age_s = old.connected_at.elapsed().map_or(0, |d| d.as_secs()),
+                    "replacing previous session"
+                );
                 old.cut_clients();
                 old.abort.abort();
             }

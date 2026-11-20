@@ -205,22 +205,38 @@ fn dip_window_frame(
         .filter_map(|(index, entry)| {
             let frame = &entry["frame"];
             let [x, y, w, h] = ["x", "y", "w", "h"].map(|key| frame[key].as_f64());
-            let (x, y, w, h) = (x?, y?, w?, h?);
-            if w <= 0.0 || h <= 0.0 {
-                return None;
-            }
-            let scale = f64::from(ww) / w;
-            // A frame unit spans `scale` pixels, so rounding moves each edge
-            // by less than one unit.
-            let fits = |frame: f64, window: i32| (frame * scale - f64::from(window)).abs() <= scale;
-            (scale >= 1.0 && fits(h, wh) && fits(x, wx) && fits(y, wy)).then_some((
-                index,
-                (x, y),
-                scale,
-            ))
+            let frame = [x?, y?, w?, h?];
+            let window = [wx, wy, ww, wh].map(f64::from);
+            Some((index, (frame[0], frame[1]), fitting_scale(frame, window)?))
         })
         .min_by(|a, b| a.2.total_cmp(&b.2))
         .filter(|(_, _, scale)| *scale > 1.0)
+}
+
+/// The X11 pixels per frame unit, at least 1, that map `frame` onto `window`
+/// as `[x, y, w, h]`, or `None` when no scale does. Frames are whole units, so
+/// each value may miss by up to one unit: `|f * scale - w| <= scale`. 1 when
+/// it fits; otherwise the width ratio, held inside what every value allows.
+fn fitting_scale(frame: [f64; 4], window: [f64; 4]) -> Option<f64> {
+    let (mut low, mut high) = (1.0_f64, f64::INFINITY);
+    for (f, w) in frame.into_iter().zip(window) {
+        if f * w < 0.0 {
+            return None;
+        }
+        let (f, w) = (f.abs(), w.abs());
+        low = low.max(w / (f + 1.0));
+        if f > 1.0 {
+            high = high.min(w / (f - 1.0));
+        }
+    }
+    if low > high || frame[2] <= 0.0 || frame[3] <= 0.0 {
+        return None;
+    }
+    Some(if low == 1.0 {
+        1.0
+    } else {
+        (window[2] / frame[2]).clamp(low, high)
+    })
 }
 
 #[cfg(test)]
@@ -325,6 +341,18 @@ mod x11_screenshot_frame_tests {
         assert_eq!(
             frames((1040, 440, 1840, 1361), elements)[0],
             json!({"x": 0, "y": 0, "w": 1840, "h": 1361})
+        );
+    }
+
+    #[test]
+    fn an_odd_dip_width_still_fits_a_far_origin() {
+        // 801 pixels are 400.5 DIPs, reported as 401.
+        let elements = vec![
+            json!({"role": "frame", "depth": 0, "frame": {"x": 960, "y": 220, "w": 401, "h": 300}}),
+        ];
+        assert_eq!(
+            frames((1920, 440, 801, 600), elements)[0],
+            json!({"x": 0, "y": 0, "w": 801, "h": 600})
         );
     }
 

@@ -374,6 +374,17 @@ pub trait BrowserPlatform: Send + Sync {
         ))
     }
 
+    /// Where the machine's administrator forces extensions on `executable`
+    /// through managed browser policy, if anywhere: the admin-only policy
+    /// file, preference domain or registry key that does it (see
+    /// [`super::managed_policy::policy_forces_extensions`]). Only policy a
+    /// standard user cannot write counts. When it returns `Some`, the
+    /// isolated launch leaves extensions and background networking on so the
+    /// browser installs them. The default reports none.
+    fn managed_extension_policy(&self, _executable: &str) -> Option<String> {
+        None
+    }
+
     /// Spawn the driver-owned isolated browser that core fully configured in
     /// `command` for the private profile at `profile`. The default launches
     /// it with the Driver's own token. A platform may instead launch it with

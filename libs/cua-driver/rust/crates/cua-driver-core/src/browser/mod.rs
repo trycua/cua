@@ -49,6 +49,7 @@ mod grant;
 mod headless_tests;
 mod input;
 mod keyed_gates;
+pub mod managed_policy;
 #[cfg(test)]
 pub(crate) mod mock_cdp;
 mod motion_policy;

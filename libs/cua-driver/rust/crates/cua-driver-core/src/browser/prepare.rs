@@ -557,14 +557,8 @@ impl Drop for ManagedBrowser {
             // that exact process tree when its owning session ends. Windows
             // has no process group to signal, so a headless launch reaps its
             // tree the same way: its contract is that no descendant outlives
-            // the session. The unreaped `child` handle keeps its pid from
-            // being reused until the tree is gone.
-            let _ = Command::new("taskkill.exe")
-                .args(["/PID", &self.owned_pid.to_string(), "/T", "/F"])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
+            // the session.
+            kill_process_tree(self.owned_pid);
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -673,16 +667,37 @@ pub(super) fn signal_group_if_unreaped(browser: &mut dyn IsolatedBrowserProcess)
     false
 }
 
+/// Reap a driver-launched process tree on Windows, which has no process
+/// group to signal. Call it while the launched `Child` handle is held, so the
+/// pid cannot have been reused.
+#[cfg(target_os = "windows")]
+fn kill_process_tree(pid: i64) {
+    let _ = Command::new("taskkill.exe")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
 /// `leader_reaped` is true once launch polling has reaped the leader, after
 /// which its pid, and so its group id, may belong to another process.
+/// `headless` refusals also reap the tree on Windows, as session cleanup does.
 fn cleanup_created_profile_as_browser(
     browser: &mut dyn IsolatedBrowserProcess,
     profile: &PreparedProfile,
     leader_reaped: bool,
+    headless: bool,
 ) {
     if !leader_reaped {
         signal_group_if_unreaped(browser);
+        #[cfg(target_os = "windows")]
+        if headless {
+            kill_process_tree(i64::from(browser.id()));
+        }
     }
+    #[cfg(not(target_os = "windows"))]
+    let _ = headless;
     let _ = browser.kill();
     let _ = browser.wait();
     if profile.delete_on_cleanup {
@@ -1529,6 +1544,7 @@ impl BrowserEngine {
                     child.as_mut(),
                     &prepared_profile,
                     leader_reaped,
+                    request.headless,
                 );
                 let failure = if error
                     .detail
@@ -1566,6 +1582,7 @@ impl BrowserEngine {
                         child.as_mut(),
                         &prepared_profile,
                         leader_reaped,
+                        true,
                     );
                     let error = BrowserRefusal::new(
                         BrowserRefusalCode::BrowserRouteUnavailable,

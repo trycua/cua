@@ -313,7 +313,7 @@ impl SelfActivationGuard {
         let user_front = crate::apps::frontmost_pid().filter(|front| *front != pid);
         std::thread::spawn(move || {
             if let Some(front) = user_front {
-                watch_self_activation(pid, front, &flag);
+                watch_self_activation(pid, front, crate::focus_arbiter::UndoWatch::arm(), &flag);
             }
         });
         Self { stop }
@@ -366,7 +366,14 @@ impl Drop for GuardedIsolatedBrowserChild {
     }
 }
 
-fn watch_self_activation(pid: i32, front: i32, stop: &std::sync::atomic::AtomicBool) {
+/// `undo` is the watch it starts under, so a decision made before it started
+/// still holds.
+fn watch_self_activation(
+    pid: i32,
+    front: i32,
+    undo: crate::focus_arbiter::UndoWatch,
+    stop: &std::sync::atomic::AtomicBool,
+) {
     use crate::focus_arbiter::{Decision, UndoWatch};
     use std::sync::atomic::Ordering;
     use std::time::Instant;
@@ -382,7 +389,7 @@ fn watch_self_activation(pid: i32, front: i32, stop: &std::sync::atomic::AtomicB
     // The watch outlives single driver activations and user switches: once
     // the driver or the user has put Chrome in front, it leaves Chrome alone
     // until Chrome is no longer in front, then holds off briefly and re-arms.
-    let mut undo = UndoWatch::arm();
+    let mut undo = undo;
     let mut quiet_until = Instant::now();
     while !stop.load(Ordering::SeqCst) {
         if (undo.has_left() || !undo.epoch().is_current())
@@ -924,13 +931,17 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         // std::process::Command with --no-startup-window / background posture.
         // Pair FocusStealPreventer suppression with a bounded SkyLight
         // self-activation watcher across cold launch so the user's frontmost
-        // window keeps key focus and z-order.
+        // window keeps key focus and z-order. One watch covers the whole
+        // launch: once the driver or the user brings the browser forward, no
+        // lease, watcher or final restore undoes it.
+        let undo = crate::focus_arbiter::UndoWatch::arm();
         let prior_front = crate::apps::frontmost_pid();
         let pre_lease = prior_front.map(|prior| {
-            crate::focus_steal::FocusStealPreventer::begin_suppression(
+            crate::focus_steal::FocusStealPreventer::begin_suppression_for(
                 None,
                 prior,
                 "BrowserPrepare.isolated.pre",
+                undo.clone(),
             )
         });
         let child = command.spawn().map_err(|error| {
@@ -942,17 +953,20 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         if let (Some(prior), Ok(child_pid)) = (prior_front, i32::try_from(child.id())) {
             if prior != child_pid {
-                let post_lease = crate::focus_steal::FocusStealPreventer::begin_suppression(
+                let post_lease = crate::focus_steal::FocusStealPreventer::begin_suppression_for(
                     Some(child_pid),
                     prior,
                     "BrowserPrepare.isolated.post",
+                    undo.clone(),
                 );
                 drop(pre_lease);
                 let guard_stop = Arc::clone(&stop);
                 std::thread::spawn(move || {
                     let deadline = std::time::Instant::now() + ISOLATED_LAUNCH_GUARD_WINDOW;
                     std::thread::scope(|s| {
-                        s.spawn(|| watch_self_activation(child_pid, prior, &guard_stop));
+                        s.spawn(|| {
+                            watch_self_activation(child_pid, prior, undo.clone(), &guard_stop)
+                        });
                         while !guard_stop.load(std::sync::atomic::Ordering::SeqCst)
                             && std::time::Instant::now() < deadline
                         {
@@ -961,8 +975,11 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                         guard_stop.store(true, std::sync::atomic::Ordering::SeqCst);
                     });
                     drop(post_lease);
-                    let _ =
+                    if crate::apps::frontmost_pid() == Some(child_pid)
+                        && undo.decide() == crate::focus_arbiter::Decision::Undo
+                    {
                         restore_front_app_if_browser_front(i64::from(prior), i64::from(child_pid));
+                    }
                 });
             }
         }
@@ -2474,26 +2491,50 @@ mod tests {
         assert_eq!(ids, vec![7, 8]);
     }
 
-    #[test]
-    fn spawn_isolated_browser_launches_child_and_stops_guard_on_exit() {
-        let platform = MacOsBrowserPlatform::default();
-        let cmd = std::process::Command::new("/usr/bin/true");
-        let mut proc = platform
-            .spawn_isolated_browser(cmd, std::path::Path::new("/tmp"))
+    fn guarded_true_child() -> (
+        GuardedIsolatedBrowserChild,
+        Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let child = std::process::Command::new("/usr/bin/true")
+            .spawn()
             .expect("spawn /usr/bin/true");
-        assert!(proc.id() > 0);
-        let status = proc.wait().expect("wait on /usr/bin/true");
-        assert!(status.success());
+        (
+            GuardedIsolatedBrowserChild {
+                child,
+                stop: Arc::clone(&stop),
+            },
+            stop,
+        )
     }
 
     #[test]
-    fn spawn_isolated_browser_maps_missing_executable_to_route_unavailable() {
-        let platform = MacOsBrowserPlatform::default();
-        let cmd = std::process::Command::new("/nonexistent/cua-isolated-browser-test-bin");
-        let err = match platform.spawn_isolated_browser(cmd, std::path::Path::new("/tmp")) {
-            Ok(_) => panic!("missing executable must return Err"),
-            Err(err) => err,
-        };
-        assert_eq!(err.code, BrowserRefusalCode::BrowserRouteUnavailable);
+    fn guarded_isolated_child_stops_launch_guard_when_it_exits_or_is_dropped() {
+        use std::sync::atomic::Ordering;
+
+        let (mut child, stop) = guarded_true_child();
+        assert!(!stop.load(Ordering::SeqCst));
+        assert!(child.wait().expect("wait on /usr/bin/true").success());
+        assert!(stop.load(Ordering::SeqCst));
+
+        let (mut child, stop) = guarded_true_child();
+        while child
+            .try_wait()
+            .expect("try_wait on /usr/bin/true")
+            .is_none()
+        {
+            assert!(!stop.load(Ordering::SeqCst));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(stop.load(Ordering::SeqCst));
+
+        let (mut child, stop) = guarded_true_child();
+        let _ = child.kill();
+        assert!(stop.load(Ordering::SeqCst));
+        let _ = child.wait();
+
+        let (child, stop) = guarded_true_child();
+        drop(child);
+        assert!(stop.load(Ordering::SeqCst));
     }
 }

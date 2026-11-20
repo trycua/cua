@@ -370,6 +370,8 @@ async fn shutdown_signal() {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Fixes the boot identity (`x-cua-relay-boot`) at process start.
+    let _ = cua_relay::route_marker::boot();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

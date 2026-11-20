@@ -657,6 +657,12 @@ load-balancer error page carries no marker at all. The values are fixed:
 `tests/probe_contract.rs` fails if one changes or disappears. Changing them
 means changing the probes in trycua/cloud in the same release.
 
+**Boot identity.** `/healthz` also carries `x-cua-relay-boot` (a random
+id, new on every process start), `x-cua-relay-started` (Unix seconds) and
+`x-cua-relay-version`. Two answers with the same boot id come from the same
+process; a new id means the relay restarted. Tests, canaries and
+dashboards use it to tell a rollout from an outage. It carries no secret.
+
 **Log lines to alert on** (stable message and `alert` field):
 `state persist failed` (`alert=state_persist_failed`, with `store` and
 `error`; at most one line per store per second, `since_last_line` counts

@@ -299,9 +299,9 @@ Each action that watches for window changes (`click`, `double_click`,
   (800 ms) on Linux X11, where a Qt file dialog that maps after 300 to 600 ms
   then still confirms the action. Use it when the next decision depends on
   this result naming the window the action opened.
-- `"none"` returns as soon as the input is delivered. The result ends with
-  `Window changes not observed: post_action_wait "none" returned without
-  waiting.` instead of reporting no change. On macOS the watch still runs
+- `"none"` returns as soon as the input is delivered. On macOS the result
+  ends with `Window changes not observed: post_action_wait "none" returned
+  without waiting.` instead of reporting no change, and the watch still runs
   detached for its whole deadline and keeps the focus-steal lease, so focus
   protection is unchanged and a window that opens is reported on the next
   action's result. On Linux X11 a foreground action then reports no

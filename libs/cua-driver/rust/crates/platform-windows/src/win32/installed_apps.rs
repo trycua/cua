@@ -475,16 +475,36 @@ fn read_uwp_application_id(pkg: &windows::ApplicationModel::Package) -> Option<S
 
 /// The `Id` of the first `<Application>` element in an AppxManifest. The
 /// enclosing `<Applications>` element shares the prefix and has no `Id`, so
-/// the tag name must end where the prefix does. Attributes are read in XML
-/// syntax: whitespace around `=`, and either quote.
+/// the tag name must end where the prefix does. Comments, CDATA, processing
+/// instructions and declarations are skipped, since only they can hold a `<`
+/// that does not start a tag. Attributes are read in XML syntax: whitespace
+/// around `=`, and either quote.
 fn first_application_id(xml: &str) -> Option<String> {
     const TAG: &str = "<Application";
-    let mut rest = xml.match_indices(TAG).find_map(|(pos, _)| {
-        let after = &xml[pos + TAG.len()..];
-        after
-            .starts_with(|c: char| c.is_whitespace() || c == '>' || c == '/')
-            .then_some(after)
-    })?;
+    let mut rest = xml;
+    loop {
+        rest = &rest[rest.find('<')?..];
+        let skip_to = [
+            ("<!--", "-->"),
+            ("<![CDATA[", "]]>"),
+            ("<?", "?>"),
+            ("<!", ">"),
+        ]
+        .into_iter()
+        .find(|(open, _)| rest.starts_with(open));
+        if let Some((open, close)) = skip_to {
+            let body = &rest[open.len()..];
+            rest = &body[body.find(close)? + close.len()..];
+            continue;
+        }
+        if let Some(after) = rest.strip_prefix(TAG) {
+            if after.starts_with(|c: char| c.is_whitespace() || c == '>' || c == '/') {
+                rest = after;
+                break;
+            }
+        }
+        rest = &rest[1..];
+    }
     loop {
         rest = rest.trim_start();
         if rest.is_empty() || rest.starts_with(['>', '/']) {
@@ -614,6 +634,17 @@ mod tests {
             <Application uap10:HostId="Host" Id="Editor" Executable="editor.exe" EntryPoint="Windows.FullTrustApplication">
             </Application>
             <Application Id="Viewer" Executable="viewer.exe"/>
+        </Applications></Package>"#;
+        assert_eq!(first_application_id(manifest).as_deref(), Some("Editor"));
+    }
+
+    #[test]
+    fn first_application_id_skips_markup_that_is_not_a_tag() {
+        let manifest = r#"<?xml version="1.0"?><Package><Applications>
+            <!-- <Application Id="OldEditor"/> -->
+            <![CDATA[<Application Id="Data"/>]]>
+            <?pi <Application Id="Instruction"/> ?>
+            <Application Id="Editor"/>
         </Applications></Package>"#;
         assert_eq!(first_application_id(manifest).as_deref(), Some("Editor"));
     }

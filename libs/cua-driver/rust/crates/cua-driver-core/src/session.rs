@@ -1969,7 +1969,7 @@ pub fn revive_session_for_owner(
     // Validate ownership before running any cleanup callback. A caller that
     // merely guesses another transport's public label must not be able to
     // trigger work for that lifecycle episode.
-    if !check(&*lifecycle())? {
+    if !check(&lifecycle())? {
         return Ok(false);
     }
     if !retry_session_cleanup(session_id).complete {
@@ -1979,7 +1979,7 @@ pub fn revive_session_for_owner(
     // Recheck after cleanup because another thread may have completed the
     // revival while callbacks were running.
     let mut lifecycle = lifecycle();
-    if !check(&*lifecycle)? {
+    if !check(&lifecycle)? {
         return Ok(false);
     }
     if lifecycle.cleanup_pending(session_id) {

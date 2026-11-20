@@ -42,6 +42,8 @@ for spec in "${specs[@]}"; do
     venv="${CUA_COMPAT_VENVS:-$WORK}/venv-${spec//[^a-zA-Z0-9]/_}"
     [ -x "$venv/bin/python" ] || python3 -m venv "$venv"
     "$venv/bin/pip" install -q --upgrade "$spec"
+    # SDK 2.0 moved the original Daytona API into a namespace behind this extra.
+    [ "$PROVIDER" = daytona ] && "$venv/bin/pip" install -q "daytona[v0-sdk]"
     echo "== $spec"
     "$venv/bin/python" "$HERE/hermetic_sdk.py" "$WORK/env.json" || status=1
     if [ "$PROVIDER" = modal ]; then

@@ -1,5 +1,193 @@
 # Changelog
 
+## [0.29.3](https://github.com/trycua/cua/compare/cua-sdk-v0.29.2...cua-sdk-v0.29.3) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** python security bumps (Twisted, pypdf, filelock, virtualenv, litellm, transformers, pyasn1, GitPython, fsspec, joserfc, black, langgraph-sdk) ([#8312](https://github.com/trycua/cua/issues/8312)) ([ee59258](https://github.com/trycua/cua/commit/ee592588b4a6ff6fc8ea929a4354dcb62c64076f))
+
+## [0.29.2](https://github.com/trycua/cua/compare/cua-sdk-v0.29.1...cua-sdk-v0.29.2) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** js security bumps (52 Dependabot alerts) ([#8313](https://github.com/trycua/cua/issues/8313)) ([38d718e](https://github.com/trycua/cua/commit/38d718e66565ec7a4490ff9dd63caee39ff157a2))
+
+## [0.29.1](https://github.com/trycua/cua/compare/cua-sdk-v0.29.0...cua-sdk-v0.29.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** bump aiohttp to 3.14.5 (44 Dependabot alerts) ([#8309](https://github.com/trycua/cua/issues/8309)) ([006c897](https://github.com/trycua/cua/commit/006c897412aef0820e43a67beab8fe262a4a9886))
+
+## [0.29.0](https://github.com/trycua/cua/compare/cua-sdk-v0.28.6...cua-sdk-v0.29.0) (2026-11-20)
+
+
+### Features
+
+* **spaces:** stream direct Spaces over the advertised QUIC media endpoint ([#8083](https://github.com/trycua/cua/issues/8083)) ([ecde561](https://github.com/trycua/cua/commit/ecde5618f7d20cff7fb66a6c2ce0dba16a473c55))
+
+## [0.28.6](https://github.com/trycua/cua/compare/cua-sdk-v0.28.5...cua-sdk-v0.28.6) (2026-11-19)
+
+
+### Bug Fixes
+
+* **cua-vmm:** wait for a starting container engine, name and retry its failed pings ([#8241](https://github.com/trycua/cua/issues/8241)) ([fd4e019](https://github.com/trycua/cua/commit/fd4e01991b42350dc8cf0e807c9f211ada44e0bd))
+
+## [0.28.5](https://github.com/trycua/cua/compare/cua-sdk-v0.28.4...cua-sdk-v0.28.5) (2026-11-19)
+
+
+### Bug Fixes
+
+* **spaces:** deliver agent messages once ([#8218](https://github.com/trycua/cua/issues/8218)) ([a88ded9](https://github.com/trycua/cua/commit/a88ded951c5e66285bc788b75fddc1c1cdff5eb0))
+
+## [0.28.4](https://github.com/trycua/cua/compare/cua-sdk-v0.28.3...cua-sdk-v0.28.4) (2026-11-19)
+
+
+### Bug Fixes
+
+* **spaces:** send the Mac clipboard on paste in the native viewer ([#8145](https://github.com/trycua/cua/issues/8145)) ([54312cf](https://github.com/trycua/cua/commit/54312cfce862d13a57f0c28851bd399e261c8e70))
+
+## [0.28.3](https://github.com/trycua/cua/compare/cua-sdk-v0.28.2...cua-sdk-v0.28.3) (2026-11-18)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** probe hardware encoders off the GetCapabilities path ([#8161](https://github.com/trycua/cua/issues/8161)) ([9346cab](https://github.com/trycua/cua/commit/9346cabc2e0614a2ec9d9b629ab0db39b44db4bb))
+
+## [0.28.2](https://github.com/trycua/cua/compare/cua-sdk-v0.28.1...cua-sdk-v0.28.2) (2026-11-17)
+
+
+### Bug Fixes
+
+* **packaging:** ship LICENSE files in Python distributions ([#8056](https://github.com/trycua/cua/issues/8056)) ([be4ba4b](https://github.com/trycua/cua/commit/be4ba4ba8250e127aebc053b6450eb57710f40d5))
+
+## [0.28.1](https://github.com/trycua/cua/compare/cua-sdk-v0.28.0...cua-sdk-v0.28.1) (2026-11-17)
+
+
+### Bug Fixes
+
+* **spaces:** keep a deleted prepared agent home removed ([#7979](https://github.com/trycua/cua/issues/7979)) ([59debb5](https://github.com/trycua/cua/commit/59debb541b94da819fb94869a3cabdec2f7f08b7))
+
+## [0.28.0](https://github.com/trycua/cua/compare/cua-sdk-v0.27.7...cua-sdk-v0.28.0) (2026-11-16)
+
+
+### Features
+
+* **spaces:** delete one or all notifications, and prune old read ones ([#7396](https://github.com/trycua/cua/issues/7396)) ([5fe2ca9](https://github.com/trycua/cua/commit/5fe2ca9a4715469a467c65e04ce7ca0a7b44a64d))
+
+
+### Bug Fixes
+
+* **agents:** install Hermes dependencies in macOS spaces ([#7978](https://github.com/trycua/cua/issues/7978)) ([a090ad5](https://github.com/trycua/cua/commit/a090ad5f5e7f3333b0c5649ff96ea1e34c607ac5))
+* **cua-cli:** say containers accept --network none under the Secure default ([#7990](https://github.com/trycua/cua/issues/7990)) ([3a0b44f](https://github.com/trycua/cua/commit/3a0b44fc40504ed146ff98dc06ced0d767d936b0))
+* **cua-sdk:** check image-pull free space on the engine's data root ([#7989](https://github.com/trycua/cua/issues/7989)) ([0efaeeb](https://github.com/trycua/cua/commit/0efaeeb15e4e0324c417c45ed9a31f0d9b802414))
+* **cua-sdk:** keep HTTP MCP reply waits cancellable ([#7980](https://github.com/trycua/cua/issues/7980)) ([d735f38](https://github.com/trycua/cua/commit/d735f383d43a2abecc100c08be23c4540f4cba95))
+* **cua-spaces:** compile with reduced feature sets ([#4846](https://github.com/trycua/cua/issues/4846)) ([c871171](https://github.com/trycua/cua/commit/c8711718ebc2f4aad364caf3daed74631deab5fa))
+
+## [0.27.7](https://github.com/trycua/cua/compare/cua-sdk-v0.27.6...cua-sdk-v0.27.7) (2026-11-15)
+
+
+### Bug Fixes
+
+* **cua-cli:** two fixes re-landed from [#6199](https://github.com/trycua/cua/issues/6199) and [#6230](https://github.com/trycua/cua/issues/6230) ([#7864](https://github.com/trycua/cua/issues/7864)) ([a49f60a](https://github.com/trycua/cua/commit/a49f60ae8a106735e2568f9f54594e830c2af816))
+* **cua-daemon:** name a digest-pinned Lume image's digest once and check what Lume pulled ([#7868](https://github.com/trycua/cua/issues/7868)) ([b729604](https://github.com/trycua/cua/commit/b729604b0fab2a926ea47603784e78938e8c7702))
+* **spaces:** pass saved custom endpoints to persistent agents ([#7417](https://github.com/trycua/cua/issues/7417)) ([7b3a88d](https://github.com/trycua/cua/commit/7b3a88d6752a039cd077510ce02cd98591c8e23b))
+
+## [0.27.6](https://github.com/trycua/cua/compare/cua-sdk-v0.27.5...cua-sdk-v0.27.6) (2026-11-15)
+
+
+### Bug Fixes
+
+* **teleport:** copy browser databases data-only (macOS 27 EPERM) ([#4844](https://github.com/trycua/cua/issues/4844)) ([b1632d3](https://github.com/trycua/cua/commit/b1632d30af832a7572288007bca63a34842f4da7))
+
+## [0.27.5](https://github.com/trycua/cua/compare/cua-sdk-v0.27.4...cua-sdk-v0.27.5) (2026-11-14)
+
+
+### Bug Fixes
+
+* **cua-agent-setup:** bundle the cua-driver skill from its release source ([#7774](https://github.com/trycua/cua/issues/7774)) ([6fc85a5](https://github.com/trycua/cua/commit/6fc85a57b4052f22261a5d62e494fef14798e60d))
+
+## [0.27.4](https://github.com/trycua/cua/compare/cua-sdk-v0.27.3...cua-sdk-v0.27.4) (2026-11-13)
+
+
+### Bug Fixes
+
+* **deps:** upgrade pillow to 13.0.0 and soupsieve to 4.1 (CVE-2026-128066, CVE-2026-128067, CVE-2026-126190) ([#7598](https://github.com/trycua/cua/issues/7598)) ([4d14f88](https://github.com/trycua/cua/commit/4d14f88d9482528ea0e9bdf2c7020d002bcd488d))
+
+## [0.27.3](https://github.com/trycua/cua/compare/cua-sdk-v0.27.2...cua-sdk-v0.27.3) (2026-11-13)
+
+
+### Bug Fixes
+
+* **host:** name and, where possible, fix what a headless Linux computer needs for Spaces ([#7310](https://github.com/trycua/cua/issues/7310)) ([#7399](https://github.com/trycua/cua/issues/7399)) ([9653f85](https://github.com/trycua/cua/commit/9653f85f38b76f7293c833673775d5c8b00b033d))
+
+## [0.27.2](https://github.com/trycua/cua/compare/cua-sdk-v0.27.1...cua-sdk-v0.27.2) (2026-11-13)
+
+
+### Bug Fixes
+
+* **cua-driver:** do not strip proc-macro dylibs in release builds ([#7540](https://github.com/trycua/cua/issues/7540)) ([8837363](https://github.com/trycua/cua/commit/8837363d65a36292c7692b5c9c37e77d44e9326d))
+
+## [0.27.1](https://github.com/trycua/cua/compare/cua-sdk-v0.27.0...cua-sdk-v0.27.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-spaces:** build the github_auth tests on Windows ([#7515](https://github.com/trycua/cua/issues/7515)) ([2319d45](https://github.com/trycua/cua/commit/2319d4561feb3086a8dc66edeb9cbd5eb509c5a5))
+
+## [0.27.0](https://github.com/trycua/cua/compare/cua-sdk-v0.26.0...cua-sdk-v0.27.0) (2026-11-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cua-driver:** the `page` tool no longer accepts `execute_javascript`, `click_element`, `insert_text`, `type_keystrokes` or `enable_javascript_apple_events`; use the typed `browser_*` tools.
+
+### Features
+
+* **cua-driver:** deprecate replay_trajectory, install_ffmpeg, get_accessibility_tree ([#7483](https://github.com/trycua/cua/issues/7483)) ([b13430e](https://github.com/trycua/cua/commit/b13430e04a8a71cf933266a047c9e88e9573d3b9))
+
+## [0.26.0](https://github.com/trycua/cua/compare/cua-sdk-v0.25.2...cua-sdk-v0.26.0) (2026-11-12)
+
+
+### Features
+
+* **cua-sdk:** ship cua-cli on PyPI as a thin wheel that fetches the signed CLI ([#7474](https://github.com/trycua/cua/issues/7474)) ([b890fca](https://github.com/trycua/cua/commit/b890fcada5e762fa5bd2820548ae1fffa63f452c))
+
+
+### Bug Fixes
+
+* **cua-driver:** deprecate Computer History, removal after 26 Nov 2026 ([#7478](https://github.com/trycua/cua/issues/7478)) ([0b6922b](https://github.com/trycua/cua/commit/0b6922bad2363be5215c9e527307c2ff6657b3be))
+* **cua-driver:** render macOS cursors on every display and remove all action marks ([#7458](https://github.com/trycua/cua/issues/7458)) ([8fb8d67](https://github.com/trycua/cua/commit/8fb8d67e3bdecd3b030298c945929efe4f02cb77))
+
+## [0.25.2](https://github.com/trycua/cua/compare/cua-sdk-v0.25.1...cua-sdk-v0.25.2) (2026-11-12)
+
+
+### Bug Fixes
+
+* **vmm:** gate container-only code so cua-vmm builds with any backend feature set ([#7433](https://github.com/trycua/cua/issues/7433)) ([6637de4](https://github.com/trycua/cua/commit/6637de44fb669fea965ee0197ced5ac6a95cf11e))
+* **vmm:** skip resolv.conf removal for containers without one ([#7429](https://github.com/trycua/cua/issues/7429)) ([4a5f90b](https://github.com/trycua/cua/commit/4a5f90baf4478943f08c8b38724c7ee8b06d7667))
+
+## [0.25.1](https://github.com/trycua/cua/compare/cua-sdk-v0.25.0...cua-sdk-v0.25.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **spaces:** forward create_space CPU and memory limits ([#7428](https://github.com/trycua/cua/issues/7428)) ([f2201ac](https://github.com/trycua/cua/commit/f2201ac55ce19fb513c4b53569d04d2016bce4b8))
+
+## [0.25.0](https://github.com/trycua/cua/compare/cua-sdk-v0.24.2...cua-sdk-v0.25.0) (2026-11-12)
+
+
+### Features
+
+* **spaces:** setup shows each agent connection step live, connects Cua Driver and sets up This Mac (CUA-4067) ([#7389](https://github.com/trycua/cua/issues/7389)) ([d2c5abb](https://github.com/trycua/cua/commit/d2c5abbb3b4b4cbece4079ad59da74e99dc7b473))
+
+
+### Bug Fixes
+
+* **cua-vmm:** run the engine helper's chroot from PATH and build sandbox overlays on 24.04 ([#7409](https://github.com/trycua/cua/issues/7409)) ([10cd739](https://github.com/trycua/cua/commit/10cd739d46db34a0373245531c8219babf606c1f))
+
 ## [0.24.2](https://github.com/trycua/cua/compare/cua-sdk-v0.24.1...cua-sdk-v0.24.2) (2026-11-11)
 
 

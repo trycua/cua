@@ -119,6 +119,8 @@ describe("a row's words", () => {
     expect(perm.sub).toContain("Screen Recording and Accessibility");
     expect(checklistRowView(item("mcp"), done(), "macos").action).toBeNull();
     const code = checklistRowView(item("sign_in", "codex"), { status: "needs_code", where: null, line: null }, "macos");
+    expect(code.text).toBe("Sign Codex in for your other computers");
+    expect(code.sub).toBe("Codex signs in with a code made for Cua. Your own sign-in stays as it is.");
     expect(code.action).toEqual({ id: "code", label: "Get a code" });
     const waiting = checklistRowView(
       item("sign_in", "codex"),

@@ -825,7 +825,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     expect(document.querySelector("[data-checklist-row='codex:driver']")!.getAttribute("data-status")).toBe("needs_permission");
     expect(rowText("codex:driver")).toBe("Codex needs your permission to use apps on this Mac");
     expect(document.querySelector("[data-checklist-row='codex:driver'] [data-checklist-action]")!.textContent).toBe("Allow");
-    expect(rowText("codex:sign_in")).toBe("Save a Codex sign-in to Keyvault so jobs on your other computers can use it");
+    expect(rowText("codex:sign_in")).toBe("Sign Codex in for your other computers");
     expect(heading()).toBe("Almost there");
     const connects = () => calls.filter((c) => c.op === "agents.connect").map((c) => c.args);
     expect(connects()).toEqual([

@@ -57,6 +57,15 @@ fn coordinate_less_mouse_button_up_survives_snapshot_replacement() {
         "coordinate-less release must use the stored native hold point"
     );
 
+    // The press owner's own newer read without a screenshot retires its
+    // frame, so coordinates off the old screenshot are refused.
+    state.snapshots.publish_for_session(
+        hold.pid as i32,
+        hold.xid,
+        crate::atspi::snapshot::AtspiSnapshot::from_nodes(&[]),
+        Some("press-owner"),
+        None,
+    );
     let stale_coordinate_args = json!({"_session_id": "press-owner", "x": 60.0, "y": 40.0});
     let refusal = mouse_button_up_coordinates(&state, &stale_coordinate_args, &hold)
         .expect_err("coordinate-bearing release must still reject a replaced snapshot");

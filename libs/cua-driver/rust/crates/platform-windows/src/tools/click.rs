@@ -345,8 +345,13 @@ impl Tool for ClickTool {
                         3 => "triple-click",
                         _ => "click",
                     };
+                    let note = if crate::win32::window_closed_or_hidden(hwnd_u) {
+                        " The window closed or hid."
+                    } else {
+                        ""
+                    };
                     ToolResult::text(format!(
-                        "Sent {click_word} via SendInput at screen ({sx},{sy}) on HWND 0x{hwnd_u:x} (desktop scope)."
+                        "Sent {click_word} via SendInput at screen ({sx},{sy}) on HWND 0x{hwnd_u:x} (desktop scope).{note}"
                     ))
                     // SendInput dispatched but is not driver-verifiable (no read-back).
                     .with_structured(json!({ "path": "pixel", "verified": false, "effect": "unverifiable" }))
@@ -365,6 +370,9 @@ impl Tool for ClickTool {
             Err(e) => return e,
         };
         let (elem_idx, hwnd_opt, admitted) = resolved.into_parts(args.opt_u64("window_id"));
+        if let Some(refusal) = super::impl_::refuse_if_disabled(pid, &admitted, "click").await {
+            return refusal;
+        }
         let x = args.opt_f64("x");
         let y = args.opt_f64("y");
         // Surface 5: explicit rejection of unknown buttons so a typo doesn't fall
@@ -774,9 +782,7 @@ impl Tool for ClickTool {
             // left falls through to the UIA Invoke path below (already drives
             // WinUI3). Double-left lands via a double UIA Invoke; right/middle
             // can't both land and hold the contract → structured error.
-            if delivery == DeliveryMode::Background
-                && (count > 1 || btn == "right" || btn == "middle")
-            {
+            if delivery.is_background() && (count > 1 || btn == "right" || btn == "middle") {
                 if let Some(r) =
                     winui3_background_gesture(&admitted, pid, hwnd, Some(idx), count, &btn).await
                 {
@@ -788,7 +794,7 @@ impl Tool for ClickTool {
             // changing foreground, z-order, or the real cursor. Keep AX for
             // target resolution and use the posted-message transport only for
             // the empirically verified single-left-click shape.
-            if delivery == DeliveryMode::Background
+            if delivery.is_background()
                 && btn == "left"
                 && count == 1
                 && crate::input::is_chromium_target_window(hwnd)
@@ -853,7 +859,7 @@ impl Tool for ClickTool {
                 // DOM event while occluded. Try the honest coordinate actuator
                 // first: it lands while visible and reports occlusion without
                 // raising the window when hidden.
-                if delivery == DeliveryMode::Background
+                if delivery.is_background()
                     && crate::input::is_chromium_target_window(hwnd)
                 {
                     let (cx, cy) = resolve_onscreen_point_with_scroll(
@@ -957,7 +963,7 @@ impl Tool for ClickTool {
                         std::mem::forget(elem);
                     }
                 }
-                if delivery == DeliveryMode::Background
+                if delivery.is_background()
                     && crate::input::delivery::would_be_silently_dropped(
                         hwnd,
                         EventKind::MouseClick,
@@ -1034,13 +1040,11 @@ impl Tool for ClickTool {
                     };
                     background_element_click_result(message, transport, failed_calls)
                 }
-                Ok(Err(error)) if inject => {
-                    crate::input::delivery::background_unavailable_error_with_cause(
-                        hwnd,
-                        EventKind::MouseClick,
-                        error.to_string(),
-                    )
-                }
+                Ok(Err(error)) if inject => crate::input::delivery::background_injection_error(
+                    hwnd,
+                    EventKind::MouseClick,
+                    &error,
+                ),
                 Ok(Err(error)) => ToolResult::error(error.to_string()),
                 Err(error) => ToolResult::error(format!("Task error: {error}")),
             }
@@ -1155,9 +1159,7 @@ impl Tool for ClickTool {
             // path, no element_token → no cached element to UIA-Invoke): these
             // can't both land and hold the contract on WinUI3 (posted input is
             // ignored, the pen injector steals foreground) → structured error.
-            if delivery == DeliveryMode::Background
-                && (count > 1 || btn == "right" || btn == "middle")
-            {
+            if delivery.is_background() && (count > 1 || btn == "right" || btn == "middle") {
                 if let Some(r) =
                     winui3_background_gesture(&admitted, pid, hwnd, None, count, &btn).await
                 {
@@ -1167,7 +1169,7 @@ impl Tool for ClickTool {
             // Match the AX-addressed Chromium route above: the point remains
             // PX-resolved, but transport uses the background-safe posted
             // message path proven against the fully occluded fixture.
-            if delivery == DeliveryMode::Background
+            if delivery.is_background()
                 && btn == "left"
                 && count == 1
                 && crate::input::is_chromium_target_window(hwnd)
@@ -1198,8 +1200,7 @@ impl Tool for ClickTool {
             // the coordinate actuator before attempting any accessibility hit
             // test. The actuator itself distinguishes visible delivery from a
             // fully occluded structured refusal.
-            if delivery == DeliveryMode::Background && crate::input::is_chromium_target_window(hwnd)
-            {
+            if delivery.is_background() && crate::input::is_chromium_target_window(hwnd) {
                 let btn2 = btn.clone();
                 let inj = tokio::task::spawn_blocking({
                     let admitted = admitted.clone();
@@ -1214,10 +1215,10 @@ impl Tool for ClickTool {
                         "Injected click to pid {pid} at ({sx},{sy}) (background, no foreground swap)."
                     ))
                     .with_structured(json!({ "path": "pixel", "verified": false, "effect": "unverifiable" })),
-                    Ok(Err(error)) => crate::input::delivery::background_unavailable_error_with_cause(
+                    Ok(Err(error)) => crate::input::delivery::background_injection_error(
                         hwnd,
                         EventKind::MouseClick,
-                        error.to_string(),
+                        &error,
                     ),
                     Err(error) => ToolResult::error(format!("Task error: {error}")),
                 };
@@ -1244,7 +1245,7 @@ impl Tool for ClickTool {
 
             // UIA completed with a miss or was not applicable. Known dropped surfaces other than direct
             // Chromium (handled above) get one targeted injection attempt.
-            if delivery == DeliveryMode::Background
+            if delivery.is_background()
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
                 let btn2 = btn.clone();
@@ -1261,10 +1262,10 @@ impl Tool for ClickTool {
                         "Injected click to pid {pid} at ({sx},{sy}) (background, no foreground swap)."
                     ))
                     .with_structured(json!({ "path": "pixel", "verified": false, "effect": "unverifiable" })),
-                    Ok(Err(error)) => crate::input::delivery::background_unavailable_error_with_cause(
+                    Ok(Err(error)) => crate::input::delivery::background_injection_error(
                         hwnd,
                         EventKind::MouseClick,
-                        error.to_string(),
+                        &error,
                     ),
                     Err(error) => ToolResult::error(format!("Task error: {error}")),
                 };

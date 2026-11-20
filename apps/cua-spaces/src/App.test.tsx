@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -92,20 +92,37 @@ describe("keyboard selection and MRU", () => {
     await user.keyboard("{ArrowRight}{ArrowRight}");
     expect(screen.getByRole("option", { name: /^Linux Build/ })).toHaveFocus();
 
-    await user.keyboard("{Enter}");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      // Freeze the auto-collapse clock before Enter; a slow runner must still
+      // observe the switch confirmation before advancing to collapse.
+      fireEvent.keyDown(document.activeElement!, { key: "Enter", code: "Enter" });
+      fireEvent.keyUp(document.activeElement!, { key: "Enter", code: "Enter" });
 
-    // Switching still makes it the portal's current Space — which is what
-    // re-orders the grid and seeds the popped-out list — it just is not drawn
-    // as a selection on the tile any more.
-    expect(screen.queryByRole("option", { selected: true })).toBeNull();
-    expect(tileNames()).toEqual(["Linux Build", "This Mac", "Windows QA", "Research"]);
-    expect(screen.getAllByRole("status")[0]).toHaveTextContent("Switching to Linux Build");
+      // Switching still makes it the portal's current Space — which is what
+      // re-orders the grid and seeds the popped-out list — it just is not drawn
+      // as a selection on the tile any more.
+      expect(screen.queryByRole("option", { selected: true })).toBeNull();
+      expect(tileNames()).toEqual(["Linux Build", "This Mac", "Windows QA", "Research"]);
+      expect(screen.getAllByRole("status")[0]).toHaveTextContent("Switching to Linux Build");
 
-    await waitFor(() => expect(screen.getByRole("button", { name: /2 Spaces/ })).toBeInTheDocument());
-    // Re-open: MRU order persists.
-    await user.click(screen.getByRole("button", { name: /2 Spaces/ }));
-    // The grid mounts as the notch opens: wait for it, as for the collapse.
-    await waitFor(() => expect(tileNames()[0]).toBe("Linux Build"));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(29);
+      });
+      expect(screen.getByRole("listbox")).toBeInTheDocument();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(screen.getByRole("button", { name: /2 Spaces/ })).toBeInTheDocument();
+      // Re-open under the same clock: inspecting persisted MRU must not race
+      // another collapse while the switch confirmation is still present.
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /2 Spaces/ }));
+      });
+      expect(tileNames()[0]).toBe("Linux Build");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("wraps from the New tile back to the first Space and reaches New with End", async () => {

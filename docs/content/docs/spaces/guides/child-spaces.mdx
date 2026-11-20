@@ -46,7 +46,7 @@ make is a child of this one:
 cua spaces create linux --name worker
 cua spaces ls
 cua sb exec worker -- make test
-cua spaces rm worker
+cua spaces delete worker --force
 ```
 
 An agent gets the same as tools in its Space's own MCP server:

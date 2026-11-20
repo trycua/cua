@@ -106,7 +106,7 @@
         },
         {
           "path": "apps/ledger-lantern-mail/package-lock.json",
-          "sha256": "0a8166633af87a1a3d685ec1556a6ec026c9b9ce0486d3fc68b37475fc72aca5"
+          "sha256": "72dd7ef2063afb0237ee3dcb0a5253baebf327491811d0efb4c2e12076e0f864"
         },
         {
           "path": "apps/ledger-lantern-mail/renderer/index.html",

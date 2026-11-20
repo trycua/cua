@@ -535,7 +535,7 @@ export function checklistRowView(item: ChecklistItem, state: ChecklistState, os:
       if (state.status === "needs_code")
         return {
           ...base,
-          text: `Save a ${name} sign-in to Keyvault ${purpose}`,
+          text: `Sign ${name} in for your other computers`,
           sub: state.code
             ? `Enter ${state.code.code} on the sign-in page. This row moves on when you're done.`
             : `${name} signs in with a code made for Cua. Your own sign-in stays as it is.`,

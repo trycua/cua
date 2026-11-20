@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.0...cua-spacesd-v0.17.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **relay:** cut per-connection memory and give freed memory back ([#8314](https://github.com/trycua/cua/issues/8314)) ([4fd73dd](https://github.com/trycua/cua/commit/4fd73ddca26415f67a5daed89e71530775c12633))
+* **relay:** stop machines retrying a refused token every few seconds ([#8302](https://github.com/trycua/cua/issues/8302)) ([83d9eab](https://github.com/trycua/cua/commit/83d9eab3bb81ac26bc6c993e7911f70da43f932a))
+
 ## [0.17.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.6...cua-spacesd-v0.17.0) (2026-11-20)
 
 

@@ -528,16 +528,20 @@ fn stable_hash(value: &str) -> u64 {
 }
 
 fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
+    let relative = home_relative_profile_root(product)?;
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
-    let relative = match product {
+    Some(home.join(relative))
+}
+
+fn home_relative_profile_root(product: BrowserProduct) -> Option<&'static str> {
+    Some(match product {
         BrowserProduct::GoogleChrome => "Library/Application Support/Google/Chrome",
         BrowserProduct::MicrosoftEdge => "Library/Application Support/Microsoft Edge",
         BrowserProduct::Chromium => "Library/Application Support/Chromium",
         BrowserProduct::Brave => "Library/Application Support/BraveSoftware/Brave-Browser",
         BrowserProduct::Comet => "Library/Application Support/Comet",
         _ => return None,
-    };
-    Some(home.join(relative))
+    })
 }
 
 fn process_arguments(pid: i64) -> Result<Vec<Vec<u8>>, BrowserRefusal> {
@@ -1536,24 +1540,22 @@ mod tests {
 
     #[test]
     fn brave_default_user_data_dir_is_its_brave_software_profile_root() {
-        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap();
         assert_eq!(
-            default_user_data_dir(browser_product("Brave Browser", "com.brave.Browser")),
-            Some(home.join("Library/Application Support/BraveSoftware/Brave-Browser"))
+            home_relative_profile_root(browser_product("Brave Browser", "com.brave.Browser")),
+            Some("Library/Application Support/BraveSoftware/Brave-Browser")
         );
     }
 
     #[test]
-    fn comet_is_a_standalone_chromium_browser_with_its_own_profile_root() {
+    fn comet_is_a_chromium_browser_with_its_own_profile_root() {
         assert!(is_chromium("Comet", "ai.perplexity.comet"));
         assert_eq!(
             browser_product("Comet", "ai.perplexity.comet"),
             BrowserProduct::Comet
         );
-        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap();
         assert_eq!(
-            default_user_data_dir(browser_product("Comet", "ai.perplexity.comet")),
-            Some(home.join("Library/Application Support/Comet"))
+            home_relative_profile_root(browser_product("Comet", "ai.perplexity.comet")),
+            Some("Library/Application Support/Comet")
         );
     }
 

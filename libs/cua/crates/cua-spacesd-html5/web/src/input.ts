@@ -292,9 +292,15 @@ export class InputController {
       if (!mapped) return; // text arrives through beforeinput
       // A Super chord is the guest's shortcut, never the host clipboard's.
       const chord = mapped.kind === "key" && mapped.modifiers.length > 0 && !superKey;
-      // A paste while one waits for the clipboard queues behind it: the host
-      // clipboard it would send is the one already on its way.
-      const isPaste = chord && mapped.key === "v" && this.options.onPaste && !this.pendingPaste;
+      const isPaste = chord && mapped.key === "v" && this.options.onPaste;
+      if (isPaste && this.pendingPaste) {
+        // Queued whole behind the paste waiting for the clipboard, whose host
+        // clipboard is the one this paste would send.
+        event.preventDefault();
+        this.send(mapped);
+        this.send({ ...mapped, state: "up", repeat: false });
+        return;
+      }
       if (isPaste) {
         // Let the browser fire `paste` (it carries the host clipboard without
         // a permission prompt); the keys follow once the guest has it.

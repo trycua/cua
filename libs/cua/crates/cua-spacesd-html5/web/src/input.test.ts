@@ -100,9 +100,9 @@ describe("keyboard mapping", () => {
     expect(press("keydown", { key: "v", code: "KeyV", metaKey: true })).toBe(true);
     controller.textarea.dispatchEvent(new Event("paste"));
     press("keyup", { key: "v", code: "KeyV", metaKey: true });
-    // A second paste meanwhile waits for the same clipboard.
+    // A second paste meanwhile waits for the same clipboard, whole: Chromium
+    // may send no key-up for a key pressed with ⌘ held.
     expect(press("keydown", { key: "v", code: "KeyV", metaKey: true })).toBe(false);
-    press("keyup", { key: "v", code: "KeyV", metaKey: true });
     press("keyup", { key: "Meta", code: "MetaLeft", metaKey: true });
     expect(sent.map((e) => (e.kind === "key" ? `${e.key} ${e.state}` : e.kind))).toEqual(["meta down", "meta up", "control down"]);
     landed();

@@ -151,6 +151,33 @@ async fn a_step_refused_for_background_delivery_says_how_or_falls_back() {
 }
 
 #[tokio::test]
+async fn an_explicit_background_step_is_never_sent_in_the_foreground() {
+    let harness = Harness::new();
+    let refused = "Background pixel click is not available for pid 2261. Retry this action with delivery_mode:\"foreground\".";
+    // The step's own mode, and run_steps' default, both opt out of the
+    // fallback: explicit "background" is strict.
+    for batch in [
+        json!({"pid": 2261, "window_id": 181, "foreground_fallback": true, "steps": [
+            {"tool": "click", "args": {"x": 1, "y": 2, "delivery_mode": "background", "fail_message": refused}}
+        ]}),
+        json!({"pid": 2261, "window_id": 181, "foreground_fallback": true, "delivery_mode": "background", "steps": [
+            {"tool": "click", "args": {"x": 1, "y": 2, "fail_message": refused}}
+        ]}),
+    ] {
+        let before = harness.hits("click");
+        let result = harness.run(batch).await;
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(harness.hits("click"), before + 1, "{}", text(&result));
+        assert_eq!(harness.last("click")["delivery_mode"], "background");
+        assert!(
+            !text(&result).contains("foreground_fallback"),
+            "{}",
+            text(&result)
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_step_whose_input_may_have_landed_is_never_replayed() {
     let harness = Harness::new();
     let hint = "Retry this action with delivery_mode:\"foreground\".";

@@ -2264,7 +2264,7 @@ mod tests {
             0,
             /*is_terminal_target=*/ true,
             KeyboardRoute {
-                delivery_mode: super::super::DeliveryMode::Background,
+                delivery_mode: super::super::DeliveryMode::BackgroundPreferred,
                 window_id: Some(7),
                 keyboard_policy: BackgroundKeyboardPolicy::SemanticOnly(refusal.clone()),
                 explicit_target: false,
@@ -2289,7 +2289,7 @@ mod tests {
             0,
             /*is_terminal_target=*/ false,
             KeyboardRoute {
-                delivery_mode: super::super::DeliveryMode::Background,
+                delivery_mode: super::super::DeliveryMode::BackgroundPreferred,
                 window_id: Some(7),
                 keyboard_policy: BackgroundKeyboardPolicy::Allowed,
                 explicit_target: false,
@@ -2334,7 +2334,7 @@ mod tests {
             0,
             /*is_terminal_target=*/ true,
             KeyboardRoute {
-                delivery_mode: super::super::DeliveryMode::Background,
+                delivery_mode: super::super::DeliveryMode::BackgroundPreferred,
                 window_id: None,
                 keyboard_policy: BackgroundKeyboardPolicy::Allowed,
                 explicit_target: false,
@@ -2794,7 +2794,7 @@ mod tests {
     #[test]
     fn electron_web_ax_background_refuses_before_synthesis() {
         let refusal = electron_background_ax_refusal(
-            crate::tools::DeliveryMode::Background,
+            crate::tools::DeliveryMode::BackgroundPreferred,
             true,
             false,
             true,
@@ -2811,14 +2811,14 @@ mod tests {
         )
         .is_none());
         assert!(electron_background_ax_refusal(
-            crate::tools::DeliveryMode::Background,
+            crate::tools::DeliveryMode::BackgroundPreferred,
             false,
             true,
             true,
         )
         .is_none());
         assert!(electron_background_ax_refusal(
-            crate::tools::DeliveryMode::Background,
+            crate::tools::DeliveryMode::BackgroundPreferred,
             true,
             false,
             false,

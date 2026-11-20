@@ -23,7 +23,7 @@ dependencies = [
 torch = [
     "torch>=2.12.1",
     "torchvision>=0.27.1",
-    "transformers>=5.0.0rc3,<6.0",
+    "transformers>=5.10.1,<6.0",
 ]
 # trainer/off_policy/tinker (the Tinker GRPO loop)
 tinker = [

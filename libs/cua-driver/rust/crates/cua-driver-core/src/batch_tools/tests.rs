@@ -320,7 +320,7 @@ async fn a_step_that_ran_unconfirmed_says_so_instead_of_ok() {
     assert_eq!(lines[1], "1. click ok: click sent.");
     assert_eq!(
         lines[2],
-        "2. click UNCONFIRMED: click sent; nothing read back. Look first: get_window_state \
+        "2. click UNCONFIRMED: click sent; effect not confirmed. Look first: get_window_state \
          {\"pid\":47,\"since\":\"latest\",\"window_id\":7}"
     );
     assert_eq!(lines[3], "3. press_key ok: press_key sent.");

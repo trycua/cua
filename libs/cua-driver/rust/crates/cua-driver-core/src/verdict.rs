@@ -11,7 +11,7 @@
 //! the same way on every platform and inside `run_steps` and `run_script`.
 //!
 //! - `confirmed`: `CONFIRMED: <what the tool did>`
-//! - `unverifiable`: `UNCONFIRMED: <what the tool did>; nothing read back.
+//! - `unverifiable`: `UNCONFIRMED: <what the tool did>; effect not confirmed.
 //!   Look first: get_window_state {...}`
 //! - `suspected_noop`: `UNCONFIRMED: <what the tool did>; the read-back shows
 //!   no change. Look first: ...`
@@ -130,7 +130,8 @@ pub fn annotate(tool: &str, result: &mut ToolResult) {
 }
 
 /// `get_window_state {"pid":…,"window_id":…}`: the recovery hint's
-/// `next_call`, else the read that fits the tool.
+/// `next_call`, else a read that needs no arguments: the page for a browser
+/// action, the desktop for any other.
 fn look_first(tool: &str, next_call: Option<&Value>) -> String {
     if let Some(call) = next_call {
         if let Some(name) = call.get("tool").and_then(Value::as_str) {
@@ -145,7 +146,7 @@ fn look_first(tool: &str, next_call: Option<&Value>) -> String {
     if tool.starts_with("browser_") {
         "get_browser_state".to_owned()
     } else {
-        "get_window_state".to_owned()
+        "get_desktop_state".to_owned()
     }
 }
 
@@ -172,7 +173,7 @@ fn headline(verdict: Verdict, noop: bool, said: &str, look: &str) -> String {
         Verdict::Unconfirmed if noop => {
             format!("{word}: {what}; the read-back shows no change. Look first: {look}")
         }
-        Verdict::Unconfirmed => format!("{word}: {what}; nothing read back. Look first: {look}"),
+        Verdict::Unconfirmed => format!("{word}: {what}; effect not confirmed. Look first: {look}"),
         Verdict::Partial => {
             format!("{word}: {what}; only part of it was delivered. Look first: {look}")
         }
@@ -219,7 +220,7 @@ mod tests {
         assert_eq!(
             text,
             "UNCONFIRMED: Clicked element [2] button \"Apply\" with a real pointer click; \
-             nothing read back. Look first: get_window_state {\"pid\":7,\"window_id\":9}"
+             effect not confirmed. Look first: get_window_state {\"pid\":7,\"window_id\":9}"
         );
         assert_eq!(result.structured_content.unwrap()["summary"], text);
     }
@@ -230,7 +231,7 @@ mod tests {
             ("confirmed", "CONFIRMED: Set value to 42."),
             (
                 "unverifiable",
-                "UNCONFIRMED: Set value to 42; nothing read back",
+                "UNCONFIRMED: Set value to 42; effect not confirmed",
             ),
             (
                 "suspected_noop",
@@ -262,7 +263,7 @@ mod tests {
         let (headline, next) = text.split_once('\n').unwrap();
         assert!(headline.chars().count() < 300, "{}", headline.len());
         assert!(
-            headline.ends_with("Look first: get_window_state"),
+            headline.ends_with("Look first: get_desktop_state"),
             "{headline}"
         );
         assert_eq!(next, long);
@@ -310,6 +311,16 @@ mod tests {
         let mut result = action("Typed 3 characters.", json!({"effect": "unverifiable"}));
         annotate("browser_type", &mut result);
         assert!(first_text(&result).ends_with("Look first: get_browser_state"));
+    }
+
+    #[test]
+    fn a_desktop_action_without_a_next_call_points_at_the_desktop_read() {
+        let mut result = action(
+            "Clicked at screen (10, 20) (desktop scope).",
+            json!({"effect": "unverifiable"}),
+        );
+        annotate("click", &mut result);
+        assert!(first_text(&result).ends_with("Look first: get_desktop_state"));
     }
 
     #[test]

@@ -29,7 +29,7 @@ starts with a verdict built from `effect` at the dispatch seam, the same on
 every platform: `CONFIRMED:`, `UNCONFIRMED:` (for `unverifiable` and
 `suspected_noop`), `PARTIAL:` or `REFUSED:`, followed by what the tool did. An
 `UNCONFIRMED` or `PARTIAL` headline ends with the read to make, for example
-`UNCONFIRMED: Clicked element [2] with a real pointer click; nothing read back.
+`UNCONFIRMED: Clicked element [2] with a real pointer click; effect not confirmed.
 Look first: get_window_state {"pid":811,"since":"latest","window_id":659}`.
 Inside `run_steps` such a step reads `UNCONFIRMED` instead of `ok`, and
 `run_script`'s call log marks the call the same way; both end with a count

@@ -301,8 +301,10 @@ impl GatewaySshExec {
     /// and nothing dialled, when the gateway is not running or forwards no
     /// SSH.
     fn login(&self) -> Result<crate::exec::SshExec> {
-        // Running first, then the port: a gateway replaced in between is
-        // read with its new port, never dialled on the old one.
+        // Running first, then the port, so a gateway replaced between
+        // commands is dialled on its new port. One still being replaced
+        // (new pid file written, gateway.json not yet) can be read with
+        // the previous port for that moment.
         if !crate::netgw::gateway_running(&self.dir) {
             return Err(VmmError::NotRunning {
                 what: format!("the network gateway of VM {}", self.vm),
@@ -2272,6 +2274,8 @@ pub async fn apply_macos_env(
         match exec.exec(macos_env_request(&script, over_stdin)).await {
             Ok(out) if out.success() && out.stdout_str().contains("cua-env-ok") => return Ok(()),
             Ok(out) => last = crate::exec::tail(&out.stderr_str(), 500),
+            // The gateway is gone: no retry brings it back.
+            Err(e @ VmmError::NotRunning { .. }) => return Err(e),
             Err(e) => last = e.to_string(),
         }
         if tokio::time::Instant::now() + retry > deadline {
@@ -4607,13 +4611,25 @@ mod tests {
 
     /// A live process named `cua-netgw` (a copy of `sleep`), recorded as
     /// the gateway of the VM in `dir`: [`crate::netgw::gateway_running`].
+    /// Ended when dropped, so a failed assertion leaves no process behind.
     #[cfg(unix)]
-    fn fake_running_gateway(dir: &std::path::Path) -> std::process::Child {
+    fn fake_running_gateway(dir: &std::path::Path) -> FakeGateway {
         let bin = dir.join("cua-netgw");
         std::fs::copy("/bin/sleep", &bin).unwrap();
         let child = std::process::Command::new(&bin).arg("60").spawn().unwrap();
         std::fs::write(dir.join(crate::netgw::PID_FILE), child.id().to_string()).unwrap();
-        child
+        FakeGateway(child)
+    }
+
+    #[cfg(unix)]
+    struct FakeGateway(std::process::Child);
+
+    #[cfg(unix)]
+    impl Drop for FakeGateway {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
     }
 
     #[cfg(unix)]
@@ -4658,20 +4674,19 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(matches!(err, VmmError::Timeout { .. }), "{err}");
-        assert!(err.to_string().contains("is not running"), "{err}");
+        // At once, not after the budget: no retry brings a gateway back.
+        assert!(not_running(&err), "{err}");
         // Running: the same channel reads the port at each command, so it
         // follows a replaced gateway to its new forward.
-        let mut gateway = fake_running_gateway(&vm_dir);
+        let gateway = fake_running_gateway(&vm_dir);
         assert_eq!(exec.login().unwrap().port, 50022);
         write_gw(50023);
         assert_eq!(exec.login().unwrap().port, 50023);
         // Ended again: its port is never dialled, the old one neither.
-        gateway.kill().unwrap();
-        gateway.wait().unwrap();
+        drop(gateway);
         assert!(not_running(&exec.login().unwrap_err()));
         // No SSH forward any more: a clear error too.
-        let mut gateway = fake_running_gateway(&vm_dir);
+        let _gateway = fake_running_gateway(&vm_dir);
         let only_spacesd = LumeGateway {
             network: "gateway:/x".into(),
             ports: [(3211, 50211)].into(),
@@ -4683,8 +4698,6 @@ mod tests {
         .unwrap();
         let err = exec.login().unwrap_err();
         assert!(err.to_string().contains("forwards no SSH port"), "{err}");
-        gateway.kill().unwrap();
-        gateway.wait().unwrap();
     }
 
     #[test]

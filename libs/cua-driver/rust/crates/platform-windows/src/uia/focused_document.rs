@@ -253,7 +253,7 @@ fn try_type_focused_document_append_unbounded(
                 .then(|| unsafe { document_range.Clone() })
                 .transpose()
                 .map_err(|_| "TextPattern range clone failed after dispatch")?;
-            for units in caret_unit_counts(&caret_text) {
+            for units in caret_unit_counts(&caret_text, &actual_value.to_string()) {
                 if landed.is_some() {
                     break;
                 }
@@ -418,15 +418,39 @@ fn focused_document_eligible(
     exact_target && writable_value && single_text_selection && selection_mapped && document_matches
 }
 
-fn caret_unit_counts(text: &str) -> Vec<i32> {
-    let text = normalize_document_line_endings(text);
-    let utf16 = text.encode_utf16().count() as i32;
-    let chars = text.chars().count() as i32;
-    if utf16 == chars {
-        vec![chars]
-    } else {
-        vec![utf16, chars]
+/// Character counts to try for the caret after `caret_text`: the text as
+/// typed with each line break as one unit, then the same span of the written
+/// document as the provider stores it, where a CRLF may count as two.
+fn caret_unit_counts(caret_text: &str, written: &str) -> Vec<i32> {
+    let typed = normalize_document_line_endings(caret_text);
+    let stored = stored_prefix(written, typed.chars().count());
+    let mut counts = Vec::new();
+    for text in [typed.as_str(), stored] {
+        for units in [text.encode_utf16().count(), text.chars().count()] {
+            let units = units as i32;
+            if !counts.contains(&units) {
+                counts.push(units);
+            }
+        }
     }
+    counts
+}
+
+/// The leading part of `written` that holds `line_units` characters once
+/// each CRLF, CR or LF counts as one line break.
+fn stored_prefix(written: &str, line_units: usize) -> &str {
+    let mut seen = 0;
+    let mut chars = written.char_indices().peekable();
+    while let Some((index, ch)) = chars.next() {
+        if seen == line_units {
+            return &written[..index];
+        }
+        seen += 1;
+        if ch == '\r' && chars.peek().is_some_and(|&(_, next)| next == '\n') {
+            chars.next();
+        }
+    }
+    written
 }
 
 fn within_size_cap(probed_units: usize) -> bool {
@@ -529,9 +553,21 @@ mod tests {
 
     #[test]
     fn the_caret_tries_utf16_units_before_scalar_values_when_they_differ() {
-        assert_eq!(caret_unit_counts("line1\rab"), vec![8]);
-        assert_eq!(caret_unit_counts("a\r\nb"), vec![3]);
-        assert_eq!(caret_unit_counts("x \u{1f642} y"), vec![6, 5]);
+        assert_eq!(caret_unit_counts("line1\rab", "line1\rab tail"), vec![8]);
+        assert_eq!(caret_unit_counts("a\r\nb", "a\rb tail"), vec![3]);
+        assert_eq!(
+            caret_unit_counts("x \u{1f642} y", "x \u{1f642} y tail"),
+            vec![6, 5]
+        );
+    }
+
+    #[test]
+    fn the_caret_also_tries_the_stored_text_where_a_crlf_counts_as_two() {
+        assert_eq!(caret_unit_counts("a\nb", "a\r\nb tail"), vec![3, 4]);
+        assert_eq!(caret_unit_counts("a\n", "a\r\nb"), vec![2, 3]);
+        assert_eq!(stored_prefix("a\r\nb\r\nc", 3), "a\r\nb");
+        assert_eq!(stored_prefix("a\r\n", 2), "a\r\n");
+        assert_eq!(stored_prefix("ab", 5), "ab");
     }
 
     #[test]

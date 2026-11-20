@@ -550,11 +550,15 @@ impl Drop for ManagedBrowser {
         // root Child can leave profile writers alive after cleanup.
         signal_group_if_unreaped(self.child.as_mut());
         #[cfg(target_os = "windows")]
-        if self.owned_pid != i64::from(self.child.id()) {
+        if self.owned_pid != i64::from(self.child.id()) || self.headless.is_some() {
             // Edge on Windows ARM may use a short-lived launcher process and
             // transfer the browser role to a descendant. The listener owner
             // was attested inside that driver-spawned process tree, so reap
-            // that exact process tree when its owning session ends.
+            // that exact process tree when its owning session ends. Windows
+            // has no process group to signal, so a headless launch reaps its
+            // tree the same way: its contract is that no descendant outlives
+            // the session. The unreaped `child` handle keeps its pid from
+            // being reused until the tree is gone.
             let _ = Command::new("taskkill.exe")
                 .args(["/PID", &self.owned_pid.to_string(), "/T", "/F"])
                 .stdin(Stdio::null())

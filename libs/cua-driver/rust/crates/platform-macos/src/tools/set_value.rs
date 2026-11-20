@@ -1599,10 +1599,9 @@ fn hex_digit(n: u8) -> char {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_surface_trust, calc_cell_record, classify_write,
-        file_name_needs_rename, is_file_name_cell, is_get_info_name_field, not_applied_result,
-        write_not_applied, FieldSettle, SetValueOutcome, FIELD_QUIET, GET_INFO_RENAME_ROUTE,
-        LIST_RENAME_ROUTE,
+        apply_surface_trust, calc_cell_record, classify_write, file_name_needs_rename,
+        is_file_name_cell, is_get_info_name_field, not_applied_result, write_not_applied,
+        FieldSettle, SetValueOutcome, FIELD_QUIET, GET_INFO_RENAME_ROUTE, LIST_RENAME_ROUTE,
     };
     use std::time::Duration;
 

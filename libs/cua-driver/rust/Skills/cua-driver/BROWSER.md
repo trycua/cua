@@ -251,8 +251,13 @@ refuses with `background_unavailable` before it opens a tab or connects. Keep
 or put Chrome on another Space, or pass `delivery_mode:"foreground"` only when
 nobody is using the screen or the user agreed to Chrome coming forward; the
 driver then brings the previous app back and reports
-`side_effects.restored_frontmost_app`. If the user is working in another app,
-read the Chrome window with `get_window_state` instead.
+`side_effects.restored_frontmost_app`. When Chrome comes to the front during
+the call, including its own activation for the consent prompt,
+`side_effects.foregrounded_window` is `true`. A guarded attach counts every
+activation the driver reverted. A foreground attach counts what macOS reported
+before the call returned, so an activation the user switched away from in the
+last moments of the call can still be missed. If the user is working in
+another app, read the Chrome window with `get_window_state` instead.
 
 Chrome 144 and later can expose its agent auto-connect bridge from the running
 profile. After approval, Cua reads the exact port and browser WebSocket path

@@ -25,8 +25,9 @@ use crate::tool::Tool;
 use super::engine::BrowserEngine;
 use super::mock_cdp::{MockCdpServer, MockEvent, MockHandler, MockReply};
 use super::platform::{
-    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, ExistingProfileSetupOutcome,
-    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
+    BrowserConsentOutcome, BrowserConsentRequest, BrowserForegroundWatch, BrowserPlatform,
+    ExistingProfileSetupOutcome, ExistingProfileSetupRequest, PrepareAction, PrepareOutcome,
+    PrepareRequest,
 };
 use super::pointer::BrowserPointerTool;
 use super::refusal::BrowserRefusal;
@@ -1049,6 +1050,46 @@ struct FixtureFocus {
     /// can guard a background attach.
     browser_off_space: bool,
     guards: StdMutex<Vec<(i64, u64)>>,
+    /// A live background guard puts the user's app straight back when the
+    /// browser brings itself forward, and records that it did.
+    guard_live: Arc<AtomicBool>,
+    guard_saw_activation: Arc<AtomicBool>,
+    /// A live foreground watch, and whether it saw the browser come forward.
+    watch_live: Arc<AtomicBool>,
+    watch_saw_activation: Arc<AtomicBool>,
+    /// The platform's activation notice reaches the watch only after the
+    /// attach returned.
+    activation_notice_late: bool,
+    /// The user switches to this app after the browser came forward, before
+    /// the attach returns.
+    user_switches_to: Option<i64>,
+}
+
+/// Clears `live` when dropped.
+struct FixtureLive(Arc<AtomicBool>);
+
+impl FixtureLive {
+    fn start(live: &Arc<AtomicBool>) -> Self {
+        live.store(true, Ordering::SeqCst);
+        Self(live.clone())
+    }
+}
+
+impl Drop for FixtureLive {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+struct FixtureWatch {
+    _live: FixtureLive,
+    saw_activation: Arc<AtomicBool>,
+}
+
+impl BrowserForegroundWatch for FixtureWatch {
+    fn finish(self: Box<Self>) -> bool {
+        self.saw_activation.load(Ordering::SeqCst)
+    }
 }
 
 #[async_trait]
@@ -1072,7 +1113,7 @@ impl BrowserPlatform for FixturePlatform {
         &self,
         browser_pid: i64,
         window_id: u64,
-    ) -> Option<Box<dyn std::any::Any + Send>> {
+    ) -> Option<Box<dyn BrowserForegroundWatch>> {
         if !self.focus.browser_off_space {
             return None;
         }
@@ -1081,7 +1122,20 @@ impl BrowserPlatform for FixturePlatform {
             .lock()
             .unwrap()
             .push((browser_pid, window_id));
-        Some(Box::new(()))
+        Some(Box::new(FixtureWatch {
+            _live: FixtureLive::start(&self.focus.guard_live),
+            saw_activation: self.focus.guard_saw_activation.clone(),
+        }))
+    }
+
+    fn watch_browser_foreground(
+        &self,
+        _browser_pid: i64,
+    ) -> Option<Box<dyn BrowserForegroundWatch>> {
+        Some(Box::new(FixtureWatch {
+            _live: FixtureLive::start(&self.focus.watch_live),
+            saw_activation: self.focus.watch_saw_activation.clone(),
+        }))
     }
 
     fn restore_frontmost_app(&self, previous_pid: i64, browser_pid: i64) -> bool {
@@ -1198,9 +1252,29 @@ impl BrowserPlatform for FixturePlatform {
 
     async fn setup_existing_profile_endpoint(
         &self,
-        _request: ExistingProfileSetupRequest,
+        request: ExistingProfileSetupRequest,
     ) -> Result<ExistingProfileSetupOutcome, BrowserRefusal> {
         self.setup_invoked.store(true, Ordering::SeqCst);
+        // With `attach_activates_browser`, the browser brings itself to the
+        // front during setup, the way Chrome does to show its consent prompt.
+        if self.focus.attach_activates_browser {
+            if self.focus.watch_live.load(Ordering::SeqCst) && !self.focus.activation_notice_late {
+                self.focus
+                    .watch_saw_activation
+                    .store(true, Ordering::SeqCst);
+            }
+            // A live guard puts the user's app straight back.
+            if self.focus.guard_live.load(Ordering::SeqCst) {
+                self.focus
+                    .guard_saw_activation
+                    .store(true, Ordering::SeqCst);
+            } else {
+                *self.focus.frontmost.lock().unwrap() = Some(request.pid);
+                if let Some(app) = self.focus.user_switches_to {
+                    *self.focus.frontmost.lock().unwrap() = Some(app);
+                }
+            }
+        }
         Ok(ExistingProfileSetupOutcome {
             opened_setup_page: true,
             closed_setup_page: false,
@@ -1425,16 +1499,22 @@ async fn attach_fixture_with_space(
     frontmost: i64,
     browser_off_space: bool,
 ) -> (Fixture, Arc<FixtureFocus>, Arc<FixtureProtectedProvider>) {
+    attach_fixture(FixtureFocus {
+        attach_activates_browser: true,
+        frontmost: StdMutex::new(Some(frontmost)),
+        browser_off_space,
+        ..FixtureFocus::default()
+    })
+    .await
+}
+
+async fn attach_fixture(
+    focus: FixtureFocus,
+) -> (Fixture, Arc<FixtureFocus>, Arc<FixtureProtectedProvider>) {
     let state = Arc::new(StdMutex::new(FixtureState::default()));
     let server = MockCdpServer::start(fixture_handler(state.clone())).await;
     let setup_invoked = Arc::new(AtomicBool::new(false));
-    let focus = Arc::new(FixtureFocus {
-        attach_activates_browser: true,
-        frontmost: StdMutex::new(Some(frontmost)),
-        restores: StdMutex::new(Vec::new()),
-        browser_off_space,
-        guards: StdMutex::new(Vec::new()),
-    });
+    let focus = Arc::new(focus);
     let provider = Arc::new(FixtureProtectedProvider {
         consent_seen: AtomicBool::new(false),
     });
@@ -1885,6 +1965,33 @@ async fn background_existing_profile_attach_runs_guarded_when_the_browser_is_off
     // The user's app is brought back if the browser is left in front.
     assert_eq!(*focus.restores.lock().unwrap(), vec![(99, 1)]);
     assert_eq!(prepared["side_effects"]["restored_frontmost_app"], true);
+    // The browser came forward on its own while the guard ran (trycua/cua#4810).
+    assert_eq!(prepared["side_effects"]["foregrounded_window"], true);
+}
+
+#[tokio::test]
+async fn guarded_existing_profile_attach_reports_a_reverted_activation_without_its_notice() {
+    // The guard reverted the browser's activation before the platform's
+    // activation notice arrived.
+    let (f, _, _) = attach_fixture(FixtureFocus {
+        attach_activates_browser: true,
+        frontmost: StdMutex::new(Some(99)),
+        browser_off_space: true,
+        activation_notice_late: true,
+        ..FixtureFocus::default()
+    })
+    .await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let prepared = structured(&result);
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    assert_eq!(prepared["side_effects"]["foregrounded_window"], true);
 }
 
 #[tokio::test]
@@ -1939,6 +2046,8 @@ async fn existing_profile_attach_proceeds_when_the_browser_is_already_in_front()
     assert_eq!(prepared["status"], "ok", "{prepared}");
     assert!(f.setup_invoked.load(Ordering::SeqCst));
     assert_eq!(prepared["side_effects"]["restored_frontmost_app"], false);
+    // Already in front, so the attach did not bring it forward.
+    assert_eq!(prepared["side_effects"]["foregrounded_window"], false);
     assert!(focus.restores.lock().unwrap().is_empty());
 }
 
@@ -1958,7 +2067,35 @@ async fn foreground_existing_profile_attach_brings_the_previous_app_back() {
     assert_eq!(prepared["status"], "ok", "{prepared}");
     assert!(f.setup_invoked.load(Ordering::SeqCst));
     assert_eq!(prepared["side_effects"]["restored_frontmost_app"], true);
+    // The browser came to the front during setup, outside any setup step
+    // that reports it (trycua/cua#4810).
+    assert_eq!(prepared["side_effects"]["foregrounded_window"], true);
     assert_eq!(*focus.restores.lock().unwrap(), vec![(99, 1)]);
+}
+
+#[tokio::test]
+async fn foreground_existing_profile_attach_reports_a_browser_that_lost_the_front_again() {
+    // The browser comes forward during setup, then the user switches to
+    // another app before the attach returns.
+    let (f, _, _) = attach_fixture(FixtureFocus {
+        attach_activates_browser: true,
+        frontmost: StdMutex::new(Some(99)),
+        user_switches_to: Some(42),
+        ..FixtureFocus::default()
+    })
+    .await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "delivery_mode": "foreground",
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let prepared = structured(&result);
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    assert_eq!(prepared["side_effects"]["foregrounded_window"], true);
 }
 
 #[tokio::test]

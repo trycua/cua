@@ -198,7 +198,8 @@ fn dip_window_frame(
             .flatten()
     };
     let depth = elements.iter().filter_map(top_level_depth).min()?;
-    elements
+    let window = [wx, wy, ww, wh].map(f64::from);
+    let fits: Vec<(usize, [f64; 4], f64)> = elements
         .iter()
         .enumerate()
         .filter(|(_, entry)| top_level_depth(entry) == Some(depth))
@@ -206,11 +207,23 @@ fn dip_window_frame(
             let frame = &entry["frame"];
             let [x, y, w, h] = ["x", "y", "w", "h"].map(|key| frame[key].as_f64());
             let frame = [x?, y?, w?, h?];
-            let window = [wx, wy, ww, wh].map(f64::from);
-            Some((index, (frame[0], frame[1]), fitting_scale(frame, window)?))
+            Some((index, frame, fitting_scale(frame, window)?))
         })
-        .min_by(|a, b| a.2.total_cmp(&b.2))
-        .filter(|(_, _, scale)| *scale > 1.0)
+        .collect();
+    if fits.iter().any(|(_, _, scale)| *scale == 1.0) {
+        return None;
+    }
+    // Of several DIP frames, the one closest to the window is its own.
+    let miss = |frame: &[f64; 4], scale: f64| -> f64 {
+        frame
+            .iter()
+            .zip(window)
+            .map(|(f, w)| (f * scale - w).abs())
+            .sum()
+    };
+    fits.into_iter()
+        .min_by(|a, b| miss(&a.1, a.2).total_cmp(&miss(&b.1, b.2)))
+        .map(|(index, frame, scale)| (index, (frame[0], frame[1]), scale))
 }
 
 /// The X11 pixels per frame unit, at least 1, that map `frame` onto `window`
@@ -353,6 +366,18 @@ mod x11_screenshot_frame_tests {
         assert_eq!(
             frames((1920, 440, 801, 600), elements)[0],
             json!({"x": 0, "y": 0, "w": 801, "h": 600})
+        );
+    }
+
+    #[test]
+    fn the_closest_dip_frame_is_the_window_s() {
+        let elements = vec![
+            json!({"role": "frame", "depth": 0, "frame": {"x": 961, "y": 220, "w": 401, "h": 300}}),
+            json!({"role": "frame", "depth": 0, "frame": {"x": 960, "y": 220, "w": 400, "h": 300}}),
+        ];
+        assert_eq!(
+            frames((1920, 440, 800, 600), elements)[1],
+            json!({"x": 0, "y": 0, "w": 800, "h": 600})
         );
     }
 

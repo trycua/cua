@@ -659,25 +659,30 @@ fn document_is_setup_page(
     }
 }
 
-/// The one rendered document that reports the setup URL, when the browser
-/// reports document URIs at all.
+/// The rendered document the close guard re-reads: the one that reports
+/// the setup URL or, when the browser reports no document URIs at all, the
+/// only document. `None` when neither identifies it.
 fn setup_document_object(
     nodes: &[AtspiNode],
     descriptor: &BrowserSetupDescriptor,
 ) -> Option<ObjectRef> {
-    if document_is_setup_page(nodes, descriptor) != Some(true) {
-        return None;
-    }
-    nodes
+    let documents = nodes
         .iter()
-        .find(|node| {
-            role_is(node, &["document web", "document frame"])
-                && node
-                    .document_uri
-                    .as_deref()
-                    .is_some_and(|uri| uri.trim().eq_ignore_ascii_case(descriptor.setup_url))
-        })
-        .and_then(|node| node.object_ref.clone())
+        .filter(|node| role_is(node, &["document web", "document frame"]))
+        .collect::<Vec<_>>();
+    let document = match document_is_setup_page(nodes, descriptor) {
+        Some(true) => documents.into_iter().find(|node| {
+            node.document_uri
+                .as_deref()
+                .is_some_and(|uri| uri.trim().eq_ignore_ascii_case(descriptor.setup_url))
+        }),
+        Some(false) => None,
+        None => match documents.as_slice() {
+            [only] => Some(*only),
+            _ => None,
+        },
+    };
+    document.and_then(|node| node.object_ref.clone())
 }
 
 fn setup_page_proven(
@@ -968,7 +973,6 @@ fn trusted_setup_navigation(
         input.check()?;
         let tree =
             window_scoped_tree(pid, window_id).map_err(|error| anyhow::anyhow!(error.message))?;
-        handle.observe_document_uris(&tree);
         let step = created_tab(&baseline, &tree).map_err(|error| anyhow::anyhow!(error.message))?;
         if let Some(object) = proof.observe(step) {
             handle.owned_setup_tab = Some(object);
@@ -988,7 +992,6 @@ fn trusted_setup_navigation(
         input.check()?;
         let tree =
             window_scoped_tree(pid, window_id).map_err(|error| anyhow::anyhow!(error.message))?;
-        handle.observe_document_uris(&tree);
         handle
             .require_owned_selected_tab(&tree)
             .map_err(|error| anyhow::anyhow!(error.message))?;
@@ -1081,7 +1084,6 @@ fn trusted_setup_navigation(
         input.check()?;
         let tree =
             window_scoped_tree(pid, window_id).map_err(|error| anyhow::anyhow!(error.message))?;
-        handle.observe_document_uris(&tree);
         handle
             .require_owned_selected_tab(&tree)
             .map_err(|error| anyhow::anyhow!(error.message))?;
@@ -1170,9 +1172,6 @@ pub struct SetupUiHandle {
     owned_setup_tab: Option<ObjectRef>,
     trusted_setup_navigation: bool,
     input_delivery_unknown: bool,
-    /// A walk of this window showed a document URI, so this browser reports
-    /// them and cleanup must re-read the setup URI before closing the tab.
-    reports_document_uri: bool,
     armed: bool,
     enabling: bool,
     enable_attempted: bool,
@@ -1281,21 +1280,17 @@ impl SetupUiHandle {
     }
 
     /// [`Self::owned_input`] for the closing shortcut: the guard also
-    /// re-reads the setup document's URI, so a tab the person navigated
-    /// elsewhere while cleanup waited is never closed, and a failed read
-    /// refuses. Only a browser that never reported a document URI is held
-    /// to the selection check alone, after the page proof that precedes
-    /// this input.
-    fn owned_close_input(&self, document: Option<ObjectRef>) -> anyhow::Result<SetupInput> {
+    /// re-reads the setup page's own document object, so a tab the person
+    /// navigated elsewhere while cleanup waited is never closed. Leaving the
+    /// page retires that object or changes its URI; either refuses, as does
+    /// a failed read.
+    fn owned_close_input(&self, document: ObjectRef) -> anyhow::Result<SetupInput> {
         let mut input = self.owned_input()?;
-        let Some(document) = document else {
-            return Ok(input);
-        };
         let setup_url = self.descriptor.setup_url;
         let selected = input.cancellation.clone();
         input.cancellation = selected.clone().with_dispatch_guard(move || {
             let uri = crate::atspi::native::document_uri_ref(&document)?;
-            if !uri.is_some_and(|uri| uri.trim().eq_ignore_ascii_case(setup_url)) {
+            if uri.is_some_and(|uri| !uri.trim().eq_ignore_ascii_case(setup_url)) {
                 anyhow::bail!("the owned setup tab no longer shows the exact fixed setup page");
             }
             selected.before_dispatch()
@@ -1336,16 +1331,15 @@ impl SetupUiHandle {
                 // and its document object is kept for the dispatch guard.
                 let result = window_scoped_tree(handle.pid, handle.window_id)
                     .and_then(|tree| {
-                        handle.observe_document_uris(&tree);
                         handle.require_owned_setup_page(&tree)?;
-                        let document = setup_document_object(&tree.nodes, handle.descriptor);
-                        if handle.reports_document_uri && document.is_none() {
-                            return Err(BrowserRefusal::new(
-                                BrowserRefusalCode::BrowserWrongTargetRefused,
-                                "the setup document's URI could not be read again before cleanup",
-                            ));
-                        }
-                        *setup_document.borrow_mut() = document;
+                        let document = setup_document_object(&tree.nodes, handle.descriptor)
+                            .ok_or_else(|| {
+                                BrowserRefusal::new(
+                                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                                    "the setup page's document could not be identified before cleanup",
+                                )
+                            })?;
+                        *setup_document.borrow_mut() = Some(document);
                         Ok(())
                     })
                     .map_err(|error| anyhow::anyhow!(error.message))
@@ -1355,7 +1349,9 @@ impl SetupUiHandle {
             },
             |handle| {
                 let result = handle
-                    .owned_close_input(setup_document.borrow().clone())?
+                    .owned_close_input(setup_document.borrow().clone().ok_or_else(|| {
+                        anyhow::anyhow!("the setup page's document was not identified")
+                    })?)?
                     .hotkey(handle.pid, handle.window_id, "w", &["ctrl"]);
                 handle.record_input_result(result)
             },
@@ -1374,8 +1370,7 @@ impl SetupUiHandle {
         }
         let deadline = Instant::now() + EXISTING_PROFILE_SETUP_READY_TIMEOUT;
         loop {
-            let tree = self
-                .scoped_walk()
+            let tree = window_scoped_tree(self.pid, self.window_id)
                 .map_err(|error| anyhow::anyhow!(error.message))?;
             let scan = scan_tabs(&tree).map_err(|error| anyhow::anyhow!(error.message))?;
             if !scan.truncated && !scan.unidentified && !scan.objects.contains(&owned) {
@@ -1388,19 +1383,6 @@ impl SetupUiHandle {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-    }
-
-    /// Latch that the browser reports document URIs once any walk of the
-    /// window shows one; a later walk whose read failed reports none.
-    fn observe_document_uris(&mut self, tree: &AtspiTreeResult) {
-        self.reports_document_uri |= !document_uris(&tree.nodes).is_empty();
-    }
-
-    /// A window-scoped walk that also feeds [`Self::observe_document_uris`].
-    fn scoped_walk(&mut self) -> Result<AtspiTreeResult, BrowserRefusal> {
-        let tree = window_scoped_tree(self.pid, self.window_id)?;
-        self.observe_document_uris(&tree);
-        Ok(tree)
     }
 
     fn require_owned_selected_tab(&self, tree: &AtspiTreeResult) -> Result<(), BrowserRefusal> {
@@ -1419,8 +1401,8 @@ impl SetupUiHandle {
         Ok(())
     }
 
-    fn owned_tab_tree(&mut self) -> Result<AtspiTreeResult, BrowserRefusal> {
-        let tree = self.scoped_walk()?;
+    fn owned_tab_tree(&self) -> Result<AtspiTreeResult, BrowserRefusal> {
+        let tree = window_scoped_tree(self.pid, self.window_id)?;
         self.require_owned_selected_tab(&tree)?;
         Ok(tree)
     }
@@ -1462,7 +1444,7 @@ impl SetupUiHandle {
         if !(self.enabled_remote_debugging || (self.enable_attempted && self.enabling)) {
             return true;
         }
-        let Ok(tree) = self.scoped_walk() else {
+        let Ok(tree) = window_scoped_tree(self.pid, self.window_id) else {
             return false;
         };
         let restored =
@@ -1479,12 +1461,19 @@ impl SetupUiHandle {
                 });
         let deadline = Instant::now() + Duration::from_secs(1);
         while restored && self.input.check().is_ok() {
-            if self.scoped_walk().ok().and_then(|tree| {
-                exact_setup_checkbox(&tree.nodes, self.descriptor, self.trusted_setup_navigation)
+            if window_scoped_tree(self.pid, self.window_id)
+                .ok()
+                .and_then(|tree| {
+                    exact_setup_checkbox(
+                        &tree.nodes,
+                        self.descriptor,
+                        self.trusted_setup_navigation,
+                    )
                     .ok()
                     .flatten()
                     .map(|node| node.checked == Some(false))
-            }) == Some(true)
+                })
+                == Some(true)
             {
                 self.enabled_remote_debugging = false;
                 return true;
@@ -1534,7 +1523,7 @@ impl SetupUiHandle {
             self.armed = false;
             return Ok(None);
         }
-        let tree = match self.scoped_walk() {
+        let tree = match window_scoped_tree(self.pid, self.window_id) {
             Ok(tree) => tree,
             Err(error) => return Err(self.abort(error)),
         };
@@ -1566,7 +1555,7 @@ impl SetupUiHandle {
         if !self.opened_setup_page {
             return None;
         }
-        let Ok(tree) = self.scoped_walk() else {
+        let Ok(tree) = window_scoped_tree(self.pid, self.window_id) else {
             return Some(false);
         };
         Some(
@@ -1724,7 +1713,6 @@ fn set_remote_debugging(
         owned_setup_tab: None,
         trusted_setup_navigation: false,
         input_delivery_unknown: false,
-        reports_document_uri: false,
         armed: true,
         enabling: desired_enabled,
         enable_attempted: false,
@@ -1735,7 +1723,6 @@ fn set_remote_debugging(
         foregrounded_window: false,
         injected_global_input: false,
     };
-    handle.observe_document_uris(&initial);
     if initial_checkbox.is_none() {
         if let Err(error) = open_setup_page(
             &mut handle,
@@ -1759,7 +1746,6 @@ fn set_remote_debugging(
             Ok(tree) => tree,
             Err(error) => return Err(handle.abort(error)),
         };
-        handle.observe_document_uris(&tree);
         match exact_setup_checkbox(&tree.nodes, descriptor, handle.trusted_setup_navigation) {
             Ok(Some(node)) => match node.checked {
                 Some(state) if state == desired_enabled => {
@@ -1798,7 +1784,6 @@ fn set_remote_debugging(
                             "trusted Edge checkbox fallback is not qualified on Hyprland",
                         )));
                     }
-                    let saw_document_uri = std::cell::Cell::new(false);
                     let clicked = with_target_foreground(
                         pid,
                         window_id,
@@ -1806,7 +1791,6 @@ fn set_remote_debugging(
                         || {
                             std::thread::sleep(Duration::from_millis(60));
                             let tree = crate::atspi::walk_tree(pid, window_id, None);
-                            saw_document_uri.set(!document_uris(&tree.nodes).is_empty());
                             let checkbox = exact_setup_checkbox(
                             &tree.nodes,
                             descriptor,
@@ -1862,7 +1846,6 @@ fn set_remote_debugging(
                             Ok(true)
                         },
                     );
-                    handle.reports_document_uri |= saw_document_uri.get();
                     match clicked {
                         Ok(injected) => handle.injected_global_input |= injected,
                         Err(error) => {
@@ -1936,7 +1919,7 @@ mod tests {
     }
 
     #[test]
-    fn close_guard_keeps_only_the_one_document_that_reports_the_setup_url() {
+    fn close_guard_binds_the_setup_pages_own_document() {
         let document = |uri: Option<&str>, path: &str| {
             let mut node = node("document web", descriptor().page_titles[0], None, &[]);
             node.document_uri = uri.map(str::to_owned);
@@ -1953,8 +1936,14 @@ mod tests {
         );
         let elsewhere = vec![document(Some("https://example.com/"), "/other")];
         assert!(setup_document_object(&elsewhere, descriptor()).is_none());
+        // A browser that reports no URIs: the only document is the one.
         let unreported = vec![document(None, "/setup")];
-        assert!(setup_document_object(&unreported, descriptor()).is_none());
+        assert_eq!(
+            setup_document_object(&unreported, descriptor()).map(|object| object.path),
+            Some("/setup".to_owned())
+        );
+        let unreported_pair = vec![document(None, "/setup"), document(None, "/frame")];
+        assert!(setup_document_object(&unreported_pair, descriptor()).is_none());
         let both = vec![
             document(Some(descriptor().setup_url), "/setup"),
             document(Some("https://example.com/"), "/frame"),
@@ -2009,7 +1998,6 @@ mod tests {
             owned_setup_tab: None,
             trusted_setup_navigation: false,
             input_delivery_unknown: false,
-            reports_document_uri: false,
             armed: false,
             enabling: true,
             enable_attempted: false,
@@ -2485,7 +2473,6 @@ mod tests {
             owned_setup_tab: None,
             trusted_setup_navigation: false,
             input_delivery_unknown: false,
-            reports_document_uri: false,
             armed: false,
             enabling: true,
             enable_attempted: false,

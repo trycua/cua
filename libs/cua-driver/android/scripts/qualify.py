@@ -81,6 +81,37 @@ def synthetic_tasks_off_main_display(stack):
     return found
 
 
+def installed_apk(pm_path):
+    """The one installed APK path, or None when `pm path` lists none or splits these builds never produce."""
+    paths = [line.removeprefix("package:") for line in pm_path.split()]
+    return paths[0] if len(paths) == 1 else None
+
+
+def cleanup(shell):
+    """Force-stop the synthetic apps, then wait out the runtime lease for any Cua display or task left behind.
+
+    A probe that fails makes the result `unverified` instead of reading its empty output as clean.
+    """
+    try:
+        for package in SYNTHETIC:
+            shell("am", "force-stop", package, check=False)
+
+        def residue():
+            return {"cua_virtual_displays": shell("dumpsys", "display").count('DisplayDeviceInfo{"Cua agent"'),
+                    "synthetic_tasks_off_display_0": synthetic_tasks_off_main_display(shell("am", "stack", "list"))}
+
+        # A session whose controller just died is released by the runtime lease, not by the harness.
+        left, start, waited = residue(), time.monotonic(), False
+        while any(left.values()) and time.monotonic() - start < LEASE_CLEANUP_SECONDS:
+            waited = True
+            time.sleep(3)
+            left = residue()
+    except Exception as error:
+        return {"result": "unverified", "error": repr(error)}
+    return dict(left, waited_s=round(time.monotonic() - start), result="residue" if any(left.values())
+                else "clean_after_lease_expiry" if waited else "clean")
+
+
 def sha256(path):
     return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
 
@@ -102,6 +133,7 @@ def main():
     p.add_argument("--runs", type=int, default=2)
     p.add_argument("--lifecycle", action="store_true", help="also run lifecycle-smoke.py on the emulator")
     args = p.parse_args()
+    driver = args.driver.resolve()
     if args.runs < 1:
         refuse("--runs must be at least 1")
     evidence = args.evidence_dir.resolve()
@@ -129,7 +161,7 @@ def main():
             refuse(role + " device refused before any mutation: " + ", ".join(refused))
     apks = {module: ROOT / module / "build/outputs/apk/debug" / (module + "-debug.apk") for module in PACKAGES}
     def identity():
-        return {module: sha256(apk) for module, apk in apks.items()}, sha256(args.driver)
+        return {module: sha256(apk) for module, apk in apks.items()}, sha256(driver)
 
     candidate = {"source_revision": subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
                                                    capture_output=True, text=True).stdout.strip() or None,
@@ -173,20 +205,20 @@ def main():
             if ok:
                 installed = {}
                 for module, package in PACKAGES.items():
-                    path = shell(serial, "pm", "path", package).strip().splitlines()[0].removeprefix("package:")
-                    installed[module] = shell(serial, "sha256sum", path).split()[0]
+                    path = installed_apk(shell(serial, "pm", "path", package))
+                    installed[module] = shell(serial, "sha256sum", path).split()[0] if path else None
                 phase["installed_identity"] = "match" if installed == candidate["apk_sha256"] else "mismatch"
                 ok = phase["installed_identity"] == "match"
             smoke = [sys.executable, str(ROOT / "scripts/smoke.py"), "--device", serial,
-                     "--driver", str(args.driver), "--evidence-dir", str(out / "smoke"), "--runs", str(args.runs)]
+                     "--driver", str(driver), "--evidence-dir", str(out / "smoke"), "--runs", str(args.runs)]
             ok = ok and step("smoke", smoke, 900)
             if role == "emulator" and args.lifecycle:
                 ok = ok and step("lifecycle", [sys.executable, str(ROOT / "scripts/lifecycle-smoke.py"), "--device", serial,
-                                               "--driver", str(args.driver), "--evidence-dir", str(out / "lifecycle")], 900)
+                                               "--driver", str(driver), "--evidence-dir", str(out / "lifecycle")], 900)
             if role == "physical":
                 phase["not_run"] = PHYSICAL_NOT_RUN
             if ok:
-                caps = json.loads(subprocess.run([str(args.driver), "--device", serial, "capabilities"],
+                caps = json.loads(subprocess.run([str(driver), "--device", serial, "capabilities"],
                                                  capture_output=True, text=True, timeout=30).stdout)["data"]["capabilities"]
                 phase["driver_unsupported"] = sorted(c["capability"] for c in caps if c["support"] == "unsupported")
                 phase["driver_unverified"] = sorted(c["capability"] for c in caps
@@ -195,23 +227,9 @@ def main():
         except Exception as error:  # Keep the original failure beside the cleanup result.
             phase["failure"] = {"step": "harness", "error": redact(repr(error), serials)}
         finally:
-            for package in SYNTHETIC:
-                shell(serial, "am", "force-stop", package, check=False)
-
-            def residue():
-                return {"cua_virtual_displays": shell(serial, "dumpsys", "display", check=False)
-                        .count('DisplayDeviceInfo{"Cua agent"'),
-                        "synthetic_tasks_off_display_0": synthetic_tasks_off_main_display(
-                            shell(serial, "am", "stack", "list", check=False))}
-
-            # A session whose controller just died is released by the runtime lease, not by the harness.
-            start, left = time.monotonic(), residue()
-            while any(left.values()) and time.monotonic() - start < LEASE_CLEANUP_SECONDS:
-                time.sleep(3)
-                left = residue()
-            waited = round(time.monotonic() - start)
-            phase["cleanup"] = dict(left, waited_s=waited, result="residue" if any(left.values())
-                                    else "clean" if waited == 0 else "clean_after_lease_expiry")
+            phase["cleanup"] = cleanup(lambda *command, check=True: shell(serial, *command, check=check))
+            if "error" in phase["cleanup"]:
+                phase["cleanup"]["error"] = redact(phase["cleanup"]["error"], serials)
             if phase["status"] == "pass" and phase["cleanup"]["result"] != "clean":
                 phase["status"] = "fail"
         return phase
@@ -221,8 +239,11 @@ def main():
         if blocked:
             receipt["phases"][role] = {"status": "blocked", "reason": blocked}
         elif unsupported(props[role]):
-            receipt["phases"][role] = {"status": "unsupported", "reasons": unsupported(props[role]),
-                                       "environment": environment(serial, role)}
+            receipt["phases"][role] = {"status": "unsupported", "reasons": unsupported(props[role])}
+            try:
+                receipt["phases"][role]["environment"] = environment(serial, role)
+            except Exception as error:
+                receipt["phases"][role]["environment_error"] = redact(repr(error), serials)
         else:
             receipt["phases"][role] = run_phase(role, serial)
         (evidence / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")

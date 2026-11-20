@@ -2,7 +2,9 @@
 """Focused stdlib tests for qualify.py decisions; no Android device required."""
 import importlib.util
 import pathlib
+import subprocess
 import unittest
+from unittest import mock
 
 
 spec = importlib.util.spec_from_file_location("qualify", pathlib.Path(__file__).with_name("qualify.py"))
@@ -58,6 +60,31 @@ RootTask id=371 bounds=[0,0][1080,1920] displayId=49 userId=0
 """
         self.assertEqual(qualify.synthetic_tasks_off_main_display(stack), [370])
         self.assertEqual(qualify.synthetic_tasks_off_main_display(stack.split("RootTask id=370")[0]), [])
+
+    def test_only_a_single_installed_apk_is_hashed(self):
+        self.assertEqual(qualify.installed_apk("package:/data/app/x/base.apk\n"), "/data/app/x/base.apk")
+        self.assertIsNone(qualify.installed_apk(""))
+        self.assertIsNone(qualify.installed_apk("package:/data/app/x/base.apk\npackage:/data/app/x/split_a.apk\n"))
+
+    def test_cleanup_reports_clean_only_from_successful_probes(self):
+        def device(display="", stack="", fail=()):
+            def shell(*command, check=True):
+                if command[:2] in fail and check:
+                    raise subprocess.CalledProcessError(1, command)
+                return {("dumpsys", "display"): display, ("am", "stack"): stack}.get(command[:2], "")
+            return shell
+
+        self.assertEqual(qualify.cleanup(device())["result"], "clean")
+        failed = qualify.cleanup(device(fail={("dumpsys", "display")}))
+        self.assertEqual(failed["result"], "unverified")
+        self.assertIn("CalledProcessError", failed["error"])
+        displays = iter(['DisplayDeviceInfo{"Cua agent"', ""])
+        released = device()
+
+        def lease(*command, check=True):
+            return next(displays) if command[:2] == ("dumpsys", "display") else released(*command, check=check)
+        with mock.patch.object(qualify.time, "sleep"):
+            self.assertEqual(qualify.cleanup(lease)["result"], "clean_after_lease_expiry")
 
 
 if __name__ == "__main__":

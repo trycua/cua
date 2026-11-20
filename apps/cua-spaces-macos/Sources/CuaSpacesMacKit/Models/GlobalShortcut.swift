@@ -53,7 +53,7 @@ final class GlobalShortcut {
         }
         guard let next = ShortcutKeys(accelerator: option) else { throw Refusal.notAShortcut(option) }
         if next == keys {
-            ensure()
+            guard ensure() else { throw Refusal.taken(next.label) }
             return
         }
         guard register(next) else { throw Refusal.taken(next.label) }

@@ -187,6 +187,12 @@ pub struct CreateSpace {
     /// Name. Default: a generated friendly name such as `brave-otter`.
     #[serde(default)]
     pub name: Option<String>,
+    /// vCPUs for each Space. Default: the location's default size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpus: Option<u32>,
+    /// Memory for each Space, in MiB. Default: the location's default size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_mb: Option<u64>,
     /// Return a reachable registered Space in the same location that has
     /// the requested services instead of creating one (get-or-create).
     /// Default false.
@@ -541,11 +547,19 @@ pub struct ListSpaceWindows {
     pub app_name: Option<String>,
 }
 
-/// `stream_space_window`: draw one Space window on the operator's desktop.
+/// `stream_space_window`: show one Space window in another Space's Stream
+/// section, or on the operator's desktop.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct StreamSpaceWindow {
-    /// Space id or name.
+    /// The Space the window lives in (id or name): the child Space you made
+    /// and opened the app in.
     pub space: SpaceArg,
+    /// The Space whose Stream section shows the window (id or name): your
+    /// own Space, where the person watches. Default: the Space that created
+    /// `space` (its parent); a Space with no parent shows the window on the
+    /// operator's desktop. `desktop` forces the desktop.
+    #[serde(default)]
+    pub into: Option<String>,
     /// Auto-pick this app's largest visible window, e.g. "Firefox".
     #[serde(default)]
     pub app_name: Option<String>,
@@ -663,6 +677,10 @@ pub struct AgentStart {
     /// Model id.
     #[serde(default)]
     pub model: Option<String>,
+    /// Reasoning level: `low`, `medium`, `high`, `xhigh` or `max`. Taken by Claude Code and Codex;
+    /// other agents ignore it.
+    #[serde(default)]
+    pub effort: Option<String>,
     /// A custom model endpoint base URL (a proxy or compatible server).
     #[serde(default)]
     pub base_url: Option<String>,
@@ -868,6 +886,9 @@ pub struct PersistentAgentCreate {
     /// Model id.
     #[serde(default)]
     pub model: Option<String>,
+    /// Reasoning level (see `agent_start`'s `effort`).
+    #[serde(default)]
+    pub effort: Option<String>,
     /// Standing instructions: the first message each run takes carries them
     /// in front of its text (the thread shows only the message).
     #[serde(default)]
@@ -1407,6 +1428,18 @@ pub struct NotificationsAck {
     /// Ids to mark read. Default: every notification.
     #[serde(default)]
     pub ids: Vec<String>,
+}
+
+/// `notifications_delete`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct NotificationsDelete {
+    /// Ids to delete. Unknown ids are ignored; an empty list deletes nothing
+    /// unless `all` is set.
+    #[serde(default)]
+    pub ids: Vec<String>,
+    /// Delete every notification. Default false.
+    #[serde(default)]
+    pub all: Option<bool>,
 }
 
 /// `computer_access_grant`.

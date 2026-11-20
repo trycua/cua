@@ -7,7 +7,8 @@
 //! foreground at that moment (#4477), so restoring the previous window early
 //! hands it the unread tail. A late keystroke in the user's window cannot be
 //! undone; a target left in front costs one click. The rule is modelled in
-//! `models/windows_typing.tla`. Pure, so the table test runs on every host.
+//! `.cursor/skills/formally-verify-cua-driver/models/windows_typing.tla`.
+//! Pure, so the table test runs on every host.
 
 /// How a foreground input turn ended, by what is known about inserted input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

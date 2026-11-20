@@ -121,6 +121,20 @@ public final class LiveStreamSession: ObservableObject {
     /// would-require-activation are resent after the activation reopen.
     private var sentBatches: [(first: UInt64, events: [InteractiveInputEvent])] = []
     private static let resendableBatches = 32
+    /// Input waiting for a paste's clipboard to reach the Space (`paste`).
+    private var heldInput: [HeldInput]?
+    private enum HeldInput {
+        case input([InteractiveInputEvent])
+        case paste([InteractiveInputEvent], String)
+    }
+    /// Clipboard transfers started and the newest one that landed, and its
+    /// text while the stream lasts.
+    private var clipboardStarted: UInt64 = 0
+    private var newestLanded: UInt64 = 0
+    private var newestClipboard: String?
+    private var pasteGeneration: UInt64 = 0
+    /// How long a paste waits for the clipboard before its keys go anyway.
+    var pasteWait: Duration = .seconds(2)
     private var lastKeyframeRequest = Date.distantPast
     /// Bumped by every open, stop and source switch. An `open` that finds it
     /// changed after its `await` was superseded: it closes what it opened and
@@ -153,8 +167,12 @@ public final class LiveStreamSession: ObservableObject {
     /// The `stream.open` span of the latest open (see `StreamOpenClock`).
     public private(set) var openClock = StreamOpenClock()
 
-    public init(provider: SpaceStreamSourceProviding) {
+    /// `source`: what the first open streams (the desktop unless a window is given). Nothing opens
+    /// until `start()`, so a window slot that is paused does not open the desktop on resume.
+    public init(provider: SpaceStreamSourceProviding, source: StreamSource = .desktop) {
         self.provider = provider
+        self.source = source
+        if source != .desktop { title = source.label }
     }
 
     /// Stream a Space directly. This is the call `FRICTION.md` §10 says was
@@ -196,6 +214,7 @@ public final class LiveStreamSession: ObservableObject {
     public func select(_ newSource: StreamSource) async {
         guard newSource != source || status == .idle else { return }
         cancelReconnect()
+        dropHeldInput()
         await teardownTransport()
         if newSource != source { activatesOnInput = false }
         source = newSource
@@ -219,6 +238,7 @@ public final class LiveStreamSession: ObservableObject {
 
     public func stop() async {
         cancelReconnect()
+        dropHeldInput()
         await teardownTransport()
         activatesOnInput = false
         status = .idle
@@ -504,7 +524,7 @@ public final class LiveStreamSession: ObservableObject {
         presenceJoining = true
         defer { presenceJoining = false }
         do {
-            let session = try await provider.joinPresence(name: name, color: color)
+            let session = try await provider.joinPresence(name: name, color: color, source: source)
             presence = session
             presenceView = session.view()
             let me = try await session.me()
@@ -662,6 +682,10 @@ public final class LiveStreamSession: ObservableObject {
     /// On a Linux or Windows guest ⌘ chords go as Control chords
     /// (`SpaceStreamSourceProviding.commandAsControl`), whichever view sent them.
     public func send(_ events: [InteractiveInputEvent]) {
+        if heldInput != nil {
+            heldInput?.append(.input(events))
+            return
+        }
         let mapped = provider.commandAsControl ? InputEncoder.commandAsControl(events) : events
         let batch = mapped.filter(\.isDispatchable)
         guard !batch.isEmpty, let media, let sessionID else { return }
@@ -672,6 +696,82 @@ public final class LiveStreamSession: ObservableObject {
         nextInputSequence += UInt64(batch.count)
         inputEventsSent += batch.count
         try? media.sendText(json: text)
+    }
+
+    /// Send a paste chord after putting this Mac's clipboard `text` on the
+    /// Space, empty too: the Space's own clipboard is what its paste inserts.
+    /// Input sent meanwhile, another paste too, waits behind the chord for
+    /// at most `pasteWait`, so a slow or failed transfer still delivers the
+    /// keys, in order.
+    public func paste(_ events: [InteractiveInputEvent], text: String) {
+        if heldInput != nil {
+            heldInput?.append(.paste(events, text))
+            return
+        }
+        beginPaste(events, text: text)
+    }
+
+    private func beginPaste(_ events: [InteractiveInputEvent], text: String) {
+        heldInput = [.input(events)]
+        pasteGeneration &+= 1
+        let generation = pasteGeneration
+        newestClipboard = text
+        Task { @MainActor [weak self] in
+            await self?.transferClipboard(text)
+            self?.releaseHeldInput(generation)
+        }
+        Task { @MainActor [weak self, pasteWait] in
+            try? await Task.sleep(for: pasteWait)
+            self?.releaseHeldInput(generation)
+        }
+    }
+
+    private func releaseHeldInput(_ generation: UInt64) {
+        guard generation == pasteGeneration, var held = heldInput else { return }
+        heldInput = nil
+        while !held.isEmpty {
+            switch held.removeFirst() {
+            case let .input(events):
+                send(events)
+            case let .paste(events, text):
+                beginPaste(events, text: text)
+                if heldInput != nil {
+                    heldInput?.append(contentsOf: held)
+                    return
+                }
+            }
+        }
+    }
+
+    /// Puts `text` on the Space. A transfer that outlived its wait can land
+    /// after a newer one (the call cannot be recalled): the newest text then
+    /// goes again, as a transfer of its own, so however late any of them
+    /// lands the Space ends with the last paste's clipboard.
+    private func transferClipboard(_ text: String) async {
+        clipboardStarted &+= 1
+        let transfer = clipboardStarted
+        _ = try? await provider.sendClipboard(text)
+        clipboardLanded(transfer)
+    }
+
+    private func clipboardLanded(_ transfer: UInt64) {
+        guard transfer < newestLanded, let newest = newestClipboard else {
+            newestLanded = max(newestLanded, transfer)
+            return
+        }
+        clipboardStarted &+= 1
+        let repair = clipboardStarted
+        Task { @MainActor [weak self, provider] in
+            _ = try? await provider.sendClipboard(newest)
+            self?.clipboardLanded(repair)
+        }
+    }
+
+    /// Input held for a paste was meant for the stream that is going away.
+    private func dropHeldInput() {
+        heldInput = nil
+        pasteGeneration &+= 1
+        newestClipboard = nil
     }
 
     /// The Space can reach the streamed window only by activating it: reopen

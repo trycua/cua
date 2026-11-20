@@ -1273,6 +1273,47 @@ done < "$FAKE/needs.txt"
         }
     }
 
+    /// A fresh Hermes install must reach the macOS uv download on both CPUs.
+    /// Refuse the fetch so this exercises platform selection without network access.
+    #[test]
+    #[cfg(unix)]
+    fn hermes_downloads_uv_for_the_macos_guest_cpu() {
+        use std::os::unix::fs::PermissionsExt;
+
+        for (cpu, target) in [("arm64", "aarch64"), ("x86_64", "x86_64")] {
+            let f = Fake::new();
+            for (name, body) in [
+                (
+                    "uname",
+                    format!(
+                        "#!/bin/sh\ncase \"$1\" in -s) echo Darwin ;; -m) echo {cpu} ;; esac\n"
+                    ),
+                ),
+                ("curl", "#!/bin/sh\nexit 1\n".to_string()),
+            ] {
+                let path = f.dir.join("bin").join(name);
+                std::fs::write(&path, body).unwrap();
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            let (ok, progress, log) = f.run(&script(&["hermes"]).unwrap(), 1000);
+            assert!(!ok, "{log}");
+            let error = progress.iter().find(|p| p.phase == "error").unwrap();
+            assert_eq!(
+                (&*error.id, &*error.detail),
+                ("uv", "download failed"),
+                "{log}"
+            );
+            assert_eq!(
+                details(&progress, "download"),
+                [format!(
+                    "https://github.com/astral-sh/uv/releases/download/{}/uv-{target}-apple-darwin.tar.gz",
+                    get("uv").unwrap().version
+                )],
+                "{log}"
+            );
+        }
+    }
+
     #[test]
     fn staged_archives_name_the_file_the_script_looks_for() {
         let a = staged_archives(&["vscode"], "aarch64").unwrap();

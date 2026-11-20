@@ -73,6 +73,11 @@ impl Tool for DoubleClickTool {
             Err(e) => return e,
         };
         let (elem_idx, hwnd_opt, admitted) = resolved.into_parts(args.opt_u64("window_id"));
+        if let Some(refusal) =
+            super::impl_::refuse_if_disabled(pid, &admitted, "double_click").await
+        {
+            return refusal;
+        }
         let x = args.opt_f64("x");
         let y = args.opt_f64("y");
         let delivery = DeliveryMode::from_args(&args);
@@ -193,10 +198,10 @@ impl Tool for DoubleClickTool {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Injected double-click to [{idx}] at screen ({cx},{cy}) (background, no foreground swap)."
                     )),
-                    Ok(Err(e)) => crate::input::delivery::background_unavailable_error_with_cause(
+                    Ok(Err(e)) => crate::input::delivery::background_injection_error(
                         hwnd,
                         EventKind::MouseClick,
-                        e.to_string(),
+                        &e,
                     ),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
@@ -314,10 +319,10 @@ impl Tool for DoubleClickTool {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Injected double-click to pid {pid} at screen ({sx_i},{sy_i}) (background, no foreground swap)."
                     )),
-                    Ok(Err(e)) => crate::input::delivery::background_unavailable_error_with_cause(
+                    Ok(Err(e)) => crate::input::delivery::background_injection_error(
                         hwnd,
                         EventKind::MouseClick,
-                        e.to_string(),
+                        &e,
                     ),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };

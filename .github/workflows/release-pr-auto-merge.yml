@@ -17,10 +17,11 @@ name: "Release: Auto-merge release PRs"
 # workflow-failure-alerts.yml) when a release PR has been green for more than 6 h and is
 # still open and not on hold.
 #
-# pull_request_target runs this file from main and never checks out the PR's code.
+# Runs on pull_request (same-repo release-please branches only: the job is skipped for forks),
+# and the script always comes from main, never from the PR's checkout.
 
 on:
-  pull_request_target:
+  pull_request:
     types: [opened, reopened, synchronize, edited, labeled, unlabeled, ready_for_review]
     branches: [main]
   push:
@@ -40,7 +41,7 @@ jobs:
   auto-merge:
     if: >-
       github.repository == 'trycua/cua' &&
-      (github.event_name != 'pull_request_target' ||
+      (github.event_name != 'pull_request' ||
        (startsWith(github.event.pull_request.head.ref, 'release-please--branches--') &&
         github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-latest
@@ -88,7 +89,7 @@ jobs:
           if [ -n "$PR_NUMBER" ]; then
             args+=(--pr "$PR_NUMBER")
           fi
-          if [ "$GITHUB_EVENT_NAME" != pull_request_target ] && [ "$GITHUB_EVENT_NAME" != push ]; then
+          if [ "$GITHUB_EVENT_NAME" != pull_request ] && [ "$GITHUB_EVENT_NAME" != push ]; then
             args+=(--alert)
           fi
           python3 .github/scripts/release_pr_automerge.py "${args[@]}"

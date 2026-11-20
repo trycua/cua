@@ -201,14 +201,28 @@ result. That is cheaper than running everything, and it is the same rule as a pu
 will land on `main`. In a `merge_group` run, `github.event_name` is not `pull_request`, so those lanes run their
 `main` jobs too.
 
-This is off until the repository variable `CI_QUEUE_RUNS` is `true`. While it is off, `merge_group` runs skip
-every job and the gate in the queue re-reads the pull request's own results, as before. When it is on, the
-gate judges a workflow by its queue run where it has one (with at least one job not skipped) and by the pull
-request's run otherwise. Turn it on after one queue entry has gone through green with it on.
+Only the workflows listed under `queue` in `.github/ci-areas.json` (read from the queue's base commit) run in
+the queue, and each runs there only its push-only jobs that fit the queue's 60-minute timeout. The pull
+request already ran the rest. Every other `merge_group` run skips, and the gate reads that workflow's pull
+request run.
+
+| Workflow | Runs in the queue | Waits for the run after merge |
+| --- | --- | --- |
+| `E2E: Cua Driver release gate` (gated paths) | every Linux lane; Windows native, capture and installer | Windows shared Electron + Tauri (the PR's quick lane ran its Electron cells), hosted macOS, standalone browsers |
+
+`CI: cua SDK` is not in the list: its Windows rust leg takes longer than the queue's timeout (its long test step
+compiles for 26 to 31 minutes and runs for about 17), so it runs after merge.
+
+The gate judges each queue run in addition to the pull request's run, never instead of it, so a queue run whose
+jobs were all skipped cannot hide a failing pull request run. The repository variable `CI_QUEUE_RUNS` set to
+`true` runs every workflow the change reaches instead of only the `queue` list.
 
 ### When a rerun turns green
 
-The gate is one job that gives one verdict after every other workflow finishes. If a job fails, the gate fails.
+The gate is one job that gives one verdict after every other workflow finishes. If a job fails, the gate fails,
+at once: it does not wait for the rest of that job's run (unless the failure is a quarantined flake). In the merge
+queue this drops a failing entry within about a minute, so the entries behind it are not held until the queue's
+60-minute timeout.
 [`ci-gate-recheck.yml`](../../.github/workflows/ci-gate-recheck.yml) reruns the gate when a workflow it waits for
 completes green (a first run or a rerun) or the `local-ci` sign-off turns green, if the newest gate run for that
 commit failed before that result arrived and the commit is still the head of an open pull request without a

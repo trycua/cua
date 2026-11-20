@@ -2936,6 +2936,20 @@ html.is-teleport-picker .hp-panel {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.dw .ssr-origin {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--dw-text-3);
+  font-size: 12px;
+}
+.dw .ssr-origin-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .dw .ssr-resolution {
   flex: 0 0 auto;
   color: var(--dw-text-3);

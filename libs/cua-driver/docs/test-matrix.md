@@ -203,6 +203,7 @@ background delivery and attach desktop-side-effect oracles.
 | Desktop target | `desktop_scope_macos_test.rs` | Per-call window/desktop modality, screen-absolute action delivery, and strict rejection |
 | Installed-app launch/focus | `installed_app_launch_macos_test.rs` | Real Calculator/TextEdit launch and focus behavior in the canonical logged-in lane |
 | Installed-app text | `installed_app_textedit_macos_test.rs` | Real TextEdit AX background write and verification in the canonical logged-in lane |
+| Installed-app remote input | `screen_sharing_macos_test.rs` | Foreground pixel `type_text` into one exact, minimized Screen Sharing window, checked against local VNC servers |
 
 The AppKit `snapshot_publication` regression holds a fixture PNG write with FIFO
 backpressure while replacing a button at the same AX index. It exercises the
@@ -227,6 +228,11 @@ transient-panel AX discovery gap.
 | Tauri | `cross_platform_behavior_test.rs` | X11, hosted Sway, and nested niri | Shared web action matrix |
 | GTK3 | `harness_gtk3_test.rs` | X11/AT-SPI and Wayland/AT-SPI where configured | Native GTK controls and input |
 | Desktop target | `desktop_scope_linux_test.rs` | X11/Wayland | Per-call window/desktop modality, screen-absolute action delivery, and strict rejection |
+| Wayland presentation | `wayland_presentation_latency_test.rs` | Hosted Sway (native Wayland only) | Causal latency attribution across the presentation boundary: input received, state changed, surface commit, compositor `presented`/`discarded`, Driver return |
+
+The presentation cell is latency *attribution*, not a performance gate. It
+proves which layer owns a wait; it asserts no throughput or timing budget, and
+one lane's rows are not a cross-compositor claim.
 
 Nix provides the Linux build and desktop environment. X11 and Wayland are
 separate matrix dimensions because their capture and input contracts differ.

@@ -86,6 +86,11 @@ impl Tool for StartRecordingTool {
                 replaced with `[redacted]`, and such turns are not replayed.\n\n\
                 Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn \
                 numbering restarts at 1 each time recording is (re-)started.\n\n\
+                `<output_dir>/session.json` describes the whole recording: \
+                `schema_version`, `started_at_unix_ms` (the wall-clock start in \
+                Unix epoch milliseconds, unchanged when recording stops), `video` \
+                and `cursor`. `started_at_monotonic_ms` holds the same value for \
+                older readers; it is not a monotonic clock reading.\n\n\
                 **Video is off by default.** Pass `record_video: true` to also \
                 capture the main display to `<output_dir>/recording.mp4` (H.264 / \
                 30 fps) for the lifetime of the session. The recording is torn \
@@ -167,12 +172,7 @@ impl Tool for StartRecordingTool {
                             The values are held in memory only, never written, and cleared \
                             when recording stops. Screenshots and video are not altered."
                     },
-                    "session": {
-                        "type": "string",
-                        "description": "For multi-call work, prefer a short public session label \
-                            and repeat it on every call that accepts it. Omit it to use the \
-                            authenticated transport's implicit lifecycle session."
-                    }
+                    "session": crate::tool_schema::session_schema()
                 },
                 "additionalProperties": false
             }),
@@ -225,8 +225,9 @@ impl Tool for StartRecordingTool {
                 } else if video_failed {
                     let err = state.last_error.clone().unwrap_or_else(|| "unknown".into());
                     let hint = if crate::video_ffmpeg::find_ffmpeg().is_none() {
-                        "\n\nffmpeg was not found. Call install_ffmpeg (then again with \
-                         confirm=true) to install it, then restart recording."
+                        "\n\nffmpeg was not found. Install it with your package manager \
+                         (brew install ffmpeg, winget install Gyan.FFmpeg, or \
+                         apt/dnf/pacman install ffmpeg), then restart recording."
                     } else {
                         ""
                     };

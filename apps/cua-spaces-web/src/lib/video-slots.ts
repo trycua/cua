@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import {
+  LAYOUT_CHANGE_EVENT,
   nativeVideoHandler,
   type SurfacePhase,
   type SurfaceRect,
@@ -41,6 +42,7 @@ export function sameSurface(a: SurfaceState | null, b: SurfaceState): boolean {
     a.spaceId === b.spaceId &&
     a.tier === b.tier &&
     a.interactive === b.interactive &&
+    a.windowId === b.windowId &&
     a.visible === b.visible &&
     a.occluded === b.occluded &&
     a.radius === b.radius &&
@@ -302,6 +304,7 @@ export class VideoSlotReporter {
       tier: slot.tier,
       // Under a modal dialog nothing takes the pointer or keys.
       interactive: slot.interactive && !modal,
+      ...(slot.windowId ? { windowId: slot.windowId } : {}),
       rect,
       clip,
       radius: Math.max(0, slot.radius - inset),
@@ -334,6 +337,13 @@ export class VideoSlotReporter {
     slot.listener(status);
   }
 
+  /** A pane moved (the page's layout committed): measure now, so the report
+   * leaves in the same frame as the new layout, then keep following it. */
+  private onLayoutChange = (): void => {
+    this.flush();
+    this.schedule();
+  };
+
   private watchDpr = (): void => {
     this.dpr?.removeEventListener("change", this.watchDpr);
     this.dpr = this.win.matchMedia?.(`(resolution: ${this.win.devicePixelRatio}dppx)`) ?? null;
@@ -362,6 +372,7 @@ export class VideoSlotReporter {
     // Hover and focus show a tile's controls by CSS alone (no DOM change): measure their holes.
     for (const type of POINTER_FOCUS) w.addEventListener(type, this.schedule, { passive: true });
     w.addEventListener("resize", this.schedule);
+    w.addEventListener(LAYOUT_CHANGE_EVENT, this.onLayoutChange);
     w.addEventListener("cua:event", this.onHostEvent);
     w.document.addEventListener("visibilitychange", this.schedule);
     this.watchDpr();
@@ -379,6 +390,7 @@ export class VideoSlotReporter {
     w.removeEventListener("scroll", this.schedule, { capture: true });
     for (const type of POINTER_FOCUS) w.removeEventListener(type, this.schedule);
     w.removeEventListener("resize", this.schedule);
+    w.removeEventListener(LAYOUT_CHANGE_EVENT, this.onLayoutChange);
     w.removeEventListener("cua:event", this.onHostEvent);
     w.document.removeEventListener("visibilitychange", this.schedule);
     this.dpr?.removeEventListener("change", this.watchDpr);

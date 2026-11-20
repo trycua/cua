@@ -48,7 +48,7 @@ use super::platform::{
     BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
     BrowserVisualActionKind, ExistingProfileSetupRequest,
 };
-use super::prepare::ManagedBrowsers;
+use super::prepare::{IsolatedLaunchBreaker, ManagedBrowsers};
 use super::reconnect::{ReconnectGates, ReconnectKey};
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::semantic::{
@@ -86,6 +86,7 @@ pub struct BrowserEngine {
     pub(crate) store: BrowserStore,
     pub(crate) pool: CdpPool,
     pub(crate) managed_browsers: ManagedBrowsers,
+    pub(crate) isolated_launch_breaker: IsolatedLaunchBreaker,
     pub(crate) existing_profile_grants: ExistingProfileGrants,
     pub(crate) approval_broker: Arc<crate::consent::ApprovalBroker>,
     pub(crate) protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
@@ -221,6 +222,43 @@ fn with_existing_profile_next_call(
     );
     refusal.detail = Some(Value::Object(detail));
     refusal
+}
+
+/// An Electron app opens no DevTools endpoint unless it was started with one,
+/// and it has no remote-debugging page to turn one on, so the
+/// `existing_profile` setup that serves Chrome cannot attach it. Name the two
+/// routes that can.
+fn embedded_app_without_endpoint(
+    refusal: BrowserRefusal,
+    session: &str,
+    pid: i64,
+) -> BrowserRefusal {
+    if refusal.code != BrowserRefusalCode::BrowserRequiresSetup {
+        return refusal;
+    }
+    refuse(
+        BrowserRefusalCode::BrowserRequiresSetup,
+        format!(
+            "pid {pid} is an Electron app with no DevTools endpoint. To read and drive a copy of \
+             it, call browser_prepare in detail.next_call: it launches a separate driver-owned \
+             instance on a fresh profile (the user's open window and its data are not attached), \
+             then bind that instance's window. To attach the user's own instance instead, it \
+             must be restarted with --remote-debugging-port=0; only the user can decide that."
+        ),
+    )
+    .with_detail(json!({
+        "reason": "embedded_application_endpoint_closed",
+        "supported_strategies": ["isolated_new", "remote_debugging_port_at_launch"],
+        "next_call": {
+            "tool": "browser_prepare",
+            "arguments": {
+                "pid": pid,
+                "session": session,
+                "allow_launch": true,
+                "profile": { "mode": "isolated_new" },
+            },
+        },
+    }))
 }
 
 fn endpoint_access_class(
@@ -671,6 +709,7 @@ impl BrowserEngine {
             store: BrowserStore::new(),
             pool: CdpPool::new(),
             managed_browsers: Default::default(),
+            isolated_launch_breaker: Default::default(),
             existing_profile_grants: ExistingProfileGrants::new(),
             approval_broker,
             protected_resource_ownership,
@@ -1001,6 +1040,12 @@ impl BrowserEngine {
                             // consent. Cancel it before grant revocation so no
                             // socket-pool resource can outlive this refusal.
                             drop(reconnect);
+                            // The browser keeps the prompt of the connection
+                            // just abandoned; approving it would attach nothing.
+                            let _ = self
+                                .platform
+                                .dismiss_abandoned_existing_profile_consent(pid, grant.window_id)
+                                .await;
                             if error.code == BrowserRefusalCode::BrowserConsentRevoked {
                                 self.revoke_existing_profile_grant(session, transport_session, pid)
                                     .await;
@@ -1360,7 +1405,13 @@ impl BrowserEngine {
             self.existing_profile_endpoint(pid, &live_grant.endpoint_ws_url)
                 .await?
         } else {
-            self.owned_endpoint(pid).await?
+            self.owned_endpoint(pid).await.map_err(|refusal| {
+                if access_class == EndpointAccessClass::EmbeddedApplication {
+                    embedded_app_without_endpoint(refusal, session, pid)
+                } else {
+                    refusal
+                }
+            })?
         };
         if let Some(grant) = &grant {
             if !grant.fingerprint.matches(&fingerprint)

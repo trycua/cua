@@ -8,9 +8,9 @@
  *
  * - `useAgentChats()` lists the agents across every Space
  *   (`thread.members {overview}` per Space). One agent in several Spaces
- *   is one row, keyed on who owns it, its harness and its name (`chatKey`),
- *   since handles differ per daemon. Each row has its status line, unread
- *   count and what waits for you.
+ *   is its own row (a Space's handle is its key), so the Agents tab and Home
+ *   list the same entries. Each row has its status line, unread count and
+ *   what waits for you.
  * - `useAgentDm(chat, space)` reads the DM in each of its Spaces (or one),
  *   follows it, marks it read while visible, posts @mention tasks and
  *   answers approvals.
@@ -115,6 +115,8 @@ export function mergeChats(
   core: CoreClient,
   perSpace: readonly { space: Space; role: ThreadRole | null; members: readonly AgentMember[] }[],
   attempts: readonly ChatAttempt[] = [],
+  /** One row per agent in each Space (the Agents tab), not one per agent across its Spaces. */
+  perSpaceRows = false,
 ): AgentChat[] {
   const input = {
     spaces: perSpace.map(({ space, members }) => ({
@@ -134,6 +136,7 @@ export function mergeChats(
       })),
     })),
     attempts,
+    perSpace: perSpaceRows,
   };
   const view = core.tryCall<{ rows: AgentListRow[] }>("agentList.view", { input: input as unknown as Record<string, unknown> });
   if (!view) return [];
@@ -283,6 +286,7 @@ export function useAgentChats(attempts: readonly ChatAttempt[] = []): AgentChats
         if (settleNext) setSettled(true);
       }, FLUSH_MS);
     };
+    const unseen = new Set<string>();
     const readOne = async (space: Space) => {
       inflight.current.add(space.id);
       try {
@@ -300,14 +304,18 @@ export function useAgentChats(attempts: readonly ChatAttempt[] = []): AgentChats
       } finally {
         inflight.current.delete(space.id);
         if (alive) {
-          setPending((n) => Math.max(0, n - 1));
+          if (unseen.delete(space.id)) setPending((n) => Math.max(0, n - 1));
           flush();
         }
       }
     };
     const pass = async () => {
       const asked = list.filter((s) => !misses.current.has(s.id) && !inflight.current.has(s.id));
-      setPending(asked.length);
+      // Only a Space with no answer yet is "being checked": a pass that refreshes known answers is silent, so
+      // "Checking 1 Space" does not come and go every few seconds.
+      unseen.clear();
+      for (const s of asked) if (!reads.current!.has(s.id)) unseen.add(s.id);
+      setPending(unseen.size);
       // Spaces that answered last time go first: the slow ones are last in line, never in front.
       asked.sort((x, y) => Number(reads.current!.has(y.id)) - Number(reads.current!.has(x.id)));
       await forEachLimit(asked, CHATS_PARALLEL, CHATS_SLOT_MS, readOne);
@@ -338,12 +346,19 @@ export function useAgentChats(attempts: readonly ChatAttempt[] = []): AgentChats
   }, [data, ids, round, spaces === undefined]);
   // One list, with this device's unfinished runs (the core's order and words), made again only when an
   // answer, the Spaces or the runs change.
+  const stable = useRef<{ json: string; chats: AgentChat[] } | null>(null);
   const merged = useMemo(() => {
     const perSpace = list.flatMap((space) => {
       const r = reads.current!.get(space.id);
       return r ? [{ space, role: r.role, members: r.members }] : [];
     });
-    return { perSpace, chats: spaces === undefined ? [] : mergeChats(core, perSpace, attempts) };
+    const next = spaces === undefined ? [] : mergeChats(core, perSpace, attempts, true);
+    // The same list as before keeps its identity: a poll that found nothing new redraws nothing (rows, the open
+    // thread and its roster stay as they are).
+    const json = JSON.stringify(next);
+    if (stable.current && stable.current.json === json) return { perSpace, chats: stable.current.chats };
+    stable.current = { json, chats: next };
+    return { perSpace, chats: next };
     // `list` follows `spaces`; `reads` is read when `version` says it changed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [version, spaces, attempts, core]);

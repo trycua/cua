@@ -60,6 +60,25 @@ class ReplayReleaseBranch(unittest.TestCase):
                      GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t"),
         )
 
+    def test_clean_rebase_restores_a_stale_foreign_manifest_entry(self):
+        # Release Please wrote libs/cua back to a stale 0.4.0 in the release
+        # commit; main later moved on. Nothing conflicts, so only the
+        # reconcile step can repair it.
+        git(self.repo, "checkout", "-q", "release")
+        write(self.repo, ".release-please-manifest.json", json.dumps({SB: "0.9.2", "libs/cua": "0.4.0"}, indent=2) + "\n")
+        git(self.repo, "commit", "-qam", "stale foreign entry")
+        git(self.repo, "checkout", "-q", "main")
+        write(self.repo, "docs/other.md", "unrelated\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "main moves")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "main")
+        git(self.repo, "update-ref", "refs/remotes/origin/release", "release")
+        git(self.repo, "checkout", "-q", "release")
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        manifest = json.loads((self.repo / ".release-please-manifest.json").read_text())
+        self.assertEqual(manifest, {SB: "0.9.2", "libs/cua": "0.5.0"})
+
     def test_manifest_and_generated_commit_both_conflict(self):
         # main bumped another component AND regenerated the same doc.
         self.advance_main({SB: "0.9.1", "libs/cua": "0.6.0"}, "version 0.9.1 and more\n")

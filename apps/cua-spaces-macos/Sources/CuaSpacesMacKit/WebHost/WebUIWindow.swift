@@ -475,7 +475,12 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
     public func windowDidEnterFullScreen(_ notification: Notification) { applyInset() }
     public func windowDidExitFullScreen(_ notification: Notification) { applyInset() }
 
+    /// The main window was closed by the person (not by a quit): what the
+    /// app does about the background service (`BackgroundPolicy`).
+    public static var onClosed: (@MainActor () -> Void)?
+
     public func windowWillClose(_ notification: Notification) {
+        Self.onClosed?()
         // Opened again, it comes back where it was.
         window?.saveFrame(usingName: Self.frameName)
         videoSurfaces?.removeAll()

@@ -1221,14 +1221,14 @@ fn overlay_window_and_scale(window_id: u64) -> Option<(u64, f64)> {
     Some((overlay_window, scale))
 }
 
-/// `dwState` is not kept: on Windows 11 10.0.26300.9818 it is unreliable even
-/// in the listener-only table (live listeners report 0, 1, 2 or 6). A
-/// listening socket has no remote peer, which `remote_unspecified` records.
+/// Rows come from the listener-only table, so neither `dwState` nor the remote
+/// endpoint is kept: on Windows 11 10.0.26300.9818 `dwState` is unreliable
+/// there (live listeners report 0, 1, 2 or 6), and Windows documents the
+/// remote fields of a listening row as having no meaning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TcpOwnerRow {
     local_ip: IpAddr,
     local_port: u16,
-    remote_unspecified: bool,
     owner_pid: u32,
 }
 
@@ -1242,11 +1242,7 @@ const TCP_OWNER_TABLE_READ_ATTEMPTS: usize = 3;
 fn select_loopback_listeners(rows: &[TcpOwnerRow], allowed_pids: &[u32]) -> Vec<(u16, u32)> {
     let mut listeners = rows
         .iter()
-        .filter(|row| {
-            row.remote_unspecified
-                && row.local_ip.is_loopback()
-                && allowed_pids.contains(&row.owner_pid)
-        })
+        .filter(|row| row.local_ip.is_loopback() && allowed_pids.contains(&row.owner_pid))
         .map(|row| (row.local_port, row.owner_pid))
         .collect::<Vec<_>>();
     listeners.sort_unstable();
@@ -1415,7 +1411,6 @@ fn windows_loopback_listeners_with(
             .map(|row| TcpOwnerRow {
                 local_ip: IpAddr::V4(Ipv4Addr::from(u32::from_be(row.dwLocalAddr))),
                 local_port: network_port(row.dwLocalPort),
-                remote_unspecified: row.dwRemoteAddr == 0 && network_port(row.dwRemotePort) == 0,
                 owner_pid: row.dwOwningPid,
             }),
         );
@@ -1432,8 +1427,6 @@ fn windows_loopback_listeners_with(
             .map(|row| TcpOwnerRow {
                 local_ip: IpAddr::V6(Ipv6Addr::from(row.ucLocalAddr)),
                 local_port: network_port(row.dwLocalPort),
-                remote_unspecified: Ipv6Addr::from(row.ucRemoteAddr).is_unspecified()
-                    && network_port(row.dwRemotePort) == 0,
                 owner_pid: row.dwOwningPid,
             }),
         );
@@ -3236,37 +3229,27 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn native_listener_selection_requires_loopback_listener_and_process_tree() {
+    fn native_listener_selection_requires_loopback_and_process_tree() {
         let rows = [
             TcpOwnerRow {
                 local_ip: "127.0.0.1".parse().unwrap(),
                 local_port: 9222,
-                remote_unspecified: true,
                 owner_pid: 42,
             },
             TcpOwnerRow {
                 local_ip: "0.0.0.0".parse().unwrap(),
                 local_port: 9333,
-                remote_unspecified: true,
                 owner_pid: 43,
             },
             TcpOwnerRow {
                 local_ip: "::1".parse().unwrap(),
                 local_port: 9444,
-                remote_unspecified: true,
                 owner_pid: 43,
             },
             TcpOwnerRow {
                 local_ip: "127.0.0.1".parse().unwrap(),
                 local_port: 9555,
-                remote_unspecified: true,
                 owner_pid: 7,
-            },
-            TcpOwnerRow {
-                local_ip: "127.0.0.1".parse().unwrap(),
-                local_port: 9666,
-                remote_unspecified: false,
-                owner_pid: 42,
             },
         ];
         assert_eq!(
@@ -3280,7 +3263,6 @@ mod tests {
         let row = TcpOwnerRow {
             local_ip: "127.0.0.1".parse().unwrap(),
             local_port: 9222,
-            remote_unspecified: true,
             owner_pid: 43,
         };
         assert_eq!(
@@ -3393,8 +3375,8 @@ mod tests {
 
     #[test]
     fn native_listener_discovery_ignores_unreliable_row_states() {
-        // 10.0.26300.9818 reports live listeners as 0, 1 or 6 and some
-        // connected sockets as LISTEN, so only the remote endpoint counts.
+        // 10.0.26300.9818 reports live listeners as 0, 1 or 6, and the remote
+        // fields of a listening row have no documented meaning.
         const LISTEN: u32 = MIB_TCP_STATE_LISTEN.0 as u32;
         let ipv4_offset = std::mem::offset_of!(MIB_TCPTABLE_OWNER_PID, table);
         let row = |state: u32, local_port: u16, remote_addr: Ipv4Addr, remote_port: u16| {
@@ -3414,7 +3396,7 @@ mod tests {
                 row(1, 9223, Ipv4Addr::UNSPECIFIED, 0),
                 row(6, 9224, Ipv4Addr::UNSPECIFIED, 0),
                 row(LISTEN, 9225, Ipv4Addr::UNSPECIFIED, 0),
-                row(LISTEN, 9226, Ipv4Addr::LOCALHOST, 50_000),
+                row(LISTEN, 9226, Ipv4Addr::new(10, 0, 0, 1), 50_000),
             ],
         );
         let ipv6_offset = std::mem::offset_of!(MIB_TCP6TABLE_OWNER_PID, table);
@@ -3454,7 +3436,15 @@ mod tests {
         .unwrap();
         assert_eq!(
             listeners,
-            vec![(9222, 42), (9223, 42), (9224, 42), (9225, 42), (9227, 42)]
+            vec![
+                (9222, 42),
+                (9223, 42),
+                (9224, 42),
+                (9225, 42),
+                (9226, 42),
+                (9227, 42),
+                (9228, 42)
+            ]
         );
     }
 

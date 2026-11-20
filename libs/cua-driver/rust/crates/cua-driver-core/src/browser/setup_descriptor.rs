@@ -81,14 +81,26 @@ const EDGE: BrowserSetupDescriptor = BrowserSetupDescriptor {
     tab_close_labels: EDGE_TAB_CLOSE_LABELS,
 };
 
+/// The desktop surface an adapter runs existing-profile setup on. A product's
+/// descriptor resolves only on the surfaces its setup page was verified on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetupPlatform {
+    MacOS,
+    Windows,
+    LinuxX11,
+    LinuxWayland,
+}
+
 pub fn existing_profile_setup_descriptor(
     product: BrowserProduct,
+    platform: SetupPlatform,
 ) -> Option<&'static BrowserSetupDescriptor> {
     match product {
         BrowserProduct::GoogleChrome => Some(&CHROME),
         BrowserProduct::Chromium => Some(&CHROMIUM),
         BrowserProduct::MicrosoftEdge => Some(&EDGE),
-        BrowserProduct::Brave => Some(&BRAVE),
+        // Brave setup is verified on Linux X11 only.
+        BrowserProduct::Brave if platform == SetupPlatform::LinuxX11 => Some(&BRAVE),
         _ => None,
     }
 }
@@ -97,39 +109,57 @@ pub fn existing_profile_setup_descriptor(
 mod tests {
     use super::*;
 
+    const PLATFORMS: [SetupPlatform; 4] = [
+        SetupPlatform::MacOS,
+        SetupPlatform::Windows,
+        SetupPlatform::LinuxX11,
+        SetupPlatform::LinuxWayland,
+    ];
+
     #[test]
     fn setup_is_limited_to_products_with_exact_descriptors() {
-        assert_eq!(
-            existing_profile_setup_descriptor(BrowserProduct::GoogleChrome)
-                .unwrap()
-                .setup_url,
-            "chrome://inspect/#remote-debugging"
-        );
-        assert_eq!(
-            existing_profile_setup_descriptor(BrowserProduct::MicrosoftEdge)
-                .unwrap()
-                .setup_url,
-            "edge://inspect/#remote-debugging"
-        );
-        assert_eq!(
-            existing_profile_setup_descriptor(BrowserProduct::Chromium)
-                .unwrap()
-                .product,
-            BrowserProduct::Chromium
-        );
-        assert_eq!(
-            existing_profile_setup_descriptor(BrowserProduct::Brave)
-                .unwrap()
-                .setup_url,
-            "brave://inspect/#remote-debugging"
-        );
-        for product in [
-            BrowserProduct::Firefox,
-            BrowserProduct::Safari,
-            BrowserProduct::Electron,
-            BrowserProduct::Other,
-        ] {
-            assert!(existing_profile_setup_descriptor(product).is_none());
+        for platform in PLATFORMS {
+            assert_eq!(
+                existing_profile_setup_descriptor(BrowserProduct::GoogleChrome, platform)
+                    .unwrap()
+                    .setup_url,
+                "chrome://inspect/#remote-debugging"
+            );
+            assert_eq!(
+                existing_profile_setup_descriptor(BrowserProduct::MicrosoftEdge, platform)
+                    .unwrap()
+                    .setup_url,
+                "edge://inspect/#remote-debugging"
+            );
+            assert_eq!(
+                existing_profile_setup_descriptor(BrowserProduct::Chromium, platform)
+                    .unwrap()
+                    .product,
+                BrowserProduct::Chromium
+            );
+            for product in [
+                BrowserProduct::Firefox,
+                BrowserProduct::Safari,
+                BrowserProduct::Electron,
+                BrowserProduct::Other,
+            ] {
+                assert!(existing_profile_setup_descriptor(product, platform).is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn brave_setup_resolves_only_on_linux_x11() {
+        for platform in PLATFORMS {
+            let descriptor = existing_profile_setup_descriptor(BrowserProduct::Brave, platform);
+            if platform == SetupPlatform::LinuxX11 {
+                assert_eq!(
+                    descriptor.unwrap().setup_url,
+                    "brave://inspect/#remote-debugging"
+                );
+            } else {
+                assert!(descriptor.is_none(), "{platform:?}");
+            }
         }
     }
 }

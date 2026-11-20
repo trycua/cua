@@ -26,6 +26,7 @@ use cua_driver_core::browser::types::{
 use cua_driver_core::browser::{
     existing_profile_setup_descriptor, fetch_json_version_ws_url, is_electron_app_layout,
     is_firefox, loopback_websocket_port, parse_devtools_active_port, BrowserCursorTracker,
+    SetupPlatform,
 };
 
 pub struct LinuxBrowserPlatform {
@@ -549,6 +550,18 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
 }
 
 #[async_trait]
+
+/// A Wayland session, XWayland included, names its windows through the
+/// compositor rather than X11, so setup verified on X11 does not carry over.
+fn setup_platform() -> SetupPlatform {
+    match crate::desktop::desktop() {
+        crate::desktop::Desktop::X11 => SetupPlatform::LinuxX11,
+        crate::desktop::Desktop::XWayland(_) | crate::desktop::Desktop::Wayland(_) => {
+            SetupPlatform::LinuxWayland
+        }
+    }
+}
+
 impl BrowserPlatform for LinuxBrowserPlatform {
     fn isolated_browser_executable(&self) -> Result<String, BrowserRefusal> {
         for candidate in isolated_browser_candidates() {
@@ -1046,15 +1059,16 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         &self,
         request: ExistingProfileSetupRequest,
     ) -> Result<ExistingProfileSetupOutcome, BrowserRefusal> {
-        let descriptor = existing_profile_setup_descriptor(request.browser).ok_or_else(|| {
-            BrowserRefusal::new(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!(
-                    "approved existing-profile setup is not implemented for {:?}",
-                    request.browser
-                ),
-            )
-        })?;
+        let descriptor = existing_profile_setup_descriptor(request.browser, setup_platform())
+            .ok_or_else(|| {
+                BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!(
+                        "approved existing-profile setup is not implemented for {:?}",
+                        request.browser
+                    ),
+                )
+            })?;
         let pid_u32 = u32::try_from(request.pid).map_err(|_| {
             BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -1292,15 +1306,16 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         &self,
         request: ExistingProfileSetupRequest,
     ) -> Result<bool, BrowserRefusal> {
-        let descriptor = existing_profile_setup_descriptor(request.browser).ok_or_else(|| {
-            BrowserRefusal::new(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!(
-                    "existing-profile cleanup is not implemented for {:?}",
-                    request.browser
-                ),
-            )
-        })?;
+        let descriptor = existing_profile_setup_descriptor(request.browser, setup_platform())
+            .ok_or_else(|| {
+                BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!(
+                        "existing-profile cleanup is not implemented for {:?}",
+                        request.browser
+                    ),
+                )
+            })?;
         let pid = u32::try_from(request.pid).map_err(|_| {
             BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,

@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde_json::Value;
 
-use super::store::{BrowserActionKind, BrowserVisibility, FrameRef, RefEntry};
+use super::store::{BrowserActionKind, BrowserVisibility, FrameRef, RefEntry, SemanticScope};
 
 pub(crate) const SEMANTIC_COMPUTED_STYLES: &[&str] = &[
     "display",
@@ -219,9 +219,9 @@ impl SemanticDocument {
         offset: usize,
         budget: usize,
         query: Option<&str>,
-        scope_backend_node_id: Option<i64>,
+        scope: Option<&SemanticScope>,
     ) -> SemanticPage {
-        let mut candidates = scoped_indices(&self.nodes, query, scope_backend_node_id);
+        let mut candidates = scoped_indices(&self.nodes, query, scope);
         candidates.retain(|idx| {
             !matches!(
                 self.nodes[*idx].visibility,
@@ -1036,7 +1036,7 @@ fn rank(node: &SemanticNode) -> u8 {
 fn scoped_indices(
     nodes: &[SemanticNode],
     query: Option<&str>,
-    scope_backend_node_id: Option<i64>,
+    scope: Option<&SemanticScope>,
 ) -> Vec<usize> {
     let by_ax_id: HashMap<AxNodeKey<'_>, usize> = nodes
         .iter()
@@ -1044,12 +1044,12 @@ fn scoped_indices(
         .map(|(idx, node)| (node.ax_key(&node.ax_id), idx))
         .collect();
     let mut allowed = HashSet::new();
-    if let Some(scope_backend) = scope_backend_node_id {
-        if let Some(scope) = nodes
-            .iter()
-            .find(|node| node.backend_node_id == Some(scope_backend))
-        {
-            let mut stack = vec![scope.ax_key(&scope.ax_id)];
+    if let Some(scope) = scope {
+        if let Some(root) = nodes.iter().find(|node| {
+            node.backend_node_id == Some(scope.backend_node_id)
+                && node.frame.oopif_target_id == scope.oopif_target_id
+        }) {
+            let mut stack = vec![root.ax_key(&root.ax_id)];
             while let Some(ax_id) = stack.pop() {
                 if !allowed.insert(ax_id) {
                     continue;
@@ -1062,9 +1062,8 @@ fn scoped_indices(
         }
     }
     let query = query.map(|value| value.trim().to_ascii_lowercase());
-    let in_scope = |node: &SemanticNode| {
-        scope_backend_node_id.is_none() || allowed.contains(&node.ax_key(&node.ax_id))
-    };
+    let in_scope =
+        |node: &SemanticNode| scope.is_none() || allowed.contains(&node.ax_key(&node.ax_id));
     let exact_match_exists = query.as_ref().is_some_and(|query| {
         !query.is_empty()
             && nodes
@@ -1252,6 +1251,13 @@ mod tests {
         )
     }
 
+    fn main_scope(backend_node_id: i64) -> SemanticScope {
+        SemanticScope {
+            oopif_target_id: None,
+            backend_node_id,
+        }
+    }
+
     #[test]
     fn scoped_container_keeps_same_process_iframe_content() {
         let mut document = document_in_frame(
@@ -1286,7 +1292,7 @@ mod tests {
         );
         document.extend(child);
 
-        let scoped = document.page(0, 300, None, Some(101));
+        let scoped = document.page(0, 300, None, Some(&main_scope(101)));
         assert!(
             scoped
                 .selected
@@ -1294,7 +1300,7 @@ mod tests {
                 .any(|node| node.name.as_deref() == Some("Inner button")),
             "scoped container lost its same-process iframe content"
         );
-        let queried = document.page(0, 300, Some("Inner button"), Some(101));
+        let queried = document.page(0, 300, Some("Inner button"), Some(&main_scope(101)));
         assert_eq!(queried.selected_nodes, 1);
         assert_eq!(
             queried.outline,
@@ -1323,7 +1329,7 @@ mod tests {
             ]}),
         ));
 
-        let scoped = document.page(0, 300, None, Some(101));
+        let scoped = document.page(0, 300, None, Some(&main_scope(101)));
         let mut names: Vec<_> = scoped
             .selected
             .iter()
@@ -1336,6 +1342,41 @@ mod tests {
             queried.outline,
             "- group \"Main group\"\n  - button \"Main button\""
         );
+    }
+
+    #[test]
+    fn scope_root_resolves_in_its_own_target_when_backend_ids_collide() {
+        let mut document = document_in_frame(
+            "main",
+            json!({"nodes": [
+                {"nodeId": "1", "role": {"value": "group"}, "name": {"value": "Main group"},
+                 "backendDOMNodeId": 101, "childIds": ["2"]},
+                {"nodeId": "2", "parentId": "1", "role": {"value": "button"},
+                 "name": {"value": "Main button"}, "backendDOMNodeId": 102}
+            ]}),
+        );
+        document.extend(document_in_frame(
+            "child",
+            json!({"nodes": [
+                {"nodeId": "7", "role": {"value": "group"}, "name": {"value": "Child group"},
+                 "backendDOMNodeId": 101, "childIds": ["8"]},
+                {"nodeId": "8", "parentId": "7", "role": {"value": "button"},
+                 "name": {"value": "Child button"}, "backendDOMNodeId": 102}
+            ]}),
+        ));
+
+        let scope = SemanticScope {
+            oopif_target_id: Some("target-child".into()),
+            backend_node_id: 101,
+        };
+        let scoped = document.page(0, 300, None, Some(&scope));
+        let mut names: Vec<_> = scoped
+            .selected
+            .iter()
+            .filter_map(|node| node.name.as_deref())
+            .collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["Child button", "Child group"]);
     }
 
     #[test]

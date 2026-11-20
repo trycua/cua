@@ -123,27 +123,38 @@ def repo_of(ref: str) -> str:
 CRANE_TIMEOUT = float(os.environ.get("CUA_CRANE_TIMEOUT", "60"))
 
 
+CRANE_ATTEMPTS = 2
+
+
 def run_crane(args: list[str], anon_dir: str, timeout: float = CRANE_TIMEOUT) -> tuple[int, str, str]:
-    """Run crane anonymously and never longer than ``timeout`` seconds -> (rc, stdout, stderr).
+    """Run crane anonymously and never longer than ``timeout`` seconds in total -> (rc, stdout, stderr).
 
     The refs checked here are public, so no credentials are needed. crane has no ``--anonymous`` flag; it reads
     registry credentials through the Docker config, so we point DOCKER_CONFIG at an empty directory we own. That keeps
     crane away from credential helpers (osxkeychain, desktop), which block forever on a headless Mac. The child runs in
-    its own process group so a stuck helper is killed with it. rc 124 means the timeout hit.
+    its own process group so a stuck helper is killed with it.
+
+    A healthy lookup takes well under a second, so a call that stalls is a dead connection (shared CI runner IPs get
+    throttled by the registry), not a slow one. The budget is therefore split over a few short attempts: a stalled
+    connection is killed and retried on a fresh one instead of burning the whole budget on a single hang. rc 124 means
+    every attempt timed out.
     """
     env = dict(os.environ, DOCKER_CONFIG=anon_dir)
-    proc = subprocess.Popen(["crane", *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
-                            stdin=subprocess.DEVNULL, start_new_session=True)
-    try:
-        out, err = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
+    per_attempt = timeout / CRANE_ATTEMPTS
+    for _ in range(CRANE_ATTEMPTS):
+        proc = subprocess.Popen(["crane", *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+                                stdin=subprocess.DEVNULL, start_new_session=True)
         try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (OSError, AttributeError):
-            proc.kill()
-        proc.communicate()
-        return 124, "", f"crane {args[0]} timed out after {timeout:.0f}s (anonymous access; is the registry reachable?)"
-    return proc.returncode, out, err
+            out, err = proc.communicate(timeout=per_attempt)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (OSError, AttributeError):
+                proc.kill()
+            proc.communicate()
+            continue
+        return proc.returncode, out, err
+    return 124, "", f"crane {args[0]} timed out after {timeout:.0f}s (anonymous access; is the registry reachable?)"
 
 
 def resolve_crane(ref: str) -> dict[str, Any]:

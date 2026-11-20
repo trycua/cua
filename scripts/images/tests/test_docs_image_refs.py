@@ -151,5 +151,15 @@ class CraneAnonymousTests(unittest.TestCase):
         self.assertIn("timed out", err)
 
 
+    def test_a_stalled_first_connection_is_retried(self) -> None:
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as anon:
+            flag = os.path.join(root, "stalled-once")
+            body = ('if [ ! -e "%s" ]; then : > "%s"; sleep 30; fi\necho sha256:%s\n' % (flag, flag, "b" * 64))
+            env = self.fake_crane(root, body)
+            rc, out, _ = self.run_with(env, lambda: check_docs.run_crane(["digest", "x"], anon, timeout=4))
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "sha256:" + "b" * 64)
+
+
 if __name__ == "__main__":
     unittest.main()

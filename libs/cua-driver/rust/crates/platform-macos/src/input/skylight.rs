@@ -202,6 +202,9 @@ impl Drop for WindowKeyScope {
             &self.order_before,
             &app_window_order(self.pid),
         ) else {
+            if self.confirm_hand_back {
+                record_hand_back(self.pid, self.target, false);
+            }
             return;
         };
         match self.primed {
@@ -240,51 +243,65 @@ impl Drop for WindowKeyScope {
     }
 }
 
+/// How long an unconfirmed hand-back keeps its window from counting as the
+/// user's key window. Past it the app's report is trusted again, so a window
+/// the user or `bring_to_front` made key since is not refused for good.
+const UNCONFIRMED_HAND_BACK_HOLD: std::time::Duration = std::time::Duration::from_secs(2);
+
+type PendingHandBacks = std::collections::HashMap<pid_t, (u32, std::time::Instant)>;
+
 /// Per pid, the window a confirmed scope ([`WindowKeyScope::confirm_hand_back`])
-/// made key and could not confirm handing key back from.
-fn unconfirmed_hand_backs() -> &'static std::sync::Mutex<std::collections::HashMap<pid_t, u32>> {
-    static PENDING: OnceLock<std::sync::Mutex<std::collections::HashMap<pid_t, u32>>> =
-        OnceLock::new();
-    PENDING.get_or_init(Default::default)
+/// made key and could not confirm handing key back from, and when.
+fn unconfirmed_hand_backs() -> std::sync::MutexGuard<'static, PendingHandBacks> {
+    static PENDING: OnceLock<std::sync::Mutex<PendingHandBacks>> = OnceLock::new();
+    PENDING
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn record_hand_back(pid: pid_t, target: u32, settled: bool) {
-    let mut pending = unconfirmed_hand_backs()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut pending = unconfirmed_hand_backs();
     if settled {
         pending.remove(&pid);
     } else {
-        pending.insert(pid, target);
+        pending.insert(pid, (target, std::time::Instant::now()));
     }
+}
+
+/// Whether an unconfirmed hand-back from `target`, recorded at `since`, still
+/// stands given the key window read now (`None` when it cannot be read).
+fn hand_back_still_pending(
+    target: u32,
+    since: std::time::Instant,
+    key: Option<u32>,
+    now: std::time::Instant,
+) -> bool {
+    now.duration_since(since) < UNCONFIRMED_HAND_BACK_HOLD && key.is_none_or(|key| key == target)
 }
 
 /// `Err(window)` while `pid`'s key window is still `window`, which a confirmed
 /// scope made key and could not confirm handing key back from: that window is
 /// not the user's key window, whatever the app reports. Waits briefly for a
-/// late hand-back, and clears once key has left that window.
+/// late hand-back. Clears once a read shows key in another window, or once
+/// [`UNCONFIRMED_HAND_BACK_HOLD`] has passed; an unreadable key window keeps it.
 pub fn settle_hand_back(pid: pid_t) -> Result<(), u32> {
-    let pending = unconfirmed_hand_backs()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .get(&pid)
-        .copied();
-    let Some(target) = pending else {
+    let pending = unconfirmed_hand_backs().get(&pid).copied();
+    let Some((target, since)) = pending else {
         return Ok(());
     };
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(400);
     loop {
         let key = key_focus_of_pid(pid).window.map(|window| window.own);
-        if key != Some(target) {
-            let mut pending = unconfirmed_hand_backs()
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if pending.get(&pid) == Some(&target) {
+        let now = std::time::Instant::now();
+        if !hand_back_still_pending(target, since, key, now) {
+            let mut pending = unconfirmed_hand_backs();
+            if pending.get(&pid) == Some(&(target, since)) {
                 pending.remove(&pid);
             }
             return Ok(());
         }
-        if std::time::Instant::now() >= deadline {
+        if now >= deadline {
             return Err(target);
         }
         std::thread::sleep(std::time::Duration::from_millis(40));
@@ -1837,7 +1854,10 @@ mod tests {
 
 #[cfg(test)]
 mod key_prime_tests {
-    use super::{prime_exact_window_key, restore_target, KeyFocus, KeyPrime};
+    use super::{
+        hand_back_still_pending, prime_exact_window_key, restore_target, KeyFocus, KeyPrime,
+        UNCONFIRMED_HAND_BACK_HOLD,
+    };
     use crate::ax::exact_target::AxWindowId;
     use std::cell::Cell;
 
@@ -2022,5 +2042,19 @@ mod key_prime_tests {
             let r = prime_exact_window_key(7, || focused, || true, || true);
             assert!(r.unwrap_err().contains("no keys were sent"));
         }
+    }
+
+    /// An unconfirmed hand-back from window 42 stands while key reads as 42
+    /// or cannot be read, and only until its hold runs out.
+    #[test]
+    fn an_unconfirmed_hand_back_clears_on_another_key_window_or_expiry() {
+        let since = std::time::Instant::now();
+        let soon = since + std::time::Duration::from_millis(100);
+        assert!(hand_back_still_pending(42, since, Some(42), soon));
+        assert!(hand_back_still_pending(42, since, None, soon));
+        assert!(!hand_back_still_pending(42, since, Some(41), soon));
+        let late = since + UNCONFIRMED_HAND_BACK_HOLD;
+        assert!(!hand_back_still_pending(42, since, Some(42), late));
+        assert!(!hand_back_still_pending(42, since, None, late));
     }
 }

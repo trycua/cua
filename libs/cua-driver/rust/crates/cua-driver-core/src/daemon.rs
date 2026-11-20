@@ -308,7 +308,14 @@ fn probe_metadata(socket_path: &str) -> Option<DaemonMetadata> {
         if !is_daemon_listening(socket_path) {
             return None;
         }
-        send_request(socket_path, &request).ok()?
+        // The pipe client has no read timeout, so wait for it on a thread
+        // that is left behind if the daemon never answers.
+        let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+        let socket_path = socket_path.to_owned();
+        std::thread::spawn(move || {
+            let _ = reply_tx.send(send_request(&socket_path, &request));
+        });
+        reply_rx.recv_timeout(PRESENCE_REPLY_DEADLINE).ok()?.ok()?
     };
     if !response.ok {
         return None;

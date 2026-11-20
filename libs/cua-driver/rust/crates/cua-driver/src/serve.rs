@@ -2396,6 +2396,7 @@ async fn serve_claimed_socket(
 
 /// Names the descriptor of the socket lock a disclaimed relaunch inherits
 /// from the `serve` process that claimed the socket.
+#[cfg(target_os = "macos")]
 pub const INHERITED_SOCKET_LOCK_FD_ENV: &str = "CUA_DRIVER_RS_INHERITED_SOCKET_LOCK_FD";
 
 /// Take over the socket lock the launching process passed down, if the named
@@ -2411,20 +2412,25 @@ fn adopt_inherited_socket_lock(socket_path: &str) -> Option<std::fs::File> {
         return None;
     }
     let expected = std::fs::metadata(daemon_lock_path(socket_path)).ok()?;
-    // SAFETY: borrowed without closing until it proves to be the lock file,
-    // which nothing else in this process has opened yet.
-    let candidate = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(fd) });
-    let actual = candidate.metadata().ok()?;
-    if actual.dev() != expected.dev() || actual.ino() != expected.ino() {
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } != 0 {
         return None;
     }
-    let lock = std::mem::ManuallyDrop::into_inner(candidate);
+    let stat = unsafe { stat.assume_init() };
+    if stat.st_dev as u64 != expected.dev() || stat.st_ino != expected.ino() {
+        return None;
+    }
+    // Close it on exec before anything else can spawn, so tools and helpers
+    // never inherit the lock.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } != 0 {
+        return None;
+    }
+    // SAFETY: the descriptor is open on the lock file, which nothing else in
+    // this process has opened yet.
+    let lock = unsafe { std::fs::File::from_raw_fd(fd) };
     // Succeeds only while this open file already holds the lock or nobody does.
     lock.try_lock().ok()?;
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
-    if flags >= 0 {
-        unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) };
-    }
     Some(lock)
 }
 
@@ -2511,6 +2517,10 @@ pub fn run_serve_cmd(
 /// How long `stop` waits for a starting daemon to answer before it gives up.
 const STOP_STARTING_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// How long `stop` keeps looking when it finds no daemon. A `serve` process
+/// that has just started takes a moment to reach its claim on the socket.
+const STOP_ABSENT_SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
+
 #[derive(Debug, PartialEq, Eq)]
 enum StopOutcome {
     Stopped,
@@ -2524,17 +2534,19 @@ enum StopOutcome {
 fn stop_daemon(
     socket_path: &str,
     starting_wait: std::time::Duration,
+    absent_settle: std::time::Duration,
 ) -> anyhow::Result<StopOutcome> {
-    let deadline = std::time::Instant::now() + starting_wait;
+    let started = std::time::Instant::now();
     loop {
+        let waited = started.elapsed();
         match probe_presence(socket_path) {
             DaemonPresence::Serving { .. } => break,
-            DaemonPresence::Starting { .. } if std::time::Instant::now() < deadline => {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
+            DaemonPresence::Starting { .. } if waited < starting_wait => {}
             DaemonPresence::Starting { .. } => return Ok(StopOutcome::StillStarting),
+            DaemonPresence::Absent | DaemonPresence::Stale { .. } if waited < absent_settle => {}
             presence => return Ok(StopOutcome::NotRunning(presence)),
         }
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
 
     let req = DaemonRequest {
@@ -2551,7 +2563,7 @@ fn stop_daemon(
 
 /// `cua-driver stop` implementation.
 pub fn run_stop_cmd(socket_path: &str) {
-    match stop_daemon(socket_path, STOP_STARTING_WAIT) {
+    match stop_daemon(socket_path, STOP_STARTING_WAIT, STOP_ABSENT_SETTLE) {
         Ok(StopOutcome::Stopped) => wait_for_release(socket_path),
         Ok(StopOutcome::NotRunning(presence)) => {
             report_not_serving(socket_path, presence);
@@ -3026,23 +3038,24 @@ mod presence_tests {
         drop(held);
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn stop_waits_for_a_starting_daemon_and_stops_it() {
+    /// Run `stop` against a launch that claims the socket after `claim_after`
+    /// and starts serving 300 ms after `stop` began. `stop` must wait for it,
+    /// stop it, and leave nothing behind.
+    async fn stop_a_launch(tag: &str, claim_after: Duration) {
         let _guard = crate::test_runtime_lock().lock().await;
         let (_driver, sdk, _calls) = crate::probe_sdk().await;
-        let socket = unique_socket("starting");
-        // A launch that holds the socket but has not started serving yet.
+        let socket = unique_socket(tag);
+        let stop = tokio::task::spawn_blocking({
+            let socket = socket.clone();
+            move || stop_daemon(&socket, Duration::from_secs(10), super::STOP_ABSENT_SETTLE)
+        });
+        tokio::time::sleep(claim_after).await;
         let lock = claim_socket(&socket).unwrap();
         assert!(matches!(
             presence(&socket).await,
             DaemonPresence::Starting { .. }
         ));
-
-        let stop = tokio::task::spawn_blocking({
-            let socket = socket.clone();
-            move || stop_daemon(&socket, Duration::from_secs(10))
-        });
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        tokio::time::sleep(Duration::from_millis(300).saturating_sub(claim_after)).await;
         assert!(!stop.is_finished(), "stop gave up on a starting daemon");
         let server = tokio::spawn({
             let socket = socket.clone();
@@ -3057,6 +3070,16 @@ mod presence_tests {
             .unwrap();
         assert_eq!(presence(&socket).await, DaemonPresence::Absent);
         let _ = std::fs::remove_file(daemon_lock_path(&socket));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stop_waits_for_a_starting_daemon_and_stops_it() {
+        stop_a_launch("starting", Duration::ZERO).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stop_sees_a_launch_that_claims_the_socket_just_after_it_starts() {
+        stop_a_launch("claiming", Duration::from_millis(150)).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

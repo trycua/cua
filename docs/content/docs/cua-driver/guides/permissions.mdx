@@ -234,18 +234,10 @@ allow:
         amount:
           min: -20
           max: 20
-    - tool: launch_app         # macOS
+    - tool: launch_app
       constraints:
         bundle_id:
           allowed: ["com.apple.Safari", "com.google.Chrome"]
-    - tool: launch_app         # Windows
-      constraints:
-        path: { pattern: '^C:\\Windows\\System32\\notepad\.exe$' }
-        launch_path: { optional: true, allowed: [] }   # must be absent
-        urls: { optional: true, allowed: [] }
-        additional_arguments:
-          optional: true
-          items: { pattern: '^[\w.-]+\.txt$' }
 deny:
   tools:                       # checked first
     - shell_execute
@@ -262,9 +254,25 @@ the default does before relying on it: a `scope: desktop` click with no
 `delivery_mode` uses foreground input, which is why the example also limits
 `scope`. A rule passes whatever other arguments the call carries, so forbid
 any argument that overrides a constrained one with `optional: true` and
-`allowed: []`; on Windows `launch_path` takes precedence over `path`.
-`allow` and `deny` also accept a flat list of names.
+`allowed: []`. `allow` and `deny` also accept a flat list of names.
 `type_text_chars` is normalized to `type_text`.
+
+The `bundle_id` rule above is for macOS. On Windows, `launch_app` prefers
+`launch_path`, then `path`, over `bundle_id`, so a Windows policy pins `path`
+and forbids the arguments that would override it:
+
+```yaml test="config" id="yaml-config-policy-windows-launch"
+allow:
+  rules:
+    - tool: launch_app
+      constraints:
+        path: { pattern: '^C:\\Windows\\System32\\notepad\.exe$' }
+        launch_path: { optional: true, allowed: [] }   # must be absent
+        urls: { optional: true, allowed: [] }
+        additional_arguments:
+          optional: true
+          items: { pattern: '^[\w.-]+\.txt$' }
+```
 
 ```bash test="cli-shape" id="cua-driver-serve"
 CUA_DRIVER_POLICY_FILE=~/.cua-driver/policy.yaml cua-driver serve

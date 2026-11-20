@@ -37,7 +37,7 @@ use crate::ax::bindings::{
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
-use core_foundation::base::CFRelease;
+use core_foundation::base::{CFEqual, CFRelease, CFTypeRef};
 
 use super::ToolState;
 
@@ -251,14 +251,18 @@ impl Tool for SetValueTool {
         // the write may take it once focused.
         let webkit_field = ax_echo_surface && !is_chromium_popup_owner(pid);
 
-        let plan = resolve_write_plan(
+        let plan = match resolve_write_plan(
             &_mutation_lease,
             window_id,
             element_ptr,
             &value,
             ax_echo_surface,
         )
-        .await;
+        .await
+        {
+            Ok(plan) => plan,
+            Err(refusal) => return refusal,
+        };
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // AXValue writes on popups / sliders can cause reflex activations
@@ -700,11 +704,11 @@ async fn resolve_write_plan(
     element_ptr: usize,
     value: &str,
     ax_echo_surface: bool,
-) -> WritePlan {
+) -> Result<WritePlan, ToolResult> {
     if ax_echo_surface {
-        return WritePlan::Blocked(
+        return Ok(WritePlan::Blocked(
             "web content never observes an AXValue write, so there is nothing to commit".to_owned(),
-        );
+        ));
     }
     let Ok((role, subrole, advertised)) = tokio::task::spawn_blocking(move || unsafe {
         let element = element_ptr as AXUIElementRef;
@@ -716,9 +720,9 @@ async fn resolve_write_plan(
     })
     .await
     else {
-        return WritePlan::Blocked(
+        return Ok(WritePlan::Blocked(
             "the element stopped answering AX reads before the write".to_owned(),
-        );
+        ));
     };
     let plan = write_plan(&role, &subrole, &advertised, value);
     if matches!(plan, WritePlan::ValueThenKey(_) | WritePlan::Retype(_)) {
@@ -730,33 +734,43 @@ async fn resolve_write_plan(
             )
             .await
         {
-            return refused_keystroke_plan(&plan, &advertised, &refusal);
+            return refused_keystroke_plan(&plan, &advertised).ok_or(refusal);
         }
     }
-    plan
+    Ok(plan)
 }
 
-fn refused_keystroke_plan(
-    plan: &WritePlan,
-    advertised: &[String],
-    refusal: &ToolResult,
-) -> WritePlan {
+/// The write to make when the keystroke gate refused `plan`, or `None` when
+/// the refusal stands and nothing may be written.
+fn refused_keystroke_plan(plan: &WritePlan, advertised: &[String]) -> Option<WritePlan> {
     let confirms = advertised.iter().any(|action| action == "AXConfirm");
-    if matches!(plan, WritePlan::Retype(_)) && confirms {
-        return WritePlan::ValueThenConfirm;
-    }
-    WritePlan::Blocked(keystroke_refusal_reason(refusal))
+    (matches!(plan, WritePlan::Retype(_)) && confirms).then_some(WritePlan::ValueThenConfirm)
 }
 
-fn keystroke_refusal_reason(refusal: &ToolResult) -> String {
-    let detail = refusal
-        .structured_content
-        .as_ref()
-        .and_then(|structured| structured.get("reason"))
-        .and_then(serde_json::Value::as_str);
-    match detail {
-        Some(detail) => format!("the commit keystroke was refused before dispatch — {detail}"),
-        None => "the commit keystroke was refused before dispatch".to_owned(),
+/// Focus `element_ptr` and confirm it holds keyboard focus, re-applying once:
+/// AppKit can clobber an accepted `AXFocused` write with the window's
+/// remembered first responder.
+fn take_keyboard_focus(pid: i32, element_ptr: usize) -> bool {
+    for _ in 0..2 {
+        let _ = crate::input::ax_actions::focus_element(element_ptr);
+        std::thread::sleep(FOCUS_SETTLE);
+        if crate::input::ax_actions::is_element_focused(pid, element_ptr) {
+            return true;
+        }
+    }
+    false
+}
+
+/// True only when the app's focused element is readable and is another
+/// element, so the edit session on `element_ptr` is known to have ended.
+fn focus_moved_off(pid: i32, element_ptr: usize) -> bool {
+    unsafe {
+        let Some(focused) = crate::ax::bindings::focused_element_of_pid(pid) else {
+            return false;
+        };
+        let same = CFEqual(focused as CFTypeRef, element_ptr as CFTypeRef) != 0;
+        CFRelease(focused as CFTypeRef);
+        !same
     }
 }
 
@@ -784,7 +798,7 @@ fn commit_written_value(
             judge_commit(dispatched, survived, false, "AXConfirm")
         }
         WritePlan::ValueThenKey(key) => {
-            let focused = crate::input::ax_actions::focus_element(element as usize).is_ok();
+            let focused = take_keyboard_focus(pid, element as usize);
             let dispatched = focused && crate::input::keyboard::press_key(pid, key, &[]).is_ok();
             let survived = dispatched && {
                 std::thread::sleep(COMMIT_SETTLE);
@@ -1207,14 +1221,7 @@ fn retype_blocking(
         );
     };
 
-    crate::input::ax_actions::focus_element(element_ptr)
-        .map_err(|error| anyhow::anyhow!("could not focus [{element_index}] {role}: {error}"))?;
-    std::thread::sleep(FOCUS_SETTLE);
-    if !crate::input::ax_actions::is_element_focused(pid, element_ptr) {
-        let _ = crate::input::ax_actions::focus_element(element_ptr);
-        std::thread::sleep(FOCUS_SETTLE);
-    }
-    if !crate::input::ax_actions::is_element_focused(pid, element_ptr) {
+    if !take_keyboard_focus(pid, element_ptr) {
         anyhow::bail!(
             "[{element_index}] {role} did not take keyboard focus, so typed keystrokes cannot \
              be proven to reach it; click the control first, or retry with \
@@ -1252,7 +1259,7 @@ fn retype_blocking(
         let after = unsafe { copy_string_attr(element, "AXValue") };
         (
             value_matches(after.as_deref(), value, false),
-            !crate::input::ax_actions::is_element_focused(pid, element_ptr),
+            focus_moved_off(pid, element_ptr),
         )
     } else {
         (false, false)
@@ -1970,7 +1977,7 @@ mod tests {
         apply_surface_trust, apply_verification_label, calc_cell_record, classify_write,
         commit_written_value, file_name_needs_rename, is_file_name_cell, is_get_info_name_field,
         judge_commit, not_applied_result, refused_keystroke_plan, write_not_applied, write_plan,
-        FieldSettle, SetValueOutcome, ToolResult, WritePlan, FIELD_QUIET, GET_INFO_RENAME_ROUTE,
+        FieldSettle, SetValueOutcome, WritePlan, FIELD_QUIET, GET_INFO_RENAME_ROUTE,
         LIST_RENAME_ROUTE,
     };
     use cua_driver_contract::ActionCommit;
@@ -2285,27 +2292,18 @@ mod tests {
 
     #[test]
     fn a_refused_retype_falls_back_to_an_advertised_confirm() {
-        let refusal = ToolResult::error("refused".to_owned());
         assert_eq!(
             refused_keystroke_plan(
                 &WritePlan::Retype("tab"),
                 &["AXShowMenu".to_owned(), "AXConfirm".to_owned()],
-                &refusal,
             ),
-            WritePlan::ValueThenConfirm
+            Some(WritePlan::ValueThenConfirm)
         );
-        assert!(matches!(
-            refused_keystroke_plan(&WritePlan::Retype("tab"), &[], &refusal),
-            WritePlan::Blocked(_)
-        ));
-        assert!(matches!(
-            refused_keystroke_plan(
-                &WritePlan::ValueThenKey("tab"),
-                &["AXConfirm".to_owned()],
-                &refusal,
-            ),
-            WritePlan::Blocked(_)
-        ));
+        assert_eq!(refused_keystroke_plan(&WritePlan::Retype("tab"), &[]), None);
+        assert_eq!(
+            refused_keystroke_plan(&WritePlan::ValueThenKey("tab"), &["AXConfirm".to_owned()]),
+            None
+        );
     }
 
     #[test]

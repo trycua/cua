@@ -115,6 +115,10 @@ impl Tool for PressKeyTool {
             Err(e) => return e,
         };
         let (elem_idx, hwnd_opt, admitted) = resolved.into_parts(args.opt_u64("window_id"));
+        if let Some(refusal) = super::impl_::refuse_if_unanswered(pid, &admitted, "press_key").await
+        {
+            return refusal;
+        }
         let delivery = DeliveryMode::from_args(&args);
         // Swift requires window_id when element_index is supplied — ports the
         // same validation.

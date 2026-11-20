@@ -33,7 +33,11 @@ fn canonical_core_contracts_match_live_registry() {
             .iter()
             .find(|entry| entry["name"] == contract.name)
             .unwrap_or_else(|| panic!("{} missing from live registry", contract.name));
-        assert_eq!(entry["description"], contract.description, "description");
+        assert_eq!(
+            entry["description"],
+            cua_driver_core::tool::lead_on_own_line(&contract.description),
+            "description"
+        );
         // Dispatch admits `session` on every closed runtime schema.
         let mut expected_schema = contract.input_schema.clone();
         if expected_schema["additionalProperties"] == false {

@@ -971,3 +971,31 @@ fn a_long_recovery_call_is_kept_whole_when_it_fits_the_budget() {
     assert!(summary.chars().count() <= super::SUMMARY_TEXT_LIMIT);
     assert!(summary.ends_with(&look), "{summary}");
 }
+
+#[test]
+fn a_recovery_call_that_fits_alone_is_kept_without_its_marker() {
+    for session_len in [200, 215, 216, 217] {
+        let (value, look) = unconfirmed_value(
+            "Clicked element [2] with a real pointer click",
+            json!({"tool": "get_window_state", "arguments": {
+                "pid": 42,
+                "session": "s".repeat(session_len),
+                "since": "latest",
+                "window_id": 7,
+            }}),
+            "[2] button \"Apply\"",
+        );
+        let summary = super::summarize(&value);
+        assert!(
+            summary.chars().count() <= super::SUMMARY_TEXT_LIMIT,
+            "{session_len}"
+        );
+        assert!(summary.ends_with(&look), "{session_len}: {summary}");
+        if session_len == 200 {
+            assert!(
+                summary.starts_with("on [2] button"),
+                "{session_len}: {summary}"
+            );
+        }
+    }
+}

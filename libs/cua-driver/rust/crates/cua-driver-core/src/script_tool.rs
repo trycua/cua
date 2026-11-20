@@ -1082,19 +1082,28 @@ fn render(
 }
 
 /// Like [`clip`], but an unconfirmed headline's closing `look` tail
-/// ([`crate::verdict::look_tail`]) is kept whole and the cut falls before it,
-/// whenever it fits in the budget.
+/// ([`crate::verdict::look_tail`]) is kept and the cut falls before it. When
+/// the whole tail does not fit, its `Look first: <call>` alone is kept.
 fn clip_keeping_look(text: &str, look: Option<&str>, max: usize) -> String {
     if text.chars().count() <= max {
         return text.to_owned();
     }
-    match look.filter(|look| look.chars().count() < max) {
-        Some(look) if text.ends_with(look) => {
-            let what = &text[..text.len() - look.len()];
-            let room = max.saturating_sub(look.chars().count());
-            format!("{}{look}", clip(what, room))
+    let Some(look) = look.filter(|look| text.ends_with(look)) else {
+        return clip(text, max);
+    };
+    let call = &look[look.find(" Look first: ").unwrap_or(0)..];
+    for keep in [look, call] {
+        let kept = keep.chars().count();
+        if kept < max {
+            let what = &text[..text.len() - keep.len()];
+            return format!("{}{keep}", clip(what, max - kept));
         }
-        _ => clip(text, max),
+    }
+    let call = call.trim_start();
+    if call.chars().count() <= max {
+        call.to_owned()
+    } else {
+        clip(text, max)
     }
 }
 

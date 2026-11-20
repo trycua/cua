@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Per-call activity hook: the platform shell learns that an agent is
 //! working each time the registry dispatches a tool.
 //!

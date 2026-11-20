@@ -277,23 +277,39 @@ impl DriverService for DriverServiceImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cua_driver_core::session::{is_session_ended, touch_session};
+    use cua_driver_core::session::{
+        begin_session_dispatch, is_session_ended, SessionClientKind, SessionTransport,
+    };
+
+    fn use_session(session_id: &str) {
+        drop(
+            begin_session_dispatch(
+                session_id,
+                None,
+                session_id,
+                false,
+                SessionTransport::Daemon,
+                SessionClientKind::Direct,
+            )
+            .unwrap(),
+        );
+    }
 
     #[tokio::test]
     async fn the_sweep_ends_a_session_left_idle_past_the_ttl() {
         let idle = format!("spacesd-sweep-idle-{}", std::process::id());
         let busy = format!("spacesd-sweep-busy-{}", std::process::id());
-        touch_session(&idle);
-        touch_session(&busy);
+        use_session(&idle);
+        use_session(&busy);
         let sweep = spawn_idle_sweep(Duration::from_millis(20), Duration::from_millis(300));
         // `busy` is used again and again; `idle` is left alone.
         for _ in 0..25 {
             tokio::time::sleep(Duration::from_millis(20)).await;
-            touch_session(&busy);
+            use_session(&busy);
         }
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while !is_session_ended(&idle) && std::time::Instant::now() < deadline {
-            touch_session(&busy);
+            use_session(&busy);
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         sweep.abort();

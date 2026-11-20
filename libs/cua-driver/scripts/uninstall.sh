@@ -24,6 +24,8 @@
 #     - ~/.local/bin/cua-driver symlink (only when it resolves to a
 #       cua-driver path — a Swift-driver symlink is left in place)
 #     - versioned packages/current symlink under ~/.cua-driver/
+#     - KWin desktop entry ai.cua.driver.desktop (only when it names
+#       this install)
 #     - telemetry id, preference, and registration markers are preserved by
 #       default so a reinstall remains the same pseudonymous installation
 #     - ~/.config/systemd/user/cua-driver.service (if --autostart
@@ -975,6 +977,18 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
         log "$USER_BIN_LINK exists but is not a symlink (skipping; refusing to clobber a real file)"
     else
         log "no CLI symlink at $USER_BIN_LINK (skipping)"
+    fi
+
+    # --- KWin desktop entry ---
+    # `cua-driver kwin-capture on` writes it. Only an entry naming this install goes.
+    KWIN_DESKTOP_ENTRY="${XDG_DATA_HOME:-$HOME/.local/share}/applications/ai.cua.driver.desktop"
+    if [[ -f "$KWIN_DESKTOP_ENTRY" ]]; then
+        case "$(sed -n 's/^Exec="\(.*\)" serve$/\1/p' "$KWIN_DESKTOP_ENTRY")" in
+            "$PACKAGES_DIR"/current/cua-driver|"$PACKAGES_DIR"/releases/*/cua-driver)
+                rm -f "$KWIN_DESKTOP_ENTRY"
+                log "removed $KWIN_DESKTOP_ENTRY"
+                ;;
+        esac
     fi
 
     release_supervisor remove

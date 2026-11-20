@@ -144,6 +144,10 @@ export interface FirstRunInput {
   agentUsedAt: string | null;
   signedIn: boolean;
   signingIn: boolean;
+  /** While signing in by a code: the code to enter (null: the browser flow). */
+  signInCode?: string | null;
+  /** The last sign-in didn't finish, for this reason (null: it did, or it is running). */
+  signInFailure?: import("./host").SignInFailure | null;
   host: FirstRunHost | null;
   hostSettingUp: boolean;
   offers: FirstRunOffer[];

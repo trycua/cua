@@ -35,11 +35,9 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: shellcheck
         run: shellcheck .github/actions/cua-sandbox/cua-sandbox.sh
+      - name: Install actionlint
+        uses: ./.github/actions/install-actionlint
       - name: actionlint on the docs examples
         run: |
           set -euo pipefail
-          VERSION=1.7.12
-          curl -fsSL -o actionlint.tgz \
-            "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz"
-          tar xzf actionlint.tgz actionlint
-          python3 .github/actions/cua-sandbox/lint-docs-yaml.py ./actionlint
+          python3 .github/actions/cua-sandbox/lint-docs-yaml.py actionlint

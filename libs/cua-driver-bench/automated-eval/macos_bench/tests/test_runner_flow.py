@@ -890,6 +890,27 @@ class ExecuteTrialTest(unittest.TestCase):
             self.assertEqual(err.reason, "AUTH")
             self.assertEqual(len(pauses), 1)
 
+    def test_resumed_trial_numbers_after_recorded_attempts_and_keeps_its_budget(self) -> None:
+        # A run killed after one recorded mcp_start retry: the resume must not reuse a1 or grant a second retry.
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(tmp)
+            core.append_row(ctx.results_path, attempt_row(1, "mcp_start"))
+            seen: list[int] = []
+
+            def fake_attempt(_ctx: rb.Ctx, _entry: dict, attempt: int) -> dict:
+                seen.append(attempt)
+                return attempt_row(attempt, "mcp_start")
+
+            with (
+                mock.patch.object(rb, "run_attempt", fake_attempt),
+                mock.patch.object(rb, "log_pause"),
+            ):
+                row = rb.execute_trial(ctx, dict(ENTRY))
+            self.assertEqual(seen, [2])
+            self.assertTrue(row["final"] and row["excluded"])
+            saved = core.load_rows(ctx.results_path)
+            self.assertEqual([(r["attempt"], r["final"]) for r in saved], [(1, False), (2, True)])
+
     def test_agent_failures_are_not_retried(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ctx = make_ctx(tmp)
@@ -1016,6 +1037,131 @@ class FinalizeTest(unittest.TestCase):
             self.assertEqual(rb.finalize(ctx)["blocks_complete"], 1)
             self.assertFalse(any(r["block_incomplete"] for r in core.load_rows(ctx.results_path)))
 
+    def test_preflight_never_runs_in_a_live_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(tmp)
+            held = core.lock_run(ctx.run_dir)
+            args = argparse.Namespace(**vars(ctx.args), command="preflight", run_id="run")
+            with (
+                mock.patch.object(rb, "make_ctx", return_value=ctx),
+                mock.patch.object(rb, "setup_arms") as setup,
+            ):
+                self.assertEqual(rb.cmd_preflight(args), 2)
+            setup.assert_not_called()
+            held.close()
+
+    def test_finalize_waits_for_a_live_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(tmp)
+            held = core.lock_run(ctx.run_dir)
+            args = argparse.Namespace(**vars(ctx.args), command="finalize")
+            with mock.patch.object(rb, "make_ctx", return_value=ctx):
+                self.assertEqual(rb.cmd_finalize(args), 5)
+                held.close()
+                self.assertEqual(rb.cmd_finalize(args), 0)
+
+    def test_resume_refuses_a_row_missing_an_identity_key_even_when_none_is_expected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(tmp, max_turns=None, timeout_s=None, effort="high")
+            ctx.tasks = {"MB-01": mock.Mock(timeout_s=240, spec={})}
+            entry = core.flat_entries(ctx.blocks())[0]
+            row = {"trial_id": entry["trial_id"], **rb.trial_identity(ctx, entry)}
+            self.assertIsNone(row["condition"])  # not a v2 run
+            core.append_row(ctx.results_path, row)
+            self.assertEqual(rb.resume_conflicts(ctx), [])
+            del row["condition"]
+            ctx.results_path.write_text(json.dumps(row) + "\n")
+            self.assertEqual(len(rb.resume_conflicts(ctx)), 1)
+
+    def test_recorder_start_requeues_video_whose_compression_was_cut_short(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(tmp, no_recorder=False)
+            records = {"T1": None, "T2": {}, "T3": {"error": "ffmpeg failed; raw kept"}}
+            for trial, record in records.items():
+                attempt = ctx.run_dir / "trials" / trial / "a1"
+                (attempt / "rec").mkdir(parents=True)
+                (attempt / "rec" / "recording.mp4").write_bytes(b"raw")
+                if record is not None:
+                    (attempt / "video").mkdir()
+                    (attempt / "video" / "video.json").write_text(json.dumps(record))
+                core.append_row(ctx.results_path, {"trial_id": trial, "attempt": 1, "video": "x"})
+            queue = mock.Mock()
+            with (
+                mock.patch.object(rb.ca, "start_cua_daemon"),
+                mock.patch.object(rb.rec, "CuaRecorder"),
+                mock.patch.object(rb.rec, "CompressQueue", return_value=queue),
+            ):
+                rb.start_recorder(ctx)
+            want = [ctx.run_dir / "trials" / t / "a1" for t in ("T1", "T3")]
+            self.assertEqual(
+                [c.args for c in queue.submit.call_args_list],
+                [(a / "rec" / "recording.mp4", a / "video") for a in want],
+            )
+
+    def test_resume_refuses_a_different_driver_build(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(tmp, max_turns=None, timeout_s=None, effort="high")
+            ctx.tasks = {"MB-01": mock.Mock(timeout_s=240, spec={})}
+            driver, skills = Path(tmp) / "cua-driver", Path(tmp) / "skills"
+            driver.write_bytes(b"build 1")
+            skills.mkdir()
+            (skills / "SKILL.md").write_text("skill")
+            build = rb.ca.CUA_BUILDS["cc-cua-driver"]
+            entry = next(e for e in core.flat_entries(ctx.blocks()) if e["arm"] == "cc-cua-driver")
+            row = {
+                "trial_id": entry["trial_id"],
+                **rb.trial_identity(ctx, entry),
+                "cua_driver_sha256": rb.ca.sha256_file(driver),
+                "skills_tree_sha256": rb.ca.sha256_tree(skills),
+            }
+            core.append_row(ctx.results_path, row)
+            same = rb.replace(build, executable=driver, skills=skills)
+            with mock.patch.dict(rb.ca.CUA_BUILDS, {"cc-cua-driver": same}):
+                self.assertEqual(rb.resume_conflicts(ctx), [])
+                # cx-cua-driver rows record no skill tree: only what a row recorded is compared
+                ctx.results_path.write_text(json.dumps({**row, "skills_tree_sha256": None}) + "\n")
+                (skills / "SKILL.md").write_text("another skill")
+                self.assertEqual(rb.resume_conflicts(ctx), [])
+                other = next(
+                    e for e in core.flat_entries(ctx.blocks()) if e["arm"] == "cc-codex-cu"
+                )
+                recorder_row = {"trial_id": other["trial_id"], **rb.trial_identity(ctx, other)}
+                recorder_row["cua_driver_sha256"] = row["cua_driver_sha256"]  # the recorder build
+                core.append_row(ctx.results_path, recorder_row)
+                self.assertEqual(rb.resume_conflicts(ctx), [])
+                ctx.results_path.write_text(json.dumps(row) + "\n")
+                (skills / "SKILL.md").write_text("skill")
+                self.assertEqual(rb.resume_conflicts(ctx), [])
+                driver.write_bytes(b"build 2")
+                self.assertEqual(
+                    [c.split(":")[0] for c in rb.resume_conflicts(ctx)],
+                    [f"{entry['trial_id']} cua_driver_sha256"],
+                )
+
+    def test_compression_keeps_the_raw_video_until_its_record_is_written(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raw, dest = Path(tmp) / "recording.mp4", Path(tmp) / "video"
+            raw.write_bytes(b"raw")
+            dest.mkdir()
+            for name in ("video.mp4", "video-720p.mp4"):
+                (dest / name).write_bytes(b"h264")
+            seen: list[bool] = []
+
+            def write(path: Path, text: str) -> None:
+                seen.append(raw.exists())  # the raw file is still there while video.json is written
+                path.write_text(text)
+
+            queue = rb.rec.CompressQueue()
+            with (
+                mock.patch.object(rb.rec, "compress_video", return_value={"raw_deleted": True}),
+                mock.patch.object(rb.rec, "write_atomic", write),
+            ):
+                queue.submit(raw, dest)
+                queue.join()
+            queue.close()
+            self.assertEqual(seen, [True])
+            self.assertFalse(raw.exists())
+
     def test_resume_skips_final_ids_only(self) -> None:
         rows = [
             {"trial_id": "a", "final": True},
@@ -1110,3 +1256,31 @@ class MiscTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ParkPointerFlowTests(unittest.TestCase):
+    def test_failed_park_raises_and_success_returns_record(self):
+        point = rb.PARK_POINT
+        ok = mock.Mock(stdout=json.dumps({"x": point[0], "y": point[1]}))
+        with (
+            mock.patch.object(rb.desktop, "detect_platform", return_value="macos"),
+            mock.patch.object(rb.ca, "cua_cli", return_value=ok),
+        ):
+            record = rb.park_pointer(mock.Mock())
+        self.assertTrue(record["ok"])
+        self.assertEqual(record["read_back"], [float(point[0]), float(point[1])])
+        off = mock.Mock(stdout=json.dumps({"x": 162, "y": 158}))
+        with (
+            mock.patch.object(rb.desktop, "detect_platform", return_value="macos"),
+            mock.patch.object(rb.ca, "cua_cli", return_value=off),
+        ):
+            with self.assertRaises(rb.ParkFailed):
+                rb.park_pointer(mock.Mock())
+
+    def test_unsupported_platform_fails_instead_of_faking(self):
+        with (
+            mock.patch.object(rb.desktop, "detect_platform", return_value="linux"),
+            mock.patch.object(rb.shutil, "which", return_value=None),
+        ):
+            with self.assertRaises(rb.ParkFailed):
+                rb.park_pointer(mock.Mock())

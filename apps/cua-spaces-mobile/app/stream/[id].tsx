@@ -39,7 +39,8 @@ function Fresh({ children }: { children: React.ReactNode }) {
   const backend = useBackend();
   const required = usePrefs((p) => p.requireUnlock) && !backend.capabilities.sample;
   const unlockedAt = useLock((s) => s.unlockedAt);
-  if (needsUnlock({ required, unlockedAt, now: Date.now(), maxAgeMs: VIEWER_FRESH_MS })) return <LockScreen title="Unlock to see this desktop" reason="Open the desktop of a computer" />;
+  if (needsUnlock({ required, unlockedAt, now: Date.now(), maxAgeMs: VIEWER_FRESH_MS }))
+    return <LockScreen title="Unlock to see this desktop" reason="Open the desktop of a computer" />;
   return <>{children}</>;
 }
 

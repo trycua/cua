@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Authenticated lifecycle for optional Driver extensions.
 //!
 //! Normal installs consume a target-specific catalog signed by a pinned
@@ -31,7 +34,7 @@ use cua_driver_core::perception_client::containment::{
     run_contained_hook, ContainmentLimits, HookOutcome,
 };
 use cua_driver_core::perception_client::{
-    PerceptionClient, PerceptionClientResolver, PerceptionWorkerConfig,
+    PerceptionClient, PerceptionClientResolver, PerceptionWorkerConfig, ResolutionDeferred,
 };
 use cua_driver_core::protocol::ToolResult;
 use cua_driver_core::tool::{Tool, ToolDef, ToolRegistry};
@@ -608,6 +611,8 @@ fn ensure_private_directory_path(path: &Path) -> Result<Dir> {
 }
 
 fn sync_cap_dir(dir: &Dir) -> Result<()> {
+    #[cfg(not(unix))]
+    let _ = dir;
     #[cfg(unix)]
     {
         let mut options = CapOpenOptions::new();
@@ -1064,17 +1069,23 @@ fn extension_root() -> Result<PathBuf> {
 }
 
 /// Resolve the optional perception worker through the same active-pointer and
-/// installed-payload verification used by extension lifecycle commands.
-fn perception_client_in(store: &ExtensionStore) -> PerceptionClient {
+/// installed-payload verification used by extension lifecycle commands. A lock
+/// held by another command defers resolution, since that command may finish
+/// without changing anything the fingerprint observes.
+fn perception_client_in(store: &ExtensionStore) -> Result<PerceptionClient, ResolutionDeferred> {
     match perception_worker_config_in(store) {
-        Ok(Some(config)) => PerceptionClient::new(config).unwrap_or_else(|error| {
+        Ok(Some(config)) => Ok(PerceptionClient::new(config).unwrap_or_else(|error| {
             tracing::warn!("installed cua-perception configuration is unusable: {error:?}");
             PerceptionClient::unavailable()
-        }),
-        Ok(None) => PerceptionClient::unavailable(),
+        })),
+        Ok(None) => Ok(PerceptionClient::unavailable()),
+        Err(error) if is_lock_contention(&error) => {
+            tracing::warn!("installed cua-perception extension is busy: {error:#}");
+            Err(ResolutionDeferred)
+        }
         Err(error) => {
             tracing::warn!("installed cua-perception extension is unavailable: {error:#}");
-            PerceptionClient::unavailable()
+            Ok(PerceptionClient::unavailable())
         }
     }
 }
@@ -1108,12 +1119,12 @@ impl PerceptionClientResolver for InstalledPerceptionResolver {
         }
     }
 
-    fn resolve(&self) -> PerceptionClient {
+    fn resolve(&self) -> Result<PerceptionClient, ResolutionDeferred> {
         match self.store() {
             Ok(store) => perception_client_in(&store),
             Err(error) => {
                 tracing::warn!("installed cua-perception extension is unavailable: {error:#}");
-                PerceptionClient::unavailable()
+                Ok(PerceptionClient::unavailable())
             }
         }
     }
@@ -1767,18 +1778,18 @@ fn initial_publisher_trust() -> PublisherTrust {
     }
 }
 
+/// A lone backup means a commit stopped between its two renames; it is the
+/// committed trust that `recover_publisher_trust_locked` would restore.
 fn load_publisher_trust_at(root: &Dir) -> Result<PublisherTrust> {
-    let active = private_regular_file_or_missing_at(root, TRUST_NAME)?;
-    let backup = private_regular_file_or_missing_at(root, TRUST_BACKUP_NAME)?;
-    if !active && backup {
-        bail!("publisher trust update is interrupted; run an extension mutation to recover it");
-    }
-    if !active {
+    let name = if private_regular_file_or_missing_at(root, TRUST_NAME)? {
+        TRUST_NAME
+    } else if private_regular_file_or_missing_at(root, TRUST_BACKUP_NAME)? {
+        TRUST_BACKUP_NAME
+    } else {
         return Ok(initial_publisher_trust());
-    }
-    let trust: PublisherTrust =
-        serde_json::from_slice(&read_small_file_at(root, Path::new(TRUST_NAME))?)
-            .context("parse publisher trust state")?;
+    };
+    let trust: PublisherTrust = serde_json::from_slice(&read_small_file_at(root, Path::new(name))?)
+        .context("parse publisher trust state")?;
     validate_publisher_trust(&trust)?;
     Ok(trust)
 }
@@ -2053,14 +2064,6 @@ impl ExtensionStore {
         }
         let root = open_directory_path_nofollow(&self.root)?;
         verify_cap_directory_permissions_portable(&root)?;
-        let active = private_regular_file_or_missing_at(&root, TRUST_NAME)?;
-        let backup = private_regular_file_or_missing_at(&root, TRUST_BACKUP_NAME)?;
-        if !active && backup {
-            bail!("publisher trust update is interrupted; run an extension mutation to recover it");
-        }
-        if !active {
-            return Ok(initial_publisher_trust());
-        }
         load_publisher_trust_at(&root)
     }
 
@@ -2463,42 +2466,50 @@ impl ExtensionStore {
         let versions_handle = ensure_private_subdirectory(&extension_handle, "versions")?;
         let staging_parent = self.root.join(".staging");
         let staging_parent_handle = ensure_private_subdirectory(&lock.root, ".staging")?;
+        sweep_orphaned_staging(&staging_parent_handle, entry.id);
         let staging = staging_parent.join(unique_name(entry.id));
         let staging_name = staging.file_name().expect("generated staging name");
         create_private_subdirectory(&staging_parent_handle, staging_name)?;
-        let staging_handle = staging_parent_handle.open_dir_nofollow(staging_name)?;
-        let inspected = match inspect_archive(&source.archive, entry, &staging_handle) {
-            Ok(inspected) => inspected,
+        let prepared = (|| -> Result<_> {
+            let staging_handle = staging_parent_handle.open_dir_nofollow(staging_name)?;
+            let inspected = inspect_archive(&source.archive, entry, &staging_handle)?;
+            let version = Version::parse(&inspected.manifest.version)
+                .context("manifest version is not valid semantic versioning")?;
+            if let Some(active) = &active {
+                let current = Version::parse(&active.version)?;
+                if version < current {
+                    bail!("update version {version} must be newer than active version {current}");
+                }
+            }
+            validate_source_metadata(&inspected, source)?;
+            let version_text = version.to_string();
+            let existing = match versions_handle.open_dir_nofollow(&version_text) {
+                Ok(existing) => {
+                    verify_cap_directory_permissions_portable(&existing)?;
+                    Some(existing)
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "inspect existing extension version {}",
+                            versions.join(&version_text).display()
+                        )
+                    })
+                }
+            };
+            Ok((staging_handle, inspected, version_text, existing))
+        })();
+        let (staging_handle, inspected, version_text, existing) = match prepared {
+            Ok(prepared) => prepared,
             Err(error) => {
-                drop(staging_handle);
                 remove_cap_subdirectory(&staging_parent_handle, staging_name)?;
                 return Err(error);
             }
         };
-        let version = match Version::parse(&inspected.manifest.version)
-            .context("manifest version is not valid semantic versioning")
-        {
-            Ok(version) => version,
-            Err(error) => {
-                drop(staging_handle);
-                remove_cap_subdirectory(&staging_parent_handle, staging_name)?;
-                return Err(error);
-            }
-        };
-        let version_text = version.to_string();
-        if let Some(active) = &active {
-            let current = Version::parse(&active.version)?;
-            if version < current {
-                drop(staging_handle);
-                remove_cap_subdirectory(&staging_parent_handle, staging_name)?;
-                bail!("update version {version} must be newer than active version {current}");
-            }
-        }
-        validate_source_metadata(&inspected, source)?;
         let destination = versions.join(&version_text);
-        match versions_handle.open_dir_nofollow(&version_text) {
-            Ok(existing) => {
-                verify_cap_directory_permissions_portable(&existing)?;
+        match existing {
+            Some(existing) => {
                 let verified =
                     verify_installed_version_at(&existing, entry, Some(&inspected.manifest_bytes));
                 drop(staging_handle);
@@ -2516,7 +2527,7 @@ impl ExtensionStore {
                 )?;
                 cleanup?;
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            None => {
                 let mut placed = false;
                 let staged = (|| -> Result<()> {
                     // Record and fully verify the staged version before any
@@ -2580,14 +2591,6 @@ impl ExtensionStore {
                     }
                 }
                 staged?;
-            }
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!(
-                        "inspect existing extension version {}",
-                        destination.display()
-                    )
-                })
             }
         }
 
@@ -3459,14 +3462,14 @@ fn verify_installed_version_for_startup(
     #[cfg(windows)]
     {
         let started = Instant::now();
-        return converge_windows_startup_verification_with(
+        converge_windows_startup_verification_with(
             WINDOWS_ACL_CONVERGENCE_ATTEMPTS,
             WINDOWS_ACL_CONVERGENCE_RETRY_WINDOW,
             || started.elapsed(),
             std::thread::sleep,
             || windows_harden_private_tree(root),
             || verify_installed_version_for_startup_at(root, entry),
-        );
+        )
     }
     #[cfg(not(windows))]
     verify_installed_version_for_startup_at(root, entry)
@@ -4040,6 +4043,40 @@ fn verify_private_cap_file_permissions(_file: &cap_std::fs::File, _path: &str) -
     Ok(())
 }
 
+/// Removes `<id>-<pid>-<counter>` staging directories (see `unique_name`) left
+/// by a dead installer. The caller holds the extension lock, so no live
+/// installer of `id` owns a directory from another process.
+fn sweep_orphaned_staging(parent: &Dir, id: &str) {
+    let digits = |text: &str| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit());
+    let children = match parent.entries() {
+        Ok(children) => children,
+        Err(error) => {
+            tracing::warn!("could not list extension staging: {error}");
+            return;
+        }
+    };
+    for child in children {
+        let name = match child {
+            Ok(child) => child.file_name(),
+            Err(error) => {
+                tracing::warn!("could not list extension staging: {error}");
+                continue;
+            }
+        };
+        let orphaned = name
+            .to_str()
+            .and_then(|name| name.strip_prefix(id)?.strip_prefix('-')?.split_once('-'))
+            .is_some_and(|(pid, counter)| {
+                digits(pid) && digits(counter) && pid != std::process::id().to_string()
+            });
+        if orphaned {
+            if let Err(error) = remove_cap_subdirectory(parent, &name) {
+                tracing::warn!("could not remove orphaned extension staging {name:?}: {error:#}");
+            }
+        }
+    }
+}
+
 fn remove_cap_subdirectory(parent: &Dir, name: &std::ffi::OsStr) -> Result<()> {
     let opened = match parent.open_dir_nofollow(name) {
         Ok(opened) => opened,
@@ -4347,6 +4384,20 @@ fn open_lock_file_at(dir: &Dir, name: &str) -> Result<fs::File> {
     }
 }
 
+fn is_contended(cause: &std::io::Error) -> bool {
+    cause.kind() == std::io::ErrorKind::WouldBlock
+        || cause.raw_os_error() == fs2::lock_contended_error().raw_os_error()
+}
+
+/// True when `error` came from another command holding an extension lock.
+fn is_lock_contention(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(is_contended)
+    })
+}
+
 fn acquire_extension_lock_with(
     retry_window: Duration,
     mut elapsed: impl FnMut() -> Duration,
@@ -4356,10 +4407,7 @@ fn acquire_extension_lock_with(
     loop {
         match try_lock() {
             Ok(()) => return Ok(()),
-            Err(cause)
-                if cause.kind() == std::io::ErrorKind::WouldBlock
-                    || cause.raw_os_error() == fs2::lock_contended_error().raw_os_error() =>
-            {
+            Err(cause) if is_contended(&cause) => {
                 if elapsed() >= retry_window {
                     return Err(cause);
                 }
@@ -4385,12 +4433,9 @@ fn acquire_windows_acl_lease_with(
     loop {
         match try_lock() {
             Ok(()) => return Ok(()),
-            Err(cause)
-                if cause.kind() == std::io::ErrorKind::WouldBlock
-                    || cause.raw_os_error() == fs2::lock_contended_error().raw_os_error() =>
-            {
+            Err(cause) if is_contended(&cause) => {
                 if elapsed() >= retry_window {
-                    bail!("timed out waiting for the Windows ACL lease");
+                    return Err(cause).context("timed out waiting for the Windows ACL lease");
                 }
                 sleep(WINDOWS_ACL_LEASE_RETRY_INTERVAL);
             }
@@ -5752,6 +5797,40 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn live_perception_client_retries_after_lock_contention() {
+        use cua_driver_core::perception_client::PerceptionClientHandle;
+
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("extensions");
+        let store = ExtensionStore::new(root.clone());
+        let runtime_name = if cfg!(target_os = "windows") {
+            "onnxruntime.dll"
+        } else if cfg!(target_os = "macos") {
+            "libonnxruntime.dylib"
+        } else {
+            "libonnxruntime.so"
+        };
+        let archive = perception_fixture_archive(temp.path(), "1.0.0", runtime_name);
+        store
+            .install_archive(registry_entry(PERCEPTION_ID).unwrap(), &archive)
+            .unwrap();
+        let handle =
+            PerceptionClientHandle::live(std::sync::Arc::new(InstalledPerceptionResolver {
+                root: Some(root),
+            }));
+
+        // Another command holds the lock and exits without changing anything
+        // the fingerprint observes.
+        let lock = store.lock(PERCEPTION_ID).unwrap();
+        assert!(!handle.current().await.is_available());
+        drop(lock);
+        assert!(
+            handle.current().await.is_available(),
+            "a busy lock must not leave the running Driver unavailable"
+        );
+    }
+
     #[test]
     fn absent_perception_extension_has_no_worker_config() {
         let temp = TempDir::new().unwrap();
@@ -6048,6 +6127,7 @@ mod tests {
     }
 
     /// A publisher-verifiable extension archive and its signed catalog.
+    #[cfg(any(unix, feature = "review-trust-root"))]
     fn signed_fixture(
         directory: &Path,
         pair: &ring::signature::Ed25519KeyPair,
@@ -6059,9 +6139,31 @@ mod tests {
         let notice = b"notice";
         let source = b"source";
         let model_license = b"model license";
+        let runtime_name = if cfg!(target_os = "macos") {
+            "libonnxruntime.dylib"
+        } else {
+            "libonnxruntime.so"
+        };
+        let runtime_path = format!("runtime/{runtime_name}");
+        let contract = serde_json::to_vec(&serde_json::json!({
+            "$schema": "runtime-contract.schema.json",
+            "schemaVersion": 1,
+            "target": current_target().unwrap(),
+            "protocolVersion": 1,
+            "worker": {"name": "cua-perception", "sha256": hex_sha256(worker)},
+            "runtime": {"name": runtime_name, "sha256": hex_sha256(model)},
+            "modelManifest": {"name": "model-manifest.json", "sha256": hex_sha256(model)},
+            "models": [{"name": "parser.bin", "role": "icon-detect", "sha256": hex_sha256(model)}],
+            "dictionary": {"name": "parser.bin", "role": "ocr-dictionary", "sha256": hex_sha256(model)},
+            "rejectMismatch": true
+        }))
+        .unwrap();
         let bindings = [
             ("bin/cua-perception", worker.as_slice(), true),
             ("models/parser.bin", model.as_slice(), false),
+            ("models/model-manifest.json", model.as_slice(), false),
+            (runtime_path.as_str(), model.as_slice(), false),
+            (PERCEPTION_RUNTIME_CONTRACT, contract.as_slice(), false),
             ("LICENSES/NOTICE.txt", notice.as_slice(), false),
             ("LICENSES/model.txt", model_license.as_slice(), false),
             ("SOURCE/source.txt", source.as_slice(), false),
@@ -6313,6 +6415,93 @@ mod tests {
         assert_eq!(
             fs::read_dir(store.root.join(".staging")).unwrap().count(),
             0
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_sweeps_staging_left_by_a_dead_installer() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let entry = registry_entry("cua-perception").unwrap();
+        let staging = store.root.join(".staging");
+        let mut planted = Vec::new();
+        for name in [
+            "cua-perception-99999-0",
+            "other-99999-0",
+            "cua-perception-x",
+            "cua-perception-+1-0",
+        ] {
+            let directory = staging.join(name);
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(directory.join("payload"), b"partial").unwrap();
+            fs::set_permissions(directory.join("payload"), fs::Permissions::from_mode(0o600))
+                .unwrap();
+            planted.push(directory);
+        }
+        for directory in [&store.root, &staging].into_iter().chain(&planted) {
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let archive = fixture_archive(
+            temp.path(),
+            "1.0.0",
+            &current_target().unwrap(),
+            1,
+            b"worker",
+        );
+
+        store.install_archive(entry, &archive).unwrap();
+        // Only this id's crash leftovers are collected; other ids and names
+        // that are not staging names stay put.
+        let mut left: Vec<_> = fs::read_dir(&staging)
+            .unwrap()
+            .map(|child| child.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            ["cua-perception-+1-0", "cua-perception-x", "other-99999-0"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn every_refusal_after_staging_cleans_it() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let entry = registry_entry("cua-perception").unwrap();
+        let archive = fixture_archive(
+            temp.path(),
+            "1.0.0",
+            &current_target().unwrap(),
+            1,
+            b"worker",
+        );
+
+        // A catalog that expired after the preview is refused only once the
+        // archive is staged.
+        let expired = InstallSource {
+            archive: archive.clone(),
+            trust: TrustClass::DeveloperUnsignedLocal,
+            catalog: Some(test_catalog_payload("current", 1)),
+            signed_catalog: None,
+            trust_update: None,
+        };
+        let error = store.install_source(entry, &expired, false).unwrap_err();
+        assert!(format!("{error:#}").contains("expired"), "{error:#}");
+        assert!(staging_is_empty(&store), "expired catalog leaked staging");
+
+        // Reinstalling over a version directory with unsafe permissions is
+        // refused after staging too.
+        store.install_archive(entry, &archive).unwrap();
+        let installed = store.versions_dir(entry.id).join("1.0.0");
+        fs::set_permissions(&installed, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(store.install_archive(entry, &archive).is_err());
+        assert!(
+            staging_is_empty(&store),
+            "unsafe existing version leaked staging"
         );
     }
 
@@ -7824,6 +8013,61 @@ mod tests {
             .unwrap()
             .to_string();
         assert!(error.contains("no record"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn interrupted_trust_commit_reads_the_backup_everywhere() {
+        let pair = ring::signature::Ed25519KeyPair::from_seed_unchecked(&[28; 32]).unwrap();
+        let key = test_publisher_key("current", &pair, 1, u64::MAX);
+        let entry = registry_entry(PERCEPTION_ID).unwrap();
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let root = ensure_private_directory_path(&store.root).unwrap();
+        store
+            .commit_publisher_trust_locked(&root, &test_trust(key, 0))
+            .unwrap();
+        let (archive, catalog) = signed_fixture(temp.path(), &pair, "current", 2026092402);
+        let source = |store: &ExtensionStore| InstallSource {
+            archive: archive.clone(),
+            trust: verified_trust_class(),
+            catalog: Some(catalog.payload.clone()),
+            signed_catalog: Some(catalog.clone()),
+            trust_update: Some(
+                verify_catalog_at(
+                    entry,
+                    &catalog,
+                    &store.load_publisher_trust().unwrap(),
+                    store.load_catalog_ledger().as_ref(),
+                    unix_now().unwrap(),
+                )
+                .unwrap(),
+            ),
+        };
+        store.install_source(entry, &source(&store), false).unwrap();
+        let committed = store.load_publisher_trust().unwrap();
+        assert_eq!(committed.highest_catalog_version, 2026092402);
+
+        // A crash between commit's two renames leaves only the backup, which
+        // is still the committed trust. Read-only callers must not fail on it.
+        root.rename(TRUST_NAME, &root, TRUST_BACKUP_NAME).unwrap();
+        write_new_file_at(&root, TRUST_NEW_NAME, b"interrupted").unwrap();
+        assert_eq!(store.load_publisher_trust().unwrap(), committed);
+        let info = store.info(entry, false).unwrap();
+        assert!(info.healthy, "{}", info.detail);
+        assert!(store.active_path(PERCEPTION_ID).unwrap().is_some());
+        assert!(perception_worker_config_in(&store).unwrap().is_some());
+        assert!(!store.root.join(TRUST_NAME).exists());
+
+        // Mutations read the same trust and leave the store recovered.
+        store.remove(entry).unwrap();
+        assert!(!store.root.join(TRUST_NAME).exists());
+        assert_eq!(store.load_publisher_trust().unwrap(), committed);
+        store.install_source(entry, &source(&store), false).unwrap();
+        assert_eq!(store.load_publisher_trust().unwrap(), committed);
+        assert!(store.root.join(TRUST_NAME).exists());
+        assert!(!store.root.join(TRUST_BACKUP_NAME).exists());
+        assert!(!store.root.join(TRUST_NEW_NAME).exists());
     }
 
     #[test]

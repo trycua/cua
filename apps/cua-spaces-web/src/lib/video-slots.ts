@@ -2,10 +2,12 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import {
+  LAYOUT_CHANGE_EVENT,
   nativeVideoHandler,
   type SurfacePhase,
   type SurfaceRect,
   type SurfaceState,
+  type StreamSurfaceMessage,
   type SurfaceTier,
   type VideoHandler,
 } from "./stream-surface";
@@ -40,6 +42,7 @@ export function sameSurface(a: SurfaceState | null, b: SurfaceState): boolean {
     a.spaceId === b.spaceId &&
     a.tier === b.tier &&
     a.interactive === b.interactive &&
+    a.windowId === b.windowId &&
     a.visible === b.visible &&
     a.occluded === b.occluded &&
     a.radius === b.radius &&
@@ -80,14 +83,7 @@ export function modalOpen(doc: Document = document): boolean {
  * (`holes`) and the rest keeps playing. Hiding the whole video for a menu
  * turned the desktop black while the menu was open.
  */
-export const HOLE_SELECTOR = [
-  "[data-video-occluder]",
-  "[data-video-hole]",
-  '[role="menu"]',
-  '[role="listbox"]',
-  '[role="tooltip"]',
-  "[data-toast]",
-].join(",");
+export const HOLE_SELECTOR = ["[data-video-occluder]", "[data-video-hole]", '[role="menu"]', '[role="listbox"]', '[role="tooltip"]', "[data-toast]"].join(",");
 
 /** Where a slot's own controls live (a Space tile): a `[data-video-hole]`
  * inside one counts only for the slot in the same scope, and only while it
@@ -179,6 +175,9 @@ export class VideoSlotReporter {
   /** The keyboard was handed back to the page for the modal dialog open now (once per dialog). */
   private releasedForModal = false;
   private next = 0;
+  /** The host removed its `cuaVideo` handler (its window closed or the page was torn down): nothing is listening any more. */
+  private gone = false;
+  private warned = false;
 
   constructor(
     private readonly handler: VideoHandler,
@@ -205,7 +204,37 @@ export class VideoSlotReporter {
 
   /** Gives keys to a slot's Space (null: back to the page). */
   focus(id: string | null): void {
-    this.handler.postMessage({ type: "focus", surfaceId: id });
+    this.send({ type: "focus", surfaceId: id });
+  }
+
+  /**
+   * Posts to the host and settles the result here. WebKit's `postMessage`
+   * returns a promise that rejects with `InvalidAccessError` once the host
+   * removed the handler (`removeAllScriptMessageHandlers` when its window
+   * closes) or the frame is gone, while this page, its 400 ms poll and its
+   * animation frames keep running: an unhandled rejection on every tick
+   * (CUA-SPACES-DESKTOP-3). A handler that is gone stays gone, so the reporter
+   * stops; any other failure is warned about once and the loop goes on.
+   */
+  private send(message: StreamSurfaceMessage): void {
+    if (this.gone) return;
+    const fail = (err: unknown): void => {
+      if ((err as { name?: string } | null)?.name === "InvalidAccessError") {
+        this.gone = true;
+        this.stop();
+      }
+      if (this.warned) return;
+      this.warned = true;
+      console.warn("[video] the host's video handler rejected a message", err);
+    };
+    try {
+      const result: unknown = this.handler.postMessage(message);
+      if (result && typeof (result as PromiseLike<unknown>).then === "function") {
+        (result as PromiseLike<unknown>).then(undefined, fail);
+      }
+    } catch (err) {
+      fail(err);
+    }
   }
 
   /** The id of the slot `el` registered as, for `focus`. */
@@ -216,6 +245,7 @@ export class VideoSlotReporter {
 
   /** Measure on the next frame, and for a few frames after. */
   schedule = (): void => {
+    if (this.gone) return;
     this.settle = SETTLE_FRAMES;
     if (!this.frame) this.frame = this.win.requestAnimationFrame(this.tick);
   };
@@ -223,7 +253,7 @@ export class VideoSlotReporter {
   private tick = (): void => {
     this.frame = 0;
     this.flush();
-    if (this.settle > 0) {
+    if (this.settle > 0 && !this.gone) {
       this.settle -= 1;
       this.frame = this.win.requestAnimationFrame(this.tick);
     }
@@ -231,6 +261,7 @@ export class VideoSlotReporter {
 
   /** Measures every slot now and sends what changed. */
   flush(): void {
+    if (this.gone) return;
     // A modal dialog takes the keyboard from a viewer that has it (once; the host answers `video.focus`).
     const modal = modalOpen(this.win.document);
     if (modal && this.focused && !this.releasedForModal) {
@@ -247,7 +278,7 @@ export class VideoSlotReporter {
     }
     const remove = this.removed;
     this.removed = [];
-    if (update.length || remove.length) this.handler.postMessage({ type: "surfaces", update, remove });
+    if (update.length || remove.length) this.send({ type: "surfaces", update, remove });
   }
 
   private measure(slot: Slot): SurfaceState {
@@ -273,6 +304,7 @@ export class VideoSlotReporter {
       tier: slot.tier,
       // Under a modal dialog nothing takes the pointer or keys.
       interactive: slot.interactive && !modal,
+      ...(slot.windowId ? { windowId: slot.windowId } : {}),
       rect,
       clip,
       radius: Math.max(0, slot.radius - inset),
@@ -289,7 +321,8 @@ export class VideoSlotReporter {
     if (detail.event === "video.surface" && p.surfaceId) {
       const slot = this.slots.get(p.surfaceId);
       const phase = p.state === "live" || p.state === "failed" ? p.state : "connecting";
-      if (slot) this.update(slot, { ...slot.status, phase, reason: p.reason ?? undefined, opening: phase === "failed" && p.opening === true ? true : undefined });
+      if (slot)
+        this.update(slot, { ...slot.status, phase, reason: p.reason ?? undefined, opening: phase === "failed" && p.opening === true ? true : undefined });
     } else if (detail.event === "video.focus") {
       this.focused = p.surfaceId ?? null;
       for (const slot of this.slots.values()) {
@@ -304,6 +337,13 @@ export class VideoSlotReporter {
     slot.listener(status);
   }
 
+  /** A pane moved (the page's layout committed): measure now, so the report
+   * leaves in the same frame as the new layout, then keep following it. */
+  private onLayoutChange = (): void => {
+    this.flush();
+    this.schedule();
+  };
+
   private watchDpr = (): void => {
     this.dpr?.removeEventListener("change", this.watchDpr);
     this.dpr = this.win.matchMedia?.(`(resolution: ${this.win.devicePixelRatio}dppx)`) ?? null;
@@ -312,6 +352,7 @@ export class VideoSlotReporter {
   };
 
   private start(): void {
+    if (this.gone) return;
     const w = this.win;
     if (typeof ResizeObserver !== "undefined") {
       this.resize = new ResizeObserver(this.schedule);
@@ -331,6 +372,7 @@ export class VideoSlotReporter {
     // Hover and focus show a tile's controls by CSS alone (no DOM change): measure their holes.
     for (const type of POINTER_FOCUS) w.addEventListener(type, this.schedule, { passive: true });
     w.addEventListener("resize", this.schedule);
+    w.addEventListener(LAYOUT_CHANGE_EVENT, this.onLayoutChange);
     w.addEventListener("cua:event", this.onHostEvent);
     w.document.addEventListener("visibilitychange", this.schedule);
     this.watchDpr();
@@ -348,12 +390,14 @@ export class VideoSlotReporter {
     w.removeEventListener("scroll", this.schedule, { capture: true });
     for (const type of POINTER_FOCUS) w.removeEventListener(type, this.schedule);
     w.removeEventListener("resize", this.schedule);
+    w.removeEventListener(LAYOUT_CHANGE_EVENT, this.onLayoutChange);
     w.removeEventListener("cua:event", this.onHostEvent);
     w.document.removeEventListener("visibilitychange", this.schedule);
     this.dpr?.removeEventListener("change", this.watchDpr);
     this.dpr = null;
     if (this.poll) clearInterval(this.poll);
     this.poll = null;
+    this.settle = 0;
   }
 }
 
@@ -403,7 +447,8 @@ export function isOccluded(el: Element, clip: SurfaceRect, doc: Document = docum
       // An ancestor of the slot can't paint over it: it is what hit-testing
       // reaches when the slot itself takes no hits (a modal menu makes the
       // rest of the page `inert`).
-      if (hit && !hit.contains(el) && !el.contains(hit) && !hit.closest(keepUnderDialogs ? `${HOLE_SELECTOR},${DIALOG_HOLE_SELECTOR}` : HOLE_SELECTOR)) return true;
+      if (hit && !hit.contains(el) && !el.contains(hit) && !hit.closest(keepUnderDialogs ? `${HOLE_SELECTOR},${DIALOG_HOLE_SELECTOR}` : HOLE_SELECTOR))
+        return true;
     }
   }
   return false;

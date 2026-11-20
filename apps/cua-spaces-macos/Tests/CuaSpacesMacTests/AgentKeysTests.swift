@@ -14,6 +14,8 @@ final class FakeAgentKeysTools: AgentsToolRunning, @unchecked Sendable {
     var calls: [(String, [String: Any])] = []
     var keys: [[String: Any]] = [["provider": "openai", "env": "OPENAI_API_KEY", "last4": "3f9a", "added_ms": 1_790_000_000_000]]
     var available = true
+    /// A Local development build keeping keys in an unencrypted file: the daemon's warning.
+    var insecure: String?
 
     func agentsTool(_ tool: String, _ args: [String: Any]) async throws -> Any {
         calls.append((tool, args))
@@ -31,7 +33,7 @@ final class FakeAgentKeysTools: AgentsToolRunning, @unchecked Sendable {
             } else {
                 keys.removeAll { $0["env"] as? String == args["env"] as? String }
             }
-        case "agent_keys.use": break
+        case "agent_keys.use", "agent_keys.rename", "agent_keys.copy_sign_in": break
         // Your login shell has an Anthropic key: names only, and a copy saved on request.
         case "agent_keys.shell": return ["names": ["ANTHROPIC_API_KEY"]]
         case "agent_keys.from_shell":
@@ -43,6 +45,7 @@ final class FakeAgentKeysTools: AgentsToolRunning, @unchecked Sendable {
         }
         var report: [String: Any] = ["keys": keys, "providers": [], "available": available]
         if !available { report["unavailable"] = "this build keeps credentials in a file" }
+        if let insecure { report["insecure"] = insecure }
         return report
     }
 }
@@ -91,7 +94,22 @@ struct AgentKeysTests {
         #expect(!m.view.canEdit)
         #expect(m.view.notice?.contains("keeps credentials in a file") == true)
         let none = AgentKeysModel(tools: nil)
-        #expect(none.view.notice?.contains("need the cua daemon") == true)
+        #expect(none.view.notice?.contains("background service") == true)
+    }
+
+    @Test func aDevelopmentBuildWarnsThatKeysAreUnencryptedAndKeepsTheButtonsOn() async {
+        let tools = FakeAgentKeysTools()
+        tools.insecure = "Keychain not available in this development build: keys are stored unencrypted in ~/.cua-local/agent-keys. Do not use real production secrets"
+        let m = AgentKeysModel(tools: tools)
+        await m.load()
+        #expect(m.view.canEdit)
+        #expect(m.view.notice?.hasPrefix("Keychain not available in this development build") == true)
+        #expect(m.view.notice?.contains("unencrypted") == true)
+        // A refusal still wins over the warning.
+        tools.available = false
+        await m.load()
+        #expect(!m.view.canEdit)
+        #expect(m.view.notice?.hasPrefix("Keys can't be saved here") == true)
     }
 
     @Test func aKeyFromYourShellIsSavedAndTheNamesNeverReplaceTheList() async throws {
@@ -107,7 +125,7 @@ struct AgentKeysTests {
     }
 
     @Test func theWebBridgeRoutesAgentKeysToTheDaemon() {
-        for m in ["agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.shell", "agentKeys.fromShell"] {
+        for m in ["agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.rename", "agentKeys.shell", "agentKeys.fromShell", "agentKeys.copySignIn"] {
             #expect(WebUIBridge.methods.contains(m))
         }
     }

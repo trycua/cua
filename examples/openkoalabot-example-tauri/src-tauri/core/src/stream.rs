@@ -312,6 +312,7 @@ mod tests {
             focused: false,
             available: true,
             limitation: String::new(),
+            origin: None,
         }
     }
 

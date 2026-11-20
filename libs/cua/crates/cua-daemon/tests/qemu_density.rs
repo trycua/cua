@@ -108,6 +108,8 @@ fn gate() -> Option<PathBuf> {
 #[tokio::test]
 #[ignore = "boots QEMU VMs; set CUA_VMM_TEST_QEMU=1 and CUA_VMM_TEST_DISK, run with --ignored"]
 async fn shared_memory_counts_once_and_admission_refuses_past_the_limits() {
+    // A real VM test of the open network: Secure Spaces (on by default) puts a VM behind a gateway.
+    let _open = cua_vmm::network::hold_mode(cua_vmm::network::Mode::Legacy);
     let Some(disk) = gate() else { return };
     let root = tempfile::tempdir().unwrap();
     let cpus = cua_vmm::density::host_cpus();
@@ -244,6 +246,8 @@ async fn shared_memory_counts_once_and_admission_refuses_past_the_limits() {
 #[tokio::test]
 #[ignore = "boots QEMU VMs; set CUA_VMM_TEST_QEMU=1 and CUA_VMM_TEST_DISK, run with --ignored"]
 async fn free_page_reporting_returns_freed_guest_memory_where_qemu_can() {
+    // A real VM test of the open network: Secure Spaces (on by default) puts a VM behind a gateway.
+    let _open = cua_vmm::network::hold_mode(cua_vmm::network::Mode::Legacy);
     let Some(disk) = gate() else { return };
     let root = tempfile::tempdir().unwrap();
     // Cold boots (warm off): anonymous guest RAM, the only RAM the balloon
@@ -449,7 +453,10 @@ async fn bake_world(root: &Path, disk: &Path, forkable: bool) -> Vec<String> {
 /// `CUA_VMM_TEST_BURST` VMs of 2 vCPU / 2 GiB (what the E2B gateway asks
 /// for) are created at once under a memory cap of `CUA_VMM_TEST_CAP_GIB`
 /// (default 24.6, the cap of the 32 GiB host of the failing run, whatever
-/// this host's size). `CUA_VMM_TEST_MODE`: `cold` boots each from the disk;
+/// this host's size). The vCPU limit fits the burst and the fork's world VM
+/// whatever this host's CPUs, so only memory can refuse one: the default 8x
+/// of a 4-CPU runner allows 32 vCPUs, 16 of these VMs (15 beside a world).
+/// `CUA_VMM_TEST_MODE`: `cold` boots each from the disk;
 /// `fork` (the gateway's path) checkpoints one world VM and forks it,
 /// `CUA_VMM_TEST_FORKABLE=1` for a world with a shared RAM file.
 ///
@@ -471,8 +478,11 @@ async fn burst(mode: &str) {
     let total_mb = cua_vmm::density::host_memory()
         .expect("host memory")
         .total_mb;
+    let cpus = cua_vmm::density::host_cpus().max(1) as usize;
     let capped = DensityConfig {
         max_rss_fraction: (cap_gib * 1024.0 / total_mb as f64).min(1.0),
+        vcpu_overcommit: ((2 * (n + 1)).div_ceil(cpus) as f64)
+            .max(cua_vmm::density::DEFAULT_VCPU_OVERCOMMIT),
         ..DensityConfig::default()
     };
     let mut made: Vec<String> = vec![];
@@ -585,6 +595,8 @@ async fn burst(mode: &str) {
 #[ignore = "boots QEMU VMs; set CUA_VMM_TEST_QEMU=1, CUA_VMM_TEST_DISK and CUA_VMM_TEST_BURST, run with --ignored"]
 #[cfg(target_os = "linux")]
 async fn a_burst_of_cold_creates_is_admitted_while_real_memory_has_room() {
+    // A real VM test of the open network: Secure Spaces (on by default) puts a VM behind a gateway.
+    let _open = cua_vmm::network::hold_mode(cua_vmm::network::Mode::Legacy);
     burst("cold").await;
 }
 
@@ -592,6 +604,8 @@ async fn a_burst_of_cold_creates_is_admitted_while_real_memory_has_room() {
 #[ignore = "boots QEMU VMs; set CUA_VMM_TEST_QEMU=1, CUA_VMM_TEST_DISK and CUA_VMM_TEST_BURST, run with --ignored"]
 #[cfg(target_os = "linux")]
 async fn a_burst_of_forks_is_admitted_while_real_memory_has_room() {
+    // A real VM test of the open network: Secure Spaces (on by default) puts a VM behind a gateway.
+    let _open = cua_vmm::network::hold_mode(cua_vmm::network::Mode::Legacy);
     burst("fork").await;
 }
 
@@ -605,6 +619,8 @@ async fn a_burst_of_forks_is_admitted_while_real_memory_has_room() {
 #[ignore = "boots QEMU VMs; set CUA_VMM_TEST_QEMU=1, CUA_VMM_TEST_DISK and CUA_VMM_TEST_BURST, run with --ignored"]
 #[cfg(target_os = "linux")]
 async fn creating_and_deleting_vms_over_and_over_is_not_refused() {
+    // A real VM test of the open network: Secure Spaces (on by default) puts a VM behind a gateway.
+    let _open = cua_vmm::network::hold_mode(cua_vmm::network::Mode::Legacy);
     let Some(disk) = gate() else { return };
     let workers: usize = std::env::var("CUA_VMM_TEST_BURST")
         .ok()

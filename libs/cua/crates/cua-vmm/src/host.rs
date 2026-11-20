@@ -511,6 +511,17 @@ pub fn pid_command(pid: u32) -> Option<String> {
 
 /// Send a signal (`TERM`, `KILL`, ...) to a pid.
 pub fn signal(pid: u32, sig: &str) {
+    #[cfg(windows)]
+    {
+        // No `kill` on Windows: a TERM or KILL ends the process (and its children).
+        let _ = sig;
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(not(windows))]
     let _ = std::process::Command::new("kill")
         .args([&format!("-{sig}"), &pid.to_string()])
         .stderr(Stdio::null())

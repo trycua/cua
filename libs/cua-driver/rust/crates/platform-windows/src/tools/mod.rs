@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows tool implementations.
 //!
 //! On Windows, delegates to real win32/uia/input/capture implementations.
@@ -49,10 +52,6 @@ mod list_windows;
 mod move_cursor;
 #[cfg(target_os = "windows")]
 pub(crate) mod page;
-#[cfg(target_os = "windows")]
-pub(crate) mod page_bookmark;
-// Pure title parsing for `page_bookmark`; ungated so its tests run on any host.
-pub(crate) mod page_title_marker;
 #[cfg(target_os = "windows")]
 mod press_key;
 #[cfg(target_os = "windows")]

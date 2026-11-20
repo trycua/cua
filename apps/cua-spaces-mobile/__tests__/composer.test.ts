@@ -45,20 +45,46 @@ describe("tool calls read as one muted phrase for the group", () => {
 
 describe("the timeline", () => {
   const now = 1_800_000_000_000;
-  const items = foldThread([entry(1, now - 90 * 60_000, CLAUDE, "a"), entry(2, now - 89 * 60_000, CLAUDE, "b"), entry(3, now - 60_000, ME, "c")], { me: ME.id });
+  const items = foldThread([entry(1, now - 90 * 60_000, CLAUDE, "a"), entry(2, now - 89 * 60_000, CLAUDE, "b"), entry(3, now - 60_000, ME, "c")], {
+    me: ME.id,
+  });
   it("shows the author once for a run of messages and starts a day line after a gap", () => {
     const rows = buildRows({ items, me: ME.id, live: [], pending: [], tools: [{ ...CHECKOUT_GROUPS[0]!, afterSeq: 2 }], now, agentName: (h) => h });
     expect(rows.map((r) => r.type)).toEqual(["day", "message", "message", "tools", "day", "message"]);
     expect(rows.filter((r) => r.type === "message").map((r) => (r as { showAuthor: boolean }).showAuthor)).toEqual([true, false, false]);
   });
   it("adds the live agent's words and the messages the machine has not taken at the end, and an answer shows on its card instead", () => {
-    const pending = (id: string, kind: string, state: "waiting" | "sending" | "failed") => ({ id, space: "s", kind, text: "oops", state, label: "Not sent", canRetry: state === "failed", canDiscard: true, retryLabel: "Retry", discardLabel: "Delete", mode: "send" });
-    const rows = buildRows({ items, me: ME.id, live: [{ agent: "@claude", stage: "replying", text: "On it" }], pending: [pending("f1", "post", "failed"), pending("a1", "answer", "waiting")], tools: [], now, agentName: () => "Claude Code" });
+    const pending = (id: string, kind: string, state: "waiting" | "sending" | "failed") => ({
+      id,
+      space: "s",
+      kind,
+      text: "oops",
+      state,
+      label: "Not sent",
+      canRetry: state === "failed",
+      canDiscard: true,
+      retryLabel: "Retry",
+      discardLabel: "Delete",
+      mode: "send",
+    });
+    const rows = buildRows({
+      items,
+      me: ME.id,
+      live: [{ agent: "@claude", stage: "replying", text: "On it" }],
+      pending: [pending("f1", "post", "failed"), pending("a1", "answer", "waiting")],
+      tools: [],
+      now,
+      agentName: () => "Claude Code",
+    });
     expect(rows.slice(-2).map((r) => r.type)).toEqual(["live", "pending"]);
     expect(rows.filter((r) => r.type === "pending")).toHaveLength(1);
   });
   it("puts the calls of every agent that followed one message in one group, in the order they happened", () => {
-    const g = (agent: string, at: number) => ({ afterSeq: 2, agent, calls: [{ id: `${agent}${at}`, cat: "ran", line: `Ran ${agent}`, detail: "", state: "done" as const, atMs: at }] });
+    const g = (agent: string, at: number) => ({
+      afterSeq: 2,
+      agent,
+      calls: [{ id: `${agent}${at}`, cat: "ran", line: `Ran ${agent}`, detail: "", state: "done" as const, atMs: at }],
+    });
     const rows = buildRows({ items, me: ME.id, live: [], pending: [], tools: [g("b", 20), g("a", 10)], now, agentName: (h) => h });
     const tools = rows.find((r) => r.type === "tools") as { calls: { line: string }[] };
     expect(tools.calls.map((c) => c.line)).toEqual(["Ran a", "Ran b"]);
@@ -70,11 +96,21 @@ import { parseBlocks, parseInline } from "../src/features/thread/markdown";
 describe("markdown in an agent's message (safe while it streams)", () => {
   it("reads bold, code, https links and mentions, and ignores other links", () => {
     expect(parseInline("**done** run `npm test` see [log](https://x.io/a) @sam [bad](javascript:alert(1))")).toEqual([
-      { t: "bold", v: "done" }, { t: "text", v: " run " }, { t: "code", v: "npm test" }, { t: "text", v: " see " }, { t: "link", v: "log", href: "https://x.io/a" }, { t: "text", v: " " }, { t: "mention", v: "@sam" }, { t: "text", v: " [bad](javascript:alert(1))" },
+      { t: "bold", v: "done" },
+      { t: "text", v: " run " },
+      { t: "code", v: "npm test" },
+      { t: "text", v: " see " },
+      { t: "link", v: "log", href: "https://x.io/a" },
+      { t: "text", v: " " },
+      { t: "mention", v: "@sam" },
+      { t: "text", v: " [bad](javascript:alert(1))" },
     ]);
   });
   it("draws an unclosed fence as code so far and an unclosed ** as plain text", () => {
-    expect(parseBlocks("Result:\n\n```sh\nnpm test\n149 pa")).toEqual([{ t: "p", inline: [{ t: "text", v: "Result:" }] }, { t: "code", v: "npm test\n149 pa" }]);
+    expect(parseBlocks("Result:\n\n```sh\nnpm test\n149 pa")).toEqual([
+      { t: "p", inline: [{ t: "text", v: "Result:" }] },
+      { t: "code", v: "npm test\n149 pa" },
+    ]);
     expect(parseInline("a **bol")).toEqual([{ t: "text", v: "a **bol" }]);
   });
 });

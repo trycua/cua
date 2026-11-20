@@ -233,6 +233,8 @@ fn pct(v: &mut [f64], p: f64) -> f64 {
 #[tokio::test]
 #[ignore = "boots QEMU VMs; set CUA_VMM_TEST_QEMU=1 and CUA_VMM_TEST_DISK, run with --ignored"]
 async fn forks_of_a_live_checkpoint_share_its_memory() {
+    // A real VM test of the open network: Secure Spaces (on by default) puts a VM behind a gateway.
+    let _open = cua_vmm::network::hold_mode(cua_vmm::network::Mode::Legacy);
     if std::env::var("CUA_VMM_TEST_QEMU").as_deref() != Ok("1") {
         eprintln!("skipped: set CUA_VMM_TEST_QEMU=1");
         return;

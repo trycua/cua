@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Sway metadata and focus over the native i3-ipc socket.
 //!
 //! The wlroots foreign-toplevel protocol exposes titles and app ids, but not

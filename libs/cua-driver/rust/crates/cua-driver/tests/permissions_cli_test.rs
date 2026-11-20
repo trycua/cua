@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `cua-driver permissions` reports usage errors with the documented exit code.
 
 use std::process::{Command, Stdio};

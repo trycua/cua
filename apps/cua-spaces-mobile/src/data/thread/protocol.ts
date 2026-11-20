@@ -106,6 +106,47 @@ export interface ThreadFailure {
   retryable: boolean;
 }
 
+/** A subagent the agent started, or a child Space it made, on a system note. */
+export type ChildNote =
+  | {
+      kind: "subagent";
+      id: string;
+      agent: string;
+      title: string;
+      state: "running" | "done" | "failed";
+      steps: number;
+      result: string | null;
+      startedMs: number | null;
+      endedMs: number | null;
+    }
+  | {
+      kind: "child_space";
+      space: string;
+      /** One create: the notes of a Space being made fold into one row. */
+      key?: string;
+      name: string;
+      os: string;
+      /** The agent member that made it (a handle). */
+      agent: string;
+      /** The person that made it, when a person did. */
+      by?: { id: string; name: string } | null;
+      /** Absent on a note from before: it is made. */
+      state?: "creating" | "ready" | "failed";
+      phase?: string;
+      percent?: number | null;
+      error?: string;
+      startedMs?: number | null;
+      endedMs?: number | null;
+    };
+
+/** A subagent that runs now, on the agent's live row. */
+export interface LiveChild {
+  id: string;
+  title: string;
+  steps: number;
+  step: string | null;
+}
+
 export interface ThreadEntry {
   seq: number;
   id: string;
@@ -133,6 +174,8 @@ export interface ThreadEntry {
   runsOnKeysOf: { id: string; name: string } | null;
   /** A system note about a member joining, leaving or a refused name (CUA-2262). */
   event: MemberEvent | null;
+  /** A subagent or a child Space the agent started (a system note). */
+  child?: ChildNote | null;
   /** On a `join_request` entry (CUA-2263). */
   joinRequest?: JoinRequest | null;
   /** What the person was looking at in the Space as they posted (`view`): its desktop or a window. */
@@ -164,6 +207,8 @@ export interface LiveAgent {
   sinceMs?: number;
   /** What it has said so far this turn, the whole text each time, while it streams; the reply replaces it. */
   text?: string;
+  /** The subagents it has running now. */
+  children?: LiveChild[];
 }
 
 /** Every agent with a turn on its way, and a key that changes when any stage does. */
@@ -402,7 +447,14 @@ export function threadReadArgs(a: ThreadReadArgs): Json {
 export function threadPostArgs(a: ThreadPostArgs): Json {
   const out: Json = { space: a.spaceId, text: a.text };
   if (a.replyTo != null) out.reply_to = a.replyTo;
-  if (a.answer) out.answer = { approval: a.answer.approval, approve: a.answer.approve, ...(a.answer.note ? { note: a.answer.note } : {}), ...(a.answer.scope && a.answer.approve ? { scope: a.answer.scope } : {}), ...(a.answer.clientId ? { client_id: a.answer.clientId } : {}) };
+  if (a.answer)
+    out.answer = {
+      approval: a.answer.approval,
+      approve: a.answer.approve,
+      ...(a.answer.note ? { note: a.answer.note } : {}),
+      ...(a.answer.scope && a.answer.approve ? { scope: a.answer.scope } : {}),
+      ...(a.answer.clientId ? { client_id: a.answer.clientId } : {}),
+    };
   if (a.clientId) out.client_id = a.clientId;
   if (a.toSession != null) out.to_session = a.toSession;
   if (a.view) out.view = threadViewArgs(a.view);
@@ -548,6 +600,39 @@ export function memberIdentity(v: unknown): MemberIdentity | null {
 
 const EVENT_KINDS: readonly MemberEvent["kind"][] = ["member_joined", "member_removed", "name_refused", "rate_limited"];
 
+function childNote(v: unknown): ChildNote | null {
+  const e = obj(v);
+  if (!e) return null;
+  if (e.kind === "subagent" && str(e.id)) {
+    const state = e.state === "done" || e.state === "failed" ? e.state : "running";
+    return {
+      kind: "subagent",
+      id: str(e.id),
+      agent: str(e.agent),
+      title: str(e.title) || "Subagent",
+      state,
+      steps: num(e.steps) ?? 0,
+      result: str(e.result) || null,
+      startedMs: num(e.started_ms),
+      endedMs: num(e.ended_ms),
+    };
+  }
+  if (e.kind === "child_space" && str(e.space)) {
+    const state = e.state === "creating" || e.state === "ready" || e.state === "failed" ? e.state : undefined;
+    return {
+      kind: "child_space",
+      space: str(e.space),
+      name: str(e.name) || str(e.space),
+      os: str(e.os),
+      agent: str(e.agent),
+      ...(obj(e.by) && str(obj(e.by)!.id) ? { by: { id: str(obj(e.by)!.id), name: str(obj(e.by)!.name) || str(obj(e.by)!.id) } } : {}),
+      ...(str(e.key) ? { key: str(e.key) } : {}),
+      ...(state ? { state, phase: str(e.phase), percent: num(e.percent), error: str(e.error), startedMs: num(e.started_ms), endedMs: num(e.ended_ms) } : {}),
+    };
+  }
+  return null;
+}
+
 function memberEvent(v: unknown): MemberEvent | null {
   const e = obj(v);
   if (!e || !EVENT_KINDS.includes(e.kind as MemberEvent["kind"])) return null;
@@ -597,7 +682,16 @@ export function threadEntryFromTool(v: unknown): ThreadEntry | null {
           ...(strs(approval.scope_choices).length ? { scopeChoices: strs(approval.scope_choices).filter((c) => c === "once" || c === "space") } : {}),
         }
       : null,
-    answer: answer && num(answer.approval) !== null ? { approval: num(answer.approval)!, approve: answer.approve === true, note: str(answer.note) || null, scope: answer.scope === "space" ? "space" : answer.scope === "once" ? "once" : null, clientId: str(answer.client_id) || null } : null,
+    answer:
+      answer && num(answer.approval) !== null
+        ? {
+            approval: num(answer.approval)!,
+            approve: answer.approve === true,
+            note: str(answer.note) || null,
+            scope: answer.scope === "space" ? "space" : answer.scope === "once" ? "once" : null,
+            clientId: str(answer.client_id) || null,
+          }
+        : null,
     ...(str(e.client_id) ? { clientId: str(e.client_id) } : {}),
     update:
       update && num(update.task) !== null && updateState
@@ -605,6 +699,7 @@ export function threadEntryFromTool(v: unknown): ThreadEntry | null {
         : null,
     runsOnKeysOf: keyOwner(e.runs_on_keys_of),
     event: kind === "system" ? memberEvent(e.event) : null,
+    ...(kind === "system" && childNote(e.event) ? { child: childNote(e.event) } : {}),
     ...(kind === "join_request" ? { joinRequest: joinRequest(e) } : {}),
     ...(e.view != null ? { view: threadViewFromTool(e.view) } : {}),
     ...(e.failure != null ? { failure: threadFailure(e.failure) } : {}),
@@ -713,7 +808,12 @@ function agentOverview(m: Json): { dm?: AgentDm | null; needsYou?: NeedsYou[] } 
   const last = obj(d?.last);
   const needs = Array.isArray(m.needs_you) ? m.needs_you : [];
   return {
-    dm: d ? { unread: num(d.unread) ?? 0, last: last && num(last.seq) !== null ? { seq: num(last.seq)!, tsMs: num(last.ts_ms) ?? 0, text: str(last.text), author: author(last.author) } : null } : null,
+    dm: d
+      ? {
+          unread: num(d.unread) ?? 0,
+          last: last && num(last.seq) !== null ? { seq: num(last.seq)!, tsMs: num(last.ts_ms) ?? 0, text: str(last.text), author: author(last.author) } : null,
+        }
+      : null,
     needsYou: needs.flatMap((n) => {
       const x = obj(n);
       const seq = num(x?.seq);
@@ -751,7 +851,12 @@ export function threadLiveFromTool(v: unknown): ThreadLive {
     const stage = str(r?.stage);
     const sinceMs = typeof r?.since_ms === "number" ? r.since_ms : undefined;
     const text = str(r?.text);
-    return agent && stage ? [{ agent, stage, ...(sinceMs ? { sinceMs } : {}), ...(text ? { text } : {}) }] : [];
+    const children = (Array.isArray(r?.children) ? r.children : []).flatMap((c): LiveChild[] => {
+      const o = obj(c);
+      const id = str(o?.id);
+      return o && id ? [{ id, title: str(o.title) || "Subagent", steps: num(o.steps) ?? 0, step: str(o.step) || null }] : [];
+    });
+    return agent && stage ? [{ agent, stage, ...(sinceMs ? { sinceMs } : {}), ...(text ? { text } : {}), ...(children.length ? { children } : {}) }] : [];
   });
   return { key: str(o.key), agents };
 }
@@ -808,4 +913,3 @@ export function isMissingThreadTool(e: unknown): boolean {
   const message = e instanceof Error ? e.message : typeof e === "string" ? e : "";
   return /\b(unknown tool|no such tool)\b.*\b(thread_\w+|agent_members)\b|\bspaces tool (thread_\w+|agent_members)\b/i.test(message);
 }
-

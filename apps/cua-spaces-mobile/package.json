@@ -1,6 +1,7 @@
 {
   "name": "@cua/cua-spaces-mobile",
   "version": "0.1.0",
+  "packageManager": "pnpm@9.0.4",
   "main": "expo-router/entry",
   "dependencies": {
     "@bufbuild/protobuf": "2.15.0",
@@ -9,7 +10,7 @@
     "@expo/vector-icons": "^15.0.2",
     "@react-native-async-storage/async-storage": "^2.2.0",
     "@shopify/flash-list": "2.3.2",
-    "expo": "~58.0.21",
+    "expo": "~58.0.26",
     "expo-auth-session": "~58.0.16",
     "expo-build-properties": "~58.0.11",
     "expo-clipboard": "~58.0.4",

@@ -348,6 +348,16 @@ pub fn token_subject(token: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// The unverified, lowercased `email` claim of a JWT access token (a local
+/// lookup key only; the relay verifies every token).
+pub fn token_email(token: &str) -> Option<String> {
+    token_claims(token)?
+        .get("email")?
+        .as_str()
+        .map(|e| e.trim().to_lowercase())
+        .filter(|e| !e.is_empty())
+}
+
 impl std::fmt::Debug for DeviceAuth {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DeviceAuth")

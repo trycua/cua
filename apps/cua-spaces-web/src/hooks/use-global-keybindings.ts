@@ -9,9 +9,8 @@ import { resolveCommand, type KeybindingCommand } from "@/lib/keybindings";
 import { useThemeStore } from "@/lib/theme";
 import { useUiStore } from "@/stores/ui";
 
-const NAV: Partial<Record<KeybindingCommand, "/spaces" | "/machines" | "/agents" | "/keyvault" | "/settings">> = {
+const NAV: Partial<Record<KeybindingCommand, "/spaces" | "/agents" | "/keyvault" | "/settings">> = {
   "nav.spaces": "/spaces",
-  "nav.machines": "/machines",
   "nav.agents": "/agents",
   "nav.keyvault": "/keyvault",
   "nav.settings": "/settings",

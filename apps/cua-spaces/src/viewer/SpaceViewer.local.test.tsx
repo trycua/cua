@@ -19,7 +19,10 @@ class RecordingSocket {
   onmessage: unknown = null;
   onclose: unknown = null;
   onerror: unknown = null;
-  constructor(url: string, readonly protocols?: string[]) {
+  constructor(
+    url: string,
+    readonly protocols?: string[],
+  ) {
     RecordingSocket.urls.push(url);
   }
   send() {}
@@ -66,9 +69,7 @@ beforeEach(() => {
   RecordingSocket.urls = [];
   originalWebSocket = (globalThis as { WebSocket?: unknown }).WebSocket;
   (globalThis as { WebSocket: unknown }).WebSocket = RecordingSocket;
-  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
-    null as unknown as CanvasRenderingContext2D,
-  );
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null as unknown as CanvasRenderingContext2D);
 });
 afterEach(() => {
   (globalThis as { WebSocket?: unknown }).WebSocket = originalWebSocket;

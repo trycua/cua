@@ -26,6 +26,27 @@ const DOMAIN: &str = "relay.test";
 const SID: &str = "0123456789abcdef";
 const TOKEN: &str = "0123456789abcdef0123456789abcdef01234567";
 
+/// A free TCP port for a share listener the relay binds itself. The tests in
+/// this file run in parallel in one process, and a port that was only probed
+/// and released can be handed to a second test before the first test's relay
+/// binds it. The second test's share then listens nowhere, and its dials land
+/// in the first test's share instead. Never hand the same port out twice.
+fn free_port() -> u16 {
+    static HANDED_OUT: Mutex<Vec<u16>> = Mutex::new(Vec::new());
+    loop {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let mut taken = HANDED_OUT.lock().unwrap();
+        if !taken.contains(&port) {
+            taken.push(port);
+            return port;
+        }
+    }
+}
+
 /// A mock identity provider: discovery, a token endpoint that checks PKCE,
 /// and `grant` to stand in for the user signing in at its login page.
 struct Idp {
@@ -985,10 +1006,7 @@ async fn forwarded_for_is_ignored_without_trusted_proxies() {
 #[tokio::test]
 async fn a_tcp_share_carries_raw_bytes_to_its_share_and_closes() {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-    let port = {
-        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        l.local_addr().unwrap().port()
-    };
+    let port = free_port();
     let env = Env::start(Opts {
         web: false,
         tcp_port: Some(port),
@@ -1079,10 +1097,7 @@ async fn a_tcp_share_carries_raw_bytes_to_its_share_and_closes() {
 #[tokio::test]
 async fn a_tcp_share_holds_its_connection_cap_and_byte_rate() {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-    let port = {
-        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        l.local_addr().unwrap().port()
-    };
+    let port = free_port();
     let env = Env::start(Opts {
         web: false,
         tcp_port: Some(port),
@@ -1171,10 +1186,7 @@ async fn a_tcp_share_holds_its_connection_cap_and_byte_rate() {
 async fn an_edge_carries_tcp_shares_for_its_token_only_and_checks_hosts_and_allowlists() {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     const EDGE_TOKEN: &str = "edge-token-0123456789abcdef0123456789abcdef";
-    let port = {
-        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        l.local_addr().unwrap().port()
-    };
+    let port = free_port();
     let relay = Relay::new(RelayConfig {
         tokens: vec![EDGE_TOKEN.into()],
         tcp_shares: Some(cua_relay::tcp_shares::TcpShareConfig {
@@ -1263,10 +1275,7 @@ async fn an_edge_carries_tcp_shares_for_its_token_only_and_checks_hosts_and_allo
 #[tokio::test]
 async fn a_tcp_share_refuses_addresses_outside_its_allowlist() {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-    let port = {
-        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        l.local_addr().unwrap().port()
-    };
+    let port = free_port();
     let env = Env::start(Opts {
         web: false,
         tcp_port: Some(port),
@@ -1300,10 +1309,7 @@ async fn a_tcp_share_refuses_addresses_outside_its_allowlist() {
 #[tokio::test]
 async fn a_tcp_share_ends_its_connections_at_its_data_cap() {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-    let port = {
-        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        l.local_addr().unwrap().port()
-    };
+    let port = free_port();
     let env = Env::start(Opts {
         web: false,
         tcp_port: Some(port),

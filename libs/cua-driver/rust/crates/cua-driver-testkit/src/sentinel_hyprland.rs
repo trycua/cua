@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cursor guard adapted from contributor PR #3466; compositor observations
 //! remain independent of Driver geometry, capture and input implementations.
 

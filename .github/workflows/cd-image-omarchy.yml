@@ -154,7 +154,10 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            protobuf-compiler libprotobuf-dev
       - uses: dtolnay/rust-toolchain@1.97.1
       - uses: ./.github/actions/rust-cache
         with:
@@ -197,6 +200,8 @@ jobs:
         with:
           name: cua-cli-linux-amd64
           path: ${{ runner.temp }}/bin
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: Host tools (QEMU, firmware, virtiofsd, crane, oras)
         run: |
           set -euo pipefail

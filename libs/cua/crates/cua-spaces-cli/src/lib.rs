@@ -81,6 +81,27 @@ impl CliExtension for CuaSpacesCli {
         }
     }
 
+    async fn compat(
+        &self,
+        cmd: cua_compat_cmd::CompatCmd,
+        json: bool,
+        out: &mut dyn Write,
+    ) -> Result<i32, CuaError> {
+        cua_compat::cli::run(cmd, json, out, cua_cli::util::hint).await
+    }
+
+    fn register_compat_job_services(&self) {
+        cua_compat::cli::register_job_services();
+    }
+
+    fn compat_prewarm_image(
+        &self,
+        provider: &str,
+        reference: &str,
+    ) -> Result<Option<String>, String> {
+        cua_compat::cli::resolve_prewarm_image(provider, reference)
+    }
+
     async fn viewer(
         &self,
         cua: Arc<Cua>,

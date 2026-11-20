@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -9,8 +12,7 @@ use std::{future::Future, path::Path, sync::Arc, time::Duration};
 use super::ToolState;
 use crate::permission_observation::{DirectCaptureEvidenceStore, DirectCaptureVerification};
 use crate::permissions::status::{
-    accessibility_granted, request_accessibility, request_screen_recording,
-    screen_recording_granted,
+    accessibility_granted, current_status, request_next_missing, screen_recording_granted,
 };
 
 /// Private argv sentinel shared by the trusted CLI launcher and the public
@@ -27,14 +29,18 @@ impl CheckPermissionsTool {
     }
 }
 
-/// LaunchServices-hosted permission setup entrypoint. This is deliberately
+/// LaunchServices-hosted permission entrypoint. This is deliberately
 /// not registered as an agent tool or exposed on the daemon socket: the
-/// standalone `permissions grant` command launches the app bundle and macOS
-/// owns the actual approval UI.
-pub async fn request_from_launchservices_host(probe_direct_capture: bool) -> ToolResult {
+/// standalone `permissions grant` / `permissions status` commands launch the
+/// app bundle so the answer (and any macOS prompt) belongs to the app, and
+/// macOS owns the actual approval UI. `prompt: false` only reads.
+pub async fn request_from_launchservices_host(
+    prompt: bool,
+    probe_direct_capture: bool,
+) -> ToolResult {
     let tool = CheckPermissionsTool::new(Arc::new(ToolState::new(false, false, None)));
     tool.invoke(serde_json::json!({
-        "prompt": true,
+        "prompt": prompt,
         "probe_direct_capture": probe_direct_capture,
     }))
     .await
@@ -83,6 +89,51 @@ fn current_direct_capture_evidence_store(source: &Value) -> Option<DirectCapture
     let home = std::env::var_os("HOME")?;
     let attribution = source.get("attribution").and_then(Value::as_str);
     direct_capture_evidence_store_for_identity(&current_executable(), Path::new(&home), attribution)
+}
+
+unsafe extern "C" {
+    fn responsibility_get_pid_responsible_for_pid(pid: libc::pid_t) -> libc::pid_t;
+}
+
+/// Whether macOS attributes this process's TCC checks to itself. A driver
+/// reparented to launchd after its launcher exits still answers to that
+/// launcher's host, so the parent pid alone does not prove it.
+fn is_own_responsible_process() -> bool {
+    let pid = unsafe { libc::getpid() };
+    unsafe { responsibility_get_pid_responsible_for_pid(pid) == pid }
+}
+
+/// Whether a successful probe from this process raised the direct-capture
+/// consent alert for its own bundle rather than for the app it answers to.
+fn probe_raised_own_consent_alert() -> bool {
+    crate::capture_consent::macos_has_direct_capture_consent() && is_own_responsible_process()
+}
+
+/// The grant evidence that stands for consent to capture as this process: the
+/// driver daemon's own record, and only while macOS confirms the daemon is
+/// responsible for itself. Anything else would raise its alert for another app.
+pub(crate) fn consent_evidence_store_for_identity(
+    executable: &str,
+    home: &Path,
+    attribution: Option<&str>,
+    own_responsible: bool,
+) -> Option<DirectCaptureEvidenceStore> {
+    if !own_responsible {
+        return None;
+    }
+    direct_capture_evidence_store_for_identity(executable, home, attribution)
+}
+
+/// [`consent_evidence_store_for_identity`] for the running process.
+pub(crate) fn driver_daemon_direct_capture_evidence_store() -> Option<DirectCaptureEvidenceStore> {
+    let home = std::env::var_os("HOME")?;
+    let source = permission_source(false, None);
+    consent_evidence_store_for_identity(
+        &current_executable(),
+        Path::new(&home),
+        source.get("attribution").and_then(Value::as_str),
+        is_own_responsible_process(),
+    )
 }
 
 /// (A) Real ScreenCaptureKit capability probe — what THIS process can
@@ -180,6 +231,7 @@ fn should_prompt_permissions(requested: bool, host_owns_permission_ux: bool) -> 
 fn resolve_direct_capture_verification(
     store: Option<&DirectCaptureEvidenceStore>,
     probe: Option<DirectCaptureProbeResult>,
+    consent_alert_raised: bool,
 ) -> Result<Option<DirectCaptureVerification>, Value> {
     match probe {
         None => Ok(store.and_then(DirectCaptureEvidenceStore::load)),
@@ -190,18 +242,23 @@ fn resolve_direct_capture_verification(
                     "message": "the installed product identity or user home directory is unavailable",
                 }));
             };
-            store.record_now().map(Some).map_err(|error| {
-                let message = match store.clear() {
-                    Ok(()) => error,
-                    Err(clear_error) => {
-                        format!("{error}; clear prior direct-capture verification: {clear_error}")
-                    }
-                };
-                serde_json::json!({
-                    "code": "direct_capture_verification_store_failed",
-                    "message": message,
+            store
+                .record_now(consent_alert_raised)
+                .map(Some)
+                .map_err(|error| {
+                    let message = match store.clear() {
+                        Ok(()) => error,
+                        Err(clear_error) => {
+                            format!(
+                                "{error}; clear prior direct-capture verification: {clear_error}"
+                            )
+                        }
+                    };
+                    serde_json::json!({
+                        "code": "direct_capture_verification_store_failed",
+                        "message": message,
+                    })
                 })
-            })
         }
         Some(_) => {
             let Some(store) = store else {
@@ -389,8 +446,11 @@ impl Tool for CheckPermissionsTool {
         );
         let probe_direct_capture = args.bool_or("probe_direct_capture", true);
         if should_prompt {
-            let _ = request_accessibility();
-            let _ = request_screen_recording();
+            // One permission per call, Accessibility first. Asking for both
+            // at once made macOS drop the Screen Recording prompt, leaving
+            // Cua Driver out of that list. Callers ask again once
+            // Accessibility is on.
+            let _ = request_next_missing(current_status());
         }
         let accessibility = accessibility_granted();
         let screen_recording = screen_recording_granted();
@@ -422,8 +482,11 @@ impl Tool for CheckPermissionsTool {
         );
         let evidence_store = current_direct_capture_evidence_store(&source);
         let (direct_capture_verification, direct_capture_verification_error) =
-            match resolve_direct_capture_verification(evidence_store.as_ref(), direct_capture_probe)
-            {
+            match resolve_direct_capture_verification(
+                evidence_store.as_ref(),
+                direct_capture_probe,
+                probe_raised_own_consent_alert(),
+            ) {
                 Ok(verification) => (verification, None),
                 Err(error) => (None, Some(error)),
             };
@@ -573,7 +636,9 @@ mod tests {
         )
         .expect("local store");
 
-        release.record_now().expect("record release verification");
+        release
+            .record_now(true)
+            .expect("record release verification");
         assert!(release.load().is_some());
         assert!(local.load().is_none());
         assert!(direct_capture_evidence_store_for_identity(
@@ -601,24 +666,38 @@ mod tests {
 
         assert!(resolve_direct_capture_verification(
             Some(&store),
-            Some(DirectCaptureProbeResult::Ready)
+            Some(DirectCaptureProbeResult::Ready),
+            true,
         )
         .expect("record evidence")
         .is_some());
-        assert!(resolve_direct_capture_verification(Some(&store), None)
-            .expect("load evidence")
-            .is_some());
+        assert!(store.records_consent_alert());
+        assert!(
+            resolve_direct_capture_verification(Some(&store), None, false)
+                .expect("load evidence")
+                .is_some()
+        );
+        assert!(store.records_consent_alert());
+        assert!(resolve_direct_capture_verification(
+            Some(&store),
+            Some(DirectCaptureProbeResult::Ready),
+            false,
+        )
+        .expect("record evidence")
+        .is_some());
+        assert!(!store.records_consent_alert());
         assert_eq!(
             resolve_direct_capture_verification(
                 Some(&store),
-                Some(DirectCaptureProbeResult::Unavailable)
+                Some(DirectCaptureProbeResult::Unavailable),
+                true,
             )
             .expect("clear evidence"),
             None
         );
         assert!(store.load().is_none());
         assert_eq!(
-            resolve_direct_capture_verification(None, Some(DirectCaptureProbeResult::Ready))
+            resolve_direct_capture_verification(None, Some(DirectCaptureProbeResult::Ready), true)
                 .expect_err("missing-store error")["code"],
             "direct_capture_verification_store_unavailable"
         );
@@ -632,7 +711,7 @@ mod tests {
         let home =
             std::env::temp_dir().join(format!("cua-direct-capture-test-{}", uuid::Uuid::new_v4()));
         let store = release_evidence_store(&home);
-        store.record_now().expect("record prior evidence");
+        store.record_now(true).expect("record prior evidence");
         let state_directory = home.join(".cua-driver");
         std::fs::set_permissions(&state_directory, std::fs::Permissions::from_mode(0o500))
             .expect("make evidence directory read-only");
@@ -640,6 +719,7 @@ mod tests {
         let result = resolve_direct_capture_verification(
             Some(&store),
             Some(DirectCaptureProbeResult::Ready),
+            true,
         );
 
         std::fs::set_permissions(&state_directory, std::fs::Permissions::from_mode(0o700))

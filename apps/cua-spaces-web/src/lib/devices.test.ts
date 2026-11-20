@@ -6,7 +6,12 @@ import { describe, expect, it } from "vitest";
 import { shellDevicesBanner } from "./devices";
 
 describe("shellDevicesBanner", () => {
-  const banner = { tone: "warning" as const, text: "Trust this machine within 3 days to keep reaching your machines.", action: "enroll" as const, actionLabel: "Trust this machine" };
+  const banner = {
+    tone: "warning" as const,
+    text: "Trust this computer within 3 days to keep reaching your machines.",
+    action: "enroll" as const,
+    actionLabel: "Trust this computer",
+  };
   const read = (input: { devices?: { id: string; state: string }[]; readError?: string | null }) => ({ input, view: { banner } });
 
   it("shows the core's bar once signed in and read", () => {

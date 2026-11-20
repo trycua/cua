@@ -260,6 +260,8 @@ pub fn row_to_space(row: &SpaceRow, now: i64) -> Space {
         cloud_place: cloud_place_of(row).map(str::to_string),
         cloud_delete: text(&row.cloud).and(text(&row.cloud_delete)),
         access: Some(access),
+        hidden: row.hidden,
+        parent: row.parent.clone(),
     }
 }
 
@@ -443,7 +445,8 @@ pub fn desktop_availability(space: &Space) -> DesktopAvailability {
 /// The Spaces the user can open, in `spaces`' order: every Space, and the
 /// desktops of your other machines while they are there to open
 /// ([`desktop_availability`] is `Available`): a shared desktop is a Space.
-/// Not This machine, even while it provides Spaces, and not a machine that
+/// Not a hidden Space ([`Space::hidden`]: the home warming for Home's prompt
+/// box, until a person writes into it). Not This machine, even while it provides Spaces, and not a machine that
 /// has no desktop to open (it only provides Spaces, is off or has not
 /// answered): the notch listed those as if they were Spaces (#5190). A Space a machine
 /// provides is listed. The notch's tiles list these (and the desktops a
@@ -452,6 +455,7 @@ pub fn desktop_availability(space: &Space) -> DesktopAvailability {
 pub fn openable_spaces(spaces: &[Space]) -> Vec<Space> {
     spaces
         .iter()
+        .filter(|s| !s.hidden)
         .filter(|s| {
             !is_machine_desktop(s)
                 || (is_remote_desktop(s)
@@ -562,20 +566,20 @@ pub struct ListView {
     /// not empty yet (an app update restarting the daemon must not show it).
     pub empty: bool,
     /// One quiet line where the Spaces go while the list is not complete
-    /// ("Reaching 6 machines…"), below what is known so far.
+    /// ("Reaching 6 computers…"), below what is known so far.
     pub reaching_line: Option<String>,
 }
 
-/// The Spaces page's empty state and "Reaching N machines…" line, for
+/// The Spaces page's empty state and "Reaching N computers…" line, for
 /// every shell.
 pub fn list_view(input: ListViewInput) -> ListView {
     let reaching_line = if !input.loaded {
         Some("Loading Spaces…".to_string())
     } else if input.incomplete {
         Some(match input.reaching {
-            0 => "Reaching your machines…".to_string(),
-            1 => "Reaching 1 machine…".to_string(),
-            n => format!("Reaching {n} machines…"),
+            0 => "Reaching your computers…".to_string(),
+            1 => "Reaching 1 computer…".to_string(),
+            n => format!("Reaching {n} computers…"),
         })
     } else {
         None
@@ -613,16 +617,16 @@ mod tests {
             v(true, true, 6, 0),
             ListView {
                 empty: false,
-                reaching_line: Some("Reaching 6 machines…".into())
+                reaching_line: Some("Reaching 6 computers…".into())
             }
         );
         assert_eq!(
             v(true, true, 1, 2).reaching_line.as_deref(),
-            Some("Reaching 1 machine…")
+            Some("Reaching 1 computer…")
         );
         assert_eq!(
             v(true, true, 0, 0).reaching_line.as_deref(),
-            Some("Reaching your machines…")
+            Some("Reaching your computers…")
         );
         assert!(!v(true, true, 3, 0).empty);
         // Complete: empty only with no Space, and no line.
@@ -638,6 +642,8 @@ mod tests {
 
     fn row() -> SpaceRow {
         SpaceRow {
+            hidden: false,
+            parent: None,
             id: "space://direct/10.0.0.5:3211".into(),
             name: "brave-otter".into(),
             display_name: None,
@@ -664,6 +670,93 @@ mod tests {
             stop_reason: None,
             sharing: None,
         }
+    }
+
+    /// The home that warms for Home's prompt box (the daemon marks it
+    /// `hidden`) is in no top bar view: not the menu bar item's count, the
+    /// notch's tab or its tiles. The first message makes it appear (the
+    /// daemon clears the mark); a home the record did not prepare is never
+    /// hidden; the core's own listing keeps the row, marked.
+    #[test]
+    fn a_warming_home_is_in_no_top_bar_view_until_the_first_message() {
+        use crate::prepare;
+        let running = |id: &str, hidden: bool| SpaceRow {
+            id: id.into(),
+            name: id.trim_start_matches("local:").into(),
+            provider: "local".into(),
+            hidden,
+            ..row()
+        };
+        let counted = |rows: &[SpaceRow]| {
+            let spaces = rows_to_spaces(rows, 0);
+            let menu = crate::window::menu(&crate::window::MenuInput {
+                spaces: spaces.clone(),
+                ..Default::default()
+            });
+            (
+                on_count(&spaces),
+                menu[0].label.clone(),
+                crate::notch::tab(&spaces).count,
+                openable_spaces(&spaces).len(),
+                spaces.len(),
+            )
+        };
+
+        // The app prepares the home: the record names it, the daemon marks it.
+        let state = prepare::State {
+            wanted: true,
+            home_space_id: Some("local:home-claude-code".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            prepare::hidden_spaces(&state),
+            ["local:home-claude-code".to_string()]
+        );
+        let warming = [
+            running("local:home-claude-code", true),
+            running("local:other", false),
+        ];
+        let tile_ids = |rows: &[SpaceRow]| -> Vec<String> {
+            crate::notch::tiles(&rows_to_spaces(rows, 0), None)
+                .into_iter()
+                .map(|t| t.id)
+                .collect()
+        };
+        assert!(!tile_ids(&warming).contains(&"local:home-claude-code".to_string()));
+        let (on, line, tab, tiles, all) = counted(&warming);
+        assert_eq!(
+            (on, line.as_str(), tab.as_str(), tiles),
+            (1, "1 Space running", "1", 1)
+        );
+        assert_eq!(all, 2, "the core's listing keeps the hidden row");
+        assert!(rows_to_spaces(&warming, 0)[0].hidden);
+        assert!(
+            !openable_spaces(&rows_to_spaces(&warming, 0))
+                .iter()
+                .any(|s| s.id == "local:home-claude-code")
+        );
+
+        // The first message: the record says asked, the daemon clears the mark.
+        let asked = prepare::State {
+            asked_ms: Some(5),
+            ..state
+        };
+        assert!(prepare::hidden_spaces(&asked).is_empty());
+        let shown = [
+            running("local:home-claude-code", false),
+            running("local:other", false),
+        ];
+        assert!(tile_ids(&shown).contains(&"local:home-claude-code".to_string()));
+        let (on, line, tab, tiles, _) = counted(&shown);
+        assert_eq!(
+            (on, line.as_str(), tab.as_str(), tiles),
+            (2, "2 Spaces running", "2", 2)
+        );
+
+        // A home of the same name the record did not prepare is not hidden.
+        let (on, ..) = counted(&[running("local:home-claude-code", false)]);
+        assert_eq!(on, 1);
+        assert!(prepare::hidden_spaces(&prepare::State::default()).is_empty());
     }
 
     #[test]
@@ -819,6 +912,8 @@ mod tests {
     #[test]
     fn mru_puts_the_most_recent_first() {
         let mk = |id: &str, t: i64| Space {
+            hidden: false,
+            parent: None,
             id: id.into(),
             name: id.into(),
             os: SpaceOs::Linux,

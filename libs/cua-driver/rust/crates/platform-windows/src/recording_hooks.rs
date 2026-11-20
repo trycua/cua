@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Recording callbacks exposed to `cua_driver_core::recording`.
 //!
 //! Two hooks:
@@ -30,6 +33,19 @@ use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetLastActivePopup, GetWindowThreadProcessId, IsWindow, IsWindowVisible,
 };
+
+#[cfg(target_os = "windows")]
+pub(crate) fn install() {
+    cua_driver_core::recording::set_classified_screenshot_fn(screenshot_for_recording);
+    cua_driver_core::recording::set_click_marker_fn(|png_bytes, x, y| {
+        crate::capture::crosshair_png_bytes(png_bytes, x, y).ok()
+    });
+    cua_driver_core::recording::set_budgeted_ax_snapshot_fn(app_state_json_for);
+    cua_driver_core::recording::set_element_bounds_fn(element_window_local_xy);
+    cua_driver_core::video::set_video_backend_factory(Box::new(
+        cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory,
+    ));
+}
 
 #[cfg(target_os = "windows")]
 pub fn set_snapshots(cache: Arc<Snapshots>) {
@@ -105,6 +121,11 @@ pub fn app_state_json_for(
     pid: Option<i64>,
     budget: cua_driver_core::recording::StateCaptureBudget,
 ) -> Option<Vec<u8>> {
+    // The recorder runs this hook on its own state-capture thread.
+    if let Err(error) = crate::dpi::use_per_monitor_v2_for_current_thread() {
+        tracing::warn!(target: "recording", "application-state capture refused: {error}");
+        return None;
+    }
     let pid = u32::try_from(pid?).ok()?;
     let hwnd = resolve_window_for_recording(window_id, Some(pid.into()))?;
     let mut walk = cua_driver_core::walk_budget::WalkBudget::new(

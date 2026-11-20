@@ -21,17 +21,16 @@
 import { useEffect, useRef, useState } from "react";
 
 import type { RemoteWindow } from "../model/teleport";
-import type {
-  SpacesBridge,
-  StreamOpts,
-  StreamTarget,
-  StreamTicketInfo,
-  ViewerConfig,
-} from "../native/spacesBridge";
+import type { SpacesBridge, StreamOpts, StreamTarget, StreamTicketInfo, ViewerConfig } from "../native/spacesBridge";
 import { createTeleportBridge } from "../native/teleport";
 import { telemetryBridge, type TelemetryBridge } from "../native/telemetry";
 import { PresenceOverlay } from "./presence/PresenceOverlay";
-import { MediaSession, type MediaStatus, type MediaTicket, type SessionOpenedPayload } from "@cua/spacesd-html5/core/mediaSession";
+import {
+  MediaSession,
+  type MediaStatus,
+  type MediaTicket,
+  type SessionOpenedPayload,
+} from "@cua/spacesd-html5/core/mediaSession";
 import { useT } from "../i18n";
 
 export { applyCursorShape, cursorShapeToCss } from "./cursorShape";
@@ -172,10 +171,7 @@ interface WindowStreamProps {
   listWindows?: (spaceId: string) => Promise<RemoteWindow[]>;
 }
 
-type Boot =
-  | { kind: "loading" }
-  | { kind: "error"; message: string }
-  | { kind: "ready"; config: ViewerConfig };
+type Boot = { kind: "loading" } | { kind: "error"; message: string } | { kind: "ready"; config: ViewerConfig };
 
 export function WindowStream({ bridge, listWindows }: WindowStreamProps) {
   const t = useT(["spaces", "common"]);
@@ -189,8 +185,7 @@ export function WindowStream({ bridge, listWindows }: WindowStreamProps) {
         if (!cancelled) setBoot({ kind: "ready", config });
       })
       .catch((error: unknown) => {
-        if (!cancelled)
-          setBoot({ kind: "error", message: error instanceof Error ? error.message : String(error) });
+        if (!cancelled) setBoot({ kind: "error", message: error instanceof Error ? error.message : String(error) });
       });
     return () => {
       cancelled = true;
@@ -336,7 +331,12 @@ function SingleWindowStream({ bridge, config }: { bridge: SpacesBridge; config: 
                 .catch(() => {});
             }}
           />
-          <PresenceOverlay spaceId={space.id} windowId={target.id} interactive={!replica} live={status === "streaming"} />
+          <PresenceOverlay
+            spaceId={space.id}
+            windowId={target.id}
+            interactive={!replica}
+            live={status === "streaming"}
+          />
         </div>
       </div>
       {status !== "streaming" && (
@@ -471,7 +471,12 @@ function WindowPanel({
   };
 
   return (
-    <div className="ws-frame" style={{ left: `${pos.x}px`, top: `${pos.y}px`, zIndex: z }} onMouseDown={() => setZ(2)} onBlur={() => setZ(1)}>
+    <div
+      className="ws-frame"
+      style={{ left: `${pos.x}px`, top: `${pos.y}px`, zIndex: z }}
+      onMouseDown={() => setZ(2)}
+      onBlur={() => setZ(1)}
+    >
       <div className="ws-frame-bar" onMouseDown={startDrag}>
         <span className="ws-frame-title">{`${win.appName || "Window"}${title ? ` — ${title}` : ""}`}</span>
         <span className="ws-frame-badge">{badge}</span>

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Shared tool-argument extraction helpers.
 //!
 //! Every tool in every platform crate does the same dance to pull

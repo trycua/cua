@@ -4,7 +4,16 @@
 import { AppWindowIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { useDesktopCover, useSettings, useSpaces, useSpaceThumbnail, type DesktopCover, type MachineAccessNotice, type SpaceOs, type StreamPhase } from "@/bridge";
+import {
+  useDesktopCover,
+  useSettings,
+  useSpaces,
+  useSpaceThumbnail,
+  type DesktopCover,
+  type MachineAccessNotice,
+  type SpaceOs,
+  type StreamPhase,
+} from "@/bridge";
 import { OsIcon } from "@/components/os-icon";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
@@ -83,6 +92,20 @@ export const SLOW_CONNECT_HINT = "Still connecting. This is taking longer than u
 /** Why, when it timed out. */
 export const CONNECT_TIMEOUT_REASON = "No picture arrived from the desktop within 20 seconds.";
 
+/** The page can be seen. The host stops every stream while its window is
+ * fully covered or minimized (native-video.md), so no picture can arrive
+ * then: the connect wait counts only visible time. */
+function usePageVisible(): boolean {
+  const read = () => typeof document === "undefined" || document.visibilityState !== "hidden";
+  const [visible, setVisible] = useState(read);
+  useEffect(() => {
+    const changed = () => setVisible(read());
+    document.addEventListener("visibilitychange", changed);
+    return () => document.removeEventListener("visibilitychange", changed);
+  }, []);
+  return visible;
+}
+
 /** True once `waiting` has held for `ms` without a break; a new `key` (another
  * Space, or Try again) starts the wait over. */
 function useTimedOut(waiting: boolean, ms: number, key: string): boolean {
@@ -104,7 +127,21 @@ function useTimedOut(waiting: boolean, ms: number, key: string): boolean {
 const SURFACE_RADIUS = 8;
 const SURFACE_BORDER = 0;
 
-export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, previewText, access, onAccessAction, children, className, windowId, windowName, interactive = true, viewOnly = false }: StreamSurfaceProps) {
+export function StreamSurface({
+  spaceId,
+  os,
+  aspectRatio = 16 / 10,
+  canStream,
+  previewText,
+  access,
+  onAccessAction,
+  children,
+  className,
+  windowId,
+  windowName,
+  interactive = true,
+  viewOnly = false,
+}: StreamSurfaceProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const settings = useSettings();
   const autoConnect = settings.data?.values.autoConnect ?? true;
@@ -133,8 +170,11 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
   });
   // Still no picture after CONNECT_TIMEOUT_MS: failed, with the reason and
   // Try again (a picture that arrives later still shows).
-  const timedOut = useTimedOut(slot?.phase === "connecting", CONNECT_TIMEOUT_MS, `${spaceId}:${attempt}`);
-  const slow = useTimedOut(slot?.phase === "connecting", SLOW_CONNECT_MS, `${spaceId}:${attempt}`);
+  // A hidden window starts the wait over when it shows again.
+  const visible = usePageVisible();
+  const waiting = slot?.phase === "connecting" && visible;
+  const timedOut = useTimedOut(waiting, CONNECT_TIMEOUT_MS, `${spaceId}:${attempt}`);
+  const slow = useTimedOut(waiting, SLOW_CONNECT_MS, `${spaceId}:${attempt}`);
   const phase: StreamPhase = !slot ? "nosession" : slot.phase === "live" ? "streaming" : slot.phase === "failed" || timedOut ? "failed" : "connecting";
   const cover = useDesktopCover({ canStream, previewText, autoConnect, connectRequested: requested, stream: phase, access });
   const thumbnail = useSpaceThumbnail(spaceId, videoHere && canStream && !replaced && !access);
@@ -194,7 +234,9 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
               <OsIcon os={os} className="mb-4 size-8 text-muted-foreground/30" />
               {canStream ? (
                 <>
-                  <p className="text-[13px] text-muted-foreground">{windowId && windowName ? `${windowName} opens in its own window.` : "The desktop opens in its own window."}</p>
+                  <p className="text-[13px] text-muted-foreground">
+                    {windowId && windowName ? `${windowName} opens in its own window.` : "The desktop opens in its own window."}
+                  </p>
                   <Button className="mt-4" onClick={() => void open()}>
                     <AppWindowIcon /> Open window
                   </Button>
@@ -214,7 +256,7 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
           data-video-hole=""
           className="glass absolute bottom-2 left-1/2 max-w-[calc(100%-1rem)] -translate-x-1/2 truncate rounded-lg px-3 py-1 text-xs text-muted-foreground shadow-float"
         >
-          View only. You can watch, but not control this Space.
+          View only
         </p>
       ) : slot?.phase === "live" && slot.focused ? (
         // While the desktop has the keyboard: how to give it back, over the
@@ -278,7 +320,10 @@ function DesktopCoverView({
 }) {
   const dark = Boolean(thumbnail) || cover.kind !== "status";
   return (
-    <div data-desktop-cover={cover.kind} className={cn("absolute inset-0 flex flex-col items-center justify-center px-6 text-center", dark && "dark text-white")}>
+    <div
+      data-desktop-cover={cover.kind}
+      className={cn("absolute inset-0 flex flex-col items-center justify-center px-6 text-center", dark && "dark text-white")}
+    >
       {thumbnail ? (
         <>
           <img data-cover-thumbnail="" src={thumbnail} alt="" aria-hidden className="absolute inset-0 size-full scale-110 object-cover blur-2xl" />

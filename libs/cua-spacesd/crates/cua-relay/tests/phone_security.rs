@@ -1849,3 +1849,33 @@ async fn revoking_phones_cuts_phone_streams_and_not_computer_streams() {
         assert!(chunk.is_some(), "the computer's stream was cut");
     }
 }
+
+/// A new computer added with the account token alone is refused (S5) with a
+/// stable code next to the reason, so the apps can ask the person to confirm
+/// it is them instead of showing a bare failure.
+#[tokio::test]
+async fn a_new_computer_from_a_token_alone_is_refused_with_a_code() {
+    let env = start(true).await;
+    let id = format!("space-{}", &uuid::Uuid::new_v4().simple().to_string()[..16]);
+    let r = env
+        .http
+        .post(format!("{}/v1/machines", env.base))
+        .bearer_auth(env.token("ada", "cua-cli"))
+        .json(&json!({"id": id, "name": "new mac"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    let body: Value = r.json().await.unwrap();
+    assert_eq!(
+        body["code"].as_str(),
+        Some(cua_relay::api::NEW_COMPUTER_NEEDS_PROOF),
+        "{body}"
+    );
+    assert!(
+        body["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("pairing code")),
+        "{body}"
+    );
+}

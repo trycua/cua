@@ -26,13 +26,7 @@ jobs:
         run: |
           # Service → tag prefix → directory
           declare -A SERVICE_TAG_DIR
-          SERVICE_TAG_DIR["docker/xfce-cua"]="docker-xfce-cua-v|libs/xfce-cua/"
-          SERVICE_TAG_DIR["docker/xfce"]="docker-xfce-v|libs/xfce/"
-          SERVICE_TAG_DIR["docker/kasm"]="docker-kasm-v|libs/kasm/"
           SERVICE_TAG_DIR["docker/lumier"]="docker-lumier-v|libs/lumier/"
-          SERVICE_TAG_DIR["docker/qemu-android"]="docker-cua-qemu-android-v|libs/qemu-docker/android/"
-          SERVICE_TAG_DIR["docker/qemu-linux"]="docker-cua-qemu-linux-v|libs/qemu-docker/linux/"
-          SERVICE_TAG_DIR["docker/qemu-windows"]="docker-cua-qemu-windows-v|libs/qemu-docker/windows/"
 
           UNRELEASED=""
           UNRELEASED_COUNT=0
@@ -75,7 +69,9 @@ jobs:
 
           # Send alert to AlertManager → Slack
           # The alert intake needs a password (repository secret ALERTMANAGER_INTAKE_TOKEN).
-          curl -s -u "alerts:${ALERTMANAGER_INTAKE_TOKEN}" -X POST https://am.cua.ai/api/v2/alerts \
+          # --fail-with-body: a refused password (401) fails the job, instead of
+          # printing "Slack digest sent." while the alert is dropped.
+          curl -sS --fail-with-body --max-time 30 -u "alerts:${ALERTMANAGER_INTAKE_TOKEN}" -X POST https://am.cua.ai/api/v2/alerts \
             -H "Content-Type: application/json" \
             -d "[
               {

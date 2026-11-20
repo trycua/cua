@@ -1,0 +1,13 @@
+{
+  "soak_hours_10": 2,
+  "soak_hours_50": 4,
+  "soak_hours_full": 24,
+  "min_installs": 15,
+  "min_create_events": 30,
+  "max_create_error_delta": 10.0,
+  "min_update_events": 20,
+  "max_update_failure_delta": 15.0,
+  "min_sessions": 100,
+  "max_crash_free_drop": 0.5,
+  "min_crash_free": 99.0
+}

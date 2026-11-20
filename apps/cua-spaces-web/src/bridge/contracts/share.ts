@@ -47,9 +47,7 @@ export interface ShareRemovalNote {
 }
 
 /** The command the host runs next (`share::ShareRequest`). */
-export type ShareRequest =
-  | { kind: "share"; space: string; who: string; role: string }
-  | { kind: "unshare"; space: string; who: string };
+export type ShareRequest = { kind: "share"; space: string; who: string; role: string } | { kind: "unshare"; space: string; who: string };
 
 /** The sheet's state (`share::ShareSheetState`). */
 export interface ShareSheetState {

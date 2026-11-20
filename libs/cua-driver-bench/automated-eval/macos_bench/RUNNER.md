@@ -22,8 +22,11 @@ observed-pin comparison and doctor/CDP/page-info/deny probes remain prerequisite
 | `cc-codex-cu` | Codex Computer-Use (Sky) | OpenAI's `cua_repl` launcher from the ChatGPT app 26.930 plugin as MCP server `codex-cu` (`js`, `js_reset`), no skill |
 | `cc-codex-cu-1007-browser` | Codex Computer-Use (Sky), app 26.1007 | The same launcher from app 26.1007 with the browser surface on |
 | `cc-claude-cu-helper` | Claude Computer-Use (Desktop helper): Claude Desktop 2.31226.0 computer-use helper via a minimal adapter; an internal interface, not an Anthropic-supported procedure | Cua's adapter `tools/claude_cu_helper/cu_helper_mcp.py` as MCP server `claude-cu-helper` (`app_list_windows`, `app_screenshot` and the pinned input tools), no skill |
+| `cc-agent-desktop` | Vercel agent-desktop | agent-desktop 1.2.0 behind `tools/agent_desktop/ad_mcp.py` as MCP server `agentdesktop` (one tool per CLI command), the vendor skill text as server instructions |
+| `cc-browser-use` | Browser Use harness | Browser Use macOS harness 0.2.1 behind `tools/browser_use_harness/bu_mcp.py` as MCP server `browseruse` (`macos_harness`, `view_screenshot`), the vendor skill as server instructions |
 | `cx-cua-driver`, `cx-codex-cu`, `cx-claude-cu-helper` | Cua Driver, Codex Computer-Use (Sky) and Claude Computer-Use (Desktop helper, with the label above), driven by Codex CLI (Amendment 23) | Not Claude Code: the bundled Codex CLI as `codex app-server` (`codex_native.py`) with GPT-6.1 Sol (`gpt-6.1-sol`, default effort low), given the MCP entry and system prompt of `cc-cua-driver-script`, `cc-codex-cu` or `cc-claude-cu-helper` |
 | `cc-cua-driver`, `cc-cua-driver-main`, `cc-cua-driver-main-skill` | Internal baselines | Cua Driver 0.34.0 release; main with `run_script` off; main with the skill in the system prompt |
+| `pi-cua-driver`, `pi-cua-driver-main`, `pi-cua-driver-main-skill`, `pi-cua-driver-script` | The four Cua Driver setups above, driven by pi | Not Claude Code: `pi --mode json` (`pi_arms.py`) on `openai-codex` / `gpt-6.1-terra` by default (`CDB_PI_PROVIDER`, `CDB_PI_MODEL`, `CDB_PI_THINKING`), given the driver daemon, MCP entry, skill and system prompt of the matching `cc-*` arm. Tools: `read` (limited to the skill's `SKILL.md`, and the turn cap enforced, by `pi_gate.ts`), `tool_search` and the deferred `cua` server. Linux and macOS. |
 
 Arms `codex-native-cu` and `codex-cua-driver` (`codex exec --json`, from
 `run_pilot.py`) exist behind `--allow-codex-arms` and are not part of Bench v2.
@@ -160,6 +163,45 @@ The unit of completeness is a task block (one task, every arm, one run).
 * Before each trial the runner kills leftover BenchLab and BenchSentinel
   processes by exact name, and with `CDB_BENCH_DISPOSABLE=1` the task apps too,
   so nothing else may use those apps during a run.
+
+## Interrupts and resume
+
+To resume a run that stopped, however it stopped, rerun the same `run` command with the same `--run-id`.
+The run's only state is `results.jsonl`. Each attempt appends one row and fsyncs it.
+
+* Trials with a final row are kept and skipped. A trial with only non-final rows continues at the next
+  attempt number, and the retries it already used still count.
+* An attempt cut short before its row was written (SIGKILL, a lost VM or host, a full disk) has no row. Its
+  directory is cleared and redone under the same number. `tools/check_run_evidence.py` accepts that one
+  directory until the run reaches `DONE`.
+* A row cut off halfway by a crash is dropped when the run starts again. A recorded trial whose video
+  compression was cut short or failed is compressed again from its raw recording, which is deleted only
+  after a successful `video.json` is written. A run whose videos are not all compressed ends `STOPPED_COMPRESS`, not
+  `DONE`.
+* A `--smoke` run resumes the same way, from its own smoke rows.
+* SIGTERM, SIGINT, SIGHUP and `STOP` end the current trial cleanly and write `STOPPED_USER`. Resuming
+  clears that flag.
+* `run.lock` is a kernel lock and is released when its holder dies. A second `run` or `finalize` on a live
+  run exits 5.
+* Options that change what a trial measures (for example `--no-gui-only-enforce`, `--no-tell-budget`,
+  `--tool-search`) must match the run's recorded argv. Only operational options (paths, ledger, cutoff,
+  budget cap, quota and disk floors, preflight switches) and the schedule options may change.
+* Every row records the hash of the runner, probes and briefs (`bench_src_sha256`). A start from a
+  checkout that hashes differently exits 6. Pack tasks are checked against their pinned digests by every
+  preflight.
+* A Cua Driver row records the driver binary and skill tree it ran. A start with a different build for a
+  recorded trial exits 6, whatever the pins say. `preflight` refuses a run directory that has trials, so
+  the recorded manifest stays the one the run started with.
+* Every row records its trial's place in the schedule (phase, block, run, position in the order, task position, arm slot) and its
+  setup (condition, model, effort, turn cap, time limit). A start that would give a recorded trial id other values, or drop it
+  from the schedule, exits 6 before anything in the run directory changes. Extending the schedule, for
+  example adding phase 2 to a finished phase 1, is a resume.
+* `tools/make_linux_pins.py` rerun against the same build is a no-op, so the whole Linux session command
+  can be rerun. Pins from a different build are still refused.
+
+The runner does not restart itself. Retries cover rate limits, overload and setup failures inside one
+process (Gates, above). After a crash, or after the host or VM was lost, a person or the calling job
+reruns the command once.
 
 ## Per-trial output
 

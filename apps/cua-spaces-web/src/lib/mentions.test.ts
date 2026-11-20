@@ -3,7 +3,16 @@
 
 import { describe, expect, it } from "vitest";
 
-import { activeMention, addLeadingMention, insertMention, matchMentions, mentionedHandles, mentionSegments, startsWithMention, type MentionCandidate } from "./mentions";
+import {
+  activeMention,
+  addLeadingMention,
+  insertMention,
+  matchMentions,
+  mentionedHandles,
+  mentionSegments,
+  startsWithMention,
+  type MentionCandidate,
+} from "./mentions";
 
 const PEOPLE: MentionCandidate[] = [
   { handle: "grace", label: "Grace", kind: "person" },

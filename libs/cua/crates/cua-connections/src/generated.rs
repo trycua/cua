@@ -21,7 +21,7 @@ pub static PROVIDERS: &[Provider] = &[
         also_wires: &[],
         base_url: "https://api.anthropic.com",
         base_url_env: "",
-        default_model: "claude-sonnet-5",
+        default_model: "claude-sonnet-5-5",
         hermes_id: "anthropic",
         key_help: "Create a key at console.anthropic.com. Every app that uses Claude can use it.",
         placeholder: "sk-ant-…",
@@ -77,9 +77,12 @@ pub static PROVIDERS: &[Provider] = &[
         regions: &[
         ],
         models: &[
-            Model { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", fast: true },
-            Model { id: "claude-sonnet-5", name: "Claude Sonnet 5", fast: false },
-            Model { id: "claude-opus-5-5", name: "Claude Opus 5.5", fast: false },
+            Model { id: "claude-haiku-5-5", name: "Claude Haiku 5.5", fast: true, legacy: false },
+            Model { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", fast: false, legacy: false },
+            Model { id: "claude-opus-5-5", name: "Claude Opus 5.5", fast: false, legacy: false },
+            Model { id: "claude-fable-5-1", name: "Claude Fable 5.1", fast: false, legacy: false },
+            Model { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", fast: true, legacy: true },
+            Model { id: "claude-sonnet-5", name: "Claude Sonnet 5", fast: false, legacy: true },
         ],
         delivery: &[
             Delivery { harness: "claude-code", entries: &[Entry { dest: "ANTHROPIC_API_KEY", src: "ANTHROPIC_API_KEY" }, Entry { dest: "CLAUDE_CODE_OAUTH_TOKEN", src: "CLAUDE_CODE_OAUTH_TOKEN" }, Entry { dest: "ANTHROPIC_AUTH_TOKEN", src: "ANTHROPIC_AUTH_TOKEN" }, ] },
@@ -146,7 +149,7 @@ pub static PROVIDERS: &[Provider] = &[
         regions: &[
         ],
         models: &[
-            Model { id: "gpt-5.5", name: "GPT-5.5", fast: false },
+            Model { id: "gpt-5.5", name: "GPT-5.5", fast: false, legacy: false },
         ],
         delivery: &[
             Delivery { harness: "goose", entries: &[Entry { dest: "OPENAI_API_KEY", src: "OPENAI_API_KEY" }, ] },
@@ -198,7 +201,7 @@ pub static PROVIDERS: &[Provider] = &[
         regions: &[
         ],
         models: &[
-            Model { id: "anthropic/claude-sonnet-5", name: "Claude Sonnet 5", fast: false },
+            Model { id: "anthropic/claude-sonnet-5", name: "Claude Sonnet 5", fast: false, legacy: false },
         ],
         delivery: &[
             Delivery { harness: "goose", entries: &[Entry { dest: "OPENROUTER_API_KEY", src: "OPENROUTER_API_KEY" }, ] },
@@ -249,7 +252,7 @@ pub static PROVIDERS: &[Provider] = &[
         regions: &[
         ],
         models: &[
-            Model { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash", fast: true },
+            Model { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash", fast: true, legacy: false },
         ],
         delivery: &[
             Delivery { harness: "gemini-cli", entries: &[Entry { dest: "GEMINI_API_KEY", src: "GEMINI_API_KEY" }, Entry { dest: "GOOGLE_API_KEY", src: "GOOGLE_API_KEY" }, ] },
@@ -301,7 +304,7 @@ pub static PROVIDERS: &[Provider] = &[
         regions: &[
         ],
         models: &[
-            Model { id: "grok-4.6", name: "Grok 4.6", fast: false },
+            Model { id: "grok-4.6", name: "Grok 4.6", fast: false, legacy: false },
         ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "XAI_API_KEY", src: "XAI_API_KEY" }, ] },
@@ -348,7 +351,7 @@ pub static PROVIDERS: &[Provider] = &[
         regions: &[
         ],
         models: &[
-            Model { id: "deepseek-flash", name: "DeepSeek Flash", fast: true },
+            Model { id: "deepseek-flash", name: "DeepSeek Flash", fast: true, legacy: false },
         ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "DEEPSEEK_API_KEY", src: "DEEPSEEK_API_KEY" }, ] },
@@ -395,7 +398,7 @@ pub static PROVIDERS: &[Provider] = &[
         regions: &[
         ],
         models: &[
-            Model { id: "kimi-k3", name: "Kimi K3", fast: false },
+            Model { id: "kimi-k3", name: "Kimi K3", fast: false, legacy: false },
         ],
         delivery: &[
             Delivery { harness: "hermes", entries: &[Entry { dest: "KIMI_API_KEY", src: "KIMI_API_KEY" }, ] },

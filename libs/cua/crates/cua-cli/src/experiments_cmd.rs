@@ -5,7 +5,7 @@
 //!
 //! The switches live in the cua home, where the daemon and the Spaces apps
 //! read them. `CUA_EXPERIMENTS`
-//! turns experiments on (`secure-spaces`) or off (`-secure-spaces`) for one
+//! turns experiments on (`ci-runners`) or off (`-ci-runners`) for one
 //! process.
 
 use std::io::Write;
@@ -26,14 +26,14 @@ pub enum ExperimentsCmd {
     List,
     /// Turn an experiment on.
     #[command(after_help = "Examples:
-  cua experiments enable secure-spaces")]
+  cua experiments enable ci-runners")]
     Enable {
         /// The experiment's name, as `cua experiments` lists it.
         name: String,
     },
     /// Turn an experiment off. Nothing it made is deleted.
     #[command(after_help = "Examples:
-  cua experiments disable secure-spaces")]
+  cua experiments disable ci-runners")]
     Disable {
         /// The experiment's name, as `cua experiments` lists it.
         name: String,
@@ -41,6 +41,12 @@ pub enum ExperimentsCmd {
 }
 
 fn gate(name: &str) -> Result<Gate, CuaError> {
+    let t = name.trim().to_ascii_lowercase().replace('_', "-");
+    if experiments::RETIRED.contains(&t.as_str()) {
+        return Err(CuaError::InvalidArgument(format!(
+            "{t} is always on now; it has no switch"
+        )));
+    }
     Gate::parse(name).ok_or_else(|| {
         let names: Vec<_> = Gate::ALL.iter().map(|g| g.name()).collect();
         CuaError::InvalidArgument(format!(

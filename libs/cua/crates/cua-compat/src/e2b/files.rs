@@ -169,12 +169,15 @@ pub async fn read(
     };
     let _ = user;
     let path = resolve_path(&path, &home);
+    // envd reads with root's rights.
+    let driver = e.drivers.of(&r.id, &c).await;
     let call = pb::ReadFileRequest {
         path: path.clone(),
         offset: 0,
         length: 0,
         chunk_size: 0,
         compute_sha256: false,
+        run_as: crate::guest::file_run_as(&driver, "root"),
         ..Default::default()
     };
     let mut stream = match c.filesystem().read_file(call).await {
@@ -186,8 +189,6 @@ pub async fn read(
             );
         }
         Err(s) if s.code() == tonic::Code::PermissionDenied => {
-            // envd reads with root's rights.
-            let driver = e.drivers.of(&r.id, &c).await;
             return read_as_user(&c, &driver, "root", &path).await;
         }
         Err(s) => return read_error(&s, &path),

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Resolves "what is the latest Cua Driver release?" without depending on the
 //! rate-limited GitHub REST API.
 //!

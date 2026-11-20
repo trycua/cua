@@ -65,8 +65,9 @@ runs:
       uses: ./.github/actions/setup-protoc
     - if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Linux'
       name: Install Linux build dependencies
-      shell: bash
-      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential cmake pkg-config libssl-dev
+      uses: ./.github/actions/apt-install
+      with:
+        packages: build-essential cmake pkg-config libssl-dev
     # Dependencies and build products of a cold build (a source change).
     - if: steps.cache.outputs.cache-hit != 'true'
       uses: ./.github/actions/rust-cache

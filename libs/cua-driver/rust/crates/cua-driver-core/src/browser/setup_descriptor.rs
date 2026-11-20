@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Exact, product-specific anchors for approved existing-profile setup.
 
 use std::time::Duration;

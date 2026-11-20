@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Shared image-manipulation utilities for the `zoom` tool.
 //!
 //! All three platform crates depend on cursor-overlay, so this is the natural

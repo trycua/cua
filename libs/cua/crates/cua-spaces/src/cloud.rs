@@ -126,7 +126,7 @@ impl Spaces {
                 .clone()
                 .filter(|n| !n.trim().is_empty())
                 .map(|n| crate::spaces::sanitize_label(&n))
-                .unwrap_or_else(|| format!("space-{}", crate::spaces::random_suffix())),
+                .unwrap_or_else(|| self.fresh_name()),
         );
         if opts.kind != Kind::Auto {
             create.kind = opts.kind;
@@ -243,7 +243,7 @@ fn cloud_network(
         };
     }
     match settings.preset {
-        P::Localhost | P::Lan => Err(Error::invalid(format!(
+        P::Localhost | P::Lan | P::LocalhostLan => Err(Error::invalid(format!(
             "a Space in your cloud account ({word}) can't reach this computer or your local \
              network; use internet (the default), none or custom"
         ))),

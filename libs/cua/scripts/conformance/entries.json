@@ -33,6 +33,10 @@
       "what": "stop and resume, and the declared pause, checkpoint and fork"
     },
     {
+      "case": "warm",
+      "what": "a Space claimed from a warm member answers with its own token and only that one, or the runtime says it starts cold"
+    },
+    {
       "case": "teardown",
       "what": "delete leaves no Space, process, container or network"
     }
@@ -46,13 +50,15 @@
           "x86_64"
         ],
         "checkpoint": true,
+        "claim": true,
         "fork": true,
         "guests": [
           "linux"
         ],
         "kvm": false,
         "nested_virt": false,
-        "pause": true
+        "pause": true,
+        "prepare": true
       },
       "guest": "linux",
       "hosts": [
@@ -95,6 +101,11 @@
             },
             {
               "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "warm",
               "expect": "pass",
               "why": null
             },
@@ -145,6 +156,11 @@
             },
             {
               "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "warm",
               "expect": "pass",
               "why": null
             },
@@ -171,13 +187,15 @@
           "x86_64"
         ],
         "checkpoint": true,
+        "claim": true,
         "fork": true,
         "guests": [
           "linux"
         ],
         "kvm": false,
         "nested_virt": false,
-        "pause": true
+        "pause": true,
+        "prepare": true
       },
       "guest": "linux",
       "hosts": [
@@ -220,6 +238,11 @@
             },
             {
               "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "warm",
               "expect": "pass",
               "why": null
             },
@@ -274,6 +297,11 @@
               "why": null
             },
             {
+              "case": "warm",
+              "expect": "pass",
+              "why": null
+            },
+            {
               "case": "teardown",
               "expect": "pass",
               "why": null
@@ -296,13 +324,15 @@
           "x86_64"
         ],
         "checkpoint": true,
+        "claim": true,
         "fork": true,
         "guests": [
           "linux"
         ],
         "kvm": false,
         "nested_virt": false,
-        "pause": true
+        "pause": true,
+        "prepare": true
       },
       "guest": "linux",
       "hosts": [
@@ -345,6 +375,11 @@
             },
             {
               "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "warm",
               "expect": "pass",
               "why": null
             },
@@ -371,13 +406,15 @@
           "x86_64"
         ],
         "checkpoint": true,
+        "claim": true,
         "fork": true,
         "guests": [
           "linux"
         ],
         "kvm": false,
         "nested_virt": false,
-        "pause": true
+        "pause": true,
+        "prepare": true
       },
       "guest": "linux",
       "hosts": [
@@ -420,6 +457,11 @@
             },
             {
               "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "warm",
               "expect": "pass",
               "why": null
             },
@@ -446,13 +488,15 @@
           "x86_64"
         ],
         "checkpoint": true,
+        "claim": true,
         "fork": true,
         "guests": [
           "linux"
         ],
         "kvm": true,
         "nested_virt": true,
-        "pause": true
+        "pause": true,
+        "prepare": false
       },
       "guest": "linux",
       "hosts": [
@@ -495,6 +539,11 @@
             },
             {
               "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "warm",
               "expect": "pass",
               "why": null
             },
@@ -520,13 +569,15 @@
           "aarch64"
         ],
         "checkpoint": true,
+        "claim": true,
         "fork": true,
         "guests": [
           "linux"
         ],
         "kvm": false,
         "nested_virt": false,
-        "pause": true
+        "pause": true,
+        "prepare": false
       },
       "guest": "linux",
       "hosts": [
@@ -569,6 +620,11 @@
             },
             {
               "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "warm",
               "expect": "pass",
               "why": null
             },
@@ -595,13 +651,15 @@
           "x86_64"
         ],
         "checkpoint": false,
+        "claim": true,
         "fork": false,
         "guests": [
           "linux"
         ],
         "kvm": false,
         "nested_virt": false,
-        "pause": false
+        "pause": false,
+        "prepare": false
       },
       "guest": "linux",
       "hosts": [
@@ -648,6 +706,11 @@
               "why": null
             },
             {
+              "case": "warm",
+              "expect": "pass",
+              "why": null
+            },
+            {
               "case": "teardown",
               "expect": "pass",
               "why": null
@@ -670,6 +733,7 @@
           "x86_64"
         ],
         "checkpoint": true,
+        "claim": true,
         "fork": true,
         "guests": [
           "linux",
@@ -679,7 +743,8 @@
         ],
         "kvm": false,
         "nested_virt": false,
-        "pause": true
+        "pause": true,
+        "prepare": false
       },
       "guest": "linux",
       "hosts": [
@@ -722,6 +787,11 @@
             },
             {
               "case": "lifecycle",
+              "expect": "pass",
+              "why": null
+            },
+            {
+              "case": "warm",
               "expect": "pass",
               "why": null
             },
@@ -776,6 +846,11 @@
               "why": null
             },
             {
+              "case": "warm",
+              "expect": "pass",
+              "why": null
+            },
+            {
               "case": "teardown",
               "expect": "pass",
               "why": null
@@ -826,6 +901,11 @@
               "why": null
             },
             {
+              "case": "warm",
+              "expect": "pass",
+              "why": null
+            },
+            {
               "case": "teardown",
               "expect": "pass",
               "why": null
@@ -847,13 +927,15 @@
           "aarch64"
         ],
         "checkpoint": false,
+        "claim": true,
         "fork": true,
         "guests": [
           "macos"
         ],
         "kvm": false,
         "nested_virt": false,
-        "pause": false
+        "pause": false,
+        "prepare": false
       },
       "guest": "macos",
       "hosts": [
@@ -900,6 +982,11 @@
               "why": null
             },
             {
+              "case": "warm",
+              "expect": "refused",
+              "why": "not applicable to this guest"
+            },
+            {
               "case": "teardown",
               "expect": "pass",
               "why": null
@@ -919,11 +1006,13 @@
       "capabilities": {
         "archs": [],
         "checkpoint": false,
+        "claim": false,
         "fork": false,
         "guests": [],
         "kvm": false,
         "nested_virt": false,
-        "pause": false
+        "pause": false,
+        "prepare": false
       },
       "guest": "linux",
       "hosts": [],

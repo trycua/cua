@@ -5,7 +5,7 @@ description: Verify Cua Spaces on Linux the way a user drives a Space - register
 
 # Verify Cua Spaces
 
-A **Space** is any machine running **cua-spacesd** (port 3211 in an image; a random loopback port here). Users reach it through the `cua` CLI (`cua spaces`, `cua sb view`, `cua do`, `cua spacesd`, `cua mcp`), the HTML5 viewer that cua-spacesd serves at `/viewer/`, and the desktop apps (Tauri, Electron, SwiftUI) that sit on the same SDK. This skill drives the CLI and the viewer against a throwaway Linux desktop. Read [the feature map](features/README.md) before picking a journey.
+A **Space** is any machine running **cua-spacesd** (port 3211 in an image; a random loopback port here). Users reach it through the `cua` CLI (`cua spaces`, `cua sb view`, `cua do`, `cua spacesd`, `cua mcp`), the HTML5 viewer that cua-spacesd serves at `/viewer/`, and the desktop apps (Tauri, Electron, SwiftUI) that sit on the same SDK. This skill drives the CLI and the viewer against a throwaway Linux desktop. The macOS app has its own lane, [Cua Spaces Local on a real Mac](macos-app.md). Read [the feature map](features/README.md) before picking a journey.
 
 Everything here is source-built: `libs/cua-spacesd` (the daemon and the `cua-spacesd-x11-pad` input-echo fixture) and `libs/cua` (`cua-spaces-cli`, the Spaces build of `cua`; the apps ship it as `cua`). Never drive a cua-spacesd, cua daemon or `~/.cua` you did not start: every run gets its own display, session bus, audio server, port, token and cua home.
 
@@ -75,7 +75,7 @@ Kills only the pids `up` recorded (newest first, TERM then KILL) and deletes `RU
 
 ## Unverified here
 
-- The desktop apps: Tauri (`apps/cua-spaces`), Electron (`apps/cua-spaces-desktop`) and SwiftUI (`apps/cua-spaces-macos`, `libs/spaces-*-swift`), the notch panel, menu bar item and first-run flow. None was launched; the web UI's demo mode (`apps/cua-spaces-web`, `pnpm dev`) is fixtures only.
+- The Tauri (`apps/cua-spaces`) and Electron (`apps/cua-spaces-desktop`) apps. The SwiftUI app, its notch and its first run go through [the macOS app lane](macos-app.md). The web UI's demo mode (`apps/cua-spaces-web`, `pnpm dev`) is fixtures only.
 - macOS and Windows cua-spacesd (ScreenCaptureKit/TCC grants, WASAPI, scheduled task). Linux X11 only; Wayland/Hyprland capture is not exercised.
 - Creating Spaces (`cua spaces create`, `create_space`): needs a container runtime or VM image pulls; this skill attaches to a cua-spacesd it started instead.
 - Sign-in, the relay (`cua-spacesd join`, `relay:<id>` Spaces), sharing and account features: need a Cua account and the hosted relay.

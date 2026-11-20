@@ -8,7 +8,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use async_trait::async_trait;
@@ -77,6 +77,8 @@ struct HeadlessPlatform {
     /// Replaces the live endpoint URL to simulate an endpoint change.
     endpoint_override: StdMutex<Option<String>>,
     start_time: AtomicU64,
+    /// Report no process start time, so the launch identity is unproven.
+    start_time_unknown: AtomicBool,
     native_calls: AtomicUsize,
     spawned_args: StdMutex<Vec<Vec<String>>>,
     signals: Arc<StdMutex<Vec<String>>>,
@@ -178,7 +180,8 @@ impl BrowserPlatform for HeadlessPlatform {
     async fn process_fingerprint(&self, pid: i64) -> Result<ProcessFingerprint, BrowserRefusal> {
         Ok(ProcessFingerprint {
             pid,
-            start_time: Some(self.start_time.load(Ordering::SeqCst)),
+            start_time: (!self.start_time_unknown.load(Ordering::SeqCst))
+                .then(|| self.start_time.load(Ordering::SeqCst)),
             executable: Some("/fixture/chromium".into()),
         })
     }
@@ -272,6 +275,7 @@ async fn harness() -> Harness {
         ws_url,
         endpoint_override: StdMutex::new(None),
         start_time: AtomicU64::new(1),
+        start_time_unknown: AtomicBool::new(false),
         native_calls: AtomicUsize::new(0),
         spawned_args: StdMutex::new(Vec::new()),
         signals: Default::default(),
@@ -573,6 +577,33 @@ async fn headless_prepare_refuses_out_of_scope_requests() {
     assert_eq!(bad.is_error, Some(true));
     assert!(h.platform.spawned_args.lock().unwrap().is_empty());
     assert_eq!(h.platform.native_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn headless_launch_with_unproven_identity_counts_as_a_failed_launch() {
+    let h = harness().await;
+    let session = unique("headless-unproven");
+    h.platform.start_time_unknown.store(true, Ordering::SeqCst);
+    for _ in 0..3 {
+        let result = prepare(&h, json!({"session": session})).await;
+        assert_eq!(refusal_code(&result), "browser_route_unavailable");
+        let message = structured(&result)["refusal"]["message"].clone();
+        assert!(
+            message.as_str().unwrap().contains("start identity"),
+            "{message}"
+        );
+    }
+    // A refused launch never resets the failure streak, so the breaker opens.
+    let result = prepare(&h, json!({"session": session})).await;
+    assert_eq!(refusal_code(&result), "browser_route_unavailable");
+    assert_eq!(
+        structured(&result)["refusal"]["detail"]["reason"],
+        "isolated_launch_backoff",
+        "{}",
+        structured(&result)
+    );
+    assert_eq!(h.platform.spawned_args.lock().unwrap().len(), 3);
+    crate::session::fire_session_end(&session);
 }
 
 #[tokio::test]

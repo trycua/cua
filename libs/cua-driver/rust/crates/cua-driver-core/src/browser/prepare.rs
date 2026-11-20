@@ -1519,10 +1519,7 @@ impl BrowserEngine {
             Err(error) => Err(error),
         };
         let endpoint = match launched {
-            Ok(endpoint) => {
-                self.isolated_launch_breaker.record_success();
-                endpoint
-            }
+            Ok(endpoint) => endpoint,
             Err(error) => {
                 cleanup_created_profile_as_browser(
                     child.as_mut(),
@@ -1566,15 +1563,22 @@ impl BrowserEngine {
                         &prepared_profile,
                         leader_reaped,
                     );
-                    return Err(BrowserRefusal::new(
+                    let error = BrowserRefusal::new(
                         BrowserRefusalCode::BrowserRouteUnavailable,
                         "could not prove the headless browser's process start identity",
-                    ));
+                    );
+                    self.isolated_launch_breaker.record_failure(
+                        Instant::now(),
+                        LaunchFailure::Browser,
+                        &error.message,
+                    );
+                    return Err(error);
                 }
             }
         } else {
             None
         };
+        self.isolated_launch_breaker.record_success();
         let mut owner_sessions = vec![request.session];
         if let Some(transport_session) = request.transport_session {
             if !owner_sessions.contains(&transport_session) {

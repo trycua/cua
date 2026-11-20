@@ -1036,14 +1036,15 @@ fn frame_geometry_distance(
 /// Server-side decorations offset a frame's reported origin from the native
 /// window's outer geometry, so an exact match is not required. The correlation
 /// must still be unambiguous: the best candidate has to be within this budget
-/// AND either match exactly where no other frame does or beat the runner-up by
-/// [`FRAME_MATCH_MARGIN_PX`].
+/// AND either match exactly where every close rival has the window's size, or
+/// beat the runner-up by [`FRAME_MATCH_MARGIN_PX`].
 const FRAME_MATCH_TOLERANCE_PX: u64 = 160;
 
 /// How decisively the best frame must beat the second-best, unless it alone
-/// matches the window exactly. Two windows of genuinely similar geometry are
-/// not disambiguated by this heuristic, and a caller that needs proof of
-/// window identity must get a refusal instead of a coin flip.
+/// matches the window exactly and every close rival has the window's size.
+/// Two windows of genuinely similar geometry are not disambiguated by this
+/// heuristic, and a caller that needs proof of window identity must get a
+/// refusal instead of a coin flip.
 const FRAME_MATCH_MARGIN_PX: u64 = 24;
 
 /// Pick the unique application top-level that corresponds to native window
@@ -1062,19 +1063,28 @@ fn correlate_frame_to_window(
     candidates: &[FrameExtents],
     window: &crate::x11::WindowInfo,
 ) -> Option<usize> {
-    let mut scored: Vec<(u64, usize)> = candidates
+    let mut scored: Vec<(u64, usize, (i32, i32))> = candidates
         .iter()
         .filter_map(|(ordinal, extents)| {
-            frame_geometry_distance(*extents, window).map(|distance| (distance, *ordinal))
+            frame_geometry_distance(*extents, window)
+                .map(|distance| (distance, *ordinal, (extents.2, extents.3)))
         })
         .collect();
-    scored.sort_by_key(|(distance, ordinal)| (*distance, *ordinal));
-    let (best_distance, best_ordinal) = *scored.first()?;
+    scored.sort_by_key(|(distance, ordinal, _)| (*distance, *ordinal));
+    let (best_distance, best_ordinal, _) = *scored.first()?;
     if best_distance > FRAME_MATCH_TOLERANCE_PX {
         return None;
     }
-    if let Some(&(runner_up, _)) = scored.get(1) {
-        let exact = best_distance == 0 && runner_up > 0;
+    if let Some(&(runner_up, _, _)) = scored.get(1) {
+        // An exact match is proof only when every rival within the margin is
+        // reported at the window's own size, so it differs by position alone.
+        let window_size = (i64::from(window.width), i64::from(window.height));
+        let exact = best_distance == 0
+            && runner_up > 0
+            && scored[1..]
+                .iter()
+                .filter(|(distance, _, _)| *distance < FRAME_MATCH_MARGIN_PX)
+                .all(|(_, _, (w, h))| (i64::from(*w), i64::from(*h)) == window_size);
         if !exact && runner_up.saturating_sub(best_distance) < FRAME_MATCH_MARGIN_PX {
             return None;
         }

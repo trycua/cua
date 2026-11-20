@@ -1053,9 +1053,10 @@ const FRAME_MATCH_MARGIN_PX: u64 = 24;
 /// on. Geometry is the available bridge — `Component.GetExtents` in screen
 /// coordinates against the X11 outer geometry the caller already named. This
 /// refuses ties rather than guessing, because callers use the result to decide
-/// which window they are about to act inside. The tie rule holds both ways: the
-/// frame must also fit `window` decisively better than any of the process's
-/// other `windows`, since a native modal can have a window but no frame.
+/// which window they are about to act inside. The tie rule holds both ways:
+/// a native modal can have a window but no frame, so the frame must not be a
+/// plausible match for another of the process's `windows` either, unless that
+/// window has a frame of its own that fits it decisively better.
 /// An AT-SPI frame ordinal and its screen extents (x, y, width, height).
 type FrameExtents = (usize, (i32, i32, i32, i32));
 
@@ -1080,12 +1081,23 @@ fn correlate_frame_to_window(
             return None;
         }
     }
-    let fits_another_window = windows
+    let contested = windows
         .iter()
         .filter(|other| other.xid != window.xid)
-        .filter_map(|other| frame_geometry_distance(best_extents, other))
-        .any(|distance| distance.saturating_sub(best_distance) < FRAME_MATCH_MARGIN_PX);
-    if fits_another_window {
+        .any(|other| {
+            let Some(distance) = frame_geometry_distance(best_extents, other)
+                .filter(|distance| *distance <= FRAME_MATCH_TOLERANCE_PX)
+            else {
+                return false;
+            };
+            let own_best = candidates
+                .iter()
+                .filter_map(|(_, extents)| frame_geometry_distance(*extents, other))
+                .min()
+                .unwrap_or(distance);
+            distance.saturating_sub(own_best) < FRAME_MATCH_MARGIN_PX
+        });
+    if contested {
         return None;
     }
     Some(best_ordinal)
@@ -7658,19 +7670,29 @@ pub(crate) fn lone_top_level_renders(
 
 /// [`x11_app_tree_is_window`] for window `xid` of `pid`, read from the server.
 fn x11_app_tree_proves_window(pid: u32, xid: u64) -> bool {
-    let pid_windows: Vec<u64> = crate::x11::list_windows(Some(pid))
-        .into_iter()
-        .map(|window| window.xid)
-        .collect();
-    x11_app_tree_is_window(xid, &pid_windows, crate::x11::is_override_redirect(xid))
+    let pid_windows = crate::x11::complete_window_list(pid).map(|windows| {
+        windows
+            .into_iter()
+            .map(|window| window.xid)
+            .collect::<Vec<_>>()
+    });
+    x11_app_tree_is_window(
+        xid,
+        pid_windows.as_deref(),
+        crate::x11::is_override_redirect(xid),
+    )
 }
 
 /// Whether the application-wide AT-SPI tree can stand for X11 window `xid`.
 /// A popup (override-redirect) is drawn by its application's tree. A managed
-/// window qualifies only as the process's one listed window: with a sibling,
-/// or when the listing missed it, the tree may be another window's.
-fn x11_app_tree_is_window(xid: u64, pid_windows: &[u64], override_redirect: bool) -> bool {
-    override_redirect || (pid_windows.contains(&xid) && pid_windows.iter().all(|&w| w == xid))
+/// window qualifies only as the one window of the process's complete listing
+/// (`None` when no listing names untitled windows): with a sibling, or when
+/// the listing missed it, the tree may be another window's.
+fn x11_app_tree_is_window(xid: u64, pid_windows: Option<&[u64]>, override_redirect: bool) -> bool {
+    override_redirect
+        || pid_windows.is_some_and(|windows| {
+            windows.contains(&xid) && windows.iter().all(|&window| window == xid)
+        })
 }
 
 fn lone_top_level_proves_window(pid: u32, xid: u64) -> bool {
@@ -8415,25 +8437,36 @@ mod frame_correlation_tests {
         );
     }
 
-    /// A native modal with an X11 window but no AT-SPI frame (#6936): the
-    /// main window's frame lies close to the dialog's geometry, yet fits the
-    /// main window better, so it must not bind to the dialog.
+    /// A native modal with an X11 window but no AT-SPI frame (#6936): when
+    /// the main window's frame is a plausible match for both windows, it binds
+    /// to neither, whichever one decoration offsets make it fit better.
     #[test]
     fn refuses_a_frame_that_fits_another_window_of_the_process() {
         let main = WindowInfo {
             xid: 4241,
             ..window(438, 80, 1050, 953)
         };
-        let candidates = [(0usize, (438, 80, 1050, 953))];
         let dialog = window(448, 90, 1030, 933);
-        assert_eq!(
-            correlate_frame_to_window(&candidates, &dialog, &[main.clone(), dialog.clone()]),
-            None
-        );
+        for frame in [(438, 80, 1050, 953), (440, 108, 1050, 925)] {
+            let candidates = [(0usize, frame)];
+            for target in [&main, &dialog] {
+                assert_eq!(
+                    correlate_frame_to_window(&candidates, target, &[main.clone(), dialog.clone()]),
+                    None
+                );
+            }
+        }
+        // Cascaded windows that each publish a frame still bind one to one.
+        let candidates = [(0usize, (438, 80, 1050, 953)), (1, (448, 90, 1030, 933))];
         assert_eq!(
             correlate_frame_to_window(&candidates, &main, &[main.clone(), dialog.clone()]),
             Some(0)
         );
+        assert_eq!(
+            correlate_frame_to_window(&candidates, &dialog, &[main.clone(), dialog.clone()]),
+            Some(1)
+        );
+        let candidates = [(0usize, (438, 80, 1050, 953))];
         // A dialog far from the main window leaves the main window's match.
         let far_dialog = window(1238, 820, 404, 159);
         assert_eq!(
@@ -9853,15 +9886,27 @@ mod token_scope_tests {
         const POPUP: u64 = 0x0400_0003;
         // A native modal beside its main window (#6936): the lone root may be
         // the main window's, so neither window is the application's tree.
-        assert!(!x11_app_tree_is_window(DIALOG, &[MAIN, DIALOG], false));
-        assert!(!x11_app_tree_is_window(MAIN, &[MAIN, DIALOG], false));
-        // A managed dialog the listing missed (no EWMH client list, no title).
-        assert!(!x11_app_tree_is_window(DIALOG, &[MAIN], false));
-        assert!(!x11_app_tree_is_window(DIALOG, &[], false));
+        assert!(!x11_app_tree_is_window(
+            DIALOG,
+            Some(&[MAIN, DIALOG][..]),
+            false
+        ));
+        assert!(!x11_app_tree_is_window(
+            MAIN,
+            Some(&[MAIN, DIALOG][..]),
+            false
+        ));
+        // A managed dialog the listing missed.
+        assert!(!x11_app_tree_is_window(DIALOG, Some(&[MAIN][..]), false));
+        assert!(!x11_app_tree_is_window(DIALOG, Some(&[][..]), false));
+        // Without an EWMH client list an untitled main window goes unlisted,
+        // so a titled dialog alone in the listing proves nothing.
+        assert!(!x11_app_tree_is_window(DIALOG, None, false));
         // The process's only managed window is the application.
-        assert!(x11_app_tree_is_window(MAIN, &[MAIN], false));
+        assert!(x11_app_tree_is_window(MAIN, Some(&[MAIN][..]), false));
         // An override-redirect popup is drawn by its application's tree.
-        assert!(x11_app_tree_is_window(POPUP, &[MAIN], true));
+        assert!(x11_app_tree_is_window(POPUP, Some(&[MAIN][..]), true));
+        assert!(x11_app_tree_is_window(POPUP, None, true));
     }
 
     #[test]

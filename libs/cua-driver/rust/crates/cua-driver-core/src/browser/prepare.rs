@@ -669,11 +669,16 @@ pub(super) fn signal_group_if_unreaped(browser: &mut dyn IsolatedBrowserProcess)
     false
 }
 
+/// `leader_reaped` is true once launch polling has reaped the leader, after
+/// which its pid, and so its group id, may belong to another process.
 fn cleanup_created_profile_as_browser(
     browser: &mut dyn IsolatedBrowserProcess,
     profile: &PreparedProfile,
+    leader_reaped: bool,
 ) {
-    signal_group_if_unreaped(browser);
+    if !leader_reaped {
+        signal_group_if_unreaped(browser);
+    }
     let _ = browser.kill();
     let _ = browser.wait();
     if profile.delete_on_cleanup {
@@ -1111,6 +1116,7 @@ async fn wait_for_spawned_endpoint(
     child: &mut dyn IsolatedBrowserProcess,
     profile: &Path,
     security_prompt_open: &(dyn Fn() -> bool + Send + Sync),
+    leader_reaped: &mut bool,
 ) -> Result<OwnedEndpoint, BrowserRefusal> {
     let deadline = Instant::now() + Duration::from_secs(20);
     let port_file = profile.join("DevToolsActivePort");
@@ -1127,6 +1133,7 @@ async fn wait_for_spawned_endpoint(
                 format!("could not inspect the isolated browser process: {error}"),
             )
         })? {
+            *leader_reaped = true;
             if clean_spawn_exit_can_be_launcher_handoff(&status) {
                 // Edge on Windows ARM can transfer the browser role to a
                 // descendant and let its launcher exit successfully. Keep
@@ -1489,10 +1496,12 @@ impl BrowserEngine {
         };
         let platform = self.platform.clone();
         let security_prompt_open = move || platform.security_prompt_open();
+        let mut leader_reaped = false;
         let launched = match wait_for_spawned_endpoint(
             child.as_mut(),
             &prepared_profile.path,
             &security_prompt_open,
+            &mut leader_reaped,
         )
         .await
         {
@@ -1515,7 +1524,11 @@ impl BrowserEngine {
                 endpoint
             }
             Err(error) => {
-                cleanup_created_profile_as_browser(child.as_mut(), &prepared_profile);
+                cleanup_created_profile_as_browser(
+                    child.as_mut(),
+                    &prepared_profile,
+                    leader_reaped,
+                );
                 let failure = if error
                     .detail
                     .as_ref()
@@ -1548,7 +1561,11 @@ impl BrowserEngine {
                     transport_session: request.transport_session.clone(),
                 }),
                 _ => {
-                    cleanup_created_profile_as_browser(child.as_mut(), &prepared_profile);
+                    cleanup_created_profile_as_browser(
+                        child.as_mut(),
+                        &prepared_profile,
+                        leader_reaped,
+                    );
                     return Err(BrowserRefusal::new(
                         BrowserRefusalCode::BrowserRouteUnavailable,
                         "could not prove the headless browser's process start identity",

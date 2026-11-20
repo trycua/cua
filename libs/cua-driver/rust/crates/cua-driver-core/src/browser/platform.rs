@@ -86,7 +86,9 @@ impl IsolatedBrowserProcess for Child {
 
     /// An exited leader that is still a zombie holds its pid, so it counts as
     /// unreaped and its surviving descendants are still signalled. `WNOWAIT`
-    /// leaves it a zombie; `ECHILD` means it was already reaped.
+    /// leaves it a zombie; `ECHILD` means it was already reaped. Once this
+    /// `Child` has been reaped, another child may hold its pid, so callers
+    /// never ask after reaping it themselves.
     #[cfg(unix)]
     fn leader_unreaped(&mut self) -> bool {
         let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };

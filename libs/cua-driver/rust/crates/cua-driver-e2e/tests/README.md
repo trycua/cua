@@ -144,7 +144,7 @@ desktop state outside the repo-local fixtures:
   of the SAL/VCL MSAA fallback. Requires LibreOffice installed, or
   `LO_SWRITER_EXE` pointing at `swriter.exe`; it fails when Writer is missing.
 - `installed_app_launch_macos_test.rs`: macOS Calculator/TextEdit launch focus
-  checks. Requires a logged-in GUI session and usable System Events scripting.
+  checks, and a Finder folder launch through a `--no-overlay` daemon. Requires a logged-in GUI session and usable System Events scripting.
 - `installed_app_textedit_macos_test.rs`: real TextEdit background AX write and
   verification, plus the window-only foreground chord delivered while Finder
   holds the front or while a sibling document holds the keyboard focus.

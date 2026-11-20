@@ -757,7 +757,7 @@ pub fn parse_command() -> Command {
         println!("    --pretty / -p                 Pretty-print the JSON.");
         println!();
         println!("test options:");
-        println!("  cua-driver test [--json]  Check permissions, screen read, pointer and typing.");
+        println!("  cua-driver test [--json]  Check permissions (macOS), screen read, pointer and typing (macOS).");
         println!("                          Exit 0 when Cua Driver works, 1 when something needs fixing.");
         println!();
         println!("doctor options:");
@@ -2309,7 +2309,7 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--fix", "type": "flag", "description": "macOS: make LaunchServices forget every other copy of CuaDriver.app (no files are deleted)." }
               ] },
             { "name": "test",
-              "description": "Check a new install end to end: permissions, screen read, pointer, and typing in TextEdit (macOS). Exit 0 when it all works.",
+              "description": "Check a new install end to end: permissions (macOS), screen read, pointer, and typing in TextEdit (macOS). Exit 0 when it all works.",
               "args": [
                   { "name": "--json", "type": "flag", "description": "Machine-readable result." }
               ] },

@@ -432,7 +432,7 @@ fn def() -> &'static ToolDef {
                 "capture_id": { "type": "string", "description": "Optional capture ID from get_window_state or get_desktop_state. With x,y it is consumed atomically; stale or mismatched captures are refused." },
                 "x":             { "type": "number",  "description": "X in screenshot pixels (get_window_state PNG, or get_desktop_state PNG for a desktop target)." },
                 "y":             { "type": "number",  "description": "Y in screenshot pixels from the image selected by target." },
-                "action":        { "type": "string",  "description": "AX action: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui. show_alternate_ui reveals hover-only controls on an element that lists it, without the pointer." },
+                "action":        { "type": "string",  "description": "AX action: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui; or an element's published custom_actions name or raw envelope. show_alternate_ui reveals hover-only controls on an element that lists it, without the pointer." },
                 "button":        {
                     "type": "string",
                     "enum": ["left", "right", "middle"],
@@ -650,7 +650,25 @@ impl ClickTool {
             .opt_f64("y")
             .or_else(|| args.opt_i64("y").map(|i| i as f64));
         let action = args.str_or("action", "press");
-        if let Err(error) = validate_click_action(&action, element_guard.is_some()) {
+        // Only a non-standard name needs the element's live action list, and
+        // that AX read blocks until the target answers, so it runs off the
+        // async worker.
+        let element_actions = match &element_guard {
+            Some(guard) if crate::input::ax_actions::map_action(&action).is_err() => {
+                let guard = guard.clone();
+                match tokio::task::spawn_blocking(move || unsafe {
+                    copy_action_names(guard.as_ptr() as AXUIElementRef)
+                })
+                .await
+                {
+                    Ok(names) => Some(names),
+                    Err(e) => return ToolResult::error(format!("task error: {e}")),
+                }
+            }
+            Some(_) => Some(Vec::new()),
+            None => None,
+        };
+        if let Err(error) = validate_click_action(&action, element_actions.as_deref()) {
             return ToolResult::error(format!("click: {error}"));
         }
         // Surface 5: optional `button` arg, default "left" preserves legacy behaviour.
@@ -1422,15 +1440,20 @@ impl ClickTool {
                     }
                     // An element that does not advertise AXPress can still
                     // accept it as a no-op. On a toolkit that drops routed
-                    // mouse events (LibreOffice's Calc cells) that no-op used
-                    // to come back as a pressed click; fall through so the
-                    // pixel route refuses instead.
+                    // mouse events (LibreOffice's Calc cells) or only takes
+                    // them while active (GTK 3) that no-op used to come back
+                    // as a pressed click; fall through to the pixel route.
                     if !focus_only
                         && !crate::ax::bindings::copy_action_names(element)
                             .iter()
                             .any(|action| action == "AXPress")
-                        && crate::input::pointer_toolkit::detect(pid)
-                            == Some(crate::input::pointer_toolkit::PointerReadingToolkit::Vcl)
+                        && matches!(
+                            crate::input::pointer_toolkit::detect(pid),
+                            Some(
+                                crate::input::pointer_toolkit::PointerReadingToolkit::Vcl
+                                    | crate::input::pointer_toolkit::PointerReadingToolkit::GdkQuartz
+                            )
+                        )
                     {
                         CFRelease(element as _);
                         return Ok(None);
@@ -1516,11 +1539,25 @@ impl ClickTool {
             }
             // Background delivery cannot satisfy a toolkit that reads the
             // hardware pointer; refuse before any activation or dispatch.
-            let route = match super::pixel_route::resolve(pid, fg, window_id, "mouse_click").await {
-                Ok(route) => route,
-                Err(refusal) => return refusal,
+            let gesture = if button_str == "left" && modifiers.is_empty() {
+                super::pixel_route::PointerGesture::LeftClick
+            } else {
+                super::pixel_route::PointerGesture::Other
             };
-            let activation_policy = pixel_activation_policy(&button_str, fg, window_id.is_some());
+            let route =
+                match super::pixel_route::resolve(pid, fg, window_id, "mouse_click", gesture).await
+                {
+                    Ok(route) => route,
+                    Err(refusal) => return refusal,
+                };
+            // The AppKit-activated route replaces the SkyLight focus prologue:
+            // the app is made active in its own eyes, and the suppression
+            // lease still undoes any activation the click provokes.
+            let activation_policy = if route == PixelClickRoute::BackgroundAppKitActivated {
+                PixelActivationPolicy::SuppressTarget
+            } else {
+                pixel_activation_policy(&button_str, fg, window_id.is_some())
+            };
 
             // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
             // A pixel click can land on a "Sign In" button that opens a sheet
@@ -1631,6 +1668,28 @@ impl ClickTool {
                     tokio::task::spawn_blocking(move || {
                         let do_click = move || -> anyhow::Result<()> {
                             let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
+                            if let (PixelClickRoute::BackgroundAppKitActivated, Some(wid)) =
+                                (route, window_id)
+                            {
+                                let height = crate::windows::window_bounds_by_id(wid)
+                                    .map(|bounds| bounds.height)
+                                    .ok_or_else(|| {
+                                        anyhow::anyhow!("window {wid} has no frame to click in")
+                                    })?;
+                                let _lease =
+                                    crate::input::appkit_activation::ActivationLease::acquire(
+                                        pid, wid,
+                                    )
+                                    .map_err(|reason| anyhow::anyhow!(reason))?;
+                                return crate::input::appkit_activation::click(
+                                    pid,
+                                    wid,
+                                    (screen_x, screen_y),
+                                    (win_local_x, win_local_y),
+                                    height,
+                                    count,
+                                );
+                            }
                             if route == PixelClickRoute::ForegroundHid {
                                 // Warp the hardware pointer to the mapped global
                                 // point and post at the HID tap. The pointer stays
@@ -1992,8 +2051,12 @@ fn perform_ax_click(
         prompt,
         watch_page,
     } = delivery;
-    let ax_action = crate::input::ax_actions::map_action(action_str)?;
     let element = element_ptr as AXUIElementRef;
+
+    // Capture advertised actions BEFORE dispatching so we can detect silent no-ops
+    // (AX returns success even when the element doesn't advertise the action).
+    let advertised = unsafe { copy_action_names(element) };
+    let ax_action = crate::ax::actions::wire_name(&advertised, action_str)?;
 
     // Check the live value immediately before dispatch. Foreground assist can
     // enable menu items that were disabled in the cached snapshot, while a
@@ -2008,10 +2071,6 @@ fn perform_ax_click(
     } else {
         crate::input::ax_actions::ensure_ax_action_enabled(element_ptr, ax_action)?;
     }
-
-    // Capture advertised actions BEFORE dispatching so we can detect silent no-ops
-    // (AX returns success even when the element doesn't advertise the action).
-    let advertised = unsafe { copy_action_names(element) };
 
     let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
     let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
@@ -2460,15 +2519,21 @@ fn ax_click_structured(
 }
 
 /// Check `click`'s `action` before any dispatch. Element clicks take the
-/// AX action names `map_action` knows. A pixel click also takes `focus`: the
-/// background focus rung that pixel `type_text`, `press_key` and `scroll`
-/// use to put the keyboard focus on a point (`focus_by_pixel`). It sets
-/// AXFocused on the element under the point instead of pressing it.
-fn validate_click_action(action: &str, element_target: bool) -> anyhow::Result<()> {
-    if !element_target && action == "focus" {
-        return Ok(());
+/// AX action names `map_action` knows, or a custom action the element
+/// advertises, by its `custom_actions` name or raw envelope. A pixel click
+/// also takes `focus`: the background focus rung that pixel `type_text`,
+/// `press_key` and `scroll` use to put the keyboard focus on a point
+/// (`focus_by_pixel`). It sets AXFocused on the element under the point
+/// instead of pressing it.
+fn validate_click_action(action: &str, element_actions: Option<&[String]>) -> anyhow::Result<()> {
+    let known = crate::input::ax_actions::map_action(action).map(|_| ());
+    match element_actions {
+        None if action == "focus" => Ok(()),
+        Some(advertised) if known.is_err() => {
+            crate::ax::actions::wire_name(advertised, action).map(|_| ())
+        }
+        _ => known,
     }
-    crate::input::ax_actions::map_action(action).map(|_| ())
 }
 
 #[cfg(test)]
@@ -2479,11 +2544,16 @@ mod tests {
     /// started refusing: background pixel typing into Electron depended on it.
     #[test]
     fn pixel_click_accepts_the_internal_focus_action() {
-        assert!(validate_click_action("focus", false).is_ok());
-        assert!(validate_click_action("press", false).is_ok());
-        assert!(validate_click_action("show_alternate_ui", true).is_ok());
-        assert!(validate_click_action("focus", true).is_err());
-        assert!(validate_click_action("hover", false).is_err());
+        let pixel = None;
+        let element = Some(&[][..]);
+        assert!(validate_click_action("focus", pixel).is_ok());
+        assert!(validate_click_action("press", pixel).is_ok());
+        assert!(validate_click_action("show_alternate_ui", element).is_ok());
+        assert!(validate_click_action("focus", element).is_err());
+        assert!(validate_click_action("hover", element).is_err());
+        assert!(validate_click_action("hover", pixel).is_err());
+        let paste = ["Name:Paste\nTarget:0x0\nSelector:(null)".to_owned()];
+        assert!(validate_click_action("Paste", Some(&paste[..])).is_ok());
     }
 
     fn window(window_id: u32) -> crate::window_change_detector::WindowEvent {

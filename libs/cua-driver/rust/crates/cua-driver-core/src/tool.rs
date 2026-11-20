@@ -1352,11 +1352,21 @@ pub struct ToolRegistry {
     /// How a batch learns which window an `element_token` belongs to; set by
     /// the platform that owns the snapshot store.
     token_window_resolver: Option<TokenWindowResolver>,
+    /// How a capability-manifest check learns which process a window really
+    /// belongs to; set by a platform whose windows can be hosted by another
+    /// process.
+    window_identity_resolver: Option<WindowIdentityResolver>,
 }
 
 /// Call arguments (carrying an `element_token`) -> the `(pid, window_id)` of
 /// the live snapshot that token names, or `None` when it is stale or unknown.
 pub type TokenWindowResolver = Arc<dyn Fn(&Value) -> Option<(i32, u64)> + Send + Sync + 'static>;
+
+/// The `(pid, window_id)` of a window -> the pid of the app it hosts, when the
+/// owning process is a shared host rather than the app (a Windows packaged
+/// app's frame is owned by `ApplicationFrameHost.exe`). `None` keeps the
+/// owning pid as the window's identity.
+pub type WindowIdentityResolver = Arc<dyn Fn(i64, u64) -> Option<i64> + Send + Sync + 'static>;
 
 impl ToolRegistry {
     pub fn new() -> Self {
@@ -1433,6 +1443,7 @@ impl ToolRegistry {
             protected_resource_grants,
             protected_resource_ownership,
             token_window_resolver: None,
+            window_identity_resolver: None,
         }
     }
 
@@ -1440,6 +1451,12 @@ impl ToolRegistry {
     /// window, so `run_steps` can take the window to observe from a token.
     pub fn set_token_window_resolver(&mut self, resolver: TokenWindowResolver) {
         self.token_window_resolver = Some(resolver);
+    }
+
+    /// Install the resolver that maps a hosted window to the app it hosts, so
+    /// a manifest app grant matches the app rather than its shared host.
+    pub fn set_window_identity_resolver(&mut self, resolver: WindowIdentityResolver) {
+        self.window_identity_resolver = Some(resolver);
     }
 
     /// The `(pid, window_id)` a live `element_token` in `args` names.
@@ -1499,6 +1516,12 @@ impl ToolRegistry {
     }
 
     async fn enrich_application_resource(&self, resource: &mut Value, pid: i64) {
+        let pid = resource
+            .get("window_id")
+            .and_then(Value::as_u64)
+            .zip(self.window_identity_resolver.as_ref())
+            .and_then(|(window_id, resolve)| resolve(pid, window_id))
+            .unwrap_or(pid);
         if let Some(fingerprint) = self.attest_process_fingerprint(pid).await {
             resource["fingerprint"] = serde_json::to_value(fingerprint).unwrap_or(Value::Null);
         }
@@ -4592,6 +4615,92 @@ resources:
 
         assert_eq!(hits.load(Ordering::SeqCst), 1);
         assert_ne!(result.is_error, Some(true));
+    }
+
+    /// A `list_apps` stand-in: a shared window host with no identity and the
+    /// packaged app it hosts.
+    struct HostedAppsProbe;
+
+    #[async_trait::async_trait]
+    impl super::Tool for HostedAppsProbe {
+        fn def(&self) -> &super::ToolDef {
+            static DEF: std::sync::OnceLock<super::ToolDef> = std::sync::OnceLock::new();
+            DEF.get_or_init(|| super::ToolDef {
+                name: "list_apps".into(),
+                description: "test app list".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: true,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            })
+        }
+
+        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+            crate::protocol::ToolResult::text("apps").with_structured(serde_json::json!({
+                "apps": [
+                    {"pid": 100, "bundle_id": null, "launch_path": null},
+                    {"pid": 200, "bundle_id": "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"},
+                ]
+            }))
+        }
+    }
+
+    #[cfg(feature = "yaml")]
+    #[tokio::test]
+    async fn bounded_window_grant_matches_the_app_its_shared_host_frames() {
+        const MANIFEST: &str = r#"
+version: 3
+expires_after: 1h
+idle_timeout: 30m
+allow:
+  tools: [get_window_state]
+resources:
+  apps:
+    - bundle_id: Microsoft.WindowsCalculator_8wekyb3d8bbwe!App
+      launch: false
+      windows: all
+"#;
+        for (resolves_host, frame, expected_allowed) in
+            [(false, 7, false), (true, 7, true), (true, 8, false)]
+        {
+            let hits = Arc::new(AtomicUsize::new(0));
+            let mut registry = super::ToolRegistry::new();
+            registry.register(Box::new(ObservationProbe {
+                hits: hits.clone(),
+                def: super::ToolDef {
+                    name: "get_window_state".into(),
+                    description: "test observation".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    read_only: true,
+                    destructive: false,
+                    idempotent: true,
+                    open_world: false,
+                },
+            }));
+            registry.register(Box::new(HostedAppsProbe));
+            if resolves_host {
+                // Host pid 100's frame 7 hosts app pid 200; its frame 8 hosts
+                // nothing the platform can attribute.
+                registry.set_window_identity_resolver(Arc::new(|pid, window_id| {
+                    (pid == 100 && window_id == 7).then_some(200)
+                }));
+            }
+            let result = registry
+                .invoke_with_context(
+                    "get_window_state",
+                    serde_json::json!({"pid": 100, "window_id": frame, "session": "review"}),
+                    bounded_context(MANIFEST),
+                )
+                .await;
+
+            assert_eq!(
+                result.is_error != Some(true),
+                expected_allowed,
+                "resolver {resolves_host}, frame {frame}: {result:?}"
+            );
+            assert_eq!(hits.load(Ordering::SeqCst), usize::from(expected_allowed));
+        }
     }
 
     #[cfg(feature = "yaml")]

@@ -318,8 +318,14 @@ impl Tool for DragTool {
         // mouse events (LibreOffice VCL) cannot take a background gesture;
         // refuse before any activation or dispatch.
         if !fg {
-            if let Err(refusal) =
-                super::pixel_route::resolve(pid, false, window_id, "mouse_drag").await
+            if let Err(refusal) = super::pixel_route::resolve(
+                pid,
+                false,
+                window_id,
+                "mouse_drag",
+                super::pixel_route::PointerGesture::Other,
+            )
+            .await
             {
                 return refusal;
             }

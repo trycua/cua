@@ -145,7 +145,7 @@ mod pid_window_target_tests {
                 height: 480.0,
             },
             layer: 0,
-            z_index: 1,
+            z_index: Some(1),
             is_on_screen: true,
             current_space_id: None,
             on_current_space: None,
@@ -579,7 +579,19 @@ pub(crate) fn key_scope(
 ) -> Result<Option<crate::input::skylight::WindowKeyScope>, String> {
     match window_id {
         Some(wid) if crate::input::skylight::is_focus_without_raise_available() => {
-            crate::input::skylight::enter_exact_window_key(pid as libc::pid_t, wid).map(Some)
+            // GTK 3 on Quartz routes keys through the window of the event
+            // only while `NSApp` is active, so its app is told it is active
+            // (without being raised) before its window is made key.
+            let activation = (crate::input::pointer_toolkit::detect(pid)
+                == Some(crate::input::pointer_toolkit::PointerReadingToolkit::GdkQuartz))
+            .then(|| crate::input::appkit_activation::ActivationLease::acquire(pid, wid))
+            .transpose()?;
+            let mut scope =
+                crate::input::skylight::enter_exact_window_key(pid as libc::pid_t, wid)?;
+            if let Some(lease) = activation {
+                scope.hold_activation(lease);
+            }
+            Ok(Some(scope))
         }
         _ => Ok(None),
     }
@@ -1507,6 +1519,7 @@ mod open_menu_refusal_tests {
         for element in [
             ElementAncestry::NotAddressed,
             ElementAncestry::ProvenDescendant,
+            ElementAncestry::ProvenSemanticOnly,
             ElementAncestry::OutsideTargetWindow,
             ElementAncestry::Unproven,
         ] {

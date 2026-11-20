@@ -26,6 +26,7 @@ use crate::tool_args::ArgsExt;
 use super::cdp_ws::CdpConnection;
 use super::download::BrowserDownloadTool;
 use super::engine::{BrowserEngine, BrowserTabScreenshot, DIALOG_SUBSCRIPTION_TIMEOUT};
+use super::input::{confirm_ref_point, ref_point, refuse_in_focus_emulation, trusted_ref_point};
 use super::motion_policy::BrowserMotionPolicy;
 use super::platform::{
     BrowserVisualActionKind, PrepareAction, PrepareProfile, PrepareProfileMode, PrepareRequest,
@@ -1605,33 +1606,17 @@ impl Tool for BrowserClickTool {
             };
             // Cursor feedback is best-effort and visual-only. A missing box
             // must not turn a valid DOM-event action into a refusal.
-            let _ = conn
-                .call(
-                    Some(cdp),
-                    "DOM.scrollIntoViewIfNeeded",
-                    json!({ "backendNodeId": backend }),
-                )
-                .await;
-            if let Ok(box_model) = conn
-                .call(
-                    Some(cdp),
-                    "DOM.getBoxModel",
-                    json!({ "backendNodeId": backend }),
-                )
-                .await
-            {
-                if let Some((x, y)) = quad_center(&box_model) {
-                    self.engine
-                        .visualize_browser_action(
-                            &session,
-                            &validated,
-                            cdp,
-                            x,
-                            y,
-                            BrowserVisualActionKind::Click,
-                        )
-                        .await;
-                }
+            if let Ok((x, y)) = ref_point(conn, cdp, backend).await {
+                self.engine
+                    .visualize_browser_action(
+                        &session,
+                        &validated,
+                        cdp,
+                        x,
+                        y,
+                        BrowserVisualActionKind::Click,
+                    )
+                    .await;
             }
             let before =
                 read_dom_click_state(conn, cdp, &object_id, DOM_CLICK_BASELINE_DEADLINE).await;
@@ -1705,44 +1690,12 @@ impl Tool for BrowserClickTool {
         }
 
         // Trusted route: resolve a click point, then Input.dispatchMouseEvent.
+        // A ref's point must hit-test to the ref, or the event lands elsewhere.
         let (x, y) = match (backend_node_id, coords) {
-            (Some(backend), _) => {
-                // Best effort scroll-into-view; ignore failure (older Chromium).
-                let _ = conn
-                    .call(
-                        Some(cdp),
-                        "DOM.scrollIntoViewIfNeeded",
-                        json!({ "backendNodeId": backend }),
-                    )
-                    .await;
-                let box_model = match conn
-                    .call(
-                        Some(cdp),
-                        "DOM.getBoxModel",
-                        json!({ "backendNodeId": backend }),
-                    )
-                    .await
-                {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return BrowserRefusal::new(
-                            BrowserRefusalCode::BrowserRefStale,
-                            "the ref's node has no layout box — it left the DOM or is hidden",
-                        )
-                        .to_tool_result()
-                    }
-                };
-                match quad_center(&box_model) {
-                    Some(pt) => pt,
-                    None => {
-                        return BrowserRefusal::new(
-                            BrowserRefusalCode::BrowserRefStale,
-                            "the ref's node returned an unusable layout box",
-                        )
-                        .to_tool_result()
-                    }
-                }
-            }
+            (Some(backend), _) => match trusted_ref_point(conn, cdp, backend).await {
+                Ok(point) => point,
+                Err(refusal) => return refusal.to_tool_result(),
+            },
             (None, Some(pt)) => pt,
             (None, None) => unreachable!("validated above"),
         };
@@ -1803,6 +1756,13 @@ impl Tool for BrowserClickTool {
             .to_tool_result();
         }
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        if let Some(backend) = backend_node_id {
+            if let Err(refusal) = confirm_ref_point(conn, cdp, backend, (x, y)).await {
+                return refuse_in_focus_emulation(conn, cdp, refusal)
+                    .await
+                    .to_tool_result();
+            }
+        }
 
         let mut delivery_error = None;
         let mut opened = None;
@@ -1970,21 +1930,6 @@ fn dialog_block(dialog: &super::cdp_ws::CdpDialogState) -> Value {
         "dialog_id": dialog_capability_id(dialog.generation),
         "resolvable": !dialog.detached,
     })
-}
-
-/// Center of the content quad from a `DOM.getBoxModel` result.
-fn quad_center(box_model: &Value) -> Option<(f64, f64)> {
-    let quad = box_model.get("model")?.get("content")?.as_array()?;
-    if quad.len() < 8 {
-        return None;
-    }
-    let nums: Vec<f64> = quad.iter().filter_map(Value::as_f64).collect();
-    if nums.len() < 8 {
-        return None;
-    }
-    let xs = [nums[0], nums[2], nums[4], nums[6]];
-    let ys = [nums[1], nums[3], nums[5], nums[7]];
-    Some((xs.iter().sum::<f64>() / 4.0, ys.iter().sum::<f64>() / 4.0))
 }
 
 /// Synthetic click for `input_route:"dom_event"`, evaluated ON the ref's node.
@@ -2478,33 +2423,17 @@ impl Tool for BrowserTypeTool {
 
         // Give the recording a visual target before text delivery. Keep this
         // best-effort: editability/input semantics never depend on the overlay.
-        let _ = conn
-            .call(
-                Some(cdp),
-                "DOM.scrollIntoViewIfNeeded",
-                json!({ "backendNodeId": entry.backend_node_id }),
-            )
-            .await;
-        if let Ok(box_model) = conn
-            .call(
-                Some(cdp),
-                "DOM.getBoxModel",
-                json!({ "backendNodeId": entry.backend_node_id }),
-            )
-            .await
-        {
-            if let Some((x, y)) = quad_center(&box_model) {
-                self.engine
-                    .visualize_browser_action(
-                        &session,
-                        &validated,
-                        cdp,
-                        x,
-                        y,
-                        BrowserVisualActionKind::Type,
-                    )
-                    .await;
-            }
+        if let Ok((x, y)) = ref_point(conn, cdp, entry.backend_node_id).await {
+            self.engine
+                .visualize_browser_action(
+                    &session,
+                    &validated,
+                    cdp,
+                    x,
+                    y,
+                    BrowserVisualActionKind::Type,
+                )
+                .await;
         }
 
         let requested_chars = text.chars().count();
@@ -3562,6 +3491,10 @@ mod tests {
         /// Each launched browser raises a prompt, as a Chromium that reads
         /// its keychain secret does.
         prompt_on_launch: std::sync::atomic::AtomicBool,
+        /// What `managed_extension_policy` reports for every executable.
+        managed_extension_policy: std::sync::Mutex<Option<String>>,
+        /// The arguments of each isolated browser command core built.
+        launched_args: std::sync::Mutex<Vec<Vec<String>>>,
     }
 
     impl MockPlatform {
@@ -3726,14 +3659,28 @@ mod tests {
                 .load(std::sync::atomic::Ordering::SeqCst)
         }
 
+        fn managed_extension_policy(&self, _executable: &str) -> Option<String> {
+            self.launches
+                .managed_extension_policy
+                .lock()
+                .unwrap()
+                .clone()
+        }
+
         fn spawn_isolated_browser(
             &self,
-            _command: std::process::Command,
+            command: std::process::Command,
             profile: &std::path::Path,
         ) -> Result<Box<dyn crate::browser::platform::IsolatedBrowserProcess>, BrowserRefusal>
         {
             use std::sync::atomic::Ordering;
             self.launches.spawned.fetch_add(1, Ordering::SeqCst);
+            self.launches.launched_args.lock().unwrap().push(
+                command
+                    .get_args()
+                    .map(|arg| arg.to_string_lossy().into_owned())
+                    .collect(),
+            );
             if self.launches.prompt_on_launch.load(Ordering::SeqCst) {
                 self.launches.prompt_open.store(true, Ordering::SeqCst);
             }
@@ -4227,6 +4174,49 @@ mod tests {
             0,
             "the user's own profile must never be launched or relaunched"
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn isolated_launch_keeps_extensions_only_under_managed_extension_policy() {
+        let launches = Arc::new(LaunchSignals::default());
+        let engine = observed_launching_engine(std::time::Duration::ZERO, launches.clone());
+        // One named profile, launched and then relaunched under the policy.
+        let name = format!("managed-extensions-{}", uuid::Uuid::new_v4().simple());
+        let switches = [
+            "--disable-background-networking",
+            "--disable-component-update",
+            "--disable-extensions",
+        ];
+        for (policy, kept) in [
+            (None, true),
+            (
+                Some("/etc/opt/chrome/policies/managed/extensions.json".to_owned()),
+                false,
+            ),
+        ] {
+            *launches.managed_extension_policy.lock().unwrap() = policy;
+            let (session, owner) = start_lifecycle_session(None);
+            prepare_isolated(
+                &engine,
+                &session,
+                &owner,
+                json!({ "mode": "isolated_named", "name": name }),
+            )
+            .await;
+            crate::session::end_session(&session);
+            let args = launches.launched_args.lock().unwrap().pop().unwrap();
+            for switch in switches {
+                assert_eq!(
+                    args.iter().any(|arg| arg == switch),
+                    kept,
+                    "{switch}: {args:?}"
+                );
+            }
+            assert!(args.iter().any(|arg| arg == "--disable-default-apps"));
+        }
+        let root = std::env::var_os("CUA_DRIVER_BROWSER_PROFILE_ROOT").unwrap();
+        std::fs::remove_dir_all(std::path::Path::new(&root).join(name)).unwrap();
     }
 
     #[cfg(unix)]

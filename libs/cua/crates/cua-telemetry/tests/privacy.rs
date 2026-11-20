@@ -1165,6 +1165,30 @@ fn space_create_failed_step_keeps_its_vocabulary() {
         )),
         "pull_image"
     );
+    // An engine API error before any image work is about getting the engine
+    // ready; once the container is being made it is that step.
+    assert_eq!(
+        step(&create(
+            err,
+            "preparing",
+            "engine_error",
+            "",
+            "linux",
+            "container"
+        )),
+        "start_runtime"
+    );
+    assert_eq!(
+        step(&create(
+            err,
+            "creating",
+            "engine_error",
+            "",
+            "linux",
+            "container"
+        )),
+        "create_container"
+    );
     // Else the phase; `unknown` when it was `preparing` and no word helps.
     assert_eq!(
         step(&create(err, "creating", "runtime", "", "macos", "vm")),

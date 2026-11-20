@@ -665,6 +665,24 @@ fn background_screenshot_preserves_desktop() {
             .expect("required source-built driver did not start");
         *evidence = recording_evidence(driver.recording_dir());
         let (pid, wid) = launch(&mut driver).expect("required WPF capture harness did not start");
+        let ready = snapshot_settled_default(&mut driver, pid, wid);
+        assert!(tree_has_marker(&ready) && has_image(&ready));
+        let (reference, reference_width, reference_height) =
+            platform_windows::wgc::screenshot_window_via_wgc_software(wid)
+                .expect("WARP must capture the visible WPF window");
+        assert!(reference_width > 0 && reference_height > 0);
+        assert_eq!(
+            reference.len(),
+            reference_width as usize * reference_height as usize * 4
+        );
+        assert!(
+            reference
+                .chunks_exact(4)
+                .filter(|pixel| pixel[..3] != [0, 0, 0])
+                .count()
+                > reference.len() / 40,
+            "visible WARP capture must contain WPF pixels"
+        );
         let sentinel = ForegroundSentinel::launch(&mut driver);
         sentinel
             .assert_background_posture(TargetWindow {
@@ -682,21 +700,24 @@ fn background_screenshot_preserves_desktop() {
                 },
             )
             .expect("re-establish capture background posture after recording setup");
-        let (response, mut passed) = sentinel
+        let ((response, (warp_pixels, warp_width, warp_height)), mut passed) = sentinel
             .observe_background(
                 TargetWindow {
                     pid,
                     native_id: wid,
                 },
                 || {
-                    driver.call(
+                    let response = driver.call(
                         "get_window_state",
                         serde_json::json!({
                             "pid": pid as i64,
                             "window_id": wid,
                             "capture_mode": "vision"
                         }),
-                    )
+                    );
+                    let warp = platform_windows::wgc::screenshot_window_via_wgc_software(wid)
+                        .expect("WARP must capture the covered WPF window");
+                    (response, warp)
                 },
             )
             .unwrap_or_else(|error| panic!("background screenshot disturbed the desktop: {error}"));
@@ -708,6 +729,20 @@ fn background_screenshot_preserves_desktop() {
         assert!(
             has_image(&response),
             "background screenshot returned no image"
+        );
+        assert_eq!(
+            (warp_width, warp_height),
+            (reference_width, reference_height)
+        );
+        assert_eq!(warp_pixels.len(), reference.len());
+        let unchanged = reference
+            .chunks_exact(4)
+            .zip(warp_pixels.chunks_exact(4))
+            .filter(|(before, after)| before[..3] == after[..3])
+            .count();
+        assert!(
+            unchanged > reference.len() / 8,
+            "WARP must capture the WPF window, not the covering sentinel"
         );
         for required in [
             OracleKind::Focus,

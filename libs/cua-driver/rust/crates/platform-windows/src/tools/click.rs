@@ -872,7 +872,7 @@ impl Tool for ClickTool {
             //   - count > 1 (double-click semantics aren't an Invoke
             //     concept — PostMessage produces the actual WM_LBUTTONDBLCLK)
             let use_uia_invoke = (btn == "left" || btn == "middle") && count == 1;
-let result = tokio::task::spawn_blocking({
+            let result = tokio::task::spawn_blocking({
                 let admitted = admitted.clone();
                 move || -> anyhow::Result<BackgroundElementClick> {
                     let _admission = &admitted;

@@ -73,6 +73,11 @@ impl Tool for DoubleClickTool {
             Err(e) => return e,
         };
         let (elem_idx, hwnd_opt, admitted) = resolved.into_parts(args.opt_u64("window_id"));
+        if let Some(refusal) =
+            super::impl_::refuse_if_disabled(pid, &admitted, "double_click").await
+        {
+            return refusal;
+        }
         let x = args.opt_f64("x");
         let y = args.opt_f64("y");
         let delivery = DeliveryMode::from_args(&args);
@@ -163,7 +168,7 @@ impl Tool for DoubleClickTool {
             // → last_action=double_click, held non-activatable so no foreground
             // swap. If the element has no InvokePattern, a background double-
             // click isn't expressible → structured error.
-            if delivery == DeliveryMode::Background {
+            if delivery.is_background() {
                 if let Some(r) =
                     winui3_background_gesture(&admitted, pid, hwnd, Some(idx), 2, "left").await
                 {
@@ -178,7 +183,7 @@ impl Tool for DoubleClickTool {
             if (cx, cy) != recorded_center {
                 crate::recording_hooks::capture_dispatch_click_target(hwnd, pid, cx, cy);
             }
-            if delivery == DeliveryMode::Background
+            if delivery.is_background()
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
                 let inj = tokio::task::spawn_blocking({
@@ -193,10 +198,10 @@ impl Tool for DoubleClickTool {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Injected double-click to [{idx}] at screen ({cx},{cy}) (background, no foreground swap)."
                     )),
-                    Ok(Err(e)) => crate::input::delivery::background_unavailable_error_with_cause(
+                    Ok(Err(e)) => crate::input::delivery::background_injection_error(
                         hwnd,
                         EventKind::MouseClick,
-                        e.to_string(),
+                        &e,
                     ),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
@@ -290,7 +295,7 @@ impl Tool for DoubleClickTool {
             // background double-click on WinUI3 only lands via UIA Invoke on a
             // cached element, which the pixel path doesn't have → structured
             // error (caller retries with delivery_mode:foreground or uses element_index).
-            if delivery == DeliveryMode::Background {
+            if delivery.is_background() {
                 if let Some(r) =
                     winui3_background_gesture(&admitted, pid, hwnd, None, 2, "left").await
                 {
@@ -299,7 +304,7 @@ impl Tool for DoubleClickTool {
             }
             // delivery_mode:"background" (default): inject via the coordinate actuator
             // (no foreground swap) for targets that drop posted clicks (#1984).
-            if delivery == DeliveryMode::Background
+            if delivery.is_background()
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
                 let inj = tokio::task::spawn_blocking({
@@ -314,10 +319,10 @@ impl Tool for DoubleClickTool {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Injected double-click to pid {pid} at screen ({sx_i},{sy_i}) (background, no foreground swap)."
                     )),
-                    Ok(Err(e)) => crate::input::delivery::background_unavailable_error_with_cause(
+                    Ok(Err(e)) => crate::input::delivery::background_injection_error(
                         hwnd,
                         EventKind::MouseClick,
-                        e.to_string(),
+                        &e,
                     ),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };

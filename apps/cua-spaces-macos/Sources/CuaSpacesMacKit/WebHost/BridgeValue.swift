@@ -88,5 +88,5 @@ enum BridgeValue {
         return out
     }
 
-    private static let fixActions = ["copyCommand": "copy-command", "openUrl": "open-url"]
+    private static let fixActions = ["copyCommand": "copy-command", "openUrl": "open-url", "chooseWindowsIso": "choose-windows-iso"]
 }

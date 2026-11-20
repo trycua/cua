@@ -89,8 +89,8 @@ also requires `-DCUA_HYPRLAND_INPUT_TRACE=ON`. Do not ship that instrumentation
 in the production package. Neither build option loads or enables the plugin.
 
 For a pinned acceptance build, also set
-`-DCUA_HYPRLAND_EXPECTED_VERSION=0.56.2` (or the exact intended pkg-config
-version). The build refuses a different header version. The status-command
+`-DCUA_HYPRLAND_EXPECTED_VERSION=0.56.2` or `0.57.2` (or the exact intended
+pkg-config version). The build refuses a different header version. The status-command
 adapter supports both Hyprland `0.56.2`'s `SHyprCtlCommand` API and the newer
 Socket1 API. CMake compile-checks the installed `PluginAPI.hpp` and selects a
 declared tier; an unknown command API fails configuration. Input builds
@@ -316,7 +316,7 @@ The exact initial host acceptance baseline is:
 | Component                   | Required baseline |
 | --------------------------- | ----------------- |
 | Omarchy                     | `4.0.2-1`         |
-| Hyprland                    | `0.56.2`          |
+| Hyprland                    | `0.56.2` (Omarchy stable, rc) / `0.57.2` (Omarchy edge) |
 | xdg-desktop-portal-hyprland | `1.4.1`           |
 | Cua Driver                  | `0.23.2`          |
 | Session and display manager | UWSM / SDDM       |

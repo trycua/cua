@@ -1,6 +1,6 @@
 ---
 title: Choose where sandboxes run
-description: Run sandboxes on this machine, in your own AWS, Google Cloud, Hetzner or Modal account, or on E2B, Daytona or Modal. Check the host, pick a runtime, and set the default.
+description: Run sandboxes on this machine, in your own cloud account, or on E2B, Daytona or Modal. Check the host, pick a runtime, and set the default.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -12,7 +12,7 @@ machine.
 | Where | `on` | What you set up |
 | --- | --- | --- |
 | [This machine](#this-machine) | `local` (the default) | A container engine, QEMU or Lume, with `cua runtime setup` |
-| [Your own cloud](#your-own-cloud) | `aws`, `gcp`, `hetzner`, `modal` | `cua cloud connect` |
+| [Your own cloud](#your-own-cloud) | `aws`, `gcp`, `azure`, `hetzner`, `modal` | `cua cloud connect` |
 | [Another provider](#other-sandbox-providers) | `e2b`, `daytona`, `modal` | The provider's API key, and a `cua` build with `--features contrib` |
 | A machine that runs cua-spacesd | `direct:<host:port>` | [Attach to or run cua-spacesd](/cua-sdk/guides/spacesd) |
 
@@ -100,16 +100,16 @@ A Windows 11 on ARM guest (`os="windows"`, `arch="aarch64"`) runs on the QEMU
 runtime of an arm64 macOS or Linux host. Windows 11 needs 4 GB: a guest started
 with less is given 4096 MB.
 
-**TPM.** The guest gets a persistent software TPM 2.0 automatically. It needs
-`swtpm` on the host's `PATH`:
+**TPM.** The guest gets a persistent software TPM 2.0 automatically (not on a
+Mac). It needs `swtpm` on the host's `PATH`:
 
 ```bash skip="host-install"
-brew install swtpm                 # macOS
 sudo apt-get install swtpm         # Debian, Ubuntu
 ```
 
 **Secure Boot firmware.** The guest needs `AAVMF_CODE.secboot.fd` and
-`AAVMF_VARS.ms.fd`, both in one directory. cua looks, in order, at
+`AAVMF_VARS.ms.fd`, both in one directory (else QEMU's generic edk2 firmware).
+cua looks, in order, at
 `CUA_QEMU_AAVMF_DIR` (when set, nowhere else), `~/.cua/firmware/aavmf`, the
 QEMU prefix's `share/AAVMF`, then `/usr/share/AAVMF`. On Linux:
 
@@ -126,9 +126,9 @@ mkdir -p ~/.cua/firmware/aavmf
 cp -L usr/share/AAVMF/AAVMF_CODE.secboot.fd usr/share/AAVMF/AAVMF_VARS.ms.fd ~/.cua/firmware/aavmf/
 ```
 
-**Network.** Windows 11 on ARM has no inbox virtio-net driver, so the guest has
-no network during Setup. Finish OOBE offline, then install NetKVM from the
-virtio-win ISO (`NetKVM\w11\ARM64`). cua does not ship or download it.
+**Network.** Windows 11 on ARM has no inbox virtio-net driver, so a guest you
+install by hand has no network in Setup. Finish OOBE offline, then install
+NetKVM from the virtio-win ISO (`NetKVM\w11\ARM64`).
 
 **Fork and checkpoint** need the VM stopped, so its TPM state is copied
 consistently. A checkpoint with TPM state stays on the host that made it: it is
@@ -245,12 +245,12 @@ network.
 ## Your own cloud
 
 Sandboxes and Spaces can run in a cloud account you own: `--on aws` (EC2),
-`--on gcp` (Compute Engine), `--on hetzner` (Hetzner Cloud servers) or
+`--on gcp` (Compute Engine), `--on azure` (Azure Virtual Machines), `--on hetzner` (Hetzner Cloud servers) or
 `--on modal` (Modal Sandboxes). The same images, SDK calls and `cua-bench`
 runs work there, each sandbox dials out to the cua.ai relay as a machine of
 your account, and you pay the cloud directly. Connect one with
 `cua cloud connect`; [Use your own cloud](/cua-sdk/guides/your-cloud) covers
-what you need, what Cua creates there, costs, notes for each cloud and
+requirements, costs, notes for each cloud (Azure links without a key) and
 cleanup.
 
 ## Other sandbox providers

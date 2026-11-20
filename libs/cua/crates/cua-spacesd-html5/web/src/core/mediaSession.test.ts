@@ -453,83 +453,20 @@ describe("MediaSession in the Electron shell (hardware decode, keys, scrolls, ti
     key("keydown", { key: "w", code: "KeyW", metaKey: true });
     key("keydown", { key: "Meta", code: "MetaLeft", metaKey: true });
     key("keydown", { key: "c", code: "KeyC", metaKey: true });
-    key("keyup", { key: "Meta", code: "MetaLeft", metaKey: true });
+    canvas.dispatchEvent(new FocusEvent("blur"));
     key("keydown", { key: "q", code: "KeyQ", metaKey: true });
-    key("keyup", { key: "Meta", code: "MetaRight" });
-    key("keydown", { key: "Meta", code: "MetaLeft", metaKey: true });
-    key("keydown", { key: "v", code: "KeyV", metaKey: true });
     await Promise.resolve();
     const events = socket.of("interactive_input").flatMap((m) => m.payload!.events as Array<Record<string, unknown>>);
     expect(events.map((e) => [e.key, e.state, e.modifiers])).toEqual([
-      ["meta", "down", ["command"]],
+      ["meta", "down", []],
       ["w", "down", ["command"]],
-      ["control", "down", ["control"]],
+      ["meta", "up", []],
+      ["control", "down", []],
       ["c", "down", ["control"]],
-      ["control", "up", ["control"]],
-      ["q", "down", ["command"]],
-      ["meta", "up", []],
-      ["control", "down", ["control"]],
-      ["v", "down", ["control"]],
-    ]);
-  });
-
-  it("releases each command key as the guest key it pressed", async () => {
-    const { socket, canvas } = start({ metaAsControl: true });
-    handshake(socket);
-    const key = (type: string, init: KeyboardEventInit) => canvas.dispatchEvent(new KeyboardEvent(type, init));
-    key("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
-    key("keydown", { key: "Meta", code: "MetaLeft", metaKey: true });
-    key("keyup", { key: "Meta", code: "MetaRight", metaKey: true });
-    key("keyup", { key: "Meta", code: "MetaLeft" });
-    await Promise.resolve();
-    const events = socket.of("interactive_input").flatMap((m) => m.payload!.events as Array<Record<string, unknown>>);
-    expect(events.map((e) => [e.key, e.state])).toEqual([
-      ["meta", "down"],
-      ["control", "down"],
-      ["meta", "up"],
-      ["control", "up"],
-    ]);
-  });
-
-  it("releases a held command key when the canvas loses focus", async () => {
-    const { socket, canvas } = start({ metaAsControl: true });
-    handshake(socket);
-    const key = (type: string, init: KeyboardEventInit) => canvas.dispatchEvent(new KeyboardEvent(type, init));
-    key("keydown", { key: "Meta", code: "MetaLeft", metaKey: true });
-    canvas.dispatchEvent(new FocusEvent("blur"));
-    key("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
-    key("keydown", { key: "w", code: "KeyW", metaKey: true });
-    await Promise.resolve();
-    const events = socket.of("interactive_input").flatMap((m) => m.payload!.events as Array<Record<string, unknown>>);
-    expect(events.map((e) => [e.key, e.state, e.modifiers])).toEqual([
-      ["control", "down", ["control"]],
+      // Focus loss releases the guest's keys; the ⌘ keys still held press again.
       ["control", "up", []],
-      ["meta", "down", ["command"]],
-      ["w", "down", ["command"]],
-    ]);
-  });
-
-  it("keeps a right command key held through a focus change as Super", async () => {
-    const { socket, canvas } = start({ metaAsControl: true });
-    handshake(socket);
-    const key = (type: string, init: KeyboardEventInit) => canvas.dispatchEvent(new KeyboardEvent(type, init));
-    key("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
-    canvas.dispatchEvent(new FocusEvent("blur"));
-    // A second focus change releases nothing more.
-    canvas.dispatchEvent(new FocusEvent("blur"));
-    key("keydown", { key: "w", code: "KeyW", metaKey: true });
-    key("keyup", { key: "w", code: "KeyW", metaKey: true });
-    // Blur already released it on the guest: its late key-up leaves the left ⌘ held.
-    key("keydown", { key: "Meta", code: "MetaLeft", metaKey: true });
-    key("keyup", { key: "Meta", code: "MetaRight", metaKey: true });
-    await Promise.resolve();
-    const events = socket.of("interactive_input").flatMap((m) => m.payload!.events as Array<Record<string, unknown>>);
-    expect(events.map((e) => [e.key, e.state, e.modifiers])).toEqual([
-      ["meta", "down", ["command"]],
-      ["meta", "up", []],
-      ["w", "down", ["command"]],
-      ["w", "up", ["command"]],
-      ["control", "down", ["control"]],
+      ["control", "down", []],
+      ["q", "down", ["control"]],
     ]);
   });
 

@@ -21,6 +21,7 @@
  */
 
 import { AudioPlayer, type AudioConfigMessage } from "./audio";
+import { CommandKeys } from "./commandKeys";
 
 export type { AudioConfigMessage };
 import { avcCodecFromAnnexB } from "./h264";
@@ -760,59 +761,30 @@ export class MediaSession {
       },
       { passive: false },
     );
-    // The ⌘ keys held (`MetaLeft`, `MetaRight`): the right one alone is Super.
-    const commands = new Set<string>();
-    // Set once the canvas lost focus: a ⌘ may have been released elsewhere,
-    // so the next ⌘ pressed here replaces what `commands` holds.
-    let unsure = false;
-    // Whether each held key went down as Control, so it is released as the
-    // same guest key even if the other ⌘ changed in between.
-    const asControl = new Map<string, boolean>();
-    const send = (input: InteractiveInputEvent | null, control: boolean) => {
-      if (input) this.queueInput(control ? commandAsControl(input) : input);
+    const commands = new CommandKeys(() => !!this.options.metaAsControl);
+    const send = (input: InteractiveInputEvent | null) => {
+      if (input) this.queueInput(this.options.metaAsControl && !commands.isSuper ? commandAsControl(input) : input);
     };
-    on("keydown", (event) => {
+    const key = (event: KeyboardEvent, state: "down" | "up") => {
       event.preventDefault();
-      if (!event.metaKey || (unsure && COMMAND_CODES.has(event.code))) {
-        commands.clear();
-        unsure = false;
+      for (const input of commands.key(event, state)) this.queueInput(input);
+      if (CommandKeys.isCommand(event.code)) return;
+      send(keyEventToInput(event, state));
+      if (state === "down" && this.options.wholeCommandChords && event.metaKey && !MODIFIER_KEYS.has(event.key)) {
+        send(keyEventToInput(event, "up"));
       }
-      if (COMMAND_CODES.has(event.code)) commands.add(event.code);
-      const superKey = commands.has("MetaRight") && !commands.has("MetaLeft");
-      const control = !!this.options.metaAsControl && !superKey;
-      asControl.set(event.code, control);
-      send(keyEventToInput(event, "down"), control);
-      if (this.options.wholeCommandChords && event.metaKey && !MODIFIER_KEYS.has(event.key)) send(keyEventToInput(event, "up"), control);
-    });
-    on("keyup", (event) => {
-      event.preventDefault();
-      commands.delete(event.code);
-      // A ⌘ whose press was never sent, or was released on blur, is not
-      // held on the guest.
-      const control = asControl.get(event.code);
-      if (control === undefined && COMMAND_CODES.has(event.code)) return;
-      send(keyEventToInput(event, "up"), control ?? !!this.options.metaAsControl);
-      asControl.delete(event.code);
-    });
-    // Keys released while the canvas is unfocused send no keyup here:
-    // release each ⌘ on the guest now. A ⌘ still held when focus returns
-    // keeps its side for the next chord.
+    };
+    on("keydown", (event) => key(event, "down"));
+    on("keyup", (event) => key(event, "up"));
+    // Keys released while the canvas is unfocused send no keyup here.
     on("blur", () => {
-      for (const code of commands) {
-        const control = asControl.get(code);
-        if (control === undefined) continue;
-        send({ kind: "key", key: "meta", state: "up", modifiers: [], repeat: false }, control);
-        asControl.delete(code);
-      }
-      unsure = commands.size > 0;
+      for (const input of commands.release()) this.queueInput(input);
     });
   }
 }
 
 /** Keys that only change the modifiers. */
 const MODIFIER_KEYS = new Set(["Meta", "OS", "Shift", "Alt", "Control"]);
-
-const COMMAND_CODES = new Set(["MetaLeft", "MetaRight"]);
 
 /** A key as a Linux or Windows guest takes it from a Mac: ⌘ as Control. */
 export function commandAsControl(input: InteractiveInputEvent): InteractiveInputEvent {

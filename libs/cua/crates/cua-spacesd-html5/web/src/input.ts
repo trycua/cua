@@ -18,6 +18,7 @@
  * right click, two fingers scroll, one-finger drag drags.
  */
 
+import { CommandKeys } from "./core/commandKeys";
 import {
   modifiersOf,
   normalizePoint,
@@ -70,7 +71,6 @@ const NAMED = new Set([
 ]);
 
 const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "Meta", "AltGraph"]);
-const COMMAND_CODES = new Set(["MetaLeft", "MetaRight"]);
 
 /** Options for mapping one key event. */
 export interface KeyMapOptions {
@@ -214,10 +214,7 @@ export class InputController {
   private touchMode: "none" | "pointer" | "scroll" | "longpress" = "none";
   private pendingPaste: { resolve: () => void; timer: number } | null = null;
   private readonly heldKeys = new Map<string, InteractiveInputEvent>();
-  // The ⌘ keys held (`MetaLeft`, `MetaRight`), kept through a focus change;
-  // `commandsUnsure` once focus left, when a ⌘ may have been released elsewhere.
-  private readonly commands = new Set<string>();
-  private commandsUnsure = false;
+  private readonly commands = new CommandKeys(() => this.options.keyOptions().metaAsControl);
   enabled = true;
 
   constructor(private readonly options: InputControllerOptions) {
@@ -249,21 +246,7 @@ export class InputController {
       if (event.kind === "key") this.send({ ...event, state: "up", repeat: false });
     }
     this.heldKeys.clear();
-  }
-
-  /** Whether a key is part of a Super chord for a guest that takes ⌘ as
-   * Control: the right ⌘ held without the left one is its Super. */
-  private isSuper(): boolean {
-    return this.options.keyOptions().metaAsControl && this.commands.has("MetaRight") && !this.commands.has("MetaLeft");
-  }
-
-  private trackCommands(event: KeyboardEvent): void {
-    const command = COMMAND_CODES.has(event.code);
-    if (!event.metaKey || (this.commandsUnsure && command)) {
-      this.commands.clear();
-      this.commandsUnsure = false;
-    }
-    if (command) this.commands.add(event.code);
+    for (const event of this.commands.release()) this.send(event);
   }
 
   private keyOptions(superKey: boolean): KeyMapOptions {
@@ -296,8 +279,10 @@ export class InputController {
     const textarea = this.textarea;
 
     this.on(textarea, "keydown", (event) => {
-      this.trackCommands(event);
-      const superKey = this.isSuper();
+      for (const command of this.commands.key(event, "down")) this.send(command);
+      if (CommandKeys.isCommand(event.code)) return event.preventDefault();
+      // The right ⌘ alone is the guest's Super, never Control.
+      const superKey = this.commands.isSuper;
       const mapped = mapKey(event, "down", this.keyOptions(superKey));
       if (!mapped) return; // text arrives through beforeinput
       // A Super chord is the guest's shortcut, never the host clipboard's.
@@ -317,10 +302,10 @@ export class InputController {
       }
     });
     this.on(textarea, "keyup", (event) => {
+      for (const command of this.commands.key(event, "up")) this.send(command);
+      if (CommandKeys.isCommand(event.code)) return event.preventDefault();
       // Release exactly what went down for this physical key, even if the
       // modifiers changed in between (Ctrl released before C).
-      const superKey = this.isSuper();
-      this.commands.delete(event.code);
       const held = this.heldKeys.get(event.code || event.key);
       if (held && held.kind === "key") {
         event.preventDefault();
@@ -328,10 +313,7 @@ export class InputController {
         this.send({ ...held, state: "up", repeat: false });
         return;
       }
-      // A ⌘ whose press was never sent, or was released on blur, is not
-      // held on the guest.
-      if (COMMAND_CODES.has(event.code)) return;
-      const mapped = mapKey(event, "up", this.keyOptions(superKey));
+      const mapped = mapKey(event, "up", this.keyOptions(this.commands.isSuper));
       if (!mapped || !MODIFIER_KEYS.has(event.key)) return;
       event.preventDefault();
       this.send(mapped);
@@ -358,10 +340,7 @@ export class InputController {
       event.preventDefault();
       void this.pasted(event as ClipboardEvent);
     });
-    this.on(textarea, "blur", () => {
-      this.releaseAll();
-      this.commandsUnsure = this.commands.size > 0;
-    });
+    this.on(textarea, "blur", () => this.releaseAll());
 
     // Pointer (mouse, pen, touch).
     this.on(surface, "pointerdown", (event) => {

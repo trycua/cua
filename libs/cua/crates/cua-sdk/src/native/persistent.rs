@@ -415,6 +415,19 @@ impl Spaces {
         .await
     }
 
+    /// Deletes notifications: these ids, or every one when `all` (an empty
+    /// `ids` without `all` deletes nothing). Returns how many were deleted.
+    pub async fn notifications_delete(&self, ids: Vec<String>, all: bool) -> Result<u64> {
+        let host = self.tool_caller();
+        run(async move {
+            let v = host
+                .tool_value("notifications_delete", json!({"ids": ids, "all": all}))
+                .await?;
+            Ok(v.get("deleted").and_then(Value::as_u64).unwrap_or(0))
+        })
+        .await
+    }
+
     /// Lets one persistent agent use one of the user's computers (asks for
     /// presence).
     pub async fn computer_access_grant(

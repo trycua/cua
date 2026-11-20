@@ -1287,7 +1287,7 @@ impl Tool for HistoryStatusTool {
     fn def(&self) -> &ToolDef {
         HISTORY_STATUS_DEF.get_or_init(|| ToolDef {
             name: "history_status".to_owned(),
-            description: "For prompts to continue or revisit recent work, call this first, before broad desktop discovery. Reports whether encrypted local history is admitted, enabled, healthy, paused, or dropping events. If history is absent or access is denied, continue with normal discovery. Returns metadata-only status, never history entries, screen or page content, geometry, or inferred user intent, and does not change history lifecycle state.".to_owned(),
+            description: "Deprecated, removal planned in the release after 26 Nov 2026. Do not call this unless the user asks about Computer History. Reports whether the opt-in encrypted local history is admitted, enabled, healthy, paused, or dropping events. Metadata-only; never returns history entries, screen or page content, geometry, or inferred user intent, and does not change history lifecycle state.".to_owned(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {},
@@ -1325,7 +1325,7 @@ impl Tool for HistoryQueryTool {
     fn def(&self) -> &ToolDef {
         HISTORY_QUERY_DEF.get_or_init(|| ToolDef {
             name: "history_query".to_owned(),
-            description: "After history_status reports ready for a prompt to continue or revisit recent work, make one bounded initial query before broad desktop discovery. Reads metadata-only encrypted local history; it omits screen and page content, geometry, and inferred user intent. Results may enter model context. Requires the existing permission and capability-manifest checks for this exact operation; if history is absent or access is denied, continue with normal discovery. This read does not enable, pause, resume, disable, or delete history.".to_owned(),
+            description: "Deprecated, removal planned in the release after 26 Nov 2026. Do not call this unless the user asks about Computer History. Reads metadata-only encrypted local history (opt-in); omits screen and page content, geometry, and inferred user intent. Results may enter model context. Requires the existing permission and capability-manifest checks for this exact operation. This read does not enable, pause, resume, disable, or delete history.".to_owned(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -2500,7 +2500,7 @@ mod tests {
     }
 
     #[test]
-    fn history_tool_descriptions_define_bounded_history_first_consultation() {
+    fn history_tool_descriptions_are_deprecated_and_do_not_ask_for_a_first_call() {
         let temp = tempfile::tempdir().unwrap();
         let manager = HistoryManager::new(
             config(temp.path()),
@@ -2512,18 +2512,12 @@ mod tests {
         let status_description = &status.def().description;
         let query_description = &query.def().description;
 
-        for trigger in ["continue", "recent work"] {
-            assert!(status_description.contains(trigger));
-            assert!(query_description.contains(trigger));
+        for description in [status_description, query_description] {
+            assert!(description.starts_with("Deprecated"));
+            assert!(description.contains("26 Nov 2026"));
+            assert!(!description.contains("call this first"));
+            assert!(!description.contains("before broad desktop discovery"));
         }
-        assert!(
-            query_description.find("history_status")
-                < query_description.find("one bounded initial query")
-        );
-        assert!(
-            query_description.find("one bounded initial query")
-                < query_description.find("broad desktop discovery")
-        );
         for boundary in [
             "metadata-only",
             "screen and page content",
@@ -2533,13 +2527,9 @@ mod tests {
         ] {
             assert!(query_description.contains(boundary), "missing {boundary}");
         }
-        assert!(status_description.contains("never history entries"));
+        assert!(status_description.contains("never returns history entries"));
         assert!(status_description.contains("does not change history lifecycle state"));
         assert!(query_description.contains("does not enable, pause, resume, disable, or delete"));
-        for fallback in ["absent", "access is denied", "normal discovery"] {
-            assert!(status_description.contains(fallback));
-            assert!(query_description.contains(fallback));
-        }
     }
 
     #[test]

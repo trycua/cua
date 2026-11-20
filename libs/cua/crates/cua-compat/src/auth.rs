@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use subtle::ConstantTimeEq;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct KeyEntry {
     pub key: String,
     #[serde(default)]
@@ -27,6 +27,17 @@ pub struct KeyEntry {
     /// Cua daemon token for this key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
+}
+
+impl std::fmt::Debug for KeyEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeyEntry")
+            .field("key", &"<redacted>")
+            .field("label", &self.label)
+            .field("daemon", &self.daemon)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 impl KeyEntry {

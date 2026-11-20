@@ -27,6 +27,7 @@ on:
       - ".github/scripts/spaces_rust_slice_inputs.py"
       - ".github/actions/spaces-rust-slice/**"
       - ".github/workflows/ci-cua-spaces-rust-slice.yml"
+  merge_group:
   workflow_dispatch:
 
 permissions:
@@ -43,12 +44,12 @@ env:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   slice:
     needs: quick
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: SwiftUI Rust (${{ matrix.arch }})
     runs-on: macos-26
     timeout-minutes: 120

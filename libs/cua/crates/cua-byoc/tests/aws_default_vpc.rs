@@ -20,11 +20,10 @@ use cua_byoc::{CloudApi, Connection};
 mod fake_aws;
 use fake_aws::{S, fake_with_default_subnets, filters, spec_tags};
 
-/// These tests are about the behavior without Secure Spaces: the sandbox
-/// goes into the account's default VPC, as it always did, and Cua makes no
-/// VPC of its own.
-fn legacy() {
-    cua_vmm::experiments::set_enabled(cua_vmm::experiments::Gate::SecureSpaces, Some(false));
+/// These tests are about the operator override `CUA_SECURE_DEFAULT=0`: the sandbox goes into the
+/// account's default VPC, as it always did, and Cua makes no VPC of its own.
+fn legacy() -> cua_vmm::network::ModeHold {
+    cua_vmm::network::hold_mode(cua_vmm::network::Mode::Legacy)
 }
 
 fn conn() -> Connection {
@@ -47,7 +46,7 @@ fn actions(s: &S) -> Vec<String> {
 
 #[tokio::test]
 async fn test_is_a_dry_run_that_creates_nothing() {
-    legacy();
+    let _legacy = legacy();
     let (url, s) = fake_with_default_subnets().await;
     let aws = Aws::with_endpoint(&url, "AKIDTEST", "secret");
     let t = aws.test(&conn()).await;
@@ -86,7 +85,7 @@ async fn test_is_a_dry_run_that_creates_nothing() {
 
 #[tokio::test]
 async fn the_dry_run_security_group_carries_the_managed_tag() {
-    legacy();
+    let _legacy = legacy();
     // The least-privilege policy only allows a security group created with
     // the cua-managed tag, so the test's dry run must send it.
     let (url, s) = fake_with_default_subnets().await;
@@ -103,7 +102,7 @@ async fn the_dry_run_security_group_carries_the_managed_tag() {
 
 #[tokio::test]
 async fn the_boot_log_is_the_decoded_console_output() {
-    legacy();
+    let _legacy = legacy();
     let (url, s) = fake_with_default_subnets().await;
     let aws = Aws::with_endpoint(&url, "AKIDTEST", "secret");
     let r = Resource {
@@ -141,7 +140,7 @@ fn spec(owner: &str) -> ProvisionSpec {
 
 #[tokio::test]
 async fn a_create_is_tagged_locked_down_and_reuses_one_outbound_only_group() {
-    legacy();
+    let _legacy = legacy();
     let (url, s) = fake_with_default_subnets().await;
     let aws = Aws::with_endpoint(&url, "AKIDTEST", "secret");
     let made = aws.provision(&conn(), &spec("owner1")).await.unwrap();
@@ -205,7 +204,7 @@ async fn a_create_is_tagged_locked_down_and_reuses_one_outbound_only_group() {
 
 #[tokio::test]
 async fn a_pool_host_boots_the_image_its_ssm_parameter_names() {
-    legacy();
+    let _legacy = legacy();
     let (url, s) = fake_with_default_subnets().await;
     let aws = Aws::with_endpoint(&url, "AKIDTEST", "secret");
     let param = cua_byoc::aws::host_image_parameter(true, "amd64");
@@ -258,7 +257,7 @@ async fn a_pool_host_boots_the_image_its_ssm_parameter_names() {
 /// (an older one opened fewer ports), and rules it has are left alone.
 #[tokio::test]
 async fn pool_hosts_reach_each_other_and_nothing_else() {
-    legacy();
+    let _legacy = legacy();
     let (url, s) = fake_with_default_subnets().await;
     let aws = Aws::with_endpoint(&url, "AKIDTEST", "secret");
     let sandbox = aws.provision(&conn(), &spec("owner1")).await.unwrap();
@@ -341,7 +340,7 @@ fn calls_to(s: &S, action: &str) -> Vec<BTreeMap<String, String>> {
 /// default VPC in order, with its own client token, until one has room.
 #[tokio::test]
 async fn a_create_without_capacity_tries_the_other_zones() {
-    legacy();
+    let _legacy = legacy();
     let (url, s) = fake_with_default_subnets().await;
     s.lock().unwrap().full = vec!["".into(), "us-west-2a".into()];
     let aws = Aws::with_endpoint(&url, "AKIDTEST", "secret");
@@ -403,7 +402,7 @@ fn put(s: &S, id: &str, tags: BTreeMap<String, String>) {
 
 #[tokio::test]
 async fn nothing_untagged_or_foreign_is_listed_stopped_or_deleted() {
-    legacy();
+    let _legacy = legacy();
     let (url, s) = fake_with_default_subnets().await;
     let aws = Aws::with_endpoint(&url, "AKIDTEST", "secret");
     put(&s, "i-untagged", BTreeMap::new());
@@ -493,7 +492,7 @@ async fn nothing_untagged_or_foreign_is_listed_stopped_or_deleted() {
 /// The elastic pool's provider conformance suite against the fake EC2.
 #[tokio::test]
 async fn aws_conforms_to_the_elastic_contract() {
-    legacy();
+    let _legacy = legacy();
     use base64::Engine as _;
     use cua_byoc::conformance::{CreateCall, lifecycle_checks, static_checks};
     let (url, s) = fake_with_default_subnets().await;
@@ -530,7 +529,7 @@ async fn aws_conforms_to_the_elastic_contract() {
 /// the shared group before any made it. One makes it; the rest use it.
 #[tokio::test]
 async fn sixteen_concurrent_first_launches_share_one_security_group() {
-    legacy();
+    let _legacy = legacy();
     let (url, s) = fake_with_default_subnets().await;
     s.lock().unwrap().describe_delay_ms = 40;
     let aws = Arc::new(Aws::with_endpoint(&url, "AKIDTEST", "secret"));
@@ -559,7 +558,7 @@ async fn sixteen_concurrent_first_launches_share_one_security_group() {
 /// the look and the create: `InvalidGroup.Duplicate` means it is there.
 #[tokio::test]
 async fn a_duplicate_security_group_is_the_one_to_use() {
-    legacy();
+    let _legacy = legacy();
     let (url, s) = fake_with_default_subnets().await;
     s.lock().unwrap().describe_delay_ms = 40;
     let mut tasks = vec![];

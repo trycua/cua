@@ -10,7 +10,11 @@ import { agentThreadsMethods } from "../src/bridge/agent-threads";
 import type { BridgeContext } from "../src/bridge/context";
 
 const ctx = {} as BridgeContext;
-const LIST = { threads: [{ agent: "claude-code", id: "abc", title: "Kettle timer", cwd: "/Users/sam/code/kettle", last_active_ms: 5, resume: ["claude", "--resume", "abc"] }] };
+const LIST = {
+  threads: [
+    { agent: "claude-code", id: "abc", title: "Kettle timer", cwd: "/Users/sam/code/kettle", last_active_ms: 5, resume: ["claude", "--resume", "abc"] },
+  ],
+};
 
 describe("agents.recentThreads / agents.threadHistory", () => {
   it("lists with the tool's arguments and answers its JSON as-is", async () => {
@@ -20,6 +24,13 @@ describe("agents.recentThreads / agents.threadHistory", () => {
     expect(tool).toHaveBeenCalledWith("agent_threads", { limit: 4 });
     expect(r).toBe(LIST);
     expect(recentThreadsFromTool(r)[0]!.title).toBe("Kettle timer");
+  });
+
+  it("passes the picked agents on, for the daemon to read only theirs", async () => {
+    const tool = vi.fn(async () => LIST);
+    const m = agentThreadsMethods(ctx, () => tool);
+    await m["agents.recentThreads"]!({ limit: 4, agents: ["claude-code"] }, {});
+    expect(tool).toHaveBeenCalledWith("agent_threads", { limit: 4, agents: ["claude-code"] });
   });
 
   it("reads one chat by its agent and id", async () => {

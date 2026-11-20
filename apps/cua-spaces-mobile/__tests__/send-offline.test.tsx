@@ -23,7 +23,8 @@ afterAll(() => {
   uninstallCore();
 });
 
-const thread = (opts: Parameters<typeof renderWithApp>[1] = {}, id = "relay:sample-design-review") => renderWithApp(<ThreadScreen spaceId={id} onBack={() => {}} onFullStream={() => {}} />, opts);
+const thread = (opts: Parameters<typeof renderWithApp>[1] = {}, id = "relay:sample-design-review") =>
+  renderWithApp(<ThreadScreen spaceId={id} onBack={() => {}} onFullStream={() => {}} />, opts);
 
 describe("sending while the connection is down", () => {
   it("keeps the message with an honest state, sends it once when the machine is back, and shows it as sent", async () => {
@@ -66,10 +67,13 @@ describe("sending while the connection is down", () => {
     // A new launch: the same disk, a connected sample machine.
     const second = await thread({ store: testStore(kv) });
     await screen.findByText(/Reviewed 3 PRs/);
-    await waitFor(async () => {
-      const page = await second.backend.readThread("relay:sample-design-review", { after: 0 });
-      expect(page.entries.filter((e) => e.text === "@reviewer one more")).toHaveLength(1);
-    }, { timeout: 10_000 });
+    await waitFor(
+      async () => {
+        const page = await second.backend.readThread("relay:sample-design-review", { after: 0 });
+        expect(page.entries.filter((e) => e.text === "@reviewer one more")).toHaveLength(1);
+      },
+      { timeout: 10_000 },
+    );
     expect(screen.queryByText("Waiting for a connection")).toBeNull();
   });
 });

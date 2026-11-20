@@ -79,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
     out = args.out.resolve()
     if in_checkout(out):
         raise SystemExit("refusing to write inside a git checkout")
-    if out.exists() or args.out.is_symlink():
+    if args.out.is_symlink():
         raise SystemExit(f"refusing to overwrite {out}")
     report = json.loads(args.doctor_json.read_text("utf-8"))
     version = subprocess.run(
@@ -87,11 +87,17 @@ def main(argv: list[str] | None = None) -> int:
     ).stdout.strip()
     version = version.removeprefix("cua-driver").strip()
     pins = build_pins(args.cua_bin, args.cua_skills, report, version)
+    text = json.dumps(pins, indent=2) + "\n"
+    if out.exists():
+        # A resumed session reruns this with the same driver: identical pins are already in place.
+        if out.read_text("utf-8") == text:
+            return 0
+        raise SystemExit(f"refusing to overwrite {out} with different pins")
     out.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=out.parent, prefix=".pins-")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps(pins, indent=2) + "\n")
+            handle.write(text)
         try:
             os.link(tmp, out)  # atomic no-clobber publish
         except FileExistsError:

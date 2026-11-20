@@ -49,4 +49,5 @@ export function testSigner(): DeviceSigner {
   };
 }
 
-export const verify = (publicKey: string, message: string, signature: string) => p256.verify(fromB64url(signature), sha256(utf8ToBytes(message)), fromB64url(publicKey), { prehash: false });
+export const verify = (publicKey: string, message: string, signature: string) =>
+  p256.verify(fromB64url(signature), sha256(utf8ToBytes(message)), fromB64url(publicKey), { prehash: false });

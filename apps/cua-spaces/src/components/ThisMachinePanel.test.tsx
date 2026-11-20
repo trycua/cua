@@ -49,7 +49,12 @@ describe("host model", () => {
 
   it("builds the This machine entry, first in the roster, and the setup form", () => {
     const space = thisMachineSpace(null, 5, "linux");
-    expect(space).toMatchObject({ id: "this-mac", name: "This computer", status: "suspended", detail: "Set up for access" });
+    expect(space).toMatchObject({
+      id: "this-mac",
+      name: "This computer",
+      status: "suspended",
+      detail: "Set up for access",
+    });
     expect(withThisMachine([], sharing, 5, "macos").map((s) => s.detail)).toEqual(["Sharing · 1 connected"]);
     expect(clientLabel({ id: "u", email: "e@x" })).toBe("e@x");
     let form = hostFormInitial();
@@ -157,7 +162,7 @@ describe("ThisMachinePanel: a spare machine", () => {
     render(<ThisMachinePanel host={host} />);
     fireEvent.click(await screen.findByRole("button", { name: "Turn on remote access" }));
     fireEvent.click(screen.getByRole("radio", { name: "Let other computers create Spaces here" }));
-    expect(screen.getByText(/Its own screen stays private/)).toBeInTheDocument();
+    expect(screen.getByText(/Its screen stays private/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Start running Spaces" }));
     const desktop = await screen.findByRole("switch", { name: /Let other computers control this desktop/ });
     expect(desktop).not.toBeChecked();
@@ -169,7 +174,9 @@ describe("ThisMachinePanel: a spare machine", () => {
     // No desktop, so no screen permissions to grant.
     expect(screen.queryByText("Screen Recording")).toBeNull();
     fireEvent.click(desktop);
-    await waitFor(() => expect(screen.getByRole("switch", { name: /Let other computers control this desktop/ })).toBeChecked());
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: /Let other computers control this desktop/ })).toBeChecked(),
+    );
     expect(host.calls.find((c) => c.startsWith("configure:"))).toMatch(/"shareDesktop":true/);
   });
 
@@ -230,7 +237,9 @@ describe("roster", () => {
         },
       ],
     });
-    render(<App bridge={createFallbackBridge("notched")} spacesBridge={spacesBridge} host={host} now={() => FIXTURE_NOW} />);
+    render(
+      <App bridge={createFallbackBridge("notched")} spacesBridge={spacesBridge} host={host} now={() => FIXTURE_NOW} />,
+    );
     await user.click(await screen.findByRole("button", { name: /Spaces/ }));
     const listbox = await screen.findByRole("listbox");
     await waitFor(() => {

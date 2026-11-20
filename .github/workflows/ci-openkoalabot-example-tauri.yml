@@ -14,6 +14,7 @@ on:
       - "libs/cua/**"
       - "libs/cua-spacesd/**"
       - ".github/workflows/ci-openkoalabot-example-tauri.yml"
+  merge_group:
   # Not on every push to main: the pull request above already built the same
   # paths. A breakage from a change that raced in after the PR shows up in the
   # nightly build.
@@ -43,12 +44,12 @@ env:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   check:
     needs: quick
-    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: cargo check + core tests + vitest
     runs-on: ubuntu-22.04
     timeout-minutes: 60

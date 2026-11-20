@@ -484,8 +484,10 @@ impl Helper {
     }
 
     /// Runs `argv` as root in the engine's own filesystem (`chroot /host`).
+    /// `chroot` is found on `PATH`: GNU coreutils installs it in `/usr/sbin`,
+    /// uutils (Ubuntu 25.10 and later) in `/usr/bin`.
     pub async fn run(&self, argv: &[&str], timeout: Duration) -> Result<HelperOut> {
-        let mut cmd: Vec<String> = vec!["/usr/sbin/chroot".into(), "/host".into()];
+        let mut cmd: Vec<String> = vec!["chroot".into(), "/host".into()];
         cmd.extend(argv.iter().map(|s| s.to_string()));
         let fut = async {
             let created = self

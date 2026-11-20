@@ -50,6 +50,16 @@ name: "Nightly: Cua Spaces"
 # still publish, and the run ends red. The input tree is recorded only when
 # every platform published, so the next night builds again.
 #
+# Immutable tag: the rolling release moves every night, so after a fully
+# green build and publish the last publish step also tags the built commit
+# `cua-spaces-nightly-YYYYMMDD.<run number>` (a lightweight tag at the exact
+# GITHUB_SHA that was built, never a later main). Anyone can read the code of
+# a nightly version or pin to it. The tag is never moved or force-updated: if
+# it exists at another commit the job fails. A red nightly (a platform failed)
+# makes no tag. The tag name and commit are recorded in nightly.json (`tag`,
+# `tagCommit`) and in the release notes; old tags are not pruned here. The
+# tag does not match `cua-spaces-v*`, so no release workflow runs.
+#
 # Cost: the last job writes the run's runner minutes per OS to the summary.
 #
 # workflow_dispatch: `force` builds even when nothing changed; `ignore_ci`
@@ -101,6 +111,7 @@ jobs:
       electron_version: ${{ steps.plan.outputs.electron_version }}
       bundle_version: ${{ steps.plan.outputs.bundle_version }}
       tree: ${{ steps.plan.outputs.tree }}
+      nightly_tag: ${{ steps.plan.outputs.nightly_tag }}
       previous_sha: ${{ steps.plan.outputs.previous_sha }}
       previous_tree: ${{ steps.plan.outputs.previous_tree }}
     steps:
@@ -156,6 +167,7 @@ jobs:
             echo "electron_version=$electron_version"
             echo "bundle_version=$bundle_version"
             echo "tree=$tree"
+            echo "nightly_tag=cua-spaces-nightly-$day.$GITHUB_RUN_NUMBER"
             echo "previous_sha=$previous_sha"
             echo "previous_tree=$last_tree"
           } >> "$GITHUB_OUTPUT"
@@ -415,6 +427,27 @@ jobs:
           if grep -l -- '-nightly' "$stable"/latest*.yml 2>/dev/null; then echo "::error::a stable feed names a nightly"; bad=1; fi
           [ ! -f "$stable/cua-spaces-appcast.xml" ] || python3 -I .github/scripts/sparkle_feed.py check "$stable/cua-spaces-appcast.xml" || bad=1
           exit "$bad"
+      # Only after a fully successful build, publish and channel check (a
+      # failed or partial nightly leaves no tag). Lightweight tag at the built
+      # commit through the git refs API; never moved. Then the record and the
+      # notes name it (additive field in nightly.json).
+      - name: Tag the commit
+        if: needs.build.result == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NIGHTLY_TAG: ${{ needs.plan.outputs.nightly_tag }}
+        run: |
+          set -euo pipefail
+          .github/scripts/spaces_nightly_tag.sh "$NIGHTLY_TAG" "$GITHUB_SHA"
+          . "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
+          retry gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern nightly.json --output nightly.json --clobber
+          jq --arg tag "$NIGHTLY_TAG" --arg sha "$GITHUB_SHA" '. + {tag: $tag, tagCommit: $sha}' nightly.json > nightly.tagged.json
+          mv nightly.tagged.json nightly.json
+          cat nightly.json
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber nightly.json
+          body="The newest Cua Spaces for Mac, Windows and Linux, built from main every night. Nightly builds get the newest changes from main every day. They may break. To get them, open Cua Spaces, Settings, Advanced, and choose Nightly. Latest: $VERSION (tag $NIGHTLY_TAG, commit $GITHUB_SHA)."
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes "$body" --prerelease --latest=false
+          echo "- Tag: https://github.com/$GITHUB_REPOSITORY/tree/$NIGHTLY_TAG (commit $GITHUB_SHA)" >> "$GITHUB_STEP_SUMMARY"
       - name: A platform failed
         if: needs.build.result != 'success'
         run: |
@@ -437,3 +470,31 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 -I .github/scripts/spaces_build_summary.py "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> "$GITHUB_STEP_SUMMARY"
+
+  # Mirror to the downloads CDN (CUA-3941). GitHub stays the source of truth:
+  # this job never blocks or fails the release (continue-on-error) but shows a
+  # red job and a loud step summary when the CDN copy is incomplete.
+  cdn-publish:
+    name: Copy to the downloads CDN
+    needs: [plan, publish]
+    if: >-
+      !cancelled() && github.repository == 'trycua/cua' && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 90
+    # The publish role trusts main and this environment (OIDC).
+    environment: cua-driver-release-signing
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts
+            .github/actions
+          persist-credentials: false
+      - uses: ./.github/actions/publish-downloads-cdn
+        with:
+          tags: |
+            cua-spaces-nightly

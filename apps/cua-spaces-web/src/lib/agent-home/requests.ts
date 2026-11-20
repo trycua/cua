@@ -52,9 +52,17 @@ export function covered(req: AbilityRequest, grants: AgentGrants, machineIds: Re
 export function askText(req: AbilityRequest, machineName: string | null): { title: string; detail: string; allow: string } {
   switch (req.ability) {
     case "spaces.list":
-      return { title: "Let this agent see all your Spaces?", detail: "Until you say yes it only sees the Spaces you @mention. It can look at them, not change them.", allow: "Allow" };
+      return {
+        title: "Let this agent see all your Spaces?",
+        detail: "Until you say yes it only sees the Spaces you @mention. It can look at them, not change them.",
+        allow: "Allow",
+      };
     case "machines.use":
-      return { title: machineName ? `Let this agent use ${machineName}?` : "Let this agent use this computer?", detail: req.detail || "It will put work on that computer.", allow: "Allow" };
+      return {
+        title: machineName ? `Let this agent use ${machineName}?` : "Let this agent use this computer?",
+        detail: req.detail || "It will put work on that computer.",
+        allow: "Allow",
+      };
     default:
       return { title: "Let this agent make a Space?", detail: req.detail, allow: "Allow" };
   }

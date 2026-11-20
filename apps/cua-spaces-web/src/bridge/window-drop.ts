@@ -143,5 +143,9 @@ const subscribe = (l: () => void) => {
 
 /** The Space a dragged window is over now, if any. */
 export function useWindowDropTarget(): string | null {
-  return useSyncExternalStore(subscribe, () => targeted, () => null);
+  return useSyncExternalStore(
+    subscribe,
+    () => targeted,
+    () => null,
+  );
 }

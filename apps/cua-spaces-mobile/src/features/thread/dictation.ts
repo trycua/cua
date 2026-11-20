@@ -53,7 +53,12 @@ export interface Dictation {
  */
 export function useDictation(read: () => DictationBox, write: (text: string, cursor: number) => void): Dictation {
   const native = voiceModule();
-  const [perm, setPerm] = useState<{ microphone: PermissionWord; speech: PermissionWord; recognizer: boolean; onDevice: boolean }>({ microphone: "undetermined", speech: "undetermined", recognizer: true, onDevice: false });
+  const [perm, setPerm] = useState<{ microphone: PermissionWord; speech: PermissionWord; recognizer: boolean; onDevice: boolean }>({
+    microphone: "undetermined",
+    speech: "undetermined",
+    recognizer: true,
+    onDevice: false,
+  });
   const [listening, setListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const base = useRef<DictationBox | null>(null);
@@ -131,7 +136,9 @@ export function useDictation(read: () => DictationBox, write: (text: string, cur
     }
   }, [native]);
 
-  const view = native ? voiceView({ microphone: perm.microphone, speech: perm.speech, recognizerAvailable: perm.recognizer, onDevice: perm.onDevice, listening, error }) : null;
+  const view = native
+    ? voiceView({ microphone: perm.microphone, speech: perm.speech, recognizerAvailable: perm.recognizer, onDevice: perm.onDevice, listening, error })
+    : null;
 
   return {
     supported: native !== null,

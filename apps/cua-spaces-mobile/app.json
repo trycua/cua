@@ -10,11 +10,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "ai.cua.spaces.mobile",
       "infoPlist": {
-        "UISupportedInterfaceOrientations": [
-          "UIInterfaceOrientationPortrait",
-          "UIInterfaceOrientationLandscapeLeft",
-          "UIInterfaceOrientationLandscapeRight"
-        ],
+        "UISupportedInterfaceOrientations": ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"],
         "ITSAppUsesNonExemptEncryption": false,
         "NSPhotoLibraryUsageDescription": "Cua Spaces reads a photo only if you choose to attach one to a message for your agent.",
         "NSMicrophoneUsageDescription": "Cua Spaces uses the microphone only while you hold the microphone button to dictate a message.",
@@ -58,10 +54,7 @@
         }
       ]
     ],
-    "scheme": [
-      "cua-spaces",
-      "ai.cua.spaces"
-    ],
+    "scheme": ["cua-spaces", "ai.cua.spaces"],
     "newArchEnabled": true,
     "experiments": {
       "typedRoutes": false

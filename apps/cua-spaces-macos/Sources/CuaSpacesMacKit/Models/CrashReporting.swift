@@ -95,9 +95,33 @@ public enum CrashReporting {
         try! NSRegularExpression(pattern: "[A-Za-z]:\\\\Users\\\\[^\\\\\\s\"']+"),
     ]
 
-    /// Home folders become `~`, emails `[email]`.
-    static func scrub(_ text: String, home: String = NSHomeDirectory()) -> String {
+    /// Token-shaped secrets, replaced with `[redacted]`: JWTs, `Bearer`
+    /// credentials, AWS access key ids, and long values after `token`, `key`,
+    /// `secret` (any prefix, `=` or `:`). The `$1` template keeps the name.
+    private static let secretPatterns: [(NSRegularExpression, String)] = [
+        (try! NSRegularExpression(pattern: "\\beyJ[A-Za-z0-9_-]{4,}\\.[A-Za-z0-9_-]{4,}\\.[A-Za-z0-9_-]*"), "[redacted]"),
+        (try! NSRegularExpression(pattern: "\\b(bearer\\s+)[A-Za-z0-9._~+/=-]{8,}", options: .caseInsensitive), "$1[redacted]"),
+        (try! NSRegularExpression(pattern: "\\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA|AIPA|ABIA|ACCA)[A-Z0-9]{16}\\b"), "[redacted]"),
+        (try! NSRegularExpression(
+            pattern: "\\b([a-z0-9_.-]*(?:token|key|secret)[a-z0-9_-]*[\"']?\\s*[=:]\\s*[\"']?)[A-Za-z0-9+/_~.=-]{16,}",
+            options: .caseInsensitive), "$1[redacted]"),
+        (try! NSRegularExpression(
+            pattern: "\\b([a-z0-9_.-]*(?:password|passwd)[a-z0-9_-]*[\"']?\\s*[=:]\\s*[\"']?)[^\\s\"'&,;)}\\]]{8,}",
+            options: .caseInsensitive), "$1[redacted]"),
+    ]
+
+    /// Redacts token-shaped secrets.
+    static func scrubSecrets(_ text: String) -> String {
         var out = text
+        for (re, template) in secretPatterns {
+            out = re.stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out), withTemplate: template)
+        }
+        return out
+    }
+
+    /// Home folders become `~`, emails `[email]`, tokens `[redacted]`.
+    static func scrub(_ text: String, home: String = NSHomeDirectory()) -> String {
+        var out = scrubSecrets(text)
         let trimmedHome = home.hasSuffix("/") ? String(home.dropLast()) : home
         if trimmedHome.count > 1 { out = out.replacingOccurrences(of: trimmedHome, with: "~") }
         for re in homePatterns {
@@ -205,6 +229,7 @@ public enum CrashReporting {
             options.enableMetricKit = false
             options.maxBreadcrumbs = 0
             options.tracesSampleRate = 0
+            options.beforeBreadcrumb = { _ in nil }
             options.beforeSend = { event in sanitize(event, allowed: currentlyAllowed()) }
         }
         SentrySDK.configureScope { scope in

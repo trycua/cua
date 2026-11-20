@@ -62,14 +62,14 @@ impl FromStr for ClipboardSetting {
     }
 }
 
-/// Refuses `what` while Secure Spaces is off.
+/// Refuses `what` while the operator override `CUA_SECURE_DEFAULT=0` has the secure default off.
 pub(crate) fn require_secure(what: &str) -> Result<()> {
     if crate::network::Mode::from_env() == crate::network::Mode::Secure {
         return Ok(());
     }
     Err(Error::invalid(format!(
-        "{what} is part of Secure Spaces. {}",
-        cua_vmm::experiments::Gate::SecureSpaces.off_message()
+        "{what} is part of the secure default. {}",
+        cua_vmm::network::secure_default_off_message()
     )))
 }
 
@@ -77,7 +77,7 @@ impl Spaces {
     /// Sets when this Space's viewers may move the clipboard. It applies to
     /// viewers opened after the change.
     pub fn set_clipboard(&self, space: &str, setting: ClipboardSetting) -> Result<()> {
-        // Part of Secure Spaces: without it the viewers keep the clipboard in
+        // Part of the secure default: without it the viewers keep the clipboard in
         // sync both ways and nothing would enforce the word.
         require_secure("The clipboard setting")?;
         let id = self.resolve(space)?;

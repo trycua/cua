@@ -94,6 +94,16 @@ export function spaceStreams(ctx: BridgeContext): SpaceStreams {
   return s;
 }
 
+/** `spaces.reach`'s answer as the page reads it (`SpaceReach`): the SDK's snake_case in camelCase. */
+export function spaceReach(answer: unknown): { reachable: boolean; listedOffline: boolean; reason: string | null } {
+  const r = (answer && typeof answer === "object" ? answer : {}) as Record<string, unknown>;
+  return {
+    reachable: r.reachable === true,
+    listedOffline: r.listed_offline === true,
+    reason: typeof r.reason === "string" ? r.reason : null,
+  };
+}
+
 export function spaceDetailMethods(ctx: BridgeContext): Handlers {
   const { model } = ctx;
   const streams = spaceStreams(ctx);
@@ -101,6 +111,9 @@ export function spaceDetailMethods(ctx: BridgeContext): Handlers {
 
   return {
     "spaces.usage": async (args) => encode(await model.backend.usage(spaceId(args))),
+    // Whether the Space can take work now: the relay's word and a health check (the SDK's `spaces.reach`),
+    // asked before a job is handed to it.
+    "spaces.reach": async (args) => spaceReach(await model.backend.tool("spaces.reach", { space: spaceId(args) })),
     "spaces.windows": async (args) => {
       const { rows, pips } = streams.get(spaceId(args));
       await rows.refresh();

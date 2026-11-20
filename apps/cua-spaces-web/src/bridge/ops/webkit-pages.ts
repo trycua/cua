@@ -97,14 +97,18 @@ export const WEBKIT_PAGE_OPS = [
   "notifications.list",
   "notifications.markAllRead",
   "notifications.markRead",
+  "notifications.delete",
+  "notifications.deleteAll",
   "telemetry.track",
   "spaces.usage",
+  "spaces.reach",
   "spaces.windows",
   "stream.pip",
   "spaces.thumbnail",
   "spaces.chooseFiles",
   "spaces.droppedFiles",
   "spaces.sendFiles",
+  "windows.chooseIso",
   "host.setUp",
   "host.joinWithCode",
   "host.action",
@@ -292,6 +296,8 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "notifications.list": list("notifications.list"),
     "notifications.markAllRead": none("notifications.markAllRead"),
     "notifications.markRead": none("notifications.markRead"),
+    "notifications.delete": none("notifications.delete"),
+    "notifications.deleteAll": none("notifications.deleteAll"),
 
     // Only known signals of fixed words leave the page; the host drops
     // them all while usage data is off.
@@ -301,12 +307,14 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
       return null;
     },
     "spaces.usage": call("spaces.usage"),
+    "spaces.reach": call("spaces.reach"),
     "spaces.windows": call("spaces.windows"),
     "stream.pip": list("stream.pip"),
     "spaces.thumbnail": call("spaces.thumbnail"),
     "spaces.chooseFiles": list("spaces.chooseFiles"),
     "spaces.droppedFiles": list("spaces.droppedFiles"),
     "spaces.sendFiles": list("spaces.sendFiles"),
+    "windows.chooseIso": call("windows.chooseIso"),
 
     "host.setUp": host("host.setUp"),
     "host.joinWithCode": ({ code, relay }) => request("host.joinWithCode", { code, relay: relay ?? null }),

@@ -3,7 +3,6 @@
 
 import type { ReactNode } from "react";
 
-
 /**
  * One onboarding page in the two-column layout: title and one sentence on
  * the left; the details (paths, agents, choices) in a card on the right.

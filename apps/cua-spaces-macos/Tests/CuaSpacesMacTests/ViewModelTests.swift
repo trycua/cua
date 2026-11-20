@@ -431,7 +431,7 @@ struct ViewModelTests {
         let telemetry = FixtureTelemetry()
         let model = makeModel(telemetry: telemetry)
         let toggles = model.experimentsPage.sections.flatMap(\.rows).filter { $0.kind == .toggle }
-        #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:secure_spaces", "experiment:child_spaces", "experiment:ask_first", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile", "experiment:warm_pools"])
+        #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile"])
         #expect(toggles.allSatisfy { r in r.options.first { $0.id == "off" }?.active == true })
         #expect(!model.settingsPageWithStorage.sections.map(\.id).contains("storage"))
         model.chooseExperiment(row: "experiment:cua_volume", option: "on")
@@ -466,6 +466,52 @@ struct ViewModelTests {
         await model.beginSignIn()
         #expect(model.identity == "you@example.com")
         #expect(steps(telemetry) == ["signed_in"])
+    }
+
+    /// Regression (first run): the browser stayed in front after it confirmed,
+    /// covering the app's next step. The app comes forward, once.
+    @Test func aConfirmedSignInBringsTheAppForward() async {
+        let model = makeModel(account: FixtureAccount())
+        var forward = 0
+        model.comeForward = { forward += 1 }
+        await model.beginSignIn()
+        #expect(model.identity == "you@example.com")
+        #expect(forward == 1)
+
+        // A sign-in Cancel superseded still signs in when its browser tab
+        // confirms later, but the app stays where the person left it.
+        let late = makeModel(account: LateAccount())
+        var lateForward = 0
+        late.comeForward = { lateForward += 1 }
+        let run = Task { await late.beginSignIn() }
+        try? await waitUntil { if case .waiting = late.signIn { true } else { false } }
+        late.cancelSignIn()
+        await run.value
+        #expect(late.identity == "you@example.com")
+        #expect(lateForward == 0)
+
+        // The same when a retry replaced it: the first tab confirms while
+        // the second sign-in waits.
+        let retried = makeModel(account: LateAccount())
+        var retriedForward = 0
+        retried.comeForward = { retriedForward += 1 }
+        let first = Task { await retried.beginSignIn() }
+        try? await waitUntil { if case .waiting = retried.signIn { true } else { false } }
+        try? await Task.sleep(for: .milliseconds(100))
+        let second = Task { await retried.beginSignIn() }
+        await first.value
+        #expect(retriedForward == 0, "the replaced sign-in confirmed while the retry waited")
+        await second.value
+        #expect(retried.identity == "you@example.com")
+
+        // The same after the timeout gave up on it.
+        let timedOut = makeModel(account: LateAccount())
+        var timedOutForward = 0
+        timedOut.comeForward = { timedOutForward += 1 }
+        timedOut.signInTimeout = .milliseconds(50)
+        await timedOut.beginSignIn()
+        #expect(timedOut.identity == "you@example.com")
+        #expect(timedOutForward == 0)
     }
 
     /// "Get a code instead": a sign-in that never came back from the browser
@@ -788,7 +834,7 @@ struct ViewModelTests {
                                  features: [], addedAt: nil, os: nil, osName: nil, osPrettyName: nil, image: nil,
                                  imageDigest: nil, kind: nil, arch: nil, hidden: false, reachable: false, error: nil,
                                  host: "96fe", hostName: "gamma-4 Mac Studio", power: nil, powerState: nil,
-                                 cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil)
+                                 cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil, parent: nil)
         let backend = FixtureSpacesBackend(rows: [record])
         backend.holdCreates = true
         let model = makeModel(backend)
@@ -1216,7 +1262,7 @@ struct ViewModelTests {
             AppSpaceRow(id: id, name: name, displayName: nil, provider: "relay", spacesdVersion: "0.4.0", features: [], addedAt: nil,
                         os: .linux, osName: nil, osPrettyName: nil, image: nil, imageDigest: nil, kind: nil, arch: nil,
                         hidden: false, reachable: true, error: nil, host: nil, hostName: nil, power: nil, powerState: nil,
-                        cloud: cloud, cloudPlace: place, cloudDelete: delete, stopReason: nil, sharing: nil)
+                        cloud: cloud, cloudPlace: place, cloudDelete: delete, stopReason: nil, sharing: nil, parent: nil)
         }
         let backend = FixtureSpacesBackend(rows: [
             cloudRow("relay:cloud-0000000000000a01", "research-box", "aws", "AWS \u{b7} us-west-2", "here"),
@@ -1389,7 +1435,7 @@ struct ViewModelTests {
         await w.submitAddress { _, _, _ in throw TimeoutError.timedOut }
         #expect(w.view.address.error != nil)
         w.send(.addressFailed(error: "status: Unauthenticated"))
-        #expect(w.view.address.error?.hasPrefix("The Space rejected the token") == true)
+        #expect(w.view.address.error?.hasPrefix("This Space didn\u{2019}t accept the access token") == true)
     }
 
     func unlockCase(_ name: String) throws -> KeyvaultOverview { try keyvaultUnlockCase(name) }
@@ -1604,6 +1650,18 @@ final class StuckAccount: AccountRunning, @unchecked Sendable {
         SignInAttempt(userCode: "ABCD-EFGH", url: URL(string: "https://cua.ai/device"), opened: opened) {
             try await Task.sleep(for: .seconds(3600))
             return nil
+        }
+    }
+    func signOut() async throws {}
+}
+
+/// An account whose browser confirms a moment after the sign-in starts.
+final class LateAccount: AccountRunning, @unchecked Sendable {
+    func identity() -> String? { nil }
+    func beginSignIn() async throws -> SignInAttempt {
+        SignInAttempt(userCode: nil, url: URL(string: "https://cua.ai/device"), opened: true) {
+            try await Task.sleep(for: .milliseconds(300))
+            return "you@example.com"
         }
     }
     func signOut() async throws {}

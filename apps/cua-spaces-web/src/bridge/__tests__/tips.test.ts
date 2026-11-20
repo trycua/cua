@@ -26,7 +26,12 @@ describe("sendTipsEvent", () => {
   });
 
   it("changes nothing on a core without tips or one that throws", async () => {
-    for (const tryCall of [() => undefined, () => { throw new Error("no tips.reduce"); }]) {
+    for (const tryCall of [
+      () => undefined,
+      () => {
+        throw new Error("no tips.reduce");
+      },
+    ]) {
       const { s, updateSetting } = store(tryCall);
       await expect(sendTipsEvent(s, { type: "shared" })).resolves.toBeUndefined();
       expect(updateSetting).not.toHaveBeenCalled();

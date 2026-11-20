@@ -24,6 +24,7 @@ LOCAL_URL_SCHEME="cua-local"                       # CuaChannel::url_scheme
 LOCAL_HOME_DIR_NAME=".cua-local"                   # CuaChannel::home_dir
 LOCAL_APP_SUPPORT_DIR_NAME="com.trycua.spaces.macos.local" # CuaChannel::app_support_dir_name
 LOCAL_HELPER_LABEL="com.trycua.spaces.local.helper"  # CuaChannel::helper_label
+LOCAL_DRIVER_LABEL="com.trycua.spaces.local.driver"  # DriverService.label (build-app.sh)
 LOCAL_HOST_LABEL="com.trycua.spacesd.host.local"     # CuaChannel::host_label
 LOCAL_VOLUME_NAME="Cua Volume Local"               # CuaChannel::volume_name
 LOCAL_LUME_BIN_NAME="lume-local"                   # CuaChannel::lume_bin_name

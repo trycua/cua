@@ -7,6 +7,8 @@
  * first run say the same thing.
  */
 
+import { t } from "@/i18n";
+
 /** The Space an agent on another machine names to use this machine's desktop (`relay:<machine id>`). */
 export const desktopSpace = (relayId: string) => `relay:${relayId}`;
 
@@ -26,8 +28,14 @@ export function otherMachinePrompt(name: string, relayId: string | undefined): s
 }
 
 /** The permissions line: what the machine must allow, and how to give the agent less. */
+/** @deprecated English only: use {@link otherMachinePermissions}. */
 export const OTHER_MACHINE_PERMISSIONS =
   "This computer has to share its desktop (its page in Computers, Let other computers control this desktop) and be online. The agent gets every Cua tool by default; add --permissions computer:all to cua mcp to give it only the computer tools.";
 
-/** Why a reload is needed. */
+export const otherMachinePermissions = (): string => t("computers.row.other_permissions");
+
+/** @deprecated English only: use {@link otherMachineReload}. */
 export const OTHER_MACHINE_RELOAD = "Restart the agent after adding the server so it loads the tools.";
+
+/** Why a reload is needed. */
+export const otherMachineReload = (): string => t("computers.row.other_reload");

@@ -47,7 +47,7 @@
       "rows": [
         "desktop desktop | Desktop | 1920×1080 | os os-windows | pip pip.enter: Picture in picture"
       ],
-      "statusText": "No windows: the Space’s window host is not up."
+      "statusText": "Can’t see this Space’s windows yet."
     },
     {
       "case": "no windows, Arch",

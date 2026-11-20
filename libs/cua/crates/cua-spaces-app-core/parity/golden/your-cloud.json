@@ -42,9 +42,7 @@
           "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
-        "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
-        ]
+        "systemsOff": []
       }
     },
     {
@@ -88,9 +86,7 @@
           "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
-        "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
-        ]
+        "systemsOff": []
       }
     },
     {
@@ -727,7 +723,7 @@
         ],
         "systemsOff": [
           "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off",
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+          "windows | Windows | Windows on AWS is not offered yet. Ask your agent to deploy the Windows Server 2022 image on AWS and add it with cua spaces add. | off"
         ]
       }
     },
@@ -769,7 +765,7 @@
         ],
         "systemsOff": [
           "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off",
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+          "windows | Windows | Windows on AWS is not offered yet. Ask your agent to deploy the Windows Server 2022 image on AWS and add it with cua spaces add. | off"
         ]
       }
     },
@@ -814,7 +810,7 @@
         ],
         "systemsOff": [
           "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off",
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+          "windows | Windows | Windows on AWS is not offered yet. Ask your agent to deploy the Windows Server 2022 image on AWS and add it with cua spaces add. | off"
         ]
       }
     },
@@ -856,7 +852,7 @@
         ],
         "systemsOff": [
           "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off",
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+          "windows | Windows | Windows on AWS is not offered yet. Ask your agent to deploy the Windows Server 2022 image on AWS and add it with cua spaces add. | off"
         ]
       }
     },
@@ -902,7 +898,7 @@
         ],
         "systemsOff": [
           "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off",
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+          "windows | Windows | Windows on AWS is not offered yet. Ask your agent to deploy the Windows Server 2022 image on AWS and add it with cua spaces add. | off"
         ]
       }
     },
@@ -948,7 +944,7 @@
         ],
         "systemsOff": [
           "macos | macOS | Modal does not run this image. Ask your agent to deploy the macOS Tahoe 26 image on Modal and add it with cua spaces add. | off",
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
+          "windows | Windows | Modal does not run this image. Ask your agent to deploy the Windows Server 2022 image on Modal and add it with cua spaces add. | off"
         ]
       }
     },
@@ -992,9 +988,7 @@
           "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
-        "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
-        ]
+        "systemsOff": []
       }
     }
   ]

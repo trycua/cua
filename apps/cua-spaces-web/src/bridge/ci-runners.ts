@@ -213,9 +213,7 @@ export function useCiRunners(): CiRunnersHook {
       if (!data) return;
       // The switch moves at once; the answer settles it.
       setOverview((o) =>
-        o?.repositories.all
-          ? { ...o, repositories: { ...o.repositories, all: o.repositories.all.map((r) => (r.name === name ? { ...r, allowed } : r)) } }
-          : o,
+        o?.repositories.all ? { ...o, repositories: { ...o.repositories, all: o.repositories.all.map((r) => (r.name === name ? { ...r, allowed } : r)) } } : o,
       );
       data.call("ci.repositories", allowed ? { allow: [name] } : { remove: [name] }).then(
         () => void load(true),

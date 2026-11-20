@@ -321,8 +321,18 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
             in: nil, in: .page, completionHandler: nil)
     }
 
+    /// The system's preferred languages, most preferred first, as a JSON
+    /// array: the web UI picks its language from them
+    /// (apps/cua-spaces-web/src/i18n/host-languages.ts).
+    static func preferredLanguagesJSON(_ languages: [String] = Locale.preferredLanguages) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: languages),
+              let json = String(data: data, encoding: .utf8) else { return "[]" }
+        return json
+    }
+
     /// Sets at document start: the inset and title bar height as CSS
-    /// variables, and `window.cuaHost` (what host this is).
+    /// variables, and `window.cuaHost` (what host this is, and the system's
+    /// languages).
     static func hostScript(leftInset: CGFloat) -> String {
         """
         (() => {
@@ -331,7 +341,8 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
           root.style.setProperty('--titlebar-height', '\(Int(titlebarHeight))px');
           root.dataset.host = 'macos';
           window.cuaHost = Object.freeze({ platform: 'macos', shell: 'swiftui', bridge: 'webkit',
-            handler: '\(WebUIBridge.name)', titlebarLeftInset: \(Int(leftInset)), titlebarHeight: \(Int(titlebarHeight)) });
+            handler: '\(WebUIBridge.name)', titlebarLeftInset: \(Int(leftInset)), titlebarHeight: \(Int(titlebarHeight)),
+            languages: Object.freeze(\(preferredLanguagesJSON())) });
         })();
         """
     }
@@ -464,7 +475,12 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
     public func windowDidEnterFullScreen(_ notification: Notification) { applyInset() }
     public func windowDidExitFullScreen(_ notification: Notification) { applyInset() }
 
+    /// The main window was closed by the person (not by a quit): what the
+    /// app does about the background service (`BackgroundPolicy`).
+    public static var onClosed: (@MainActor () -> Void)?
+
     public func windowWillClose(_ notification: Notification) {
+        Self.onClosed?()
         // Opened again, it comes back where it was.
         window?.saveFrame(usingName: Self.frameName)
         videoSurfaces?.removeAll()

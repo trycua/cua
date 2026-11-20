@@ -24,17 +24,7 @@ import type {
   SettingsInput,
   SettingsPage,
 } from "./contracts/host";
-import type {
-  KeyvaultOverview,
-  KvItem,
-  KvListView,
-  KvLock,
-  KvPage,
-  KvSelection,
-  KvSidebar,
-  VaultState,
-  VaultView,
-} from "./contracts/keyvault";
+import type { KeyvaultOverview, KvItem, KvListView, KvLock, KvPage, KvSelection, KvSidebar, VaultState, VaultView } from "./contracts/keyvault";
 import type { CreateAction, CreatesState, ListStatus, ListView, PendingCreate, Space, SpaceOs, SpaceRow, SpaceStatus } from "./contracts/spaces";
 import type { RelayAllowanceNotice, RelayUsage, RelayUsageView } from "./ops/relay-usage";
 import type { SessionSnapshot, SettingsSnapshot } from "./protocol";
@@ -63,7 +53,8 @@ function fallbackRowToSpace(row: SpaceRow, now: number): Space {
   // Not reported: unknown, never guessed (the core's `row_to_space`).
   const os = row.os ?? "unknown";
   const off = row.powerState === "suspended" || row.powerState === "stopped";
-  const status: SpaceStatus = row.reachable && !(row.power && off) ? "running" : "suspended";
+  // This Mac's own desktop is `local` while it is shared (the host says so), else off.
+  const status: SpaceStatus = row.id === "this-mac" ? (row.reachable ? "local" : "suspended") : row.reachable && !(row.power && off) ? "running" : "suspended";
   const added = row.addedAt ? Date.parse(row.addedAt) : NaN;
   return {
     id: row.id,
@@ -75,6 +66,7 @@ function fallbackRowToSpace(row: SpaceRow, now: number): Space {
     lastUsedAt: Number.isFinite(added) ? added : now,
     scene: SCENES[os],
     provider: row.provider,
+    ...(row.hidden ? { hidden: true } : {}),
     sdk: { features: row.features, spacesdVersion: row.spacesdVersion, reachable: row.reachable, error: row.error },
     osName: row.osName,
     osPrettyName: row.osPrettyName,
@@ -83,6 +75,7 @@ function fallbackRowToSpace(row: SpaceRow, now: number): Space {
     arch: row.arch,
     host: row.host,
     hostName: row.hostName,
+    parent: row.parent,
     power: row.power
       ? {
           control: row.power === "stop" ? "stop" : "suspend",
@@ -134,13 +127,9 @@ export const FIRST_RUN_BYTES_PER_SEC = 9_100_000;
 export const CACHED_START_SECS = 6;
 
 /** "12.4 of 30.0 GB · 85 MB/s · about 4 min" (`creating::transfer_text_with`). */
-export function transferText(
-  p: Pick<PendingCreate, "bytesDone" | "bytesTotal" | "bytesPerSecond">,
-  later: Later = { bytes: 0, secs: 0 },
-): string | null {
+export function transferText(p: Pick<PendingCreate, "bytesDone" | "bytesTotal" | "bytesPerSecond">, later: Later = { bytes: 0, secs: 0 }): string | null {
   if (p.bytesDone == null) return null;
-  const unit = (n: number): [number, string] =>
-    n >= 2 ** 30 ? [2 ** 30, "GB"] : n >= 2 ** 20 ? [2 ** 20, "MB"] : n >= 1024 ? [1024, "KB"] : [1, "bytes"];
+  const unit = (n: number): [number, string] => (n >= 2 ** 30 ? [2 ** 30, "GB"] : n >= 2 ** 20 ? [2 ** 20, "MB"] : n >= 1024 ? [1024, "KB"] : [1, "bytes"]);
   const scaled = (n: number, [size]: [number, string], below: number) => {
     const v = n / size;
     return size > 1 && v < below ? v.toFixed(1) : Math.round(v).toString();
@@ -219,9 +208,12 @@ function fallbackReduce(state: CreatesState, a: CreateAction): CreatesState {
       patch(a.id, (p) => {
         const i = Math.max(0, PHASES.indexOf(a.phase));
         const permille = Math.round(((i + (a.fraction ?? 0)) / PHASES.length) * 1000);
-        const bytes = a.bytesDone != null
-          ? { bytesDone: a.bytesDone, bytesTotal: a.bytesTotal ?? null, bytesPerSecond: a.bytesPerSecond ?? null }
-          : a.phase === p.phase ? {} : { bytesDone: null, bytesTotal: null, bytesPerSecond: null };
+        const bytes =
+          a.bytesDone != null
+            ? { bytesDone: a.bytesDone, bytesTotal: a.bytesTotal ?? null, bytesPerSecond: a.bytesPerSecond ?? null }
+            : a.phase === p.phase
+              ? {}
+              : { bytesDone: null, bytesTotal: null, bytesPerSecond: null };
         return { ...p, ...bytes, phase: a.phase, fraction: a.fraction, permille: Math.max(p.permille, Math.min(990, permille)) };
       });
       break;
@@ -488,7 +480,9 @@ function fallbackMerge({ machines, devices }: MachinesInput): MergedMachine[] {
     current: m.current,
   }));
   for (const d of devices) {
-    const i = machines.findIndex((m, i) => !out[i]!.device && (m.id === d.id || (m.current && d.current) || (m.hostname && nameKey(m.hostname) === nameKey(d.name))));
+    const i = machines.findIndex(
+      (m, i) => !out[i]!.device && (m.id === d.id || (m.current && d.current) || (m.hostname && nameKey(m.hostname) === nameKey(d.name))),
+    );
     if (i >= 0) out[i]!.device = d.id;
     else if (!d.current && d.state !== "revoked") out.push({ id: d.id, name: d.name || d.id, online: false, device: d.id, deviceOnly: true, current: false });
   }
@@ -631,13 +625,22 @@ export function hostPanelFromState(core: CoreClient, state: object | null, statu
 }
 
 function fallbackPanel(s: HostStatus | null): HostPanelView {
-  const base: HostPanelView = { title: "This computer", summary: "Checking…", configured: false, facts: [], clients: [], permissions: [], openSettingsLabel: "Open Settings", actions: [] };
+  const base: HostPanelView = {
+    title: "This computer",
+    summary: "Checking…",
+    configured: false,
+    facts: [],
+    clients: [],
+    permissions: [],
+    openSettingsLabel: "Open Settings",
+    actions: [],
+  };
   if (!s) return base;
   if (!s.configured) {
-    return { ...base, summary: "Your other computers can’t reach this computer yet.", intro: FALLBACK_INTRO, setupChoices: FALLBACK_CHOICES };
+    return { ...base, summary: "Your other computers can’t reach this computer yet.", setupChoices: FALLBACK_CHOICES };
   }
   const via = s.mode === "direct" ? "Direct" : "Relay";
-  const summary = !s.service.running ? "Host service stopped" : !s.sharing ? "Not sharing" : `Sharing · ${via}`;
+  const summary = !s.service.running ? "Sharing stopped" : !s.sharing ? "Not sharing" : `Sharing · ${via}`;
   const access = s.mode === "direct" ? `Direct at ${s.directUrl || "this machine’s address"}` : s.relayUrl ? `Relay ${s.relayUrl}` : "Relay";
   return {
     ...base,
@@ -654,8 +657,6 @@ function fallbackPanel(s: HostStatus | null): HostPanelView {
   };
 }
 
-const FALLBACK_INTRO =
-  "This is the computer you’re using now. Set it up so you, your teammates and your AI agents can use it from other computers. Cua connects them for you, with no network setup.";
 const FALLBACK_CHOICES: HostSetupChoice[] = [
   { id: "desktop", label: "Let other computers create Spaces and control this desktop", buttonLabel: "Set Up…" },
   { id: "spare", label: "Let other computers create Spaces here", buttonLabel: "Set Up…" },
@@ -664,7 +665,7 @@ const FALLBACK_CHOICES: HostSetupChoice[] = [
 /** What "Add a machine" explains: the core's words for host setup, as the
  * other machine will show them. Read-only; nothing here sets anything up. */
 export interface HostSetupGuide {
-  /** What setting a machine up does (`host::HOST_INTRO`). */
+  /** What setting a machine up does (`host::HOST_INTRO`; empty without the core). */
   intro: string;
   /** The ways to set it up (`host::setup_choices`). */
   choices: HostSetupChoice[];
@@ -673,11 +674,17 @@ export interface HostSetupGuide {
 }
 
 export function hostSetupGuide(core: CoreClient): HostSetupGuide {
-  const panel = hostPanel(core, { configured: false, sharing: false, service: { installed: false, running: false, kind: "process" }, clients: [], permissions: [] });
+  const panel = hostPanel(core, {
+    configured: false,
+    sharing: false,
+    service: { installed: false, running: false, kind: "process" },
+    clients: [],
+    permissions: [],
+  });
   const initial = core.tryCall<unknown>("host.formInitial");
   // As setup shows it: Cua's relay. Self-hosting is under Settings → Advanced.
   const form = initial === undefined ? null : (core.tryCall<HostFormView>("host.formView", { state: initial, identity: null }) ?? null);
-  return { intro: panel.intro ?? FALLBACK_INTRO, choices: panel.setupChoices?.length ? panel.setupChoices : FALLBACK_CHOICES, form };
+  return { intro: panel.intro ?? "", choices: panel.setupChoices?.length ? panel.setupChoices : FALLBACK_CHOICES, form };
 }
 
 /* ---- Settings ----------------------------------------------------------- */
@@ -700,9 +707,7 @@ export function settingsPage(
     telemetry: settings.telemetry
       ? {
           enabled: settings.telemetry.enabled,
-          lockedBy: ["do_not_track", "env", "legacy_env", "ci"].includes(settings.telemetry.sourceKind)
-            ? settings.telemetry.source
-            : null,
+          lockedBy: ["do_not_track", "env", "legacy_env", "ci"].includes(settings.telemetry.sourceKind) ? settings.telemetry.source : null,
         }
       : null,
     // The host's own settings (the SwiftUI app's): the core lays out the
@@ -713,6 +718,9 @@ export function settingsPage(
     keyvaultProtection: settings.hostSettings?.keyvaultProtection ?? [],
     autoConnect: settings.hostSettings?.autoConnect ?? null,
     overflow: settings.hostSettings?.overflow ?? null,
+    // The Mac app's "When I close the window" rows (none on other hosts).
+    closeWindowKeepsRunning: settings.hostSettings?.closeWindowKeepsRunning ?? null,
+    closeNotice: settings.hostSettings?.closeNotice ?? true,
     // Every host's runtimes section; what the host read fills it in.
     runtimes: settings.hostSettings?.runtimes ?? null,
     agents: agents?.agents ?? null,

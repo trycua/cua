@@ -107,8 +107,11 @@ async fn sequential_creates_start_the_agent_from_a_warm_home() {
     let n = env_u64("CUA_WARM_LIVE_N", 10) as usize;
     let gap = Duration::from_millis(env_u64("CUA_WARM_LIVE_GAP_MS", 3000));
     let out_path = std::env::var_os("CUA_WARM_LIVE_OUT").map(std::path::PathBuf::from);
-    // The experiment, for this process only.
-    cua_vmm::experiments::set_enabled(cua_vmm::experiments::Gate::WarmPools, Some(warm));
+    // The operator override that turns Warm start off, for this process only (a cold run).
+    if !warm {
+        // SAFETY: set before the runtime or any thread reads it.
+        unsafe { std::env::set_var(cua_daemon::local::WARM_START_ENV, "0") };
+    }
     // The apps the warm Space is prepared for: the daemon's default, or
     // `CUA_WARM_POOLS_HARNESSES` as given.
     let state = home.join("sandboxes");

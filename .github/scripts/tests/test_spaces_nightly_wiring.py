@@ -22,7 +22,7 @@ def test_nightly_publishes_only_to_its_own_rolling_prerelease():
     assert "cua-spaces-latest" not in "".join(re.findall(r"gh release (?:upload|create|edit|delete-asset)[^\n]*", nightly))
     # Never Latest, always a prerelease.
     assert "--prerelease --latest=false" in nightly
-    assert nightly.count("--latest=false") == 2
+    assert nightly.count("--latest=false") == 3
     assert "--latest=true" not in nightly and "make_latest" not in nightly
 
 

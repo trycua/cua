@@ -448,6 +448,45 @@ async fn what_the_agent_posted_itself_is_not_posted_twice() {
     );
 }
 
+/// A reply is told apart from an earlier one by the task it answers, not by its words: "Done." for the
+/// second task is its own reply though the first task was answered with the same word.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_later_reply_with_the_same_words_is_not_taken_for_an_earlier_one() {
+    let (fx, p, _seq, _t) = play("@ada first", &[chunk(2, "Done."), ended(2)]).await;
+    post(&fx, json!({"text": "@ada second"})).await.unwrap();
+    Box::pin(p.tick()).await;
+    run_state(&fx, 1, json!({"status": "running", "turn": 3}));
+    events(&fx, 1, &[chunk(3, "Done."), ended(3)]);
+    run_state(&fx, 1, json!({"status": "idle", "turn": 3}));
+    Box::pin(p.tick()).await;
+    assert_eq!(says(&thread(&fx).await), ["Done.", "Done."]);
+}
+
+/// The same words after other words under one task are a new reply, not the retry of the first.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_same_words_after_other_words_under_one_task_are_a_new_reply() {
+    let (fx, p, seq, _t) = play("@ada hello there", &[chunk(2, "Hello!"), ended(2)]).await;
+    for (text, state) in [
+        ("Done.", "working"),
+        ("Next.", "working"),
+        ("Done.", "done"),
+    ] {
+        let r = bridge_call(
+            &fx,
+            &p,
+            1,
+            "thread_reply",
+            json!({"task": seq, "text": text, "state": state}),
+        )
+        .await;
+        assert!(r["result"]["isError"] != json!(true), "{r}");
+    }
+    assert_eq!(
+        says(&thread(&fx).await),
+        ["Hello!", "Done.", "Next.", "Done."]
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_silent_turn_still_ends_with_finished() {
     let (_fx, _p, _seq, t) = play("@ada tidy up", &[tool(2), ended(2)]).await;

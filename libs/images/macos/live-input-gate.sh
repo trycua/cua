@@ -13,6 +13,8 @@
 # when both tests ran (not skipped) and passed. Builds the test with cargo
 # (CARGO_TARGET_DIR as set). macOS allows two VMs per host; one lane at a time.
 set -euo pipefail
+# macOS shells default to 256 open files, too few for the cua-spaces test binaries (see scripts/ci/tests/test_nofile_limit.py).
+[ "$(ulimit -Sn)" = unlimited ] || [ "$(ulimit -Sn)" -ge 10240 ] || ulimit -Sn 10240 2>/dev/null || ulimit -Sn "$(ulimit -Hn)" 2>/dev/null || true # nofile-limit
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
 VM="" OUT="" MEMORY=4GB TIMEOUT=900

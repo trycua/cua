@@ -18,7 +18,7 @@
           "channel": "Updates Stable* | Nightly",
           "check": "Check Now on",
           "download": null,
-          "help": "Stable: tested releases. Best for most people.",
+          "help": "Tested releases.",
           "lastCheck": "Last check: Never",
           "note": null,
           "sparkleChannels": []
@@ -44,7 +44,7 @@
           "channel": "Updates Stable* | Nightly",
           "check": "Check Now on",
           "download": null,
-          "help": "Stable: tested releases. Best for most people.",
+          "help": "Tested releases.",
           "lastCheck": "Last check: Never",
           "note": null,
           "sparkleChannels": []
@@ -70,7 +70,7 @@
           "channel": "Updates Stable | Nightly*",
           "check": "Check Now on",
           "download": null,
-          "help": "Nightly builds: get the newest changes from main every day. They may break.",
+          "help": "Daily builds. May break.",
           "lastCheck": "Last check: 9/30/26, 3:04 PM",
           "note": null,
           "sparkleChannels": [
@@ -98,7 +98,7 @@
           "channel": "Updates Stable* | Nightly",
           "check": "Check Now on",
           "download": "Download Stable -> https://spaces.cua.ai/download",
-          "help": "Stable: tested releases. Best for most people.",
+          "help": "Tested releases.",
           "lastCheck": "Last check: 9/30/26, 3:04 PM",
           "note": "This build is newer than the latest Stable release, so it stays until the next Stable release replaces it. To go back now, download Stable and install it.",
           "sparkleChannels": []
@@ -124,7 +124,7 @@
           "channel": "Updates Stable* | Nightly",
           "check": "Checking… off",
           "download": "Download Stable -> https://spaces.cua.ai/download",
-          "help": "Stable: tested releases. Best for most people.",
+          "help": "Tested releases.",
           "lastCheck": "Last check: 9/30/26, 3:04 PM",
           "note": "This build is newer than the latest Stable release, so it stays until the next Stable release replaces it. To go back now, download Stable and install it.",
           "sparkleChannels": []
@@ -150,7 +150,7 @@
           "channel": "Updates Stable* | Nightly",
           "check": "Check Now on",
           "download": "Download Stable -> https://spaces.cua.ai/download",
-          "help": "Stable: tested releases. Best for most people.",
+          "help": "Tested releases.",
           "lastCheck": "Last check: 9/30/26, 3:04 PM",
           "note": "This build is newer than the latest Stable release, so it stays until the next Stable release replaces it. To go back now, download Stable and install it.",
           "sparkleChannels": []

@@ -67,12 +67,26 @@ export interface LiveDeps {
   now?: () => number;
 }
 
-const KEYS: Record<string, Key> = { escape: Key.ESCAPE, tab: Key.TAB, return: Key.ENTER, up: Key.ARROW_UP, down: Key.ARROW_DOWN, left: Key.ARROW_LEFT, right: Key.ARROW_RIGHT, ctrl: Key.CONTROL, alt: Key.ALT, cmd: Key.META };
+const KEYS: Record<string, Key> = {
+  escape: Key.ESCAPE,
+  tab: Key.TAB,
+  return: Key.ENTER,
+  up: Key.ARROW_UP,
+  down: Key.ARROW_DOWN,
+  left: Key.ARROW_LEFT,
+  right: Key.ARROW_RIGHT,
+  ctrl: Key.CONTROL,
+  alt: Key.ALT,
+  cmd: Key.META,
+};
 
 /** The text of a thread tool's MCP content parts (`content_json`), parsed as the tool's JSON. */
 export function toolJson(contentJson: string, isError: boolean): unknown {
   const parts = JSON.parse(contentJson || "[]") as { type?: string; text?: string }[];
-  const text = parts.filter((p) => p.type === "text").map((p) => p.text ?? "").join("\n");
+  const text = parts
+    .filter((p) => p.type === "text")
+    .map((p) => p.text ?? "")
+    .join("\n");
   if (isError) throw new Error(text || "the daemon refused");
   try {
     return JSON.parse(text);
@@ -120,9 +134,11 @@ export function createLiveBackend(d: LiveDeps): Backend {
 
   /** One thread or agent member tool, run by the daemon of the machine that provides the Space (`HostThreadService`). */
   /** A refusal because the computer predates phones becomes the plain "needs an update"; anything else passes. */
-  const needsUpdate = (what: "Space" | "computer") => (e: unknown): never => {
-    throw OLD_COMPUTER_REFUSAL.test(e instanceof Error ? e.message : String(e)) ? new NeedsUpdateError(what) : e;
-  };
+  const needsUpdate =
+    (what: "Space" | "computer") =>
+    (e: unknown): never => {
+      throw OLD_COMPUTER_REFUSAL.test(e instanceof Error ? e.message : String(e)) ? new NeedsUpdateError(what) : e;
+    };
 
   async function tool(s: SpaceMachine, name: string, args: Record<string, unknown>): Promise<unknown> {
     if (!s.threadOnHost) throw new Error("This Space runs on its own, and its thread is not reachable from a phone yet.");
@@ -190,7 +206,13 @@ export function createLiveBackend(d: LiveDeps): Backend {
       const queue = [...m.spaces];
       const work = async () => {
         for (let s = queue.shift(); s; s = queue.shift()) {
-          const machine = m.machines.find((x) => x.id === s.hostId) ?? { id: s.hostId, name: s.hostId, kind: "mac" as const, online: s.machine.online, lastSeenMs: null };
+          const machine = m.machines.find((x) => x.id === s.hostId) ?? {
+            id: s.hostId,
+            name: s.hostId,
+            kind: "mac" as const,
+            online: s.machine.online,
+            lastSeenMs: null,
+          };
           let members: AgentMember[] = [];
           let last: ThreadEntry | null = null;
           let unread = 0;
@@ -227,7 +249,13 @@ export function createLiveBackend(d: LiveDeps): Backend {
     },
     async readThread(spaceId, o): Promise<ThreadPage> {
       const s = spaceOf(spaceId);
-      return threadPageFromTool(await tool(s, "thread_read", threadReadArgs({ spaceId, after: o.after, before: o.before, limit: o.limit, markRead: o.markRead, followMs: o.followMs, liveAfter: o.liveAfter })));
+      return threadPageFromTool(
+        await tool(
+          s,
+          "thread_read",
+          threadReadArgs({ spaceId, after: o.after, before: o.before, limit: o.limit, markRead: o.markRead, followMs: o.followMs, liveAfter: o.liveAfter }),
+        ),
+      );
     },
     async members(spaceId) {
       return agentMembersFromTool(await tool(spaceOf(spaceId), "agent_members", agentMembersArgs({ spaceId, overview: true }))).members;
@@ -249,7 +277,13 @@ export function createLiveBackend(d: LiveDeps): Backend {
     },
     async answer(spaceId, approval, approve, o) {
       const note = approve ? (o?.scope === "space" ? "Allowed for this Space" : "Approved") : "Denied";
-      return threadPostFromTool(await tool(spaceOf(spaceId), "thread_post", threadPostArgs({ spaceId, text: note, answer: { approval, approve, scope: o?.scope, clientId: o?.clientId } })));
+      return threadPostFromTool(
+        await tool(
+          spaceOf(spaceId),
+          "thread_post",
+          threadPostArgs({ spaceId, text: note, answer: { approval, approve, scope: o?.scope, clientId: o?.clientId } }),
+        ),
+      );
     },
     async toolRows(spaceId, o) {
       return toolRowsFromTool(await tool(spaceOf(spaceId), "thread_tool_rows", toolRowsArgs({ spaceId, cursor: o?.cursor, followMs: o?.followMs })));
@@ -268,7 +302,20 @@ export function createLiveBackend(d: LiveDeps): Backend {
         first ??= r.reason;
         // A computer that cannot answer (an older Cua Spaces) is listed, with why it cannot start one.
         const id = hosts[i]!;
-        parts.push({ machines: [{ id, name: names.get(id) ?? id, online: true, canCreate: false, why: missingTool(r.reason) ? "Update Cua Spaces on it to start tasks from here" : errorText(r.reason), os: [], readyAgents: [] }], agents: [] });
+        parts.push({
+          machines: [
+            {
+              id,
+              name: names.get(id) ?? id,
+              online: true,
+              canCreate: false,
+              why: missingTool(r.reason) ? "Update Cua Spaces on it to start tasks from here" : errorText(r.reason),
+              os: [],
+              readyAgents: [],
+            },
+          ],
+          agents: [],
+        });
       });
       if (answers.every((r) => r.status === "rejected")) throw missingTool(first) ? new Error(tooOld) : first;
       const merged = mergeTaskOptions(parts, names);
@@ -330,7 +377,9 @@ export function createLiveBackend(d: LiveDeps): Backend {
       const s = spaceOf(spaceId);
       const c = clientsFor(s.machine.id);
       // A ticket for looking: view only (asked for by name), short. Touching the desktop is not a ticket's to give.
-      const r = await c.system.createViewerTicket({ ttl: { seconds: BigInt(STREAM_TICKET_SECONDS), nanos: 0 }, policy: SessionPolicy.VIEW_ONLY }).catch(needsUpdate("Space"));
+      const r = await c.system
+        .createViewerTicket({ ttl: { seconds: BigInt(STREAM_TICKET_SECONDS), nanos: 0 }, policy: SessionPolicy.VIEW_ONLY })
+        .catch(needsUpdate("Space"));
       // The page gets the ticket in its address and nothing else: never the account's bearer or this phone's session.
       return { viewerUrl: `${d.relay.machineUrl(s.machine.id)}${r.viewerPath}`, expiresAtMs: now() + STREAM_TICKET_SECONDS * 1000, width: null, height: null };
     },
@@ -341,10 +390,23 @@ export function createLiveBackend(d: LiveDeps): Backend {
         const target = { space: CoordinateSpace.NORMALIZED };
         switch (a.type) {
           case "click":
-            await c.pointer({ target, action: { case: "click", value: { position: { x: a.x, y: a.y }, button: a.button === "right" ? MouseButton.RIGHT : MouseButton.LEFT, count: a.button === "double" ? 2 : 1 } } });
+            await c.pointer({
+              target,
+              action: {
+                case: "click",
+                value: {
+                  position: { x: a.x, y: a.y },
+                  button: a.button === "right" ? MouseButton.RIGHT : MouseButton.LEFT,
+                  count: a.button === "double" ? 2 : 1,
+                },
+              },
+            });
             return;
           case "scroll":
-            await c.pointer({ target, action: { case: "scroll", value: { position: { x: a.x, y: a.y }, deltaX: a.dx, deltaY: a.dy, unit: ScrollUnit.PIXEL } } });
+            await c.pointer({
+              target,
+              action: { case: "scroll", value: { position: { x: a.x, y: a.y }, deltaX: a.dx, deltaY: a.dy, unit: ScrollUnit.PIXEL } },
+            });
             return;
           case "drag":
             await c.pointer({ target, action: { case: "drag", value: { from: a.from, to: a.to, button: MouseButton.LEFT } } });
@@ -355,7 +417,15 @@ export function createLiveBackend(d: LiveDeps): Backend {
           case "key": {
             const named = KEYS[a.key];
             if (named === undefined) return;
-            await c.keyboard({ action: { case: "press", value: { key: create(KeyInputSchema, { key: { case: "named", value: named } }), modifiers: (a.modifiers ?? []).flatMap((m) => (KEYS[m] !== undefined ? [KEYS[m]!] : [])) } } });
+            await c.keyboard({
+              action: {
+                case: "press",
+                value: {
+                  key: create(KeyInputSchema, { key: { case: "named", value: named } }),
+                  modifiers: (a.modifiers ?? []).flatMap((m) => (KEYS[m] !== undefined ? [KEYS[m]!] : [])),
+                },
+              },
+            });
           }
         }
       } catch (e) {

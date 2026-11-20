@@ -19,12 +19,18 @@
 //                    whose accessibility press raises, so AppKit answers AXPress
 //                    with an AX error; one toggles before raising (#3835)
 //   disabled_control — opt-in (CUA_APPKIT_DISABLED_CONTROL=1): a disabled
-//                    checkbox (disabled_checked=) for enablement reads (#3949)
+//                    checkbox (disabled_checked=) for enablement reads (#3949),
+//                    and a button and field enabled only while the app is
+//                    active (active_only=, activations=) for the
+//                    post-activation re-read
 //   context_menu   — NSButton + NSMenu (Cut/Copy/Paste → menu_action=)
 //   popup_select   — NSPopUpButton (Design/Research/Finance → popup_value=)
 //   scroll_target  — NSScrollView with a tall body and offset label
 //   ns_menubar     — main menu item with known title (Mac-specific)
 //   exit           — NSButton terminates the app
+//   save_sheet     — opt-in (CUA_APPKIT_SAVE_SHEET=1): a button that opens an
+//                    NSSavePanel as a sheet on the main window; the label
+//                    records what the panel returned (#3351, #4392)
 //   jev_use_tasks  — opt-in (CUA_APPKIT_TASK_STATE=<path>): a labeled Note
 //                    field with a Save button and Small/Medium/Large radio
 //                    buttons, plus an app-owned JSON state file rewritten on
@@ -65,7 +71,13 @@ let kErroringTogglesStateAID = "lbl-erroring-toggles"
 let kDisabledControlEnv = "CUA_APPKIT_DISABLED_CONTROL"
 let kDisabledCheckboxAID = "chk-disabled"
 let kDisabledStateAID = "lbl-disabled-state"
+let kActiveOnlyButtonAID = "btn-active-only"
+let kActiveOnlyFieldAID = "txt-active-only"
+let kActiveOnlyStateAID = "lbl-active-only"
+let kActivationsAID = "lbl-activations"
 let kSelectionStateAID = "lbl-selection-state"
+let kRowHelpGroupAID = "grp-row-help"
+let kRowHelpGroupStateAID = "lbl-group-state"
 let kContextButtonAID = "btn-context"
 let kMenuActionAID = "lbl-menu-action"
 let kPopupAID = "pop-team"
@@ -81,6 +93,10 @@ let kSecondaryWindowTitle = "CuaTestHarness AppKit Secondary"
 let kSheetWindowTitle = "CuaTestHarness AppKit Sheet"
 let kSheetInputAID = "txt-sheet"
 let kFloatingWindowTitle = "CuaTestHarness AppKit Floating"
+let kSaveSheetEnv = "CUA_APPKIT_SAVE_SHEET"
+let kSaveSheetButtonAID = "btn-save-sheet"
+let kSaveSheetStateAID = "lbl-save-sheet"
+let kSaveSheetDefaultName = "harness-untitled"
 let kTaskStateEnv = "CUA_APPKIT_TASK_STATE"
 let kTaskStateSchema = "cua.appkit_task_state_v1"
 let kNoteFieldAID = "txt-note"
@@ -128,6 +144,51 @@ func taskDensityFromEnvironment() -> Int? {
     return density
 }
 
+final class HelpfulGroupView: NSView {
+    var onPress: () -> Void = {}
+    var onCustomAction: () -> Void = {}
+
+    private lazy var pinAction = NSAccessibilityCustomAction(name: "Pin Row", handler: { [weak self] in
+        self?.onCustomAction()
+        return true
+    })
+
+    override func accessibilityCustomActions() -> [NSAccessibilityCustomAction]? {
+        [pinAction]
+    }
+
+    override func isAccessibilityElement() -> Bool { true }
+
+    override func accessibilityRole() -> NSAccessibility.Role? { .group }
+
+    override func accessibilityLabel() -> String? { "row detail" }
+
+    override func accessibilityHelp() -> String? {
+        "To mark the row as done, press Control-Option-Space."
+    }
+
+    override func accessibilityActionNames() -> [NSAccessibility.Action] { [.press] }
+
+    override func accessibilityPerformPress() -> Bool {
+        onPress()
+        return true
+    }
+}
+
+/// A group kept only for its help: no name, no value and no action, so the
+/// snapshot shows it as an unindexed row that carries the help.
+final class HelpOnlyGroupView: NSView {
+    override func isAccessibilityElement() -> Bool { true }
+
+    override func accessibilityRole() -> NSAccessibility.Role? { .group }
+
+    override func accessibilityHelp() -> String? {
+        "Rows sync when the window closes."
+    }
+
+    override func accessibilityActionNames() -> [NSAccessibility.Action] { [] }
+}
+
 // MARK: - Controller
 
 final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate, NSMenuItemValidation {
@@ -147,10 +208,22 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     let erroringTogglesLabel = NSTextField(labelWithString: "")
     let disabledCheckbox = NSButton(checkboxWithTitle: "Unavailable option", target: nil, action: nil)
     let disabledStateLabel = NSTextField(labelWithString: "")
+    // Lazy: an ordinary launch never creates the opt-in active-only controls.
+    lazy var activeOnlyButton = ActiveOnlyButton(title: "Active only", target: nil, action: nil)
+    lazy var activeOnlyField = NSTextField(string: "")
+    lazy var activeOnlyLabel = NSTextField(labelWithString: "active_only=none")
+    lazy var activationsLabel = NSTextField(labelWithString: "activations=0")
+    var activations = 0
     let selectionItems = ["alpha", "beta", "gamma"]
     let selectionTable = NSTableView()
     let selectionStateLabel = NSTextField(labelWithString: "selection=none")
+    let rowHelpGroup = HelpfulGroupView()
+    let rowHelpGroupStateLabel = NSTextField(labelWithString: "group_pressed=0")
+    let helpOnlyGroup = HelpOnlyGroupView()
+    var rowHelpGroupPresses = 0
+    var rowCustomActions = 0
     let menuActionLabel = NSTextField(labelWithString: "menu_action=none")
+    let saveSheetLabel = NSTextField(labelWithString: "save_sheet=none")
     let popupValueLabel = NSTextField(labelWithString: "popup_value=Choose a team")
     let scrollOffsetLabel = NSTextField(labelWithString: "scroll_offset=0")
     let accelCountLabel = NSTextField(labelWithString: "accel_fired=0")
@@ -341,6 +414,32 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         ])
         content.addArrangedSubview(checkRow)
 
+        content.addArrangedSubview(sectionLabel("group_with_help"))
+        rowHelpGroup.setAccessibilityIdentifier(kRowHelpGroupAID)
+        rowHelpGroup.translatesAutoresizingMaskIntoConstraints = false
+        rowHelpGroup.onPress = { [weak self] in self?.onRowHelpGroupPress() }
+        rowHelpGroup.onCustomAction = { [weak self] in
+            guard let self else { return }
+            self.rowCustomActions += 1
+            self.rowHelpGroupStateLabel.stringValue = "group_custom=\(self.rowCustomActions)"
+        }
+        rowHelpGroupStateLabel.setAccessibilityIdentifier(kRowHelpGroupStateAID)
+        rowHelpGroupStateLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        let groupRow = NSStackView()
+        groupRow.orientation = .horizontal
+        groupRow.spacing = 12
+        groupRow.addArrangedSubview(rowHelpGroup)
+        groupRow.addArrangedSubview(rowHelpGroupStateLabel)
+        helpOnlyGroup.translatesAutoresizingMaskIntoConstraints = false
+        groupRow.addArrangedSubview(helpOnlyGroup)
+        NSLayoutConstraint.activate([
+            rowHelpGroup.widthAnchor.constraint(equalToConstant: 60),
+            rowHelpGroup.heightAnchor.constraint(equalToConstant: 28),
+            helpOnlyGroup.widthAnchor.constraint(equalToConstant: 28),
+            helpOnlyGroup.heightAnchor.constraint(equalToConstant: 28),
+        ])
+        content.addArrangedSubview(groupRow)
+
         // context_menu — NSButton with an attached NSMenu. Right-click opens the
         // native contextual menu; selecting an item updates menu_action=.
         content.addArrangedSubview(sectionLabel("context_menu"))
@@ -436,6 +535,9 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         }
         if ProcessInfo.processInfo.environment[kDisabledControlEnv] == "1" {
             addDisabledControl(to: content)
+        }
+        if ProcessInfo.processInfo.environment[kSaveSheetEnv] == "1" {
+            addSaveSheetControls(to: content)
         }
 
         // No outer scroll-view wrap: the content is sized to fit the window
@@ -550,10 +652,83 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         row.addArrangedSubview(disabledStateLabel)
         content.addArrangedSubview(row)
         onDisabledCheckbox()
+
+        // Enabled only while the app is active, like a toolbar item in a
+        // window that is not key: activation is what makes them usable.
+        activeOnlyButton.setAccessibilityIdentifier(kActiveOnlyButtonAID)
+        activeOnlyButton.target = self
+        activeOnlyButton.action = #selector(onActiveOnlyPress)
+        activeOnlyButton.onEvent = { [weak self] in self?.recordActiveOnly($0) }
+        activeOnlyField.setAccessibilityIdentifier(kActiveOnlyFieldAID)
+        activeOnlyField.delegate = self
+        activeOnlyLabel.setAccessibilityIdentifier(kActiveOnlyStateAID)
+        activeOnlyLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        let activeRow = NSStackView()
+        activeRow.orientation = .horizontal
+        activeRow.spacing = 12
+        activeRow.addArrangedSubview(activeOnlyButton)
+        activeRow.addArrangedSubview(activeOnlyField)
+        activeRow.addArrangedSubview(activeOnlyLabel)
+        activationsLabel.setAccessibilityIdentifier(kActivationsAID)
+        activationsLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        activeRow.addArrangedSubview(activationsLabel)
+        NSLayoutConstraint.activate([activeOnlyField.widthAnchor.constraint(equalToConstant: 160)])
+        content.addArrangedSubview(activeRow)
+        for name in [NSApplication.didBecomeActiveNotification,
+                     NSApplication.didResignActiveNotification] {
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(syncActiveOnly(_:)), name: name, object: nil)
+        }
+        syncActiveOnly(nil)
     }
 
     @objc private func onDisabledCheckbox() {
         disabledStateLabel.stringValue = "disabled_checked=\(disabledCheckbox.state == .on)"
+    }
+
+    /// Also counts activations, so a refused call can show it activated the
+    /// app before refusing rather than refusing up front.
+    @objc private func syncActiveOnly(_ note: Notification?) {
+        activeOnlyButton.isEnabled = NSApp.isActive
+        activeOnlyField.isEnabled = NSApp.isActive
+        if note?.name == NSApplication.didBecomeActiveNotification {
+            activations += 1
+            activationsLabel.stringValue = "activations=\(activations)"
+        }
+    }
+
+    @objc private func onActiveOnlyPress() { recordActiveOnly("click") }
+
+    private func recordActiveOnly(_ event: String) {
+        activeOnlyLabel.stringValue = "active_only=\(event)"
+    }
+
+    /// Opt-in Save sheet (#3351, #4392), appended below Exit like the task
+    /// controls so every ordinary control keeps its position. The panel's
+    /// controls live in the main window's accessibility tree while it is open;
+    /// the label is the fixture's own record of how the panel ended.
+    private func addSaveSheetControls(to content: NSStackView) {
+        content.addArrangedSubview(sectionLabel("save_sheet"))
+        let open = NSButton(title: "Save…", target: self, action: #selector(onSaveSheet))
+        open.setAccessibilityIdentifier(kSaveSheetButtonAID)
+        saveSheetLabel.setAccessibilityIdentifier(kSaveSheetStateAID)
+        saveSheetLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        let row = NSStackView(views: [open, saveSheetLabel])
+        row.orientation = .horizontal
+        row.spacing = 12
+        content.addArrangedSubview(row)
+    }
+
+    @objc private func onSaveSheet() {
+        let panel = NSSavePanel()
+        panel.directoryURL = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        panel.nameFieldStringValue = kSaveSheetDefaultName
+        saveSheetLabel.stringValue = "save_sheet=open"
+        panel.beginSheetModal(for: window) { [weak self] response in
+            let name = panel.url?.lastPathComponent ?? ""
+            self?.saveSheetLabel.stringValue =
+                response == .OK ? "save_sheet=saved name=\(name)" : "save_sheet=cancelled"
+        }
     }
 
     /// Benign distractor controls for density mode (#4312): a grid of buttons,
@@ -693,6 +868,11 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         writeTaskState()
     }
 
+    private func onRowHelpGroupPress() {
+        rowHelpGroupPresses += 1
+        rowHelpGroupStateLabel.stringValue = "group_pressed=\(rowHelpGroupPresses)"
+    }
+
     @objc private func onExit() {
         NSApp.terminate(nil)
     }
@@ -769,6 +949,8 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         guard let field = obj.object as? NSTextField else { return }
         if field === textInput {
             textInputMirror.stringValue = field.stringValue
+        } else if field.accessibilityIdentifier() == kActiveOnlyFieldAID {
+            recordActiveOnly("text:\(field.stringValue)")
         }
     }
 
@@ -854,6 +1036,24 @@ final class ClickTargetButton: NSButton {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
+/// The active-only button: AXPress and a single click fire its action; a
+/// pixel double-click reports itself before AppKit's tracking loop, and a
+/// middle click reports itself.
+final class ActiveOnlyButton: NSButton {
+    var onEvent: ((String) -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 && isEnabled {
+            onEvent?("double_click")
+            return
+        }
+        super.mouseDown(with: event)
+    }
+    override func otherMouseDown(with event: NSEvent) {
+        if isEnabled { onEvent?("middle_click") }
+    }
+}
+
 // Opt-in windows for the persistent exact-window activation certification.
 // Ordinary harness launches remain byte-for-byte and behaviorally unchanged.
 final class BringToFrontMatrixWindows {
@@ -893,6 +1093,17 @@ final class BringToFrontMatrixWindows {
             if let field {
                 candidate.makeFirstResponder(field)
             }
+        } else if mode == "open-panel" {
+            // A native Open panel attached as a sheet, browsing a folder with
+            // enough files that its file browser alone outgrows a default
+            // read (issue #3351).
+            let panel = NSOpenPanel()
+            panel.canChooseDirectories = true
+            if let directory = ProcessInfo.processInfo.environment["CUA_HARNESS_OPEN_PANEL_DIR"] {
+                panel.directoryURL = URL(fileURLWithPath: directory)
+            }
+            sheet = panel
+            panel.beginSheetModal(for: parent) { _ in }
         } else if mode == "floating" {
             let candidate = NSPanel(
                 contentRect: NSRect(x: 180, y: 180, width: 320, height: 140),
@@ -1045,6 +1256,33 @@ struct CuaAppKitHarness {
                 "height": controller.window.frame.height
             ])
         }
+        // An untitled borderless child window over the receiver's top-left
+        // quarter, like Chrome's omnibox dropdown (issue #4242). Pointer
+        // events it receives go to the same journal, tagged with its id.
+        var popupWindow: NSWindow?
+        if let path = ProcessInfo.processInfo.environment["CUA_APPKIT_POINTER_ORACLE"],
+           ProcessInfo.processInfo.environment["CUA_APPKIT_POPUP_OVER_RECEIVER"] == "1" {
+            let parent = controller.window
+            let content = parent.contentRect(forFrameRect: parent.frame)
+            let popup = NSWindow(
+                contentRect: NSRect(
+                    x: content.minX, y: content.maxY - content.height / 2,
+                    width: content.width / 2, height: content.height / 2),
+                styleMask: [.borderless], backing: .buffered, defer: false)
+            popup.isReleasedWhenClosed = false
+            popup.isRestorable = false
+            let receiver = SingleClickReceiver(
+                frame: NSRect(origin: .zero, size: popup.frame.size),
+                journal: URL(fileURLWithPath: path))
+            receiver.layer?.backgroundColor = NSColor.systemOrange.cgColor
+            popup.contentView = receiver
+            parent.addChildWindow(popup, ordered: .above)
+            popupWindow = popup
+            receiver.append([
+                "kind": "popup_ready",
+                "window_id": popup.windowNumber
+            ])
+        }
         var matrixWindows: BringToFrontMatrixWindows?
         if let mode = ProcessInfo.processInfo.environment["CUA_HARNESS_BRING_TO_FRONT_MODE"] {
             matrixWindows = BringToFrontMatrixWindows(parent: controller.window, mode: mode)
@@ -1061,5 +1299,6 @@ struct CuaAppKitHarness {
         }
         app.run()
         _ = matrixWindows
+        _ = popupWindow
     }
 }

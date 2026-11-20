@@ -163,9 +163,69 @@ fn env_off(key: &str) -> bool {
 fn app_bundle_path() -> Option<std::path::PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
-    exe.ancestors()
-        .find(|p| p.extension().and_then(|e| e.to_str()) == Some("app"))
+    enclosing_app(&exe)
+}
+
+fn enclosing_app(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    path.ancestors()
+        .find(|p| {
+            p.extension().and_then(|e| e.to_str()) == Some("app")
+                && p.join("Contents/Info.plist").is_file()
+        })
         .map(std::path::Path::to_path_buf)
+}
+
+/// The host app as the + button's file picker shows it: its name in Finder,
+/// which is the file name rather than the bundle's own name, and its folder.
+pub(crate) fn host_app_in_finder() -> Option<(String, std::path::PathBuf)> {
+    let bundle = app_bundle_path()?;
+    let name = unsafe { finder_name(&bundle) }?;
+    Some((name, bundle.parent()?.to_path_buf()))
+}
+
+unsafe fn finder_name(path: &std::path::Path) -> Option<String> {
+    let manager: *mut AnyObject = msg_send![class!(NSFileManager), defaultManager];
+    string_value(msg_send![manager, displayNameAtPath: ns_string(path.to_str()?)])
+}
+
+pub(crate) fn host_app_name() -> String {
+    app_bundle_path()
+        .and_then(|bundle| unsafe { bundle_shown_name(&bundle) })
+        .unwrap_or_else(|| guide::APP_NAME.to_owned())
+}
+
+unsafe fn bundle_shown_name(bundle: &std::path::Path) -> Option<String> {
+    let ns_bundle: *mut AnyObject =
+        msg_send![class!(NSBundle), bundleWithPath: ns_string(bundle.to_str()?)];
+    if ns_bundle.is_null() {
+        return None;
+    }
+    ["CFBundleDisplayName", "CFBundleName"]
+        .into_iter()
+        .find_map(|key| {
+            let value: *mut AnyObject =
+                msg_send![ns_bundle, objectForInfoDictionaryKey: ns_string(key)];
+            string_value(value)
+        })
+}
+
+unsafe fn string_value(value: *mut AnyObject) -> Option<String> {
+    if value.is_null() {
+        return None;
+    }
+    let is_string: bool = msg_send![value, isKindOfClass: class!(NSString)];
+    if !is_string {
+        return None;
+    }
+    let utf8: *const std::ffi::c_char = msg_send![value, UTF8String];
+    if utf8.is_null() {
+        return None;
+    }
+    let text = std::ffi::CStr::from_ptr(utf8)
+        .to_string_lossy()
+        .trim()
+        .to_owned();
+    (!text.is_empty()).then_some(text)
 }
 
 fn running_inside_app_bundle() -> bool {
@@ -174,8 +234,9 @@ fn running_inside_app_bundle() -> bool {
 
 // ── Layout ──────────────────────────────────────────────────────────────
 //
-// Fixed layout, measured from the top of the content view (AppKit's origin
-// is bottom-left, so `top()` converts).
+// Measured from the top of the content view (AppKit's origin is
+// bottom-left, so `top()` converts). The step rows stack in `ROWS` order and
+// grow to fit their words, and the window grows to hold them.
 
 const WIN_W: f64 = 480.0;
 const WIN_H: f64 = 420.0;
@@ -185,6 +246,36 @@ const TILE_H: f64 = 60.0;
 const ICON: f64 = 36.0;
 /// Ticks (1 s each) the finished state stays up before the window closes.
 const DONE_TICKS: u32 = 2;
+
+/// The step view's rows, top to bottom: the gap above each and the least
+/// height it takes. Counter, title, why, how, waiting line, Open System
+/// Settings, drag hint, tile, note.
+const ROWS: [(f64, f64); 9] = [
+    (20.0, 16.0),
+    (4.0, 26.0),
+    (6.0, 36.0),
+    (6.0, 18.0),
+    (10.0, 18.0),
+    (12.0, 32.0),
+    (24.0, 18.0),
+    (4.0, TILE_H),
+    (10.0, 32.0),
+];
+/// Below the last row: a gap, then Not Now 16 pt above the bottom edge.
+const BELOW_ROWS: f64 = 20.0 + 32.0 + 16.0;
+
+/// Each row's top and height for the heights its contents need, and the
+/// window height that holds them.
+fn stack(needed: [f64; 9]) -> ([(f64, f64); 9], f64) {
+    let mut y = 0.0;
+    let mut rows = [(0.0, 0.0); 9];
+    for (row, ((gap, least), need)) in rows.iter_mut().zip(ROWS.into_iter().zip(needed)) {
+        y += gap;
+        *row = (y, least.max(need.ceil()));
+        y += row.1;
+    }
+    (rows, y + BELOW_ROWS)
+}
 
 fn top(y_from_top: f64, height: f64) -> f64 {
     WIN_H - y_from_top - height
@@ -216,12 +307,18 @@ struct Views {
     why: usize,
     how: usize,
     note: usize,
+    spinner: usize,
+    /// The step rows in `ROWS` order.
+    rows: [usize; 9],
+    /// Content height, the most either step needs.
+    win_h: f64,
 }
 
 struct Session {
     machine: GuideMachine,
     hooks: PanelHooks,
     views: Views,
+    app: String,
     done_ticks: u32,
 }
 
@@ -236,6 +333,9 @@ fn ptr(u: usize) -> *mut AnyObject {
 }
 
 unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOutcome> {
+    // AppKit uses Text Input Sources on this thread from here on.
+    crate::input::input_source::main_thread_runs_event_loop();
+    let app_name = host_app_name();
     let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
     let _: bool = msg_send![app, setActivationPolicy: 1i64];
     let _: () = msg_send![app, finishLaunching];
@@ -271,7 +371,8 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
     // Floating, so it stays above System Settings while the person works
     // there.
     let _: () = msg_send![window, setLevel: 3i64];
-    let _: () = msg_send![window, setTitle: ns_string(guide::WINDOW_TITLE)];
+    let _: () =
+        msg_send![window, setTitle: ns_string(&guide::for_app(guide::WINDOW_TITLE, &app_name))];
     let target = target_instance();
     let _: () = msg_send![window, setDelegate: target];
 
@@ -322,7 +423,7 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
     let _: () = msg_send![step_view, addSubview: open_btn];
 
     let hint = label(
-        guide::DRAG_HINT,
+        &guide::for_app(guide::DRAG_HINT, &app_name),
         12.0,
         false,
         rect(PAD, 228.0, CONTENT_W, 18.0),
@@ -332,7 +433,7 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
 
     let bundle = app_bundle_path();
     TILE_BUNDLE.with(|cell| *cell.borrow_mut() = bundle.clone());
-    let tile = drag_tile(rect(PAD, 250.0, CONTENT_W, TILE_H), bundle.as_deref());
+    let tile = drag_tile(CONTENT_W, bundle.as_deref(), &app_name);
     let _: () = msg_send![step_view, addSubview: tile];
 
     let note = label("", 11.0, false, rect(PAD, 320.0, CONTENT_W, 32.0));
@@ -371,25 +472,27 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
     let _: () = msg_send![check, setContentTintColor: green];
     let _: () = msg_send![done_view, addSubview: check];
     let done_title = label(
-        guide::DONE_TITLE,
+        &guide::for_app(guide::DONE_TITLE, &app_name),
         17.0,
         true,
         rect(PAD, 184.0, CONTENT_W, 24.0),
     );
+    let done_title_h = needed_height(done_title).max(24.0);
+    let _: () = msg_send![done_title, setFrame: rect(PAD, 184.0, CONTENT_W, done_title_h)];
     center_text(done_title);
     let _: () = msg_send![done_view, addSubview: done_title];
     let done_why = label(
         GuideStep::Done.copy().why,
         13.0,
         false,
-        rect(PAD, 214.0, CONTENT_W, 18.0),
+        rect(PAD, 190.0 + done_title_h, CONTENT_W, 18.0),
     );
     center_text(done_why);
     set_secondary(done_why);
     let _: () = msg_send![done_view, addSubview: done_why];
     let _: () = msg_send![content, addSubview: done_view];
 
-    let views = Views {
+    let mut views = Views {
         window: window as usize,
         step_view: step_view as usize,
         done_view: done_view as usize,
@@ -398,26 +501,42 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
         why: why as usize,
         how: how as usize,
         note: note as usize,
+        spinner: spinner as usize,
+        rows: [
+            counter, title, why, how, waiting, open_btn, hint, tile, note,
+        ]
+        .map(|v| v as usize),
+        win_h: WIN_H,
     };
-    render(&views, machine.step());
+    // Tall enough for either step, so the window keeps its size between them.
+    views.win_h = [GuideStep::Accessibility, GuideStep::ScreenRecording]
+        .into_iter()
+        .map(|step| {
+            set_words(&views, step, &app_name);
+            stack(views.rows.map(|v| needed_height(ptr(v)))).1
+        })
+        .fold(WIN_H, f64::max);
+    // Not Now and the finished view keep their place from the bottom.
+    for view in [step_view, done_view] {
+        // NSViewWidthSizable | NSViewHeightSizable.
+        let _: () = msg_send![view, setAutoresizingMask: 2u64 | 16u64];
+    }
+    let _: () = msg_send![window, setContentSize: NSSize { width: WIN_W, height: views.win_h }];
+    render(&views, machine.step(), &app_name);
     OUTCOME.with(|cell| *cell.borrow_mut() = None);
+    let views_h = views.win_h;
     SESSION.with(|cell| {
         *cell.borrow_mut() = Some(Session {
             machine,
             hooks,
             views,
+            app: app_name,
             done_ticks: 0,
         })
     });
 
-    // Top right of the screen, clear of System Settings, which opens in the
-    // middle.
     let visible: NSRect = msg_send![main_screen, visibleFrame];
-    let origin = NSPoint {
-        x: visible.origin.x + visible.size.width - WIN_W - 24.0,
-        y: visible.origin.y + visible.size.height - WIN_H - 48.0,
-    };
-    let _: () = msg_send![window, setFrameOrigin: origin];
+    let _: () = msg_send![window, setFrameOrigin: guide_origin(visible, views_h)];
     let _: () = msg_send![window, makeKeyAndOrderFront: std::ptr::null::<AnyObject>()];
     let _: () = msg_send![window, orderFrontRegardless];
     let _: () = msg_send![app, activateIgnoringOtherApps: true];
@@ -440,21 +559,51 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
     Some(outcome)
 }
 
+/// Top left of `visible`. System Settings opens centred with its app list
+/// and switches in its right half, so the guide stays clear of them.
+fn guide_origin(visible: NSRect, win_h: f64) -> NSPoint {
+    NSPoint {
+        x: visible.origin.x + 24.0,
+        y: visible.origin.y + visible.size.height - win_h - 48.0,
+    }
+}
+
 /// Draw `step`: the step's words, or the finished view.
-unsafe fn render(views: &Views, step: GuideStep) {
+unsafe fn render(views: &Views, step: GuideStep, app: &str) {
     let done = step == GuideStep::Done;
     let _: () = msg_send![ptr(views.step_view), setHidden: done];
     let _: () = msg_send![ptr(views.done_view), setHidden: !done];
     if done {
         return;
     }
+    set_words(views, step, app);
+    let (rows, _) = stack(views.rows.map(|v| needed_height(ptr(v))));
+    for (&view, (y, h)) in views.rows.iter().zip(rows) {
+        let mut frame: NSRect = msg_send![ptr(view), frame];
+        frame.origin.y = views.win_h - y - h;
+        frame.size.height = h;
+        let _: () = msg_send![ptr(view), setFrame: frame];
+    }
+    let (waiting_y, _) = rows[4];
+    let _: () = msg_send![ptr(views.spinner), setFrameOrigin: NSPoint {
+        x: PAD,
+        y: views.win_h - waiting_y - 2.0 - 16.0,
+    }];
+}
+
+/// Put `step`'s words in the step view's labels.
+unsafe fn set_words(views: &Views, step: GuideStep, app: &str) {
     let copy = step.copy();
     let _: () = msg_send![ptr(views.counter), setStringValue: ns_string(copy.counter)];
-    let _: () = msg_send![ptr(views.title), setStringValue: ns_string(copy.title)];
-    let _: () = msg_send![ptr(views.why), setStringValue: ns_string(copy.why)];
-    let _: () = msg_send![ptr(views.how), setStringValue: ns_string(copy.how)];
-    let _: () = msg_send![ptr(views.note), setStringValue: ns_string(copy.note)];
-    let _: () = msg_send![ptr(views.window), setTitle: ns_string(guide::WINDOW_TITLE)];
+    let _: () =
+        msg_send![ptr(views.title), setStringValue: ns_string(&guide::for_app(copy.title, app))];
+    let _: () =
+        msg_send![ptr(views.why), setStringValue: ns_string(&guide::for_app(copy.why, app))];
+    let _: () =
+        msg_send![ptr(views.how), setStringValue: ns_string(&guide::for_app(copy.how, app))];
+    let _: () =
+        msg_send![ptr(views.note), setStringValue: ns_string(&guide::for_app(copy.note, app))];
+    let _: () = msg_send![ptr(views.window), setTitle: ns_string(&guide::for_app(guide::WINDOW_TITLE, app))];
 }
 
 // ── Timer, buttons, window close ─────────────────────────────────────────
@@ -495,7 +644,7 @@ fn tick() {
                     if step == GuideStep::ScreenRecording {
                         guide::write_resume_marker();
                     }
-                    render(&session.views, step);
+                    render(&session.views, step, &session.app);
                 },
                 GuideEffect::Request(permission) => {
                     if permission == MissingPermission::ScreenRecording {
@@ -618,10 +767,19 @@ fn target_class() -> &'static objc2::runtime::AnyClass {
 // drag puts the app bundle's file URL on the pasteboard, which System
 // Settings' privacy lists accept, the same as dragging the app from Finder.
 
-unsafe fn drag_tile(frame: NSRect, bundle: Option<&std::path::Path>) -> *mut AnyObject {
+unsafe fn drag_tile(width: f64, bundle: Option<&std::path::Path>, app: &str) -> *mut AnyObject {
+    let name_w = width - ICON - 120.0;
+    let name = label(
+        &guide::for_app(guide::TILE_NAME, app),
+        15.0,
+        false,
+        rect(0.0, 0.0, name_w, 20.0),
+    );
+    let name_h = needed_height(name).max(20.0);
+    let height = TILE_H.max(name_h + 24.0);
     let cls = tile_class();
     let tile: *mut AnyObject = msg_send![cls, alloc];
-    let tile: *mut AnyObject = msg_send![tile, initWithFrame: frame];
+    let tile: *mut AnyObject = msg_send![tile, initWithFrame: rect(PAD, 0.0, width, height)];
     let _: () = msg_send![tile, setWantsLayer: true];
     let layer: *mut AnyObject = msg_send![tile, layer];
     if !layer.is_null() {
@@ -634,8 +792,6 @@ unsafe fn drag_tile(frame: NSRect, bundle: Option<&std::path::Path>) -> *mut Any
         let fill_cg: CGColorRef = msg_send![fill, CGColor];
         let _: () = msg_send![layer, setBackgroundColor: fill_cg];
     }
-    let height = frame.size.height;
-    let width = frame.size.width;
 
     let icon_view: *mut AnyObject = msg_send![class!(NSImageView), alloc];
     let icon_frame = NSRect {
@@ -655,21 +811,16 @@ unsafe fn drag_tile(frame: NSRect, bundle: Option<&std::path::Path>) -> *mut Any
     }
     let _: () = msg_send![tile, addSubview: icon_view];
 
-    let name = label(
-        guide::TILE_NAME,
-        15.0,
-        false,
-        NSRect {
-            origin: NSPoint {
-                x: 12.0 + ICON + 12.0,
-                y: (height - 20.0) / 2.0,
-            },
-            size: NSSize {
-                width: width - ICON - 120.0,
-                height: 20.0,
-            },
+    let _: () = msg_send![name, setFrame: NSRect {
+        origin: NSPoint {
+            x: 12.0 + ICON + 12.0,
+            y: (height - name_h) / 2.0,
         },
-    );
+        size: NSSize {
+            width: name_w,
+            height: name_h,
+        },
+    }];
     let _: () = msg_send![tile, addSubview: name];
 
     let hand: *mut AnyObject = msg_send![class!(NSImageView), alloc];
@@ -704,7 +855,7 @@ unsafe fn drag_tile(frame: NSRect, bundle: Option<&std::path::Path>) -> *mut Any
     let _: () = msg_send![tile, addSubview: drag];
 
     // Tooltip, and the role VoiceOver reads.
-    let _: () = msg_send![tile, setToolTip: ns_string(guide::DRAG_HINT)];
+    let _: () = msg_send![tile, setToolTip: ns_string(&guide::for_app(guide::DRAG_HINT, app))];
     tile
 }
 
@@ -891,6 +1042,29 @@ unsafe fn label(text: &str, size: f64, bold: bool, frame: NSRect) -> *mut AnyObj
     label
 }
 
+/// The height `view` needs at its current width: a label's wrapped text,
+/// else its frame.
+unsafe fn needed_height(view: *mut AnyObject) -> f64 {
+    let frame: NSRect = msg_send![view, frame];
+    let has_cell: bool = msg_send![view, respondsToSelector: objc2::sel!(cell)];
+    if !has_cell {
+        return frame.size.height;
+    }
+    let cell: *mut AnyObject = msg_send![view, cell];
+    if cell.is_null() {
+        return frame.size.height;
+    }
+    let bounds = NSRect {
+        origin: NSPoint { x: 0.0, y: 0.0 },
+        size: NSSize {
+            width: frame.size.width,
+            height: 10_000.0,
+        },
+    };
+    let size: NSSize = msg_send![cell, cellSizeForBounds: bounds];
+    size.height.ceil()
+}
+
 unsafe fn set_secondary(label: *mut AnyObject) {
     let color: *mut AnyObject = msg_send![class!(NSColor), secondaryLabelColor];
     let _: () = msg_send![label, setTextColor: color];
@@ -959,22 +1133,116 @@ mod tests {
     }
 
     #[test]
-    fn layout_fits_the_window() {
-        // Every row from the top stays inside the window.
-        for (y, h) in [
-            (20.0, 16.0),
-            (40.0, 26.0),
-            (72.0, 36.0),
-            (114.0, 18.0),
-            (142.0, 18.0),
-            (172.0, 32.0),
-            (228.0, 18.0),
-            (250.0, TILE_H),
-            (320.0, 32.0),
+    fn the_guide_leaves_a_centred_settings_list_and_its_switches_uncovered() {
+        let settings_width = 723.0;
+        let settings_sidebar = 243.0;
+        for (width, height) in [(1280.0, 775.0), (1440.0, 875.0), (1920.0, 1055.0)] {
+            let visible = NSRect {
+                origin: NSPoint { x: 0.0, y: 0.0 },
+                size: NSSize { width, height },
+            };
+            let at = guide_origin(visible, WIN_H);
+            let list_left = (width - settings_width) / 2.0 + settings_sidebar;
+            assert!(
+                at.x + WIN_W <= list_left,
+                "{width}: guide ends at {}",
+                at.x + WIN_W
+            );
+            assert!(at.x >= 0.0 && at.y >= 0.0 && at.y + WIN_H <= height);
+        }
+    }
+
+    #[test]
+    fn the_host_is_the_app_that_encloses_the_executable() {
+        let root = tempfile::tempdir().unwrap();
+        let host = root.path().join("Host.app");
+        std::fs::create_dir_all(host.join("Contents/Resources/vendor.app/bin")).unwrap();
+        std::fs::write(host.join("Contents/Info.plist"), "").unwrap();
+        for exe in [
+            "Contents/MacOS/cua-driver",
+            "Contents/Resources/cua-driver",
+            "Contents/Resources/bin/cua-driver",
+            "Contents/Resources/vendor.app/bin/cua-driver",
         ] {
+            assert_eq!(enclosing_app(&host.join(exe)), Some(host.clone()), "{exe}");
+        }
+        assert_eq!(
+            enclosing_app(std::path::Path::new("/usr/local/bin/cua-driver")),
+            None
+        );
+        assert_eq!(host_app_name(), guide::APP_NAME);
+    }
+
+    #[test]
+    fn the_shown_name_is_the_localized_one_settings_lists() {
+        let root = tempfile::tempdir().unwrap();
+        let bundle = root.path().join("Host.app");
+        let contents = bundle.join("Contents");
+        std::fs::create_dir_all(contents.join("Resources/en.lproj")).unwrap();
+        std::fs::write(
+            contents.join("Info.plist"),
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.example.host</string>
+<key>CFBundleDevelopmentRegion</key><string>en</string>
+<key>CFBundleName</key><string>HostRaw</string>
+</dict></plist>"#,
+        )
+        .unwrap();
+        assert_eq!(
+            unsafe { bundle_shown_name(&bundle) }.as_deref(),
+            Some("HostRaw")
+        );
+        let localized = root.path().join("Localized.app");
+        std::fs::create_dir_all(localized.join("Contents/Resources/en.lproj")).unwrap();
+        std::fs::copy(
+            contents.join("Info.plist"),
+            localized.join("Contents/Info.plist"),
+        )
+        .unwrap();
+        std::fs::write(
+            localized.join("Contents/Resources/en.lproj/InfoPlist.strings"),
+            "\u{FEFF}\"CFBundleDisplayName\" = \"Host App\";\n",
+        )
+        .unwrap();
+        assert_eq!(
+            unsafe { bundle_shown_name(&localized) }.as_deref(),
+            Some("Host App")
+        );
+        assert_eq!(
+            unsafe { finder_name(&localized) }.as_deref(),
+            Some("Localized")
+        );
+    }
+
+    #[test]
+    fn layout_fits_the_window() {
+        let (rows, win_h) = stack([0.0; 9]);
+        let tops: Vec<f64> = rows.iter().map(|&(y, _)| y).collect();
+        assert_eq!(
+            tops,
+            [20.0, 40.0, 72.0, 114.0, 142.0, 172.0, 228.0, 250.0, 320.0]
+        );
+        assert_eq!(win_h, WIN_H);
+        for (y, h) in rows {
             let r = rect(PAD, y, CONTENT_W, h);
             assert!(r.origin.y >= 48.0, "row at {y} overlaps the bottom buttons");
             assert!(r.origin.y + r.size.height <= WIN_H);
         }
+    }
+
+    #[test]
+    fn rows_grow_to_fit_a_long_host_name() {
+        let (short, short_h) = stack([0.0; 9]);
+        let mut needed = [0.0; 9];
+        needed[1] = 52.0;
+        needed[3] = 35.2;
+        let (long, long_h) = stack(needed);
+        assert_eq!(long[1], (40.0, 52.0));
+        assert_eq!(long[3], (140.0, 36.0));
+        assert_eq!(long[8].0, short[8].0 + 26.0 + 18.0);
+        assert_eq!(long_h, short_h + 26.0 + 18.0);
+        let (last_y, last_h) = long[8];
+        assert!(long_h - last_y - last_h >= BELOW_ROWS);
     }
 }

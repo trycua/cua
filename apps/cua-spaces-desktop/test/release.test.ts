@@ -62,9 +62,7 @@ describe("release config", () => {
     const pkg = JSON.parse(readFileSync(path.join(import.meta.dirname, "../package.json"), "utf8"));
     expect(c.extraMetadata.version).toBe(pkg.version);
     expect(c.buildVersion).toBe(`${pkg.version}.0`);
-    expect(c.publish).toEqual([
-      { provider: "generic", url: "https://github.com/trycua/cua/releases/download/cua-spaces-latest", channel: "latest" },
-    ]);
+    expect(c.publish).toEqual([{ provider: "generic", url: "https://github.com/trycua/cua/releases/download/cua-spaces-latest", channel: "latest" }]);
   });
 
   it("prerelease: the tag's version on the beta channel, feed on the building repository", () => {
@@ -72,9 +70,7 @@ describe("release config", () => {
     expect(c.extraMetadata.version).toBe("0.8.0-beta.1");
     // The Swift app's CFBundleVersion scheme: X.Y.Z.<run number>.
     expect(c.buildVersion).toBe("0.8.0.412");
-    expect(c.publish).toEqual([
-      { provider: "generic", url: "https://github.com/example/cua-fork/releases/download/cua-spaces-latest", channel: "beta" },
-    ]);
+    expect(c.publish).toEqual([{ provider: "generic", url: "https://github.com/example/cua-fork/releases/download/cua-spaces-latest", channel: "beta" }]);
   });
 
   it("refuses a malformed version, build number or repository", () => {

@@ -54,6 +54,8 @@ private final class RecordingProvider: SpaceStreamSourceProviding, @unchecked Se
         return media
     }
 
+    /// Whether the guest takes ⌘ as Control (a Linux or Windows Space).
+    var commandAsControl = false
     /// Whether the Space's clipboard setting lets a paste send the clipboard.
     var sendsClipboard = true
     /// How long the clipboard takes to reach the Space.
@@ -424,6 +426,23 @@ private func pointerEvents(in text: String) -> [[String: Any]] {
         await eventually("the paste") { provider.media.sent.count == 1 }
         #expect(provider.clipboards == [""])
         #expect(provider.framesAtClipboard == [0], "the empty clipboard reached the Space before the chord")
+        await session.stop()
+    }
+
+    /// Right ⌘V on a Linux Space is Super+V, the guest's own shortcut: it
+    /// goes as a plain chord and leaves the Space's clipboard alone. ⌘V
+    /// with the left ⌘ still pastes.
+    @Test func aSuperChordIsNotAPaste() async throws {
+        let provider = RecordingProvider()
+        provider.commandAsControl = true
+        let session = LiveStreamSession(provider: provider)
+        await session.start()
+        session.paste([.key(key: "v", down: true, modifiers: [.super], repeatKey: false)], text: "copied on the Mac")
+        await eventually("the Super chord") { provider.media.sent.count == 1 }
+        #expect(provider.clipboards.isEmpty)
+        session.paste([.key(key: "v", down: true, modifiers: [.command], repeatKey: false)], text: "copied on the Mac")
+        await eventually("the paste") { provider.media.sent.count == 2 }
+        #expect(provider.clipboards == ["copied on the Mac"])
         await session.stop()
     }
 

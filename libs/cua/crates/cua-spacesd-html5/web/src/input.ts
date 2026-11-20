@@ -246,12 +246,16 @@ export class InputController {
     this.heldKeys.clear();
   }
 
-  /** The key options for a key with `code`: the right ⌘ held without the
-   * left one is the guest's Super, never Control. */
-  private keyOptions(code: string): KeyMapOptions {
-    const options = this.options.keyOptions();
+  /** Whether a key with `code` is part of a Super chord for a guest that
+   * takes ⌘ as Control: the right ⌘ held without the left one is its Super. */
+  private isSuper(code: string): boolean {
     const held = (meta: string) => code === meta || this.heldKeys.has(meta);
-    return held("MetaRight") && !held("MetaLeft") ? { ...options, metaAsControl: false } : options;
+    return this.options.keyOptions().metaAsControl && held("MetaRight") && !held("MetaLeft");
+  }
+
+  private keyOptions(superKey: boolean): KeyMapOptions {
+    const options = this.options.keyOptions();
+    return superKey ? { ...options, metaAsControl: false } : options;
   }
 
   private send(event: InteractiveInputEvent): void {
@@ -279,9 +283,12 @@ export class InputController {
     const textarea = this.textarea;
 
     this.on(textarea, "keydown", (event) => {
-      const mapped = mapKey(event, "down", this.keyOptions(event.code));
+      const superKey = this.isSuper(event.code);
+      const mapped = mapKey(event, "down", this.keyOptions(superKey));
       if (!mapped) return; // text arrives through beforeinput
-      const isPaste = mapped.kind === "key" && mapped.key === "v" && mapped.modifiers.length > 0 && this.options.onPaste;
+      // A Super chord is the guest's shortcut, never the host clipboard's.
+      const chord = mapped.kind === "key" && mapped.modifiers.length > 0 && !superKey;
+      const isPaste = chord && mapped.key === "v" && this.options.onPaste;
       if (isPaste) {
         // Let the browser fire `paste` (it carries the host clipboard without
         // a permission prompt); the keys follow once the guest has it.
@@ -291,7 +298,7 @@ export class InputController {
       event.preventDefault();
       if (mapped.kind === "key") this.heldKeys.set(event.code || mapped.key, mapped);
       this.send(mapped);
-      if (mapped.kind === "key" && (mapped.key === "c" || mapped.key === "x") && mapped.modifiers.length > 0) {
+      if (chord && (mapped.key === "c" || mapped.key === "x")) {
         this.options.onCopyShortcut?.();
       }
     });
@@ -305,7 +312,7 @@ export class InputController {
         this.send({ ...held, state: "up", repeat: false });
         return;
       }
-      const mapped = mapKey(event, "up", this.keyOptions(event.code));
+      const mapped = mapKey(event, "up", this.keyOptions(this.isSuper(event.code)));
       if (!mapped || !MODIFIER_KEYS.has(event.key)) return;
       event.preventDefault();
       this.send(mapped);

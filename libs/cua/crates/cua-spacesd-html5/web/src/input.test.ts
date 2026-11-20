@@ -76,6 +76,41 @@ describe("keyboard mapping", () => {
     ]);
   });
 
+  it("sends a Super chord to the guest, not through the host clipboard", () => {
+    const sent: InteractiveInputEvent[] = [];
+    let pastes = 0;
+    let copies = 0;
+    const surface = document.createElement("div");
+    const controller = new InputController({
+      surface,
+      screen: () => surface,
+      emit: (event) => sent.push(event),
+      keyOptions: () => ({ metaAsControl: true }),
+      onPaste: () => void pastes++,
+      onCopyShortcut: () => void copies++,
+    });
+    const press = (type: string, init: KeyboardEventInit) =>
+      controller.textarea.dispatchEvent(new KeyboardEvent(type, { ...init, cancelable: true }));
+    press("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
+    // Cancelled, so the browser fires no `paste` for the host clipboard.
+    expect(press("keydown", { key: "v", code: "KeyV", metaKey: true })).toBe(false);
+    press("keyup", { key: "v", code: "KeyV", metaKey: true });
+    press("keydown", { key: "c", code: "KeyC", metaKey: true });
+    press("keyup", { key: "c", code: "KeyC", metaKey: true });
+    press("keyup", { key: "Meta", code: "MetaRight" });
+    controller.dispose();
+    expect(pastes).toBe(0);
+    expect(copies).toBe(0);
+    expect(sent.map((e) => (e.kind === "key" ? [e.key, e.state, e.modifiers] : e.kind))).toEqual([
+      ["meta", "down", []],
+      ["v", "down", ["command"]],
+      ["v", "up", ["command"]],
+      ["c", "down", ["command"]],
+      ["c", "up", ["command"]],
+      ["meta", "up", []],
+    ]);
+  });
+
   it("treats AltGr and IME composition as text", () => {
     const altGr = key({ key: "@", code: "KeyQ", ctrlKey: true, altKey: true, getModifierState: (m) => m === "AltGraph" });
     expect(mapKey(altGr, "down", opts)).toBeNull();

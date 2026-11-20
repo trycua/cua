@@ -762,21 +762,26 @@ export class MediaSession {
     );
     // The ⌘ keys held (`MetaLeft`, `MetaRight`): the right one alone is Super.
     const commands = new Set<string>();
-    const send = (input: InteractiveInputEvent | null) => {
-      if (!input) return;
-      const superKey = commands.has("MetaRight") && !commands.has("MetaLeft");
-      this.queueInput(this.options.metaAsControl && !superKey ? commandAsControl(input) : input);
+    // Whether each held key went down as Control, so it is released as the
+    // same guest key even if the other ⌘ changed in between.
+    const asControl = new Map<string, boolean>();
+    const send = (input: InteractiveInputEvent | null, control: boolean) => {
+      if (input) this.queueInput(control ? commandAsControl(input) : input);
     };
     on("keydown", (event) => {
       event.preventDefault();
       if (!event.metaKey) commands.clear();
       if (COMMAND_CODES.has(event.code)) commands.add(event.code);
-      send(keyEventToInput(event, "down"));
-      if (this.options.wholeCommandChords && event.metaKey && !MODIFIER_KEYS.has(event.key)) send(keyEventToInput(event, "up"));
+      const superKey = commands.has("MetaRight") && !commands.has("MetaLeft");
+      const control = !!this.options.metaAsControl && !superKey;
+      asControl.set(event.code, control);
+      send(keyEventToInput(event, "down"), control);
+      if (this.options.wholeCommandChords && event.metaKey && !MODIFIER_KEYS.has(event.key)) send(keyEventToInput(event, "up"), control);
     });
     on("keyup", (event) => {
       event.preventDefault();
-      send(keyEventToInput(event, "up"));
+      send(keyEventToInput(event, "up"), asControl.get(event.code) ?? !!this.options.metaAsControl);
+      asControl.delete(event.code);
       commands.delete(event.code);
     });
   }

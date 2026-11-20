@@ -473,6 +473,24 @@ describe("MediaSession in the Electron shell (hardware decode, keys, scrolls, ti
     ]);
   });
 
+  it("releases each command key as the guest key it pressed", async () => {
+    const { socket, canvas } = start({ metaAsControl: true });
+    handshake(socket);
+    const key = (type: string, init: KeyboardEventInit) => canvas.dispatchEvent(new KeyboardEvent(type, init));
+    key("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
+    key("keydown", { key: "Meta", code: "MetaLeft", metaKey: true });
+    key("keyup", { key: "Meta", code: "MetaRight", metaKey: true });
+    key("keyup", { key: "Meta", code: "MetaLeft" });
+    await Promise.resolve();
+    const events = socket.of("interactive_input").flatMap((m) => m.payload!.events as Array<Record<string, unknown>>);
+    expect(events.map((e) => [e.key, e.state])).toEqual([
+      ["meta", "down"],
+      ["control", "down"],
+      ["meta", "up"],
+      ["control", "up"],
+    ]);
+  });
+
   it("sends a ⌘ chord whole from a Mac, whose key-up Chromium never fires", async () => {
     const { socket, canvas } = start({ wholeCommandChords: true });
     handshake(socket);

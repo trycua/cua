@@ -292,6 +292,122 @@ fn assert_page_marker(driver: &mut McpDriver, pid: i64, wid: u64) {
 
 #[test]
 #[ignore]
+fn harness_webview_type_text_refuses_value_assignment_before_mutation() {
+    let case = native_background_case(
+        "webview2",
+        "type_text",
+        Targeting::Ax,
+        DriverRoute::UiaValue,
+    )
+    .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]);
+    let token = RefCell::new(None);
+    let barrier = RefCell::new(None);
+    let payload = RefCell::new(String::new());
+    run_web_case_with_preparation(
+        case,
+        "webview2",
+        webview_exe(),
+        "CuaTestHarness WebView [ready",
+        |pid, wid, driver, journal| {
+            let state = snapshot(driver, pid, wid);
+            let index = ax::element_index_by_id(state.tree_text(), "txt-input")
+                .expect("text input missing from WebView2 snapshot");
+            let element = state.element_token(index);
+            // An intentional value write stays supported. Its DOM value is
+            // separate from the payload consumed by an input-event editor.
+            for value in ["seed", ""] {
+                let assigned = driver.call(
+                    "set_value",
+                    serde_json::json!({
+                        "pid": pid, "window_id": wid,
+                        "element_token": element, "value": value,
+                    }),
+                );
+                assert!(
+                    !assigned.is_error(),
+                    "explicit assignment failed: {}",
+                    assigned.text()
+                );
+                wait_for_journal_text(journal, "lbl-input-mirror", &format!("mirror={value}"));
+            }
+            payload.replace(journal.text("lbl-input-payload").unwrap_or_default());
+            let state = snapshot(driver, pid, wid);
+            let index = ax::element_index_by_id(state.tree_text(), "txt-input")
+                .expect("text input missing from fresh WebView2 snapshot");
+            token.replace(Some(state.element_token(index).to_owned()));
+            let index = ax::element_index_by_id(state.tree_text(), "number-input")
+                .expect("number input missing from fresh WebView2 snapshot");
+            barrier.replace(Some(state.element_token(index).to_owned()));
+        },
+        |pid, wid, driver, journal| {
+            let response = driver.call(
+                "type_text",
+                serde_json::json!({
+                    "pid": pid, "window_id": wid,
+                    "element_token": token.borrow().as_ref().unwrap(),
+                    "text": "typed-payload", "delivery_mode": "background",
+                }),
+            );
+            assert!(
+                response.is_error(),
+                "web typing became a value write: {}",
+                response.text()
+            );
+            assert_eq!(response.structured()["code"], "background_unavailable");
+            // The journal holds the last published state, so the unchanged
+            // text field alone could be a pre-action publication. Change a
+            // second field and wait for it to get a publication taken after
+            // the refusal.
+            let marked = driver.call(
+                "set_value",
+                serde_json::json!({
+                    "pid": pid, "window_id": wid,
+                    "element_token": barrier.borrow().as_ref().unwrap(),
+                    "value": "7",
+                }),
+            );
+            assert!(
+                !marked.is_error(),
+                "barrier assignment failed: {}",
+                marked.text()
+            );
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let state = loop {
+                let state = journal.snapshot();
+                if state["number-input"]["value"] == "7" {
+                    break state;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "WebView2 fixture journal did not publish the barrier: {state}"
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            };
+            assert_eq!(state["txt-input"]["value"], "", "{state}");
+            assert_eq!(state["lbl-input-mirror"]["text"], "mirror=", "{state}");
+            assert_eq!(
+                state["lbl-input-payload"]["text"],
+                payload.borrow().as_str(),
+                "{state}"
+            );
+            response.text().to_owned()
+        },
+        |message, mut passed| {
+            passed.extend([OracleKind::FixtureState, OracleKind::Protocol]);
+            passed.sort();
+            passed.dedup();
+            Observation::refused(
+                RefusalCode::BackgroundUnavailable,
+                passed,
+                message,
+                Evidence::default(),
+            )
+        },
+    );
+}
+
+#[test]
+#[ignore]
 fn harness_webview_left_click_px_background() {
     let case = native_background_case(
         "webview2",

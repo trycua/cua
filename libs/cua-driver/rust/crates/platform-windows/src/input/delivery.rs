@@ -115,7 +115,8 @@ pub fn would_be_silently_dropped(hwnd: u64, kind: EventKind) -> bool {
     }
     if crate::input::has_chromium_descendant(hwnd) {
         // Embedded WebView2 hosts retain useful UIA/top-level routes for
-        // clicks and ValuePattern text. Their drag, wheel and modifier-chord
+        // clicks and native-control ValuePattern text (type_text refuses
+        // web-content value writes itself). Their drag, wheel and modifier-chord
         // paths still depend on the renderer's system input queue.
         return matches!(kind, MouseMove | MouseScroll | KeyCombo);
     }

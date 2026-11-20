@@ -101,6 +101,16 @@ process.
 Cua Driver refuses a route it cannot deliver safely instead of reporting a
 silent success. These are the cases callers hit most.
 
+### Windows web editors need input events
+
+In an embedded Chromium web editor, UIA can change a textarea's value without
+providing the input-event payload the editor consumes. Background `type_text`
+with an `element_token` in that web content returns `background_unavailable`
+before changing the value. Use `set_value` when assigning a field value is the
+intended operation. For typing, use a supported browser input route or explicitly
+select foreground delivery. A value readback alone does not prove that an
+event-driven editor received the text.
+
 ### Canvas apps and games need the foreground
 
 Blender, Unity, most native games, and some WebGL-heavy Electron apps ignore

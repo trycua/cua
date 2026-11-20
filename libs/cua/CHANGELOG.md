@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.29.0](https://github.com/trycua/cua/compare/cua-sdk-v0.28.6...cua-sdk-v0.29.0) (2026-11-20)
+
+
+### Features
+
+* **spaces:** stream direct Spaces over the advertised QUIC media endpoint ([#8083](https://github.com/trycua/cua/issues/8083)) ([ecde561](https://github.com/trycua/cua/commit/ecde5618f7d20cff7fb66a6c2ce0dba16a473c55))
+
+## [0.28.6](https://github.com/trycua/cua/compare/cua-sdk-v0.28.5...cua-sdk-v0.28.6) (2026-11-19)
+
+
+### Bug Fixes
+
+* **cua-vmm:** wait for a starting container engine, name and retry its failed pings ([#8241](https://github.com/trycua/cua/issues/8241)) ([fd4e019](https://github.com/trycua/cua/commit/fd4e01991b42350dc8cf0e807c9f211ada44e0bd))
+
+## [0.28.5](https://github.com/trycua/cua/compare/cua-sdk-v0.28.4...cua-sdk-v0.28.5) (2026-11-19)
+
+
+### Bug Fixes
+
+* **spaces:** deliver agent messages once ([#8218](https://github.com/trycua/cua/issues/8218)) ([a88ded9](https://github.com/trycua/cua/commit/a88ded951c5e66285bc788b75fddc1c1cdff5eb0))
+
+## [0.28.4](https://github.com/trycua/cua/compare/cua-sdk-v0.28.3...cua-sdk-v0.28.4) (2026-11-19)
+
+
+### Bug Fixes
+
+* **spaces:** send the Mac clipboard on paste in the native viewer ([#8145](https://github.com/trycua/cua/issues/8145)) ([54312cf](https://github.com/trycua/cua/commit/54312cfce862d13a57f0c28851bd399e261c8e70))
+
+## [0.28.3](https://github.com/trycua/cua/compare/cua-sdk-v0.28.2...cua-sdk-v0.28.3) (2026-11-18)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** probe hardware encoders off the GetCapabilities path ([#8161](https://github.com/trycua/cua/issues/8161)) ([9346cab](https://github.com/trycua/cua/commit/9346cabc2e0614a2ec9d9b629ab0db39b44db4bb))
+
 ## [0.28.2](https://github.com/trycua/cua/compare/cua-sdk-v0.28.1...cua-sdk-v0.28.2) (2026-11-17)
 
 

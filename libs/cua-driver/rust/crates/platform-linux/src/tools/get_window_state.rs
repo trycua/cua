@@ -150,39 +150,59 @@ mod megapixel_cap_tests {
     }
 }
 
-/// The space of a window's element frames: the frame-space position of the
-/// window's top-left pixel, and the X11 pixels per frame unit. Chromium under
-/// a device scale reports its AT-SPI extents in DIPs while its X11 window, and
-/// the capture of it, are in device pixels; its top-level frame is then the
-/// X11 window rectangle divided by that scale. A window-scoped tree's own
-/// frame is its shallowest top-level one; an application-wide tree offers
-/// every top-level frame, and one that matches the window in pixels wins.
-/// With no match, frames are in pixels from the window origin.
-fn atspi_frame_space(
+/// Add `screenshot_frame` to the elements of X11 window `window`, captured
+/// as `delivered` pixels at `capture_scale` delivered pixels per X11 pixel.
+fn with_x11_screenshot_frames(
+    window: (i32, i32, i32, i32),
+    elements: Vec<Value>,
+    delivered: (u32, u32),
+    capture_scale: f64,
+) -> Vec<Value> {
+    let (wx, wy, _, _) = window;
+    match dip_window_frame(window, &elements) {
+        Some((root, origin, scale)) => {
+            let mut elements = cua_driver_core::element_frame::with_screenshot_frames(
+                elements,
+                origin,
+                scale * capture_scale,
+            );
+            // The root is the whole capture; its DIP size was rounded.
+            elements[root]["screenshot_frame"] =
+                json!({ "x": 0, "y": 0, "w": delivered.0, "h": delivered.1 });
+            elements
+        }
+        None => cua_driver_core::element_frame::with_screenshot_frames(
+            elements,
+            (f64::from(wx), f64::from(wy)),
+            capture_scale,
+        ),
+    }
+}
+
+/// The window's top-level frame when its frames are in DIPs: its position in
+/// `elements`, its origin, and the X11 pixels per DIP. Chromium under a device
+/// scale reports AT-SPI extents in DIPs while its X11 window is in device
+/// pixels, so its frame is the X11 window rectangle divided by that scale.
+/// Only the shallowest top-level frames are windows; an application-wide tree
+/// holds several, and one that matches the window in pixels means no scale.
+fn dip_window_frame(
     window: (i32, i32, i32, i32),
     elements: &[Value],
-    window_scoped: bool,
-) -> ((f64, f64), f64) {
+) -> Option<(usize, (f64, f64), f64)> {
     let (wx, wy, ww, wh) = window;
-    let top_levels = elements.iter().filter(|entry| {
-        entry["role"].as_str().is_some_and(|role| {
-            matches!(
-                role.to_ascii_lowercase().as_str(),
-                "frame" | "window" | "dialog"
-            )
-        }) && entry.get("frame").is_some()
-    });
-    let candidates: Vec<&Value> = if window_scoped {
-        top_levels
-            .min_by_key(|entry| entry["depth"].as_u64().unwrap_or(u64::MAX))
-            .into_iter()
-            .collect()
-    } else {
-        top_levels.collect()
+    let top_level_depth = |entry: &Value| {
+        let role = entry["role"].as_str()?.to_ascii_lowercase();
+        let top_level = matches!(role.as_str(), "frame" | "window" | "dialog");
+        (top_level && entry.get("frame").is_some())
+            .then(|| entry["depth"].as_u64())
+            .flatten()
     };
-    let matched = candidates
-        .into_iter()
-        .filter_map(|entry| {
+    let depth = elements.iter().filter_map(top_level_depth).min()?;
+    elements
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| top_level_depth(entry) == Some(depth))
+        .filter_map(|(index, entry)| {
             let frame = &entry["frame"];
             let [x, y, w, h] = ["x", "y", "w", "h"].map(|key| frame[key].as_f64());
             let (x, y, w, h) = (x?, y?, w?, h?);
@@ -193,28 +213,27 @@ fn atspi_frame_space(
             // A frame unit spans `scale` pixels, so rounding moves each edge
             // by less than one unit.
             let fits = |frame: f64, window: i32| (frame * scale - f64::from(window)).abs() <= scale;
-            (scale >= 1.0 && fits(h, wh) && fits(x, wx) && fits(y, wy)).then_some(((x, y), scale))
+            (scale >= 1.0 && fits(h, wh) && fits(x, wx) && fits(y, wy)).then_some((
+                index,
+                (x, y),
+                scale,
+            ))
         })
-        .min_by(|a, b| a.1.total_cmp(&b.1));
-    match matched {
-        Some((origin, scale)) if scale > 1.0 => (origin, scale),
-        _ => ((f64::from(wx), f64::from(wy)), 1.0),
-    }
+        .min_by(|a, b| a.2.total_cmp(&b.2))
+        .filter(|(_, _, scale)| *scale > 1.0)
 }
 
 #[cfg(test)]
-mod atspi_frame_space_tests {
-    use super::atspi_frame_space;
-    use cua_driver_core::element_frame::with_screenshot_frames;
+mod x11_screenshot_frame_tests {
+    use super::with_x11_screenshot_frames;
     use serde_json::json;
 
     fn frames(
         window: (i32, i32, i32, i32),
         elements: Vec<serde_json::Value>,
-        window_scoped: bool,
     ) -> Vec<serde_json::Value> {
-        let (origin, unit) = atspi_frame_space(window, &elements, window_scoped);
-        with_screenshot_frames(elements, origin, unit)
+        let delivered = (window.2 as u32, window.3 as u32);
+        with_x11_screenshot_frames(window, elements, delivered, 1.0)
             .into_iter()
             .map(|entry| entry["screenshot_frame"].clone())
             .collect()
@@ -229,7 +248,7 @@ mod atspi_frame_space_tests {
             json!({"role": "push button", "depth": 1, "frame": {"x": 1390, "y": 220, "w": 50, "h": 30}}),
         ];
         assert_eq!(
-            frames((1040, 440, 1840, 1360), elements, true),
+            frames((1040, 440, 1840, 1360), elements),
             vec![
                 json!({"x": 0, "y": 0, "w": 1840, "h": 1360}),
                 json!({"x": 1740, "y": 0, "w": 100, "h": 60}),
@@ -244,7 +263,7 @@ mod atspi_frame_space_tests {
             json!({"role": "push button", "depth": 1, "frame": {"x": 1390, "y": 220, "w": 50, "h": 30}}),
         ];
         assert_eq!(
-            frames((520, 220, 920, 680), elements, true),
+            frames((520, 220, 920, 680), elements),
             vec![
                 json!({"x": 0, "y": 0, "w": 920, "h": 680}),
                 json!({"x": 870, "y": 0, "w": 50, "h": 30}),
@@ -261,7 +280,7 @@ mod atspi_frame_space_tests {
             json!({"role": "push button", "depth": 1, "frame": {"x": 720, "y": 420, "w": 50, "h": 30}}),
         ];
         assert_eq!(
-            frames((520, 220, 920, 680), elements, true)[1],
+            frames((520, 220, 920, 680), elements)[1],
             json!({"x": 200, "y": 200, "w": 50, "h": 30})
         );
     }
@@ -275,14 +294,37 @@ mod atspi_frame_space_tests {
             json!({"role": "dialog", "depth": 1, "frame": {"x": 0, "y": 0, "w": 960, "h": 540}}),
         ];
         assert_eq!(
-            frames((0, 0, 1920, 1080), elements.clone(), true)[0],
+            frames((0, 0, 1920, 1080), elements.clone())[0],
             json!({"x": 0, "y": 0, "w": 1920, "h": 1080})
         );
-        // An application-wide tree may hold another window's frame first.
+        // Element order does not pick the window frame.
         let other_window_first = elements.into_iter().rev().collect();
         assert_eq!(
-            frames((0, 0, 1920, 1080), other_window_first, false)[1],
+            frames((0, 0, 1920, 1080), other_window_first)[1],
             json!({"x": 0, "y": 0, "w": 1920, "h": 1080})
+        );
+    }
+
+    #[test]
+    fn a_nested_dialog_is_not_a_window_frame() {
+        let elements = vec![
+            json!({"role": "frame", "depth": 0, "frame": {"x": 0, "y": 0, "w": 1280, "h": 720}}),
+            json!({"role": "dialog", "depth": 1, "frame": {"x": 0, "y": 0, "w": 1920, "h": 1080}}),
+        ];
+        assert_eq!(
+            frames((0, 0, 2560, 1440), elements)[0],
+            json!({"x": 0, "y": 0, "w": 2560, "h": 1440})
+        );
+    }
+
+    #[test]
+    fn the_dip_root_spans_the_capture_despite_rounding() {
+        let elements = vec![
+            json!({"role": "frame", "depth": 0, "frame": {"x": 520, "y": 220, "w": 920, "h": 680}}),
+        ];
+        assert_eq!(
+            frames((1040, 440, 1840, 1361), elements)[0],
+            json!({"x": 0, "y": 0, "w": 1840, "h": 1361})
         );
     }
 
@@ -295,7 +337,7 @@ mod atspi_frame_space_tests {
             json!({"role": "frame", "depth": 0, "frame": {"x": 520, "y": 220, "w": 920, "h": 680}}),
         ];
         assert_eq!(
-            frames((1040, 440, 1840, 1360), elements, false)[1],
+            frames((1040, 440, 1840, 1360), elements)[1],
             json!({"x": 0, "y": 0, "w": 1840, "h": 1360})
         );
     }
@@ -306,7 +348,7 @@ mod atspi_frame_space_tests {
             json!({"role": "frame", "depth": 0, "frame": {"x": 520, "y": 220, "w": 920, "h": 680}}),
         ];
         assert_eq!(
-            frames((1041, 441, 1840, 1360), elements, true)[0],
+            frames((1041, 441, 1840, 1360), elements)[0],
             json!({"x": 0, "y": 0, "w": 1840, "h": 1360})
         );
     }
@@ -1055,23 +1097,19 @@ impl Tool for GetWindowStateTool {
                         &tr.tree_markdown,
                     );
                     let elements = framed_elements_first(elements);
-                    let frame_space = match x11_window {
-                        Some(window) => {
-                            Some(atspi_frame_space(window, &elements, tr.window_scoped))
-                        }
-                        None => popup_meta
-                            .as_ref()
-                            .map(|popup| ((f64::from(popup.x), f64::from(popup.y)), 1.0)),
-                    };
                     // Screenshot pixels: the capture is the window's own X11
                     // drawable (screen pixels), downsized by delivered/native.
-                    let elements = match (frame_space, shot_opt.as_ref()) {
-                        (Some((origin, unit)), Some((_, _, w, _, orig_w, _))) => {
+                    let elements = match (x11_window, &popup_meta, shot_opt.as_ref()) {
+                        (Some(window), _, Some((_, _, w, h, orig_w, _))) => {
+                            let scale = orig_w.map_or(1.0, |ow| *w as f64 / ow as f64);
+                            with_x11_screenshot_frames(window, elements, (*w, *h), scale)
+                        }
+                        (None, Some(popup), Some((_, _, w, _, orig_w, _))) => {
                             let scale = orig_w.map_or(1.0, |ow| *w as f64 / ow as f64);
                             cua_driver_core::element_frame::with_screenshot_frames(
                                 elements,
-                                origin,
-                                unit * scale,
+                                (f64::from(popup.x), f64::from(popup.y)),
+                                scale,
                             )
                         }
                         _ => elements,

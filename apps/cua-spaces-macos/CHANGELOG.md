@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.39.1](https://github.com/trycua/cua/compare/cua-spaces-v0.39.0...cua-spaces-v0.39.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.55.0 in Cua Spaces ([#8272](https://github.com/trycua/cua/issues/8272)) ([f376e91](https://github.com/trycua/cua/commit/f376e91748ee9898e765e2debb09440681e5b2fa))
+
 ## [0.39.0](https://github.com/trycua/cua/compare/cua-spaces-v0.38.19...cua-spaces-v0.39.0) (2026-11-20)
 
 

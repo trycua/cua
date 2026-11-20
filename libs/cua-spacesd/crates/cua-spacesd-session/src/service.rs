@@ -3180,6 +3180,27 @@ mod tests {
         assert!(!connection.hub.is_live_source(&target));
     }
 
+    /// #5376: a frame callback can still be delivering when the monitor
+    /// reports the window closed, before the connection drains the close.
+    #[tokio::test]
+    async fn a_frame_after_a_native_close_does_not_revive_the_target() {
+        let provider = Arc::new(MockProvider::new());
+        let mut connection = runtime(provider.clone()).connect();
+        hello(&mut connection).await;
+        let session_id = open(&mut connection, SessionPolicy::BackgroundOnly).await;
+        let target = connection.sessions[&session_id].target.id.clone();
+        let sink = provider
+            .sinks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)[0]
+            .clone();
+
+        sink.on_event(CaptureEvent::Closed);
+        sink.on_event(bgra_frame(4, 4, 30));
+
+        assert!(!connection.hub.is_live_source(&target));
+    }
+
     #[tokio::test]
     async fn explicitly_closed_target_can_reopen_without_stale_close_event() {
         let provider = Arc::new(MockProvider::new());

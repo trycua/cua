@@ -90,6 +90,7 @@ describe("keyboard mapping", () => {
     // The right Cmd held through the change is still Super.
     press("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
     blur();
+    blur();
     press("keydown", { key: "w", code: "KeyW", metaKey: true });
     press("keyup", { key: "w", code: "KeyW", metaKey: true });
     // Blur already released it on the guest: its late key-up leaves the left Cmd held.

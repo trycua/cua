@@ -799,7 +799,9 @@ export class MediaSession {
     // keeps its side for the next chord.
     on("blur", () => {
       for (const code of commands) {
-        send({ kind: "key", key: "meta", state: "up", modifiers: [], repeat: false }, asControl.get(code) ?? !!this.options.metaAsControl);
+        const control = asControl.get(code);
+        if (control === undefined) continue;
+        send({ kind: "key", key: "meta", state: "up", modifiers: [], repeat: false }, control);
         asControl.delete(code);
       }
       unsure = commands.size > 0;

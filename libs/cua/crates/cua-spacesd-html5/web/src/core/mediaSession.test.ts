@@ -515,6 +515,8 @@ describe("MediaSession in the Electron shell (hardware decode, keys, scrolls, ti
     const key = (type: string, init: KeyboardEventInit) => canvas.dispatchEvent(new KeyboardEvent(type, init));
     key("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
     canvas.dispatchEvent(new FocusEvent("blur"));
+    // A second focus change releases nothing more.
+    canvas.dispatchEvent(new FocusEvent("blur"));
     key("keydown", { key: "w", code: "KeyW", metaKey: true });
     key("keyup", { key: "w", code: "KeyW", metaKey: true });
     // Blur already released it on the guest: its late key-up leaves the left ⌘ held.

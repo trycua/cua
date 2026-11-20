@@ -59,7 +59,9 @@ core-foundation = "0.10"
 platform-windows = { path = "../platform-windows" }
 windows = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Gdi",
     "Win32_Security",
+    "Win32_System_LibraryLoader",
     "Win32_System_Threading",
     "Win32_UI_Input_Ime",
     "Win32_UI_Input_KeyboardAndMouse",

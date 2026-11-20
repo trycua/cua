@@ -144,9 +144,18 @@ pub struct WindowKeyScope {
     /// Held for apps that route keys only while AppKit-active (GTK 3); it
     /// drops after key is handed back.
     activation: Option<crate::input::appkit_activation::ActivationLease>,
+    /// Wait on drop until the app reports the hand-back as settled.
+    confirm_hand_back: bool,
 }
 
 impl WindowKeyScope {
+    /// On drop, wait until the app's key window is the one key went back to,
+    /// so a caller that releases its lease after the drop never lets the next
+    /// action read this scope's window as the user's key window.
+    pub fn confirm_hand_back(&mut self) {
+        self.confirm_hand_back = true;
+    }
+
     /// Keep `lease` for as long as this scope holds the window key.
     pub fn hold_activation(&mut self, lease: crate::input::appkit_activation::ActivationLease) {
         self.activation = Some(lease);
@@ -198,10 +207,16 @@ impl Drop for WindowKeyScope {
         match self.primed {
             KeyPrime::AlreadyKey => {}
             KeyPrime::KeyRecords => {
-                post_window_key_records(self.pid, Some(self.target), previous);
+                if post_window_key_records(self.pid, Some(self.target), previous)
+                    && self.confirm_hand_back
+                {
+                    await_key_focus(self.pid, previous, std::time::Duration::from_millis(400));
+                }
             }
             KeyPrime::AxFocusedWindow => {
-                set_app_focused_window(self.pid, previous);
+                if set_app_focused_window(self.pid, previous) && self.confirm_hand_back {
+                    await_key_focus(self.pid, previous, std::time::Duration::from_millis(200));
+                }
             }
         }
     }
@@ -369,6 +384,7 @@ pub fn enter_exact_window_key(pid: pid_t, target_wid: u32) -> Result<WindowKeySc
         order_before,
         primed,
         activation: None,
+        confirm_hand_back: false,
     })
 }
 

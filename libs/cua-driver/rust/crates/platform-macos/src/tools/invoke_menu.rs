@@ -572,21 +572,43 @@ impl PressAdmission {
 
 /// Run `work` on the blocking pool with an admission that is cancelled when
 /// this future is dropped, so a worker that outlives its call presses nothing.
-/// A press already admitted cannot be recalled, so the worker shares the pid's
-/// mutation lease and holds the desktop lane until it returns: the next action
-/// waits for it rather than running beside it.
+/// A press already admitted cannot be recalled, so the worker shares what the
+/// call holds (the pid's mutation lease, a [`PressHold`]) and the desktop lane
+/// until it returns: the next action waits for it rather than running beside
+/// it.
 async fn run_admitted<T: Send + 'static>(
-    mutation: Arc<super::BackgroundMutationLease>,
+    held: impl Send + 'static,
     work: impl FnOnce(&PressAdmission) -> T + Send + 'static,
 ) -> Result<T, tokio::task::JoinError> {
     let admission = PressAdmission::default();
     let _cancel = CancelOnDrop(admission.clone());
     let lane = cua_driver_core::tool::DesktopLease::current();
     tokio::task::spawn_blocking(move || {
-        let _held = (mutation, lane);
+        let _held = (held, lane);
         work(&admission)
     })
     .await
+}
+
+/// What a menu press holds until the call and every worker it started have
+/// returned. Fields drop in order: key goes back to the user's window, and
+/// the app confirms it, before the pid's mutation lease and the desktop lane
+/// are released.
+pub(super) struct PressHold {
+    _key: Option<crate::input::skylight::WindowKeyScope>,
+    _mutation: Arc<super::BackgroundMutationLease>,
+    _lane: Option<cua_driver_core::tool::DesktopLease>,
+}
+
+impl PressHold {
+    /// Hold only `mutation` (and this task's desktop lane): no key change.
+    pub(super) fn new(mutation: Arc<super::BackgroundMutationLease>) -> Arc<Self> {
+        Arc::new(Self {
+            _key: None,
+            _mutation: mutation,
+            _lane: cua_driver_core::tool::DesktopLease::current(),
+        })
+    }
 }
 
 /// What the background route knows about the pressed item.
@@ -903,7 +925,7 @@ pub(super) async fn run_in_background(
     window_id: u32,
     path: Vec<String>,
     request: MenuRequest,
-    mutation: Arc<super::BackgroundMutationLease>,
+    hold: Arc<PressHold>,
 ) -> ToolResult {
     let document = tokio::task::spawn_blocking(move || document_path_of_window(pid, window_id))
         .await
@@ -913,7 +935,7 @@ pub(super) async fn run_in_background(
         .as_deref()
         .and_then(crate::apple_events::modified_time);
     let press_path = path.clone();
-    let outcome = run_admitted(mutation.clone(), move |admission| {
+    let outcome = run_admitted(hold.clone(), move |admission| {
         let _key_focus = crate::key_focus_guard::protect(pid);
         unsafe { invoke_path_in_background(pid, window_id, &press_path, admission) }
     })
@@ -1148,13 +1170,31 @@ fn key_window_unknown(front_known: bool) -> &'static str {
 }
 
 /// Make the target the app's key window for one press, without raising it.
-/// The returned scope hands key back to the user's window when dropped.
+/// The returned hold hands key back to the user's window, confirmed, before
+/// it releases `mutation` and the desktop lane. The worker that primes key
+/// owns both leases, so a call dropped meanwhile still hands key back before
+/// the next action on the pid starts.
 async fn key_scope_behind_users_window(
     pid: i32,
     window_id: u32,
-) -> Result<crate::input::skylight::WindowKeyScope, ToolResult> {
-    match tokio::task::spawn_blocking(move || super::key_scope(pid, Some(window_id))).await {
-        Ok(Ok(Some(scope))) => Ok(scope),
+    mutation: Arc<super::BackgroundMutationLease>,
+) -> Result<Arc<PressHold>, ToolResult> {
+    let lane = cua_driver_core::tool::DesktopLease::current();
+    let primed = tokio::task::spawn_blocking(move || {
+        super::key_scope(pid, Some(window_id)).map(|scope| {
+            scope.map(|mut key| {
+                key.confirm_hand_back();
+                Arc::new(PressHold {
+                    _key: Some(key),
+                    _mutation: mutation,
+                    _lane: lane,
+                })
+            })
+        })
+    })
+    .await;
+    match primed {
+        Ok(Ok(Some(hold))) => Ok(hold),
         Ok(Ok(None)) => Err(behind_users_window_refusal(
             pid,
             window_id,
@@ -1261,7 +1301,8 @@ impl Tool for InvokeMenuTool {
             window_id,
         ) {
             MenuRoute::Background => {
-                return run_in_background(pid, window_id, path, MenuRequest::Path, mutation).await;
+                let hold = PressHold::new(mutation);
+                return run_in_background(pid, window_id, path, MenuRequest::Path, hold).await;
             }
             MenuRoute::KeyWindowUnknown { front_known } => {
                 return behind_users_window_refusal(
@@ -1271,20 +1312,22 @@ impl Tool for InvokeMenuTool {
                 );
             }
             MenuRoute::BehindUsersWindow => {
-                let scope = match key_scope_behind_users_window(pid, window_id).await {
-                    Ok(scope) => scope,
-                    Err(refused) => return refused,
-                };
+                let hold =
+                    match key_scope_behind_users_window(pid, window_id, mutation.clone()).await {
+                        Ok(hold) => hold,
+                        Err(refused) => return refused,
+                    };
                 let result = run_in_background(
                     pid,
                     window_id,
                     path,
                     MenuRequest::PathBehindUsersWindow,
-                    mutation.clone(),
+                    hold.clone(),
                 )
                 .await;
-                // Key goes back before the lease is released.
-                drop(scope);
+                // The last holder hands key back and waits for the app to
+                // confirm it: off the runtime, and before the lease goes.
+                let _ = tokio::task::spawn_blocking(move || drop(hold)).await;
                 return result;
             }
             MenuRoute::KeyWindowInFront => {}
@@ -1505,8 +1548,10 @@ mod tests {
         // The call holds the pid's lease while it awaits the worker, as
         // run_in_background does.
         let call = tokio::spawn(async move {
-            let mutation = Arc::new(super::super::acquire_background_mutation(pid).await);
-            run_admitted(mutation.clone(), move |_| {
+            let hold = PressHold::new(Arc::new(
+                super::super::acquire_background_mutation(pid).await,
+            ));
+            run_admitted(hold.clone(), move |_| {
                 let _ = started_tx.send(());
                 let _ = release_rx.recv();
             })

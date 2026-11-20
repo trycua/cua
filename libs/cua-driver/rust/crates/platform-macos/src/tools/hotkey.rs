@@ -435,7 +435,9 @@ impl Tool for HotkeyTool {
                         wid,
                         item.path,
                         super::invoke_menu::MenuRequest::KeyEquivalent(key_display.clone()),
-                        Arc::new(super::acquire_background_mutation(pid).await),
+                        super::invoke_menu::PressHold::new(Arc::new(
+                            super::acquire_background_mutation(pid).await,
+                        )),
                     )
                     .await;
                     // Only unavailable background menus may fall back to keys;

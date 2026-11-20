@@ -4,7 +4,7 @@
 //! Drives one yamux connection on a task and hands out streams.
 
 use std::collections::VecDeque;
-use std::future::poll_fn;
+use std::future::{poll_fn, Future as _};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -48,6 +48,7 @@ type OpenReply = oneshot::Sender<Result<yamux::Stream, yamux::ConnectionError>>;
 #[derive(Clone)]
 pub struct MuxHandle {
     open: mpsc::Sender<OpenReply>,
+    close: tokio_util::sync::CancellationToken,
 }
 
 impl MuxHandle {
@@ -61,6 +62,15 @@ impl MuxHandle {
         rx.await
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::NotConnected, "tunnel closed"))?
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::ConnectionAborted, e.to_string()))
+    }
+
+    /// Closes the connection cleanly: the driver stops accepting streams,
+    /// sends the yamux GoAway and the close frame of the transport, and
+    /// ends. The peer sees an orderly end of the connection (and
+    /// reconnects), not a reset. Streams still open are cut, so call it
+    /// after they finish.
+    pub fn close(&self) {
+        self.close.cancel();
     }
 
     /// True once the driver task has stopped.
@@ -86,9 +96,19 @@ where
 {
     let (open_tx, mut open_rx) = mpsc::channel::<OpenReply>(256);
     let mut connection = yamux::Connection::new(io, config(max_streams, window_bytes), mode);
+    let close = tokio_util::sync::CancellationToken::new();
+    let closing = close.clone();
     let task = tokio::spawn(async move {
         let mut pending: VecDeque<OpenReply> = VecDeque::new();
+        let mut close_requested = Box::pin(closing.cancelled_owned());
         let result = poll_fn(|cx: &mut Context<'_>| {
+            if close_requested.as_mut().poll(cx).is_ready() {
+                // Orderly close: flushes the GoAway and closes the transport.
+                return match connection.poll_close(cx) {
+                    Poll::Ready(result) => Poll::Ready(result),
+                    Poll::Pending => Poll::Pending,
+                };
+            }
             while let Poll::Ready(Some(reply)) = open_rx.poll_recv(cx) {
                 pending.push_back(reply);
             }
@@ -122,7 +142,13 @@ where
         }
         result
     });
-    (MuxHandle { open: open_tx }, task)
+    (
+        MuxHandle {
+            open: open_tx,
+            close,
+        },
+        task,
+    )
 }
 
 /// Byte counters for a machine.

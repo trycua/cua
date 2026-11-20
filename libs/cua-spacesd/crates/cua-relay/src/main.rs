@@ -226,6 +226,12 @@ struct Args {
     /// exiting (computers and clients reconnect on their own).
     #[arg(long, env = "CUA_RELAY_SHUTDOWN_GRACE_SECS", default_value_t = 10)]
     shutdown_grace_secs: u64,
+    /// Seconds after SIGTERM to keep machine tunnels open for client
+    /// streams still running (connection draining), refusing new tunnels
+    /// meanwhile; then the tunnels close cleanly and the relay exits. The
+    /// hard stop is this plus the shutdown grace. 0: close at once.
+    #[arg(long, env = "CUA_RELAY_DRAIN_SECS", default_value_t = 0)]
+    drain_secs: u64,
     /// The mesh coordinator and encrypted relay (`on` / `off`). Off unless
     /// set: a relay serves the mesh only when its deployment opts in.
     #[arg(long, env = "CUA_RELAY_MESH", default_value = "off")]
@@ -684,6 +690,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         meter,
         #[cfg(feature = "hosted")]
         org_access,
+        drain: Duration::from_secs(args.drain_secs),
         reconnect_grace: Duration::from_secs(args.reconnect_grace_secs),
         share_web,
         analytics_key_file: args.analytics_key_file,
@@ -716,7 +723,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     });
     // Long-lived streams (gRPC, tunnels) would hold a graceful shutdown
     // open indefinitely: bound it.
-    let grace = Duration::from_secs(args.shutdown_grace_secs);
+    // The drain runs inside the shutdown, so the hard stop leaves it its time
+    // first; the grace then covers the requests still open after it.
+    let grace = Duration::from_secs(args.shutdown_grace_secs.saturating_add(args.drain_secs));
     tokio::select! {
         served = serve => served?,
         _ = async {

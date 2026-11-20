@@ -532,6 +532,16 @@
     }
    },
    {
+    "id": "menu_button",
+    "kind": "menu_button",
+    "description": "SwiftUI Menu, exposed as AXMenuButton. Pressing it opens a menu (New Item, New Note) that SwiftUI publishes into the window's AX tree after the press returns; choosing an item sets menu_create=. menu_create= label.",
+    "controls": {
+     "button_aid": "menu-create",
+     "item_aid": "menu-create-item",
+     "state_label_aid": "lbl-menu-create"
+    }
+   },
+   {
     "id": "scroll_target",
     "kind": "scroll_viewer",
     "description": "SwiftUI ScrollView with a tall body between SCROLL_TOP/BOTTOM markers and a GeometryReader-tracked offset label. Tests scroll tool delivery. scroll_offset= label.",

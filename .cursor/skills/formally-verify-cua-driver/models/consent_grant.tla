@@ -25,15 +25,16 @@
 \*             admission, so its approval covers that call only)
 EXTENDS Naturals
 CONSTANTS InsertCheck
-VARIABLES ep, live, grant, pc, askEp, revokedSince, usedStale, askedEnded
-vars == <<ep, live, grant, pc, askEp, revokedSince, usedStale, askedEnded>>
+VARIABLES ep, live, cleanup, grant, pc, askEp, revokedSince, usedStale, askedEnded
+vars == <<ep, live, cleanup, grant, pc, askEp, revokedSince, usedStale, askedEnded>>
 \* ep: the label's current episode (1 or 2). live: it is live.
+\* cleanup: the episode has ended and its cleanup hooks have not run yet.
 \* grant: 0 (none) or the episode the grant in the map was approved in.
 \* pc: the call: "idle" | "queued" (waiting for the admission mutex) |
 \*     "prompting" (provider showing the consent prompt) | "done"
 \* askEp: the episode the prompt was asked in.
 
-Init == /\ ep = 1 /\ live = TRUE /\ grant = 0 /\ pc = "idle" /\ askEp = 0
+Init == /\ ep = 1 /\ live = TRUE /\ cleanup = FALSE /\ grant = 0 /\ pc = "idle" /\ askEp = 0
         /\ revokedSince = FALSE /\ usedStale = FALSE /\ askedEnded = FALSE
 
 \* authorize starts and the first lookup misses; it waits for the admission
@@ -43,41 +44,50 @@ Init == /\ ep = 1 /\ live = TRUE /\ grant = 0 /\ pc = "idle" /\ askEp = 0
 Ask == /\ pc = "idle" /\ grant = 0
        /\ pc' = "queued" /\ askEp' = ep /\ askedEnded' = ~live
        /\ revokedSince' = IF InsertCheck \in {"counter", "call"} THEN FALSE ELSE revokedSince
-       /\ UNCHANGED <<ep, live, grant, usedStale>>
+       /\ UNCHANGED <<ep, live, cleanup, grant, usedStale>>
 \* The admission mutex is taken (:442), the second lookup misses and the
 \* provider prompt starts (:464, broker.approve awaits the user).
 Admit == /\ pc = "queued" /\ grant = 0 /\ pc' = "prompting"
          /\ revokedSince' = IF InsertCheck = "prompt" THEN FALSE ELSE revokedSince
-         /\ UNCHANGED <<ep, live, grant, askEp, usedStale, askedEnded>>
+         /\ UNCHANGED <<ep, live, cleanup, grant, askEp, usedStale, askedEnded>>
 \* lookup hits: the call is let through on the grant in the map without a prompt.
 UseGrant == /\ pc = "idle" /\ live /\ grant # 0
             /\ usedStale' = (usedStale \/ grant # ep)
             /\ pc' = "done"
-            /\ UNCHANGED <<ep, live, grant, askEp, revokedSince, askedEnded>>
+            /\ UNCHANGED <<ep, live, cleanup, grant, askEp, revokedSince, askedEnded>>
 \* The user accepts; the grant is inserted under the grants mutex (:477).
 Accept == /\ pc = "prompting" /\ pc' = "done"
           /\ grant' = IF \/ InsertCheck # "none" /\ revokedSince
                          \/ InsertCheck = "call" /\ askedEnded
                       THEN grant ELSE askEp
-          /\ UNCHANGED <<ep, live, askEp, revokedSince, usedStale, askedEnded>>
-\* The session ends (end_session, its transport closes, or the idle sweep) and
-\* its end hook runs revoke_session (tool.rs:1374), which takes only the grants
-\* mutex, not the admission mutex a prompt holds.
-SessionEnds == /\ live /\ live' = FALSE /\ grant' = 0 /\ revokedSince' = TRUE
-               /\ UNCHANGED <<ep, pc, askEp, usedStale, askedEnded>>
+          /\ UNCHANGED <<ep, live, cleanup, askEp, revokedSince, usedStale, askedEnded>>
+\* The session ends (end_session, its transport closes, or the idle sweep):
+\* mark_session_ended (session.rs:1477-1566) publishes the tombstone and, under
+\* the same ended_sessions lock, registers the episode's cleanup.
+SessionEnds == /\ live /\ live' = FALSE /\ cleanup' = TRUE
+               /\ UNCHANGED <<ep, grant, pc, askEp, revokedSince, usedStale, askedEnded>>
+\* finish_session_end then runs the cleanup hooks (retry_session_cleanup
+\* :1598); the consent hook calls revoke_session (tool.rs:1374), which takes
+\* only the grants mutex, not the admission mutex a prompt holds.
+Revoke == /\ cleanup /\ cleanup' = FALSE /\ grant' = 0 /\ revokedSince' = TRUE
+          /\ UNCHANGED <<ep, live, pc, askEp, usedStale, askedEnded>>
 \* start_session on the same label from the same transport, or the next call
 \* of an idle-reclaimed session: a new episode with the same grant key
-\* (resource_grant_key :561-581 has no episode in it).
-Revive == /\ ~live /\ ep = 1 /\ live' = TRUE /\ ep' = 2
-          /\ UNCHANGED <<grant, pc, askEp, revokedSince, usedStale, askedEnded>>
+\* (resource_grant_key :561-581 has no episode in it). Revival is refused
+\* while the ended episode's cleanup is pending (cleanup_pending, read under
+\* the ended_sessions lock: session.rs:502, :686).
+Revive == /\ ~live /\ ~cleanup /\ ep = 1 /\ live' = TRUE /\ ep' = 2
+          /\ UNCHANGED <<cleanup, grant, pc, askEp, revokedSince, usedStale, askedEnded>>
 NextCall == /\ pc = "done" /\ pc' = "idle"
-            /\ UNCHANGED <<ep, live, grant, askEp, revokedSince, usedStale, askedEnded>>
+            /\ UNCHANGED <<ep, live, cleanup, grant, askEp, revokedSince, usedStale, askedEnded>>
 
-Next == Ask \/ Admit \/ UseGrant \/ Accept \/ SessionEnds \/ Revive \/ NextCall
+Next == Ask \/ Admit \/ UseGrant \/ Accept \/ SessionEnds \/ Revoke \/ Revive \/ NextCall
 Spec == Init /\ [][Next]_vars
 
-\* CG1. No grant outlives the episode it was approved in.
-CG1 == grant # 0 => (live /\ grant = ep)
+\* CG1. No grant outlives the cleanup of the episode it was approved in. It
+\* applies once cleanup has run: between the tombstone and revoke_session the
+\* ended episode's own grant may still be in the map.
+CG1 == grant # 0 => (grant = ep /\ (live \/ cleanup))
 \* CG2. No call is let through on a grant from an earlier episode.
 CG2 == ~usedStale
 ====

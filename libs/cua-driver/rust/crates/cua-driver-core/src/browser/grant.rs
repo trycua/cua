@@ -340,13 +340,6 @@ impl ExistingProfileGrants {
         })
     }
 
-    /// Remove the parked grant at `generation`, for the caller to release.
-    pub fn take_parked_generation(&self, generation: u64) -> Vec<ExistingProfileGrant> {
-        self.take_ended(|grant| {
-            matches!(grant.attachment, Attachment::Parked { .. }) && grant.generation == generation
-        })
-    }
-
     #[cfg(test)]
     pub fn parked_generations(&self) -> Vec<u64> {
         self.inner

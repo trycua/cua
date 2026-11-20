@@ -5714,33 +5714,47 @@ async fn a_reconnect_whose_platform_proof_refuses_the_owner_needs_setup() {
 }
 
 #[tokio::test]
-async fn a_session_end_does_not_park_a_socket_that_is_already_gone() {
-    const TRANSPORT: &str = "park-dead-socket";
+async fn a_session_end_ends_every_parked_hold_on_a_socket_that_is_already_gone() {
     let (f, _) = protected_existing_profile_fixture().await;
-    let prepared = attach_existing_profile(&f, TRANSPORT, TRANSPORT).await;
-    assert_eq!(prepared["status"], "ok", "{prepared}");
-    let grant = f
+    let generation = |session: &'static str| {
+        let engine = f.engine.clone();
+        async move {
+            engine
+                .existing_profile_grant(session, Some(session), 1)
+                .await
+                .unwrap()
+                .unwrap()
+                .generation
+        }
+    };
+    let a = attach_existing_profile(&f, "park-dead-socket-a", "park-dead-socket-a").await;
+    assert_eq!(a["status"], "ok", "{a}");
+    let a_generation = generation("park-dead-socket-a").await;
+    let b = attach_existing_profile(&f, "park-dead-socket-b", "park-dead-socket-b").await;
+    assert_eq!(b["status"], "ok", "{b}");
+    let b_generation = generation("park-dead-socket-b").await;
+    crate::session::fire_session_end("park-dead-socket-a");
+    assert!(f
         .engine
-        .existing_profile_grant(TRANSPORT, Some(TRANSPORT), 1)
-        .await
-        .unwrap()
-        .unwrap();
-    f.engine
-        .pool
-        .release_existing(&grant.endpoint_ws_url, grant.generation)
-        .await;
+        .existing_profile_grants
+        .parked_generations()
+        .contains(&a_generation));
 
-    crate::session::fire_session_end(TRANSPORT);
+    // The socket goes away while B still uses it; then B's session ends.
+    let url = f._server.ws_url();
+    f.engine.pool.release_existing(&url, a_generation).await;
+    f.engine.pool.release_existing(&url, b_generation).await;
+    crate::session::fire_session_end("park-dead-socket-b");
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while f
+        while !f
             .engine
             .existing_profile_grants
             .parked_generations()
-            .contains(&grant.generation)
+            .is_empty()
         {
             tokio::task::yield_now().await;
         }
     })
     .await
-    .expect("a session end must not keep a gone socket parked");
+    .expect("no grant stays parked on a socket that is gone");
 }

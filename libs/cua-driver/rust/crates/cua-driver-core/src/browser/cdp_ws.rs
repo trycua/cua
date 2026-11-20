@@ -872,6 +872,19 @@ impl CdpPool {
         }
     }
 
+    /// Whether a grant-owned socket for `ws_url` is open and within its
+    /// absolute bound.
+    pub async fn existing_socket_is_live(&self, ws_url: &str) -> bool {
+        let conns = self.inner.conns.lock().await;
+        conns.get(ws_url).is_some_and(|entry| {
+            !entry.conn.is_closed()
+                && entry
+                    .shared
+                    .as_ref()
+                    .is_some_and(|shared| !shared.expired(Instant::now(), self.inner.absolute_ttl))
+        })
+    }
+
     /// Number of sessions holding the shared socket for `ws_url`, or `None`
     /// when no grant-owned socket exists (diagnostics/tests).
     pub async fn shared_socket_holders(&self, ws_url: &str) -> Option<usize> {
@@ -1045,6 +1058,18 @@ mod tests {
         let fresh = pool.claim_existing(&url, 2).await.unwrap();
         assert!(!Arc::ptr_eq(&old, &fresh));
         assert_eq!(dials.load(Ordering::SeqCst), 2);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_socket_past_its_absolute_bound_is_not_live() {
+        let (url, _dials, server) = counting_browser().await;
+        let pool = CdpPool::with_shared_socket_absolute_ttl(std::time::Duration::from_millis(50));
+        assert!(!pool.existing_socket_is_live(&url).await, "no socket yet");
+        pool.claim_existing(&url, 1).await.unwrap();
+        assert!(pool.existing_socket_is_live(&url).await);
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(!pool.existing_socket_is_live(&url).await);
         server.abort();
     }
 

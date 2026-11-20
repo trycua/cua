@@ -804,10 +804,10 @@ impl BrowserEngine {
                     if !ended.parked.is_empty() {
                         engine.schedule_parked_reaper();
                     }
-                    let parked: Vec<_> = ended
+                    let parked_urls: Vec<_> = ended
                         .parked
                         .iter()
-                        .map(|grant| (grant.endpoint_ws_url.clone(), grant.generation))
+                        .map(|grant| grant.endpoint_ws_url.clone())
                         .collect();
                     let revoked: Vec<_> = ended.parked.into_iter().chain(ended.released).collect();
                     for grant in &revoked {
@@ -820,20 +820,9 @@ impl BrowserEngine {
                         runtime.spawn(async move {
                             // A socket already closed or past its absolute bound
                             // is not worth keeping for the next session.
-                            for (url, generation) in parked {
-                                if engine.pool.get_existing(&url, generation).await.is_err() {
-                                    for stale in engine
-                                        .existing_profile_grants
-                                        .take_parked_generation(generation)
-                                    {
-                                        engine
-                                            .pool
-                                            .release_existing(
-                                                &stale.endpoint_ws_url,
-                                                stale.generation,
-                                            )
-                                            .await;
-                                    }
+                            for url in parked_urls {
+                                if !engine.pool.existing_socket_is_live(&url).await {
+                                    engine.end_parked_on(&url).await;
                                 }
                             }
                             for grant in revoked {
@@ -978,9 +967,25 @@ impl BrowserEngine {
                 .release_existing(&grant.endpoint_ws_url, grant.generation)
                 .await;
         }
+        self.end_parked_on(&grant.endpoint_ws_url).await;
+    }
+
+    /// End the grants parked on the socket for `endpoint_ws_url`.
+    async fn end_parked_on(&self, endpoint_ws_url: &str) {
+        for parked in self.existing_profile_grants.take_parked_on(endpoint_ws_url) {
+            self.pool
+                .release_existing(&parked.endpoint_ws_url, parked.generation)
+                .await;
+        }
+    }
+
+    /// End the parked grants past their idle bound. Runs before any grant
+    /// joins a pooled socket, so a join never revives a socket whose parking
+    /// bound passed before its reaper woke.
+    pub(crate) async fn end_idle_parked(&self) {
         for parked in self
             .existing_profile_grants
-            .take_parked_on(&grant.endpoint_ws_url)
+            .take_idle_parked(std::time::Instant::now())
         {
             self.pool
                 .release_existing(&parked.endpoint_ws_url, parked.generation)
@@ -1007,17 +1012,8 @@ impl BrowserEngine {
             self.existing_profile_grants.parked_idle_ttl() + std::time::Duration::from_millis(10);
         runtime.spawn(async move {
             tokio::time::sleep(wait).await;
-            let Some(engine) = weak.upgrade() else {
-                return;
-            };
-            for parked in engine
-                .existing_profile_grants
-                .take_idle_parked(std::time::Instant::now())
-            {
-                engine
-                    .pool
-                    .release_existing(&parked.endpoint_ws_url, parked.generation)
-                    .await;
+            if let Some(engine) = weak.upgrade() {
+                engine.end_idle_parked().await;
             }
         });
     }
@@ -1164,6 +1160,7 @@ impl BrowserEngine {
             let attempt = super::grant::MAX_RECONNECT_ATTEMPTS
                 .saturating_sub(grant.reconnect_attempts_remaining)
                 .saturating_add(1);
+            self.end_idle_parked().await;
             let mut reconnect = Box::pin(self.pool.reconnect_existing(
                 &endpoint.ws_url,
                 old_generation,

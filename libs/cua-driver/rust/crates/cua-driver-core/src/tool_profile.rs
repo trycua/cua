@@ -83,6 +83,7 @@ pub const GROUPS: &[(&str, &[&str])] = &[
             "browser_dialog",
             "browser_download",
             "browser_set_input_files",
+            "browser_motion_policy",
             "install_extension",
         ],
     ),
@@ -126,6 +127,7 @@ pub const GROUPS: &[(&str, &[&str])] = &[
             "health_report",
             "check_permissions",
             "check_for_update",
+            "debug_window_info",
         ],
     ),
     (
@@ -134,6 +136,10 @@ pub const GROUPS: &[(&str, &[&str])] = &[
             "get_accessibility_tree",
             "get_cursor_position",
             "get_screen_size",
+            "mouse_button_down",
+            "mouse_button_up",
+            "mouse_drag",
+            "parallel_mouse_drag",
         ],
     ),
 ];

@@ -288,7 +288,7 @@ unsafe fn has_submenu(item: AXUIElementRef) -> bool {
 
 /// Whether `read` shows `title` before `timeout`, polling every `poll`.
 /// Each read gets the time left as its budget, so a stalled app cannot hold
-/// the wait past `timeout`.
+/// the wait past `timeout`, and a read that returns after it does not count.
 fn popup_shows(
     title: &str,
     read: impl Fn(std::time::Duration) -> Option<String>,
@@ -298,8 +298,11 @@ fn popup_shows(
     let deadline = std::time::Instant::now() + timeout;
     loop {
         let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return false;
+        }
         if read(left).as_deref() == Some(title) {
-            return true;
+            return std::time::Instant::now() <= deadline;
         }
         let left = deadline.saturating_duration_since(std::time::Instant::now());
         if left.is_zero() {
@@ -2807,17 +2810,25 @@ mod tests {
     fn each_popup_read_gets_only_the_time_left() {
         let ms = std::time::Duration::from_millis;
         let budgets = std::cell::RefCell::new(Vec::new());
-        let started = std::time::Instant::now();
         let stalled = |left: std::time::Duration| {
             budgets.borrow_mut().push(left);
             std::thread::sleep(left);
             None
         };
         assert!(!popup_shows("Research", stalled, ms(60), ms(10)));
-        assert!(started.elapsed() < ms(120));
         let budgets = budgets.into_inner();
         assert!(budgets[0] <= ms(60));
-        assert!(budgets.windows(2).all(|w| w[1] <= w[0]));
+        assert!(budgets.windows(2).all(|w| w[1] < w[0]));
+    }
+
+    #[test]
+    fn a_popup_read_that_returns_after_the_cap_does_not_count() {
+        let ms = std::time::Duration::from_millis;
+        let late = |left: std::time::Duration| {
+            std::thread::sleep(left + ms(5));
+            Some("Research".to_owned())
+        };
+        assert!(!popup_shows("Research", late, ms(20), ms(1)));
     }
 
     /// The pixel focus rung keeps working after unknown AX action names

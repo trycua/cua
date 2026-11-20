@@ -895,6 +895,13 @@ fn transport_from_legacy(
             }
         }
         "" if tool_name == "browser_type" => ActionTransport::BrowserCdpInputKey,
+        // Only move_cursor refusals reach here: an agent-cursor or window
+        // move was aimed at the overlay.
+        "" if tool_name == "move_cursor"
+            && args.get("scope").and_then(serde_json::Value::as_str) != Some("desktop") =>
+        {
+            ActionTransport::AgentCursorOverlay
+        }
         "" if args.get("scope").and_then(serde_json::Value::as_str) == Some("desktop") => {
             if cfg!(target_os = "macos") {
                 ActionTransport::MacosCgEventHid
@@ -1672,6 +1679,27 @@ mod tests {
                 "{args}"
             );
         }
+    }
+
+    /// A refused agent-cursor move, such as macOS without its overlay
+    /// host, still records a refusal on the overlay route.
+    #[test]
+    fn move_cursor_refusal_normalizes_on_the_overlay_route() {
+        let record = ActionExecutionRecord::from_legacy(
+            "move_cursor",
+            &serde_json::json!({"x": 10, "y": 20}),
+            &serde_json::json!({
+                "status": "refused",
+                "refusal": {
+                    "code": "facility_unavailable",
+                    "facility": "macos_cursor_overlay",
+                    "message": "macOS agent cursor overlay is unavailable",
+                }
+            }),
+        )
+        .expect("a move_cursor refusal normalizes");
+        assert_eq!(record.effect, ActionEffect::Refused);
+        assert_eq!(record.transport, ActionTransport::AgentCursorOverlay);
     }
 
     #[test]

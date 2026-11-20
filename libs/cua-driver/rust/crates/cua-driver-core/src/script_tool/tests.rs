@@ -920,3 +920,19 @@ fn a_long_role_name_target_leaves_the_recovery_call_in_the_summary() {
     assert!(summary.ends_with(look), "{summary}");
     assert!(summary.starts_with("on [2] button \"Apply"), "{summary}");
 }
+
+#[test]
+fn a_confirmed_value_that_quotes_a_look_tail_is_clipped_like_any_line() {
+    let quoted = format!(
+        "{}; effect not confirmed. Look first: {}",
+        "a".repeat(300),
+        "b".repeat(50)
+    );
+    let value = json!({
+        "text": format!("CONFIRMED: Set A1 to {quoted:?}."),
+        "target": {"element": "[3] cell \"A1\""},
+    });
+    let summary = super::summarize(&value);
+    assert!(summary.chars().count() <= super::SUMMARY_TEXT_LIMIT + 1);
+    assert!(summary.ends_with('…'), "{summary}");
+}

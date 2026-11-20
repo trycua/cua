@@ -889,10 +889,12 @@ impl<'a> Api<'a> {
 /// Short, model-facing summary of a successful call: the tool's own first
 /// line, which for an action is its verdict headline.
 fn summarize(value: &Value) -> String {
-    let text = value
+    let line = value
         .get("text")
         .and_then(Value::as_str)
-        .map(|text| crate::verdict::strip(text.lines().next().unwrap_or("")));
+        .map(|text| text.lines().next().unwrap_or(""));
+    let look = line.and_then(crate::verdict::look_tail);
+    let text = line.map(crate::verdict::strip);
     let target = value
         .get("target")
         .and_then(|target| target.get("element"))
@@ -901,11 +903,12 @@ fn summarize(value: &Value) -> String {
         (Some(target), Some(text)) if !text.is_empty() => {
             return clip_keeping_look(
                 &format!("on {}: {text}", clip(target, SUMMARY_TARGET_LIMIT)),
+                look,
                 SUMMARY_TEXT_LIMIT,
             )
         }
         (Some(target), _) => return format!("on {}", clip(target, SUMMARY_TARGET_LIMIT)),
-        (None, Some(text)) => return clip_keeping_look(text, SUMMARY_TEXT_LIMIT),
+        (None, Some(text)) => return clip_keeping_look(text, look, SUMMARY_TEXT_LIMIT),
         (None, None) => {}
     }
     match value {
@@ -1078,15 +1081,16 @@ fn render(
     }
 }
 
-/// Like [`clip`], but an unconfirmed headline keeps its closing
-/// `; … Look first: <call>` whole and the cut falls before it.
-fn clip_keeping_look(text: &str, max: usize) -> String {
+/// Like [`clip`], but an unconfirmed headline's closing `look` tail
+/// ([`crate::verdict::look_tail`]) is kept whole and the cut falls before it,
+/// while it fits in half the budget.
+fn clip_keeping_look(text: &str, look: Option<&str>, max: usize) -> String {
     if text.chars().count() <= max {
         return text.to_owned();
     }
-    match text.rsplit_once("; ") {
-        Some((what, look)) if look.contains("Look first: ") => {
-            let look = format!("; {look}");
+    match look.filter(|look| look.chars().count() <= max / 2) {
+        Some(look) if text.ends_with(look) => {
+            let what = &text[..text.len() - look.len()];
             let room = max.saturating_sub(look.chars().count() + 1);
             format!("{}{look}", clip(what, room))
         }

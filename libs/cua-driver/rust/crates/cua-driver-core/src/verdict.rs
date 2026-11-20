@@ -73,6 +73,28 @@ impl Verdict {
     }
 }
 
+/// How an `UNCONFIRMED` or `PARTIAL` headline ends, before the read to make.
+const NOT_CONFIRMED: &str = "; effect not confirmed. Look first: ";
+const NO_CHANGE: &str = "; the read-back shows no change. Look first: ";
+const PART_DELIVERED: &str = "; only part of it was delivered. Look first: ";
+
+/// The closing `; … Look first: <call>` of an `UNCONFIRMED` or `PARTIAL`
+/// headline line, so a batch that shortens the line can keep it whole.
+pub fn look_tail(line: &str) -> Option<&str> {
+    let markers = if line.starts_with("UNCONFIRMED: ") {
+        [NOT_CONFIRMED, NO_CHANGE].as_slice()
+    } else if line.starts_with("PARTIAL: ") {
+        [PART_DELIVERED].as_slice()
+    } else {
+        return None;
+    };
+    markers
+        .iter()
+        .filter_map(|marker| line.rfind(marker))
+        .max()
+        .map(|at| &line[at..])
+}
+
 /// The tool's own line with the headline's `WORD: ` prefix removed, for a
 /// batch line that already shows the verdict.
 pub fn strip(line: &str) -> &str {
@@ -171,11 +193,11 @@ fn headline(verdict: Verdict, noop: bool, said: &str, look: &str) -> String {
     let mut out = match verdict {
         Verdict::Confirmed | Verdict::Refused => format!("{word}: {what}."),
         Verdict::Unconfirmed if noop => {
-            format!("{word}: {what}; the read-back shows no change. Look first: {look}")
+            format!("{word}: {what}{NO_CHANGE}{look}")
         }
-        Verdict::Unconfirmed => format!("{word}: {what}; effect not confirmed. Look first: {look}"),
+        Verdict::Unconfirmed => format!("{word}: {what}{NOT_CONFIRMED}{look}"),
         Verdict::Partial => {
-            format!("{word}: {what}; only part of it was delivered. Look first: {look}")
+            format!("{word}: {what}{PART_DELIVERED}{look}")
         }
     };
     if cut {
@@ -321,6 +343,23 @@ mod tests {
         );
         annotate("click", &mut result);
         assert!(first_text(&result).ends_with("Look first: get_desktop_state"));
+    }
+
+    #[test]
+    fn only_an_unconfirmed_or_partial_headline_has_a_look_tail() {
+        assert_eq!(
+            look_tail("UNCONFIRMED: a; b; effect not confirmed. Look first: get_desktop_state"),
+            Some("; effect not confirmed. Look first: get_desktop_state")
+        );
+        assert_eq!(
+            look_tail("PARTIAL: a; only part of it was delivered. Look first: x"),
+            Some("; only part of it was delivered. Look first: x")
+        );
+        assert_eq!(
+            look_tail("CONFIRMED: Set A1 to \"; effect not confirmed. Look first: x\"."),
+            None
+        );
+        assert_eq!(look_tail("UNCONFIRMED: a; Look first: x"), None);
     }
 
     #[test]

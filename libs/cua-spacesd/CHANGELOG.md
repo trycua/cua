@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.2](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.1...cua-spacesd-v0.17.2) (2026-11-20)
+
+
+### Bug Fixes
+
+* **spacesd:** keep jemalloc out of the cua-spacesd build ([#8349](https://github.com/trycua/cua/issues/8349)) ([2b73a16](https://github.com/trycua/cua/commit/2b73a16dfe703e78ec823e71d9120f1785d4c835))
+
 ## [0.17.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.0...cua-spacesd-v0.17.1) (2026-11-20)
 
 

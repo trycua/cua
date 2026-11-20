@@ -1442,16 +1442,16 @@ async fn resolve_window_frame(
     // list never carries: describe it from the server directly, and let it
     // correlate with the toolkit's popup toplevels (role `window` for GTK
     // menus, `menu` / `popup menu` elsewhere).
-    let (window, popup) = match crate::x11::list_windows(Some(pid))
+    let read_window = || match crate::x11::list_windows(Some(pid))
         .into_iter()
         .find(|candidate| candidate.xid == xid)
     {
-        Some(window) => (window, false),
-        None => (
-            crate::x11::window_info(xid).filter(|w| w.is_on_screen)?,
-            true,
-        ),
+        Some(window) => Some((window, false)),
+        None => crate::x11::window_info(xid)
+            .filter(|w| w.is_on_screen)
+            .map(|window| (window, true)),
     };
+    let (window, popup) = read_window()?;
     let mut candidates: Vec<(usize, (i32, i32, i32, i32))> = Vec::new();
     for (ordinal, oref) in seeds.iter().enumerate() {
         let Some(Ok(acc)) = call(accessible_for(conn, oref)).await else {
@@ -1481,7 +1481,17 @@ async fn resolve_window_frame(
             candidates.push((ordinal, extents));
         }
     }
-    let resolved = correlate_frame_to_window(&candidates, &window);
+    // The extents were read after the geometry. A window that moved in
+    // between can leave a same-size sibling sitting on its old bounds.
+    let unmoved = read_window().is_some_and(|(again, _)| {
+        (again.x, again.y, again.width, again.height)
+            == (window.x, window.y, window.width, window.height)
+    });
+    let resolved = if unmoved {
+        correlate_frame_to_window(&candidates, &window)
+    } else {
+        None
+    };
     if resolved.is_none() {
         dlog!(
             "could not correlate xid {xid} to one of pid {pid}'s {} top-level frame(s); \

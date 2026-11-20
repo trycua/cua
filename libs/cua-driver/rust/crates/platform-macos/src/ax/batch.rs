@@ -297,6 +297,93 @@ enum Reply {
     Unanswered,
 }
 
+/// A small, explicitly selected set of attributes read before an action.
+/// Keep this within one observation phase: a write or wait requires a fresh read.
+pub(crate) struct AttributeBatch<const N: usize> {
+    element: AXUIElementRef,
+    names: [&'static str; N],
+    reply: Reply,
+}
+
+impl<const N: usize> Drop for AttributeBatch<N> {
+    fn drop(&mut self) {
+        if let Reply::Values(values) = self.reply {
+            unsafe { CFRelease(values as CFTypeRef) };
+        }
+    }
+}
+
+impl<const N: usize> AttributeBatch<N> {
+    /// # Safety
+    /// `element` must remain live until the batch is dropped, including when
+    /// a refused batch falls back to individual attribute reads.
+    pub(crate) unsafe fn read(element: AXUIElementRef, names: [&'static str; N]) -> Self {
+        let cf_names = CFArray::from_CFTypes(&names.map(CFString::new));
+        Self {
+            element,
+            names,
+            reply: copy_multiple(element, &cf_names),
+        }
+    }
+
+    unsafe fn raw(&self, name: &str) -> Option<CFTypeRef> {
+        let index = self
+            .names
+            .iter()
+            .position(|candidate| *candidate == name)
+            .expect("attribute must be included in the batch");
+        match self.reply {
+            Reply::Values(values) => {
+                let value = CFArrayGetValueAtIndex(values, index as isize) as CFTypeRef;
+                (!value.is_null()).then_some(value)
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) unsafe fn string(&self, name: &str) -> Option<String> {
+        if matches!(self.reply, Reply::Refused) {
+            return copy_string_attr(self.element, name);
+        }
+        string_value(self.raw(name)?)
+    }
+
+    pub(crate) unsafe fn number(&self, name: &str) -> Option<f64> {
+        if matches!(self.reply, Reply::Refused) {
+            return copy_number_attr(self.element, name);
+        }
+        let value = self.raw(name)?;
+        (CFGetTypeID(value) == CFNumber::type_id())
+            .then(|| CFNumber::wrap_under_get_rule(value as _).to_f64())
+            .flatten()
+    }
+
+    pub(crate) unsafe fn bool(&self, name: &str) -> Option<bool> {
+        if matches!(self.reply, Reply::Refused) {
+            return copy_bool_attr(self.element, name);
+        }
+        let value = self.raw(name)?;
+        if CFGetTypeID(value) == CFBoolean::type_id() {
+            return Some(CFBoolean::wrap_under_get_rule(value as _).into());
+        }
+        self.number(name).map(|value| value != 0.0)
+    }
+
+    pub(crate) unsafe fn url(&self) -> Option<String> {
+        use core_foundation::url::CFURL;
+        if matches!(self.reply, Reply::Refused) {
+            return copy_url_attr(self.element);
+        }
+        let value = self.raw("AXURL")?;
+        (CFGetTypeID(value) == CFURL::type_id()).then(|| {
+            CFURL::wrap_under_get_rule(value as _)
+                .absolute()
+                .get_string()
+                .to_string()
+        })
+    }
+}
+
 unsafe fn copy_multiple(element: AXUIElementRef, names: &CFArray<CFString>) -> Reply {
     let mut values: CFArrayRef = std::ptr::null();
     let error = AXUIElementCopyMultipleAttributeValues(
@@ -369,6 +456,86 @@ fn is_failed_read(error: AXError) -> bool {
 #[cfg(test)]
 mod tests {
     use super::NodeAttr;
+
+    #[test]
+    fn action_batch_preserves_mixed_attribute_types_and_missing_slots() {
+        use super::*;
+        use core_foundation::{base::kCFNull, url::CFURL};
+
+        let role = CFString::new("AXTextField");
+        let empty = CFString::new("");
+        let enabled = CFBoolean::true_value();
+        let zero = CFNumber::from(0);
+        let nonzero = CFNumber::from(-2);
+        let url = CFURL::from_path(std::path::Path::new("/tmp/example.txt"), false).unwrap();
+        let error = kAXErrorAttributeUnsupported;
+        let unsupported = unsafe { AXValueCreate(5, (&error as *const AXError).cast()) };
+        assert!(!unsupported.is_null());
+        let values = CFArray::from_copyable(&[
+            role.as_CFTypeRef(),
+            empty.as_CFTypeRef(),
+            enabled.as_CFTypeRef(),
+            zero.as_CFTypeRef(),
+            nonzero.as_CFTypeRef(),
+            url.as_CFTypeRef(),
+            unsupported as CFTypeRef,
+            unsafe { kCFNull } as CFTypeRef,
+        ]);
+        let names = [
+            "AXRole",
+            "AXTitle",
+            "AXEnabled",
+            "AXSelected",
+            "AXFocused",
+            "AXURL",
+            "missing",
+            "null",
+        ];
+        unsafe {
+            CFRetain(values.as_CFTypeRef());
+        }
+        let batch = AttributeBatch {
+            // Decoding a successful reply must not contact the application.
+            element: std::ptr::null_mut(),
+            names,
+            reply: Reply::Values(values.as_concrete_TypeRef()),
+        };
+        unsafe {
+            assert_eq!(batch.string("AXRole").as_deref(), Some("AXTextField"));
+            assert_eq!(batch.string("AXTitle").as_deref(), Some(""));
+            assert_eq!(batch.bool("AXEnabled"), Some(true));
+            assert_eq!(batch.bool("AXSelected"), Some(false));
+            assert_eq!(batch.bool("AXFocused"), Some(true));
+            assert_eq!(batch.number("AXFocused"), Some(-2.0));
+            assert_eq!(batch.url(), Some(url.absolute().get_string().to_string()));
+            assert_eq!(batch.string("AXEnabled"), None);
+            assert_eq!(batch.bool("AXRole"), None);
+            assert_eq!(batch.number("AXRole"), None);
+            for name in ["missing", "null"] {
+                assert_eq!(batch.string(name), None);
+                assert_eq!(batch.bool(name), None);
+                assert_eq!(batch.number(name), None);
+            }
+            CFRelease(unsupported as CFTypeRef);
+        }
+    }
+
+    #[test]
+    fn unanswered_action_batch_does_not_retry_individual_reads() {
+        use super::*;
+        let batch = AttributeBatch {
+            // Any fallback would dereference this invalid element.
+            element: std::ptr::null_mut(),
+            names: ["AXRole", "AXEnabled", "AXValue", "AXURL"],
+            reply: Reply::Unanswered,
+        };
+        unsafe {
+            assert_eq!(batch.string("AXRole"), None);
+            assert_eq!(batch.bool("AXEnabled"), None);
+            assert_eq!(batch.number("AXValue"), None);
+            assert_eq!(batch.url(), None);
+        }
+    }
 
     #[test]
     fn only_an_unanswered_attribute_is_a_failed_read() {

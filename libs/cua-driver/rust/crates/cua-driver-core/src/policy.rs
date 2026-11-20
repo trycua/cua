@@ -962,7 +962,7 @@ allow:
 
     #[cfg(feature = "yaml")]
     #[test]
-    fn yaml_constrains_launch_app_path_aumid_and_argument_items() {
+    fn yaml_constrains_launch_app_path_and_argument_items() {
         let policy = yaml_policy(
             r#"
 allow:
@@ -970,7 +970,7 @@ allow:
     - tool: launch_app
       constraints:
         path: { pattern: '^C:\\Windows\\System32\\notepad\.exe$' }
-        aumid: { optional: true, allowed: [] }
+        launch_path: { optional: true, allowed: [] }
         additional_arguments:
           optional: true
           items: { pattern: '^[A-Za-z0-9_.-]+\.txt$' }
@@ -1002,13 +1002,13 @@ allow:
             ),
             PolicyDecision::Deny(reason) if reason.contains("'additional_arguments' must be an array")
         ));
-        // aumid takes precedence over path, so a matching path must not carry one.
+        // launch_path takes precedence over path, so a matching path must not carry one.
         assert!(matches!(
             policy.evaluate(
                 "launch_app",
-                &serde_json::json!({"path": notepad, "aumid": "Microsoft.WindowsTerminal_8wekyb3d8bbwe!App"})
+                &serde_json::json!({"path": notepad, "launch_path": r"C:\Windows\System32\cmd.exe"})
             ),
-            PolicyDecision::Deny(reason) if reason.contains("'aumid' is not in the allowed values")
+            PolicyDecision::Deny(reason) if reason.contains("'launch_path' is not in the allowed values")
         ));
         assert!(matches!(
             policy.evaluate("launch_app", &serde_json::json!({"name": "cmd"})),

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.6](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.5...cua-spacesd-v0.16.6) (2026-11-20)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** stop capture leases outside the locks their callbacks take ([#8086](https://github.com/trycua/cua/issues/8086)) ([eca3156](https://github.com/trycua/cua/commit/eca3156e213d2ba6ede7b21ff63974c6a6dd3412))
+
 ## [0.16.5](https://github.com/trycua/cua/compare/cua-spacesd-v0.16.4...cua-spacesd-v0.16.5) (2026-11-19)
 
 

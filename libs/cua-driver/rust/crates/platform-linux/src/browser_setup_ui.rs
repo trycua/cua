@@ -968,6 +968,7 @@ fn trusted_setup_navigation(
         input.check()?;
         let tree =
             window_scoped_tree(pid, window_id).map_err(|error| anyhow::anyhow!(error.message))?;
+        handle.observe_document_uris(&tree);
         let step = created_tab(&baseline, &tree).map_err(|error| anyhow::anyhow!(error.message))?;
         if let Some(object) = proof.observe(step) {
             handle.owned_setup_tab = Some(object);
@@ -1734,6 +1735,7 @@ fn set_remote_debugging(
         foregrounded_window: false,
         injected_global_input: false,
     };
+    handle.observe_document_uris(&initial);
     if initial_checkbox.is_none() {
         if let Err(error) = open_setup_page(
             &mut handle,
@@ -1796,6 +1798,7 @@ fn set_remote_debugging(
                             "trusted Edge checkbox fallback is not qualified on Hyprland",
                         )));
                     }
+                    let saw_document_uri = std::cell::Cell::new(false);
                     let clicked = with_target_foreground(
                         pid,
                         window_id,
@@ -1803,6 +1806,7 @@ fn set_remote_debugging(
                         || {
                             std::thread::sleep(Duration::from_millis(60));
                             let tree = crate::atspi::walk_tree(pid, window_id, None);
+                            saw_document_uri.set(!document_uris(&tree.nodes).is_empty());
                             let checkbox = exact_setup_checkbox(
                             &tree.nodes,
                             descriptor,
@@ -1858,6 +1862,7 @@ fn set_remote_debugging(
                             Ok(true)
                         },
                     );
+                    handle.reports_document_uri |= saw_document_uri.get();
                     match clicked {
                         Ok(injected) => handle.injected_global_input |= injected,
                         Err(error) => {

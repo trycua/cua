@@ -1239,6 +1239,28 @@ impl BrowserEngine {
         transport_session: Option<&str>,
         target: &str,
     ) -> Result<(i64, HeadlessLaunch), BrowserRefusal> {
+        self.find_headless_launch(target, |launch| {
+            launch.session == session && launch.transport_session.as_deref() == transport_session
+        })
+    }
+
+    /// The headless launch `target` names in `session`, from any transport.
+    /// Authorization attests the resource with it before dispatch, where the
+    /// trusted transport is not among the public arguments; the bind and
+    /// every mutation still resolve the anchor with the exact transport.
+    pub(crate) fn session_headless_launch(
+        &self,
+        session: &str,
+        target: &str,
+    ) -> Result<(i64, HeadlessLaunch), BrowserRefusal> {
+        self.find_headless_launch(target, |launch| launch.session == session)
+    }
+
+    fn find_headless_launch(
+        &self,
+        target: &str,
+        owned: impl Fn(&HeadlessLaunch) -> bool,
+    ) -> Result<(i64, HeadlessLaunch), BrowserRefusal> {
         self.managed_browsers
             .lock()
             .unwrap()
@@ -1247,11 +1269,7 @@ impl BrowserEngine {
                 browser
                     .headless
                     .as_ref()
-                    .filter(|launch| {
-                        launch.target == target
-                            && launch.session == session
-                            && launch.transport_session.as_deref() == transport_session
-                    })
+                    .filter(|launch| launch.target == target && owned(launch))
                     .map(|launch| (browser.owned_pid, launch.clone()))
             })
             .ok_or_else(|| {

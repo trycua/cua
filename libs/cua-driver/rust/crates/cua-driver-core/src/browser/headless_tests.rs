@@ -431,6 +431,91 @@ async fn headless_prepare_binds_by_anchor_and_does_typed_dom_work_without_native
     crate::session::fire_session_end(&session);
 }
 
+/// Bounded mode attests a headless bind from its launch record. It has no
+/// window, so falling through to display discovery would refuse it on a host
+/// with no display.
+#[cfg(feature = "yaml")]
+#[tokio::test]
+async fn bounded_registry_binds_a_headless_anchor_without_a_display() {
+    use std::io::Write;
+
+    let h = harness().await;
+    let mut manifest = tempfile::NamedTempFile::new().unwrap();
+    manifest
+        .write_all(
+            br#"
+version: 1
+mode: bounded
+expires_after: 1h
+idle_timeout: 30m
+resources:
+  browser:
+    origins: [https://fixture.test]
+allow:
+  tools: [browser_prepare, get_browser_state]
+"#,
+        )
+        .unwrap();
+    let manifest =
+        Arc::new(crate::session_manifest::load_manifest(manifest.path()).expect("manifest loads"));
+    let ceiling = crate::session_authorization::SessionModeCeiling::for_trusted_sessions(
+        [crate::authorization::PermissionMode::Bounded],
+        false,
+        std::time::Duration::from_secs(60),
+        std::time::Duration::from_secs(30),
+    )
+    .unwrap();
+    let context = crate::session_authorization::SessionAuthorizationRegistry::with_ceiling(ceiling)
+        .compatibility_context(
+            crate::authorization::PermissionMode::Bounded,
+            Some(manifest),
+        )
+        .unwrap();
+    let mut registry = crate::tool::ToolRegistry::new();
+    registry.register(Box::new(BrowserPrepareTool::new(h.engine.clone())));
+    registry.register(Box::new(GetBrowserStateTool::new(h.engine.clone())));
+    let session = unique("headless-bounded");
+
+    let prepared = registry
+        .invoke_with_context(
+            "browser_prepare",
+            json!({
+                "session": session, "headless": true, "allow_launch": true,
+                "profile": {"mode": "isolated_new"},
+            }),
+            context.clone(),
+        )
+        .await;
+    let s = structured(&prepared);
+    assert_eq!(s["status"], "ok", "{s}");
+    let anchor = s["attachment"]["headless_target"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let bind = registry
+        .invoke_with_context(
+            "get_browser_state",
+            json!({"headless_target": anchor, "session": session}),
+            context.clone(),
+        )
+        .await;
+    let s = structured(&bind);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["binding_route"], "driver_owned_headless");
+
+    let forged = registry
+        .invoke_with_context(
+            "get_browser_state",
+            json!({"headless_target": "hl-forged", "session": session}),
+            context.clone(),
+        )
+        .await;
+    assert_eq!(refusal_code(&forged), "browser_binding_stale");
+    assert_eq!(h.platform.native_calls.load(Ordering::SeqCst), 0);
+    crate::session::fire_session_end(&context.runtime_session_key(&session));
+}
+
 #[tokio::test]
 async fn headless_prepare_refuses_out_of_scope_requests() {
     let h = harness().await;

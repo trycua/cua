@@ -291,10 +291,9 @@ pub(crate) async fn browser_resource_ownership(
             .map(|target| target.pid)
             .or_else(|| {
                 let target = args.get("headless_target").and_then(Value::as_str)?;
-                let transport = args.get("_transport_session_id").and_then(Value::as_str);
                 engine
-                    .headless_launch(&runtime_session, transport, target)
-                    .or_else(|_| engine.headless_launch(session, transport, target))
+                    .session_headless_launch(&runtime_session, target)
+                    .or_else(|_| engine.session_headless_launch(session, target))
                     .ok()
                     .map(|(pid, _)| pid)
             })
@@ -311,6 +310,42 @@ pub(crate) async fn browser_resource_ownership(
     } else {
         ProtectedResourceOwnership::UserOwned
     }
+}
+
+/// The resource a `headless_target` bind observes: the driver-owned headless
+/// browser this session launched. It has no native window or tab yet, so its
+/// launch record and live process identity attest it.
+async fn headless_protected_resource_scope(
+    engine: &BrowserEngine,
+    args: &Value,
+) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
+    let session = args
+        .get("session")
+        .and_then(Value::as_str)
+        .filter(|session| !session.is_empty())
+        .ok_or_else(|| "the browser operation requires an explicit session".to_owned())?;
+    let target = args
+        .get("headless_target")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "headless_target must be a string".to_owned())?;
+    let runtime_session = crate::tool::current_dispatch_authorization_context()
+        .map(|context| context.runtime_session_key(session))
+        .unwrap_or_else(|| session.to_owned());
+    let (pid, launch) = engine.session_headless_launch(&runtime_session, target)?;
+    let live = engine.platform.process_fingerprint(pid).await?;
+    if !launch.fingerprint.matches(&live) {
+        return Err(BrowserRefusal::new(
+            BrowserRefusalCode::BrowserBindingStale,
+            "the driver-owned headless browser process exited or was replaced; prepare it again",
+        )
+        .into());
+    }
+    Ok(Some(json!({
+        "kind": "driver_owned_headless_browser",
+        "pid": pid,
+        "process_fingerprint": launch.fingerprint,
+        "action_class": "page_observation",
+    })))
 }
 
 pub(crate) async fn browser_protected_resource_scope(
@@ -523,10 +558,12 @@ impl Tool for GetBrowserStateTool {
         adapter_id: &str,
         args: &Value,
     ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
-        if adapter_id == "private_observation"
-            && args.get("target_id").and_then(Value::as_str).is_some()
-        {
+        if adapter_id != "private_observation" {
+            Ok(None)
+        } else if args.get("target_id").and_then(Value::as_str).is_some() {
             browser_protected_resource_scope(&self.engine, args, "get_browser_state").await
+        } else if args.get("headless_target").is_some() {
+            headless_protected_resource_scope(&self.engine, args).await
         } else {
             Ok(None)
         }

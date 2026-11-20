@@ -702,8 +702,13 @@ public final class LiveStreamSession: ObservableObject {
     /// Space, empty too: the Space's own clipboard is what its paste inserts.
     /// Input sent meanwhile, another paste too, waits behind the chord for
     /// at most `pasteWait`, so a slow or failed transfer still delivers the
-    /// keys, in order.
+    /// keys, in order. Super+V on a Linux or Windows guest (the right ⌘) is
+    /// the desktop's own shortcut and goes as keys.
     public func paste(_ events: [InteractiveInputEvent], text: String) {
+        if provider.commandAsControl, events.contains(where: \.hasSuperKey) {
+            send(events)
+            return
+        }
         if heldInput != nil {
             heldInput?.append(.paste(events, text))
             return

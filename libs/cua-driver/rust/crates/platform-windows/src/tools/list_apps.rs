@@ -136,8 +136,8 @@ impl Tool for ListAppsTool {
                 // A packaged process (Store / MSIX app) never matches a
                 // Start-Menu `.lnk` by basename, so it would otherwise surface
                 // with no identity and no bundle_id grant could ever match it.
-                let package = crate::win32::process_package_identity(pid);
-                let merged = packaged_installed_match(&package, &installed).or_else(|| {
+                let aumid = crate::win32::process_app_user_model_id(pid);
+                let merged = packaged_installed_match(aumid.as_deref(), &installed).or_else(|| {
                     let key = name.to_ascii_lowercase();
                     let candidates = by_exe.get(&key).map(|v| v.as_slice()).unwrap_or(&[]);
                     disambiguate_installed_match(candidates, &installed, &name)
@@ -248,32 +248,23 @@ fn disambiguate_installed_match(
         .or_else(|| candidates.first().copied())
 }
 
-/// Pick the installed UWP entry for a running packaged process from the
-/// identity Windows attests for it. Precedence:
-///   1. the entry whose launch_path is exactly `shell:appsFolder\{AUMID}`
-///   2. when the process has no AUMID (a packaged helper that was not
-///      activated as an application), the only entry of its package family
+/// Pick the installed UWP entry whose launch_path is exactly
+/// `shell:appsFolder\{AUMID}` for the AUMID Windows attests for a running
+/// process.
 ///
-/// A process whose AUMID names a different app of the same package gets no
-/// match, so it never borrows a sibling app's launch_path.
+/// A packaged process with no AUMID gets no match: the installed catalog
+/// keeps one entry per package, so its family alone cannot say which app the
+/// process belongs to. A process whose AUMID names a different app of the
+/// same package gets no match either, so it never borrows a sibling app's
+/// launch_path.
 fn packaged_installed_match(
-    package: &crate::win32::PackageIdentity,
+    aumid: Option<&str>,
     installed: &[crate::win32::InstalledApp],
 ) -> Option<usize> {
-    let mut uwp = installed
+    let launch_path = format!("shell:appsFolder\\{}", aumid?);
+    installed
         .iter()
-        .enumerate()
-        .filter(|(_, app)| app.kind == "uwp");
-    if let Some(aumid) = package.app_user_model_id.as_deref() {
-        let launch_path = format!("shell:appsFolder\\{aumid}");
-        return uwp
-            .find(|(_, app)| app.launch_path.eq_ignore_ascii_case(&launch_path))
-            .map(|(index, _)| index);
-    }
-    let family = package.family_name.as_deref()?;
-    let mut matches = uwp.filter(|(_, app)| app.bundle_id.eq_ignore_ascii_case(family));
-    let (index, _) = matches.next()?;
-    matches.next().is_none().then_some(index)
+        .position(|app| app.kind == "uwp" && app.launch_path.eq_ignore_ascii_case(&launch_path))
 }
 
 #[cfg(test)]

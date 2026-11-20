@@ -4893,7 +4893,7 @@ mod spare_keycode_restore_tests {
     }
 
     /// The driver the next test kills: it binds a spare keycode, reports
-    /// it, and waits. Outside that test it does nothing.
+    /// it on stderr, where libtest writes nothing, and waits. Outside that test it does nothing.
     #[test]
     #[ignore = "starts its own Xvfb"]
     fn spare_keycode_holder() {
@@ -4905,7 +4905,7 @@ mod spare_keycode_restore_tests {
         let (keycode, guard) =
             keycode_for_keysym(&conn, &mut mapping, HELD_KEYSYM, "\u{4e2d}").unwrap();
         std::mem::forget(guard);
-        println!("bound {keycode}");
+        eprintln!("bound {keycode}");
         loop {
             sleep(Duration::from_secs(60));
         }
@@ -4926,11 +4926,11 @@ mod spare_keycode_restore_tests {
                 .env(HOLDER, "1")
                 .env("DISPLAY", &display)
                 .env_remove("WAYLAND_DISPLAY")
-                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
                 .spawn()
                 .unwrap(),
         );
-        let keycode: u8 = BufReader::new(holder.0.stdout.take().unwrap())
+        let keycode: u8 = BufReader::new(holder.0.stderr.take().unwrap())
             .lines()
             .map(Result::unwrap)
             .find_map(|line| line.strip_prefix("bound ").map(|k| k.parse().unwrap()))

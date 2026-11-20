@@ -1483,28 +1483,6 @@ async fn machine_connect_inner(
     if relay.is_draining() {
         return draining_response();
     }
-    // A reconnect storm (every machine back at once after a restart) is let
-    // in at a steady rate; the rest are told when to come back.
-    let admitted = relay
-        .join_limiter
-        .lock()
-        .expect("join limiter")
-        .admit(Instant::now());
-    if let Err(wait) = admitted {
-        let unit = {
-            use rand::Rng as _;
-            rand::thread_rng().gen::<f64>()
-        };
-        let secs = crate::join_limit::retry_after_secs(wait, Duration::from_secs(5), unit);
-        let mut response = text(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "the relay is busy; try again shortly",
-        );
-        if let Ok(v) = HeaderValue::from_str(&secs.to_string()) {
-            response.headers_mut().insert(header::RETRY_AFTER, v);
-        }
-        return response;
-    }
     let registrant = if let Some(index) = relay.token_index(&headers) {
         if relay.directory.get(&id).is_some() {
             return text(
@@ -1539,6 +1517,31 @@ async fn machine_connect_inner(
             }
         }
     };
+    // After the credential is checked: a computer the relay does not know
+    // (removed, rotated) is refused with a 401 that holds no state and takes no
+    // slot, so a crowd of stale tokens cannot starve real machines of joins.
+    // A reconnect storm (every machine back at once after a restart) is let
+    // in at a steady rate; the rest are told when to come back.
+    let admitted = relay
+        .join_limiter
+        .lock()
+        .expect("join limiter")
+        .admit(Instant::now());
+    if let Err(wait) = admitted {
+        let unit = {
+            use rand::Rng as _;
+            rand::thread_rng().gen::<f64>()
+        };
+        let secs = crate::join_limit::retry_after_secs(wait, Duration::from_secs(5), unit);
+        let mut response = text(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the relay is busy; try again shortly",
+        );
+        if let Ok(v) = HeaderValue::from_str(&secs.to_string()) {
+            response.headers_mut().insert(header::RETRY_AFTER, v);
+        }
+        return response;
+    }
     let version = headers
         .get(VERSION_HEADER)
         .and_then(|v| v.to_str().ok())

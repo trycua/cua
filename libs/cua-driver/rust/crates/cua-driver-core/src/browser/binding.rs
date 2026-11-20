@@ -14,7 +14,9 @@
 //! 3. Exactly one bounds match → **Exact** binding.
 //! 4. Multiple distinct CDP windows can share maximized bounds. One unique
 //!    active-tab title match disambiguates them; duplicate or absent title
-//!    matches remain ambiguous.
+//!    matches remain ambiguous. A complete native-window snapshot can
+//!    additionally resolve them when every one-to-one window assignment
+//!    maps the requested native window to the same CDP window.
 //! 5. No bounds match → a unique title match degrades to **Heuristic**
 //!    (read-only); otherwise **None**.
 
@@ -207,6 +209,148 @@ pub fn correlate(
             }
         }
     }
+}
+
+/// Resolve an otherwise ambiguous window using a complete native-window
+/// snapshot. Unsupported platforms retain the original unique-or-refuse result.
+pub fn correlate_with_native_windows(
+    native: &NativeWindowInfo,
+    candidates: &[CdpWindowCandidate],
+    windows: &[NativeWindowInfo],
+    tolerance: f64,
+) -> BindingOutcome {
+    let original = correlate(native, candidates, tolerance);
+    if !matches!(original, BindingOutcome::Ambiguous(_)) {
+        return original;
+    }
+    // Bound the matching work; missing or excessive evidence cannot improve
+    // a refusal. A native surface and a CDP window must form a bijection.
+    if windows.is_empty() || windows.len() > 32 || !native.geometry_exact {
+        return original;
+    }
+    let mut window_ids = Vec::new();
+    let mut geometries = std::collections::HashMap::new();
+    for candidate in candidates {
+        let Some(id) = candidate.cdp_window_id else {
+            return original;
+        };
+        let Some(bounds) = candidate.bounds else {
+            return original;
+        };
+        if geometries
+            .insert(id, bounds)
+            .is_some_and(|previous| previous != bounds)
+        {
+            // The window moved during collection; mixing tab geometries can
+            // manufacture a unique mapping that no single snapshot proves.
+            return original;
+        }
+        if !window_ids.contains(&id) {
+            window_ids.push(id);
+        }
+    }
+    if window_ids.len() != windows.len() {
+        return original;
+    }
+    let mut native_ids = std::collections::HashSet::new();
+    if windows.iter().any(|window| {
+        window.pid != native.pid
+            || window.ownership.owner_pid != native.pid
+            || !window.geometry_exact
+            || !native_ids.insert(window.window_id)
+    }) {
+        return original;
+    }
+    let Some(requested) = windows.iter().position(|window| {
+        window.window_id == native.window_id
+            && window.title == native.title
+            && window.bounds == native.bounds
+    }) else {
+        return original;
+    };
+    let edges = windows
+        .iter()
+        .map(|window| {
+            window_ids
+                .iter()
+                .enumerate()
+                .filter_map(|(index, id)| {
+                    candidates
+                        .iter()
+                        .any(|candidate| {
+                            candidate.cdp_window_id == Some(*id)
+                                && candidate.bounds.is_some_and(|bounds| {
+                                    bounds.approx_eq(&window.bounds, tolerance)
+                                })
+                                && title_matches(&window.title, &candidate.title)
+                        })
+                        .then_some(index)
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let Some(matching) = window_matching(&edges, None) else {
+        return original;
+    };
+    let selected = matching[requested];
+    // If a complete mapping still exists without this edge, the requested
+    // window has another possible owner. Do not let target order decide.
+    if window_matching(&edges, Some((requested, selected))).is_some() {
+        return original;
+    }
+    let representative = window_representatives(&native.title, candidates)
+        .into_iter()
+        .find(|candidate| candidate.cdp_window_id == Some(window_ids[selected]));
+    match representative {
+        Some(candidate) => BindingOutcome::Bound {
+            candidate,
+            quality: BindingQuality::Exact,
+        },
+        None => original,
+    }
+}
+
+/// A complete bipartite matching, optionally excluding one native/CDP edge.
+/// Augmenting paths avoid enumerating the permutations of same-sized windows.
+fn window_matching(edges: &[Vec<usize>], excluded: Option<(usize, usize)>) -> Option<Vec<usize>> {
+    fn assign(
+        left: usize,
+        edges: &[Vec<usize>],
+        excluded: Option<(usize, usize)>,
+        seen: &mut [bool],
+        owners: &mut [Option<usize>],
+    ) -> bool {
+        for &right in &edges[left] {
+            if excluded == Some((left, right)) || seen[right] {
+                continue;
+            }
+            seen[right] = true;
+            if owners[right].is_none()
+                || assign(owners[right].unwrap(), edges, excluded, seen, owners)
+            {
+                owners[right] = Some(left);
+                return true;
+            }
+        }
+        false
+    }
+    let mut owners = vec![None; edges.len()];
+    for left in 0..edges.len() {
+        if !assign(
+            left,
+            edges,
+            excluded,
+            &mut vec![false; edges.len()],
+            &mut owners,
+        ) {
+            return None;
+        }
+    }
+    let mut matching = vec![0; edges.len()];
+    for (right, left) in owners.into_iter().enumerate() {
+        matching[left?] = right;
+    }
+    Some(matching)
 }
 
 #[cfg(test)]
@@ -528,6 +672,144 @@ mod tests {
                 assert_eq!(quality, BindingQuality::Exact);
             }
             other => panic!("expected t2 exact, got {other:?}"),
+        }
+    }
+    fn shared_bounds_fixture() -> (
+        NativeWindowInfo,
+        Vec<NativeWindowInfo>,
+        Vec<CdpWindowCandidate>,
+    ) {
+        let a = native("Page X - Chrome", B);
+        let mut b = native("Other page - Chrome", B);
+        b.window_id = 8;
+        let mut b_selected = cand("b-selected", "Other page", B);
+        b_selected.cdp_window_id = Some(2);
+        let mut b_background = cand("b-background", "Page X", B);
+        b_background.cdp_window_id = Some(2);
+        (
+            a.clone(),
+            vec![a, b],
+            vec![cand("a-selected", "Page X", B), b_selected, b_background],
+        )
+    }
+
+    #[test]
+    fn peer_native_titles_disambiguate_a_duplicate_background_tab() {
+        let (a, windows, candidates) = shared_bounds_fixture();
+        assert_eq!(
+            correlate(&a, &candidates, 4.0),
+            BindingOutcome::Ambiguous(2)
+        );
+        for candidates in [candidates.clone(), candidates.into_iter().rev().collect()] {
+            let result = correlate_with_native_windows(&a, &candidates, &windows, 4.0);
+            assert!(
+                matches!(result, BindingOutcome::Bound { candidate, quality: BindingQuality::Exact }
+                if candidate.cdp_window_id == Some(1) && candidate.cdp_target_id == "a-selected")
+            );
+        }
+    }
+
+    #[test]
+    fn peer_native_titles_do_not_resolve_true_ambiguity() {
+        let (a, mut windows, candidates) = shared_bounds_fixture();
+        windows[1].title = a.title.clone();
+        assert_eq!(
+            correlate_with_native_windows(&a, &candidates, &windows, 4.0),
+            BindingOutcome::Ambiguous(2)
+        );
+    }
+
+    #[test]
+    fn peer_proof_requires_complete_current_owned_geometry() {
+        let (a, windows, candidates) = shared_bounds_fixture();
+        let assert_ambiguous = |windows: &[NativeWindowInfo]| {
+            assert_eq!(
+                correlate_with_native_windows(&a, &candidates, windows, 4.0),
+                BindingOutcome::Ambiguous(2)
+            );
+        };
+        assert_ambiguous(&windows[..1]);
+        for mutate in [0, 1, 2, 3, 4, 5] {
+            let mut invalid = windows.clone();
+            match mutate {
+                0 => invalid[1].ownership.owner_pid = 99,
+                1 => invalid[1].pid = 99,
+                2 => invalid[1].geometry_exact = false,
+                3 => invalid[0].title = "changed while enumerating".into(),
+                4 => invalid[1].window_id = a.window_id,
+                _ => invalid[1].bounds = OTHER,
+            }
+            assert_ambiguous(&invalid);
+        }
+    }
+
+    #[test]
+    fn peer_proof_does_not_change_an_existing_exact_binding() {
+        let a = native("Page X - Chrome", B);
+        let candidates = vec![cand("a-selected", "Page X", B)];
+        assert_eq!(
+            correlate_with_native_windows(&a, &candidates, &[], 4.0),
+            correlate(&a, &candidates, 4.0)
+        );
+    }
+    #[test]
+    fn requested_window_can_be_forced_while_peers_remain_ambiguous() {
+        let (a, mut windows, mut candidates) = shared_bounds_fixture();
+        let mut third = windows[1].clone();
+        third.window_id = 9;
+        windows.push(third);
+        let mut third_tab = cand("third", "Other page", B);
+        third_tab.cdp_window_id = Some(3);
+        candidates.push(third_tab);
+        assert!(
+            matches!(correlate_with_native_windows(&a, &candidates, &windows, 4.0),
+            BindingOutcome::Bound { candidate, quality: BindingQuality::Exact } if candidate.cdp_window_id == Some(1))
+        );
+    }
+
+    #[test]
+    fn matching_agrees_with_every_three_by_three_assignment() {
+        let permutations = [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ];
+        for bits in 0..512 {
+            let edges = (0..3)
+                .map(|left| {
+                    (0..3)
+                        .filter(|right| bits & (1 << (left * 3 + right)) != 0)
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            for excluded in [None, Some((0, 0)), Some((0, 1)), Some((0, 2))] {
+                let expected = permutations.iter().any(|assignment| {
+                    (0..3).all(|left| {
+                        edges[left].contains(&assignment[left])
+                            && excluded != Some((left, assignment[left]))
+                    })
+                });
+                assert_eq!(
+                    window_matching(&edges, excluded).is_some(),
+                    expected,
+                    "bits={bits}, excluded={excluded:?}"
+                );
+            }
+        }
+    }
+    #[test]
+    fn peer_proof_refuses_missing_or_inconsistent_cdp_geometry() {
+        let (a, windows, candidates) = shared_bounds_fixture();
+        for bounds in [None, Some(OTHER)] {
+            let mut inconsistent = candidates.clone();
+            inconsistent[2].bounds = bounds;
+            assert_eq!(
+                correlate_with_native_windows(&a, &inconsistent, &windows, 4.0),
+                correlate(&a, &inconsistent, 4.0)
+            );
         }
     }
 }

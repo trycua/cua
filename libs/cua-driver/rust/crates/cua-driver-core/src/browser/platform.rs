@@ -462,6 +462,17 @@ pub trait BrowserPlatform: Send + Sync {
         window_id: u64,
     ) -> Result<NativeWindowInfo, BrowserRefusal>;
 
+    /// A complete snapshot of the process's titled native browser surfaces.
+    /// Every entry must carry exact geometry and ownership. Used only to
+    /// resolve same-bounds ambiguity; platforms unable to attest the complete
+    /// set return None and retain the existing conservative refusal.
+    async fn native_windows(
+        &self,
+        _pid: i64,
+    ) -> Result<Option<Vec<NativeWindowInfo>>, BrowserRefusal> {
+        Ok(None)
+    }
+
     /// Prove whether `window_id` is the only native top-level window owned by
     /// `pid`. `Some(true)` is an exact platform-attested cardinality proof;
     /// `Some(false)` means another window exists; `None` means this window
@@ -641,6 +652,10 @@ mod tests {
             "platform-linux/src/browser_platform.rs",
             &[
                 (
+                    "native_windows",
+                    "no complete native peer snapshot is supplied; ambiguous binds retain their refusal",
+                ),
+                (
                     "spawn_isolated_browser",
                     "the driver launches the isolated browser with its own credentials",
                 ),
@@ -686,6 +701,10 @@ mod tests {
         (
             "platform-windows/src/browser_platform.rs",
             &[
+                (
+                    "native_windows",
+                    "no complete native peer snapshot is supplied; ambiguous binds retain their refusal",
+                ),
                 (
                     "security_prompt_open",
                     "Chromium protects its Safe Storage key with DPAPI, which shows no prompt",

@@ -726,7 +726,10 @@ fn run_calloop(context: reis::ei::Context, rx: Receiver<Cmd>) -> anyhow::Result<
         if !pending.is_empty() {
             let mut still = Vec::with_capacity(pending.len());
             for (cmd, queued) in pending.drain(..) {
-                if state.text_job.is_some() {
+                // A barrier answers for the input queued before it, so it
+                // waits for all of that to have run.
+                let behind = matches!(cmd, Cmd::Barrier { .. }) && !still.is_empty();
+                if state.text_job.is_some() || behind {
                     still.push((cmd, queued));
                 } else if queued.elapsed() >= REPLY_WAIT {
                     state.expire_command(cmd);

@@ -319,6 +319,10 @@ public slots:
             reply["error"] = QStringLiteral("another input gate is armed");
             return toJson(reply);
         }
+        if (m_closer) {
+            reply["error"] = QStringLiteral("the helper is being unloaded");
+            return toJson(reply);
+        }
         // A gate over no device would hold nothing back while the caller
         // believes its input is bound to the target.
         if (!hasDevice(client)) {
@@ -348,11 +352,24 @@ public slots:
         return toJson(reply);
     }
 
-    // Whether any input gate is armed. Unloading the helper removes the gate
-    // with it, so the driver doesn't unload it while one is.
-    Q_SCRIPTABLE bool InputGateArmed()
+    // Unloading the helper removes the gate with it, so the driver unloads it
+    // only after this returns true: no gate is armed, and none can be until
+    // the caller's D-Bus connection closes. The caller unloads the helper over
+    // that same connection.
+    Q_SCRIPTABLE bool CloseInputGate()
     {
-        return gate.arm != nullptr;
+        if (gate.arm || !calledFromDBus()) {
+            return false;
+        }
+        if (!m_closer) {
+            m_closer = std::make_unique<QDBusServiceWatcher>(message().service(),
+                                                             connection(),
+                                                             QDBusServiceWatcher::WatchForUnregistration);
+            connect(m_closer.get(), &QDBusServiceWatcher::serviceUnregistered, this, [this] {
+                m_closer.release()->deleteLater();
+            });
+        }
+        return true;
     }
 
     Q_SCRIPTABLE QString GetInputGate(quint64 arm)
@@ -424,6 +441,8 @@ private:
     quint64 m_nextArm = 1;
     // Watches the D-Bus connection that armed the gate.
     std::unique_ptr<QDBusServiceWatcher> m_owner;
+    // Watches the D-Bus connection that closed the gate to unload the helper.
+    std::unique_ptr<QDBusServiceWatcher> m_closer;
 };
 
 class KwinTargetHelperEffect : public KWin::Effect

@@ -179,27 +179,63 @@ pub(crate) fn turn_off() -> anyhow::Result<()> {
     if autostarts() {
         write_autostart(false);
     }
-    let Some((owner, _)) = loaded() else {
+    let Some((owner, version)) = loaded() else {
         return Ok(());
     };
-    let deadline = std::time::Instant::now() + START_TIMEOUT;
-    while gate_armed(&owner) {
-        anyhow::ensure!(
-            std::time::Instant::now() < deadline,
-            "the Cua KWin helper was left loaded: an action in progress holds its input \
-             gate armed. KWin no longer starts it with the session; run \
-             `cua-driver kwin-capture off` again once the action ends to unload it now"
-        );
-        crate::interaction::pause(Duration::from_millis(100));
+    if version < GATE_PROTOCOL_VERSION {
+        effects_call("unloadEffect");
+        return Ok(());
     }
-    effects_call("unloadEffect");
-    Ok(())
+    close_and_unload(owner).map_err(|error| {
+        anyhow::anyhow!(
+            "the Cua KWin helper was left loaded ({error:#}). KWin no longer starts it with \
+             the session; run `cua-driver kwin-capture off` again once no action is running \
+             to unload it now"
+        )
+    })
 }
 
-/// Whether the helper at `owner` has an input gate armed. A helper that can't
-/// say has no gate to arm.
-fn gate_armed(owner: &str) -> bool {
-    call_once::<_, bool>(owner, "InputGateArmed", ()).unwrap_or(false)
+/// Unload a helper with the input gate once no gate is armed. The helper
+/// refuses new gates while the connection that closed it stays open, so the
+/// unload goes over that same connection.
+fn close_and_unload(owner: String) -> anyhow::Result<()> {
+    std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(async move {
+                let connection = zbus::Connection::session().await?;
+                let helper = zbus::Proxy::new(&connection, owner.as_str(), PATH, IFACE).await?;
+                let deadline = tokio::time::Instant::now() + START_TIMEOUT;
+                loop {
+                    let closed = tokio::time::timeout(
+                        CALL_TIMEOUT,
+                        helper.call::<_, _, bool>("CloseInputGate", &()),
+                    )
+                    .await
+                    .map_err(|_| anyhow::anyhow!("the helper did not answer CloseInputGate"))??;
+                    if closed {
+                        break;
+                    }
+                    anyhow::ensure!(
+                        tokio::time::Instant::now() < deadline,
+                        "an action in progress holds its input gate armed"
+                    );
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                let effects =
+                    zbus::Proxy::new(&connection, KWIN_DEST, EFFECTS_PATH, EFFECTS_IFACE).await?;
+                tokio::time::timeout(
+                    CALL_TIMEOUT,
+                    effects.call::<_, _, ()>("unloadEffect", &(EFFECT,)),
+                )
+                .await
+                .map_err(|_| anyhow::anyhow!("KWin did not answer unloadEffect"))??;
+                anyhow::Ok(())
+            })
+    })
+    .join()
+    .map_err(|_| anyhow::anyhow!("KWin helper call thread panicked"))?
 }
 
 /// The helper's line in `cua-driver kwin-capture status`, or `None` when KWin
@@ -386,10 +422,9 @@ fn parse_active_uuid(raw: &str) -> Option<String> {
 }
 
 /// One helper call on its own connection, answered within [`CALL_TIMEOUT`].
-fn call_once<B, R>(owner: &str, method: &'static str, body: B) -> anyhow::Result<R>
+fn call_once<B>(owner: &str, method: &'static str, body: B) -> anyhow::Result<String>
 where
     B: serde::Serialize + zbus::zvariant::DynamicType + Send + 'static,
-    R: for<'d> zbus::zvariant::DynamicDeserialize<'d> + Send + 'static,
 {
     let owner = owner.to_owned();
     std::thread::spawn(move || {
@@ -400,7 +435,7 @@ where
                 let call = async {
                     let connection = zbus::Connection::session().await?;
                     let proxy = zbus::Proxy::new(&connection, owner.as_str(), PATH, IFACE).await?;
-                    anyhow::Ok(proxy.call::<_, _, R>(method, &body).await?)
+                    anyhow::Ok(proxy.call::<_, _, String>(method, &body).await?)
                 };
                 tokio::time::timeout(CALL_TIMEOUT, call)
                     .await

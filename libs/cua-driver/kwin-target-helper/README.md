@@ -65,7 +65,7 @@ The exported D-Bus surface:
 | `ArmInput(uuid, client)` | 2 | an input gate id, or an error |
 | `GetInputGate(id)` | 2 | how many events the gate let through and held back |
 | `DisarmInput(id)` | 2 | the same counts, and removes the gate |
-| `InputGateArmed()` | 2 | whether any gate is armed |
+| `CloseInputGate()` | 2 | false while a gate is armed; once true, no gate can be armed until the caller's D-Bus connection closes |
 
 ## Input safety boundary
 
@@ -97,9 +97,11 @@ Limits of the gate:
 - Cua Driver disarms a gate only after EIS has acknowledged all the input it
   sent. If KWin never acknowledges it, the gate stays armed, and KWin input is
   refused until the driver restarts.
-- Unloading the helper removes its gate. `cua-driver kwin-capture off` doesn't
-  unload the helper while a gate is armed; anything else that unloads it
-  mid-action lets the rest of that action's input through ungated.
+- Unloading the helper removes its gate. `cua-driver kwin-capture off` calls
+  `CloseInputGate` and unloads the helper over the same D-Bus connection, so
+  no gate is armed when it goes; while an action holds one, `off` leaves the
+  helper loaded. Anything else that unloads it mid-action lets the rest of
+  that action's input through ungated.
 - KWin moves the pointer and updates keyboard modifier state before filters
   run. A held-back event can still move the cursor or briefly change the
   modifier state another window sees, but never delivers a key, button, motion,

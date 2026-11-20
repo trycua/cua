@@ -8364,6 +8364,18 @@ mod frame_correlation_tests {
         );
     }
 
+    /// An exact match proves identity only among frames reported at the
+    /// window's own size. A sibling that sits on the target's bounds while the
+    /// target's frame includes a border is still a coin flip.
+    #[test]
+    fn an_exact_match_beside_a_bordered_frame_still_refuses() {
+        let candidates = [(0usize, (98, 98, 804, 604)), (1, (100, 100, 800, 600))];
+        assert_eq!(
+            correlate_frame_to_window(&candidates, &window(100, 100, 800, 600)),
+            None
+        );
+    }
+
     #[test]
     fn refuses_when_no_frame_is_close_enough() {
         let candidates = [(0usize, (0, 0, 200, 200))];

@@ -767,9 +767,9 @@ pub fn click_at_xy_chromium(
         }
         set(58, click_group_id); // click-group ID (gesture coalescing)
 
-        // Public `CGEventSetWindowLocation` REQUIRES the window-local point:
-        // a screen point there hit-tests outside the target window and the
-        // click drops. SkyLight keeps its screen point (unmeasured).
+        // A public pid post needs the window-local point: a screen point there
+        // hit-tests outside the target window and the click drops. SkyLight
+        // takes the version-gated stamp from the route plan.
         let window_location = match route {
             PostRoute::SkyLight | PostRoute::SkyLightAndPublic => step.skylight_window_location,
             PostRoute::PublicPid | PostRoute::Hid => step.public_window_location,

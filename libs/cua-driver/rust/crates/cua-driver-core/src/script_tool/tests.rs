@@ -211,7 +211,7 @@ return {value: field.value, platform: cua.computer.target};"#,
         "{log:?}"
     );
     assert!(
-        text(&result).contains("3. line 4 click UNCONFIRMED (") && text(&result).contains("on [2] AXButton \"Save\": click done; nothing read back. Look first: get_window_state"),
+        text(&result).contains("3. line 4 click UNCONFIRMED (") && text(&result).contains("on [2] AXButton \"Save\": click done; effect not confirmed. Look first: get_window_state"),
         "{}",
         text(&result)
     );
@@ -869,7 +869,7 @@ async fn a_role_name_call_keeps_the_tools_verification_warning_in_the_call_log()
         message.contains("1. line 1 click UNCONFIRMED (")
             && message.contains(
                 "on [2] AXButton \"Save\": Clicked element [2] (pid 42) with a real pointer click \
-                 (delivery_mode=foreground, focus_after=target); nothing read back. Look first: \
+                 (delivery_mode=foreground, focus_after=target); effect not confirmed. Look first: \
                  get_window_state {\"pid\":42,\"since\":\"latest\",\"window_id\":7}"
             ),
         "{message}"
@@ -903,4 +903,20 @@ async fn a_script_whose_calls_all_confirm_has_no_unverified_line() {
         .run("await cua.tools.click({pid: 42, role: 'button', name: 'Save', confirmed: true});\nreturn 1;")
         .await;
     assert!(!text(&result).contains("unverified"), "{}", text(&result));
+}
+
+#[test]
+fn a_long_role_name_target_leaves_the_recovery_call_in_the_summary() {
+    let look = "Look first: get_window_state {\"pid\":42,\"since\":\"latest\",\"window_id\":7}";
+    let value = json!({
+        "text": format!(
+            "UNCONFIRMED: {}; effect not confirmed. {look}",
+            "Clicked element [2] with a real pointer click ".repeat(4).trim_end()
+        ),
+        "target": {"element": format!("[2] button \"{}\"", "Apply ".repeat(40))},
+    });
+    let summary = super::summarize(&value);
+    assert!(summary.chars().count() <= 301, "{}", summary.chars().count());
+    assert!(summary.ends_with(look), "{summary}");
+    assert!(summary.starts_with("on [2] button \"Apply"), "{summary}");
 }

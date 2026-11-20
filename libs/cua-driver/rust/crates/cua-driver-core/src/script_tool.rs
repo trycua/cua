@@ -71,6 +71,9 @@ const CALL_TEXT_LIMIT: usize = 12_000;
 /// An action's first line is its verdict headline, which ends with the read
 /// to make ([`crate::verdict`]), so the call log keeps whole first lines.
 const SUMMARY_TEXT_LIMIT: usize = 300;
+/// Longest element description a call-log line repeats, so a long role/name
+/// target leaves room for the tool's own line.
+const SUMMARY_TARGET_LIMIT: usize = 80;
 const IMAGES_KEPT: usize = 2;
 /// Extra time the engine thread gets to notice a deadline or cancel.
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(1_500);
@@ -896,10 +899,13 @@ fn summarize(value: &Value) -> String {
         .and_then(Value::as_str);
     match (target, text) {
         (Some(target), Some(text)) if !text.is_empty() => {
-            return clip(&format!("on {target}: {text}"), SUMMARY_TEXT_LIMIT)
+            return clip_keeping_look(
+                &format!("on {}: {text}", clip(target, SUMMARY_TARGET_LIMIT)),
+                SUMMARY_TEXT_LIMIT,
+            )
         }
-        (Some(target), _) => return format!("on {target}"),
-        (None, Some(text)) => return clip(text, SUMMARY_TEXT_LIMIT),
+        (Some(target), _) => return format!("on {}", clip(target, SUMMARY_TARGET_LIMIT)),
+        (None, Some(text)) => return clip_keeping_look(text, SUMMARY_TEXT_LIMIT),
         (None, None) => {}
     }
     match value {
@@ -1069,6 +1075,22 @@ fn render(
         is_error: is_error.then_some(true),
         structured_content: Some(structured),
         ..Default::default()
+    }
+}
+
+/// Like [`clip`], but an unconfirmed headline keeps its closing
+/// `; … Look first: <call>` whole and the cut falls before it.
+fn clip_keeping_look(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_owned();
+    }
+    match text.rsplit_once("; ") {
+        Some((what, look)) if look.contains("Look first: ") => {
+            let look = format!("; {look}");
+            let room = max.saturating_sub(look.chars().count() + 1);
+            format!("{}{look}", clip(what, room))
+        }
+        _ => clip(text, max),
     }
 }
 

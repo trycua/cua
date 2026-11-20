@@ -212,7 +212,7 @@ export class InputController {
   private readonly touches = new Map<number, Touch>();
   private longPress: number | null = null;
   private touchMode: "none" | "pointer" | "scroll" | "longpress" = "none";
-  private pendingPaste: { resolve: () => void; timer: number } | null = null;
+  private pendingPaste: { resolve: () => void; timer: number; after: InteractiveInputEvent[] } | null = null;
   private readonly heldKeys = new Map<string, InteractiveInputEvent>();
   private readonly commands = new CommandKeys(() => this.options.keyOptions().metaAsControl);
   enabled = true;
@@ -256,6 +256,11 @@ export class InputController {
 
   private send(event: InteractiveInputEvent): void {
     if (!this.enabled) return;
+    if (this.pendingPaste) {
+      // Behind the held paste chord, so the guest gets the keys in order.
+      this.pendingPaste.after.push(event);
+      return;
+    }
     this.options.emit(event);
     this.options.onAction?.(event);
   }
@@ -420,16 +425,22 @@ export class InputController {
 
   private holdForPaste(keyEvent: InteractiveInputEvent): void {
     // Up to 300 ms for the `paste` event (none comes when the host clipboard
-    // is empty or the engine withholds it); the keys go out either way.
-    if (this.pendingPaste) window.clearTimeout(this.pendingPaste.timer);
+    // is empty or the engine withholds it); the keys go out either way,
+    // followed by any input sent meanwhile.
+    this.pendingPaste?.resolve();
+    const after: InteractiveInputEvent[] = [];
     const release = () => {
+      if (this.pendingPaste?.after !== after) return;
+      window.clearTimeout(timer);
       this.pendingPaste = null;
-      if (keyEvent.kind !== "key") return;
-      this.send(keyEvent);
-      this.send({ ...keyEvent, state: "up", repeat: false });
+      if (keyEvent.kind === "key") {
+        this.send(keyEvent);
+        this.send({ ...keyEvent, state: "up", repeat: false });
+      }
+      for (const event of after) this.send(event);
     };
     const timer = window.setTimeout(release, 300);
-    this.pendingPaste = { resolve: release, timer };
+    this.pendingPaste = { resolve: release, timer, after };
   }
 
   private async pasted(event: ClipboardEvent): Promise<void> {

@@ -161,14 +161,21 @@ fn with_x11_screenshot_frames(
     let (wx, wy, _, _) = window;
     match dip_window_frame(window, &elements) {
         Some((root, origin, scale)) => {
+            let root_frame = elements[root]["frame"].clone();
             let mut elements = cua_driver_core::element_frame::with_screenshot_frames(
                 elements,
                 origin,
                 scale * capture_scale,
             );
-            // The root is the whole capture; its DIP size was rounded.
-            elements[root]["screenshot_frame"] =
-                json!({ "x": 0, "y": 0, "w": delivered.0, "h": delivered.1 });
+            // The root is the whole capture; its DIP size was rounded. Any
+            // element with the root's bounds, such as a second maximized
+            // window, covers the same pixels.
+            for entry in &mut elements {
+                if entry["frame"] == root_frame {
+                    entry["screenshot_frame"] =
+                        json!({ "x": 0, "y": 0, "w": delivered.0, "h": delivered.1 });
+                }
+            }
             elements
         }
         None => cua_driver_core::element_frame::with_screenshot_frames(
@@ -378,6 +385,22 @@ mod x11_screenshot_frame_tests {
         assert_eq!(
             frames((1920, 440, 800, 600), elements)[1],
             json!({"x": 0, "y": 0, "w": 800, "h": 600})
+        );
+    }
+
+    #[test]
+    fn identical_window_frames_both_span_the_capture() {
+        // Two maximized windows on an odd-height work area: 1055 pixels are
+        // 527.5 DIPs, reported as 528.
+        let root = json!({"x": 0, "y": 0, "w": 960, "h": 528});
+        let elements = vec![
+            json!({"role": "frame", "depth": 0, "frame": root}),
+            json!({"role": "frame", "depth": 0, "frame": root}),
+        ];
+        let capture = json!({"x": 0, "y": 0, "w": 1920, "h": 1055});
+        assert_eq!(
+            frames((0, 0, 1920, 1055), elements),
+            vec![capture.clone(), capture]
         );
     }
 

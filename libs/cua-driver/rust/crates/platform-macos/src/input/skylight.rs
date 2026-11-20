@@ -1528,7 +1528,9 @@ fn focus_failure_hint_from(
 /// unavailable: a global HID event has no pid addressing and would otherwise
 /// land in whichever application is currently frontmost. The short settles
 /// keep the target frontmost until WindowServer has routed both sides of the
-/// key chord, then restore the prior process even when the action fails.
+/// key chord, then restore the prior process even when the action fails. A
+/// successful action that left an inline edit open which the app would end on
+/// losing the front (Finder's rename field) leaves the target in front.
 pub fn with_foreground_hid_activation(
     target_pid: libc::pid_t,
     target_wid: u32,
@@ -1593,13 +1595,59 @@ pub fn with_foreground_hid_activation(
     let result = action();
     std::thread::sleep(std::time::Duration::from_millis(40));
 
-    if prev_ok {
+    let keeps_front = result.is_ok()
+        && keeps_front_for_inline_edit(
+            ends_inline_edit_when_deactivated(target_pid),
+            INLINE_EDIT_WAIT,
+            || crate::ax::bindings::inline_editor_open(target_pid, target_wid),
+        );
+    if prev_ok && !keeps_front {
         unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
     }
     // The raise put the target window over the agent cursor's overlay.
     crate::cursor::overlay::request_repin();
 
     result
+}
+
+/// How long a foreground action waits for an inline editor it may have
+/// opened. Finder shows its rename field a moment after Return.
+const INLINE_EDIT_WAIT: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Whether `pid` ends an open inline edit when it stops being the active app.
+/// Finder cancels its rename field then (#4615), so handing the front back
+/// after the Return that opened the field closes it again.
+fn ends_inline_edit_when_deactivated(pid: libc::pid_t) -> bool {
+    crate::apps::bundle_id_for_pid(pid).as_deref() == Some("com.apple.finder")
+}
+
+/// Whether `pid` has an inline edit of `window_id` open that it would end if
+/// it lost the front, so the driver leaves it in front.
+pub fn inline_edit_holds_front(pid: libc::pid_t, window_id: u32) -> bool {
+    ends_inline_edit_when_deactivated(pid)
+        && crate::ax::bindings::inline_editor_open(pid, window_id)
+}
+
+/// Whether a foreground action that succeeded must leave its target in front:
+/// the app ends inline edits when deactivated and one is open within `wait`.
+fn keeps_front_for_inline_edit(
+    ends_edit_when_deactivated: bool,
+    wait: std::time::Duration,
+    mut editor_open: impl FnMut() -> bool,
+) -> bool {
+    if !ends_edit_when_deactivated {
+        return false;
+    }
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        if editor_open() {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(ACTIVATION_POLL_INTERVAL);
+    }
 }
 
 fn preserves_exact_existing_focus(
@@ -1617,9 +1665,10 @@ fn preserves_exact_existing_focus(
 #[cfg(test)]
 mod tests {
     use super::{
-        focus_failure_hint_from, foreground_turn, make_key_window_record, note_post_status,
-        preserves_exact_existing_focus, reset_windowserver_connection_invalid_for_test,
-        windowserver_connection_invalid, WINDOWSERVER_INVALID_CONNECTION,
+        focus_failure_hint_from, foreground_turn, keeps_front_for_inline_edit,
+        make_key_window_record, note_post_status, preserves_exact_existing_focus,
+        reset_windowserver_connection_invalid_for_test, windowserver_connection_invalid,
+        WINDOWSERVER_INVALID_CONNECTION,
     };
     use crate::ax::exact_target::AxWindowId;
 
@@ -1688,6 +1737,32 @@ mod tests {
         assert_eq!(&press[0x3C..0x40], &[0x12, 0x34, 0x56, 0x78]);
         assert_eq!(press[0x3A], 0x10);
         assert!(press[0x20..0x30].iter().all(|byte| *byte == 0xFF));
+    }
+
+    #[test]
+    fn an_inline_edit_that_opens_after_the_key_keeps_the_front() {
+        let mut reads = 0;
+        assert!(keeps_front_for_inline_edit(
+            true,
+            std::time::Duration::from_secs(5),
+            || {
+                reads += 1;
+                reads == 3
+            }
+        ));
+        assert_eq!(reads, 3);
+    }
+
+    #[test]
+    fn the_front_goes_back_without_an_inline_edit() {
+        let started = std::time::Instant::now();
+        let wait = std::time::Duration::from_millis(30);
+        assert!(!keeps_front_for_inline_edit(true, wait, || false));
+        assert!(started.elapsed() >= wait);
+        // An app that keeps its edits when deactivated is never polled.
+        assert!(!keeps_front_for_inline_edit(false, wait, || panic!(
+            "polled"
+        )));
     }
 
     #[test]

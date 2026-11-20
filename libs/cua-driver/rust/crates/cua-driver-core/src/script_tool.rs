@@ -1083,12 +1083,12 @@ fn render(
 
 /// Like [`clip`], but an unconfirmed headline's closing `look` tail
 /// ([`crate::verdict::look_tail`]) is kept whole and the cut falls before it,
-/// while it fits in half the budget.
+/// whenever it fits in the budget.
 fn clip_keeping_look(text: &str, look: Option<&str>, max: usize) -> String {
     if text.chars().count() <= max {
         return text.to_owned();
     }
-    match look.filter(|look| look.chars().count() <= max / 2) {
+    match look.filter(|look| look.chars().count() < max) {
         Some(look) if text.ends_with(look) => {
             let what = &text[..text.len() - look.len()];
             let room = max.saturating_sub(look.chars().count() + 1);

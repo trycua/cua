@@ -936,3 +936,21 @@ fn a_confirmed_value_that_quotes_a_look_tail_is_clipped_like_any_line() {
     assert!(summary.chars().count() <= super::SUMMARY_TEXT_LIMIT + 1);
     assert!(summary.ends_with('…'), "{summary}");
 }
+
+#[test]
+fn a_long_recovery_call_is_kept_whole_when_it_fits_the_budget() {
+    let look = format!(
+        "Look first: get_window_state {{\"pid\":42,\"session\":\"{}\",\"since\":\"latest\",\"window_id\":7}}",
+        "s".repeat(150)
+    );
+    let value = json!({
+        "text": format!(
+            "UNCONFIRMED: {}; effect not confirmed. {look}",
+            "Clicked element [2] with a real pointer click ".repeat(3).trim_end()
+        ),
+        "target": {"element": "[2] button \"Apply\""},
+    });
+    let summary = super::summarize(&value);
+    assert!(summary.chars().count() <= super::SUMMARY_TEXT_LIMIT);
+    assert!(summary.ends_with(&look), "{summary}");
+}

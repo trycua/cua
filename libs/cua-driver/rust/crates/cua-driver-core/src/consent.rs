@@ -283,10 +283,10 @@ struct GrantTable {
     /// (queued behind another prompt, or accepted after the end) is dropped.
     revocations: u64,
     /// The revocation that last named each session, kept only while an
-    /// authorization is in progress.
+    /// authorization window is open.
     session_revoked_at: HashMap<String, u64>,
     all_revoked_at: u64,
-    authorizing: usize,
+    windows: usize,
 }
 
 impl GrantTable {
@@ -298,31 +298,36 @@ impl GrantTable {
     }
 }
 
-/// One authorization in progress, and the revocation count it started at.
-struct Authorizing<'a> {
+/// An authorization, or a whole dispatch through its lifecycle admission, in
+/// progress, and the revocation count it started at.
+pub struct AuthorizationWindow<'a> {
     table: &'a Mutex<GrantTable>,
     since: u64,
 }
 
-impl<'a> Authorizing<'a> {
-    fn start(table: &'a Mutex<GrantTable>) -> Self {
-        let mut grants = table.lock().unwrap();
-        grants.authorizing += 1;
-        Self {
-            table,
-            since: grants.revocations,
-        }
+impl AuthorizationWindow<'_> {
+    /// Whether a `revoke_session` naming any of `sessions`, or a
+    /// `revoke_all`, ran since this window opened.
+    pub fn revoked_for(&self, sessions: &[&str]) -> bool {
+        let grants = self.table.lock().unwrap();
+        grants.all_revoked_at > self.since
+            || sessions.iter().any(|session| {
+                grants
+                    .session_revoked_at
+                    .get(*session)
+                    .is_some_and(|at| *at > self.since)
+            })
     }
 }
 
-impl Drop for Authorizing<'_> {
+impl Drop for AuthorizationWindow<'_> {
     fn drop(&mut self) {
         let mut grants = self
             .table
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        grants.authorizing -= 1;
-        if grants.authorizing == 0 {
+        grants.windows -= 1;
+        if grants.windows == 0 {
             grants.session_revoked_at.clear();
         }
     }
@@ -484,7 +489,7 @@ impl ProtectedResourceGrants {
             }
             ModeBehavior::RequireGrant => {}
         }
-        let authorizing = Authorizing::start(&self.grants);
+        let window = self.open_window();
         // Read after the snapshot: an end that lands later bumps the counter
         // past it. A session already ended here may still be recreated at
         // lifecycle admission, so its approval covers this call only, and a
@@ -531,7 +536,7 @@ impl ProtectedResourceGrants {
             }
         };
         let mut grants = self.grants.lock().unwrap();
-        if grants.revoked_since(&key, authorizing.since) {
+        if grants.revoked_since(&key, window.since) {
             protected.revoke();
             return Err(ConsentError::Canceled);
         }
@@ -577,11 +582,21 @@ impl ProtectedResourceGrants {
         Some(grant.clone())
     }
 
+    /// Records every session revocation from now until the window drops.
+    pub fn open_window(&self) -> AuthorizationWindow<'_> {
+        let mut grants = self.grants.lock().unwrap();
+        grants.windows += 1;
+        AuthorizationWindow {
+            table: &self.grants,
+            since: grants.revocations,
+        }
+    }
+
     pub fn revoke_session(&self, session: &str) -> Vec<ProtectedGrant> {
         let mut removed = Vec::new();
         let mut table = self.grants.lock().unwrap();
         table.revocations += 1;
-        if table.authorizing > 0 {
+        if table.windows > 0 {
             let at = table.revocations;
             table.session_revoked_at.insert(session.to_owned(), at);
         }

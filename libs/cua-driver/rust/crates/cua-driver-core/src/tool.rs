@@ -2269,8 +2269,9 @@ impl ToolRegistry {
         // preserving the public arguments in the grant scope and the private
         // runtime session key in its revocation lifecycle.
         let history_observation = has_adapter("computer_history");
-        // Every grant this call holds is checked again once lifecycle
-        // admission pins its episode.
+        // Every approval this call holds is checked again once lifecycle
+        // admission pins its episode, against every revocation since here.
+        let approval_window = self.protected_resource_grants.open_window();
         let mut consented = Vec::new();
         if (has_adapter("private_observation") || history_observation)
             && (history_observation
@@ -2536,9 +2537,16 @@ impl ToolRegistry {
             } else {
                 None
             };
-        if let Some(refusal) = ended_approval_refusal(&consented) {
+        let call_sessions = runtime_session
+            .as_deref()
+            .into_iter()
+            .chain(args.get("_transport_session_id").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        if let Some(refusal) = ended_approval_refusal(&consented, &approval_window, &call_sessions)
+        {
             return refusal;
         }
+        drop(approval_window);
 
         // Capture start time for recording timestamps only after validation.
         let launch_snapshot = if resolved_name == "launch_app" {
@@ -4493,36 +4501,39 @@ mod runtime_isolation_tests {
         assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
     }
 
-    #[tokio::test]
-    async fn an_approval_held_across_its_session_end_refuses_once_the_session_is_recreated() {
-        let provider = Arc::new(AcceptingProvider {
-            requests: AtomicUsize::new(0),
-        });
-        let registry = observation_registry_for(
-            "history_query",
-            Some(provider.clone()),
-            Arc::new(AtomicUsize::new(0)),
-        );
-        let context = standard_context();
-        let session = context.runtime_session_key("approval-across-end");
-        let admit = || {
-            crate::session::begin_session_dispatch(
-                &session,
-                None,
-                &session,
-                true,
-                crate::session::SessionTransport::McpStdio,
-                crate::session::SessionClientKind::Mcp,
-            )
-        };
-        drop(admit().unwrap());
-        let grant = registry
+    fn refusal_code(result: &ToolResult) -> Option<&str> {
+        result
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.pointer("/refusal/code"))
+            .and_then(serde_json::Value::as_str)
+    }
+
+    fn admit_implicit(
+        session: &str,
+    ) -> Result<crate::session::SessionDispatchGuard, crate::session::DispatchRefusal> {
+        crate::session::begin_session_dispatch(
+            session,
+            None,
+            session,
+            true,
+            crate::session::SessionTransport::McpStdio,
+            crate::session::SessionClientKind::Mcp,
+        )
+    }
+
+    async fn authorize_history(
+        registry: &super::ToolRegistry,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+        session: &str,
+    ) -> crate::consent::ResourceGrant {
+        registry
             .protected_resource_grants()
             .authorize(
-                &context,
+                context,
                 "computer_history",
                 crate::authorization::RiskClass::R2,
-                Some(&session),
+                Some(session),
                 serde_json::json!({"kind": "history"}),
                 "Read history",
                 Duration::from_secs(60),
@@ -4530,8 +4541,35 @@ mod runtime_isolation_tests {
             )
             .await
             .unwrap()
-            .unwrap();
-        assert!(super::ended_approval_refusal(std::slice::from_ref(&grant)).is_none());
+            .unwrap()
+    }
+
+    fn history_registry(provider: Arc<AcceptingProvider>) -> Arc<super::ToolRegistry> {
+        observation_registry_for(
+            "history_query",
+            Some(provider),
+            Arc::new(AtomicUsize::new(0)),
+        )
+    }
+
+    #[tokio::test]
+    async fn an_approval_held_across_its_session_end_refuses_once_the_session_is_recreated() {
+        let provider = Arc::new(AcceptingProvider {
+            requests: AtomicUsize::new(0),
+        });
+        let registry = history_registry(provider.clone());
+        let context = standard_context();
+        let session = context.runtime_session_key("approval-across-end");
+        drop(admit_implicit(&session).unwrap());
+        let grants = registry.protected_resource_grants();
+        let window = grants.open_window();
+        let grant = authorize_history(&registry, &context, &session).await;
+        assert!(super::ended_approval_refusal(
+            std::slice::from_ref(&grant),
+            &window,
+            &[session.as_str()]
+        )
+        .is_none());
 
         // The registry's end hook revokes the episode's grants before
         // admission may recreate the session.
@@ -4539,14 +4577,50 @@ mod runtime_isolation_tests {
             crate::session::evict_idle_with_prefix(Duration::ZERO, &session),
             vec![session.clone()]
         );
-        drop(admit().unwrap());
-        let refusal = super::ended_approval_refusal(&[grant]).unwrap();
+        drop(admit_implicit(&session).unwrap());
+        let refusal = super::ended_approval_refusal(&[grant], &window, &[session.as_str()]);
         assert_eq!(
-            refusal
-                .structured_content
-                .as_ref()
-                .and_then(|value| value.pointer("/refusal/code"))
-                .and_then(serde_json::Value::as_str),
+            refusal.as_ref().and_then(refusal_code),
+            Some("authorization_session_ended")
+        );
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+        crate::session::forget_ended_sessions_with_prefix(&session);
+    }
+
+    #[tokio::test]
+    async fn a_one_call_approval_refuses_when_a_later_episode_ends_before_admission() {
+        let provider = Arc::new(AcceptingProvider {
+            requests: AtomicUsize::new(0),
+        });
+        let registry = history_registry(provider.clone());
+        let context = standard_context();
+        let session = context.runtime_session_key("one-call-across-end");
+        drop(admit_implicit(&session).unwrap());
+        assert_eq!(
+            crate::session::evict_idle_with_prefix(Duration::ZERO, &session),
+            vec![session.clone()]
+        );
+        let grants = registry.protected_resource_grants();
+        let window = grants.open_window();
+        // Approved for an already-ended session: it covers this call only and
+        // is never stored, so no revocation can mark it.
+        let grant = authorize_history(&registry, &context, &session).await;
+        assert!(super::ended_approval_refusal(
+            std::slice::from_ref(&grant),
+            &window,
+            &[session.as_str()]
+        )
+        .is_none());
+
+        drop(admit_implicit(&session).unwrap());
+        assert_eq!(
+            crate::session::evict_idle_with_prefix(Duration::ZERO, &session),
+            vec![session.clone()]
+        );
+        assert!(grant.is_live());
+        let refusal = super::ended_approval_refusal(&[grant], &window, &[session.as_str()]);
+        assert_eq!(
+            refusal.as_ref().and_then(refusal_code),
             Some("authorization_session_ended")
         );
         assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
@@ -7481,11 +7555,19 @@ fn session_owned_by_other_transport_refusal(
     result
 }
 
-/// Refuses a call whose approval was revoked before lifecycle admission. An
-/// end revokes its episode's grants before admission may recreate the
-/// session, so a dead grant here belongs to an episode that has ended.
-fn ended_approval_refusal(consented: &[crate::consent::ResourceGrant]) -> Option<ToolResult> {
-    consented.iter().any(|grant| !grant.is_live()).then(|| {
+/// Refuses a call holding an approval that was revoked before its lifecycle
+/// admission, or whose session's approvals were. An end revokes its
+/// episode's approvals before admission may recreate the session, so either
+/// means the approval belongs to an episode that has ended. An approval that
+/// was never stored is covered only by the session revocation.
+fn ended_approval_refusal(
+    consented: &[crate::consent::ResourceGrant],
+    window: &crate::consent::AuthorizationWindow<'_>,
+    sessions: &[&str],
+) -> Option<ToolResult> {
+    let ended = !consented.is_empty()
+        && (consented.iter().any(|grant| !grant.is_live()) || window.revoked_for(sessions));
+    ended.then(|| {
         protected_refusal(
             "authorization_session_ended",
             "this call's approval ended with its session; retry the call to request a new one",

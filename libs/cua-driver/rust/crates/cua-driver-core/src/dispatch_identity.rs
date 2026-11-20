@@ -103,7 +103,9 @@ impl DispatchIdentity {
             .filter(|id| !id.is_empty())
             .or(label)
             .map(private);
-        let mut transport = trusted_transport.filter(|id| !id.is_empty()).map(private);
+        // A trusted transport id is kept as given, even an empty one: it is
+        // the context's own binding, not caller input.
+        let mut transport = trusted_transport.map(private);
         if session_selecting && lifecycle.is_none() {
             let implicit = transport
                 .clone()
@@ -274,6 +276,27 @@ mod tests {
         let unselected = DispatchIdentity::resolve(runtime(), None, None, &json!({}), false);
         assert_eq!(unselected.lifecycle(), None);
         assert_eq!(unselected.owner(), None);
+    }
+
+    #[test]
+    fn an_empty_trusted_transport_is_kept_as_the_owner() {
+        let identity = DispatchIdentity::resolve(
+            runtime(),
+            None,
+            Some(""),
+            &json!({"session": "label"}),
+            true,
+        );
+        assert_eq!(identity.lifecycle(), Some("__cua_runtime_r1:label"));
+        assert_eq!(identity.transport(), Some(""));
+        assert_eq!(identity.owner(), Some(""));
+        let mut args = json!({"session": "label"});
+        identity.stamp(&mut args);
+        assert_eq!(args["_transport_session_id"], "");
+
+        let implicit = DispatchIdentity::resolve(runtime(), None, Some(""), &json!({}), true);
+        assert_eq!(implicit.lifecycle(), Some(""));
+        assert_eq!(implicit.transport(), Some(""));
     }
 
     #[test]

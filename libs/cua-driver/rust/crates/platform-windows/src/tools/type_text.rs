@@ -275,7 +275,7 @@ impl Tool for TypeTextTool {
         // Refuse known background drops before the final WM_CHAR path. WPF is
         // conditional: indexed text still has a working UIA ValuePattern route,
         // while unindexed text would be posted to the top-level and disappear.
-        if delivery == DeliveryMode::Background
+        if delivery.is_background()
             && ((admitted
                 .as_ref()
                 .is_some_and(|element| element.in_web_content)

@@ -487,12 +487,30 @@ fn structural_new_tab_button(
         }
         true
     };
+    // `parent_element_index` skips unindexed ancestors, so also walk back
+    // through the pre-order walk by depth, which sees a tab without an index.
+    let below_tab = |position: usize| {
+        let mut depth = nodes[position].depth;
+        for ancestor in nodes[..position].iter().rev() {
+            if depth == 0 {
+                return false;
+            }
+            if ancestor.depth < depth {
+                if is_tab(ancestor) {
+                    return true;
+                }
+                depth = ancestor.depth;
+            }
+        }
+        false
+    };
     let matches = distinct_elements(
-        nodes.iter().enumerate().filter(|(_, node)| {
+        nodes.iter().enumerate().filter(|(position, node)| {
             node.role == "AXButton"
                 && !node.in_web_content
                 && has_action(node, "AXPress")
                 && !inside_tab(node)
+                && !below_tab(*position)
                 && node.frame.is_some_and(|frame| {
                     frame[2] > 0.0 && same_span(frame[1], strip[1]) && same_span(frame[3], strip[3])
                 })
@@ -2535,6 +2553,23 @@ mod tests {
         nested.element_index = Some(9);
         nested.parent_element_index = Some(8);
         nested.frame = Some([460.0, 33.0, 28.0, 41.0]);
+        nodes.push(nested);
+        assert_eq!(
+            structural_new_tab_button(&nodes, |left, right| left == right).unwrap(),
+            Some(106)
+        );
+
+        // A tab without an element index is skipped by `parent_element_index`.
+        let mut nodes = localized_tab_strip();
+        let mut tab = node("AXRadioButton", Some("设置"), None, &[]);
+        tab.element_ptr = 110;
+        tab.depth = 1;
+        tab.frame = Some([460.0, 33.0, 163.0, 41.0]);
+        nodes.push(tab);
+        let mut nested = tree_node("AXButton", None, 111, 2);
+        nested.element_index = Some(11);
+        nested.parent_element_index = Some(0);
+        nested.frame = Some([560.0, 33.0, 28.0, 41.0]);
         nodes.push(nested);
         assert_eq!(
             structural_new_tab_button(&nodes, |left, right| left == right).unwrap(),

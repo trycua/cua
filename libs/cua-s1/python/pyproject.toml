@@ -40,7 +40,7 @@ pdf = [
     "pdfplumber>=0.11,<1",
 ]
 mcp = [
-    "mcp>=1,<2",
+    "mcp>=1.30.0,<2",
 ]
 nano-vision = [
     "transformers>=4.45,<5",
@@ -72,7 +72,7 @@ four-b-rl = [
     # without it.
 ]
 all = [
-    "mcp>=1,<2",
+    "mcp>=1.30.0,<2",
     "pdfplumber>=0.11,<1",
     "transformers>=4.45,<5",
     "pillow>=13.0.0,<14",

@@ -718,8 +718,8 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         })?;
         if crate::desktop::desktop() != crate::desktop::Desktop::X11 {
             if crate::wayland::hyprland::is_session() {
-                let window = tokio::task::spawn_blocking(move || {
-                    crate::wayland::hyprland::window_for_address(window_id)
+                let (window, bounds) = tokio::task::spawn_blocking(move || {
+                    crate::wayland::hyprland::browser_window(window_id)
                 })
                 .await
                 .ok()
@@ -736,22 +736,26 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                         "Hyprland browser window does not match the requested pid and full address",
                     ));
                 }
+                // Without its output the rect stays in layout coordinates,
+                // which Chromium does not share, so it binds read-only.
+                let geometry_exact = bounds.is_some();
+                let [x, y, width, height] = bounds.unwrap_or([
+                    f64::from(window.x),
+                    f64::from(window.y),
+                    f64::from(window.width),
+                    f64::from(window.height),
+                ]);
                 return Ok(NativeWindowInfo {
                     pid,
                     window_id,
                     title: window.title,
-                    bounds: Rect::new(
-                        f64::from(window.x),
-                        f64::from(window.y),
-                        f64::from(window.width),
-                        f64::from(window.height),
-                    ),
-                    geometry_exact: true,
+                    bounds: Rect::new(x, y, width, height),
+                    geometry_exact,
                     ownership: NativeOwnershipProof {
                         method: NativeOwnershipMethod::WindowServerOwner,
                         owner_pid: pid,
                         detail: Some(
-                            "authenticated Hyprland IPC pid, full address, and mapped window rect"
+                            "authenticated Hyprland IPC pid, full address, and mapped window rect on its output"
                                 .to_owned(),
                         ),
                     },

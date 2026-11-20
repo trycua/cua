@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.29.1](https://github.com/trycua/cua/compare/cua-sdk-v0.29.0...cua-sdk-v0.29.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** bump aiohttp to 3.14.5 (44 Dependabot alerts) ([#8309](https://github.com/trycua/cua/issues/8309)) ([006c897](https://github.com/trycua/cua/commit/006c897412aef0820e43a67beab8fe262a4a9886))
+
 ## [0.29.0](https://github.com/trycua/cua/compare/cua-sdk-v0.28.6...cua-sdk-v0.29.0) (2026-11-20)
 
 

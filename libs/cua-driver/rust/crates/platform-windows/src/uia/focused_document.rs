@@ -246,8 +246,17 @@ fn try_type_focused_document_append_unbounded(
 
             let document_range = unsafe { text_pattern.DocumentRange() }
                 .map_err(|_| "TextPattern DocumentRange failed after dispatch")?;
-            let mut landed = None;
+            // Text written at the end keeps the caret at the document end, so
+            // an append needs no character count to place it.
+            let mut landed = rest
+                .is_empty()
+                .then(|| unsafe { document_range.Clone() })
+                .transpose()
+                .map_err(|_| "TextPattern range clone failed after dispatch")?;
             for units in caret_unit_counts(&caret_text) {
+                if landed.is_some() {
+                    break;
+                }
                 let range = unsafe { document_range.Clone() }
                     .map_err(|_| "TextPattern range clone failed after dispatch")?;
                 unsafe {
@@ -270,7 +279,6 @@ fn try_type_focused_document_append_unbounded(
                     .map_err(|_| "TextPattern caret read-back failed after dispatch")?;
                 if normalized_text_matches(&caret_text, &reached.to_string()) {
                     landed = Some(range);
-                    break;
                 }
             }
             let Some(caret_range) = landed else {

@@ -12,11 +12,11 @@
 #![allow(non_upper_case_globals)]
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, OnceLock, PoisonError};
 use std::thread;
 use std::time::Duration;
 
-use cua_driver_core::single_flight::SingleFlight;
+use cua_driver_core::single_flight::{SingleFlight, SingleFlightPermit};
 
 use anyhow::{bail, Context};
 use windows::core::{Interface, BSTR};
@@ -82,7 +82,21 @@ where
         );
         return Err(UiaDeadlineError::Busy);
     };
+    run_uia_admitted(permit, stage, timeout, fallback, f)
+}
 
+/// Run `f` on a dedicated thread that holds `permit` until `f` returns.
+fn run_uia_admitted<T, F>(
+    permit: SingleFlightPermit,
+    stage: &'static str,
+    timeout: Duration,
+    fallback: &'static str,
+    f: F,
+) -> Result<T, UiaDeadlineError>
+where
+    T: Send + 'static,
+    F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
+{
     let (tx, rx) = mpsc::channel();
     let cancelled = permit.timeout_flag();
     let worker_cancelled = permit.timeout_flag();
@@ -145,20 +159,47 @@ where
     run_uia_single_flight(uia_single_flight(), stage, timeout, fallback, f)
 }
 
-pub(crate) fn run_focused_document_uia<T, F>(f: F) -> Result<T, UiaDeadlineError>
+/// Run a focused-document probe for `target`. The error carries whether the
+/// probe it concerns is for `target`: always for a timeout, and for `Busy`
+/// only when the probe still holding the gate was admitted for that window.
+pub(crate) fn run_focused_document_uia<T, F>(
+    target: u64,
+    f: F,
+) -> Result<T, (UiaDeadlineError, bool)>
 where
     T: Send + 'static,
     F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
 {
     static GATE: OnceLock<Arc<SingleFlight>> = OnceLock::new();
+    // The window of the last admitted probe, written together with its
+    // admission, so it names the probe that holds the gate.
+    static ADMITTED_TARGET: Mutex<u64> = Mutex::new(0);
     const FOCUSED_DOCUMENT_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
-    run_uia_single_flight(
-        GATE.get_or_init(|| Arc::new(SingleFlight::new(Duration::ZERO))),
+    let permit = {
+        let mut admitted = ADMITTED_TARGET
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let Some(permit) = GATE
+            .get_or_init(|| Arc::new(SingleFlight::new(Duration::ZERO)))
+            .try_acquire()
+        else {
+            tracing::debug!(
+                target: "uia_windows_enum",
+                "UIA focused document typing skipped while another provider call is in flight"
+            );
+            return Err((UiaDeadlineError::Busy, *admitted == target));
+        };
+        *admitted = target;
+        permit
+    };
+    run_uia_admitted(
+        permit,
         "focused document typing",
         FOCUSED_DOCUMENT_PROBE_TIMEOUT,
         "an error without typing if no write started; otherwise an unknown-effect result without retry",
         f,
     )
+    .map_err(|error| (error, true))
 }
 
 struct ComInit {
@@ -962,6 +1003,34 @@ mod tests {
                 Err(PointInvokeOutcome::Unavailable),
             );
         }
+    }
+
+    #[test]
+    fn a_busy_focused_document_probe_names_the_window_it_was_admitted_for() {
+        const TARGET: u64 = 0x1234;
+        const OTHER: u64 = 0x5678;
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let first = thread::spawn(move || {
+            run_focused_document_uia(TARGET, move |_| {
+                started_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                7
+            })
+        });
+        started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        assert!(matches!(
+            run_focused_document_uia(TARGET, |_| 0),
+            Err((UiaDeadlineError::Busy, true))
+        ));
+        assert!(matches!(
+            run_focused_document_uia(OTHER, |_| 0),
+            Err((UiaDeadlineError::Busy, false))
+        ));
+
+        release_tx.send(()).unwrap();
+        let _ = first.join().unwrap();
     }
 
     #[test]

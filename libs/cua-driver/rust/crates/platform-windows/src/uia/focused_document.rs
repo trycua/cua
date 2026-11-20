@@ -9,7 +9,7 @@
 //! failures are unverifiable and must not be retried through another route.
 
 use std::sync::{
-    atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
+    atomic::{AtomicBool, AtomicU8, Ordering},
     Arc,
 };
 
@@ -37,9 +37,6 @@ pub(crate) enum FocusedDocumentTypeOutcome {
 const MAX_TYPED_DOCUMENT_UNITS: i32 = 1 << 20;
 
 static PENDING_WRITE: AtomicBool = AtomicBool::new(false);
-/// The window the running probe is for, or 0. The gate is process-wide, so a
-/// probe still stuck in another app's provider says nothing about this target.
-static PROBE_TARGET: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn try_type_focused_document_append(
     target_hwnd: u64,
@@ -53,8 +50,7 @@ pub(crate) fn try_type_focused_document_append(
     let text = text.to_owned();
     let state = Arc::new(AtomicU8::new(0));
     let worker_state = Arc::clone(&state);
-    match run_focused_document_uia(move |cancelled| {
-        PROBE_TARGET.store(target_hwnd, Ordering::Release);
+    match run_focused_document_uia(target_hwnd, move |cancelled| {
         let outcome = try_type_focused_document_append_unbounded(
             target_hwnd,
             expected_pid,
@@ -63,17 +59,16 @@ pub(crate) fn try_type_focused_document_append(
             &worker_state,
         );
         PENDING_WRITE.store(false, Ordering::Release);
-        PROBE_TARGET.store(0, Ordering::Release);
         outcome
     }) {
         Ok(outcome) => outcome,
-        Err(error) => focused_document_worker_error(
+        Err((error, probe_is_for_target)) => focused_document_worker_error(
             error,
             state
                 .compare_exchange(0, 2, Ordering::AcqRel, Ordering::Acquire)
                 .unwrap_or_else(|state| state),
             PENDING_WRITE.load(Ordering::Acquire),
-            PROBE_TARGET.load(Ordering::Acquire) == target_hwnd,
+            probe_is_for_target,
         ),
     }
 }

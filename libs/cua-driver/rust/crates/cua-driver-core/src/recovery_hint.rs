@@ -321,6 +321,16 @@ static RULES: &[Rule] = &[
         },
     },
     Rule {
+        codes: &["app_unresponsive"],
+        build: |c| {
+            RecoveryHint::new(
+                "The app did not answer UI Automation in time, so nothing was sent. Wait until it \
+                 responds, then read the window again and retry.",
+            )
+            .call(c.read_window())
+        },
+    },
+    Rule {
         codes: &["target_changed", "stale_target", "stale_observation"],
         build: |c| {
             RecoveryHint::new(

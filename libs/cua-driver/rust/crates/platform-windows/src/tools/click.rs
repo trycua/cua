@@ -30,6 +30,46 @@ fn tool_result_text(result: ToolResult) -> String {
         .unwrap_or_else(|| "element action was refused".to_owned())
 }
 
+fn unknown_effect_after_failed_calls(
+    failed_calls: &[ActionTransport],
+    message: impl FnOnce(&str) -> String,
+) -> ToolResult {
+    let failed: Vec<String> = failed_calls
+        .iter()
+        .map(|call| format!("{call:?}"))
+        .collect();
+    cua_driver_core::delivery::background_unavailable_result(
+        message(&failed.join(", ")),
+        "background_unavailable",
+        "an earlier UIA pattern call failed and may still take effect; inspect the target \
+         state before retrying with delivery_mode:\"foreground\".",
+        json!({
+            "failed_calls": failed,
+            "path": "ax",
+            "verified": false,
+            "effect": "unverifiable",
+        }),
+    )
+}
+
+fn background_click_refusal(
+    refusal: ToolResult,
+    failed_calls: &[ActionTransport],
+    idx: usize,
+) -> Box<ToolResult> {
+    if failed_calls.is_empty() {
+        return Box::new(refusal);
+    }
+    let reason = tool_result_text(refusal);
+    Box::new(unknown_effect_after_failed_calls(failed_calls, |failed| {
+        format!(
+            "Element [{idx}] was refused after an earlier pattern call failed ({failed}): \
+             {reason} No fallback input was sent. The click effect is unknown; inspect the \
+             target state before another action."
+        )
+    }))
+}
+
 fn capture_admission_refusal(error: anyhow::Error) -> ToolResult {
     let code = cua_driver_core::capture_runtime::admission_error_code(&error);
     ToolResult::error(format!("Capture-bound click refused: {error}")).with_structured(json!({
@@ -726,7 +766,7 @@ impl Tool for ClickTool {
                         });
                 let (cx, cy) = match scrolled {
                     Some(Err(())) => {
-                        return super::impl_::element_not_visible_refusal(format!(
+                        return super::impl_::app_unresponsive_refusal(format!(
                             "Element [{idx}] did not answer whether it scrolled into view within \
                              4 s (its app took longer, or has not returned an earlier UI \
                              Automation call), so a foreground click was refused before any \
@@ -866,11 +906,12 @@ impl Tool for ClickTool {
                 if delivery.is_background()
                     && crate::input::is_chromium_target_window(hwnd)
                 {
-                    let (cx, cy) = resolve_onscreen_point_with_scroll(
+                    return Ok(match resolve_onscreen_point_with_scroll(
                         &admitted, hwnd, idx, cx, cy, "clicking",
-                    )
-                    .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
-                    return Ok(BackgroundElementClick::Inject { x: cx, y: cy, failed_calls });
+                    ) {
+                        Ok((x, y)) => BackgroundElementClick::Inject { x, y, failed_calls },
+                        Err(refusal) => BackgroundElementClick::Refused(Box::new(refusal)),
+                    });
                 }
                 if use_uia_invoke {
                     // Retain the element out of the cache (AddRef under the
@@ -896,34 +937,21 @@ impl Tool for ClickTool {
                         };
                         let pattern_refusal = |failed_calls: &[ActionTransport]| {
                             if failed_calls.is_empty() {
-                                return Box::new(super::impl_::element_not_visible_refusal(format!(
+                                return Box::new(super::impl_::app_unresponsive_refusal(format!(
                                     "Element [{idx}] did not answer for its UI Automation pattern \
                                      (its app took over 2 s, or has not returned an earlier UI \
                                      Automation call), so clicking was refused before any input. \
                                      Retry once the app responds."
                                 )));
                             }
-                            let failed: Vec<String> =
-                                failed_calls.iter().map(|call| format!("{call:?}")).collect();
-                            Box::new(cua_driver_core::delivery::background_unavailable_result(
+                            Box::new(unknown_effect_after_failed_calls(failed_calls, |failed| {
                                 format!(
                                     "Element [{idx}] did not answer for its UI Automation pattern \
-                                     after an earlier pattern call failed ({}). No fallback input \
-                                     was sent. The click effect is unknown; inspect the target \
-                                     state before another action.",
-                                    failed.join(", ")
-                                ),
-                                "background_unavailable",
-                                "the UIA provider did not answer after a failed pattern call; \
-                                 inspect the target state before retrying with \
-                                 delivery_mode:\"foreground\".",
-                                json!({
-                                    "failed_calls": failed,
-                                    "path": "ax",
-                                    "verified": false,
-                                    "effect": "unverifiable",
-                                }),
-                            ))
+                                     after an earlier pattern call failed ({failed}). No fallback \
+                                     input was sent. The click effect is unknown; inspect the \
+                                     target state before another action."
+                                )
+                            }))
                         };
 
                         // Try patterns in order of click-semantics specificity:
@@ -1010,22 +1038,28 @@ impl Tool for ClickTool {
                         EventKind::MouseClick,
                     )
                 {
-                    let (cx, cy) = resolve_onscreen_point_with_scroll(
-                        &admitted,
-                        hwnd,
-                        idx,
-                        cx,
-                        cy,
-                        "clicking",
-                    )
-                    .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
-                    return Ok(BackgroundElementClick::Inject { x: cx, y: cy, failed_calls });
+                    return Ok(
+                        match resolve_onscreen_point_with_scroll(
+                            &admitted, hwnd, idx, cx, cy, "clicking",
+                        ) {
+                            Ok((x, y)) => BackgroundElementClick::Inject { x, y, failed_calls },
+                            Err(refusal) => BackgroundElementClick::Refused(
+                                background_click_refusal(refusal, &failed_calls, idx),
+                            ),
+                        },
+                    );
                 }
                 if admitted.as_ref().is_some_and(|element| element.read_while_minimized) {
-                    let (x, y) =
-                        resolve_onscreen_point_with_scroll(&admitted, hwnd, idx, cx, cy, "clicking")
-                            .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
-                    return Ok(BackgroundElementClick::Post { x, y, failed_calls });
+                    return Ok(
+                        match resolve_onscreen_point_with_scroll(
+                            &admitted, hwnd, idx, cx, cy, "clicking",
+                        ) {
+                            Ok((x, y)) => BackgroundElementClick::Post { x, y, failed_calls },
+                            Err(refusal) => BackgroundElementClick::Refused(
+                                background_click_refusal(refusal, &failed_calls, idx),
+                            ),
+                        },
+                    );
                 }
                 Ok(BackgroundElementClick::Post { x: cx, y: cy, failed_calls })
             } }).await;
@@ -1483,6 +1517,40 @@ mod pixel_click_transport_tests {
             .expect("serialize ActionResult");
         assert_eq!(public["route"], "synthetic_events");
         assert_eq!(public["delivery"]["mode"], "background");
+    }
+}
+
+#[cfg(test)]
+mod background_click_refusal_tests {
+    use super::{background_click_refusal, ActionTransport};
+    use cua_driver_core::protocol::ToolResult;
+    use serde_json::json;
+
+    fn refusal(code: &str) -> ToolResult {
+        ToolResult::error(format!("refused: {code}."))
+            .with_structured(json!({ "status": "refused", "code": code, "effect": "refused" }))
+    }
+
+    #[test]
+    fn a_refusal_before_any_pattern_call_reaches_the_caller_unchanged() {
+        for code in ["app_unresponsive", "element_not_visible"] {
+            let carried = background_click_refusal(refusal(code), &[], 4);
+            assert_eq!(carried.structured_content, refusal(code).structured_content);
+        }
+    }
+
+    #[test]
+    fn a_refusal_after_a_failed_pattern_call_has_an_unknown_effect() {
+        let carried = background_click_refusal(
+            refusal("element_not_visible"),
+            &[ActionTransport::WindowsUiaInvoke],
+            4,
+        );
+        let structured = carried.structured_content.expect("structured refusal");
+        assert_eq!(structured["code"], "background_unavailable");
+        assert_eq!(structured["effect"], "unverifiable");
+        assert_eq!(structured["path"], "ax");
+        assert_eq!(structured["failed_calls"], json!(["WindowsUiaInvoke"]));
     }
 }
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.39.5](https://github.com/trycua/cua/compare/cua-spaces-v0.39.4...cua-spaces-v0.39.5) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** bump Playwright to 1.65.1 (Chromium 159, CVE-2026-130959) ([#8321](https://github.com/trycua/cua/issues/8321)) ([7dcd4a9](https://github.com/trycua/cua/commit/7dcd4a9e86e04f3d15308762ee0e2f7f52ac632d))
+
 ## [0.39.4](https://github.com/trycua/cua/compare/cua-spaces-v0.39.3...cua-spaces-v0.39.4) (2026-11-20)
 
 

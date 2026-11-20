@@ -4939,7 +4939,7 @@ mod spare_keycode_restore_tests {
         drop(holder);
 
         let (conn, _) = RustConnection::connect(Some(&display)).unwrap();
-        assert!(keysyms_of(&conn, keycode).iter().all(|&s| s == HELD_KEYSYM));
+        assert_eq!(keysyms_of(&conn, keycode)[0], HELD_KEYSYM);
         assert_eq!(marked_by(&conn, pid), [u32::from(keycode)]);
         keyboard_mapping(&conn).unwrap();
         assert!(
@@ -4962,10 +4962,9 @@ mod spare_keycode_restore_tests {
         let (keycode, guard) =
             keycode_for_keysym(&conn, &mut mapping, HELD_KEYSYM, "\u{4e2d}").unwrap();
         keyboard_mapping(&observer).unwrap();
-        assert!(
-            keysyms_of(&observer, keycode)
-                .iter()
-                .all(|&s| s == HELD_KEYSYM),
+        assert_eq!(
+            keysyms_of(&observer, keycode)[0],
+            HELD_KEYSYM,
             "loading the keymap took a live driver's spare keycode"
         );
 
@@ -5654,9 +5653,17 @@ fn restore_dead_drivers_spares(conn: &RustConnection) -> Result<()> {
     Ok(())
 }
 
-/// A dead driver's keycode is restored only while it still holds one
-/// keysym on every level, the binding [`reserve_spare_keycode`] makes, and
-/// no running driver lists it.
+/// Whether `keysyms` is what [`reserve_spare_keycode`] binds: one keysym,
+/// on every level the server reports back. Under XKB the core map can read
+/// some levels back as NoSymbol.
+fn holds_one_keysym(keysyms: &[u32]) -> bool {
+    keysyms.first().is_some_and(|&first| {
+        first != 0 && keysyms.iter().all(|&keysym| keysym == first || keysym == 0)
+    })
+}
+
+/// A dead driver's keycode is restored only while [`holds_one_keysym`] is
+/// true of it and no running driver lists it.
 fn restore_spares_under_grab(conn: &RustConnection, root: Window) -> Result<()> {
     let mut live = std::collections::HashSet::new();
     let mut dead = Vec::new();
@@ -5679,10 +5686,7 @@ fn restore_spares_under_grab(conn: &RustConnection, root: Window) -> Result<()> 
             let Some(keysyms) = mapping.keysyms.get(at..at + usize::from(per)) else {
                 continue;
             };
-            if keysyms
-                .first()
-                .is_some_and(|&first| first != 0 && keysyms.iter().all(|&keysym| keysym == first))
-            {
+            if holds_one_keysym(keysyms) {
                 conn.change_keyboard_mapping(1, keycode, per, &vec![0; usize::from(per)])?;
             }
         }

@@ -12,7 +12,9 @@
 //! * trimmed metadata (`_note`, `background_input`) unless `verbose`,
 //! * a stated truncation line when the walk hit the `max_elements` budget,
 //! * with `since: <snapshot_id>`, only the rows that changed against that
-//!   snapshot, falling back to a full read when the snapshot is unknown.
+//!   snapshot, falling back to a full read when the snapshot is unknown or
+//!   retired. The rows a diff compares against are kept on the snapshot in
+//!   the platform's [`crate::snapshot_store`], so they retire with its tokens.
 //!
 //! `full_output: true` restores the full tree and structured payload (both
 //! representations, all metadata, the platform walk caps), with snapshot identity
@@ -22,23 +24,16 @@
 //! the same `- [N] Role "label" ...` shape, so it also sees display-only rows
 //! (static text) that the structured `elements` array omits.
 
+use crate::element_token::{format_snapshot_id, parse_snapshot_handle};
 use crate::protocol::{Content, ToolResult};
+use crate::snapshot_store::{SinceBase, SnapshotRows};
 use serde_json::{json, Value};
-use std::collections::VecDeque;
-use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
 
 /// Default accessibility-node budget for a model-facing read. The platform
 /// walkers default to 2 000 (macOS) or 5 000 (Windows, Linux) nodes, which
 /// renders 40-100K characters for an ordinary window.
 pub const DEFAULT_MAX_ELEMENTS: usize = 250;
 
-/// Snapshots remembered per (pid, window) for `since`.
-const STORE_PER_WINDOW: usize = 8;
-/// Snapshots remembered across all windows.
-const STORE_TOTAL: usize = 32;
-/// A remembered snapshot stops being a valid `since` baseline after this long.
-const STORE_TTL: Duration = Duration::from_secs(15 * 60);
 /// Largest old-rows x new-rows product the line diff will compute.
 const DIFF_CELL_LIMIT: usize = 6_000_000;
 /// A diff larger than this share (percent) of the full markdown is not worth
@@ -85,7 +80,7 @@ pub fn schema_properties() -> Value {
         },
         "since": {
             "type": "string",
-            "description": "A `snapshot_id` from an earlier get_window_state of the same window, or \"latest\" for this window's most recent read with the same query/max_elements/max_depth. Use it on every re-read after acting. Returns only what changed against that snapshot: `+` added rows, `~` changed rows, `-` removed rows (removed ids are the old snapshot's), or `no change`. Falls back to a full read when the snapshot is unknown, expired, belongs to another window, or was read with a different query/max_elements/max_depth; `since_status` says which. The response still carries a NEW snapshot_id and its element_tokens; rows not listed keep their previous [N] unless a `reindexed:` line says otherwise."
+            "description": "A `snapshot_id` from an earlier get_window_state of the same window, or \"latest\" for this window's most recent read with the same query/max_elements/max_depth. Use it on every re-read after acting. Returns only what changed against that snapshot: `+` added rows, `~` changed rows, `-` removed rows (removed ids are the old snapshot's), or `no change`. Falls back to a full read when the snapshot is unknown, retired (a later read of the window replaced it, or its session ended), belongs to another window, or was read with a different query/max_elements/max_depth; `since_status` says which. The response still carries a NEW snapshot_id and its element_tokens; rows not listed keep their previous [N] unless a `reindexed:` line says otherwise."
         },
         "verbose": {
             "type": "boolean",
@@ -259,10 +254,19 @@ pub struct ViewKey {
     pub max_depth: Option<usize>,
 }
 
+/// The rows one read rendered, kept on its snapshot as a later diff's base.
+#[derive(Debug)]
+pub struct ReadRows {
+    pub key: ViewKey,
+    pub markdown: String,
+}
+
 pub struct ViewContext<'a> {
     pub pid: i64,
     pub window_id: u64,
     pub key: ViewKey,
+    /// The platform's snapshot store, which keeps each read's rows.
+    pub snapshots: &'a dyn SnapshotRows,
     /// Describes the focused element, called only for a `no change` answer.
     pub focus_probe: Option<&'a dyn Fn() -> Option<String>>,
 }
@@ -310,11 +314,18 @@ pub fn apply(
         .get("snapshot_id")
         .and_then(Value::as_str)
         .map(str::to_owned);
+    let current = snapshot_id.as_deref().and_then(parse_snapshot_handle);
 
     // `since:"latest"` names this window's most recent read of the same view.
     let since_resolved = opts.since.as_deref().map(|since| {
         if since.eq_ignore_ascii_case(SINCE_LATEST) {
-            latest_snapshot(ctx, snapshot_id.as_deref()).unwrap_or_default()
+            current
+                .and_then(|current| {
+                    ctx.snapshots
+                        .latest_read(current, ctx.pid as i32, ctx.window_id, &ctx.key)
+                })
+                .map(format_snapshot_id)
+                .unwrap_or_default()
         } else {
             since.to_owned()
         }
@@ -323,11 +334,17 @@ pub fn apply(
         if since.is_empty() {
             SinceOutcome::Fallback("no_baseline")
         } else {
-            resolve_since(since, snapshot_id.as_deref(), &md, ctx)
+            resolve_since(since, current, &md, ctx)
         }
     });
-    if let Some(sid) = &snapshot_id {
-        remember(sid, ctx, &md);
+    if let Some(current) = current {
+        ctx.snapshots.keep_rows(
+            current,
+            ReadRows {
+                key: ctx.key.clone(),
+                markdown: md.clone(),
+            },
+        );
     }
 
     // Header text added to the first line of the tree block.
@@ -523,26 +540,12 @@ fn token_hint(snapshot_id: &str, md: &str, truncated: bool) -> String {
     hint
 }
 
-/// The most recent remembered read of this window with the same view key,
-/// other than the read being shaped now.
-fn latest_snapshot(ctx: &ViewContext<'_>, current_id: Option<&str>) -> Option<String> {
-    let guard = store().lock().unwrap_or_else(|e| e.into_inner());
-    guard
-        .iter()
-        .rev()
-        .find(|s| {
-            s.pid == ctx.pid
-                && s.window_id == ctx.window_id
-                && s.key == ctx.key
-                && Some(s.snapshot_id.as_str()) != current_id
-                && s.at.elapsed() <= STORE_TTL
-        })
-        .map(|s| s.snapshot_id.clone())
-}
-
 fn fallback_text(reason: &str) -> &'static str {
     match reason {
-        "unknown_snapshot" => "unknown or expired snapshot_id",
+        "unknown_snapshot" => "unknown snapshot_id",
+        "retired_snapshot" => {
+            "that snapshot was retired by a later read of the window or the end of its session, and its element_tokens with it"
+        }
         "other_window" => "that snapshot belongs to a different window",
         "view_changed" => "query, max_elements or max_depth differ from that snapshot's read",
         "too_much_changed" => "most of the tree changed",
@@ -661,49 +664,7 @@ fn truncation_line(structured: &Value, key: &ViewKey) -> Option<String> {
     ))
 }
 
-// ── snapshot memory for `since` ──────────────────────────────────────────
-
-#[derive(Clone)]
-struct StoredSnapshot {
-    snapshot_id: String,
-    pid: i64,
-    window_id: u64,
-    key: ViewKey,
-    markdown: String,
-    at: Instant,
-}
-
-fn store() -> &'static Mutex<VecDeque<StoredSnapshot>> {
-    static STORE: OnceLock<Mutex<VecDeque<StoredSnapshot>>> = OnceLock::new();
-    STORE.get_or_init(|| Mutex::new(VecDeque::new()))
-}
-
-fn remember(snapshot_id: &str, ctx: &ViewContext<'_>, md: &str) {
-    let mut guard = store().lock().unwrap_or_else(|e| e.into_inner());
-    // A screenshot-only read keeps its snapshot id and returns no tree. It
-    // must not erase the rows that snapshot's tokens were read from.
-    if md.trim().is_empty() && guard.iter().any(|s| s.snapshot_id == snapshot_id) {
-        return;
-    }
-    guard.retain(|s| s.snapshot_id != snapshot_id);
-    guard.push_back(StoredSnapshot {
-        snapshot_id: snapshot_id.to_owned(),
-        pid: ctx.pid,
-        window_id: ctx.window_id,
-        key: ctx.key.clone(),
-        markdown: md.to_owned(),
-        at: Instant::now(),
-    });
-    let same_window = |s: &StoredSnapshot| s.pid == ctx.pid && s.window_id == ctx.window_id;
-    while guard.iter().filter(|s| same_window(s)).count() > STORE_PER_WINDOW {
-        if let Some(pos) = guard.iter().position(same_window) {
-            guard.remove(pos);
-        }
-    }
-    while guard.len() > STORE_TOTAL {
-        guard.pop_front();
-    }
-}
+// ── rows of earlier reads ─────────────────────────────────────────────────
 
 /// One row of an earlier read, as that read rendered it.
 pub(crate) struct StoredRow {
@@ -713,17 +674,18 @@ pub(crate) struct StoredRow {
     pub line: String,
 }
 
-/// Row `[index]` of the read that produced `snapshot_id`, while that read is
-/// still remembered. Lets a caller holding a stale element token find the
-/// same element again by what it was.
-pub(crate) fn snapshot_row(snapshot_id: &str, index: u64) -> Option<StoredRow> {
-    let snapshot = {
-        let mut guard = store().lock().unwrap_or_else(|e| e.into_inner());
-        guard.retain(|s| s.at.elapsed() <= STORE_TTL);
-        guard.iter().find(|s| s.snapshot_id == snapshot_id).cloned()
-    }?;
+/// Row `[index]` of the read that produced `snapshot_id`, while its snapshot
+/// is current or recently retired. Lets a caller holding a stale element
+/// token find the same element again by what it was.
+pub(crate) fn snapshot_row(
+    snapshots: &dyn SnapshotRows,
+    snapshot_id: &str,
+    index: u64,
+) -> Option<StoredRow> {
+    let snapshot = snapshots.snapshot_rows(parse_snapshot_handle(snapshot_id)?)?;
     let marker = format!("[{index}] ");
     let line = snapshot
+        .rows
         .markdown
         .lines()
         .map(str::trim)
@@ -733,7 +695,7 @@ pub(crate) fn snapshot_row(snapshot_id: &str, index: u64) -> Option<StoredRow> {
         })?
         .to_owned();
     Some(StoredRow {
-        pid: snapshot.pid,
+        pid: i64::from(snapshot.pid),
         window_id: snapshot.window_id,
         line,
     })
@@ -743,15 +705,13 @@ pub(crate) fn snapshot_row(snapshot_id: &str, index: u64) -> Option<StoredRow> {
 /// when that row is an item in the app's menu bar: the labels of its
 /// AXMenuBarItem and AXMenuItem ancestors, then its own. `None` for any
 /// other row.
-pub(crate) fn snapshot_menu_path(snapshot_id: &str, index: u64) -> Option<Vec<String>> {
-    let markdown = {
-        let guard = store().lock().unwrap_or_else(|e| e.into_inner());
-        guard
-            .iter()
-            .find(|s| s.snapshot_id == snapshot_id && s.at.elapsed() <= STORE_TTL)
-            .map(|s| s.markdown.clone())
-    }?;
-    menu_path_in(&markdown, index)
+pub(crate) fn snapshot_menu_path(
+    snapshots: &dyn SnapshotRows,
+    snapshot_id: &str,
+    index: u64,
+) -> Option<Vec<String>> {
+    let snapshot = snapshots.snapshot_rows(parse_snapshot_handle(snapshot_id)?)?;
+    menu_path_in(&snapshot.rows.markdown, index)
 }
 
 fn menu_path_in(markdown: &str, index: u64) -> Option<Vec<String>> {
@@ -802,8 +762,6 @@ fn menu_path_in(markdown: &str, index: u64) -> Option<Vec<String>> {
     None
 }
 
-/// Remember a read's markdown as `apply` does, for tests elsewhere in the
-/// crate that drive a fake get_window_state.
 #[cfg(test)]
 #[test]
 fn menu_paths_come_from_the_menu_bar_ancestors() {
@@ -824,47 +782,29 @@ fn menu_paths_come_from_the_menu_bar_ancestors() {
     assert_eq!(menu_path_in(md, 999), None);
 }
 
-#[cfg(test)]
-#[test]
-fn a_screenshot_only_read_keeps_the_remembered_rows() {
-    remember_for_test("s7e570001", 4, 5, "- [9] AXButton \"Send\"\n");
-    remember_for_test("s7e570001", 4, 5, "");
-    assert!(snapshot_row("s7e570001", 9).is_some_and(|row| row.line.contains("Send")));
-}
-
-#[cfg(test)]
-pub(crate) fn remember_for_test(snapshot_id: &str, pid: i64, window_id: u64, markdown: &str) {
-    let ctx = ViewContext {
-        pid,
-        window_id,
-        key: ViewKey {
-            query: None,
-            max_elements: DEFAULT_MAX_ELEMENTS,
-            max_depth: None,
-        },
-        focus_probe: None,
-    };
-    remember(snapshot_id, &ctx, markdown);
-}
-
 fn resolve_since(
     since: &str,
-    current_id: Option<&str>,
+    current: Option<u32>,
     md: &str,
     ctx: &ViewContext<'_>,
 ) -> SinceOutcome {
-    if current_id.is_none() {
+    let Some(current) = current else {
         return SinceOutcome::Fallback("no_snapshot");
-    }
-    let found = {
-        let mut guard = store().lock().unwrap_or_else(|e| e.into_inner());
-        guard.retain(|s| s.at.elapsed() <= STORE_TTL);
-        guard.iter().find(|s| s.snapshot_id == since).cloned()
     };
-    let Some(old) = found else {
-        return SinceOutcome::Fallback("unknown_snapshot");
+    let base = match parse_snapshot_handle(since) {
+        Some(since) => ctx.snapshots.since_base(current, since),
+        None => SinceBase::Unknown,
     };
-    if old.pid != ctx.pid || old.window_id != ctx.window_id {
+    let (pid, window_id, old) = match base {
+        SinceBase::Rows {
+            pid,
+            window_id,
+            rows,
+        } => (pid, window_id, rows),
+        SinceBase::Retired => return SinceOutcome::Fallback("retired_snapshot"),
+        SinceBase::Unknown => return SinceOutcome::Fallback("unknown_snapshot"),
+    };
+    if i64::from(pid) != ctx.pid || window_id != ctx.window_id {
         return SinceOutcome::Fallback("other_window");
     }
     if old.key != ctx.key {
@@ -1165,6 +1105,9 @@ impl DiffReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::snapshot_store::SnapshotStore;
+    use crate::snapshot_test_support::Payload;
+    use std::sync::OnceLock;
 
     fn opts(args: Value) -> ViewOptions {
         ViewOptions::from_args(&args).unwrap()
@@ -1336,7 +1279,18 @@ mod tests {
         (content, structured)
     }
 
+    /// A store for reads whose snapshot ids no test publishes, so keeping
+    /// their rows is a no-op.
+    fn unpublished() -> &'static SnapshotStore<Payload> {
+        static STORE: OnceLock<SnapshotStore<Payload>> = OnceLock::new();
+        STORE.get_or_init(SnapshotStore::new)
+    }
+
     fn ctx(window_id: u64) -> ViewContext<'static> {
+        ctx_in(unpublished(), window_id)
+    }
+
+    fn ctx_in(store: &SnapshotStore<Payload>, window_id: u64) -> ViewContext<'_> {
         ViewContext {
             pid: 9,
             window_id,
@@ -1345,8 +1299,31 @@ mod tests {
                 max_elements: 250,
                 max_depth: None,
             },
+            snapshots: store,
             focus_probe: None,
         }
+    }
+
+    /// A backend's read of `window_id` in `session`: it publishes a snapshot
+    /// first, then hands its payload to `apply`.
+    fn read_in(
+        store: &SnapshotStore<Payload>,
+        session: Option<&str>,
+        window_id: u64,
+        md: &str,
+    ) -> (Vec<Content>, Value) {
+        let (id, _) = store
+            .publish_for_session(9, window_id, Payload(vec![0]), session, None)
+            .unwrap();
+        payload(&format_snapshot_id(id), md)
+    }
+
+    fn read(store: &SnapshotStore<Payload>, window_id: u64, md: &str) -> (Vec<Content>, Value) {
+        read_in(store, None, window_id, md)
+    }
+
+    fn sid(structured: &Value) -> String {
+        structured["snapshot_id"].as_str().unwrap().to_owned()
     }
 
     fn text_of(content: &[Content]) -> String {
@@ -1398,31 +1375,34 @@ mod tests {
         for spelled in ["null", "None", " "] {
             assert_eq!(opts(json!({ "since": spelled })).since, None, "{spelled:?}");
         }
+        let store = SnapshotStore::new();
         let window = 7103;
-        let (mut c1, mut s1) = payload("s000000f5", OLD);
-        apply(&opts(json!({})), &ctx(window), &mut c1, &mut s1);
-        let (mut c2, mut s2) = payload("s000000f6", OLD);
+        let (mut c1, mut s1) = read(&store, window, OLD);
+        apply(&opts(json!({})), &ctx_in(&store, window), &mut c1, &mut s1);
+        let (mut c2, mut s2) = read(&store, window, OLD);
         s2["truncated"] = json!(true);
         apply(
             &opts(json!({"since": "latest"})),
-            &ctx(window),
+            &ctx_in(&store, window),
             &mut c2,
             &mut s2,
         );
         assert_eq!(s2["since_status"], "no_change");
-        assert!(text_of(&c2).contains(
-            "this read stops at row [3]: rows past it from a larger read are not in s000000f6"
-        ));
+        assert!(text_of(&c2).contains(&format!(
+            "this read stops at row [3]: rows past it from a larger read are not in {}",
+            sid(&s2)
+        )));
     }
 
     #[test]
     fn since_latest_diffs_against_the_last_read_of_the_same_view() {
+        let store = SnapshotStore::new();
         let window = 7102;
         // No earlier read: full read, stated.
-        let (mut c0, mut s0) = payload("s000000f0", OLD);
+        let (mut c0, mut s0) = read(&store, window, OLD);
         apply(
             &opts(json!({"since": "latest"})),
-            &ctx(window),
+            &ctx_in(&store, window),
             &mut c0,
             &mut s0,
         );
@@ -1430,33 +1410,53 @@ mod tests {
         assert_eq!(s0["tree_markdown"], OLD);
         assert!(text_of(&c0).contains("since=latest: no earlier read of this window"));
 
-        // A read with another view is not the baseline; the last same-view read is.
-        let mut narrow = ctx(window);
+        // Another session's read with another view is not the baseline; the
+        // last same-view read is.
+        let mut narrow = ctx_in(&store, window);
         narrow.key.query = Some("Save".into());
-        let (mut c1, mut s1) = payload("s000000f1", OLD);
+        let (mut c1, mut s1) = read_in(&store, Some("other"), window, OLD);
         apply(&opts(json!({})), &narrow, &mut c1, &mut s1);
 
         let edited = OLD.replace("\"a\"", "\"ab\"");
-        let (mut c2, mut s2) = payload("s000000f2", &edited);
+        let (mut c2, mut s2) = read(&store, window, &edited);
         apply(
             &opts(json!({"since": "latest"})),
-            &ctx(window),
+            &ctx_in(&store, window),
             &mut c2,
             &mut s2,
         );
         assert_eq!(s2["since_status"], "diff");
-        assert_eq!(s2["since"], "s000000f0");
-        assert!(text_of(&c2).contains("since s000000f0:"));
+        assert_eq!(s2["since"], sid(&s0));
+        assert!(text_of(&c2).contains(&format!("since {}:", sid(&s0))));
 
-        let (mut c3, mut s3) = payload("s000000f3", &edited);
+        let (mut c3, mut s3) = read(&store, window, &edited);
         apply(
             &opts(json!({"since": "LATEST"})),
-            &ctx(window),
+            &ctx_in(&store, window),
             &mut c3,
             &mut s3,
         );
         assert_eq!(s3["since_status"], "no_change");
-        assert_eq!(s3["since"], "s000000f2");
+        assert_eq!(s3["since"], sid(&s2));
+
+        // This session's own read with another view retired the last
+        // same-view read, and latest says so rather than diffing against it.
+        let (mut c4, mut s4) = read(&store, window, &edited);
+        apply(&opts(json!({})), &narrow, &mut c4, &mut s4);
+        let (mut c5, mut s5) = read(&store, window, &edited);
+        apply(
+            &opts(json!({"since": "latest"})),
+            &ctx_in(&store, window),
+            &mut c5,
+            &mut s5,
+        );
+        assert_eq!(s5["since_status"], "retired_snapshot");
+        assert_eq!(s5["since"], sid(&s3));
+        assert_eq!(s5["tree_markdown"], edited);
+        assert!(text_of(&c5).contains(&format!(
+            "since={}: that snapshot was retired by a later read",
+            sid(&s3)
+        )));
     }
 
     fn query_ctx(window_id: u64, query: &str) -> ViewContext<'static> {
@@ -1667,28 +1667,30 @@ mod tests {
 
     #[test]
     fn since_returns_diff_then_falls_back() {
+        let store = SnapshotStore::new();
         let window = 7004;
-        let (mut c1, mut s1) = payload("s000000b1", OLD);
-        apply(&opts(json!({})), &ctx(window), &mut c1, &mut s1);
+        let at = |window| ctx_in(&store, window);
+        let (mut c1, mut s1) = read(&store, window, OLD);
+        apply(&opts(json!({})), &at(window), &mut c1, &mut s1);
 
-        // Unchanged tree.
-        let (mut c2, mut s2) = payload("s000000b2", OLD);
+        // Unchanged tree, against the snapshot this read replaced.
+        let (mut c2, mut s2) = read(&store, window, OLD);
         apply(
-            &opts(json!({"since": "s000000b1"})),
-            &ctx(window),
+            &opts(json!({ "since": sid(&s1) })),
+            &at(window),
             &mut c2,
             &mut s2,
         );
         assert_eq!(s2["since_status"], "no_change");
         assert!(s2.get("tree_markdown").is_none());
-        assert!(text_of(&c2).contains("no change since s000000b1"));
+        assert!(text_of(&c2).contains(&format!("no change since {}", sid(&s1))));
 
         // One edit, chained against the previous snapshot.
         let edited = OLD.replace("\"a\"", "\"ab\"");
-        let (mut c3, mut s3) = payload("s000000b3", &edited);
+        let (mut c3, mut s3) = read(&store, window, &edited);
         apply(
-            &opts(json!({"since": "s000000b2"})),
-            &ctx(window),
+            &opts(json!({ "since": sid(&s2) })),
+            &at(window),
             &mut c3,
             &mut s3,
         );
@@ -1699,34 +1701,115 @@ mod tests {
         assert!(s3.get("elements").is_none());
 
         // Unknown snapshot falls back to the full read.
-        let (mut c4, mut s4) = payload("s000000b4", &edited);
+        let (mut c4, mut s4) = read(&store, window, &edited);
         apply(
-            &opts(json!({"since": "s0000dead"})),
-            &ctx(window),
+            &opts(json!({"since": "sfffffff0"})),
+            &at(window),
             &mut c4,
             &mut s4,
         );
         assert_eq!(s4["since_status"], "unknown_snapshot");
         assert_eq!(s4["tree_markdown"], edited);
-        assert!(text_of(&c4).contains("unknown or expired snapshot_id; full read follows"));
+        assert!(text_of(&c4).contains("unknown snapshot_id; full read follows"));
 
-        // Another window's snapshot is not a baseline.
-        let (mut c5, mut s5) = payload("s000000b5", &edited);
+        // A snapshot an earlier read retired is no base, as its tokens are not.
+        let (mut c5, mut s5) = read(&store, window, &edited);
         apply(
-            &opts(json!({"since": "s000000b4"})),
-            &ctx(window + 1),
+            &opts(json!({ "since": sid(&s3) })),
+            &at(window),
             &mut c5,
             &mut s5,
         );
-        assert_eq!(s5["since_status"], "other_window");
+        assert_eq!(s5["since_status"], "retired_snapshot");
+        assert_eq!(s5["tree_markdown"], edited);
+
+        // Another window's snapshot is not a baseline.
+        let (mut c6, mut s6) = read(&store, window + 1, &edited);
+        apply(
+            &opts(json!({ "since": sid(&s5) })),
+            &at(window + 1),
+            &mut c6,
+            &mut s6,
+        );
+        assert_eq!(s6["since_status"], "other_window");
+    }
+
+    #[test]
+    fn retiring_a_snapshot_retires_its_diff_base() {
+        let store = SnapshotStore::new();
+        let since = |store: &SnapshotStore<Payload>, window, base: &str| {
+            let (mut c, mut s) = read(store, window, OLD);
+            apply(
+                &opts(json!({ "since": base })),
+                &ctx_in(store, window),
+                &mut c,
+                &mut s,
+            );
+            s["since_status"].clone()
+        };
+
+        // Evicted: this session's reads of eight other windows of the process
+        // push the first window's snapshot out of the store.
+        let (mut c, mut first) = read(&store, 7201, OLD);
+        apply(&opts(json!({})), &ctx_in(&store, 7201), &mut c, &mut first);
+        for window in 7202..7202 + crate::element_token::LRU_CAP_PER_PID as u64 {
+            let (mut c, mut s) = read(&store, window, OLD);
+            apply(&opts(json!({})), &ctx_in(&store, window), &mut c, &mut s);
+        }
+        assert_eq!(since(&store, 7201, &sid(&first)), "retired_snapshot");
+
+        // Ended: a session's end retires its snapshots and their bases.
+        let (mut c, mut ended) = read_in(&store, Some("ending"), 7301, OLD);
+        apply(&opts(json!({})), &ctx_in(&store, 7301), &mut c, &mut ended);
+        assert_eq!(store.retire_session_screenshots("ending"), 1);
+        assert_eq!(since(&store, 7301, &sid(&ended)), "retired_snapshot");
+
+        // Removed: the window's snapshot dropped without a new read.
+        let (mut c, mut removed) = read(&store, 7401, OLD);
+        apply(
+            &opts(json!({})),
+            &ctx_in(&store, 7401),
+            &mut c,
+            &mut removed,
+        );
+        store.remove(9, 7401, None);
+        assert_eq!(since(&store, 7401, &sid(&removed)), "retired_snapshot");
+    }
+
+    #[test]
+    fn a_live_snapshot_keeps_its_diff_base_however_much_else_is_read() {
+        let store = SnapshotStore::new();
+        let window = 7501;
+        let (mut c, mut kept) = read_in(&store, Some("keeper"), window, OLD);
+        apply(&opts(json!({})), &ctx_in(&store, window), &mut c, &mut kept);
+        // More reads of the same window, by other sessions, than any count
+        // the store could hold, and more of other windows than that.
+        for n in 0..40 {
+            let (mut c, mut s) = read_in(&store, Some(&format!("other-{n}")), window, OLD);
+            apply(&opts(json!({})), &ctx_in(&store, window), &mut c, &mut s);
+            let (mut c, mut s) = read_in(&store, Some("busy"), 7600 + n, OLD);
+            apply(&opts(json!({})), &ctx_in(&store, 7600 + n), &mut c, &mut s);
+        }
+        // The keeper's snapshot is still current, so is its base.
+        let edited = OLD.replace("\"a\"", "\"ab\"");
+        let (mut c, mut s) = read_in(&store, Some("reader"), window, &edited);
+        apply(
+            &opts(json!({ "since": sid(&kept) })),
+            &ctx_in(&store, window),
+            &mut c,
+            &mut s,
+        );
+        assert_eq!(s["since_status"], "diff");
+        assert_eq!(s["diff_counts"]["changed"], 1);
     }
 
     #[test]
     fn an_elements_diff_counts_only_the_elements_it_returns() {
         use cua_driver_contract::{ToolOutput, WindowStateOutput};
         // A backend's read: every actionable row of OLD, counted as returned.
-        let read = |sid: &str, md: &str| {
-            let (content, mut s) = payload(sid, md);
+        let store = SnapshotStore::new();
+        let read = |window: u64, md: &str| {
+            let (content, mut s) = read(&store, window, md);
             s["elements"] = json!([
                 {"element_index": 1, "role": "AXTextField", "depth": 1},
                 {"element_index": 2, "role": "AXButton", "depth": 1},
@@ -1737,21 +1820,18 @@ mod tests {
             (content, s)
         };
         let edited = OLD.replace("\"a\"", "\"ab\"");
-        for (window, format, [id1, id2, id3]) in [
-            (7020, "elements", ["s000000g1", "s000000g2", "s000000g3"]),
-            (7021, "both", ["s000000h1", "s000000h2", "s000000h3"]),
-        ] {
-            let (mut c1, mut s1) = read(id1, OLD);
+        for (window, format) in [(7020, "elements"), (7021, "both")] {
+            let (mut c1, mut s1) = read(window, OLD);
             apply(
                 &opts(json!({ "tree_format": format })),
-                &ctx(window),
+                &ctx_in(&store, window),
                 &mut c1,
                 &mut s1,
             );
-            let (mut c2, mut s2) = read(id2, &edited);
+            let (mut c2, mut s2) = read(window, &edited);
             apply(
                 &opts(json!({ "tree_format": format, "since": "latest" })),
-                &ctx(window),
+                &ctx_in(&store, window),
                 &mut c2,
                 &mut s2,
             );
@@ -1768,10 +1848,10 @@ mod tests {
             assert_eq!(s2["total_element_count"], 4, "{format}");
 
             // No change: no elements, and a count of none.
-            let (mut c3, mut s3) = read(id3, &edited);
+            let (mut c3, mut s3) = read(window, &edited);
             apply(
                 &opts(json!({ "tree_format": format, "since": "latest" })),
-                &ctx(window),
+                &ctx_in(&store, window),
                 &mut c3,
                 &mut s3,
             );
@@ -1785,14 +1865,15 @@ mod tests {
 
     #[test]
     fn a_rewritten_tree_falls_back_to_full() {
+        let store = SnapshotStore::new();
         let window = 7005;
-        let (mut c1, mut s1) = payload("s000000c1", OLD);
-        apply(&opts(json!({})), &ctx(window), &mut c1, &mut s1);
+        let (mut c1, mut s1) = read(&store, window, OLD);
+        apply(&opts(json!({})), &ctx_in(&store, window), &mut c1, &mut s1);
         let other = "- [0] AXWindow \"Other\"\n  - [1] AXList \"x\"\n  - [2] AXButton \"Q\"\n  - [3] AXButton \"R\"\n  - [4] AXButton \"S\"";
-        let (mut c2, mut s2) = payload("s000000c2", other);
+        let (mut c2, mut s2) = read(&store, window, other);
         apply(
-            &opts(json!({"since": "s000000c1"})),
-            &ctx(window),
+            &opts(json!({ "since": sid(&s1) })),
+            &ctx_in(&store, window),
             &mut c2,
             &mut s2,
         );

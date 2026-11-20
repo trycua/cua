@@ -5154,6 +5154,7 @@ pub fn build_registry_with_provider(
         let state = state.clone();
         r.set_token_window_resolver(Arc::new(move |args| state.snapshots.window_for_token(args)));
     }
+    r.set_snapshot_rows(state.snapshots.clone());
     crate::recording_hooks::install();
     if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
         let recording_state = Arc::downgrade(&state);

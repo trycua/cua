@@ -381,8 +381,8 @@ pub struct WindowStateOutput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub since: Option<String>,
     /// `diff`, `no_change`, or the reason a full read was returned instead
-    /// (`unknown_snapshot`, `other_window`, `view_changed`, `too_much_changed`,
-    /// `diff_too_large`, `no_snapshot`).
+    /// (`unknown_snapshot`, `retired_snapshot`, `other_window`, `view_changed`,
+    /// `too_much_changed`, `diff_too_large`, `no_snapshot`, `no_baseline`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub since_status: Option<String>,
     /// Added/changed/removed rows against `since`, one per line.

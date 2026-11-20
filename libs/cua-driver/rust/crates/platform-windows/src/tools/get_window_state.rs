@@ -278,7 +278,7 @@ impl Tool for GetWindowStateTool {
                 to get only what changed: `+` added rows, `~` changed rows, `-` removed rows \
                 (their ids are the old snapshot's), or `no change since …`. Rows not listed keep \
                 their previous `[N]` unless a `reindexed:` line says otherwise. The response \
-                carries a NEW snapshot_id: use it in element_tokens. An unknown, expired, \
+                carries a NEW snapshot_id: use it in element_tokens. An unknown, retired, \
                 other-window or differently-scoped (query/max_elements/max_depth) `since` falls \
                 back to a full read and `since_status` says why. The focused element is not \
                 reported on Windows yet.\n\n\
@@ -924,6 +924,7 @@ impl Tool for GetWindowStateTool {
                                     .map(|v| v as usize),
                             },
                             focus_probe: None,
+                            snapshots: &*state.snapshots,
                         },
                         &mut content,
                         &mut structured,

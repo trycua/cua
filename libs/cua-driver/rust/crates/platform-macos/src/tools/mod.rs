@@ -1337,6 +1337,7 @@ pub fn register_all(
             state.snapshots.window_for_token(args)
         }));
     }
+    registry.set_snapshot_rows(state.snapshots.clone());
     let cursor_outcome_reader = {
         let cursor_registry = state.cursor_registry.clone();
         cua_driver_core::session::register_scoped_cursor_outcome_reader(std::sync::Arc::new(

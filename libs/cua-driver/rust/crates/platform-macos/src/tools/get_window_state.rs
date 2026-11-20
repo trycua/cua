@@ -674,9 +674,6 @@ impl Tool for GetWindowStateTool {
         // preferred-for-back-compat-only via the `_note` field below.
         let elements_json: Vec<serde_json::Value> = match (snapshot_id, tree_result.as_ref()) {
             (Some(sid), Some(r)) => build_elements_array_with_token(&r.nodes, Some(sid)),
-            (None, Some(r)) if scope_matched && observation_only => {
-                build_observation_elements_array(&r.nodes)
-            }
             (None, Some(r)) if scope_matched => build_elements_array_with_token(&r.nodes, None),
             _ => Vec::new(),
         };
@@ -723,6 +720,13 @@ impl Tool for GetWindowStateTool {
         }
         if let Some(r) = tree_result.as_ref() {
             r.walk.apply(&mut structured);
+            if scope_matched {
+                cua_driver_core::element_query::publish_observations(
+                    &mut structured,
+                    build_observations(&r.nodes),
+                    query.as_deref(),
+                );
+            }
         }
         // Surface 6: an opaque snapshot identifier consumers can log
         // alongside the per-element tokens for debug correlation. Same value
@@ -747,6 +751,19 @@ impl Tool for GetWindowStateTool {
         }
         if let Some(capture_id) = capture_id {
             structured["capture_id"] = serde_json::json!(capture_id);
+        }
+        // Set only when the window scope is unresolved (issue #4039).
+        if let Some(summary) = tree_result
+            .as_ref()
+            .and_then(|result| result.ax_enumeration.as_ref())
+        {
+            structured["ax_enumeration"] = serde_json::json!({
+                "children_count": summary.children_count,
+                "windows_count": summary.windows_count,
+                "union_count": summary.union_count,
+                "ax_window_count": summary.ax_window_count,
+                "mapped_window_count": summary.mapped_window_count,
+            });
         }
         if let Some(id) = refreshed {
             let sid = cua_driver_core::element_token::format_snapshot_id(id);
@@ -1178,17 +1195,45 @@ pub(crate) fn build_elements_array_with_token(
         .collect()
 }
 
-/// Observation-only `elements` for `verify_state`: every actionable row as
-/// [`build_elements_array_with_token`] emits it, plus the display-only rows
-/// (static text, labels, read-only values) the public array omits, in DFS
-/// order. Display-only rows carry `"display_only": true` and no
-/// `element_index`/`element_token`, because they are not addressable. They let
-/// a postcondition read text that only a display node holds, such as a
-/// label-less AXStaticText whose content lives in AXValue (#4526).
-pub(crate) fn build_observation_elements_array(
+/// The walk's display-only rows (static text, labels, read-only values) as
+/// `observations`, in DFS order. They carry no `element_index` or
+/// `element_token` because no action can target them; they let a caller and
+/// `verify_state` read text only a display node holds, such as Calculator's
+/// result (#2958) or a label-less AXStaticText whose content lives in AXValue
+/// (#4526).
+pub(crate) fn build_observations(
     nodes: &[crate::ax::tree::AXNode],
-) -> Vec<serde_json::Value> {
-    nodes.iter().map(|node| element_entry(node, None)).collect()
+) -> Vec<cua_driver_contract::WindowObservation> {
+    nodes
+        .iter()
+        .filter(|node| node.element_index.is_none())
+        .filter_map(|node| {
+            let value = node
+                .value_state
+                .clone()
+                .or_else(|| node.value.clone())
+                .filter(|value| !value.is_empty());
+            let label = node
+                .title
+                .clone()
+                .or_else(|| node.description.clone())
+                .or_else(|| node.value.clone())
+                .or_else(|| node.identifier.clone());
+            // An unindexed window or sheet row is kept in the tree for
+            // structure; with no text it has nothing to observe.
+            (label.is_some() || value.is_some()).then(|| cua_driver_contract::WindowObservation {
+                role: node.role.clone(),
+                depth: node.depth as u32,
+                label,
+                value,
+                frame: node
+                    .frame
+                    .map(|[x, y, w, h]| cua_driver_contract::ElementFrame { x, y, w, h }),
+                parent_index: node.parent_element_index.map(|index| index as u64),
+                in_web_content: node.in_web_content.then_some(true),
+            })
+        })
+        .collect()
 }
 
 fn element_entry(node: &crate::ax::tree::AXNode, snapshot_id: Option<u32>) -> serde_json::Value {
@@ -1219,8 +1264,6 @@ fn element_entry(node: &crate::ax::tree::AXNode, snapshot_id: Option<u32>) -> se
             entry["element_token"] =
                 serde_json::json!(cua_driver_core::element_token::token_for(sid, idx));
         }
-    } else {
-        entry["display_only"] = serde_json::Value::Bool(true);
     }
     if let Some(label) = label {
         entry["label"] = serde_json::Value::String(label);
@@ -1288,6 +1331,19 @@ fn element_entry(node: &crate::ax::tree::AXNode, snapshot_id: Option<u32>) -> se
     }
     if !node.actions.is_empty() {
         entry["actions"] = serde_json::json!(node.actions);
+    }
+    if !node.custom_actions.is_empty() {
+        entry["custom_actions"] = serde_json::Value::Array(
+            node.custom_actions
+                .iter()
+                .map(|action| {
+                    serde_json::json!({
+                        "name": action.name,
+                        "raw": action.raw,
+                    })
+                })
+                .collect::<Vec<_>>(),
+        );
     }
     if node.in_web_content {
         entry["in_web_content"] = serde_json::Value::Bool(true);
@@ -1779,6 +1835,7 @@ mod tests {
             identifier: None,
             help: None,
             actions,
+            custom_actions: vec![],
             element_ptr: 0,
             depth,
             parent_element_index: parent,
@@ -1844,33 +1901,44 @@ mod tests {
     }
 
     #[test]
-    fn observation_elements_include_display_only_rows_in_dfs_order() {
-        // #4526: verify_state must be able to read a label-less static text
-        // whose content lives in AXValue. The public array omits it; the
-        // observation-only array keeps it, marked display-only and without
-        // an element_index.
+    fn display_only_rows_are_observations_without_action_handles() {
+        // #2958 / #4526: a label-less static text whose content lives in
+        // AXValue is not addressable, so it stays out of `elements` and is
+        // published as an observation instead.
         let mut text = node(None, "AXStaticText", None, 1, Some(0), None, vec![]);
-        text.value = Some("Saved".into());
+        text.value = Some("\u{200e}6".into());
+        text.frame = Some([10.0, 20.0, 30.0, 40.0]);
+        let mut sheet = node(None, "AXSheet", None, 1, Some(0), None, vec![]);
+        sheet.title = None;
         let nodes = vec![
             node(Some(0), "AXGroup", Some("Form"), 0, None, None, vec![]),
             text,
+            sheet,
             node(Some(1), "AXButton", Some("OK"), 1, Some(0), None, vec![]),
         ];
 
-        assert_eq!(build_elements_array_with_token(&nodes, None).len(), 2);
-        let observed = build_observation_elements_array(&nodes);
-        assert_eq!(observed.len(), 3);
-        assert_eq!(observed[0]["element_index"], 0);
-        let display = &observed[1];
-        assert_eq!(display["role"], "AXStaticText");
-        assert_eq!(display["label"], "Saved");
-        assert_eq!(display["value"], "Saved");
-        assert_eq!(display["display_only"], true);
-        assert_eq!(display["parent_index"], 0);
-        assert!(display.get("element_index").is_none());
-        assert!(display.get("element_token").is_none());
-        assert_eq!(observed[2]["element_index"], 1);
-        assert!(observed[2].get("display_only").is_none());
+        let elements = build_elements_array_with_token(&nodes, Some(3));
+        assert_eq!(elements.len(), 2);
+        assert!(elements.iter().all(|e| e.get("display_only").is_none()));
+
+        let observations = build_observations(&nodes);
+        assert_eq!(
+            observations.len(),
+            1,
+            "a text-less sheet row is not an observation"
+        );
+        let wire = serde_json::to_value(&observations[0]).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({
+                "role": "AXStaticText",
+                "depth": 1,
+                "label": "\u{200e}6",
+                "value": "\u{200e}6",
+                "frame": {"x": 10.0, "y": 20.0, "w": 30.0, "h": 40.0},
+                "parent_index": 0
+            })
+        );
     }
 
     #[test]

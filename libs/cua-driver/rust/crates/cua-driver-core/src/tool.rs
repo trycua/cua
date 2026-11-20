@@ -1345,6 +1345,10 @@ pub struct ToolRegistry {
     /// How a batch learns which window an `element_token` belongs to; set by
     /// the platform that owns the snapshot store.
     token_window_resolver: Option<TokenWindowResolver>,
+    /// The rows each `get_window_state` read kept on its snapshot, so a batch
+    /// can find a stale token's element again; set by the platform that owns
+    /// the snapshot store.
+    snapshot_rows: Option<Arc<dyn crate::snapshot_store::SnapshotRows>>,
     /// How a capability-manifest check learns which process a window really
     /// belongs to; set by a platform whose windows can be hosted by another
     /// process.
@@ -1436,6 +1440,7 @@ impl ToolRegistry {
             protected_resource_grants,
             protected_resource_ownership,
             token_window_resolver: None,
+            snapshot_rows: None,
             window_identity_resolver: None,
         }
     }
@@ -1444,6 +1449,17 @@ impl ToolRegistry {
     /// window, so `run_steps` can take the window to observe from a token.
     pub fn set_token_window_resolver(&mut self, resolver: TokenWindowResolver) {
         self.token_window_resolver = Some(resolver);
+    }
+
+    /// Install the platform snapshot store's rows, so `run_steps` can find a
+    /// stale token's element again by the row it was read from.
+    pub fn set_snapshot_rows(&mut self, rows: Arc<dyn crate::snapshot_store::SnapshotRows>) {
+        self.snapshot_rows = Some(rows);
+    }
+
+    /// The platform snapshot store's rows, when the platform installed them.
+    pub(crate) fn snapshot_rows(&self) -> Option<&dyn crate::snapshot_store::SnapshotRows> {
+        self.snapshot_rows.as_deref()
     }
 
     /// Install the resolver that maps a hosted window to the app it hosts, so

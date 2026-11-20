@@ -55,6 +55,8 @@ impl Tool for Probe {
 
 struct Harness {
     registry: Arc<ToolRegistry>,
+    /// The snapshot store whose rows the batch reads.
+    snapshots: Arc<crate::snapshot_store::SnapshotStore<crate::snapshot_test_support::Payload>>,
     calls: std::collections::HashMap<&'static str, Arc<Mutex<Vec<Value>>>>,
     pacings: Arc<Mutex<Vec<(String, crate::step_pacing::StepPacing)>>>,
 }
@@ -125,11 +127,14 @@ impl Harness {
                 .filter(|token| token.starts_with("s00000001:"))
                 .map(|_| (42, 9))
         }));
+        let snapshots = Arc::new(crate::snapshot_store::SnapshotStore::new());
+        registry.set_snapshot_rows(snapshots.clone());
         registry.register_session_tools();
         let registry = Arc::new(registry);
         registry.init_self_weak();
         Self {
             registry,
+            snapshots,
             calls,
             pacings,
         }

@@ -11,7 +11,10 @@ use serde_json::{json, Value};
 
 use super::{text, Harness};
 use crate::{
+    element_token::format_snapshot_id,
     protocol::ToolResult,
+    snapshot_store::SnapshotStore,
+    snapshot_test_support::{publish_read, Payload},
     tool::{Tool, ToolDef, ToolRegistry},
 };
 
@@ -472,15 +475,16 @@ async fn a_menu_bar_item_token_runs_as_invoke_menu() {
     let harness = Harness::new();
     // v037-full: a click on the LibreOffice menu item "To Next Sheet" by
     // token is refused as outside the window (menu-bar menus are the app's).
-    crate::window_state_view::remember_for_test(
-        "s0000a0e1",
+    let read = publish_read(
+        &harness.snapshots,
         80,
         90,
         "- [0] AXWindow \"Doc\"\n- [27] AXMenuBar\n  - [700] AXMenuBarItem \"Sheet\"\n    - [701] AXMenu\n      - [760] AXMenuItem \"Navigate\"\n        - [761] AXMenu\n          - [771] AXMenuItem \"To Next Sheet\"\n",
     );
+    let token = format!("{}:771", format_snapshot_id(read));
     let refused = "Background input refused (element_outside_target_window): the addressed element could not be proven to belong to window 90";
     let result = harness
-        .run(json!({"steps": [{"tool": "click", "args": {"pid": 80, "window_id": 90, "element_token": "s0000a0e1:771", "fail_message": refused}}]}))
+        .run(json!({"steps": [{"tool": "click", "args": {"pid": 80, "window_id": 90, "element_token": token, "fail_message": refused}}]}))
         .await;
     // The probe invoke_menu carries no action record, so only the routing
     // is checked here; the real tool reports its own outcome.
@@ -596,9 +600,12 @@ impl Tool for Rerender {
 
 fn rerender_registry(
     rows: Vec<(&'static str, &'static str)>,
+    snapshots: &Arc<SnapshotStore<Payload>>,
 ) -> (Arc<ToolRegistry>, Arc<Mutex<RerenderState>>) {
+    // Far from the ids the snapshot store mints, so a stale token from the
+    // store never names the fake window's current read.
     let state = Arc::new(Mutex::new(RerenderState {
-        snapshot: 40,
+        snapshot: 0xf000_0000,
         rows,
         ..Default::default()
     }));
@@ -620,31 +627,41 @@ fn rerender_registry(
             state: state.clone(),
         }));
     }
+    registry.set_snapshot_rows(snapshots.clone());
     registry.register_session_tools();
     let registry = Arc::new(registry);
     registry.init_self_weak();
     (registry, state)
 }
 
+/// A read the model took its tokens from, then a re-read of the same window
+/// that retired it (and its tokens) as `get_window_state` does.
+fn stale_read(snapshots: &SnapshotStore<Payload>, markdown: &str) -> String {
+    let read = publish_read(snapshots, 42, 7, markdown);
+    publish_read(snapshots, 42, 7, "- [0] AXWindow \"Daymark\"\n");
+    format_snapshot_id(read)
+}
+
 #[tokio::test]
 async fn a_stale_element_token_is_found_again_by_its_role_and_label() {
-    let (registry, state) = rerender_registry(vec![
-        ("AXButton", "Update event"),
-        ("AXButton", "Aster kickoff"),
-        ("AXButton", "Cinder decision LHP-CINDER"),
-    ]);
-    // The read the model took its token from (snapshot s0000002c, row 14),
-    // remembered as get_window_state remembers every read.
-    crate::window_state_view::remember_for_test(
-        "s0000002c",
-        42,
-        7,
+    let snapshots = Arc::new(SnapshotStore::new());
+    let (registry, state) = rerender_registry(
+        vec![
+            ("AXButton", "Update event"),
+            ("AXButton", "Aster kickoff"),
+            ("AXButton", "Cinder decision LHP-CINDER"),
+        ],
+        &snapshots,
+    );
+    // The read the model took its token from (row 14), retired by a re-read.
+    let read = stale_read(
+        &snapshots,
         "- [0] AXWindow \"Daymark\"\n  - [14] AXButton \"Cinder decision LHP-CINDER\" [actions=[press]]\n",
     );
     let result = registry
         .invoke(
             super::super::RUN_STEPS_TOOL,
-            json!({"steps": [{"tool": "click", "args": {"pid": 42, "window_id": 7, "element_token": "s0000002c:14"}}]}),
+            json!({"steps": [{"tool": "click", "args": {"pid": 42, "window_id": 7, "element_token": format!("{read}:14")}}]}),
         )
         .await;
     assert_ne!(result.is_error, Some(true), "{}", text(&result));
@@ -663,23 +680,23 @@ async fn a_found_again_target_refused_in_the_background_falls_back_on_its_fresh_
         ("AXButton", "Cinder decision LHP-CINDER"),
     ];
     for foreground_fails in [false, true] {
-        let (registry, state) = rerender_registry(rows.clone());
+        let snapshots = Arc::new(SnapshotStore::new());
+        let (registry, state) = rerender_registry(rows.clone(), &snapshots);
         {
             let mut state = state.lock().unwrap();
             state.refuse_background = true;
             state.foreground_fails = foreground_fails;
         }
-        crate::window_state_view::remember_for_test(
-            "s0000002e",
-            42,
-            7,
+        let read = stale_read(
+            &snapshots,
             "- [0] AXWindow \"Daymark\"\n  - [14] AXButton \"Cinder decision LHP-CINDER\" [actions=[press]]\n",
         );
+        let stale = format!("{read}:14");
         let result = registry
             .invoke(
                 super::super::RUN_STEPS_TOOL,
                 json!({"foreground_fallback": true, "steps": [{"tool": "click", "args": {
-                    "pid": 42, "window_id": 7, "element_token": "s0000002e:14"
+                    "pid": 42, "window_id": 7, "element_token": stale
                 }}]}),
             )
             .await;
@@ -697,8 +714,8 @@ async fn a_found_again_target_refused_in_the_background_falls_back_on_its_fresh_
             })
             .collect();
         assert_eq!(sent.len(), 3, "{sent:?}");
-        assert_eq!(sent[0], ("s0000002e:14", ""));
-        assert_ne!(sent[1].0, "s0000002e:14");
+        assert_eq!(sent[0], (stale.as_str(), ""));
+        assert_ne!(sent[1].0, stale);
         assert_eq!(sent[1].1, "");
         assert_eq!(sent[2], (sent[1].0, "foreground"));
         let text = text(&result);
@@ -723,14 +740,19 @@ async fn a_found_again_target_refused_in_the_background_falls_back_on_its_fresh_
 
 #[tokio::test]
 async fn a_stale_token_is_not_retried_when_its_label_is_ambiguous_or_unknown() {
-    let (registry, state) = rerender_registry(vec![("AXButton", "OK"), ("AXButton", "OK")]);
-    crate::window_state_view::remember_for_test(
-        "s0000002d",
-        42,
-        7,
+    let snapshots = Arc::new(SnapshotStore::new());
+    let (registry, state) =
+        rerender_registry(vec![("AXButton", "OK"), ("AXButton", "OK")], &snapshots);
+    let read = stale_read(
+        &snapshots,
         "- [3] AXButton \"OK\"\n- [4] AXStaticText = \"no label\"\n",
     );
-    for token in ["s0000002d:3", "s0000002d:4", "s0000002d:99", "s0000777f:3"] {
+    for token in [
+        format!("{read}:3"),
+        format!("{read}:4"),
+        format!("{read}:99"),
+        "sfffffff0:3".to_owned(),
+    ] {
         let result = registry
             .invoke(
                 super::super::RUN_STEPS_TOOL,

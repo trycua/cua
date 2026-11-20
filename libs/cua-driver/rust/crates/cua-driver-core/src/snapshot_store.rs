@@ -7,6 +7,7 @@ use crate::element_token::{
     SESSION_SCOPED_SNAPSHOTS, STALE_TOKEN_ERROR,
 };
 use crate::protocol::ToolResult;
+use crate::window_state_view::{ReadRows, ViewKey};
 use std::any::Any;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
@@ -40,6 +41,13 @@ struct Snapshot<S> {
     zoom: Option<ZoomContext>,
     semantic: bool,
     payload: S,
+    /// The rows this snapshot's read rendered: what a later `since` names
+    /// when it names this snapshot. They retire with the snapshot.
+    rows: Option<Arc<ReadRows>>,
+    /// The snapshot this one replaced as its session's read of the window.
+    /// Only the read that published this snapshot may diff against it, so
+    /// [`SnapshotRows::keep_rows`] clears it once that read is shaped.
+    replaced: Option<u32>,
 }
 
 impl<S> Snapshot<S> {
@@ -373,6 +381,18 @@ fn out_of_range_refusal<S: SnapshotPayload>(snapshot: &Snapshot<S>, row: usize) 
 /// whose snapshot is gone can still name the process (and so the current
 /// snapshots) it belonged to.
 const RETIRED_MEMORY: usize = 256;
+/// How many of the most recently retired snapshots keep their rows, so
+/// `run_steps` can find a stale token's element again by what it was.
+const RETIRED_ROWS: usize = 32;
+
+/// A snapshot that is no longer current. Its tokens are refused and its rows
+/// are never a `since` base; they only let a stale token be found again.
+struct RetiredSnapshot {
+    id: u32,
+    pid: i32,
+    window_id: u64,
+    rows: Option<Arc<ReadRows>>,
+}
 
 /// What one caller's reads of one window looked like.
 #[derive(Clone, Copy, Debug)]
@@ -393,10 +413,9 @@ struct SnapshotState<S> {
     /// eviction, so the caller's *second* read is what stops a row from the
     /// first being re-pointed.
     reads: HashMap<(String, i32, u64), ReadRecord>,
-    /// Recently retired snapshot ids with the pid that minted them, oldest
-    /// first. This is what lets a token-only call learn whose snapshots
-    /// replaced the one it named.
-    retired: VecDeque<(u32, i32)>,
+    /// Recently retired snapshots, oldest first. This is what lets a
+    /// token-only call learn whose snapshots replaced the one it named.
+    retired: VecDeque<RetiredSnapshot>,
 }
 
 impl<S> SnapshotState<S> {
@@ -433,13 +452,53 @@ impl<S> SnapshotState<S> {
             .find(|snapshot| snapshot.is_for(session, window_id))
     }
 
-    fn remember_retired(&mut self, pid: i32, ids: impl IntoIterator<Item = u32>) {
-        for id in ids {
+    fn remember_retired<'s>(
+        &mut self,
+        pid: i32,
+        snapshots: impl IntoIterator<Item = &'s Snapshot<S>>,
+    ) where
+        S: 's,
+    {
+        for snapshot in snapshots {
             if self.retired.len() == RETIRED_MEMORY {
                 self.retired.pop_front();
             }
-            self.retired.push_back((id, pid));
+            self.retired.push_back(RetiredSnapshot {
+                id: snapshot.id,
+                pid,
+                window_id: snapshot.window_id,
+                rows: snapshot.rows.clone(),
+            });
         }
+        let mut with_rows = self.retired.iter().filter(|r| r.rows.is_some()).count();
+        for retired in self.retired.iter_mut() {
+            if with_rows <= RETIRED_ROWS {
+                break;
+            }
+            if retired.rows.take().is_some() {
+                with_rows -= 1;
+            }
+        }
+    }
+
+    /// A current snapshot by id, with the pid it was minted for.
+    fn live(&self, snapshot_id: u32) -> Option<(i32, &Snapshot<S>)> {
+        self.lanes.iter().find_map(|(pid, lane)| {
+            lane.iter()
+                .find(|snapshot| snapshot.id == snapshot_id)
+                .map(|snapshot| (*pid, snapshot))
+        })
+    }
+
+    fn retired_snapshot(&self, snapshot_id: u32) -> Option<&RetiredSnapshot> {
+        self.retired.iter().rev().find(|r| r.id == snapshot_id)
+    }
+
+    /// The snapshot `current` replaced, while `current`'s own read may still
+    /// diff against it.
+    fn replaced_by(&self, current: u32) -> Option<&RetiredSnapshot> {
+        let replaced = self.live(current)?.1.replaced?;
+        self.retired_snapshot(replaced)
     }
 
     /// The current snapshots `session` holds for `pid`, in the shape every
@@ -466,11 +525,8 @@ impl<S> SnapshotState<S> {
     /// The pid a snapshot id was minted for, including ids retired earlier.
     fn pid_of(&self, snapshot_id: u32) -> Option<i32> {
         self.pid_of_current(snapshot_id).or_else(|| {
-            self.retired
-                .iter()
-                .rev()
-                .find(|(id, _)| *id == snapshot_id)
-                .map(|(_, pid)| *pid)
+            self.retired_snapshot(snapshot_id)
+                .map(|retired| retired.pid)
         })
     }
 }
@@ -573,6 +629,7 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         snapshot.screenshot_scale = Some(screenshot_scale);
         snapshot.screenshot_window_size = window_size;
         snapshot.zoom = None;
+        snapshot.replaced = None;
         Some(snapshot.id)
     }
 
@@ -624,6 +681,7 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
                 {
                     retired.push(lane.remove(position));
                 }
+                let replaced = retired.first().map(|previous| previous.id);
                 // A new screenshot brings its own frame. A tree-only read keeps
                 // the replaced snapshot's frame while the window keeps its size.
                 let (scale, frame_size) = match (screenshot_scale, window_size) {
@@ -654,11 +712,12 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
                     zoom: None,
                     semantic,
                     payload,
+                    rows: None,
+                    replaced,
                 });
                 (id, retired)
             };
-            let invalidated: Vec<u32> = retired_here.iter().map(|snapshot| snapshot.id).collect();
-            inner.remember_retired(pid, invalidated.iter().copied());
+            inner.remember_retired(pid, &retired_here);
             // Only a read that printed rows can leave a bare row number
             // behind, so only those count. A screenshot-only capture mints no
             // rows, and a screenshot-only refresh keeps the snapshot (and so
@@ -825,19 +884,17 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
     pub fn retire_session_screenshots(&self, session: &str) -> usize {
         let retired = {
             let mut inner = self.inner.lock().unwrap();
-            let mut retired = Vec::new();
-            let mut retired_ids: Vec<(i32, u32)> = Vec::new();
+            let mut retired: Vec<(i32, Snapshot<S>)> = Vec::new();
             for (pid, lane) in inner.lanes.iter_mut() {
-                let (owned, kept) = std::mem::take(lane)
+                let (owned, kept): (Vec<_>, Vec<_>) = std::mem::take(lane)
                     .into_iter()
                     .partition(|snapshot| snapshot.session.as_deref() == Some(session));
                 *lane = kept;
-                retired_ids.extend(owned.iter().map(|snapshot| (*pid, snapshot.id)));
-                retired.extend::<Vec<_>>(owned);
+                retired.extend(owned.into_iter().map(|snapshot| (*pid, snapshot)));
             }
             inner.lanes.retain(|_, lane| !lane.is_empty());
-            for (pid, id) in retired_ids {
-                inner.remember_retired(pid, [id]);
+            for (pid, snapshot) in &retired {
+                inner.remember_retired(*pid, [snapshot]);
             }
             retired
         };
@@ -1013,9 +1070,8 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
                     .position(|entry| entry.is_for(session, window_id))?;
                 Some(lane.remove(position))
             });
-            let id = removed.as_ref().map(|snapshot| snapshot.id);
-            if let Some(id) = id {
-                inner.remember_retired(pid, [id]);
+            if let Some(snapshot) = &removed {
+                inner.remember_retired(pid, [snapshot]);
             }
             removed
         };
@@ -1033,6 +1089,132 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         let count = retired.len();
         drop(retired);
         count
+    }
+}
+
+/// What a `since` snapshot id names, as seen by one read.
+pub enum SinceBase {
+    /// A snapshot the read may diff against, with the rows its read rendered.
+    Rows {
+        pid: i32,
+        window_id: u64,
+        rows: Arc<ReadRows>,
+    },
+    /// A snapshot that was retired before this read, with its tokens.
+    Retired,
+    /// An id this runtime does not know, or a snapshot whose read kept no rows.
+    Unknown,
+}
+
+/// The rows of a live or recently retired snapshot.
+pub struct SnapshotRowsOf {
+    pub pid: i32,
+    pub window_id: u64,
+    pub rows: Arc<ReadRows>,
+}
+
+/// The `get_window_state` rows kept on each snapshot, for `since` diffs and
+/// for finding a stale token's element again. Object safe, so shared code can
+/// reach a platform's store without knowing its payload type.
+pub trait SnapshotRows: Send + Sync {
+    /// Keep the rows `snapshot_id`'s read rendered on that snapshot, while it
+    /// is current, and end its read's claim on the snapshot it replaced. An
+    /// empty read (screenshot only) keeps rows the snapshot already has.
+    fn keep_rows(&self, snapshot_id: u32, rows: ReadRows);
+    /// What `since` names for the read that published `current`: a current
+    /// snapshot, or the one `current` replaced while `current` is being shaped.
+    fn since_base(&self, current: u32, since: u32) -> SinceBase;
+    /// The newest read of the window with this view that `current`'s read may
+    /// diff against, else the newest such read that was retired.
+    fn latest_read(&self, current: u32, pid: i32, window_id: u64, key: &ViewKey) -> Option<u32>;
+    /// The rows of a current or recently retired snapshot.
+    fn snapshot_rows(&self, snapshot_id: u32) -> Option<SnapshotRowsOf>;
+}
+
+impl<S: SnapshotPayload> SnapshotRows for SnapshotStore<S> {
+    fn keep_rows(&self, snapshot_id: u32, rows: ReadRows) {
+        let mut inner = self.inner.lock().unwrap();
+        let Some(snapshot) = inner
+            .lanes
+            .values_mut()
+            .flat_map(|lane| lane.iter_mut())
+            .find(|snapshot| snapshot.id == snapshot_id)
+        else {
+            return;
+        };
+        snapshot.replaced = None;
+        if rows.markdown.trim().is_empty() && snapshot.rows.is_some() {
+            return;
+        }
+        snapshot.rows = Some(Arc::new(rows));
+    }
+
+    fn since_base(&self, current: u32, since: u32) -> SinceBase {
+        let inner = self.inner.lock().unwrap();
+        if let Some((pid, snapshot)) = inner.live(since) {
+            return match &snapshot.rows {
+                Some(rows) => SinceBase::Rows {
+                    pid,
+                    window_id: snapshot.window_id,
+                    rows: rows.clone(),
+                },
+                None => SinceBase::Unknown,
+            };
+        }
+        if let Some(replaced) = inner.replaced_by(current).filter(|r| r.id == since) {
+            return match &replaced.rows {
+                Some(rows) => SinceBase::Rows {
+                    pid: replaced.pid,
+                    window_id: replaced.window_id,
+                    rows: rows.clone(),
+                },
+                None => SinceBase::Unknown,
+            };
+        }
+        if inner.retired_snapshot(since).is_some() {
+            SinceBase::Retired
+        } else {
+            SinceBase::Unknown
+        }
+    }
+
+    fn latest_read(&self, current: u32, pid: i32, window_id: u64, key: &ViewKey) -> Option<u32> {
+        let inner = self.inner.lock().unwrap();
+        let same_view = |rows: &Option<Arc<ReadRows>>| rows.as_ref().is_some_and(|r| r.key == *key);
+        let live = inner
+            .lane(pid)
+            .iter()
+            .filter(|s| s.id != current && s.window_id == window_id && same_view(&s.rows))
+            .map(|s| s.id);
+        let replaced = inner
+            .replaced_by(current)
+            .filter(|r| r.pid == pid && r.window_id == window_id && same_view(&r.rows))
+            .map(|r| r.id);
+        live.chain(replaced).max().or_else(|| {
+            inner
+                .retired
+                .iter()
+                .filter(|r| r.pid == pid && r.window_id == window_id && same_view(&r.rows))
+                .map(|r| r.id)
+                .max()
+        })
+    }
+
+    fn snapshot_rows(&self, snapshot_id: u32) -> Option<SnapshotRowsOf> {
+        let inner = self.inner.lock().unwrap();
+        if let Some((pid, snapshot)) = inner.live(snapshot_id) {
+            return Some(SnapshotRowsOf {
+                pid,
+                window_id: snapshot.window_id,
+                rows: snapshot.rows.clone()?,
+            });
+        }
+        let retired = inner.retired_snapshot(snapshot_id)?;
+        Some(SnapshotRowsOf {
+            pid: retired.pid,
+            window_id: retired.window_id,
+            rows: retired.rows.clone()?,
+        })
     }
 }
 
@@ -2357,6 +2539,92 @@ mod tests {
             }
             assert_eq!(retire_runtime_scope("snapshot-weak-discovery"), 0);
         });
+    }
+
+    fn rows(markdown: &str) -> crate::window_state_view::ReadRows {
+        crate::window_state_view::ReadRows {
+            key: crate::snapshot_test_support::default_view(),
+            markdown: markdown.to_owned(),
+        }
+    }
+
+    fn base_rows(base: SinceBase) -> Option<String> {
+        match base {
+            SinceBase::Rows { rows, .. } => Some(rows.markdown.clone()),
+            SinceBase::Retired => Some("retired".into()),
+            SinceBase::Unknown => None,
+        }
+    }
+
+    #[test]
+    fn a_screenshot_only_read_keeps_the_snapshots_rows() {
+        let cache = SnapshotStore::new();
+        let id = cache.publish(4, 5, Payload(vec![1]));
+        cache.keep_rows(id, rows("- [9] AXButton \"Send\"\n"));
+        cache.keep_rows(id, rows(""));
+        assert!(cache
+            .snapshot_rows(id)
+            .is_some_and(|read| read.rows.markdown.contains("Send")));
+    }
+
+    #[test]
+    fn only_the_replacing_read_diffs_against_the_snapshot_it_replaced() {
+        let cache = SnapshotStore::new();
+        let first = cache.publish(4, 5, Payload(vec![1]));
+        cache.keep_rows(first, rows("- [1] AXButton \"A\"\n"));
+        let second = cache.publish(4, 5, Payload(vec![1]));
+        assert_eq!(
+            base_rows(cache.since_base(second, first)).as_deref(),
+            Some("- [1] AXButton \"A\"\n")
+        );
+        assert_eq!(
+            cache.latest_read(second, 4, 5, &crate::snapshot_test_support::default_view()),
+            Some(first)
+        );
+        // Another read never sees it, and neither does this one once shaped.
+        let other = cache
+            .publish_for_session(4, 5, Payload(vec![1]), Some("other"), None)
+            .unwrap()
+            .0;
+        assert_eq!(
+            base_rows(cache.since_base(other, first)).as_deref(),
+            Some("retired")
+        );
+        cache.keep_rows(second, rows("- [1] AXButton \"B\"\n"));
+        assert_eq!(
+            base_rows(cache.since_base(second, first)).as_deref(),
+            Some("retired")
+        );
+
+        // A screenshot-only refresh keeps the id but is a new read.
+        let third = cache.publish(4, 5, Payload(vec![1]));
+        assert_eq!(
+            cache.refresh_screenshot_for_session(4, 5, None, 1.0, None),
+            Some(third)
+        );
+        assert_eq!(
+            base_rows(cache.since_base(third, second)).as_deref(),
+            Some("retired")
+        );
+    }
+
+    #[test]
+    fn retired_rows_still_find_a_stale_tokens_row_but_are_bounded() {
+        let cache = SnapshotStore::new();
+        let mut ids = Vec::new();
+        for n in 0..RETIRED_ROWS + 2 {
+            let id = cache.publish(4, 5, Payload(vec![1]));
+            cache.keep_rows(id, rows(&format!("- [1] AXButton \"{n}\"\n")));
+            ids.push(id);
+        }
+        cache.publish(4, 5, Payload(vec![1]));
+        let last = *ids.last().unwrap();
+        assert!(cache
+            .snapshot_rows(last)
+            .is_some_and(|read| read.pid == 4 && read.window_id == 5));
+        assert!(cache.snapshot_rows(ids[0]).is_none());
+        // Its token is still attributed after its rows are dropped.
+        assert_eq!(cache.inner.lock().unwrap().pid_of(ids[0]), Some(4));
     }
 
     #[test]

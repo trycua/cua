@@ -34,7 +34,7 @@ fn def() -> &'static ToolDef {
             \n\
             START NARROW: a read walks at most 250 nodes by default and says `Tree truncated at max_elements=…` (`truncated:true`) when it stops; raise `max_elements`, or use `query` (case-insensitive substring, `a|b` for either; matching rows plus ancestors, or a `0 of N elements match` line) and `max_depth`. Indices and tokens stay valid for the whole snapshot. `verbose:true` adds `_note` and the full `background_input` report; `full_output:true` restores the previous full response (both representations, all metadata, ≤2 000 nodes).\n\
             \n\
-            DIFF READS (use them for every re-read after acting): `since:\"latest\"`, or `since:<snapshot_id>` from an earlier read of the same window, returns only what changed: `+` added, `~` changed, `-` removed rows (removed ids are the old snapshot's), a `reindexed:` line if indices shifted, or `no change since …; focused element is …`. The response carries a NEW snapshot_id: use it in tokens. An unknown, expired, other-window or differently-scoped (query/max_elements/max_depth) `since` falls back to a full read; `since_status` says why.\n\
+            DIFF READS (use them for every re-read after acting): `since:\"latest\"`, or `since:<snapshot_id>` from an earlier read of the same window, returns only what changed: `+` added, `~` changed, `-` removed rows (removed ids are the old snapshot's), a `reindexed:` line if indices shifted, or `no change since …; focused element is …`. The response carries a NEW snapshot_id: use it in tokens. An unknown, retired, other-window or differently-scoped (query/max_elements/max_depth) `since` falls back to a full read; `since_status` says why.\n\
             \n\
             A new snapshot of the same (pid, window_id) replaces this session's previous one and stales its tokens (`invalidated_snapshot_ids`); another session's read leaves them valid. `include_screenshot:false` returns the tree only and keeps the last screenshot's pixel frame while the window keeps its size; `include_accessibility_tree:false` returns only the screenshot and keeps the current snapshot's rows and tokens valid (use it, not `max_elements:1`, when you just need to look); adding `display_only:true` (live previews) also leaves the pixel frame alone. The tree can lie on some surfaces (Electron, Catalyst, virtualized rows with `h:1` frames): cross-check the screenshot, and use pixel x,y at action time only for elements missing from the tree.\n\
             \n\
@@ -963,6 +963,7 @@ impl Tool for GetWindowStateTool {
                             .map(|v| v as usize),
                     },
                     focus_probe: Some(&focus_probe),
+                    snapshots: &*self.state.snapshots,
                 },
                 &mut content,
                 &mut structured,

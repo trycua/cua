@@ -989,7 +989,7 @@ async fn run_step(
         let mut result = registry.invoke(tool, args.clone()).await;
         let mut attempt = StepAttempt::Original;
         if result.is_error == Some(true) && tool == "click" {
-            if let Some((menu_args, note)) = menu_bar_route(&args, &result) {
+            if let Some((menu_args, note)) = menu_bar_route(registry, &args, &result) {
                 report["refound"] = json!(note);
                 result = registry.invoke("invoke_menu", menu_args.clone()).await;
                 attempt = StepAttempt::MenuRoute {
@@ -999,7 +999,9 @@ async fn run_step(
             }
         }
         if result.is_error == Some(true) && matches!(attempt, StepAttempt::Original) {
-            if let Some((retry, note)) = refind_stale_target(locator, &args, &result).await {
+            if let Some((retry, note)) =
+                refind_stale_target(registry, locator, &args, &result).await
+            {
                 report["refound"] = json!(note);
                 result = registry.invoke(tool, retry.clone()).await;
                 attempt = StepAttempt::Refound { args: retry, note };
@@ -1502,6 +1504,7 @@ fn stale_element(result: &ToolResult) -> bool {
 /// with the same role and label (exact, and unique) in the same window, and
 /// return the arguments with its fresh token plus a note saying so.
 async fn refind_stale_target(
+    registry: &ToolRegistry,
     locator: &Locator<'_>,
     args: &Value,
     result: &ToolResult,
@@ -1512,7 +1515,8 @@ async fn refind_stale_target(
     let token = args.get("element_token").and_then(Value::as_str)?;
     let (snapshot_id, row) = token.split_once(':')?;
     let row: u64 = row.parse().ok()?;
-    let stored = crate::window_state_view::snapshot_row(snapshot_id, row)?;
+    let stored =
+        crate::window_state_view::snapshot_row(registry.snapshot_rows()?, snapshot_id, row)?;
     let (role, label) = row_role_and_label(&stored.line)?;
     let window = WindowSpec {
         pid: Some(
@@ -1558,15 +1562,20 @@ async fn refind_stale_target(
 /// A click on a menu-bar item addressed by token is refused as outside the
 /// window: menu-bar menus are the app's, not the window's. Send it as
 /// invoke_menu with the path read off the item's ancestors instead.
-fn menu_bar_route(args: &Value, result: &ToolResult) -> Option<(Value, String)> {
+fn menu_bar_route(
+    registry: &ToolRegistry,
+    args: &Value,
+    result: &ToolResult,
+) -> Option<(Value, String)> {
     if !stale_element(result) {
         return None;
     }
     let token = args.get("element_token").and_then(Value::as_str)?;
     let (snapshot_id, row) = token.split_once(':')?;
     let row: u64 = row.parse().ok()?;
-    let path = crate::window_state_view::snapshot_menu_path(snapshot_id, row)?;
-    let stored = crate::window_state_view::snapshot_row(snapshot_id, row)?;
+    let rows = registry.snapshot_rows()?;
+    let path = crate::window_state_view::snapshot_menu_path(rows, snapshot_id, row)?;
+    let stored = crate::window_state_view::snapshot_row(rows, snapshot_id, row)?;
     let pid = args
         .get("pid")
         .and_then(Value::as_i64)

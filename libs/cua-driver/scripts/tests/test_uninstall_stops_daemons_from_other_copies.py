@@ -360,20 +360,34 @@ def test_installer_swap_step_skips_blanket_pkill_on_linux(machine: Machine) -> N
 def test_cua_driver_is_serve_process_ignores_mcp_with_serve_in_arguments(machine: Machine) -> None:
     test_sh = """
 tmp="$(mktemp -d)"
-mkdir -p "$tmp/proc/100" "$tmp/proc/101" "$tmp/proc/102"
+mkdir -p "$tmp/proc/100" "$tmp/proc/101" "$tmp/proc/102" "$tmp/proc/103" "$tmp/proc/104"
 printf "cua-driver\\0serve\\0--socket\\0/tmp/d.sock\\0" > "$tmp/proc/100/cmdline"
 printf "cua-driver\\0mcp\\0--socket\\0/tmp/cua-driver-serve.sock\\0" > "$tmp/proc/101/cmdline"
 printf "cua-driver\\0update\\0--apply\\0" > "$tmp/proc/102/cmdline"
+printf "cua-driver\\0--host-bundle-id\\0serve\\0mcp\\0" > "$tmp/proc/103/cmdline"
+printf "cua-driver\\0--cursor-theme\\0cua.default\\0serve\\0" > "$tmp/proc/104/cmdline"
 
 eval "$(declare -f cua_driver_is_serve_process | sed "s|/proc/|$tmp/proc/|g")"
 
 cua_driver_is_serve_process 100 || exit 1
 if cua_driver_is_serve_process 101; then exit 2; fi
 if cua_driver_is_serve_process 102; then exit 3; fi
+if cua_driver_is_serve_process 103; then exit 4; fi
+cua_driver_is_serve_process 104 || exit 5
 rm -rf "$tmp"
 """
     result = machine.common_shell(test_sh)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_serve_detection_skips_the_same_value_flags_as_the_cli() -> None:
+    cli = (SCRIPTS.parent / "rust" / "crates" / "cua-driver" / "src" / "cli.rs").read_text(encoding="utf-8")
+    block = re.search(r"const VALUE_FLAGS: &\[&str\] = &\[(.*?)\];", cli, re.S)
+    assert block is not None
+    common = (SCRIPTS / "_install-common.sh").read_text(encoding="utf-8")
+    shell = re.search(r'CUA_DRIVER_VALUE_FLAGS="(.*?)"', common, re.S)
+    assert shell is not None
+    assert shell.group(1).replace("\\\n", " ").split() == re.findall(r'"(--[^"]+)"', block.group(1))
 
 
 def test_installer_survivor_note_names_the_pid(machine: Machine) -> None:

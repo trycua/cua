@@ -45,6 +45,17 @@
 #   * Bash 3.2 compatible (macOS default). No associative arrays, no
 #     `[[ =~ ]]` patterns that need bash 4+.
 
+# Flags that take a value, copied from VALUE_FLAGS in
+# libs/cua-driver/rust/crates/cua-driver/src/cli.rs so the subcommand is
+# found the way the CLI finds it. A test keeps the two lists equal.
+CUA_DRIVER_VALUE_FLAGS=" --cursor-theme --cursor-reduced-motion --glide-ms --dwell-ms \
+--idle-hide-ms --screenshot-out-file --client --socket \
+--permission-mode --grant --session-policy --capability-manifest \
+--pid-file --expected-pid --type --host-bundle-id --pid --strategy \
+--window-id --session --profile-mode --profile-name --archive \
+--image --capture --experimental-pip-geometry --style --timing \
+--effects "
+
 # Linux: true when pid runs `cua-driver serve`, judged by its first
 # positional argument so an `mcp` client whose socket path contains
 # "serve" does not match.
@@ -62,10 +73,13 @@ cua_driver_is_serve_process() {
             skip_next=0
             continue
         fi
-        case "$arg" in
-            --pid-file|--socket|--expected-pid|--permission-mode)
+        case "$CUA_DRIVER_VALUE_FLAGS" in
+            *" $arg "*)
                 skip_next=1
+                continue
                 ;;
+        esac
+        case "$arg" in
             -*)
                 ;;
             serve)

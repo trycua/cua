@@ -308,6 +308,153 @@ fn harness_wpf_smoke() {
 
 #[test]
 #[ignore]
+fn harness_wpf_disabled_ancestors() {
+    run_case(
+        native_readonly_case(
+            "wpf",
+            "disabled_ancestors",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        ),
+        |pid, wid, driver| {
+            // Verify that this is a misleading provider, rather than a child
+            // that already reports itself disabled without our propagation.
+            let enable_ancestor = unsafe {
+                use windows::core::Interface;
+                use windows::Win32::System::Com::{
+                    CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
+                };
+                use windows::Win32::System::Variant::VARIANT;
+                use windows::Win32::UI::Accessibility::{
+                    CUIAutomation, IUIAutomation, IUIAutomationInvokePattern,
+                    TreeScope_Descendants, UIA_AutomationIdPropertyId, UIA_InvokePatternId,
+                };
+                let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+                let automation: IUIAutomation =
+                    CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).unwrap();
+                let root = automation.ElementFromHandle(HWND(wid as *mut _)).unwrap();
+                for (id, enabled) in [
+                    ("grp-disabled-ancestor", false),
+                    ("chk-disabled-descendant", true),
+                ] {
+                    let condition = automation
+                        .CreatePropertyCondition(UIA_AutomationIdPropertyId, &VARIANT::from(id))
+                        .unwrap();
+                    let element = root.FindFirst(TreeScope_Descendants, &condition).unwrap();
+                    assert_eq!(
+                        element.CurrentIsEnabled().unwrap().as_bool(),
+                        enabled,
+                        "provider state for {id}"
+                    );
+                }
+                let condition = automation
+                    .CreatePropertyCondition(
+                        UIA_AutomationIdPropertyId,
+                        &VARIANT::from("btn-enable-ancestor"),
+                    )
+                    .unwrap();
+                root.FindFirst(TreeScope_Descendants, &condition)
+                    .unwrap()
+                    .GetCurrentPattern(UIA_InvokePatternId)
+                    .unwrap()
+                    .cast::<IUIAutomationInvokePattern>()
+                    .unwrap()
+            };
+
+            let snap = snapshot(driver, pid, wid);
+            assert!(
+                !snap.is_error(),
+                "disabled snapshot failed: {}",
+                snap.text()
+            );
+            let line = snap
+                .tree_text()
+                .lines()
+                .find(|line| line.contains("Ancestor-disabled checkbox"))
+                .expect("disabled descendant must remain observable");
+            assert!(line.contains("enabled=false"), "{line}");
+            let element = snap.structured()["elements"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|element| element["label"] == "Ancestor-disabled checkbox")
+                .cloned()
+                .expect("disabled descendant must be published");
+            assert_eq!(element["enabled"], false, "{element}");
+
+            // The provider reports the checkbox enabled, so only the
+            // ancestor-aware live check can refuse these writers.
+            let token = element_token_by_id(&snap, "chk-disabled-descendant");
+            for (tool, mut args) in [
+                ("click", serde_json::json!({})),
+                ("click", serde_json::json!({ "button": "middle" })),
+                ("set_value", serde_json::json!({ "value": "1" })),
+                ("type_text", serde_json::json!({ "text": "x" })),
+            ] {
+                args["pid"] = serde_json::json!(pid);
+                args["window_id"] = serde_json::json!(wid);
+                args["element_token"] = serde_json::json!(token);
+                let refused = driver.call(tool, args);
+                assert!(
+                    refused.is_error() && refused.structured()["code"] == "element_disabled",
+                    "{tool} under a disabled ancestor was not refused as element_disabled: {}",
+                    refused.raw
+                );
+            }
+
+            let native = platform_windows::uia::walk_native_tree(wid).unwrap();
+            let disabled = native
+                .iter()
+                .find(|node| node.automation_id.as_deref() == Some("chk-disabled-descendant"))
+                .unwrap();
+            assert_eq!(disabled.enabled, Some(false));
+            assert_eq!(
+                disabled.selected,
+                Some(false),
+                "a refused writer toggled it"
+            );
+            assert!(disabled.element_index.is_some() && !disabled.actions.is_empty());
+
+            // Change fixture state directly. Driver input delivery is covered
+            // by the action cases; this case owns the effective enabled state.
+            unsafe { enable_ancestor.Invoke() }.unwrap();
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                let enabled = snapshot(driver, pid, wid);
+                let line = enabled
+                    .tree_text()
+                    .lines()
+                    .find(|line| line.contains("Ancestor-disabled checkbox"))
+                    .map(str::to_owned);
+                if line
+                    .as_deref()
+                    .is_some_and(|line| !line.contains("enabled=false"))
+                {
+                    let _ = element_token_by_id(&enabled, "chk-disabled-descendant");
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "child did not become enabled: {}",
+                    enabled.text()
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            let native = platform_windows::uia::walk_native_tree(wid).unwrap();
+            let restored = native
+                .iter()
+                .find(|node| node.automation_id.as_deref() == Some("chk-disabled-descendant"))
+                .unwrap();
+            assert_eq!(restored.enabled, Some(true));
+            assert!(restored.element_index.is_some() && !restored.actions.is_empty());
+            Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        },
+    );
+}
+
+#[test]
+#[ignore]
 fn harness_wpf_query_projects_structured_elements() {
     run_case(
         native_readonly_case(

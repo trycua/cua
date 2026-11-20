@@ -29,6 +29,7 @@ mod get_window_state_actions_tests {
             selected: None,
             is_password: None,
             element_ptr: 0,
+            retained_element: None,
             center_x: 0,
             center_y: 0,
             rect: None,
@@ -514,14 +515,9 @@ impl Tool for GetWindowStateTool {
                 let mut budget =
                     cua_driver_core::walk_budget::WalkBudget::new(timeout_ms, max_elements);
                 let iconic_before = crate::input::window_is_iconic(hwnd);
-                let tree =
+                let mut tree =
                     crate::uia::walk_tree_budgeted(hwnd, q.as_deref(), max_depth, &mut budget);
-                let kind = if tree.nodes.iter().any(|node| node.msaa_role.is_some()) {
-                    crate::uia::snapshot::SnapshotKind::Msaa
-                } else {
-                    crate::uia::snapshot::SnapshotKind::Uia
-                };
-                let payload = crate::uia::snapshot::UiaSnapshot::from_nodes(&tree.nodes, kind)
+                let payload = crate::uia::snapshot::UiaSnapshot::adopt_nodes(&mut tree.nodes)
                     .with_read_while_minimized(
                         iconic_before || crate::input::window_is_iconic(hwnd),
                     );
@@ -547,10 +543,7 @@ impl Tool for GetWindowStateTool {
                         nodes: Vec::new(),
                         elements_complete: false,
                     };
-                    let payload = crate::uia::snapshot::UiaSnapshot::from_nodes(
-                        &[],
-                        crate::uia::snapshot::SnapshotKind::Uia,
-                    );
+                    let payload = crate::uia::snapshot::UiaSnapshot::adopt_nodes(&mut []);
                     Some((tree, payload, walk))
                 }
             }
@@ -763,10 +756,7 @@ impl Tool for GetWindowStateTool {
                         None,
                     );
                     if refreshed.is_none() {
-                        let payload = crate::uia::snapshot::UiaSnapshot::from_nodes(
-                            &[],
-                            crate::uia::snapshot::SnapshotKind::Uia,
-                        );
+                        let payload = crate::uia::snapshot::UiaSnapshot::adopt_nodes(&mut []);
                         if let Some((_, replaced)) = state.snapshots.publish_for_session(
                             pid as i32,
                             hwnd,

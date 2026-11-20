@@ -75,6 +75,38 @@
 #
 # Returns: always 0. Caller threads this through unconditionally; the
 # behaviour is "kill what we can, never block the install".
+cua_driver_is_serve_process() {
+    local pid="$1"
+    [ -r "/proc/$pid/cmdline" ] || return 1
+
+    local arg is_first=1 skip_next=0
+    while IFS= read -r -d '' arg; do
+        if [ "$is_first" = "1" ]; then
+            is_first=0
+            continue
+        fi
+        if [ "$skip_next" = "1" ]; then
+            skip_next=0
+            continue
+        fi
+        case "$arg" in
+            --pid-file|--socket|--expected-pid|--permission-mode)
+                skip_next=1
+                ;;
+            -*)
+                ;;
+            serve)
+                return 0
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    done < "/proc/$pid/cmdline"
+
+    return 1
+}
+
 stop_cua_driver_daemons() {
     printf '==> stopping any running cua-driver daemons before swap\n'
 
@@ -124,6 +156,26 @@ stop_cua_driver_daemons() {
             # process that happens to be named `cua-driver`. Another app can
             # ship its own helper with that name; it is not ours to kill.
             cua_driver_stop_release_processes
+        elif [ "$(uname -s 2>/dev/null || echo unknown)" = "Linux" ]; then
+            # Linux: systemctl --user stopped the supervised service above.
+            # Do NOT blanket pkill cua-driver processes:
+            #   1. Running `cua-driver mcp` stdio servers owned by editor/agent
+            #      clients safely continue running on their held inode across
+            #      the atomic symlink swap; terminating them disrupts active sessions.
+            #   2. The updater itself (`cua-driver update --apply`) runs as `cua-driver`
+            #      and must not kill itself (which would cause exit status 143).
+            #   3. Other users' processes or test harnesses must not be signaled.
+            # Best-effort backstop for unmanaged `serve` background daemons only:
+            if command -v pgrep >/dev/null 2>&1; then
+                local user_pids pid
+                user_pids=$(pgrep -x cua-driver -u "$(id -u)" 2>/dev/null || true)
+                for pid in $user_pids; do
+                    [ "$pid" = "$$" ] || [ "$pid" = "$PPID" ] && continue
+                    if cua_driver_is_serve_process "$pid"; then
+                        kill "$pid" 2>/dev/null || true
+                    fi
+                done
+            fi
         elif command -v pkill >/dev/null 2>&1; then
             # `-x` = exact match on process name so we don't kill a
             # user's `cua-driver-rs-foo` test harness or any script
@@ -175,6 +227,38 @@ show_cua_driver_daemon_survivors() {
         printf 'Note: Cua Driver process(es) still running after the stop attempt (pid: %s).\n' "$mac_survivors"
         printf '      They ignored SIGTERM and SIGKILL. Log out and back in, or run\n'
         printf '      `kill -9 <pid>` yourself, then re-run this installer.\n'
+        return 0
+    fi
+
+    if [ "$(uname -s 2>/dev/null || echo unknown)" = "Linux" ]; then
+        # On Linux, client-owned stdio MCP servers and updater processes are
+        # intentionally left running on their existing inodes across the swap.
+        # Only report true unmanaged `serve` daemons that failed to terminate.
+        if ! command -v pgrep >/dev/null 2>&1; then
+            return 0
+        fi
+
+        local linux_survivor_pids="" pid
+        for pid in $(pgrep -x cua-driver -u "$(id -u)" 2>/dev/null || true); do
+            [ "$pid" = "$$" ] || [ "$pid" = "$PPID" ] && continue
+            if cua_driver_is_serve_process "$pid"; then
+                linux_survivor_pids="${linux_survivor_pids:+$linux_survivor_pids }$pid"
+            fi
+        done
+        if [ -z "$linux_survivor_pids" ]; then
+            return 0
+        fi
+
+        local yellow normal count pid_csv
+        yellow=$(tput setaf 3 2>/dev/null || true)
+        normal=$(tput sgr0 2>/dev/null || true)
+        count=$(printf '%s\n' "$linux_survivor_pids" | wc -w | tr -d ' ')
+        pid_csv=$(printf '%s\n' "$linux_survivor_pids" | tr ' ' ',' | sed 's/,$//' | sed 's/,/, /g')
+
+        printf '%sNote: %s unmanaged cua-driver serve daemon(s) still running after stop attempt (pid: %s).%s\n' \
+            "$yellow" "$count" "$pid_csv" "$normal"
+        printf '%s      They are ignoring SIGTERM. Until they exit, the OLD binary keeps serving.%s\n' \
+            "$yellow" "$normal"
         return 0
     fi
 

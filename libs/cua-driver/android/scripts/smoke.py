@@ -96,6 +96,17 @@ def main():
         point = state("ai.cua.android.demo")["controls"][control]
         shell("input", "-d", "0", "tap", point["x"], point["y"])
 
+    def require_main_focus():
+        """Synthetic typing needs the demo editor focused; name whatever else holds display 0."""
+        try:
+            poll(lambda: (lambda s: s.get("window_focus") and s.get("editor_focus"))(state("ai.cua.android.demo")))
+        except AssertionError:
+            section = next((s for s in shell("dumpsys", "window", "displays").stdout.split("Display: mDisplayId=")
+                            if re.match(r"0\b", s)), "")
+            holder = re.search(r"mCurrentFocus=Window\{\S+ \S+ ([\w.]+)/", section)
+            raise AssertionError("Display 0 precondition failed: the demo editor lacks focus; focused package: "
+                                 + (holder.group(1) if holder else "unknown")) from None
+
     call("doctor")
     assert local("doctor")["data"]["backend"] == "android"
     cases = pathlib.Path(__file__).resolve().parents[1] / "contract/invalid-requests.json"
@@ -107,11 +118,15 @@ def main():
     unknown, _ = raw("session.create", params={"allowed_apps": ["ai.cua.fixture.notes"], "display_id": 0})
     assert unknown.returncode == 2, unknown.stdout
 
+    # A fresh install otherwise opens the demo's notification-permission dialog over the editor.
+    # Permission is confined to this synthetic development APK on the selected device.
+    shell("pm", "grant", "ai.cua.android.demo", "android.permission.POST_NOTIFICATIONS")
     for run in range(args.runs):
         shell("am", "force-stop", "ai.cua.android.demo")
         shell("am", "start", "--display", "0", "-n", "ai.cua.android.demo/.MainActivity")
         poll(lambda: state("ai.cua.android.demo").get("controls", {}).get("editor"))
         tap_main("editor")
+        require_main_focus()
         created = call("session", "create", "--allow-app", "ai.cua.fixture.notes")
         sid = created["data"]["session_id"]
         display = created["data"]["display_id"]

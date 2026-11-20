@@ -279,7 +279,7 @@ export class InputController {
     const textarea = this.textarea;
 
     this.on(textarea, "keydown", (event) => {
-      const asSuper = this.commandSides.rightOnly(event, "down");
+      const asSuper = this.commandSides.rightOnly(event, "down") && this.options.keyOptions().metaAsControl;
       const mapped = mapKey(event, "down", this.keyOptions(asSuper));
       if (!mapped) return; // text arrives through beforeinput
       // Super+V is the guest desktop's own shortcut, not a paste.

@@ -165,6 +165,12 @@ public enum InteractiveInputEvent: Sendable {
         }
     }
 
+    /// A key event with the right ⌘ held alone (`InputModifier.superKey`).
+    public var hasSuperKey: Bool {
+        if case let .key(_, _, modifiers, _) = self { return modifiers.contains(.superKey) }
+        return false
+    }
+
     /// Whether this event's coordinates satisfy the server's validator. A batch
     /// containing one invalid event is rejected whole, so the client drops the
     /// offending event rather than losing the batch.

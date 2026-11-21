@@ -626,6 +626,16 @@ where
         // unwind through either the callback or the exported C function.
         let mut work = tokio::spawn(NATIVE_OPERATION.scope(state.clone(), future));
         let completed = tokio::select! {
+            // An accepted cancel means no native work started, so it outranks
+            // a result that became ready at the same time.
+            biased;
+            _ = state.cancelled() => {
+                work.abort();
+                Err(AbiFailure::new(
+                    CuaDriverStatus::Cancelled,
+                    "Cua Driver operation was cancelled",
+                ))
+            }
             joined = &mut work => match joined {
                 Ok(result) => result,
                 Err(error) if error.is_panic() => Err(AbiFailure::new(
@@ -637,13 +647,6 @@ where
                     format!("native Cua Driver task failed: {error}"),
                 )),
             },
-            _ = state.cancelled() => {
-                work.abort();
-                Err(AbiFailure::new(
-                    CuaDriverStatus::Cancelled,
-                    "Cua Driver operation was cancelled",
-                ))
-            }
         };
         let (status, result, error) = match completed {
             Ok(result) => (
@@ -1967,6 +1970,36 @@ mod tests {
         }
         assert!(first.is_null());
         assert!(second.is_null());
+    }
+
+    #[tokio::test]
+    async fn accepted_cancellation_wins_over_a_result_ready_at_the_same_time() {
+        for _ in 0..50 {
+            let (sender, receiver) = oneshot::channel();
+            let context = Box::into_raw(Box::new(CallbackContext { sender })).cast::<c_void>();
+            let mut operation = spawn_completion(
+                abi_executor().unwrap().handle().clone(),
+                async move {
+                    // The cancel is accepted before native work starts, then
+                    // the work reports a result anyway.
+                    let native = OperationState::current();
+                    assert!(native.cancel());
+                    assert!(!native.begin());
+                    Ok("unstarted work finished".into())
+                },
+                rust_completion,
+                context,
+            )
+            .unwrap();
+            let completed = tokio::time::timeout(Duration::from_secs(2), receiver)
+                .await
+                .unwrap()
+                .unwrap();
+            unsafe {
+                cua_driver_operation_release_v1(&mut operation);
+            }
+            assert_eq!(completed.status, CuaDriverStatus::Cancelled);
+        }
     }
 
     #[tokio::test]

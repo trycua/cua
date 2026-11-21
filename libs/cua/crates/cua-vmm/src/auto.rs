@@ -708,11 +708,19 @@ pub async fn doctor() -> DoctorReport {
                 .push("a Docker-API container engine".into());
         }
     }
-    let managed_status = managed_status(
+    let managed_status = match hyperv_status(
         crate::managed::LinuxSource::current(),
         container_status.ready,
-        wsl_probe().await,
-    );
+    )
+    .await
+    {
+        Some(s) => s,
+        None => managed_status(
+            crate::managed::LinuxSource::current(),
+            container_status.ready,
+            wsl_probe().await,
+        ),
+    };
     if !container_status.ready && managed_status.provisionable {
         container_status
             .provisioning
@@ -1206,6 +1214,92 @@ fn nearest_existing(path: &std::path::Path) -> std::path::PathBuf {
         .find(|p| p.exists())
         .unwrap_or(path)
         .to_path_buf()
+}
+
+/// The built-in Linux runtime when Hyper-V is its engine on Windows (the
+/// setting says so, this home already runs on it, or WSL 2 cannot run here
+/// and Hyper-V can); `None` when WSL 2 is ([`managed_status`] answers) and
+/// elsewhere.
+async fn hyperv_status(
+    source: crate::managed::LinuxSource,
+    engine_ready: bool,
+) -> Option<BackendStatus> {
+    use crate::managed::hyperv::{self, Backend, Probe};
+    use crate::managed::{self, wsl};
+    if !cfg!(windows) || !source.allows_builtin() {
+        return None;
+    }
+    let setting = Backend::current();
+    if setting == Backend::Wsl {
+        return None;
+    }
+    let hv = hyperv::probe().await;
+    let pick = match setting {
+        Backend::Hyperv => true,
+        _ => {
+            hyperv::provisioned()
+                || (!wsl::provisioned()
+                    && matches!(hv, Probe::Available { .. })
+                    && matches!(wsl::probe(&wsl::WslExe).await, wsl::Probe::Unavailable(_)))
+        }
+    };
+    let picked = pick
+        && (source == managed::LinuxSource::Builtin
+            || setting == Backend::Hyperv
+            || managed::exists()
+            || !engine_ready);
+    if !picked {
+        return None;
+    }
+    let mb = managed::disk_pin().size >> 20;
+    let status = |detail: String, missing: Vec<String>| BackendStatus {
+        backend: BackendKind::Managed,
+        ready: false,
+        provisionable: false,
+        detail,
+        missing,
+        provisioning: vec![],
+    };
+    if let Probe::Unavailable(why) = hv {
+        return Some(status(why, vec!["Hyper-V".into()]));
+    }
+    let exists = managed::exists();
+    if !exists
+        && let Err(e) = crate::disk::ensure_space(
+            &nearest_existing(&managed::root()),
+            (mb << 20) + (14 << 30),
+            "set up the built-in Linux runtime",
+        )
+    {
+        return Some(status(e.to_string(), vec!["disk space".into()]));
+    }
+    let running = managed::running();
+    Some(BackendStatus {
+        backend: BackendKind::Managed,
+        ready: running,
+        provisionable: !running,
+        detail: if running {
+            "built-in Linux runtime running (Hyper-V virtual machine, gVisor)".into()
+        } else if exists {
+            "built-in Linux runtime (Hyper-V virtual machine), started on demand".into()
+        } else {
+            format!(
+                "built-in Linux runtime in a Hyper-V virtual machine, set up on first use, about {mb} MB"
+            )
+        },
+        missing: vec![],
+        provisioning: if running {
+            vec![]
+        } else if exists {
+            vec!["start its Hyper-V virtual machine and Docker".into()]
+        } else {
+            vec![
+                format!("download the built-in Linux runtime (about {mb} MB)"),
+                "make a Hyper-V virtual machine from it".into(),
+                "start it and Docker".into(),
+            ]
+        },
+    })
 }
 
 /// What WSL 2 gives the built-in Linux runtime on Windows (`None` elsewhere).

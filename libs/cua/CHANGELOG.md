@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.0](https://github.com/trycua/cua/compare/cua-sdk-v0.30.1...cua-sdk-v0.31.0) (2026-11-21)
+
+
+### Features
+
+* **cua-vmm:** Linux runtime in a Hyper-V VM on Windows without WSL 2 ([#8417](https://github.com/trycua/cua/issues/8417)) ([e1209b5](https://github.com/trycua/cua/commit/e1209b5ac48ac6ed9890871965b49150544e9b88))
+
 ## [0.30.1](https://github.com/trycua/cua/compare/cua-sdk-v0.30.0...cua-sdk-v0.30.1) (2026-11-21)
 
 

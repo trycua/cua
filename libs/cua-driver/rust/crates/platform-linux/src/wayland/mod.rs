@@ -142,12 +142,6 @@ pub fn is_wayland() -> bool {
     )
 }
 
-/// Whether [`ENABLE_WAYLAND_ENV`] opts into the native Wayland backend,
-/// whatever the session.
-pub fn wayland_enabled() -> bool {
-    crate::desktop::opted_in(std::env::var(ENABLE_WAYLAND_ENV).ok().as_deref())
-}
-
 /// Reason string when X11 input injection cannot possibly work, so callers
 /// **fail loudly** instead of falling through to an X11 path that no-ops yet
 /// reports success. Triggers only on a *pure* Wayland session — `WAYLAND_DISPLAY`

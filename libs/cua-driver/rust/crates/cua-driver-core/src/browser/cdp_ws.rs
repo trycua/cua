@@ -989,6 +989,13 @@ impl CdpPool {
         Ok(conn)
     }
 
+    /// Run `work` while no grant-owned dial is in progress, so browser UI it
+    /// touches cannot belong to a dial that is still waiting for consent.
+    pub async fn while_no_dial_runs<F: std::future::Future>(&self, work: F) -> F::Output {
+        let _dial = self.inner.dial_gate.lock().await;
+        work.await
+    }
+
     /// Drop a (likely dead) unrestricted connection so the next call
     /// redials. Grant-owned sockets are never evicted by the legacy route.
     pub async fn evict(&self, ws_url: &str) {

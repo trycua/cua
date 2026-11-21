@@ -1786,12 +1786,25 @@ async fn existing_profile_bind_refuses_when_the_endpoint_reproof_stalls() {
 
 #[tokio::test]
 async fn existing_profile_reconnect_refuses_within_its_bound_when_a_process_check_stalls() {
-    for dial_first in [false, true] {
-        existing_profile_reconnect_stalls_in_a_process_check(dial_first).await;
+    for case in [
+        ReconnectStall::BeforeAnyDial,
+        ReconnectStall::AfterADial,
+        ReconnectStall::AfterADialWhileAnotherDials,
+    ] {
+        existing_profile_reconnect_stalls_in_a_process_check(case).await;
     }
 }
 
-async fn existing_profile_reconnect_stalls_in_a_process_check(dial_first: bool) {
+#[derive(Clone, Copy, PartialEq)]
+enum ReconnectStall {
+    BeforeAnyDial,
+    AfterADial,
+    /// Another caller's dial, whose prompt is on screen, is still running
+    /// when the reconnect runs out of time.
+    AfterADialWhileAnotherDials,
+}
+
+async fn existing_profile_reconnect_stalls_in_a_process_check(case: ReconnectStall) {
     const TRANSPORT: &str = "transport-v2-reconnect-stall";
     let stalls = Arc::new(FixtureStalls::default());
     // Setup turned remote debugging on, so ending the grant turns it back off.
@@ -1814,16 +1827,28 @@ async fn existing_profile_reconnect_stalls_in_a_process_check(dial_first: bool) 
             SharedSocketRelease::Close,
         )
         .await;
-    if dial_first {
+    if case == ReconnectStall::BeforeAnyDial {
+        stalls.fingerprints.store(1, Ordering::SeqCst);
+    } else {
         // The first dial fails, so the next attempt's process check stalls
         // after this reconnect dialed and may have raised a prompt.
         drop(f._server);
         stalls.fingerprints.store(2, Ordering::SeqCst);
-        stalls.dismissals.store(0, Ordering::SeqCst);
-    } else {
-        stalls.fingerprints.store(1, Ordering::SeqCst);
-        stalls.dismissals.store(1, Ordering::SeqCst);
     }
+    // A dismissal this reconnect may make stalls, so its bound is tested.
+    let may_dismiss = case == ReconnectStall::AfterADial;
+    stalls
+        .dismissals
+        .store(if may_dismiss { 0 } else { 1 }, Ordering::SeqCst);
+    // The other caller's browser accepts the connection and never answers
+    // the handshake, so its dial holds the pool's dial gate until the
+    // connect timeout, past the reconnect bound and the dismissal bound.
+    let other_browser = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let other_url = format!(
+        "ws://127.0.0.1:{}/devtools/browser/other",
+        other_browser.local_addr().unwrap().port()
+    );
+    let mut other_dial = None;
     stalls.hold_cleanup.store(true, Ordering::SeqCst);
     // The clock is advanced by hand: tokio stops auto-advancing a paused
     // clock while a blocking task runs, and the held cleanup is one.
@@ -1832,11 +1857,21 @@ async fn existing_profile_reconnect_stalls_in_a_process_check(dial_first: bool) 
         let engine = f.engine.clone();
         async move { bind_existing_profile(&engine, TRANSPORT).await }
     });
-    for _ in 0..120 {
+    for second in 0..120 {
         if bind.is_finished() {
             break;
         }
+        if second == 28 && case == ReconnectStall::AfterADialWhileAnotherDials {
+            let pool = f.engine.pool.clone();
+            let url = other_url.clone();
+            other_dial = Some(tokio::spawn(async move {
+                pool.claim_existing(&url, u64::MAX).await
+            }));
+        }
         tokio::time::advance(std::time::Duration::from_secs(1)).await;
+    }
+    if let Some(other_dial) = other_dial {
+        other_dial.abort();
     }
     assert!(
         bind.is_finished(),
@@ -1859,11 +1894,11 @@ async fn existing_profile_reconnect_stalls_in_a_process_check(dial_first: bool) 
             .is_none(),
         "a reconnect that ran out of time ends the grant"
     );
-    if !dial_first {
+    if !may_dismiss {
         assert_eq!(
             stalls.dismissals.load(Ordering::SeqCst),
             1,
-            "a reconnect that never dialed leaves a prompt in the window alone"
+            "a prompt that may be another caller's is left alone"
         );
     }
     assert!(

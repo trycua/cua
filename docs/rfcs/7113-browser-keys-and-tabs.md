@@ -90,11 +90,14 @@ browser_press_key {target_id, tab_id, session, key, modifiers?, ref?}
   the modifier bitmask, then the modifier `keyUp`s, on the tab's CDP session.
 - `ref` (optional) focuses that element first, with the ref checks
   `browser_type` uses. Without it, keys go to the page's current focus.
+- Turns on `Emulation.setFocusEmulationEnabled` for the tab first, as
+  `browser_type` keystrokes do, so keys reach an inactive tab too.
 - Annotations: `destructive: true` (a chord can close or reload the tab),
   `idempotent: false`.
 - Result: `{status, target_id, tab_id, key, modifiers, refs_invalidated: true}`.
-- Protected-resource scope: the tab resource `browser_type` uses, with
-  `action_class: "key_input"`.
+- Protected-resource scope: the tab resource `browser_type` uses, with a new
+  `action_class: "key_input"`, so a capability manifest can allow page input
+  without shortcuts.
 
 ### `browser_new_tab`
 
@@ -109,6 +112,12 @@ browser_new_tab {target_id, tab_id, session, url} -> {tab_id, url}
   with `Browser.getWindowForTarget` that the tab is in the anchor's window,
   then `Page.navigate` to `url` (http, https, or about, as in
   `browser_navigate`).
+- If the browser puts the tab in another window, refuses with
+  `browser_wrong_target_refused` (`detail.reason: "new_tab_window_mismatch"`),
+  records no tab and does not navigate. The stray `about:blank` tab stays
+  open: closing it would need `Target.closeTarget` in the allowlist too.
+- A binding without a CDP window id (a single-page embedded app) is refused:
+  there is no window to check the new tab against.
 - Mints and returns the new `tab_id` on the same target.
 - Adds `Target.createTarget` to `EXISTING_PROFILE_METHODS`.
 
@@ -142,8 +151,9 @@ tool specs, `BROWSER.md`, and the permissions guide gain the two tools.
 
 ## Implementation plan
 
-1. `browser_press_key`: core tool, mock-CDP tests, docs.
-2. `browser_new_tab` and the allowlist entry: core tool, mock-CDP tests, docs.
+1. `browser_press_key`: core tool, mock-CDP tests, docs (#8420).
+2. `browser_new_tab` and the allowlist entry: core tool, mock-CDP tests, docs
+   (#8412).
 
 Each PR is independently revertible.
 
@@ -162,14 +172,9 @@ Each PR is independently revertible.
 
 ## Unresolved questions
 
-- `Target.createTarget` takes no window id: with several browser windows, the
-  tab opens in the last active one. On a mismatch, refuse and leave the tab
-  open, or close it (adds `Target.closeTarget` to the allowlist)?
-- Keys to an inactive tab: do they need `Emulation.setFocusEmulationEnabled`,
-  as `browser_type` keystrokes do? The probe covered the active tab of a
-  background window only.
 - Should chords that open native OS dialogs (print, save, open) be refused?
-- `key_input` as a new action class, or reuse `page_input`?
+  #8420 does not refuse them: `destructive: true` and the protected-resource
+  scope warn the caller, as for `ctrl+w`.
 
 ## Prior art
 

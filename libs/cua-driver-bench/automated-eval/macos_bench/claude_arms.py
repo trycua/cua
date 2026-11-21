@@ -101,9 +101,14 @@ MAIN_SOCKET = "/tmp/cdb-bench-cua-main.sock"
 # Amendment 13: from trycua/cua#4936 run_script is on by default, so AX ("Cua Driver" in published results) is the
 # driver's default config plus the addendum. The flag is kept: builds before that PR need it, later builds ignore it.
 CUA_SCRIPT_DIR = WORK / "cua-script"
-CUA_SCRIPT_APP = CUA_SCRIPT_DIR / "CuaDriverBenchScript.app"
+# The app is named CuaDriver.app (in its own directory): since 0.41 the driver treats an executable outside a
+# "/CuaDriver.app/Contents/MacOS/" path as unbundled, disclaims TCC responsibility and refuses background input.
+CUA_SCRIPT_APP = CUA_SCRIPT_DIR / "CuaDriver.app"
 SCRIPT_SOCKET = "/tmp/cdb-bench-cua-script.sock"
 SCRIPT_FLAG = ("CUA_DRIVER_EXPERIMENTAL_SCRIPT", "1")
+# Builds that ask macOS for direct-capture consent show a system alert over the first capture. The bench VM has
+# nobody at the screen, so the script arm's daemon captures without waiting for that consent record.
+ALLOW_CAPTURE_ALERT_FLAG = ("CUA_DRIVER_ALLOW_CAPTURE_CONSENT_ALERT", "1")
 # Amendment 13: arms A and A-skill stay run_steps-only on every build. Builds before #4936 do not know this switch
 # and have run_script off anyway; later builds turn it off with it.
 NO_SCRIPT_FLAG = ("CUA_DRIVER_DISABLE_RUN_SCRIPT", "1")
@@ -181,8 +186,8 @@ CUA_BUILDS = {
         CUA_SCRIPT_APP,
         SCRIPT_SOCKET,
         CUA_SCRIPT_DIR / "daemon-state",
-        CUA_MAIN_DIR / "skills" / "cua-driver",
-        daemon_env=(SCRIPT_FLAG,),
+        CUA_SCRIPT_DIR / "skills" / "cua-driver",  # assemble_version.sh puts the build's own skill here
+        daemon_env=(SCRIPT_FLAG, ALLOW_CAPTURE_ALERT_FLAG),
         prompt_addendum=RUN_SCRIPT_ADDENDUM,
     ),
 }

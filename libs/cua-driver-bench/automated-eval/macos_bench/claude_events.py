@@ -244,6 +244,50 @@ TOOL_SETUP_PATTERNS = [
 ]
 
 
+BATCH_TOOLS = ("run_steps", "run_script")
+
+
+def batching_summary(uses: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """How many Cua tool calls were batch calls (``run_steps`` / ``run_script``) versus single calls.
+
+    ``mcp_calls`` counts every call to an MCP tool of the arm's server. ``batch_calls`` counts the batch ones and
+    ``single_calls`` the rest. ``steps_in_batches`` is the number of driver actions the batch calls carried:
+    exact for ``run_steps`` (the length of ``steps``), a static count of ``cua`` API calls in the source for
+    ``run_script`` (``script_inner_calls_est``, loops count once). ``actions_total`` = single calls + steps in batches
+    and ``batched_action_share`` = steps in batches / actions_total, the share of driver actions that rode in a batch.
+    """
+    single = steps_calls = script_calls = steps_inner = script_inner = 0
+    for use in uses.values():
+        server, tool = strip_mcp(use["name"])
+        if server is None:
+            continue
+        inp = use.get("input") or {}
+        if tool == "run_steps":
+            steps_calls += 1
+            steps = inp.get("steps")
+            steps_inner += len(steps) if isinstance(steps, list) else 0
+        elif tool == "run_script":
+            script_calls += 1
+            source = str(inp.get("script") or inp.get("code") or inp.get("source") or "")
+            script_inner += len(CUA_REPL_CALL.findall(source))
+        else:
+            single += 1
+    batch = steps_calls + script_calls
+    actions = single + steps_inner + script_inner
+    return {
+        "mcp_calls": single + batch,
+        "single_calls": single,
+        "batch_calls": batch,
+        "run_steps_calls": steps_calls,
+        "run_script_calls": script_calls,
+        "steps_in_run_steps": steps_inner,
+        "script_inner_calls_est": script_inner,
+        "actions_total": actions,
+        "batched_action_share": round((steps_inner + script_inner) / actions, 4) if actions else None,
+        "batch_call_share": round(batch / (single + batch), 4) if single + batch else None,
+    }
+
+
 def summarize(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
     """Counts, usage, cost, errors and quota state from one trial's stream."""
     events = list(events)
@@ -423,6 +467,7 @@ def summarize(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
             "failed": failed,
             "failed_by_name": dict(errors_by_name),
         },
+        "batching": batching_summary(uses),
         "action_latency_ms": latency,
         "tokens": tokens,
         "token_source": token_source,

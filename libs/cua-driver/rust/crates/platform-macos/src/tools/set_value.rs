@@ -58,7 +58,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["value"],
             "properties": {
-                "session": cua_driver_core::tool_schema::session_schema(),
+                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it." },
                 "pid": { "type": "integer", "description": "Target process ID. Optional with element_token (the token carries the pid)." },
                 "window_id": {
                     "type": "integer",

@@ -112,6 +112,8 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_
 # Fake computer-server / OSWorld endpoints for the doctor shim tests.
 axum.workspace = true
 cua-host = { workspace = true, features = ["testing"] }
+# The low-disk guard test skips a host whose own preflight refuses a VM.
+cua-create-failure.workspace = true
 cua-daemon = { workspace = true, features = ["server", "client", "test-fixtures"] }
 cua-spacesd-client = { workspace = true, features = ["testing"] }
 cua-sandbox-core = { workspace = true, features = ["testing"] }

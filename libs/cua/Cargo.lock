@@ -2519,6 +2519,7 @@ dependencies = [
  "cua-compat-cmd",
  "cua-contrib",
  "cua-crash",
+ "cua-create-failure",
  "cua-daemon",
  "cua-disk",
  "cua-home",

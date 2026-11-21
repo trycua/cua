@@ -16,7 +16,7 @@ import type {
   PresenceIdentity,
   TeleportLike,
 } from "../native/generated/index";
-import type { LiveSpacesBackend, ShareSettingsRow, SpacesBackend, TcpShareOptions } from "./backend";
+import type { LiveSpacesBackend, ShareSettingsRow, SpacesBackend, TcpShareOptions, TreeBudgetLimitsJson } from "./backend";
 import type { AgentSetupRunning } from "./agents";
 import type { AccountProfile, AccountRunning, SignInAttempt, SignInOptions } from "./services";
 
@@ -115,6 +115,35 @@ export class PendingSpacesBackend implements SpacesBackend {
     const b = await this.b();
     if (!b.setNetwork) throw new Error("network settings are not available in this build");
     return b.setNetwork(id, word, allow, deny, widen, tree, via);
+  };
+  // Child Spaces (the tree, budgets, kept services): the live backend's own.
+  spaceTree = async () => {
+    const b = await this.b();
+    return b.spaceTree ? b.spaceTree() : [];
+  };
+  setChildren = async (id: string, enabled: boolean) => {
+    const b = await this.b();
+    if (!b.setChildren) throw new Error("child Spaces are not available in this build");
+    return b.setChildren(id, enabled);
+  };
+  treeBudget = async (id: string) => {
+    const b = await this.b();
+    if (!b.treeBudget) throw new Error("budgets are not available in this build");
+    return b.treeBudget(id);
+  };
+  setTreeBudget = async (id: string, limits: TreeBudgetLimitsJson) => {
+    const b = await this.b();
+    if (!b.setTreeBudget) throw new Error("budgets are not available in this build");
+    return b.setTreeBudget(id, limits);
+  };
+  services = async (id: string) => {
+    const b = await this.b();
+    return b.services ? b.services(id) : [];
+  };
+  controlService = async (id: string, name: string, action: string) => {
+    const b = await this.b();
+    if (!b.controlService) throw new Error("kept services are not available in this build");
+    return b.controlService(id, name, action);
   };
   exitsThroughThisMachine = async () => {
     const b = await this.b();

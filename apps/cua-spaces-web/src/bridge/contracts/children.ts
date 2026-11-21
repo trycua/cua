@@ -21,6 +21,8 @@ export interface TreeNode {
   childrenOn: boolean;
   /** It is an agent's home: the agent (harness id) it was made for. */
   home?: string;
+  /** It is a job of its parent (from the run ledger), not a Space record: one logical child row. */
+  job?: import("../protocol").JobNodeWire;
 }
 
 /** What a tree's children may hold and cost. Unset: the default. */

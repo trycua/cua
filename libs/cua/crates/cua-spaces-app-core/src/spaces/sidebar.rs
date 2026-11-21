@@ -1801,6 +1801,9 @@ mod tests {
         let row = SpaceRow {
             hidden: false,
             parent: None,
+            job_name: None,
+            job_gpu: false,
+            job_run: None,
             id: "direct:127.0.0.1:34752".into(),
             name: "studio".into(),
             display_name: None,
@@ -1854,6 +1857,9 @@ mod tests {
         let row = SpaceRow {
             hidden: false,
             parent: None,
+            job_name: None,
+            job_gpu: false,
+            job_run: None,
             id: "local:demo".into(),
             name: "demo".into(),
             display_name: None,

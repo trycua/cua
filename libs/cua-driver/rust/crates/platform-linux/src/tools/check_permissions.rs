@@ -63,7 +63,7 @@ impl Tool for CheckPermissionsTool {
             "X11 display: {}\nWayland: {}\nAT-SPI (D-Bus): {}\nXSendEvent injection: {}",
             if x11_ok { "✅ connected" } else { "❌ DISPLAY not set or X11 unavailable" },
             match &wayland_display {
-                Some(s) if crate::wayland::wayland_enabled() =>
+                Some(s) if crate::desktop::wayland_opted_in() =>
                     format!("✅ native Wayland session (WAYLAND_DISPLAY={s}) — experimental backend ENABLED"),
                 Some(s) => format!(
                     "⚠️  native Wayland session (WAYLAND_DISPLAY={s}) — experimental backend OFF; \
@@ -76,6 +76,6 @@ impl Tool for CheckPermissionsTool {
             if x11_ok { "✅ available" } else { "❌ requires X11" }
         );
         ToolResult::text(status_text)
-            .with_structured(json!({ "x11": x11_ok, "wayland": wayland_display.is_some(), "wayland_enabled": crate::wayland::wayland_enabled(), "atspi": atspi_ok, "dbus_session_bus_address": dbus_address, "xsend_event": x11_ok }))
+            .with_structured(json!({ "x11": x11_ok, "wayland": wayland_display.is_some(), "wayland_enabled": crate::desktop::wayland_opted_in(), "atspi": atspi_ok, "dbus_session_bus_address": dbus_address, "xsend_event": x11_ok }))
     }
 }

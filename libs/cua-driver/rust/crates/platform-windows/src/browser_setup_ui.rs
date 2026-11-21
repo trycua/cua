@@ -13,12 +13,16 @@ use cua_driver_core::browser::{
     BrowserRefusal, BrowserRefusalCode, BrowserSetupDescriptor,
     EXISTING_PROFILE_SETUP_READY_TIMEOUT,
 };
-use windows::core::{Interface, BSTR};
+use windows::core::{Interface, HSTRING};
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, IUIAutomationInvokePattern, IUIAutomationTogglePattern,
-    IUIAutomationValuePattern, ToggleState_Off, ToggleState_On, UIA_InvokePatternId,
-    UIA_TogglePatternId, UIA_ValuePatternId,
+    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationLegacyIAccessiblePattern,
+    IUIAutomationTogglePattern, ToggleState_Off, ToggleState_On, UIA_LegacyIAccessiblePatternId,
+    UIA_TogglePatternId,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::{MapVirtualKeyW, MAPVK_VK_TO_VSC, VK_RETURN};
+use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_KEYDOWN, WM_KEYUP};
 
 use crate::uia::UiaNode;
 
@@ -32,8 +36,69 @@ use crate::uia::UiaNode;
 
 fn release_nodes(nodes: &[UiaNode]) {
     for node in nodes.iter().filter(|node| node.element_ptr != 0) {
-        unsafe { drop(IUIAutomationElement::from_raw(node.element_ptr as *mut _)) };
+        release_element(node.element_ptr);
     }
+}
+
+fn release_element(element_ptr: usize) {
+    unsafe { drop(IUIAutomationElement::from_raw(element_ptr as *mut _)) };
+}
+
+/// Takes a reference of its own on a walked element, so it outlives the walk.
+fn retain_element(element_ptr: usize) -> usize {
+    let element = unsafe { IUIAutomationElement::from_raw(element_ptr as *mut _) };
+    let retained = element.clone();
+    std::mem::forget(element);
+    let ptr = retained.as_raw() as usize;
+    std::mem::forget(retained);
+    ptr
+}
+
+/// Elements retained past the walk that read them, released on drop.
+struct RetainedElements(Vec<usize>);
+
+impl Drop for RetainedElements {
+    fn drop(&mut self) {
+        for element_ptr in &self.0 {
+            release_element(*element_ptr);
+        }
+    }
+}
+
+fn is_native_tab(node: &UiaNode) -> bool {
+    !node.in_web_content
+        && node.control_type == "TabItem"
+        && node.element_ptr != 0
+        && node.rect.is_some_and(|(l, t, r, b)| l < r && t < b)
+}
+
+/// Every native tab, with or without bounds: a tab in a collapsed group has
+/// none until the group expands, and it is still not the new tab.
+fn retain_native_tabs(nodes: &[UiaNode]) -> RetainedElements {
+    RetainedElements(
+        nodes
+            .iter()
+            .filter(|node| {
+                !node.in_web_content && node.control_type == "TabItem" && node.element_ptr != 0
+            })
+            .map(|node| retain_element(node.element_ptr))
+            .collect(),
+    )
+}
+
+/// UIA identity (runtime id), which a tab keeps when it moves in the strip.
+fn same_element(uia: &IUIAutomation, left: usize, right: usize) -> Result<bool, BrowserRefusal> {
+    let left = unsafe { IUIAutomationElement::from_raw(left as *mut _) };
+    let right = unsafe { IUIAutomationElement::from_raw(right as *mut _) };
+    let same = unsafe { uia.CompareElements(&left, &right) };
+    std::mem::forget(left);
+    std::mem::forget(right);
+    same.map(|same| same.as_bool()).map_err(|error| {
+        BrowserRefusal::new(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            format!("could not establish a native tab's identity: {error}"),
+        )
+    })
 }
 
 /// Browser chrome only: tab strip, toolbar, omnibox, and the active tab's
@@ -263,118 +328,141 @@ fn exact_setup_checkbox(
     unique_web_actionable(nodes, "CheckBox", "toggle")
 }
 
-unsafe fn set_value(element_ptr: usize, value: &str) -> Result<(), BrowserRefusal> {
-    let element = IUIAutomationElement::from_raw(element_ptr as *mut _);
-    let result = element
-        .GetCurrentPattern(UIA_ValuePatternId)
-        .and_then(|pattern| pattern.cast::<IUIAutomationValuePattern>())
-        .and_then(|pattern| pattern.SetValue(&BSTR::from(value)));
-    std::mem::forget(element);
-    result.map_err(|error| {
-        BrowserRefusal::new(
-            BrowserRefusalCode::BrowserWrongTargetRefused,
-            format!("the exact UIA Value action failed: {error}"),
-        )
-    })
-}
-
-fn force_setup_foreground(target: windows::Win32::Foundation::HWND) -> (bool, bool) {
-    unsafe { crate::input::force_foreground_assisted(target) }
-}
-
-unsafe fn invoke(element_ptr: usize, description: &str) -> Result<(), BrowserRefusal> {
-    let element = IUIAutomationElement::from_raw(element_ptr as *mut _);
-    let result = element
-        .GetCurrentPattern(UIA_InvokePatternId)
-        .and_then(|pattern| pattern.cast::<IUIAutomationInvokePattern>())
-        .and_then(|pattern| pattern.Invoke());
-    std::mem::forget(element);
-    result.map_err(|error| {
-        BrowserRefusal::new(
-            BrowserRefusalCode::BrowserWrongTargetRefused,
-            format!("the exact {description} UIA Invoke action failed: {error}"),
-        )
-    })
-}
-
-fn input_may_be_unread(error: &anyhow::Error) -> bool {
-    error
-        .downcast_ref::<crate::typing_turn::ForegroundNotRestored>()
-        .is_some()
-}
-
-fn confirm_setup_navigation(
-    hwnd: u64,
+// Chromium activates its window for UIA Invoke, SetValue, Toggle and SetFocus,
+// but not for the MSAA default action and value, nor for keys posted to its
+// HWND, so the setup flow uses only those and never takes the foreground.
+unsafe fn legacy_action(
     element_ptr: usize,
-    foregrounded_window: &mut bool,
-    injected_global_input: &mut bool,
-    focused_setup_address_field: &mut bool,
-    input_may_be_unread: &mut bool,
+    description: &str,
+    action: impl FnOnce(&IUIAutomationLegacyIAccessiblePattern) -> windows::core::Result<()>,
 ) -> Result<(), BrowserRefusal> {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    let element = IUIAutomationElement::from_raw(element_ptr as *mut _);
+    let result = element
+        .GetCurrentPattern(UIA_LegacyIAccessiblePatternId)
+        .and_then(|pattern| pattern.cast::<IUIAutomationLegacyIAccessiblePattern>())
+        .and_then(|pattern| action(&pattern));
+    std::mem::forget(element);
+    result.map_err(|error| {
+        BrowserRefusal::new(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            format!("the exact {description} MSAA action failed: {error}"),
+        )
+    })
+}
 
-    let target = HWND(hwnd as *mut _);
-    let prior = unsafe { GetForegroundWindow() };
-    let navigation = (|| {
-        let (fronted, injected) = force_setup_foreground(target);
-        *injected_global_input |= injected;
-        if !fronted {
-            return Err(BrowserRefusal::new(
-                BrowserRefusalCode::BrowserWrongTargetRefused,
-                "Windows refused the bounded foreground assist for the exact browser window",
-            ));
-        }
-        *foregrounded_window = true;
+unsafe fn default_action(element_ptr: usize, description: &str) -> Result<(), BrowserRefusal> {
+    legacy_action(element_ptr, description, |pattern| {
+        pattern.DoDefaultAction()
+    })
+}
 
-        let element = unsafe { IUIAutomationElement::from_raw(element_ptr as *mut _) };
-        let focused = unsafe {
-            element
-                .SetFocus()
-                .and_then(|_| element.CurrentHasKeyboardFocus())
-        };
-        std::mem::forget(element);
-        match focused {
-            Ok(value) if value.as_bool() => *focused_setup_address_field = true,
-            Ok(_) => {
-                return Err(BrowserRefusal::new(
-                    BrowserRefusalCode::BrowserWrongTargetRefused,
-                    "the exact address-and-search field did not acquire keyboard focus",
-                ));
-            }
-            Err(error) => {
-                return Err(BrowserRefusal::new(
-                    BrowserRefusalCode::BrowserWrongTargetRefused,
-                    format!("could not focus the exact address-and-search field: {error}"),
-                ));
-            }
-        }
+unsafe fn set_value(element_ptr: usize, value: &str) -> Result<(), BrowserRefusal> {
+    legacy_action(element_ptr, "address-field value", |pattern| {
+        pattern.SetValue(&HSTRING::from(value))
+    })
+}
 
-        *injected_global_input = true;
-        crate::input::keyboard::send_key_synthesized(hwnd, "enter", &[]).map_err(|error| {
-            *input_may_be_unread = self::input_may_be_unread(&error);
-            BrowserRefusal::new(
-                BrowserRefusalCode::BrowserWrongTargetRefused,
-                format!("could not confirm the bounded setup navigation: {error}"),
-            )
-        })
-    })();
-
-    // An unread Enter must not follow the user back to their window.
-    let restored = if prior.0.is_null() || prior == target || *input_may_be_unread {
-        true
-    } else {
-        let (restored, injected) = force_setup_foreground(prior);
-        *injected_global_input |= injected;
-        restored
-    };
-    if !restored {
+fn confirm_setup_navigation(hwnd: u64) -> Result<(), BrowserRefusal> {
+    if let Some(message) = crate::input::post_message_blocked_by_uipi(hwnd) {
         return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
-            "the setup navigation completed, but Windows refused to restore the prior foreground window",
+            message,
         ));
     }
-    navigation
+    let target = HWND(hwnd as *mut _);
+    let scan = unsafe { MapVirtualKeyW(VK_RETURN.0 as u32, MAPVK_VK_TO_VSC) };
+    let down = 1u32 | (scan << 16);
+    let up = down | (1 << 30) | (1 << 31);
+    let key = WPARAM(VK_RETURN.0 as usize);
+    unsafe {
+        PostMessageW(target, WM_KEYDOWN, key, LPARAM(down as isize))
+            .and_then(|()| PostMessageW(target, WM_KEYUP, key, LPARAM(up as isize)))
+    }
+    .map_err(|error| {
+        BrowserRefusal::new(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            format!("could not post the setup navigation to the exact browser window: {error}"),
+        )
+    })
+}
+
+/// The one native close action inside the one tab that `existed_before` does
+/// not know, matched by identity rather than by position in the strip.
+fn exact_new_tab_close_button(
+    nodes: &[UiaNode],
+    existed_before: impl Fn(&UiaNode) -> Result<bool, BrowserRefusal>,
+) -> Result<Option<usize>, BrowserRefusal> {
+    let has_rect = |node: &UiaNode| node.rect.is_some_and(|(l, t, r, b)| l < r && t < b);
+    let mut created = Vec::new();
+    for (index, node) in nodes.iter().enumerate() {
+        if is_native_tab(node)
+            && !created
+                .iter()
+                .any(|seen: &usize| nodes[*seen].rect == node.rect)
+            && !existed_before(node)?
+        {
+            created.push(index);
+        }
+    }
+    let tab_index = match created.as_slice() {
+        [] => return Ok(None),
+        [index] => *index,
+        _ => {
+            return Err(BrowserRefusal::new(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the native tab strip showed more than one new tab",
+            ))
+        }
+    };
+    let depth = nodes[tab_index].depth;
+    let mut buttons = Vec::new();
+    for node in nodes[tab_index + 1..]
+        .iter()
+        .take_while(|node| node.depth > depth)
+        .filter(|node| {
+            !node.in_web_content
+                && node.control_type == "Button"
+                && node.actions.iter().any(|action| action == "invoke")
+                && node.enabled != Some(false)
+                && node.element_ptr != 0
+                && has_rect(node)
+        })
+    {
+        if !buttons.iter().any(|seen: &&UiaNode| seen.rect == node.rect) {
+            buttons.push(node);
+        }
+    }
+    match buttons.as_slice() {
+        [] => Ok(None),
+        [button] => Ok(Some(button.element_ptr)),
+        _ => Err(BrowserRefusal::new(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "the new native tab exposed more than one close action",
+        )),
+    }
+}
+
+/// Closes the tab setup opened, through the close action it retained for that
+/// tab, once the active page is still the exact setup page. `Ok(false)` means
+/// the page was no longer proven.
+fn close_proven_setup_tab(
+    hwnd: u64,
+    descriptor: &BrowserSetupDescriptor,
+    setup_tab_close: usize,
+) -> Result<bool, BrowserRefusal> {
+    let nodes = native_nodes(hwnd)?;
+    let proven = setup_page_proven(&nodes, descriptor);
+    release_nodes(&nodes);
+    if !proven {
+        return Ok(false);
+    }
+    if setup_tab_close == 0 {
+        return Err(BrowserRefusal::new(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "setup holds no close action for the tab it opened",
+        ));
+    }
+    unsafe { default_action(setup_tab_close, "setup tab close button") }.map(|()| true)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -405,18 +493,7 @@ unsafe fn checkbox_state(element_ptr: usize) -> Result<CheckboxState, BrowserRef
 }
 
 unsafe fn toggle(element_ptr: usize) -> Result<(), BrowserRefusal> {
-    let element = IUIAutomationElement::from_raw(element_ptr as *mut _);
-    let result = element
-        .GetCurrentPattern(UIA_TogglePatternId)
-        .and_then(|pattern| pattern.cast::<IUIAutomationTogglePattern>())
-        .and_then(|pattern| pattern.Toggle());
-    std::mem::forget(element);
-    result.map_err(|error| {
-        BrowserRefusal::new(
-            BrowserRefusalCode::BrowserWrongTargetRefused,
-            format!("the exact UIA Toggle action failed: {error}"),
-        )
-    })
+    default_action(element_ptr, "remote-debugging checkbox")
 }
 
 pub struct SetupUiHandle {
@@ -424,13 +501,18 @@ pub struct SetupUiHandle {
     descriptor: &'static BrowserSetupDescriptor,
     pub opened_setup_page: bool,
     pub enabled_remote_debugging: bool,
-    pub focused_setup_address_field: bool,
-    pub foregrounded_window: bool,
-    pub injected_global_input: bool,
-    /// A setup key was inserted but not confirmed read; cleanup sends no more
-    /// input, so a late Enter or Ctrl+W cannot combine with another one.
-    input_may_be_unread: bool,
     enable_attempted: bool,
+    /// A retained `IUIAutomationElement` for the close action of the tab setup
+    /// opened, or 0. Cleanup closes that tab and no other.
+    setup_tab_close: usize,
+}
+
+impl Drop for SetupUiHandle {
+    fn drop(&mut self) {
+        if self.setup_tab_close != 0 {
+            release_element(self.setup_tab_close);
+        }
+    }
 }
 
 impl SetupUiHandle {
@@ -457,22 +539,18 @@ impl SetupUiHandle {
         let enabled_remote_debugging = self.enabled_remote_debugging;
         let restored_remote_debugging = self.rollback_remote_debugging();
         let opened_setup_page = self.opened_setup_page;
-        let focused_setup_address_field = self.focused_setup_address_field;
-        let foregrounded_window = self.foregrounded_window;
-        let injected_global_input = self.injected_global_input;
         let closed_setup_page = self.close_setup_page().unwrap_or(false);
-        let input_may_be_unread = self.input_may_be_unread;
         let mut error = error;
         let cause = error.detail.take();
         error.with_detail(serde_json::json!({
             "setup_side_effects": {
                 "opened_setup_page": opened_setup_page,
                 "closed_setup_page": closed_setup_page,
-                "focused_setup_address_field": focused_setup_address_field,
+                "focused_setup_address_field": false,
                 "enabled_remote_debugging": enabled_remote_debugging,
-                "foregrounded_window": foregrounded_window,
-                "injected_global_input": injected_global_input,
-                "input_may_be_unread": input_may_be_unread,
+                "foregrounded_window": false,
+                "injected_global_input": false,
+                "input_may_be_unread": false,
                 "restored_remote_debugging": restored_remote_debugging,
             },
             "cause": cause,
@@ -483,26 +561,16 @@ impl SetupUiHandle {
         if !self.opened_setup_page {
             return Ok(None);
         }
-        let proven = native_nodes(self.hwnd).is_ok_and(|nodes| {
-            let proven = setup_page_proven(&nodes, self.descriptor);
-            release_nodes(&nodes);
-            proven
-        });
-        if !proven {
-            let error = BrowserRefusal::new(
-                BrowserRefusalCode::BrowserWrongTargetRefused,
-                "the temporary setup page was no longer exact before cleanup",
-            );
-            return Err(self.abort(error));
-        }
-        if let Err(error) = crate::input::keyboard::send_key_synthesized(self.hwnd, "w", &["ctrl"])
-        {
-            self.input_may_be_unread |= input_may_be_unread(&error);
-            let error = BrowserRefusal::new(
-                BrowserRefusalCode::BrowserWrongTargetRefused,
-                format!("could not close the exact temporary setup tab: {error}"),
-            );
-            return Err(self.abort(error));
+        match close_proven_setup_tab(self.hwnd, self.descriptor, self.setup_tab_close) {
+            Ok(true) => {}
+            Ok(false) => {
+                let error = BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "the temporary setup page was no longer exact before cleanup",
+                );
+                return Err(self.abort(error));
+            }
+            Err(error) => return Err(self.abort(error)),
         }
         self.opened_setup_page = false;
         Ok(Some(true))
@@ -516,22 +584,10 @@ impl SetupUiHandle {
         if !self.opened_setup_page {
             return None;
         }
-        if self.input_may_be_unread {
-            return Some(false);
-        }
-        let proven = native_nodes(self.hwnd).is_ok_and(|nodes| {
-            let proven = setup_page_proven(&nodes, self.descriptor);
-            release_nodes(&nodes);
-            proven
-        });
-        if !proven {
-            return Some(false);
-        }
-        let sent = crate::input::keyboard::send_key_synthesized(self.hwnd, "w", &["ctrl"]);
-        if let Err(error) = &sent {
-            self.input_may_be_unread |= input_may_be_unread(error);
-        }
-        Some(sent.is_ok())
+        Some(
+            close_proven_setup_tab(self.hwnd, self.descriptor, self.setup_tab_close)
+                .unwrap_or(false),
+        )
     }
 }
 
@@ -600,11 +656,8 @@ fn set_remote_debugging(
             descriptor,
             opened_setup_page: false,
             enabled_remote_debugging: false,
-            focused_setup_address_field: false,
-            foregrounded_window: false,
-            injected_global_input: false,
-            input_may_be_unread: false,
             enable_attempted: false,
+            setup_tab_close: 0,
         },
         Ok(None) => {
             release_nodes(&initial);
@@ -615,11 +668,8 @@ fn set_remote_debugging(
                 descriptor,
                 opened_setup_page: false,
                 enabled_remote_debugging: false,
-                focused_setup_address_field: false,
-                foregrounded_window: false,
-                injected_global_input: false,
-                input_may_be_unread: false,
                 enable_attempted: false,
+                setup_tab_close: 0,
             };
             let tab_tree = match native_nodes(hwnd) {
                 Ok(nodes) => nodes,
@@ -642,10 +692,11 @@ fn set_remote_debugging(
                     return Err(handle.abort(error));
                 }
             };
-            if let Err(error) = unsafe { invoke(new_tab_button, "native new-tab button") } {
+            if let Err(error) = unsafe { default_action(new_tab_button, "native new-tab button") } {
                 release_nodes(&tab_tree);
                 return Err(handle.abort(error));
             }
+            let tabs_before = retain_native_tabs(&tab_tree);
             release_nodes(&tab_tree);
             handle.opened_setup_page = true;
 
@@ -668,6 +719,40 @@ fn set_remote_debugging(
                 }
                 std::thread::sleep(Duration::from_millis(100));
             };
+            let close = unsafe {
+                CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+            }
+            .map_err(|error| {
+                BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    format!("could not compare the native tabs: {error}"),
+                )
+            })
+            .and_then(|uia| {
+                exact_new_tab_close_button(&created, |node| {
+                    for before in &tabs_before.0 {
+                        if same_element(&uia, *before, node.element_ptr)? {
+                            return Ok(true);
+                        }
+                    }
+                    Ok(false)
+                })
+            });
+            drop(tabs_before);
+            match close {
+                Ok(Some(close)) => handle.setup_tab_close = retain_element(close),
+                Ok(None) => {
+                    release_nodes(&created);
+                    return Err(handle.abort(BrowserRefusal::new(
+                        BrowserRefusalCode::BrowserWrongTargetRefused,
+                        "the new native tab exposed no close action",
+                    )));
+                }
+                Err(error) => {
+                    release_nodes(&created);
+                    return Err(handle.abort(error));
+                }
+            }
             let omnibox = match unique_native_actionable(&created, "Edit", "set_value") {
                 Ok(Some(element)) => element,
                 Ok(None) => {
@@ -694,17 +779,14 @@ fn set_remote_debugging(
                 Ok(nodes) => nodes,
                 Err(error) => return Err(handle.abort(error)),
             };
-            let refreshed_omnibox = match unique_native_actionable(&created, "Edit", "set_value") {
+            match unique_native_actionable(&created, "Edit", "set_value") {
                 Ok(Some(element))
                     if created.iter().any(|node| {
                         node.element_ptr == element
                             && node.value.as_deref().is_some_and(|value| {
                                 value.trim().eq_ignore_ascii_case(descriptor.setup_url)
                             })
-                    }) =>
-                {
-                    element
-                }
+                    }) => {}
                 Ok(_) => {
                     release_nodes(&created);
                     return Err(handle.abort(BrowserRefusal::new(
@@ -717,14 +799,7 @@ fn set_remote_debugging(
                     return Err(handle.abort(error));
                 }
             };
-            if let Err(error) = confirm_setup_navigation(
-                hwnd,
-                refreshed_omnibox,
-                &mut handle.foregrounded_window,
-                &mut handle.injected_global_input,
-                &mut handle.focused_setup_address_field,
-                &mut handle.input_may_be_unread,
-            ) {
+            if let Err(error) = confirm_setup_navigation(hwnd) {
                 release_nodes(&created);
                 return Err(handle.abort(error));
             }
@@ -1248,6 +1323,69 @@ mod tests {
         assert!(
             needs_setup_page_renderer(&setup, edge),
             "the committed setup page still requires its renderer-owned checkbox"
+        );
+    }
+
+    #[test]
+    fn setup_tab_close_is_the_new_tabs_own_close_action() {
+        let mut nodes = edge_153_native_chrome("edge://inspect/#remote-debugging", "Inspect");
+        let tab = nodes
+            .iter()
+            .position(|node| node.control_type == "TabItem")
+            .unwrap();
+        let existing = |node: &UiaNode| Ok(node.element_ptr == 13);
+        assert_eq!(exact_new_tab_close_button(&nodes, existing).unwrap(), None);
+
+        // An extension can move tabs, so the new tab is the one whose identity
+        // is new, wherever it sits in the strip.
+        let mut opened = nodes[tab..=tab + 1].to_vec();
+        opened[0].rect = Some((340, 40, 596, 81));
+        opened[0].element_ptr = 20;
+        opened[1].rect = Some((564, 52, 580, 68));
+        opened[1].element_ptr = 16;
+        nodes.splice(tab..tab, opened.clone());
+        assert_eq!(
+            exact_new_tab_close_button(&nodes, existing).unwrap(),
+            Some(16)
+        );
+
+        let mut second_button = opened[1].clone();
+        second_button.rect = Some((540, 52, 556, 68));
+        second_button.element_ptr = 17;
+        nodes.insert(tab + 2, second_button);
+        assert_eq!(
+            exact_new_tab_close_button(&nodes, existing)
+                .unwrap_err()
+                .code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+        nodes.remove(tab + 2);
+
+        let mut another = opened.clone();
+        another[0].rect = Some((600, 40, 856, 81));
+        another[0].element_ptr = 21;
+        another[1].rect = Some((824, 52, 840, 68));
+        another[1].element_ptr = 18;
+        nodes.splice(tab..tab, another);
+        assert_eq!(
+            exact_new_tab_close_button(&nodes, existing)
+                .unwrap_err()
+                .code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+
+        // A tab whose identity cannot be read is refused, never taken as new.
+        let unreadable = |_: &UiaNode| {
+            Err(BrowserRefusal::new(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "unreadable",
+            ))
+        };
+        assert_eq!(
+            exact_new_tab_close_button(&nodes, unreadable)
+                .unwrap_err()
+                .code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
         );
     }
 }

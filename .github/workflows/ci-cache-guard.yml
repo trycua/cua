@@ -1,0 +1,83 @@
+name: "CI: Cache guard"
+
+# actions/cache saves in a post step, and a failed save is only a warning: the
+# job stays green and the next pull request restores nothing. On 5 Nov 2026 main
+# stopped saving the Swift SDK cache (the jobs were skipped, fixed in #6568) and
+# PRs built it cold for 56 minutes without anyone being told.
+#
+# After a green main run of a workflow that saves a macOS build cache, this
+# checks that main holds the entry (.github/scripts/cache_guard.py). If not, the
+# job goes red, which "Alerts: Workflow failures" posts to Alertmanager, and one
+# issue is opened or updated ("ci-nightly" label).
+#
+# The fallback half of the guard is already in place: .github/actions/rust-cache
+# restores the newest entry of the family by prefix (restore-keys), so a pull
+# request on a day main has not saved yet still starts from the nearest main
+# cache, and Swatinem's cache in .github/actions/spaces-rust-slice does the same.
+
+on:
+  workflow_run:
+    workflows:
+      - "CI: infinite-canvas (Swift)"
+      - "CI: Cua Spaces SwiftUI Rust slice (producer)"
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Run id of a finished main run to check"
+        required: true
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: ci-cache-guard-${{ github.event.workflow_run.id || inputs.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    name: main saved its build caches
+    if: >-
+      github.repository == 'trycua/cua' && (github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event != 'pull_request'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/cache_guard.py
+      - name: Check the entries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
+        # One expectation per job that saves (job name prefix = cache key prefix, see
+        # .github/actions/rust-cache for how the family and the key are built).
+        run: |
+          python3 .github/scripts/cache_guard.py --repo "$GITHUB_REPOSITORY" --run-id "$RUN_ID" \
+            --sccache "infinite-canvas-swift (swift test)=sccache-v2-macOS-ARM64-libs-cua-sdk-release-macos_" \
+            --slice "SwiftUI Rust ("
+
+  report:
+    name: open or update the issue
+    needs: guard
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/nightly-issue
+      - uses: ./.github/actions/nightly-issue
+        with:
+          title: "Main did not save a macOS build cache"
+          detail: >-
+            A green main run of a Swift workflow left no cache entry on main, so pull requests
+            restore nothing and build the Swift SDK or the app library cold (25 to 60 minutes).
+            The guard run below lists which entry is missing. Usual causes: the save step failed
+            (check the post step of the cache action), the job was skipped, or the key changed.

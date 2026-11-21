@@ -925,7 +925,7 @@ impl Persistent {
             author: Some(Author::system("dispatch")),
             note: String::new(),
         };
-        match store.claim(task.seq, &holder, claim_ttl_ms(), dispatch()) {
+        match store.claim_queued(task.seq, &holder, claim_ttl_ms(), dispatch()) {
             Ok(_) => {}
             Err(e) if e.tag() == crate::thread::claims::TASK_CLAIMED => {
                 return Ok(Delivered::Taken);
@@ -1110,29 +1110,6 @@ impl Persistent {
         }
     }
 
-    /// Records `seq`, already delivered, as claimed and being worked on by
-    /// the current turn of the session `rec` shows.
-    fn mark_delivered(
-        &self,
-        rec: &AgentRecord,
-        store: &ThreadStore,
-        seq: u64,
-        base: u32,
-    ) -> Result<()> {
-        store.claim(
-            seq,
-            &Holder::new(&rec.name, rec.k(), rec.drive_epoch()),
-            claim_ttl_ms(),
-            ClaimEntries {
-                states: vec![TaskState::Claimed, TaskState::Working],
-                author: Some(Author::system("dispatch")),
-                note: String::new(),
-            },
-        )?;
-        self.update_in(rec, |r| r.task = Some(InFlight { seq, turn: base }))?;
-        Ok(())
-    }
-
     /// Keeps the claims of the session `rec` shows while it works: the
     /// task its turn works on (taken again, silently, if its claim was
     /// lost to expiry and nobody else took it), and the tasks it claimed
@@ -1253,10 +1230,23 @@ impl Persistent {
             tracing::warn!(agent = name, "message not recorded in the thread: {e}");
             return Ok((d, None));
         }
-        let e = store.append(draft)?;
-        if tracked {
-            self.mark_delivered(&rec, &store, e.seq, if d.started { 0 } else { base })?;
+        if !tracked {
+            return Ok((d, Some(store.append(draft)?.seq)));
         }
+        // Already delivered: the task is written claimed, in one step, so
+        // the dispatcher never sees it queued and sends it a second time.
+        let (e, _) = store.append_claimed(
+            draft,
+            &Holder::new(&rec.name, rec.k(), rec.drive_epoch()),
+            claim_ttl_ms(),
+            ClaimEntries {
+                states: vec![TaskState::Claimed, TaskState::Working],
+                author: Some(Author::system("dispatch")),
+                note: String::new(),
+            },
+        )?;
+        let turn = if d.started { 0 } else { base };
+        self.update_in(&rec, |r| r.task = Some(InFlight { seq: e.seq, turn }))?;
         Ok((d, Some(e.seq)))
     }
 

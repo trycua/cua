@@ -412,8 +412,10 @@ pub(crate) fn screen_report() -> anyhow::Result<Option<(DesktopFrame, serde_json
     Ok(Some((frame, serde_json::Value::Array(monitors))))
 }
 
-/// How long a layout probe may wait across both Wayland roundtrips.
-const QUERY_TIMEOUT: Duration = Duration::from_secs(1);
+/// How long a layout probe may wait across both Wayland roundtrips, matching
+/// Hyprland's `QUERY_TOTAL_TIMEOUT` so a loaded compositor has room on first
+/// connect.
+const QUERY_TIMEOUT: Duration = Duration::from_secs(3);
 
 const UNASKED: &str =
     "the Wayland compositor could not be asked whether it is KWin or GNOME Mutter";

@@ -200,6 +200,11 @@ unsafe fn acquire_frame(
             Ok(()) => {
                 // Every return below must release this frame back to the output.
                 let frame = AcquiredFrame { duplication };
+                // DRM-protected content is blacked out of the duplicated
+                // image; fall back rather than return those black pixels.
+                if frame_info.ProtectedContentMaskedOut.as_bool() {
+                    bail!("DXGI duplication: protected content is masked out of the desktop image");
+                }
                 // A freshly created duplication delivers an initial
                 // placeholder frame: no present time, no accumulated updates,
                 // and an unpainted (all-zero) desktop image. Skip it and wait

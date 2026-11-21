@@ -1234,7 +1234,7 @@ fn background_text_route(
     if !crate::input::real_keyboard_input_available() {
         return Ok(None);
     }
-    match crate::input::focus_guard::guarded(Some(pid), || {
+    match crate::input::focus_guard::guarded_one_delivery(Some(pid), || {
         background_virtual_text(cursor_id, pid, xid, text, pacing)
     }) {
         Ok((mut report, guard)) => {

@@ -877,8 +877,9 @@ impl FocusSnapshot {
     }
 }
 
-/// A delivery refused before it sent any input. Nothing it did can open a
-/// popup, so [`guarded`] restores without waiting out the settle watch.
+/// A delivery refused before it sent any input. When it is the whole body,
+/// nothing can open a popup, so [`guarded_one_delivery`] restores without
+/// waiting out the settle watch.
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
 pub struct RefusedBeforeInput(pub String);
@@ -890,14 +891,26 @@ fn refused_before_input(error: &anyhow::Error) -> bool {
 /// Run `body` (a background delivery) between a snapshot and a restore.
 /// The restore runs whether or not the body succeeded: a delivery that fails
 /// after it opened a popup or let the app take the focus must still give the
-/// focus back. A body refused with [`RefusedBeforeInput`] gets one check
-/// instead of the settle watch. The body's error still propagates; the guard
-/// only adds its report on success.
+/// focus back. The body's error still propagates; the guard only adds its
+/// report on success.
 pub fn guarded<T>(
     target_pid: Option<u32>,
     body: impl FnOnce() -> Result<T>,
 ) -> Result<(T, Option<FocusGuardReport>)> {
-    restore_after(FocusSnapshot::capture(), body, |s, settle_watch| {
+    restore_after(FocusSnapshot::capture(), false, body, |s, _| {
+        s.restore_if_changed(target_pid)
+    })
+}
+
+/// [`guarded`] for a body that is a single delivery, so a
+/// [`RefusedBeforeInput`] from it means the body sent nothing: the restore
+/// checks once instead of running the settle watch. A body that sends input
+/// before the refusing call uses [`guarded`].
+pub fn guarded_one_delivery<T>(
+    target_pid: Option<u32>,
+    body: impl FnOnce() -> Result<T>,
+) -> Result<(T, Option<FocusGuardReport>)> {
+    restore_after(FocusSnapshot::capture(), true, body, |s, settle_watch| {
         s.restore_if_changed_opts(target_pid, settle_watch)
     })
 }
@@ -909,21 +922,22 @@ pub fn guarded_settled<T>(
     target_pid: Option<u32>,
     body: impl FnOnce() -> Result<T>,
 ) -> Result<(T, Option<FocusGuardReport>)> {
-    restore_after(FocusSnapshot::capture(), body, |s, _| {
+    restore_after(FocusSnapshot::capture(), false, body, |s, _| {
         s.restore_if_changed_opts(target_pid, false)
     })
 }
 
 /// Run `body`, then `restore` the snapshot on every exit path, and only then
 /// propagate the body's error. `restore` is told whether to run the settle
-/// watch: not after a [`RefusedBeforeInput`].
+/// watch: not after a [`RefusedBeforeInput`] when `one_delivery`.
 fn restore_after<S, T, R>(
     snapshot: Option<S>,
+    one_delivery: bool,
     body: impl FnOnce() -> Result<T>,
     restore: impl FnOnce(S, bool) -> R,
 ) -> Result<(T, Option<R>)> {
     let outcome = body();
-    let settle_watch = !outcome.as_ref().is_err_and(refused_before_input);
+    let settle_watch = !(one_delivery && outcome.as_ref().is_err_and(refused_before_input));
     let report = snapshot.map(|s| restore(s, settle_watch));
     Ok((outcome?, report))
 }
@@ -1040,6 +1054,7 @@ mod tests {
         let restored = std::cell::Cell::new(None);
         let result: Result<((), Option<()>)> = restore_after(
             Some("snapshot"),
+            true,
             || anyhow::bail!("the combo box popup listed no options"),
             |_, settle_watch| restored.set(Some(settle_watch)),
         );
@@ -1054,11 +1069,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_delivery_refused_before_input_restores_without_the_settle_watch() {
+    fn refused_restore(one_delivery: bool) -> (Option<bool>, String) {
         let restored = std::cell::Cell::new(None);
         let result: Result<((), Option<()>)> = restore_after(
             Some("snapshot"),
+            one_delivery,
             || {
                 Err(anyhow::Error::new(RefusedBeforeInput(
                     "typed 0 of 40 characters: the text needs 40 spare keycodes".into(),
@@ -1067,12 +1082,25 @@ mod tests {
             },
             |_, settle_watch| restored.set(Some(settle_watch)),
         );
-        assert_eq!(restored.get(), Some(false));
+        (restored.get(), format!("{:#}", result.unwrap_err()))
+    }
+
+    #[test]
+    fn a_single_delivery_refused_before_input_restores_without_the_settle_watch() {
         assert_eq!(
-            format!("{:#}", result.unwrap_err()),
-            "virtual master keyboard delivery failed: \
-             typed 0 of 40 characters: the text needs 40 spare keycodes"
+            refused_restore(true),
+            (
+                Some(false),
+                "virtual master keyboard delivery failed: \
+                 typed 0 of 40 characters: the text needs 40 spare keycodes"
+                    .into()
+            )
         );
+    }
+
+    #[test]
+    fn a_refusal_after_other_input_in_the_body_keeps_the_settle_watch() {
+        assert_eq!(refused_restore(false).0, Some(true));
     }
 
     #[test]
@@ -1080,6 +1108,7 @@ mod tests {
         let restores = std::cell::Cell::new(0);
         let (value, report) = restore_after(
             Some("snapshot"),
+            true,
             || Ok(7),
             |s, settle_watch| {
                 assert!(settle_watch);

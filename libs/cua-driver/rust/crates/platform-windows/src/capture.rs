@@ -636,14 +636,21 @@ pub fn screenshot_window(hwnd: u64) -> Result<(String, u32, u32)> {
 /// does for the other capture paths. The agent cursor overlay is excluded
 /// from the duplicated frame the same way it is for desktop captures.
 ///
-/// Returns `None` unless the window covers a whole monitor, no other window
-/// overlaps its frame, and duplication succeeds, so the caller keeps the
-/// PrintWindow / WGC / BitBlt ladder as the fallback for every other case.
+/// Returns `None` unless the window is shown, covers a whole monitor, no other
+/// window overlaps its frame before or after the capture, and duplication
+/// succeeds, so the caller keeps the PrintWindow / WGC / BitBlt ladder as the
+/// fallback for every other case.
 unsafe fn screenshot_via_dxgi_duplication(
     hwnd: HWND,
 ) -> Option<(Vec<u8>, i32, i32, FrameGeometry)> {
     use cursor_overlay::capture_exclusion::{capture_excluding_overlays, ResidualCheck};
+    use windows::Win32::UI::WindowsAndMessaging::IsWindowVisible;
 
+    // A hidden or cloaked window keeps its bounds, and the monitor would then
+    // show something else entirely.
+    if !IsWindowVisible(hwnd).as_bool() || cloaked(hwnd) != Some(false) {
+        return None;
+    }
     let (window, dwm) = window_geometry(hwnd).ok()?;
     let window_rect = bounds_rect((
         window.left,
@@ -683,6 +690,10 @@ unsafe fn screenshot_via_dxgi_duplication(
     if output.width as u32 != captured.width || output.height as u32 != captured.height {
         return None;
     }
+    // A window that appeared while duplication waited for a frame may be in it.
+    if window_above_overlaps(hwnd, frame) {
+        return None;
+    }
     let pixels = crop_bgra(&captured.bgra, output, frame)?;
     tracing::debug!(
         target: "cua-driver",
@@ -703,7 +714,6 @@ unsafe fn screenshot_via_dxgi_duplication(
 /// count; a window whose cloak state cannot be read counts as visible.
 unsafe fn window_above_overlaps(target: HWND, frame: FrameGeometry) -> bool {
     use windows::Win32::Foundation::RECT;
-    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
     use windows::Win32::System::Threading::GetCurrentProcessId;
     use windows::Win32::UI::WindowsAndMessaging::{
         GetAncestor, GetWindow, GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
@@ -725,14 +735,7 @@ unsafe fn window_above_overlaps(target: HWND, frame: FrameGeometry) -> bool {
         if pid == own_pid {
             continue;
         }
-        let mut cloaked = 0u32;
-        let cloak_read = DwmGetWindowAttribute(
-            window,
-            DWMWA_CLOAKED,
-            &mut cloaked as *mut u32 as *mut _,
-            std::mem::size_of::<u32>() as u32,
-        );
-        if cloak_read.is_ok() && cloaked != 0 {
+        if cloaked(window) == Some(true) {
             continue;
         }
         let mut rect = RECT::default();
@@ -743,6 +746,21 @@ unsafe fn window_above_overlaps(target: HWND, frame: FrameGeometry) -> bool {
         }
     }
     false
+}
+
+/// DWM's cloak state for `window`, or `None` when it cannot be read.
+unsafe fn cloaked(window: HWND) -> Option<bool> {
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+
+    let mut cloaked = 0u32;
+    DwmGetWindowAttribute(
+        window,
+        DWMWA_CLOAKED,
+        &mut cloaked as *mut u32 as *mut _,
+        std::mem::size_of::<u32>() as u32,
+    )
+    .ok()
+    .map(|_| cloaked != 0)
 }
 
 /// Whether `bounds` shares at least one pixel with `frame`.

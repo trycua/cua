@@ -57,7 +57,8 @@ impl Tool for ListAppsTool {
     async fn invoke(&self, _args: Value) -> ToolResult {
         // Strategy:
         // 1. Enumerate top-level visible windows → derive the set of running pids
-        //    that have a user-facing surface.
+        //    that have a user-facing surface, including the packaged app each
+        //    ApplicationFrameHost frame hosts.
         // 2. Enumerate the process table to map pid → executable name and full
         //    path (used to merge against Start-Menu / UWP launch_paths).
         // 3. Enumerate installed apps from Start-Menu shortcuts + WinRT
@@ -79,18 +80,16 @@ impl Tool for ListAppsTool {
             let t0 = std::time::Instant::now();
             let wins = crate::win32::list_windows_via_win32(None);
             tracing::debug!(target: "list_apps", "step 1 list_windows: {} wins ({}ms)", wins.len(), t0.elapsed().as_millis());
-            let mut seen_pids = std::collections::HashSet::new();
-            let mut running_pids: Vec<u32> = Vec::new();
-            for w in &wins {
-                if seen_pids.insert(w.pid) { running_pids.push(w.pid); }
-            }
+            let running_pids = running_app_pids(&wins, crate::win32::hosted_app_pid);
 
             let t1 = std::time::Instant::now();
+            // A foreground ApplicationFrameHost frame makes the app it hosts
+            // the active one, not the host.
             let foreground_pid = unsafe {
                 let fg = GetForegroundWindow();
                 let mut pid = 0u32;
                 let _ = GetWindowThreadProcessId(fg, Some(&mut pid));
-                pid
+                crate::win32::hosted_app_pid(pid, fg.0 as u64).unwrap_or(pid)
             };
             tracing::debug!(target: "list_apps", "step 2 fg-window: pid={} ({}ms)", foreground_pid, t1.elapsed().as_millis());
 
@@ -136,8 +135,8 @@ impl Tool for ListAppsTool {
                 // A packaged process (Store / MSIX app) never matches a
                 // Start-Menu `.lnk` by basename, so it would otherwise surface
                 // with no identity and no bundle_id grant could ever match it.
-                let package = crate::win32::process_package_identity(pid);
-                let merged = packaged_installed_match(&package, &installed).or_else(|| {
+                let aumid = crate::win32::process_app_user_model_id(pid);
+                let merged = packaged_installed_match(aumid.as_deref(), &installed).or_else(|| {
                     let key = name.to_ascii_lowercase();
                     let candidates = by_exe.get(&key).map(|v| v.as_slice()).unwrap_or(&[]);
                     disambiguate_installed_match(candidates, &installed, &name)
@@ -215,6 +214,27 @@ impl Tool for ListAppsTool {
     }
 }
 
+/// Pids that own a visible top-level window, in first-seen order. A UWP app
+/// hosted in an `ApplicationFrameHost` frame owns no top-level window of its
+/// own, so `hosted` resolves each frame to the app pid behind it, which
+/// follows the host's pid. That is the pid bounded mode resolves the frame to
+/// before it looks the app up here.
+fn running_app_pids(
+    windows: &[crate::win32::WindowInfo],
+    hosted: impl Fn(u32, u64) -> Option<u32>,
+) -> Vec<u32> {
+    let mut seen = std::collections::HashSet::new();
+    let mut pids = Vec::new();
+    for window in windows {
+        for pid in std::iter::once(window.pid).chain(hosted(window.pid, window.hwnd)) {
+            if seen.insert(pid) {
+                pids.push(pid);
+            }
+        }
+    }
+    pids
+}
+
 /// Pick which of several Start-Menu / UWP-derived installed apps best matches
 /// a running pid whose exe basename collided. Precedence:
 ///   1. exact case-insensitive equality between `proc_exe_basename` and the
@@ -248,33 +268,27 @@ fn disambiguate_installed_match(
         .or_else(|| candidates.first().copied())
 }
 
-/// Pick the installed UWP entry for a running packaged process from the
-/// identity Windows attests for it. Precedence:
-///   1. the entry whose launch_path is exactly `shell:appsFolder\{AUMID}`
-///   2. when the process has no AUMID (a packaged helper that was not
-///      activated as an application), the only entry of its package family
+/// Pick the installed UWP entry whose launch_path is exactly
+/// `shell:appsFolder\{AUMID}` for the AUMID Windows attests for a running
+/// process.
 ///
-/// A process whose AUMID names a different app of the same package gets no
-/// match, so it never borrows a sibling app's launch_path.
+/// A packaged process with no AUMID gets no match: the installed catalog
+/// keeps one entry per package, so its family alone cannot say which app the
+/// process belongs to. A process whose AUMID names a different app of the
+/// same package gets no match either, so it never borrows a sibling app's
+/// launch_path.
 fn packaged_installed_match(
-    package: &crate::win32::PackageIdentity,
+    aumid: Option<&str>,
     installed: &[crate::win32::InstalledApp],
 ) -> Option<usize> {
-    let mut uwp = installed
+    let launch_path = format!("shell:appsFolder\\{}", aumid?);
+    installed
         .iter()
-        .enumerate()
-        .filter(|(_, app)| app.kind == "uwp");
-    if let Some(aumid) = package.app_user_model_id.as_deref() {
-        let launch_path = format!("shell:appsFolder\\{aumid}");
-        return uwp
-            .find(|(_, app)| app.launch_path.eq_ignore_ascii_case(&launch_path))
-            .map(|(index, _)| index);
-    }
-    let family = package.family_name.as_deref()?;
-    let mut matches = uwp.filter(|(_, app)| app.bundle_id.eq_ignore_ascii_case(family));
-    let (index, _) = matches.next()?;
-    matches.next().is_none().then_some(index)
+        .position(|app| app.kind == "uwp" && app.launch_path.eq_ignore_ascii_case(&launch_path))
 }
 
 #[cfg(test)]
 mod list_apps_packaged_identity_tests;
+
+#[cfg(test)]
+mod running_app_pids_tests;

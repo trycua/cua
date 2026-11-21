@@ -45,8 +45,9 @@ fn resolve_download_timeout(args: &Value) -> Result<Duration, ToolResult> {
     // Read the raw value rather than `opt_u64`, which reports a wrong-typed
     // field as absent. Falling back to the default on `"60000"` would recreate
     // the bug this parameter exists to fix: a deadline the caller cannot move.
-    let Some(raw) = args.get("timeout_ms") else {
-        return Ok(Duration::from_millis(DEFAULT_DOWNLOAD_TIMEOUT_MS));
+    let raw = match args.get("timeout_ms") {
+        None | Some(Value::Null) => return Ok(Duration::from_millis(DEFAULT_DOWNLOAD_TIMEOUT_MS)),
+        Some(raw) => raw,
     };
     let Some(timeout_ms) = raw.as_u64() else {
         return Err(ToolResult::error(
@@ -633,12 +634,23 @@ mod tests {
         assert_eq!(download_path_for_cdp(path), path.to_string_lossy());
     }
 
+    fn timeout_error(args: Value) -> String {
+        let error = resolve_download_timeout(&args).unwrap_err();
+        assert_eq!(error.is_error, Some(true));
+        match &error.content[0] {
+            crate::protocol::Content::Text { text, .. } => text.clone(),
+            other => panic!("expected text content, got {other:?}"),
+        }
+    }
+
     #[test]
     fn timeout_defaults_when_the_caller_does_not_ask_for_one() {
-        assert_eq!(
-            resolve_download_timeout(&json!({})).unwrap(),
-            Duration::from_millis(DEFAULT_DOWNLOAD_TIMEOUT_MS)
-        );
+        for args in [json!({}), json!({ "timeout_ms": null })] {
+            assert_eq!(
+                resolve_download_timeout(&args).unwrap(),
+                Duration::from_millis(DEFAULT_DOWNLOAD_TIMEOUT_MS)
+            );
+        }
     }
 
     #[test]
@@ -655,18 +667,24 @@ mod tests {
             resolve_download_timeout(&json!({ "timeout_ms": MAX_DOWNLOAD_TIMEOUT_MS })).unwrap(),
             Duration::from_millis(MAX_DOWNLOAD_TIMEOUT_MS)
         );
-        assert!(
-            resolve_download_timeout(&json!({ "timeout_ms": MAX_DOWNLOAD_TIMEOUT_MS + 1 }))
-                .is_err()
-        );
-        assert!(resolve_download_timeout(&json!({ "timeout_ms": 0 })).is_err());
+        for timeout_ms in [0, MAX_DOWNLOAD_TIMEOUT_MS + 1] {
+            assert_eq!(
+                timeout_error(json!({ "timeout_ms": timeout_ms })),
+                "timeout_ms must be between 1 and 600000"
+            );
+        }
     }
 
     #[test]
     fn timeout_refuses_a_value_of_the_wrong_type() {
         // Silently defaulting here would hand the caller a deadline it never
         // asked for, which is the failure this parameter exists to remove.
-        assert!(resolve_download_timeout(&json!({ "timeout_ms": "60000" })).is_err());
+        for timeout_ms in [json!("60000"), json!(-1), json!(1.5)] {
+            assert_eq!(
+                timeout_error(json!({ "timeout_ms": timeout_ms })),
+                "timeout_ms must be a positive integer number of milliseconds"
+            );
+        }
     }
 
     #[test]

@@ -69,6 +69,16 @@ const EDGE: BrowserSetupDescriptor = BrowserSetupDescriptor {
     tab_close_labels: EDGE_TAB_CLOSE_LABELS,
 };
 
+const COMET: BrowserSetupDescriptor = BrowserSetupDescriptor {
+    product: BrowserProduct::Comet,
+    product_name: "Perplexity Comet",
+    setup_url: "chrome://inspect/#remote-debugging",
+    page_titles: CHROMIUM_TITLES,
+    page_heading: "Remote debugging",
+    checkbox_label: "Allow remote debugging for this browser instance",
+    tab_close_labels: CHROME_TAB_CLOSE_LABELS,
+};
+
 pub fn existing_profile_setup_descriptor(
     product: BrowserProduct,
 ) -> Option<&'static BrowserSetupDescriptor> {
@@ -76,6 +86,7 @@ pub fn existing_profile_setup_descriptor(
         BrowserProduct::GoogleChrome => Some(&CHROME),
         BrowserProduct::Chromium => Some(&CHROMIUM),
         BrowserProduct::MicrosoftEdge => Some(&EDGE),
+        BrowserProduct::Comet => Some(&COMET),
         _ => None,
     }
 }
@@ -103,6 +114,12 @@ mod tests {
                 .unwrap()
                 .product,
             BrowserProduct::Chromium
+        );
+        assert_eq!(
+            existing_profile_setup_descriptor(BrowserProduct::Comet)
+                .unwrap()
+                .setup_url,
+            "chrome://inspect/#remote-debugging"
         );
         for product in [
             BrowserProduct::Brave,

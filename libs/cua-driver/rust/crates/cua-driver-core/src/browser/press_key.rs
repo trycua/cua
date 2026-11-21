@@ -380,8 +380,7 @@ enum KeyDelivery {
     Unknown(anyhow::Error),
     /// A modifier down failed, so the key down was never sent.
     NotPressed(anyhow::Error),
-    /// A modifier's key handler opened a dialog, so the key down was never
-    /// sent.
+    /// A dialog opened before the key down was sent, so it never was.
     DialogBeforeKey,
 }
 
@@ -627,6 +626,13 @@ impl Tool for BrowserPressKeyTool {
         let mut opened = None;
         let mut sent = 0;
         for (index, event) in downs.into_iter().enumerate() {
+            // A handler can open its dialog after its key's reply came back;
+            // no further key down may queue behind it.
+            if let Some(open) = conn.dialog_state(cdp_target_id) {
+                opened = Some(open);
+                delivery = KeyDelivery::DialogBeforeKey;
+                break;
+            }
             sent = index + 1;
             let call = conn.call(Some(cdp), "Input.dispatchKeyEvent", event);
             match call_until_dialog(conn, cdp_target_id, call).await {
@@ -681,10 +687,7 @@ impl Tool for BrowserPressKeyTool {
                 "a modifier's key handler opened a page dialog before the key was sent, so the \
                  key was not pressed; resolve the dialog with browser_dialog first"
                     .to_owned(),
-                json!({
-                    "pressed": false,
-                    "dialog": opened.as_ref().map(dialog_block),
-                }),
+                json!({ "pressed": false }),
             )),
             KeyDelivery::Unknown(error) => Some((
                 format!(
@@ -699,6 +702,9 @@ impl Tool for BrowserPressKeyTool {
             detail["refs_invalidated"] = json!(true);
             detail["focus_emulation_restored"] = json!(focus_emulation_restored);
             detail["retryable"] = json!(false);
+            if let Some(open) = &opened {
+                detail["dialog"] = dialog_block(open);
+            }
             return BrowserRefusal::new(BrowserRefusalCode::BrowserInputIncomplete, message)
                 .with_detail(detail)
                 .to_tool_result();

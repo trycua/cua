@@ -68,6 +68,9 @@ pub(super) struct FixtureState {
     /// The `Input.dispatchKeyEvent` call at this index opens a confirm()
     /// dialog and is never answered.
     key_event_opens_dialog_at: Option<usize>,
+    /// The `Input.dispatchKeyEvent` call at this index is answered, then a
+    /// confirm() dialog opens.
+    key_event_acks_then_opens_dialog_at: Option<usize>,
     key_events: usize,
     focus_emulation_enable_fails: bool,
     /// A synthetic `this.click()` opens a confirm() dialog: the mock emits
@@ -187,6 +190,7 @@ impl Default for FixtureState {
             completed_key_pairs: 0,
             fail_key_event_at: None,
             key_event_opens_dialog_at: None,
+            key_event_acks_then_opens_dialog_at: None,
             key_events: 0,
             focus_emulation_enable_fails: false,
             click_opens_dialog: false,
@@ -889,7 +893,8 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 if st.renderer_blocked {
                     return MockReply::hang();
                 }
-                if st.key_event_opens_dialog_at == Some(index) {
+                let acks_then_opens = st.key_event_acks_then_opens_dialog_at == Some(index);
+                if acks_then_opens || st.key_event_opens_dialog_at == Some(index) {
                     st.renderer_blocked = true;
                     let events = st
                         .page_sessions
@@ -900,7 +905,12 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                             params: json!({ "type": "confirm", "message": "Leave?", "url": st.main_url }),
                         })
                         .collect();
-                    return MockReply::hang().with_events(events);
+                    let reply = if acks_then_opens {
+                        MockReply::ok(json!({}))
+                    } else {
+                        MockReply::hang()
+                    };
+                    return reply.with_events(events);
                 }
                 if st.fail_key_event_at == Some(index)
                     || (event_type == "keyDown"
@@ -5018,6 +5028,42 @@ async fn press_key_whose_modifier_opens_a_dialog_never_sends_the_key() {
             ("keyUp".to_owned(), "Control".to_owned()),
         ]
     );
+}
+
+#[tokio::test]
+async fn press_key_stops_when_an_acknowledged_modifier_then_opens_a_dialog() {
+    let f = fixture_with(|state| state.key_event_acks_then_opens_dialog_at = Some(0)).await;
+    let result = press_key_with(&f, json!({ "key": "a", "modifiers": ["ctrl"] })).await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(s["refusal"]["detail"]["pressed"], false);
+    assert_eq!(s["refusal"]["detail"]["dialog"]["present"], true, "{s}");
+    assert_eq!(
+        key_event_summary(&f)
+            .into_iter()
+            .map(|(t, k, _)| (t, k))
+            .collect::<Vec<_>>(),
+        [
+            ("rawKeyDown".to_owned(), "Control".to_owned()),
+            ("keyUp".to_owned(), "Control".to_owned()),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn press_key_reports_a_dialog_opened_by_a_cleanup_release() {
+    // ctrl's down fails, then its cleanup key up opens a dialog.
+    let f = fixture_with(|state| {
+        state.fail_key_event_at = Some(0);
+        state.key_event_opens_dialog_at = Some(1);
+    })
+    .await;
+    let result = press_key_with(&f, json!({ "key": "a", "modifiers": ["ctrl"] })).await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(s["refusal"]["detail"]["pressed"], false);
+    assert_eq!(s["refusal"]["detail"]["released"], false);
+    assert_eq!(s["refusal"]["detail"]["dialog"]["present"], true, "{s}");
 }
 
 #[tokio::test]

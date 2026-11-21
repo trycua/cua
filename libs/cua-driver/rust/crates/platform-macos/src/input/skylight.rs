@@ -1230,11 +1230,7 @@ pub fn get_process_psn_for_window(window_id: u32, pid: libc::pid_t, out_psn: &mu
 /// frontmost. Unlike `NSWorkspace.frontmostApplication`, this query does not
 /// depend on the caller's AppKit run loop processing an activation update.
 pub fn front_process_matches(target_pid: libc::pid_t, target_wid: u32) -> Option<bool> {
-    let get_front = get_front_process_fn()?;
-    let mut front_psn = [0u8; 8];
-    if unsafe { get_front(front_psn.as_mut_ptr() as *mut c_void) } != 0 {
-        return None;
-    }
+    let front_psn = front_psn()?;
     let mut target_psn = [0u8; 8];
     if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
         return None;

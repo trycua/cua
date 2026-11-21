@@ -615,6 +615,11 @@ async fn a_described_action_with_no_find_time_left_is_not_retried() {
         .run("const app = await cua.getApp('Notes');\nawait app.click({role: 'button', name: 'Save'}, {outside_once: true, timeout_ms: 0});\nreturn 1;")
         .await;
     assert_eq!(result.is_error, Some(true), "{}", text(&result));
+    assert!(
+        text(&result).contains("click refused: element_outside_target_window"),
+        "{}",
+        text(&result)
+    );
     assert_eq!(harness.calls("click").len(), 1);
 }
 

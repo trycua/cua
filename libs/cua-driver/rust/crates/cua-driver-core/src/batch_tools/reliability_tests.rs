@@ -961,17 +961,17 @@ async fn the_end_read_stops_retaking_after_its_cap() {
 
 #[cfg(target_os = "macos")]
 #[tokio::test]
-async fn a_slow_end_re_read_does_not_hold_the_batch_past_its_cap() {
-    let (registry, _) = slow_late_apply_registry(usize::MAX, std::time::Duration::from_secs(1));
-    let started = std::time::Instant::now();
+async fn a_slow_end_re_read_is_returned_rather_than_the_read_it_replaced() {
+    // The re-read that shows the change finishes past the cap; the earlier
+    // read's snapshot is retired by then.
+    let (registry, reads) = slow_late_apply_registry(1, std::time::Duration::from_millis(400));
     let result = click_and_observe(&registry).await;
-    let waited = started.elapsed();
     assert!(
-        text(&result).contains("observation: no change since s00000100"),
+        text(&result).contains("observation: changed since s00000100"),
         "{}",
         text(&result)
     );
-    assert!(waited < std::time::Duration::from_millis(600), "{waited:?}");
+    assert_eq!(reads.lock().unwrap().len(), 2);
 }
 
 #[cfg(not(target_os = "macos"))]

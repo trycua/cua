@@ -295,7 +295,9 @@ already there:
   300 ms with a note saying it did not.
 - When the last step of a `run_steps` batch was an action and its `observe`
   read reports `no change`, the batch reads again every 50 ms against the same
-  baseline until something changed, for up to 300 ms.
+  baseline until something changed, and starts no new read after 300 ms. A
+  read already under way finishes and is the one returned, since each read
+  replaces the window's snapshot.
 
 An embedding host that wants every step to play the full glide and watch, for
 example to record a demo, sets `CUA_DRIVER_BATCH_PACING=full` in the same

@@ -1251,7 +1251,8 @@ const OBSERVE_SETTLE_POLL: Duration = Duration::from_millis(50);
 
 /// The end-of-batch read. macOS actions return at delivery, so the app may
 /// not have applied the last one yet: a read that says nothing changed is
-/// taken again until it shows a change, for up to [`OBSERVE_SETTLE`]. A read
+/// taken again until it shows a change, starting no re-read after
+/// [`OBSERVE_SETTLE`]. A read
 /// that shows a change, or one after a read or a failed step, returns as is.
 async fn observe_after_settle(
     registry: &ToolRegistry,
@@ -1277,12 +1278,9 @@ async fn observe_after_settle(
             args["since"] = since;
         }
         tokio::time::sleep(OBSERVE_SETTLE_POLL).await;
-        // A re-read that does not finish by the deadline keeps the last one.
-        let left = deadline.saturating_duration_since(Instant::now());
-        match tokio::time::timeout(left, registry.invoke(OBSERVE_TOOL, args.clone())).await {
-            Ok(next) => result = next,
-            Err(_) => return result,
-        }
+        // Let a started read finish: it replaces the window's snapshot, so an
+        // earlier result would hand back retired tokens.
+        result = registry.invoke(OBSERVE_TOOL, args.clone()).await;
     }
 }
 

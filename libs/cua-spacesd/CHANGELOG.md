@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.3](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.2...cua-spacesd-v0.17.3) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-driver:** build every Windows crate against windows 0.61 ([#8444](https://github.com/trycua/cua/issues/8444)) ([d0e4f4d](https://github.com/trycua/cua/commit/d0e4f4dc4e734affa6a1aca1464deddf55a71763))
+
 ## [0.17.2](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.1...cua-spacesd-v0.17.2) (2026-11-20)
 
 

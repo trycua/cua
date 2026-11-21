@@ -488,6 +488,43 @@ mod tests {
         );
     }
 
+    /// Attests an independent input lane only for calls that ask for it.
+    struct LaneAttestingTool(ToolDef);
+
+    #[async_trait]
+    impl Tool for LaneAttestingTool {
+        fn def(&self) -> &ToolDef {
+            &self.0
+        }
+
+        fn has_independent_input_lane(&self, args: &Value) -> bool {
+            args["own_seat"] == true
+        }
+
+        async fn invoke(&self, _args: Value) -> ToolResult {
+            ToolResult::text("called")
+        }
+    }
+
+    #[test]
+    fn the_guard_keeps_its_tool_on_the_lane_the_tool_attests() {
+        let guard = |tool: Box<dyn Tool>| PidOnlyWindowTargetGuard::new(tool, Arc::new(|_| vec![]));
+        let plain = guard(Box::new(EchoTool {
+            calls: Arc::default(),
+        }));
+        assert!(!plain.has_independent_input_lane(&serde_json::json!({"own_seat": true})));
+
+        let attesting = guard(Box::new(LaneAttestingTool(
+            EchoTool {
+                calls: Arc::default(),
+            }
+            .def()
+            .clone(),
+        )));
+        assert!(attesting.has_independent_input_lane(&serde_json::json!({"own_seat": true})));
+        assert!(!attesting.has_independent_input_lane(&serde_json::json!({})));
+    }
+
     #[tokio::test]
     async fn not_found_refusal_carries_the_platform_note_for_that_pid() {
         let calls = Arc::new(AtomicUsize::new(0));

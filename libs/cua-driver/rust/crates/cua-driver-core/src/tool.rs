@@ -126,6 +126,17 @@ impl Lane {
 /// A call's admission to the input lanes it needs. It is taken after
 /// consent, so a call still being authorized holds no lane, and released
 /// as one once the call's physical action returns.
+///
+/// The order is fixed so no two calls can wait on each other:
+///
+/// 1. [`Lane::Pid`] first. It is try-only and refuses at once, so a call
+///    never waits while holding nothing but a pid.
+/// 2. [`Lane::Desktop`] last. It is the only lane that waits.
+///
+/// Browser tools never take either lane: they are not physical desktop
+/// actions, so [`requires_desktop_coordination`] is false for them, and
+/// they serialize per CDP tab on the browser engine's `MutationGates`
+/// instead. Nothing takes the desktop lane and then a browser gate.
 #[derive(Default)]
 struct InputAdmission {
     pid: Option<PidLane>,
@@ -1840,6 +1851,11 @@ impl ToolRegistry {
     /// Get a tool's ToolDef by name, or None if unknown.
     pub fn get_def(&self, name: &str) -> Option<&ToolDef> {
         self.tools.get(name).map(|t| t.def())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn registered_tool(&self, name: &str) -> Option<&dyn Tool> {
+        self.tools.get(name).map(|tool| tool.as_ref())
     }
 
     /// List all tool names in registration order.
@@ -3712,7 +3728,11 @@ fn is_physical_desktop_action(tool: &str) -> bool {
     cua_driver_contract::is_desktop_action_result_tool(tool) || tool == "bring_to_front"
 }
 
-fn requires_desktop_coordination(tool: &str, args: &Value, independent_lane: bool) -> bool {
+pub(crate) fn requires_desktop_coordination(
+    tool: &str,
+    args: &Value,
+    independent_lane: bool,
+) -> bool {
     if !is_physical_desktop_action(tool) {
         return false;
     }

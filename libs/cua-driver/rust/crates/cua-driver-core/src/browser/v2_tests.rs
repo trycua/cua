@@ -1887,6 +1887,60 @@ async fn existing_profile_reconnect_stalls_in_a_process_check(dial_first: bool) 
     tokio::time::resume();
 }
 
+#[tokio::test]
+async fn a_reconnect_waiting_for_another_dial_leaves_its_prompt_alone() {
+    const TRANSPORT: &str = "transport-v2-reconnect-behind-dial";
+    let focus = Arc::new(FixtureFocus {
+        accept_consent: true,
+        ..Default::default()
+    });
+    let (f, _) =
+        protected_existing_profile_fixture_with(Default::default(), focus.clone(), false).await;
+    prepare_existing_profile(&f.engine, TRANSPORT).await;
+    let grant = f
+        .engine
+        .existing_profile_grant(SESSION, Some(TRANSPORT), 1)
+        .await
+        .unwrap()
+        .expect("prepare minted a grant");
+    f.engine
+        .pool
+        .release_existing(
+            &grant.endpoint_ws_url,
+            grant.generation,
+            SharedSocketRelease::Close,
+        )
+        .await;
+    focus.consent_attempts.lock().unwrap().clear();
+
+    // Another caller's dial holds the pool's dial gate while its browser
+    // shows a prompt and never finishes the handshake.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let other_url = format!(
+        "ws://127.0.0.1:{}/devtools/browser/other",
+        listener.local_addr().unwrap().port()
+    );
+    let other_dial = tokio::spawn({
+        let pool = f.engine.pool.clone();
+        async move { pool.claim_existing(&other_url, u64::MAX).await }
+    });
+    let (_other_socket, _) = listener.accept().await.unwrap();
+
+    let bind = tokio::spawn({
+        let engine = f.engine.clone();
+        async move { bind_existing_profile(&engine, TRANSPORT).await }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    assert!(
+        focus.consent_attempts.lock().unwrap().is_empty(),
+        "the prompt on screen belongs to the other dial"
+    );
+    other_dial.abort();
+    let state = bind.await.unwrap();
+    assert!(state["refusal"].is_null(), "{state}");
+    assert!(focus.consent_attempts.lock().unwrap().is_empty());
+}
+
 fn queued_cleanups(engine: &BrowserEngine, session: &str) -> usize {
     engine
         .setup_cleanups

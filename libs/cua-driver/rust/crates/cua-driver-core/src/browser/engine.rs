@@ -27,7 +27,6 @@
 //!   omitted from the snapshot — never guessed.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -1075,7 +1074,7 @@ impl BrowserEngine {
             return Err(reconnect_exhausted(Some("reconnect_in_progress")));
         };
         let window_id = grant.window_id;
-        let dialed = AtomicBool::new(false);
+        let dials = tokio::sync::watch::channel(0).0;
         let reconnect = async {
             let grant = self
                 .existing_profile_grant(session, transport_session, pid)
@@ -1093,7 +1092,7 @@ impl BrowserEngine {
             {
                 return Ok((conn, grant));
             }
-            self.redial_existing_profile(session, transport_session, pid, grant, deadline, &dialed)
+            self.redial_existing_profile(session, transport_session, pid, grant, deadline, &dials)
                 .await
         };
         match tokio::time::timeout_at(deadline, reconnect).await {
@@ -1105,7 +1104,7 @@ impl BrowserEngine {
                 // approving would no longer attach to anything. Before any
                 // dial, a prompt in the window is someone else's to answer.
                 // Closing it is best effort and must not outlive the refusal.
-                if dialed.load(Ordering::SeqCst) {
+                if *dials.borrow() > 0 {
                     let _ = tokio::time::timeout(
                         ABANDONED_CONSENT_DISMISS_TIMEOUT,
                         self.platform
@@ -1127,7 +1126,7 @@ impl BrowserEngine {
         pid: i64,
         mut grant: ExistingProfileGrant,
         deadline: tokio::time::Instant,
-        dialed: &AtomicBool,
+        dials: &tokio::sync::watch::Sender<u64>,
     ) -> Result<(Arc<CdpConnection>, ExistingProfileGrant), BrowserRefusal> {
         let mut last_error = None;
         while tokio::time::Instant::now() < deadline && grant.reconnect_attempts_remaining > 0 {
@@ -1196,11 +1195,19 @@ impl BrowserEngine {
                 &endpoint.ws_url,
                 old_generation,
                 new_generation,
-                dialed,
+                dials,
             ));
+            // Until this attempt's own dial starts, a prompt on screen is
+            // another caller's, so consent handling waits for that dial.
+            let mut dial_started = dials.subscribe();
+            let dials_before = *dial_started.borrow();
+            let consent_due = async {
+                let _ = dial_started.wait_for(|n| *n > dials_before).await;
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            };
             let reconnected = tokio::select! {
                 result = &mut reconnect => result,
-                _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                _ = consent_due => {
                     match self.platform.handle_existing_profile_consent(BrowserConsentRequest {
                         action: Default::default(),
                         pid,
@@ -1218,7 +1225,7 @@ impl BrowserEngine {
                             // The browser keeps the prompt of the connection
                             // just abandoned; approving it would attach nothing.
                             // Without a dial of ours, the prompt is not ours.
-                            if dialed.load(Ordering::SeqCst) {
+                            if *dials.borrow() > 0 {
                                 let _ = self
                                     .platform
                                     .dismiss_abandoned_existing_profile_consent(

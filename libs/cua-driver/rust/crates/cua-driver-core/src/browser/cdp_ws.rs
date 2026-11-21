@@ -24,7 +24,7 @@ use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use tokio::net::TcpStream;
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
@@ -291,6 +291,31 @@ impl Drop for SendInFlight<'_> {
             self.conn.reader.abort();
             self.conn.demux.close();
         }
+    }
+}
+
+/// Releases a reconnect's old generation unless the handoff completed. A
+/// dropped future cannot await, so the release runs as its own task.
+struct RetireUnlessHandedOff<'a> {
+    pool: Option<CdpPool>,
+    ws_url: &'a str,
+    generation: u64,
+}
+
+impl Drop for RetireUnlessHandedOff<'_> {
+    fn drop(&mut self) {
+        let Some(pool) = self.pool.take() else {
+            return;
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let ws_url = self.ws_url.to_owned();
+        let generation = self.generation;
+        runtime.spawn(async move {
+            pool.release_existing(&ws_url, generation, SharedSocketRelease::Close)
+                .await;
+        });
     }
 }
 
@@ -911,14 +936,22 @@ impl CdpPool {
     /// session already re-established a live shared socket, join it without
     /// dialing; otherwise open exactly one replacement socket (which the
     /// browser treats as a new connection and may ask the person to approve).
-    /// `dialed` is set when that dial starts, and never for a join.
+    /// `dials` counts that dial when it starts; a join never dials. Unless
+    /// the handoff completes, including when this future is dropped while it
+    /// waits, `old_generation` stops holding the socket, since its grant has
+    /// already moved to `new_generation`.
     pub async fn reconnect_existing(
         &self,
         ws_url: &str,
         old_generation: u64,
         new_generation: u64,
-        dialed: &AtomicBool,
+        dials: &watch::Sender<u64>,
     ) -> anyhow::Result<Arc<CdpConnection>> {
+        let mut retire = RetireUnlessHandedOff {
+            pool: Some(self.clone()),
+            ws_url,
+            generation: old_generation,
+        };
         let _dial = self.inner.dial_gate.lock().await;
         {
             let now = Instant::now();
@@ -931,13 +964,14 @@ impl CdpPool {
                 shared.holders.remove(&old_generation);
                 shared.holders.insert(new_generation);
                 shared.last_used_at = now;
+                retire.pool = None;
                 return Ok(entry.conn.clone());
             }
         }
 
         // See claim_existing: never hold the entry mutex across a dial that
         // can wait for browser-owned consent UI.
-        dialed.store(true, Ordering::SeqCst);
+        dials.send_modify(|n| *n += 1);
         let conn = Arc::new(CdpConnection::connect(ws_url).await?);
         conn.restrict_to_existing_profile();
         let mut conns = self.inner.conns.lock().await;
@@ -951,6 +985,7 @@ impl CdpPool {
                 shared: Some(SharedSocket::new(new_generation, Instant::now())),
             },
         );
+        retire.pool = None;
         Ok(conn)
     }
 
@@ -1357,19 +1392,20 @@ mod tests {
         pool.claim_existing(&url, 2).await.unwrap();
         dead.demux.close();
 
-        let (reopen_dialed, join_dialed) = (AtomicBool::new(false), AtomicBool::new(false));
+        let (reopen_dials, join_dials) = (watch::channel(0).0, watch::channel(0).0);
         let reopened = pool
-            .reconnect_existing(&url, 1, 3, &reopen_dialed)
+            .reconnect_existing(&url, 1, 3, &reopen_dials)
             .await
             .unwrap();
         let joined = pool
-            .reconnect_existing(&url, 2, 4, &join_dialed)
+            .reconnect_existing(&url, 2, 4, &join_dials)
             .await
             .unwrap();
         assert!(Arc::ptr_eq(&reopened, &joined));
-        assert!(reopen_dialed.load(Ordering::SeqCst));
-        assert!(
-            !join_dialed.load(Ordering::SeqCst),
+        assert_eq!(*reopen_dials.borrow(), 1);
+        assert_eq!(
+            *join_dials.borrow(),
+            0,
             "joining a reopened socket raises no prompt of its own"
         );
         assert_eq!(
@@ -1390,17 +1426,46 @@ mod tests {
 
         // Another caller's dial holds the gate and may be showing its prompt.
         let gate = pool.inner.dial_gate.lock().await;
-        let dialed = AtomicBool::new(false);
-        let mut reconnect = Box::pin(pool.reconnect_existing(&url, 1, 2, &dialed));
+        let reconnect_dials = watch::channel(0).0;
+        let mut reconnect = Box::pin(pool.reconnect_existing(&url, 1, 2, &reconnect_dials));
         tokio::select! {
             _ = &mut reconnect => panic!("reconnect must wait for the dial gate"),
             _ = tokio::time::sleep(Duration::from_millis(100)) => {}
         }
-        assert!(!dialed.load(Ordering::SeqCst));
+        assert_eq!(*reconnect_dials.borrow(), 0);
         drop(gate);
         reconnect.await.unwrap();
-        assert!(dialed.load(Ordering::SeqCst));
+        assert_eq!(*reconnect_dials.borrow(), 1);
         assert_eq!(dials.load(Ordering::SeqCst), 2);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_reconnect_dropped_before_its_handoff_retires_the_old_generation() {
+        let (url, _dials, server) = counting_browser().await;
+        let pool = CdpPool::new();
+        let dead = pool.claim_existing(&url, 1).await.unwrap();
+        dead.demux.close();
+
+        // The grant already moved to generation 2 when its reconnect gave up
+        // waiting, so generation 1 must not keep the socket or the port.
+        let gate = pool.inner.dial_gate.lock().await;
+        let reconnect_dials = watch::channel(0).0;
+        let mut reconnect = Box::pin(pool.reconnect_existing(&url, 1, 2, &reconnect_dials));
+        tokio::select! {
+            _ = &mut reconnect => panic!("reconnect must wait for the dial gate"),
+            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+        }
+        drop(reconnect);
+        drop(gate);
+        for _ in 0..100 {
+            if pool.shared_socket_holders(&url).await.is_none() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(pool.shared_socket_holders(&url).await, None);
+        assert!(!endpoint_port_is_grant_owned(&url));
         server.abort();
     }
 
@@ -1502,8 +1567,8 @@ mod tests {
         let claimed = pool.claim_existing(&url, 1).await.unwrap();
         claimed.demux.close();
 
-        let dialed = AtomicBool::new(false);
-        let mut reconnect = Box::pin(pool.reconnect_existing(&url, 1, 2, &dialed));
+        let dials = watch::channel(0).0;
+        let mut reconnect = Box::pin(pool.reconnect_existing(&url, 1, 2, &dials));
         tokio::select! {
             _ = &mut reconnect => panic!("reconnect unexpectedly completed"),
             _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}

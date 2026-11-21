@@ -449,6 +449,29 @@ mod tests {
     }
 
     #[test]
+    fn multi_output_desktop_uses_the_full_bounding_box() {
+        let native = (1920, 1080);
+        let logical = select_desktop_action_dimensions(native, Some((3840, 1080))).unwrap();
+        assert_eq!(logical, (3840, 1080));
+
+        let service = CaptureService::default();
+        let call_args = args("multi-output");
+        let id = publish_desktop(
+            &service,
+            &call_args,
+            &png(logical.0, logical.1, 0x51),
+            logical,
+            logical,
+        )
+        .unwrap();
+        // A point on the second output maps to the same frame coordinate.
+        assert_eq!(
+            admit_desktop(&service, &call_args, &id, (2000.0, 500.0), logical).unwrap(),
+            (2000.0, 500.0)
+        );
+    }
+
+    #[test]
     fn downsized_desktop_capture_maps_back_to_the_action_frame() {
         let service = CaptureService::default();
         let call_args = args("downsized");

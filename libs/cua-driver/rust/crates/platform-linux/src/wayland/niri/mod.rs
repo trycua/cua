@@ -9,11 +9,13 @@
 //! recognised, an IPC failure refuses instead of falling back to the generic
 //! wlr-foreign-toplevel title join, which would lose the niri id namespace.
 //!
-//! niri 26.04 reports a position only for floating windows
-//! (`tile_pos_in_workspace_view`): a tiled window's place depends on the
-//! view's scroll position, which IPC does not report. Window capture and
-//! window-coordinate pointer input therefore refuse a tiled window; the
-//! desktop scope reaches it with pixels of the single output.
+//! niri reports a position only for a window in the workspace view
+//! (`tile_pos_in_workspace_view`). Since niri#4711 (after 26.04) that
+//! includes tiled windows while they intersect the view, so window capture
+//! and window-coordinate pointer input work on them too. Releases before
+//! that field fall back to niri's own focused-window screenshot for capture;
+//! window-coordinate input still refuses, and the desktop scope reaches the
+//! window with pixels of the output.
 //!
 //! Pointer input and window capture first wait, a few short reads at most,
 //! for two consecutive reads that agree on the target, then check the layout
@@ -104,16 +106,8 @@ pub fn desktop_snapshot() -> Result<super::hyprland::DesktopSnapshot> {
 }
 
 fn desktop_snapshot_in(scene: &Scene) -> Result<super::hyprland::DesktopSnapshot> {
-    let (output, logical) = scene.single_output()?;
     Ok(super::hyprland::DesktopSnapshot {
-        frame: super::hyprland::DesktopFrame {
-            x: logical.x,
-            y: logical.y,
-            width: logical.width,
-            height: logical.height,
-            scale: logical.scale,
-            outputs: vec![frame_output(output, logical)],
-        },
+        frame: screen_frame_in(scene)?,
         pointer: Some(scene.pointer_space()?),
     })
 }
@@ -129,8 +123,9 @@ fn frame_output(output: &IpcOutput, logical: &IpcLogical) -> super::hyprland::Fr
 }
 
 /// Every enabled output's logical rectangle, and their bounding box with the
-/// largest scale, as Hyprland reports its frame. Desktop-scope input still
-/// needs a single output; reporting sizes does not.
+/// largest scale, as Hyprland reports its frame. Desktop scope uses this
+/// frame: the capture composes every output and a point must land on one of
+/// them, not in a gap.
 fn screen_frame_in(scene: &Scene) -> Result<super::hyprland::DesktopFrame> {
     let mut outputs = Vec::new();
     let mut scale: f64 = 0.0;
@@ -157,6 +152,214 @@ fn screen_frame_in(scene: &Scene) -> Result<super::hyprland::DesktopFrame> {
         scale,
         outputs,
     })
+}
+
+/// Capture one window through niri's own screenshot action. This is the
+/// fallback for niri releases before #4711, where a tiled window has no IPC
+/// position to crop from. The action takes the window by id, so focus does
+/// not move, and writes to a file in a directory only this process can
+/// read; the file and directory are removed afterwards. niri also puts the
+/// screenshot on the clipboard, with no opt-out, so the previous clipboard
+/// text is put back, and a clipboard offering anything besides plain text
+/// refuses before the action runs.
+pub fn screenshot_window(window: &Window) -> Result<Vec<u8>> {
+    if !window.on_screen {
+        bail!("niri screenshot fallback: the window is not on screen");
+    }
+    let size = window
+        .size
+        .ok_or_else(|| anyhow!("niri reports no window size"))?;
+    let version = version()?;
+    if !writes_screenshot_to_path(&version) {
+        bail!(
+            "niri {version} cannot write a window screenshot to a path of the driver's \
+             (niri 25.11 or later is required)"
+        );
+    }
+    let clipboard = crate::clipboard::LinuxClipboard::new();
+    let bytes = with_clipboard_restored(&clipboard, || screenshot_window_to_path(window.id))?;
+    tracing::debug!(
+        "niri: screenshotted window {} by id into a driver-owned file",
+        window.id
+    );
+    fit_window_png(bytes, size)
+}
+
+/// `ScreenshotWindow` gained `path` in niri 25.11. Older releases ignore the
+/// field and save into the user's screenshot directory.
+fn writes_screenshot_to_path(version: &str) -> bool {
+    let mut parts = version
+        .split(|c: char| !c.is_ascii_digit())
+        .map(str::parse::<u32>);
+    match (parts.next(), parts.next()) {
+        (Some(Ok(major)), Some(Ok(minor))) => (major, minor) >= (25, 11),
+        _ => false,
+    }
+}
+
+/// Run `screenshot`, which replaces the clipboard with an image, then put the
+/// previous clipboard text back.
+fn with_clipboard_restored(
+    clipboard: &dyn cua_driver_core::clipboard::ClipboardBackend,
+    screenshot: impl FnOnce() -> Result<Vec<u8>>,
+) -> Result<Vec<u8>> {
+    let previous = restorable_clipboard(
+        clipboard,
+        "niri screenshot fallback: niri's window screenshot replaces the clipboard",
+    )?;
+    let shot = screenshot();
+    if shot.is_ok() {
+        // niri sets its selection from its main loop while a worker writes
+        // the file, so the selection can land after the file. Wait for it
+        // first, or it would replace the text put back.
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while Instant::now() < deadline
+            && !clipboard
+                .available_formats()
+                .unwrap_or_default()
+                .iter()
+                .any(|format| format == "image/png")
+        {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+    restore_clipboard(clipboard, previous, "niri screenshot fallback")?;
+    shot
+}
+
+/// The clipboard text to put back after the driver replaces the clipboard.
+/// Only plain text can be put back, so a clipboard offering any other
+/// format (an image, HTML next to its text, files), or one whose formats
+/// cannot be read, refuses before anything is written. `why` says what
+/// would replace it.
+pub(super) fn restorable_clipboard(
+    clipboard: &dyn cua_driver_core::clipboard::ClipboardBackend,
+    why: &str,
+) -> Result<String> {
+    let formats = match clipboard.available_formats() {
+        Ok(formats) => formats,
+        // wl-clipboard reports an empty clipboard as an error.
+        Err(error) if error.contains("is empty") => Vec::new(),
+        Err(error) => bail!("{why}, whose formats could not be read: {error}"),
+    };
+    if let Some(other) = formats.iter().find(|format| !is_plain_text_format(format)) {
+        bail!(
+            "{why}, which offers {other:?}, and only plain text can be put back; nothing was sent"
+        );
+    }
+    if formats.is_empty() {
+        return Ok(String::new());
+    }
+    clipboard
+        .read_text()
+        .map_err(|error| anyhow!("{why}, which could not be read: {error}"))
+        .map(Option::unwrap_or_default)
+}
+
+/// Put `previous` back on the clipboard, saying so when that fails.
+pub(super) fn restore_clipboard(
+    clipboard: &dyn cua_driver_core::clipboard::ClipboardBackend,
+    previous: String,
+    what: &str,
+) -> Result<()> {
+    clipboard.write_text(previous).map_err(|error| {
+        anyhow!("{what} ran, but the previous clipboard text could not be put back: {error}")
+    })
+}
+
+/// A clipboard format that holds plain text (Wayland MIME types, X11 atoms),
+/// or one of the X11 selection bookkeeping targets.
+fn is_plain_text_format(format: &str) -> bool {
+    format.to_ascii_lowercase().starts_with("text/plain")
+        || matches!(
+            format,
+            "UTF8_STRING"
+                | "STRING"
+                | "TEXT"
+                | "COMPOUND_TEXT"
+                | "TARGETS"
+                | "TIMESTAMP"
+                | "MULTIPLE"
+                | "SAVE_TARGETS"
+        )
+}
+
+/// Screenshot a window by id into a fresh directory only this process can
+/// read, then remove both.
+fn screenshot_window_to_path(id: u64) -> Result<Vec<u8>> {
+    use std::os::unix::fs::DirBuilderExt as _;
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or_default();
+    let dir = std::env::temp_dir().join(format!("cua-driver-niri-{}-{unique}", std::process::id()));
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&dir)
+        .with_context(|| {
+            format!(
+                "niri screenshot fallback: could not create {}",
+                dir.display()
+            )
+        })?;
+    let path = dir.join("window.png");
+    let result = (|| -> Result<Vec<u8>> {
+        let path_arg = path
+            .to_str()
+            .ok_or_else(|| anyhow!("temporary path {} is not UTF-8", path.display()))?;
+        ipc().action(serde_json::json!({ "ScreenshotWindow": {
+            "id": id,
+            "write_to_disk": true,
+            "show_pointer": false,
+            "path": path_arg,
+        }}))?;
+        // niri answers before its worker has written the file, and the
+        // write is not atomic: wait until the file decodes as a whole PNG.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            if let Ok(bytes) = std::fs::read(&path) {
+                if image::load_from_memory_with_format(&bytes, image::ImageFormat::Png).is_ok() {
+                    return Ok(bytes);
+                }
+            }
+            if Instant::now() >= deadline {
+                bail!(
+                    "niri screenshot fallback: no complete screenshot appeared at {}",
+                    path.display()
+                );
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    })();
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_dir(&dir);
+    result
+}
+
+/// Scale a capture to the window size niri reports, so window-relative
+/// coordinates and the screenshot share one frame.
+fn fit_window_png(bytes: Vec<u8>, size: (u32, u32)) -> Result<Vec<u8>> {
+    let image = image::load_from_memory(&bytes)?;
+    if (image.width(), image.height()) == size {
+        return Ok(bytes);
+    }
+    let image = image.resize_exact(size.0, size.1, image::imageops::FilterType::Triangle);
+    let mut out = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut out, image::ImageFormat::Png)?;
+    Ok(out.into_inner())
+}
+
+/// Compose every output's capture into the bounding-box desktop frame niri
+/// reports. Reuse the Hyprland composer: the frame layout and scale rules are
+/// the same.
+pub fn compose_desktop_capture(frame: &super::hyprland::DesktopFrame) -> Result<Vec<u8>> {
+    let canvas = super::hyprland::compose_frame(frame, |output| {
+        let png = super::niri_capture_output_png(&output.name)?;
+        Ok(image::load_from_memory_with_format(&png, image::ImageFormat::Png)?.to_rgba8())
+    })?;
+    let mut encoded = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(canvas).write_to(&mut encoded, image::ImageFormat::Png)?;
+    Ok(encoded.into_inner())
 }
 
 /// The output frame plus the monitor list `get_screen_size` reports, in the
@@ -239,8 +442,9 @@ fn describe_health(version: &str, outputs: Result<usize>) -> String {
     match outputs {
         Ok(1) => format!("niri {version}: IPC attested to WAYLAND_DISPLAY."),
         Ok(count) => format!(
-            "niri {version}: IPC attested to WAYLAND_DISPLAY; window capture and desktop \
-             input refuse because {count} outputs are enabled (one is supported)."
+            "niri {version}: IPC attested to WAYLAND_DISPLAY; window-coordinate input \
+             refuses because {count} outputs are enabled (window capture and desktop scope \
+             are supported)."
         ),
         Err(error) => format!(
             "niri {version}: IPC attested to WAYLAND_DISPLAY; the output layout is \
@@ -285,7 +489,7 @@ mod tests {
     }
 
     #[test]
-    fn desktop_snapshot_uses_the_single_output_and_refuses_several() {
+    fn desktop_snapshot_spans_every_output() {
         let one = scene(
             vec![],
             vec![],
@@ -313,10 +517,18 @@ mod tests {
             ],
             false,
         );
+        let snapshot = desktop_snapshot_in(&two).unwrap();
         assert_eq!(
-            desktop_snapshot_in(&two).unwrap_err().to_string(),
-            "niri window capture and desktop input support a single output; this layout has 2"
+            (
+                snapshot.frame.x,
+                snapshot.frame.y,
+                snapshot.frame.width,
+                snapshot.frame.height
+            ),
+            (0, 0, 3840, 1080)
         );
+        assert_eq!(snapshot.frame.outputs.len(), 2);
+        assert_eq!(snapshot.frame.outputs[1].name, "DP-2");
     }
 
     #[test]
@@ -339,12 +551,119 @@ mod tests {
     }
 
     #[test]
+    fn fit_window_png_scales_a_capture_to_the_reported_window_size() {
+        use image::ImageEncoder;
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(
+                &[255, 0, 0, 255, 0, 0, 0, 255],
+                2,
+                1,
+                image::ExtendedColorType::Rgba8,
+            )
+            .unwrap();
+        let exact = fit_window_png(png.clone(), (2, 1)).unwrap();
+        assert_eq!(&exact, &png);
+        let fitted = fit_window_png(png, (4, 2)).unwrap();
+        let image = image::load_from_memory(&fitted).unwrap();
+        assert_eq!((image.width(), image.height()), (4, 2));
+    }
+
+    #[test]
+    fn screenshot_path_needs_niri_25_11() {
+        assert!(writes_screenshot_to_path("26.04 (8ed0da4)"));
+        assert!(writes_screenshot_to_path("25.11"));
+        assert!(!writes_screenshot_to_path("25.08 (unknown commit)"));
+        assert!(!writes_screenshot_to_path("unknown"));
+    }
+
+    struct FakeClipboard {
+        text: Option<String>,
+        formats: Vec<String>,
+        writes: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl cua_driver_core::clipboard::ClipboardBackend for FakeClipboard {
+        fn available_formats(&self) -> Result<Vec<String>, String> {
+            Ok(self.formats.clone())
+        }
+        fn read_text(&self) -> Result<Option<String>, String> {
+            Ok(self.text.clone())
+        }
+        fn write_text(&self, text: String) -> Result<(), String> {
+            self.writes.lock().unwrap().push(text);
+            Ok(())
+        }
+        fn write_image(&self, _: &str) -> Result<(), String> {
+            Err("unused".into())
+        }
+        fn write_file_url(&self, _: &str) -> Result<(), String> {
+            Err("unused".into())
+        }
+    }
+
+    #[test]
+    fn window_screenshot_puts_the_clipboard_text_back() {
+        let clipboard = FakeClipboard {
+            text: Some("KEEP-ME".into()),
+            formats: vec!["text/plain".into()],
+            writes: Default::default(),
+        };
+        assert_eq!(
+            with_clipboard_restored(&clipboard, || Ok(vec![1])).unwrap(),
+            vec![1]
+        );
+        assert_eq!(
+            *clipboard.writes.lock().unwrap(),
+            vec!["KEEP-ME".to_owned()]
+        );
+    }
+
+    #[test]
+    fn a_clipboard_with_more_than_plain_text_is_not_restorable() {
+        let html = FakeClipboard {
+            text: Some("KEEP-ME".into()),
+            formats: vec!["text/plain;charset=utf-8".into(), "text/html".into()],
+            writes: Default::default(),
+        };
+        let error = restorable_clipboard(&html, "test").unwrap_err().to_string();
+        assert!(error.contains("\"text/html\""), "{error}");
+        let text = FakeClipboard {
+            text: Some("KEEP-ME".into()),
+            formats: vec!["UTF8_STRING".into(), "text/plain;charset=utf-8".into()],
+            writes: Default::default(),
+        };
+        assert_eq!(restorable_clipboard(&text, "test").unwrap(), "KEEP-ME");
+        let empty = FakeClipboard {
+            text: None,
+            formats: vec![],
+            writes: Default::default(),
+        };
+        assert_eq!(restorable_clipboard(&empty, "test").unwrap(), "");
+    }
+
+    #[test]
+    fn window_screenshot_refuses_a_clipboard_it_cannot_put_back() {
+        let clipboard = FakeClipboard {
+            text: None,
+            formats: vec!["image/png".into()],
+            writes: Default::default(),
+        };
+        let error = with_clipboard_restored(&clipboard, || panic!("must not screenshot"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("only plain text can be put back"), "{error}");
+        assert!(clipboard.writes.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn health_note_states_attestation_and_the_single_output_limit() {
         assert_eq!(
             describe_health("26.04 (8ed0da4)", Ok(1)),
             "niri 26.04 (8ed0da4): IPC attested to WAYLAND_DISPLAY."
         );
-        assert!(describe_health("26.04", Ok(2)).contains("refuse because 2 outputs are enabled"));
+        assert!(describe_health("26.04", Ok(2))
+            .contains("window-coordinate input refuses because 2 outputs are enabled"));
         assert_eq!(
             inactive_health(Attestation::Unrelated(
                 "NIRI_SOCKET is served by pid 1 but WAYLAND_DISPLAY by pid 2".into()

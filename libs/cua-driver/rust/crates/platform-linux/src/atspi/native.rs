@@ -2640,6 +2640,10 @@ pub struct WalkedTree {
     /// False when the bounds phase ran out of time; some indexed elements
     /// then carry no frame even though they exist.
     pub bounds_complete: bool,
+    /// Why frames were deliberately omitted (compositor identity, or niri
+    /// client-side decoration margins), when the walk finished but published
+    /// no frames.
+    pub bounds_suppressed: Option<String>,
     /// Wall time of the walk + bounds phases.
     pub elapsed: Duration,
 }
@@ -2695,6 +2699,7 @@ pub(super) fn walk_tree_bounded_with_timeout(
                         pending: 0,
                     }),
                     bounds_complete: false,
+                    bounds_suppressed: None,
                     elapsed: walk_started.elapsed(),
                 }));
             }
@@ -2713,6 +2718,7 @@ pub(super) fn walk_tree_bounded_with_timeout(
                         pending: 0,
                     }),
                     bounds_complete: false,
+                    bounds_suppressed: None,
                     elapsed: walk_started.elapsed(),
                 }));
             }
@@ -2739,7 +2745,7 @@ pub(super) fn walk_tree_bounded_with_timeout(
         let bounds_deadline = deadline
             .max(tokio::time::Instant::now() + (timeout / 2).min(Duration::from_millis(1500)));
         let bounds_backstop = bounds_deadline + Duration::from_millis(500);
-        let (bounds, bounds_complete) = match before_snapshot_deadline(
+        let (bounds, bounds_complete, bounds_suppressed) = match before_snapshot_deadline(
             bounds_backstop,
             OP_DEADLINE.scope(
                 bounds_deadline,
@@ -2748,10 +2754,10 @@ pub(super) fn walk_tree_bounded_with_timeout(
         )
         .await
         {
-            Ok((bounds, complete)) => (bounds, complete),
+            Ok((bounds, complete, suppressed)) => (bounds, complete, suppressed),
             Err(_) => {
                 dlog!("element bounds timed out for pid {pid}");
-                (Vec::new(), false)
+                (Vec::new(), false, None)
             }
         };
         dlog!(
@@ -2782,6 +2788,7 @@ pub(super) fn walk_tree_bounded_with_timeout(
             window_scoped: scoped_frame.is_some(),
             truncation,
             bounds_complete,
+            bounds_suppressed,
             elapsed: walk_started.elapsed(),
         }))
     })
@@ -7906,7 +7913,7 @@ async fn element_bounds_for_visited(
     pid: u32,
     xid: u64,
     scoped_frame: Option<usize>,
-) -> (Vec<(usize, i32, i32, u32, u32)>, bool) {
+) -> (Vec<(usize, i32, i32, u32, u32)>, bool, Option<String>) {
     // Query WINDOW-relative extents and add a deterministic screen offset
     // (X11 window origin + GTK4 CSD inset). This fixes GTK4 — whose
     // CoordType::Screen reports every element at (0,0) — by using the
@@ -7934,17 +7941,29 @@ async fn element_bounds_for_visited(
         && (crate::wayland::hyprland::is_session() || crate::wayland::niri::is_session())
         && (offset.is_none() || scoped_frame.is_none())
     {
-        return (Vec::new(), true);
+        return (
+            Vec::new(),
+            true,
+            Some("the compositor window origin could not be proven; element frames are omitted. Use element_token clicks instead of pixel coordinates.".into()),
+        );
     }
     if offset.is_none()
         && bounded_blocking(move || exact_wayland_origin_required(xid))
             .await
             .unwrap_or(true)
     {
-        return (Vec::new(), true);
+        return (
+            Vec::new(),
+            true,
+            Some("the compositor window origin could not be proven; element frames are omitted. Use element_token clicks instead of pixel coordinates.".into()),
+        );
     }
     if !window_scope_proven_async(pid, xid, scoped_frame).await {
-        return (Vec::new(), true);
+        return (
+            Vec::new(),
+            true,
+            Some("the window scope could not be proven; element frames are omitted. Use element_token clicks instead of pixel coordinates.".into()),
+        );
     }
     let coord = if offset.is_some() {
         CoordType::Window
@@ -8055,7 +8074,13 @@ async fn element_bounds_for_visited(
                 "element bounds: niri window {xid} is {window_size:?} but its accessible frame \
                  is {window_frame_extents:?}; publishing no frames"
             );
-            return (Vec::new(), true);
+            return (
+                Vec::new(),
+                true,
+                Some(
+                    "the toolkit frame includes client-side decoration margins and does not match niri's window size, so shifted element frames were not published. Use element_token clicks; to get frames, set niri's prefer-no-csd window rule for this app and re-read.".into(),
+                ),
+            );
         }
     }
     // Add compositor decorations and the embedded document origin for web
@@ -8131,6 +8156,7 @@ async fn element_bounds_for_visited(
             .map(|(idx, (x, y, w, h))| (idx, x, y, w, h))
             .collect(),
         complete,
+        None,
     )
 }
 

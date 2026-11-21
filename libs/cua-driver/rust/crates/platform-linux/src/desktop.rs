@@ -281,7 +281,6 @@ mod tests {
                     ("XDG_CURRENT_DESKTOP", "KDE"),
                     ("KDE_FULL_SESSION", "true"),
                     ("DISPLAY", ":0"),
-                    ("WAYLAND_DISPLAY", "wayland-0"),
                 ],
                 false,
             ),

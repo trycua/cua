@@ -42,15 +42,10 @@ struct CaptureGeometry {
 struct StreamDelegate {
     sink: Arc<dyn CaptureSink>,
     retired: Arc<AtomicBool>,
-    callback_gate: Arc<Mutex<()>>,
 }
 
 impl SCStreamDelegateTrait for StreamDelegate {
     fn stream_did_become_inactive(&self) {
-        let _callback = self
-            .callback_gate
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if !self.retired.load(Ordering::Acquire) {
             self.sink
                 .on_event(CaptureEvent::Suspended("window became inactive".into()));
@@ -58,10 +53,6 @@ impl SCStreamDelegateTrait for StreamDelegate {
     }
 
     fn did_stop_with_error(&self, error: SCError) {
-        let _callback = self
-            .callback_gate
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if !self.retired.load(Ordering::Acquire) {
             self.sink.on_event(CaptureEvent::Suspended(
                 screen_capture_error_reason(&error).into(),
@@ -72,31 +63,47 @@ impl SCStreamDelegateTrait for StreamDelegate {
 
 struct MacosCaptureLease {
     stream: Arc<SCStream>,
-    retired: Arc<AtomicBool>,
-    callback_gate: Arc<Mutex<()>>,
-    monitor: Mutex<Option<JoinHandle<()>>>,
+    retirement: Retirement,
 }
 
 impl CaptureLease for MacosCaptureLease {
     fn stop(&self) {
-        {
-            let _callback = self
-                .callback_gate
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if self.retired.swap(true, Ordering::AcqRel) {
-                return;
-            }
+        if self.retirement.retire() {
+            let _ = self.stream.stop_capture();
         }
-        if let Some(monitor) = self
+    }
+}
+
+/// Stops a lease's callbacks from reaching its sink. Callbacks hold no lock
+/// while they deliver, so `stop` can come from a thread a callback is waiting
+/// on, or from a callback itself (a closed window tears its session down
+/// from the monitor) (#5376).
+struct Retirement {
+    /// Set first; every callback drops its event once it is.
+    retired: Arc<AtomicBool>,
+    stopped: AtomicBool,
+    monitor: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl Retirement {
+    /// Retires the callbacks and waits for the monitor, unless this is the
+    /// monitor. True on the first call only.
+    fn retire(&self) -> bool {
+        if self.stopped.swap(true, Ordering::AcqRel) {
+            return false;
+        }
+        self.retired.store(true, Ordering::Release);
+        let monitor = self
             .monitor
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
-        {
-            let _ = monitor.join();
+            .take();
+        if let Some(monitor) = monitor {
+            if monitor.thread().id() != std::thread::current().id() {
+                let _ = monitor.join();
+            }
         }
-        let _ = self.stream.stop_capture();
+        true
     }
 }
 
@@ -222,26 +229,20 @@ fn start_inner(
     let frame_interval = screencapturekit::cm::CMTime::new(1, i32::from(config.max_fps));
     let configuration = stream_configuration(initial_geometry, frame_interval);
     let retired = Arc::new(AtomicBool::new(false));
-    let callback_gate = Arc::new(Mutex::new(()));
     let expected_geometry = Arc::new(Mutex::new(initial_geometry));
     let last_timestamp_us = Arc::new(AtomicU64::new(0));
     let delegate = StreamDelegate {
         sink: sink.clone(),
         retired: retired.clone(),
-        callback_gate: callback_gate.clone(),
     };
     let mut stream = SCStream::new_with_delegate(filter, &configuration, delegate);
     let frame_sink = sink.clone();
     let frame_retired = retired.clone();
-    let frame_callback_gate = callback_gate.clone();
     let frame_geometry = expected_geometry.clone();
     let frame_timestamp = last_timestamp_us.clone();
     let frame_encoder = encoder.clone();
     let handler = stream.add_output_handler(
         move |sample: screencapturekit::cm::CMSampleBuffer, output_type| {
-            let _callback = frame_callback_gate
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if frame_retired.load(Ordering::Acquire) || output_type != SCStreamOutputType::Screen {
                 return;
             }
@@ -335,7 +336,6 @@ fn start_inner(
         stream.clone(),
         sink,
         retired.clone(),
-        callback_gate.clone(),
         expected_geometry,
         native_geometry,
         located.title,
@@ -343,9 +343,11 @@ fn start_inner(
     )?;
     Ok(Arc::new(MacosCaptureLease {
         stream,
-        retired,
-        callback_gate,
-        monitor: Mutex::new(Some(monitor)),
+        retirement: Retirement {
+            retired,
+            stopped: AtomicBool::new(false),
+            monitor: Mutex::new(Some(monitor)),
+        },
     }))
 }
 
@@ -358,7 +360,6 @@ fn spawn_monitor(
     stream: Arc<SCStream>,
     sink: Arc<dyn CaptureSink>,
     retired: Arc<AtomicBool>,
-    callback_gate: Arc<Mutex<()>>,
     expected_geometry: Arc<Mutex<CaptureGeometry>>,
     native_geometry: Arc<dyn Fn(u32, u32) + Send + Sync>,
     initial_title: String,
@@ -387,9 +388,6 @@ fn spawn_monitor(
                 let Some(located) = locate(&content, source) else {
                     missing_polls = missing_polls.saturating_add(1);
                     if missing_polls >= MISSING_POLLS_BEFORE_CLOSE {
-                        let _callback = callback_gate
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         if !retired.swap(true, Ordering::AcqRel) {
                             sink.on_event(CaptureEvent::Closed);
                         }
@@ -424,9 +422,6 @@ fn spawn_monitor(
                 if next == current {
                     continue;
                 }
-                let _callback = callback_gate
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if retired.load(Ordering::Acquire) {
                     break;
                 }
@@ -599,6 +594,31 @@ mod tests {
         assert!(ensure_screen_recording(true).is_ok());
         let err = ensure_screen_recording(false).unwrap_err();
         assert_eq!(err.code, ProviderErrorCode::ConsentRequired);
+    }
+
+    /// #5376: a closed window makes the monitor tear its own session down,
+    /// so `stop` runs on the monitor thread and must not wait for itself.
+    #[test]
+    fn the_monitor_can_stop_its_own_lease() {
+        let retirement = Arc::new(Retirement {
+            retired: Arc::new(AtomicBool::new(false)),
+            stopped: AtomicBool::new(false),
+            monitor: Mutex::new(None),
+        });
+        let (start, started) = std::sync::mpsc::channel::<()>();
+        let (done, finished) = std::sync::mpsc::channel();
+        let monitor = std::thread::spawn({
+            let retirement = retirement.clone();
+            move || {
+                started.recv().unwrap();
+                let _ = done.send(retirement.retire());
+            }
+        });
+        *retirement.monitor.lock().unwrap() = Some(monitor);
+        start.send(()).unwrap();
+        assert_eq!(finished.recv_timeout(Duration::from_secs(5)), Ok(true));
+        assert!(retirement.retired.load(Ordering::Acquire));
+        assert!(!retirement.retire(), "a lease stops once");
     }
 
     #[test]

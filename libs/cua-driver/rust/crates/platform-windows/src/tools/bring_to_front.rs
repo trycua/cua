@@ -85,7 +85,7 @@ impl Tool for BringToFrontTool {
                 };
 
                 let target = HWND(hwnd as *mut _);
-                if !unsafe { IsWindow(target) }.as_bool() {
+                if !unsafe { IsWindow(Some(target)) }.as_bool() {
                     return Err(format!("hwnd 0x{hwnd:x} is not a valid window"));
                 }
 
@@ -120,7 +120,7 @@ impl Tool for BringToFrontTool {
                 let raised = unsafe {
                     let a = SetWindowPos(
                         target,
-                        HWND_TOPMOST,
+                        Some(HWND_TOPMOST),
                         0,
                         0,
                         0,
@@ -130,7 +130,7 @@ impl Tool for BringToFrontTool {
                     .is_ok();
                     let b = SetWindowPos(
                         target,
-                        HWND_NOTOPMOST,
+                        Some(HWND_NOTOPMOST),
                         0,
                         0,
                         0,

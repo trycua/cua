@@ -52,8 +52,11 @@ fn should_skip_disclaim(embedded: bool, already_disclaimed: bool, own_responsibl
     embedded || already_disclaimed || own_responsible
 }
 
+/// Relaunch `serve` as its own responsible process and exit with its status.
+/// The child inherits `socket_lock`, so the socket stays claimed across the
+/// relaunch.
 #[cfg(target_os = "macos")]
-pub fn reexec_disclaimed_if_needed() {
+pub fn reexec_disclaimed_if_needed(socket_lock: Option<&std::fs::File>) {
     if should_skip_disclaim(
         cua_driver_core::embedded_mode(),
         already_disclaimed(),
@@ -94,6 +97,9 @@ pub fn reexec_disclaimed_if_needed() {
         .collect();
     argv_ptrs.push(std::ptr::null_mut());
 
+    let inherited_lock = socket_lock
+        .filter(|lock| set_inheritable(lock, true))
+        .map(InheritedLock);
     let env: Vec<CString> = match std::env::vars_os()
         .map(|(key, value)| {
             let mut entry = key.into_vec();
@@ -105,6 +111,13 @@ pub fn reexec_disclaimed_if_needed() {
             "{}=1",
             cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV
         ))))
+        .chain(inherited_lock.as_ref().map(|lock| {
+            CString::new(format!(
+                "{}={}",
+                crate::serve::INHERITED_SOCKET_LOCK_FD_ENV,
+                std::os::fd::AsRawFd::as_raw_fd(lock.0)
+            ))
+        }))
         .collect::<Result<_, _>>()
     {
         Ok(env) => env,
@@ -154,6 +167,7 @@ pub fn reexec_disclaimed_if_needed() {
     unsafe {
         libc::posix_spawnattr_destroy(&mut attr);
     }
+    drop(inherited_lock);
 
     if spawn_result != 0 {
         tracing::debug!("responsibility disclaim skipped: posix_spawn failed: {spawn_result}");
@@ -193,8 +207,36 @@ pub fn reexec_disclaimed_if_needed() {
     std::process::exit(code);
 }
 
+/// A descriptor left open across the disclaimed spawn, closed on `exec`
+/// again once dropped so later children never inherit it.
+#[cfg(target_os = "macos")]
+struct InheritedLock<'a>(&'a std::fs::File);
+
+#[cfg(target_os = "macos")]
+impl Drop for InheritedLock<'_> {
+    fn drop(&mut self) {
+        set_inheritable(self.0, false);
+    }
+}
+
+/// Set whether `file` stays open across `exec`; false if that failed.
+#[cfg(target_os = "macos")]
+fn set_inheritable(file: &std::fs::File, inheritable: bool) -> bool {
+    let fd = std::os::fd::AsRawFd::as_raw_fd(file);
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    if flags < 0 {
+        return false;
+    }
+    let flags = if inheritable {
+        flags & !libc::FD_CLOEXEC
+    } else {
+        flags | libc::FD_CLOEXEC
+    };
+    unsafe { libc::fcntl(fd, libc::F_SETFD, flags) == 0 }
+}
+
 #[cfg(not(target_os = "macos"))]
-pub fn reexec_disclaimed_if_needed() {}
+pub fn reexec_disclaimed_if_needed(_socket_lock: Option<&std::fs::File>) {}
 
 /// The startup warning for a daemon running outside CuaDriver.app, or `None`
 /// when it is embedded or bundled (CUA-1777).

@@ -985,7 +985,8 @@ function makeClient(myGen) {
     .client({ name: "cua-agent-runner" })
     .onRequest(acp.methods.client.session.requestPermission, (ctx) => answerPermission(ctx.params))
     .onNotification(acp.methods.client.session.update, (ctx) => {
-      // History replayed by session/load is already in events.jsonl.
+      // History replayed by session/load (or Hermes's session/resume) is
+      // already in events.jsonl. Drop it before text chunks are buffered.
       if (!replaying && myGen === gen) onUpdate(ctx.params.update);
     });
 }
@@ -1164,12 +1165,12 @@ async function drive(a) {
     };
     let degraded = false;
     if (wantSession && loadSession) {
+      replaying = true;
       try {
         let res;
         if (canResume) {
           res = await requestStartup(acp.methods.agent.session.resume, { sessionId: wantSession, ...request }, "session resume");
         } else {
-          replaying = true;
           res = await requestStartup(acp.methods.agent.session.load, { sessionId: wantSession, ...request }, "session load");
         }
         sessionId = wantSession;

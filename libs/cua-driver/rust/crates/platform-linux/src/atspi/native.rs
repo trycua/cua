@@ -1053,29 +1053,52 @@ const FRAME_MATCH_MARGIN_PX: u64 = 24;
 /// on. Geometry is the available bridge — `Component.GetExtents` in screen
 /// coordinates against the X11 outer geometry the caller already named. This
 /// refuses ties rather than guessing, because callers use the result to decide
-/// which window they are about to act inside.
+/// which window they are about to act inside. The tie rule holds both ways:
+/// a native modal can have a window but no frame, so the frame must not be a
+/// plausible match for another of the process's `windows` either, unless that
+/// window has a frame of its own that fits it decisively better.
 /// An AT-SPI frame ordinal and its screen extents (x, y, width, height).
 type FrameExtents = (usize, (i32, i32, i32, i32));
 
 fn correlate_frame_to_window(
     candidates: &[FrameExtents],
     window: &crate::x11::WindowInfo,
+    windows: &[crate::x11::WindowInfo],
 ) -> Option<usize> {
-    let mut scored: Vec<(u64, usize)> = candidates
+    let mut scored: Vec<(u64, usize, (i32, i32, i32, i32))> = candidates
         .iter()
         .filter_map(|(ordinal, extents)| {
-            frame_geometry_distance(*extents, window).map(|distance| (distance, *ordinal))
+            frame_geometry_distance(*extents, window).map(|distance| (distance, *ordinal, *extents))
         })
         .collect();
-    scored.sort_by_key(|(distance, ordinal)| (*distance, *ordinal));
-    let (best_distance, best_ordinal) = *scored.first()?;
+    scored.sort_by_key(|(distance, ordinal, _)| (*distance, *ordinal));
+    let (best_distance, best_ordinal, best_extents) = *scored.first()?;
     if best_distance > FRAME_MATCH_TOLERANCE_PX {
         return None;
     }
-    if let Some((runner_up, _)) = scored.get(1) {
+    if let Some((runner_up, ..)) = scored.get(1) {
         if runner_up.saturating_sub(best_distance) < FRAME_MATCH_MARGIN_PX {
             return None;
         }
+    }
+    let contested = windows
+        .iter()
+        .filter(|other| other.xid != window.xid)
+        .any(|other| {
+            let Some(distance) = frame_geometry_distance(best_extents, other)
+                .filter(|distance| *distance <= FRAME_MATCH_TOLERANCE_PX)
+            else {
+                return false;
+            };
+            let own_best = candidates
+                .iter()
+                .filter_map(|(_, extents)| frame_geometry_distance(*extents, other))
+                .min()
+                .unwrap_or(distance);
+            distance.saturating_sub(own_best) < FRAME_MATCH_MARGIN_PX
+        });
+    if contested {
+        return None;
     }
     Some(best_ordinal)
 }
@@ -1417,11 +1440,17 @@ async fn resolve_window_frame(
         // the caller's window is the only thing this application could be
         // showing, and no geometry round-trip can make that more certain.
         // GNOME's AT-SPI tree can omit a window the Shell has mapped, so
-        // there the Shell must vouch for it (`lone_top_level_renders`).
-        let proven = !crate::wayland::is_wayland()
-            || bounded_blocking(move || lone_top_level_proves_window(pid, xid))
+        // there the Shell must vouch for it (`lone_top_level_renders`). X11
+        // can too: a native modal of an Electron app has its own window but
+        // no root, so the lone root is then another window's and only
+        // geometry can bind it.
+        let proven = if crate::wayland::is_wayland() {
+            bounded_blocking(move || lone_top_level_proves_window(pid, xid))
                 .await
-                .unwrap_or(false);
+                .unwrap_or(false)
+        } else {
+            x11_app_tree_proves_window(pid, xid)
+        };
         if proven {
             return Some(0);
         }
@@ -1469,7 +1498,12 @@ async fn resolve_window_frame(
             candidates.push((ordinal, extents));
         }
     }
-    let resolved = correlate_frame_to_window(&candidates, &window);
+    // Untitled windows count: an unlisted main window can own the frame.
+    let Some(siblings) = crate::x11::window_inventory(pid) else {
+        dlog!("could not list pid {pid}'s windows; xid {xid} stays application-scoped");
+        return None;
+    };
+    let resolved = correlate_frame_to_window(&candidates, &window, &siblings);
     if resolved.is_none() {
         dlog!(
             "could not correlate xid {xid} to one of pid {pid}'s {} top-level frame(s); \
@@ -7686,6 +7720,25 @@ pub(crate) fn lone_top_level_renders(
     )
 }
 
+/// [`x11_app_tree_is_window`] for window `xid` of `pid`, read from the server.
+fn x11_app_tree_proves_window(pid: u32, xid: u64) -> bool {
+    let pid_windows: Vec<u64> = crate::x11::window_inventory(pid)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|window| window.xid)
+        .collect();
+    x11_app_tree_is_window(xid, &pid_windows, crate::x11::is_override_redirect(xid))
+}
+
+/// Whether the application-wide AT-SPI tree can stand for X11 window `xid`.
+/// A popup (override-redirect) is drawn by its application's tree. A managed
+/// window qualifies only as the one window in the process's inventory, untitled
+/// windows included: with a sibling, or when the inventory missed it, the tree
+/// may be another window's.
+fn x11_app_tree_is_window(xid: u64, pid_windows: &[u64], override_redirect: bool) -> bool {
+    override_redirect || (pid_windows.contains(&xid) && pid_windows.iter().all(|&w| w == xid))
+}
+
 fn lone_top_level_proves_window(pid: u32, xid: u64) -> bool {
     lone_top_level_renders(
         pid,
@@ -7711,10 +7764,14 @@ fn window_bound_element(
     Ok(())
 }
 
-/// The window-scope rule for a walk of window `xid`. X11 and Hyprland keep
-/// their own routes.
+/// The window-scope rule for a walk of window `xid`. Hyprland keeps its own
+/// route. On X11 an uncorrelated walk is the application's, so it stands for
+/// a managed window only when the process has no other managed window.
 fn window_scope_proven(pid: u32, xid: u64, scoped_frame: Option<usize>) -> bool {
-    if !crate::wayland::is_wayland() || crate::wayland::hyprland::is_session() {
+    if !crate::wayland::is_wayland() {
+        return xid == 0 || scoped_frame.is_some() || x11_app_tree_proves_window(pid, xid);
+    }
+    if crate::wayland::hyprland::is_session() {
         return true;
     }
     gnome_window_scope_proven(
@@ -7783,8 +7840,9 @@ async fn gnome_window_bound_element_async(
 /// need a correlated top-level, since an application-wide walk can include
 /// another window of the same process. Elsewhere a native walk's correlated
 /// top-level counts, or else the window-scope rule for an uncorrelated walk:
-/// always on X11 and on compositors without a GNOME Shell, and on GNOME only
-/// when the attested Shell lists exactly `xid` for the PID.
+/// on X11 when the process has no other managed window, always on compositors
+/// without a GNOME Shell, and on GNOME only when the attested Shell lists
+/// exactly `xid` for the PID.
 pub(crate) fn snapshot_binds_window(
     exact_window_ids: bool,
     window_scoped: bool,
@@ -7803,7 +7861,8 @@ pub fn snapshot_binds_window_for(pid: u32, xid: u64, window_scoped: bool, truste
             && (crate::wayland::hyprland::is_session() || crate::wayland::niri::is_session()),
         window_scoped,
         trusted,
-        || window_scope_proven(pid, xid, None),
+        // The X11 property fallback is untrusted but read from `xid` itself.
+        || (window_scoped && !crate::wayland::is_wayland()) || window_scope_proven(pid, xid, None),
     )
 }
 
@@ -8363,11 +8422,11 @@ mod frame_correlation_tests {
             (2, (550, 225, 500, 584)),
         ];
         assert_eq!(
-            correlate_frame_to_window(&candidates, &window(438, 80, 1050, 953)),
+            correlate_frame_to_window(&candidates, &window(438, 80, 1050, 953), &[]),
             Some(1)
         );
         assert_eq!(
-            correlate_frame_to_window(&candidates, &window(550, 225, 500, 584)),
+            correlate_frame_to_window(&candidates, &window(550, 225, 500, 584), &[]),
             Some(2)
         );
     }
@@ -8378,7 +8437,7 @@ mod frame_correlation_tests {
     fn tolerates_decoration_offsets() {
         let candidates = [(0usize, (440, 108, 1050, 925)), (1, (144, 51, 1244, 953))];
         assert_eq!(
-            correlate_frame_to_window(&candidates, &window(438, 80, 1050, 953)),
+            correlate_frame_to_window(&candidates, &window(438, 80, 1050, 953), &[]),
             Some(0)
         );
     }
@@ -8389,7 +8448,7 @@ mod frame_correlation_tests {
     fn refuses_when_two_frames_are_equally_plausible() {
         let candidates = [(0usize, (438, 80, 1050, 953)), (1, (438, 80, 1050, 953))];
         assert_eq!(
-            correlate_frame_to_window(&candidates, &window(438, 80, 1050, 953)),
+            correlate_frame_to_window(&candidates, &window(438, 80, 1050, 953), &[]),
             None
         );
     }
@@ -8398,7 +8457,7 @@ mod frame_correlation_tests {
     fn refuses_when_no_frame_is_close_enough() {
         let candidates = [(0usize, (0, 0, 200, 200))];
         assert_eq!(
-            correlate_frame_to_window(&candidates, &window(438, 80, 1050, 953)),
+            correlate_frame_to_window(&candidates, &window(438, 80, 1050, 953), &[]),
             None
         );
     }
@@ -8406,7 +8465,7 @@ mod frame_correlation_tests {
     #[test]
     fn refuses_when_the_application_publishes_no_frame_extents() {
         assert_eq!(
-            correlate_frame_to_window(&[], &window(438, 80, 1050, 953)),
+            correlate_frame_to_window(&[], &window(438, 80, 1050, 953), &[]),
             None
         );
     }
@@ -8417,8 +8476,50 @@ mod frame_correlation_tests {
     fn ignores_frames_without_usable_extents() {
         let candidates = [(0usize, (0, 0, 0, 0)), (1, (438, 80, 1050, 953))];
         assert_eq!(
-            correlate_frame_to_window(&candidates, &window(438, 80, 1050, 953)),
+            correlate_frame_to_window(&candidates, &window(438, 80, 1050, 953), &[]),
             Some(1)
+        );
+    }
+
+    /// A native modal with an X11 window but no AT-SPI frame (#6936): when
+    /// the main window's frame is a plausible match for both windows, it binds
+    /// to neither, whichever one decoration offsets make it fit better.
+    #[test]
+    fn refuses_a_frame_that_fits_another_window_of_the_process() {
+        let main = WindowInfo {
+            xid: 4241,
+            ..window(438, 80, 1050, 953)
+        };
+        let dialog = window(448, 90, 1030, 933);
+        for frame in [(438, 80, 1050, 953), (440, 108, 1050, 925)] {
+            let candidates = [(0usize, frame)];
+            for target in [&main, &dialog] {
+                assert_eq!(
+                    correlate_frame_to_window(&candidates, target, &[main.clone(), dialog.clone()]),
+                    None
+                );
+            }
+        }
+        // Cascaded windows that each publish a frame still bind one to one.
+        let candidates = [(0usize, (438, 80, 1050, 953)), (1, (448, 90, 1030, 933))];
+        assert_eq!(
+            correlate_frame_to_window(&candidates, &main, &[main.clone(), dialog.clone()]),
+            Some(0)
+        );
+        assert_eq!(
+            correlate_frame_to_window(&candidates, &dialog, &[main.clone(), dialog.clone()]),
+            Some(1)
+        );
+        let candidates = [(0usize, (438, 80, 1050, 953))];
+        // A dialog far from the main window leaves the main window's match.
+        let far_dialog = window(1238, 820, 404, 159);
+        assert_eq!(
+            correlate_frame_to_window(&candidates, &main, &[main.clone(), far_dialog.clone()]),
+            Some(0)
+        );
+        assert_eq!(
+            correlate_frame_to_window(&candidates, &far_dialog, &[main, far_dialog.clone()]),
+            None
         );
     }
 
@@ -8430,7 +8531,7 @@ mod frame_correlation_tests {
         let far_away = i32::try_from(FRAME_MATCH_TOLERANCE_PX).unwrap() + 500;
         let candidates = [(0usize, (far_away, far_away, 1050, 953))];
         assert_eq!(
-            correlate_frame_to_window(&candidates, &window(438, 80, 1050, 953)),
+            correlate_frame_to_window(&candidates, &window(438, 80, 1050, 953), &[]),
             None
         );
     }
@@ -9779,8 +9880,8 @@ mod window_scope_tests {
 mod token_scope_tests {
     use super::{
         gnome_window_scope_proven, is_window_membership_unproven, lone_top_level_renders,
-        snapshot_binds_window, window_element_membership, ELEMENT_OUTSIDE_WINDOW,
-        WINDOW_SCOPE_UNPROVEN,
+        snapshot_binds_window, window_element_membership, x11_app_tree_is_window,
+        ELEMENT_OUTSIDE_WINDOW, WINDOW_SCOPE_UNPROVEN,
     };
 
     // One PID owns Shell windows A and B; `get_window_state` reads B.
@@ -9823,11 +9924,29 @@ mod token_scope_tests {
     }
 
     #[test]
+    fn x11_app_tree_stands_for_a_window_only_without_a_sibling() {
+        const MAIN: u64 = 0x0400_0001;
+        const DIALOG: u64 = 0x0400_0002;
+        const POPUP: u64 = 0x0400_0003;
+        // A native modal beside its main window (#6936): the lone root may be
+        // the main window's, so neither window is the application's tree.
+        assert!(!x11_app_tree_is_window(DIALOG, &[MAIN, DIALOG], false));
+        assert!(!x11_app_tree_is_window(MAIN, &[MAIN, DIALOG], false));
+        // A managed dialog the inventory missed.
+        assert!(!x11_app_tree_is_window(DIALOG, &[MAIN], false));
+        assert!(!x11_app_tree_is_window(DIALOG, &[], false));
+        // The process's only window is the application.
+        assert!(x11_app_tree_is_window(MAIN, &[MAIN], false));
+        // An override-redirect popup is drawn by its application's tree.
+        assert!(x11_app_tree_is_window(POPUP, &[MAIN], true));
+    }
+
+    #[test]
     fn x11_hyprland_and_other_compositors_bind_as_before() {
         for window_scoped in [false, true] {
             for trusted in [false, true] {
-                // X11 and compositors without a GNOME Shell: the uncorrelated
-                // walk rule holds, so the previous `true` stands.
+                // Compositors without a GNOME Shell: the uncorrelated walk
+                // rule holds, so the previous `true` stands.
                 assert!(snapshot_binds_window(false, window_scoped, trusted, || {
                     gnome_window_scope_proven(REQUESTED_B, None, false, || false, || None)
                 }));

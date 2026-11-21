@@ -78,6 +78,16 @@ async fn call<T>(fut: impl std::future::Future<Output = T>) -> Option<T> {
     tokio::time::timeout(budget, fut).await.ok()
 }
 
+/// [`call`] capped at half the remaining budget, for a step that another walk
+/// may own: waiting on it must leave this walk time to walk.
+async fn within_half_budget<T>(fut: impl std::future::Future<Output = T>) -> Option<T> {
+    let budget = remaining_budget().min(CALL_TIMEOUT) / 2;
+    if budget.is_zero() {
+        return None;
+    }
+    tokio::time::timeout(budget, fut).await.ok()
+}
+
 /// Run a *synchronous, blocking* closure (typically a raw X11 round-trip via
 /// `x11rb::RustConnection`, which has no built-in socket timeout) off the
 /// current task and bound how long the caller waits for it.
@@ -1594,9 +1604,9 @@ async fn collect_visited_bounded_opts<'a>(
         resolve_window_frame(conn, pid, xid, &seeds).await
     };
     // Wake the application once, then settle each window once. A concurrent
-    // walk of the same pid or window waits for these, within its own budget,
-    // instead of walking a tree that is still empty.
-    let _ = call(once_per(pid, None).get_or_init(|| async {
+    // walk of the same pid or window waits for these, within half its own
+    // budget, instead of walking a tree that is still empty.
+    let _ = within_half_budget(once_per(pid, None).get_or_init(|| async {
         let _ = call(app.get_attributes()).await;
     }))
     .await;
@@ -1608,7 +1618,7 @@ async fn collect_visited_bounded_opts<'a>(
         },
     };
     // A settle the budget cut short is not cached, so a later walk retries it.
-    let _ = call(
+    let _ = within_half_budget(
         once_per(pid, Some(&root))
             .get_or_try_init(|| settle_woken_chromium_tree(conn, &app, &root)),
     )
@@ -9345,6 +9355,38 @@ mod budget_tests {
             "the second walk ran before the wake settled"
         );
         assert!(!once_per(u32::MAX - 1, None).initialized());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_walk_waiting_on_another_walks_settle_keeps_half_its_budget() {
+        let root = RawObjectRef {
+            name: ":1.9".to_owned(),
+            path: "/frame/1".to_owned(),
+        };
+        let pid = u32::MAX - 4;
+        let owner = once_per(pid, Some(&root));
+        let settling = owner.get_or_try_init(|| async {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            Ok::<(), ()>(())
+        });
+        let waiter = OP_DEADLINE.scope(
+            tokio::time::Instant::now() + Duration::from_millis(400),
+            async {
+                let joined = within_half_budget(
+                    once_per(pid, Some(&root)).get_or_try_init(|| async { Ok::<(), ()>(()) }),
+                )
+                .await;
+                (joined.is_none(), remaining_budget())
+            },
+        );
+        tokio::select! {
+            biased;
+            _ = settling => panic!("the owner's settle finished before the waiter gave up"),
+            (gave_up, left) = waiter => {
+                assert!(gave_up, "the waiter ran its own settle instead of joining the owner's");
+                assert_eq!(left, Duration::from_millis(200));
+            }
+        }
     }
 
     #[tokio::test]

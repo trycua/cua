@@ -29,6 +29,8 @@ const ENCODING_RAW: i32 = 0;
 const ENCODING_DESKTOP_SIZE: i32 = -223;
 const KEYSYM_RETURN: u32 = 0xff0d;
 const KEYSYM_TAB: u32 = 0xff09;
+const MIN_DH_PRIME_BITS: u64 = 1024;
+const MILLER_RABIN_ROUNDS: usize = 16;
 
 /// Credentials for the server. Values are zeroized on drop and never printed.
 #[derive(Default)]
@@ -374,7 +376,10 @@ impl<S: Read + Write> RfbClient<S> {
     /// Type `text` key by key, then press Return.
     /// The keysyms spell out `text`, so they are zeroized like it.
     pub fn type_line(&mut self, text: &str) -> Result<()> {
-        let keysyms = Zeroizing::new(text.chars().map(keysym).collect::<Result<Vec<_>>>()?);
+        let mut keysyms = Zeroizing::new(Vec::with_capacity(text.chars().count()));
+        for c in text.chars() {
+            keysyms.push(keysym(c)?);
+        }
         for &keysym in keysyms.iter().chain(&[KEYSYM_RETURN]) {
             self.key(keysym, true)?;
             self.key(keysym, false)?;
@@ -537,15 +542,18 @@ pub fn ard_response(
     let key_len = prime.len();
     let prime = BigUint::from_bytes_be(prime);
     let server_key = BigUint::from_bytes_be(server_key);
-    // The server's parameters are not authenticated. Refuse values that make
-    // the shared secret predictable: an even or tiny prime, or a generator or
-    // server key of 0, 1 or p-1.
+    // The server's parameters are not authenticated. Require a safe prime
+    // p = 2q + 1 of at least 1024 bits, the smallest ARD group; in such a
+    // group every key other than 0, 1 and p-1 has order q or 2q, so the
+    // shared secret cannot be confined to a few values. macOS 26 sends the
+    // 4096-bit RFC 3526 group with generator 5.
     let one = BigUint::from(1u8);
     let usable = |value: &BigUint| value > &one && value < &(&prime - &one);
-    if prime.bits() < 3
-        || !prime.bit(0)
+    if prime.bits() < MIN_DH_PRIME_BITS
         || !usable(&BigUint::from(generator))
         || !usable(&server_key)
+        || !probably_prime(&prime)?
+        || !probably_prime(&((&prime - &one) >> 1u8))?
     {
         return Err(RfbError::Protocol(
             "the server's Diffie-Hellman parameters are unusable".into(),
@@ -567,6 +575,43 @@ pub fn ard_response(
     }
     out.extend_from_slice(&pad(&public.to_bytes_be(), key_len));
     Ok(out)
+}
+
+/// Miller-Rabin with random bases: a composite passes with probability at
+/// most 4^-MILLER_RABIN_ROUNDS, whoever chose it.
+fn probably_prime(n: &BigUint) -> Result<bool> {
+    let one = BigUint::from(1u8);
+    let two = BigUint::from(2u8);
+    if n < &BigUint::from(4u8) {
+        return Ok(n >= &two);
+    }
+    if !n.bit(0) {
+        return Ok(false);
+    }
+    let n_minus_1 = n - &one;
+    let shift = n_minus_1.trailing_zeros().expect("n is above 1");
+    let d = &n_minus_1 >> shift;
+    let range = n - 3u8;
+    // Extra bytes keep the reduction below close to uniform.
+    let mut bytes = vec![0u8; n.to_bytes_be().len() + 8];
+    let random = ring::rand::SystemRandom::new();
+    'rounds: for _ in 0..MILLER_RABIN_ROUNDS {
+        ring::rand::SecureRandom::fill(&random, &mut bytes)
+            .map_err(|_| RfbError::Io("no system randomness for the key exchange".into()))?;
+        let base = BigUint::from_bytes_be(&bytes) % &range + &two;
+        let mut x = base.modpow(&d, n);
+        if x == one || x == n_minus_1 {
+            continue;
+        }
+        for _ in 1..shift {
+            x = x.modpow(&two, n);
+            if x == n_minus_1 {
+                continue 'rounds;
+            }
+        }
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 fn pad(bytes: &[u8], len: usize) -> Vec<u8> {
@@ -685,6 +730,33 @@ mod tests {
             ard_response(2, &even, &two, &private, "admin", "pw"),
             unusable
         );
+        // Odd but composite: p - 2.
+        let mut composite = prime.clone();
+        composite[127] -= 2;
+        assert_eq!(
+            ard_response(2, &composite, &two, &private, "admin", "pw"),
+            unusable
+        );
+        // 23 = 2 * 11 + 1 is a safe prime, but far too small.
+        assert_eq!(
+            ard_response(5, &[23], &[2], &private, "admin", "pw"),
+            unusable
+        );
+    }
+
+    #[test]
+    fn probably_prime_separates_primes_from_composites() {
+        for n in [2u32, 3, 5, 7, 11, 13, 23, 47, 65_537] {
+            assert!(probably_prime(&BigUint::from(n)).unwrap(), "{n}");
+        }
+        // 561, 1105 and 1729 are Carmichael numbers.
+        for n in [0u32, 1, 4, 9, 15, 21, 25, 561, 1105, 1729] {
+            assert!(!probably_prime(&BigUint::from(n)).unwrap(), "{n}");
+        }
+        let p = BigUint::from_bytes_be(&unhex(OAKLEY_GROUP_2));
+        assert!(probably_prime(&p).unwrap());
+        assert!(probably_prime(&((&p - 1u8) >> 1u8)).unwrap());
+        assert!(!probably_prime(&(&p + 2u8)).unwrap());
     }
 
     #[test]

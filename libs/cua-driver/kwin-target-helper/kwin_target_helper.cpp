@@ -335,11 +335,13 @@ public slots:
             return toJson(reply);
         }
         const quint64 id = m_nextArm++;
+        // Once this gate is disarmed, its watcher's late signal must leave a
+        // newer gate and that gate's watcher alone.
         auto owner = watchCaller([this, id] {
             if (gate.arm && gate.arm->id == id) {
                 gate.arm.reset();
+                dropOwner();
             }
-            dropOwner();
         });
         if (!owner) {
             reply["error"] = QStringLiteral("the caller left before the gate was armed");

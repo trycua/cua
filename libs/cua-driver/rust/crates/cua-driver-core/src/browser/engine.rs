@@ -88,7 +88,8 @@ const ENDPOINT_REPROOF_TIMEOUT: std::time::Duration = std::time::Duration::from_
 /// Bound for one existing-profile reconnect, from waiting on another caller's
 /// reconnect through the last redial attempt.
 const EXISTING_PROFILE_RECONNECT_BOUND: std::time::Duration = std::time::Duration::from_secs(32);
-/// How long ending a grant waits for remote debugging to be turned back off.
+/// How long ending a grant waits for its socket release and for remote
+/// debugging to be turned back off.
 const SETUP_CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 /// Bound for closing the browser prompt a timed-out reconnect may have left.
 const ABANDONED_CONSENT_DISMISS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -940,8 +941,8 @@ impl BrowserEngine {
     /// revoke the consent. This runs as its own task, so a caller cancelled
     /// partway (a reconnect that ran out of time) cannot strand the socket
     /// or the consent. Turning remote debugging off drives browser UI and
-    /// can stall, so it runs on a blocking thread, the caller waits at most
-    /// `SETUP_CLEANUP_TIMEOUT` for it. A failure, however late, is queued for
+    /// can stall, so it runs on a blocking thread. The caller waits at most
+    /// `SETUP_CLEANUP_TIMEOUT` for the release and the cleanup together. A failure, however late, is queued for
     /// the session-end retry, or retried at once if the session already ended.
     /// The caller has already counted the cleanup as running
     /// (`SetupCleanups::start`) while removing the grant.
@@ -988,10 +989,15 @@ impl BrowserEngine {
                 approval_broker.revoke(protected).await;
             }
         });
-        let _ = release.await;
-        if let Some(cleanup) = cleanup {
-            let _ = tokio::time::timeout(SETUP_CLEANUP_TIMEOUT, cleanup).await;
-        }
+        // Releasing the socket takes the pool lock, which a slow dial can
+        // hold, so it shares the bound. Both tasks finish on their own.
+        let _ = tokio::time::timeout(SETUP_CLEANUP_TIMEOUT, async {
+            let _ = release.await;
+            if let Some(cleanup) = cleanup {
+                let _ = cleanup.await;
+            }
+        })
+        .await;
     }
 
     pub(crate) async fn revoke_existing_profile_grant(
@@ -1186,11 +1192,11 @@ impl BrowserEngine {
             let attempt = super::grant::MAX_RECONNECT_ATTEMPTS
                 .saturating_sub(grant.reconnect_attempts_remaining)
                 .saturating_add(1);
-            dialed.store(true, Ordering::SeqCst);
             let mut reconnect = Box::pin(self.pool.reconnect_existing(
                 &endpoint.ws_url,
                 old_generation,
                 new_generation,
+                dialed,
             ));
             let reconnected = tokio::select! {
                 result = &mut reconnect => result,
@@ -1211,10 +1217,16 @@ impl BrowserEngine {
                             drop(reconnect);
                             // The browser keeps the prompt of the connection
                             // just abandoned; approving it would attach nothing.
-                            let _ = self
-                                .platform
-                                .dismiss_abandoned_existing_profile_consent(pid, grant.window_id)
-                                .await;
+                            // Without a dial of ours, the prompt is not ours.
+                            if dialed.load(Ordering::SeqCst) {
+                                let _ = self
+                                    .platform
+                                    .dismiss_abandoned_existing_profile_consent(
+                                        pid,
+                                        grant.window_id,
+                                    )
+                                    .await;
+                            }
                             if error.code == BrowserRefusalCode::BrowserConsentRevoked {
                                 self.revoke_existing_profile_grant(session, transport_session, pid)
                                     .await;

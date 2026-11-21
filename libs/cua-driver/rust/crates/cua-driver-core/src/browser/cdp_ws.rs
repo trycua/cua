@@ -911,11 +911,13 @@ impl CdpPool {
     /// session already re-established a live shared socket, join it without
     /// dialing; otherwise open exactly one replacement socket (which the
     /// browser treats as a new connection and may ask the person to approve).
+    /// `dialed` is set when that dial starts, and never for a join.
     pub async fn reconnect_existing(
         &self,
         ws_url: &str,
         old_generation: u64,
         new_generation: u64,
+        dialed: &AtomicBool,
     ) -> anyhow::Result<Arc<CdpConnection>> {
         let _dial = self.inner.dial_gate.lock().await;
         {
@@ -935,6 +937,7 @@ impl CdpPool {
 
         // See claim_existing: never hold the entry mutex across a dial that
         // can wait for browser-owned consent UI.
+        dialed.store(true, Ordering::SeqCst);
         let conn = Arc::new(CdpConnection::connect(ws_url).await?);
         conn.restrict_to_existing_profile();
         let mut conns = self.inner.conns.lock().await;
@@ -1354,15 +1357,50 @@ mod tests {
         pool.claim_existing(&url, 2).await.unwrap();
         dead.demux.close();
 
-        let reopened = pool.reconnect_existing(&url, 1, 3).await.unwrap();
-        let joined = pool.reconnect_existing(&url, 2, 4).await.unwrap();
+        let (reopen_dialed, join_dialed) = (AtomicBool::new(false), AtomicBool::new(false));
+        let reopened = pool
+            .reconnect_existing(&url, 1, 3, &reopen_dialed)
+            .await
+            .unwrap();
+        let joined = pool
+            .reconnect_existing(&url, 2, 4, &join_dialed)
+            .await
+            .unwrap();
         assert!(Arc::ptr_eq(&reopened, &joined));
+        assert!(reopen_dialed.load(Ordering::SeqCst));
+        assert!(
+            !join_dialed.load(Ordering::SeqCst),
+            "joining a reopened socket raises no prompt of its own"
+        );
         assert_eq!(
             dials.load(Ordering::SeqCst),
             2,
             "one reconnect dial for both sessions"
         );
         assert_eq!(pool.shared_socket_holders(&url).await, Some(2));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_reconnect_waiting_for_the_dial_gate_has_not_dialed() {
+        let (url, dials, server) = counting_browser().await;
+        let pool = CdpPool::new();
+        let dead = pool.claim_existing(&url, 1).await.unwrap();
+        dead.demux.close();
+
+        // Another caller's dial holds the gate and may be showing its prompt.
+        let gate = pool.inner.dial_gate.lock().await;
+        let dialed = AtomicBool::new(false);
+        let mut reconnect = Box::pin(pool.reconnect_existing(&url, 1, 2, &dialed));
+        tokio::select! {
+            _ = &mut reconnect => panic!("reconnect must wait for the dial gate"),
+            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+        }
+        assert!(!dialed.load(Ordering::SeqCst));
+        drop(gate);
+        reconnect.await.unwrap();
+        assert!(dialed.load(Ordering::SeqCst));
+        assert_eq!(dials.load(Ordering::SeqCst), 2);
         server.abort();
     }
 
@@ -1464,7 +1502,8 @@ mod tests {
         let claimed = pool.claim_existing(&url, 1).await.unwrap();
         claimed.demux.close();
 
-        let mut reconnect = Box::pin(pool.reconnect_existing(&url, 1, 2));
+        let dialed = AtomicBool::new(false);
+        let mut reconnect = Box::pin(pool.reconnect_existing(&url, 1, 2, &dialed));
         tokio::select! {
             _ = &mut reconnect => panic!("reconnect unexpectedly completed"),
             _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}

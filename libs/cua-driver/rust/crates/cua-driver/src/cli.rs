@@ -1719,25 +1719,19 @@ fn launch_daemon_with_state_and_wait(
         && restart_managed_daemon_if_present(&executable);
     if !managed {
         let arguments = daemon_process_arguments(socket_path, state, experimental_history);
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt as _;
-            use std::process::{Command as Cmd, Stdio};
-
-            let mut command = Cmd::new(&executable);
-            command
-                .args(&arguments)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null());
-            command.process_group(0);
-            command.spawn().map_err(|error| LaunchDaemonError {
+        let mut command = std::process::Command::new(&executable);
+        command
+            .args(&arguments)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        cua_driver_core::process::ManagedChild::builder()
+            .detached()
+            .spawn(&mut command)
+            .map_err(|error| LaunchDaemonError {
                 kind: LaunchDaemonErrorKind::Failed,
                 message: format!("failed to launch {} serve: {error}", executable.display()),
             })?;
-        }
-        #[cfg(target_os = "windows")]
-        spawn_detached_windows_daemon(&executable, &arguments)?;
     }
 
     if wait_for_daemon_listening(socket_path, timeout_secs) {
@@ -1747,104 +1741,6 @@ fn launch_daemon_with_state_and_wait(
         kind: LaunchDaemonErrorKind::Timeout,
         message: format!("daemon did not appear on {socket_path} within {timeout_secs}s"),
     })
-}
-
-#[cfg(target_os = "windows")]
-fn spawn_detached_windows_daemon(
-    executable: &std::path::Path,
-    arguments: &[String],
-) -> Result<(), LaunchDaemonError> {
-    use std::os::windows::ffi::OsStrExt as _;
-    use windows::core::{PCWSTR, PWSTR};
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Threading::{
-        CreateProcessW, CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS, PROCESS_INFORMATION,
-        STARTUPINFOW,
-    };
-
-    let executable_wide = executable
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let mut command_line = windows_command_line(executable, arguments);
-    let startup = STARTUPINFOW {
-        cb: std::mem::size_of::<STARTUPINFOW>() as u32,
-        ..Default::default()
-    };
-    let mut process = PROCESS_INFORMATION::default();
-    // Rust's Command::output gives this short-lived CLI inheritable capture
-    // handles. A normal Command::spawn can leak those unrelated handles into
-    // the long-lived daemon, so the caller never observes EOF. CreateProcess
-    // with handle inheritance disabled is the Windows process boundary here.
-    unsafe {
-        CreateProcessW(
-            PCWSTR(executable_wide.as_ptr()),
-            Some(PWSTR(command_line.as_mut_ptr())),
-            None,
-            None,
-            false,
-            CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS,
-            None,
-            PCWSTR::null(),
-            &startup,
-            &mut process,
-        )
-    }
-    .map_err(|error| LaunchDaemonError {
-        kind: LaunchDaemonErrorKind::Failed,
-        message: format!("failed to launch {} serve: {error}", executable.display()),
-    })?;
-    let _ = unsafe { CloseHandle(process.hThread) };
-    let _ = unsafe { CloseHandle(process.hProcess) };
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-fn windows_command_line(executable: &std::path::Path, arguments: &[String]) -> Vec<u16> {
-    use std::os::windows::ffi::OsStrExt as _;
-
-    let mut command_line = Vec::new();
-    for argument in
-        std::iter::once(executable.as_os_str()).chain(arguments.iter().map(std::ffi::OsStr::new))
-    {
-        if !command_line.is_empty() {
-            command_line.push(' ' as u16);
-        }
-        append_windows_argument(&mut command_line, argument.encode_wide());
-    }
-    command_line.push(0);
-    command_line
-}
-
-#[cfg(target_os = "windows")]
-fn append_windows_argument(command_line: &mut Vec<u16>, argument: impl IntoIterator<Item = u16>) {
-    let argument = argument.into_iter().collect::<Vec<_>>();
-    let quote = argument.is_empty()
-        || argument
-            .iter()
-            .any(|value| matches!(*value, 0x20 | 0x09 | 0x22));
-    if !quote {
-        command_line.extend(argument);
-        return;
-    }
-    command_line.push('"' as u16);
-    let mut backslashes = 0;
-    for value in argument {
-        if value == '\\' as u16 {
-            backslashes += 1;
-        } else if value == '"' as u16 {
-            command_line.extend(std::iter::repeat_n('\\' as u16, backslashes * 2 + 1));
-            command_line.push(value);
-            backslashes = 0;
-        } else {
-            command_line.extend(std::iter::repeat_n('\\' as u16, backslashes));
-            command_line.push(value);
-            backslashes = 0;
-        }
-    }
-    command_line.extend(std::iter::repeat_n('\\' as u16, backslashes * 2));
-    command_line.push('"' as u16);
 }
 
 #[cfg(not(target_os = "macos"))]

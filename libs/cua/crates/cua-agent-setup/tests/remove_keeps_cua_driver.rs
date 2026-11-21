@@ -13,6 +13,8 @@
 
 mod common;
 
+use common::JoinRel;
+
 use cua_agent_setup::{
     AgentSetup, Change, CuaChannel, HostEnv, KEPT_CUA_DRIVER, McpServer, Outcome, Parts,
     RemoveOptions, Target, hash_dir, is_cua_driver_name,
@@ -479,7 +481,7 @@ fn a_dry_run_on_a_clean_home_has_nothing_to_remove() {
         .unwrap();
     assert!(out.iter().all(|o| o.change == Change::Skipped), "{out:#?}");
     assert_eq!(h.snapshot(), before);
-    assert!(!Path::new(&h.path.join(".cua/agent-setup.json")).exists());
+    assert!(!Path::new(&h.path.rel(".cua/agent-setup.json")).exists());
 }
 
 /// A dry run works the edit out as a real run does: a managed entry the format

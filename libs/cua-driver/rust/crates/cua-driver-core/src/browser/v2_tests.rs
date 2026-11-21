@@ -137,6 +137,8 @@ pub(super) struct FixtureState {
     /// dialog it has not yet announced).
     page_enable_hangs: bool,
     dom_click_changes_readback: bool,
+    /// DOM mutations the synthetic click sequence reports outside its target.
+    dom_click_page_mutations: u64,
     /// A trusted `mouseReleased` changes the target's semantic readback.
     trusted_click_changes_readback: bool,
     dom_click_readback_available: bool,
@@ -205,6 +207,7 @@ impl Default for FixtureState {
             tab_visible: true,
             select_outcome: Value::Null,
             dom_click_changes_readback: true,
+            dom_click_page_mutations: 0,
             trusted_click_changes_readback: false,
             dom_click_readback_available: true,
             resolve_node_fails: false,
@@ -994,7 +997,7 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 let declaration = call.params["functionDeclaration"]
                     .as_str()
                     .unwrap_or_default();
-                if st.click_opens_dialog && declaration.contains("const el = this;") {
+                if st.click_opens_dialog && declaration.contains("'pointerdown'") {
                     let events = st
                         .page_sessions
                         .iter()
@@ -1010,6 +1013,13 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                         })
                         .collect();
                     return MockReply::hang().with_events(events);
+                }
+                if declaration.contains("'pointerdown'") {
+                    return MockReply::ok(json!({
+                        "result": {
+                            "value": { "pageMutations": st.dom_click_page_mutations, "compat": true }
+                        }
+                    }));
                 }
                 MockReply::ok(json!({ "result": { "value": true } }))
             }
@@ -4124,11 +4134,36 @@ async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable
     assert!(public["escalation"].is_null(), "{public}");
     assert!(public.get("status").is_none(), "{public}");
     let dispatches = recorded_calls(&f, "Runtime.callFunctionOn");
-    let click_sequence = dispatches
+    let sequences: Vec<&str> = dispatches
         .iter()
         .filter_map(|(_, params)| params["functionDeclaration"].as_str())
-        .find(|declaration| declaration.contains("'pointerdown'"))
-        .expect("dom_event click dispatches a pointer sequence, not a bare click()");
+        .filter(|declaration| declaration.contains("dispatchEvent"))
+        .collect();
+    // Hover, press and release go out in their own calls, so the microtasks
+    // hover and focus handlers queue settle outside the counted mutations.
+    assert_eq!(sequences.len(), 3, "{sequences:?}");
+    assert!(sequences[0].contains("'pointermove'"), "{sequences:?}");
+    assert!(!sequences[0].contains("'pointerdown'"), "{sequences:?}");
+    assert!(sequences[1].contains("'mousedown'"), "{sequences:?}");
+    assert!(!sequences[1].contains("'pointerup'"), "{sequences:?}");
+    assert!(!sequences[2].contains("'pointerdown'"), "{sequences:?}");
+    // The hover call hit-tests afresh and keeps its point and descendant on
+    // the node, so a handler that re-renders between calls cannot move the
+    // press or the click onto another node. The release call clears it.
+    let pointer = "Symbol.for('cua.domEventPointer')";
+    assert!(
+        sequences[0].starts_with(&format!("function() {{ delete this[{pointer}];")),
+        "{sequences:?}"
+    );
+    assert!(
+        sequences.iter().all(|s| s.contains(pointer)),
+        "{sequences:?}"
+    );
+    assert!(
+        sequences[2].contains("delete el[pointerKey]"),
+        "{sequences:?}"
+    );
+    let click_sequence = sequences.join("\n");
     // Apps that open rows from pointer/mouse down+up ignore a bare click(),
     // so the synthetic route must replay the whole primary-button sequence
     // at the element's center, in order.
@@ -4197,6 +4232,72 @@ async fn dom_event_click_remains_unverifiable_when_only_focus_changes() {
         public["escalation"]["reason"], "effect_unconfirmed",
         "{public}"
     );
+}
+
+#[tokio::test]
+async fn dom_event_click_confirms_when_its_handlers_change_the_page() {
+    // A button that reveals fields elsewhere keeps its own state, so only the
+    // page mutations its handlers caused can confirm the click (#5253).
+    let f = fixture_with(|state| {
+        state.dom_click_changes_readback = false;
+        state.dom_click_page_mutations = 3;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": main_ref,
+            "input_route": "dom_event",
+            "session": SESSION,
+        }))
+        .await;
+
+    assert!(result.content.iter().any(|content| matches!(
+        content,
+        Content::Text { text, .. }
+            if text.contains("its own handlers changed the page outside the target")
+    )));
+    let public = result
+        .action_record
+        .as_ref()
+        .expect("typed browser click action record")
+        .public_result()
+        .expect("public browser click result");
+    let public = serde_json::to_value(public).expect("serialize public result");
+    assert_eq!(public["effect"], "confirmed", "{public}");
+    assert_eq!(public["evidence"][0]["kind"], "value_readback", "{public}");
+    assert!(public["escalation"].is_null(), "{public}");
+    let click = recorded_calls(&f, "Runtime.callFunctionOn")
+        .into_iter()
+        .map(|(_, params)| params)
+        .find(|params| {
+            params["functionDeclaration"]
+                .as_str()
+                .is_some_and(|declaration| declaration.contains("'pointerdown'"))
+        })
+        .expect("press sequence recorded");
+    assert_eq!(click["awaitPromise"], true, "{click}");
+    assert_eq!(click["returnByValue"], true, "{click}");
+    let release = recorded_calls(&f, "Runtime.callFunctionOn")
+        .into_iter()
+        .map(|(_, params)| params)
+        .find(|params| {
+            params["functionDeclaration"]
+                .as_str()
+                .is_some_and(|declaration| declaration.contains("'pointerup'"))
+        })
+        .expect("release sequence recorded");
+    assert_eq!(
+        release["arguments"],
+        json!([{ "value": true }]),
+        "{release}"
+    );
+    assert_eq!(release["awaitPromise"], true, "{release}");
 }
 
 #[tokio::test]
@@ -4895,7 +4996,7 @@ async fn dom_event_click_returns_when_its_handler_opens_a_dialog() {
                 m == "Runtime.callFunctionOn"
                     && p["functionDeclaration"]
                         .as_str()
-                        .is_some_and(|d| d.contains("const el = this;"))
+                        .is_some_and(|d| d.contains("'pointerdown'"))
             })
             .expect("click recorded");
         assert!(enable_at < click_at, "Page.enable must precede the click");
@@ -4974,7 +5075,7 @@ async fn dom_event_click_refuses_while_a_dialog_is_already_open() {
         .filter(|(_, p)| {
             p["functionDeclaration"]
                 .as_str()
-                .is_some_and(|d| d.contains("const el = this;"))
+                .is_some_and(|d| d.contains("'pointerdown'"))
         })
         .count();
     assert_eq!(

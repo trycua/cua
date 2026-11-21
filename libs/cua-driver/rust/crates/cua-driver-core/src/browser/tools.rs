@@ -88,6 +88,8 @@ const DOM_CLICK_READBACK_INTERVAL: Duration = Duration::from_millis(25);
 struct DomClickObservation {
     effect: ActionEffect,
     readback_available: bool,
+    /// The click's own handlers changed the page outside the target.
+    page_changed: bool,
 }
 
 async fn read_dom_click_state(
@@ -132,6 +134,7 @@ async fn observe_dom_click(
         return DomClickObservation {
             effect: effect_from_value_readback(false, false, false),
             readback_available: false,
+            page_changed: false,
         };
     };
     let started = Instant::now();
@@ -140,6 +143,7 @@ async fn observe_dom_click(
             return DomClickObservation {
                 effect: ActionEffect::Unverifiable,
                 readback_available: true,
+                page_changed: false,
             };
         }
         // The window only decides whether to start another read; each read
@@ -153,12 +157,14 @@ async fn observe_dom_click(
                 return DomClickObservation {
                     effect: effect_from_value_readback(true, true, true),
                     readback_available: true,
+                    page_changed: false,
                 };
             }
         } else {
             return DomClickObservation {
                 effect: effect_from_value_readback(false, false, false),
                 readback_available: false,
+                page_changed: false,
             };
         }
         tokio::time::sleep(DOM_CLICK_READBACK_INTERVAL).await;
@@ -179,7 +185,9 @@ fn click_readback_action_record(
     if observation.readback_available {
         builder = builder.evidence(ActionEvidence {
             kind: EvidenceKind::BrowserReadback,
-            detail: if observation.effect == ActionEffect::Confirmed {
+            detail: if observation.page_changed {
+                "the click's own handlers changed the page outside the target".to_owned()
+            } else if observation.effect == ActionEffect::Confirmed {
                 "bounded semantic target state changed".to_owned()
             } else {
                 "bounded semantic target state remained unchanged".to_owned()
@@ -1378,8 +1386,9 @@ impl BrowserClickTool {
                         "description": "\"trusted\" (default): Input.dispatchMouseEvent. \
                             It refuses rather than foregrounding a standalone browser. \
                             \"dom_event\": synthetic full-background DOM click, only \
-                            when explicitly requested. Dispatch does not prove the \
-                            control activated; refresh page state and verify the \
+                            when explicitly requested. Its effect is confirmed when the \
+                            target's own state changes or the click's handlers change \
+                            the page; otherwise refresh page state and verify the \
                             expected postcondition."
                     },
                 },
@@ -1620,21 +1629,80 @@ impl Tool for BrowserClickTool {
             }
             let before =
                 read_dom_click_state(conn, cdp, &object_id, DOM_CLICK_BASELINE_DEADLINE).await;
-            let click = conn.call(
+            let hover = conn.call(
                 Some(cdp),
                 "Runtime.callFunctionOn",
                 json!({
                     "objectId": object_id,
-                    "functionDeclaration": DOM_EVENT_CLICK_SEQUENCE,
+                    "functionDeclaration": DOM_EVENT_HOVER_SEQUENCE,
                 }),
             );
-            let outcome = call_until_dialog(conn, cdp_target_id, click)
-                .await
-                .unwrap_or(Ok(json!({})));
+            let page_mutations = |reply: &Value| {
+                reply
+                    .pointer("/result/value/pageMutations")
+                    .and_then(Value::as_u64)
+            };
+            let outcome = match call_until_dialog(conn, cdp_target_id, hover).await {
+                Ok(Ok(_)) => {
+                    let press = conn.call(
+                        Some(cdp),
+                        "Runtime.callFunctionOn",
+                        json!({
+                            "objectId": object_id,
+                            "functionDeclaration": DOM_EVENT_PRESS_SEQUENCE,
+                            "awaitPromise": true,
+                            "returnByValue": true,
+                        }),
+                    );
+                    match call_until_dialog(conn, cdp_target_id, press).await {
+                        Ok(Ok(pressed)) => {
+                            let compat = pressed
+                                .pointer("/result/value/compat")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(true);
+                            let release = conn.call(
+                                Some(cdp),
+                                "Runtime.callFunctionOn",
+                                json!({
+                                    "objectId": object_id,
+                                    "functionDeclaration": DOM_EVENT_RELEASE_SEQUENCE,
+                                    "arguments": [{ "value": compat }],
+                                    "awaitPromise": true,
+                                    "returnByValue": true,
+                                }),
+                            );
+                            match call_until_dialog(conn, cdp_target_id, release).await {
+                                Ok(Ok(released)) => Ok(page_mutations(&pressed).unwrap_or(0)
+                                    + page_mutations(&released).unwrap_or(0)),
+                                Ok(Err(error)) => Err(error),
+                                Err(_) => Ok(0),
+                            }
+                        }
+                        Ok(Err(error)) => Err(error),
+                        Err(_) => Ok(0),
+                    }
+                }
+                Ok(Err(error)) => Err(error),
+                Err(_) => Ok(0),
+            };
             return match (outcome, conn.dialog_state(cdp_target_id)) {
-                (Ok(_), None) => {
-                    let observation = observe_dom_click(conn, cdp, &object_id, before).await;
+                (Ok(count), None) => {
+                    let page_changed = count > 0;
+                    let observation = if page_changed {
+                        DomClickObservation {
+                            effect: ActionEffect::Confirmed,
+                            readback_available: true,
+                            page_changed,
+                        }
+                    } else {
+                        observe_dom_click(conn, cdp, &object_id, before).await
+                    };
                     let text = match observation.effect {
+                        ActionEffect::Confirmed if observation.page_changed => format!(
+                            "dispatched synthetic DOM click on {} in {tab_id}; its own handlers \
+                             changed the page outside the target",
+                            ext_ref.as_deref().unwrap_or("?")
+                        ),
                         ActionEffect::Confirmed => format!(
                             "dispatched synthetic DOM click on {} in {tab_id}; bounded semantic \
                              readback confirmed a target-state change",
@@ -1851,6 +1919,7 @@ impl Tool for BrowserClickTool {
                 None => DomClickObservation {
                     effect: effect_from_value_readback(false, false, false),
                     readback_available: false,
+                    page_changed: false,
                 },
             };
             let text = match observation.effect {
@@ -1942,15 +2011,39 @@ fn dialog_block(dialog: &super::cdp_ws::CdpDialogState) -> Value {
 /// a real click, `preventDefault()` on `pointerdown` suppresses the
 /// compatibility mouse events, and on `mousedown` suppresses the focus move.
 /// The events stay untrusted (`isTrusted === false`).
-const DOM_EVENT_CLICK_SEQUENCE: &str = "function() { \
-    const el = this; \
+///
+/// The sequence goes out in three calls, all at the point and on the
+/// descendant the hover call hit-tested, which it keeps on the node until the
+/// release call. Hover and move go first, in [`DOM_EVENT_HOVER_SEQUENCE`]. [`DOM_EVENT_PRESS_SEQUENCE`] sends
+/// `pointerdown` and `mousedown`, counts their handlers' page mutations, then
+/// moves focus. [`DOM_EVENT_RELEASE_SEQUENCE`] sends `pointerup`, `mouseup`
+/// and `click`, and counts theirs. The renderer runs every microtask a call's
+/// handlers queue before it answers, so hover and focus handlers, however deep
+/// their promise chains, settle outside both counts.
+///
+/// Each count is the DOM mutations outside the node's own subtree and its
+/// ancestors' attributes, across shadow roots to their hosts, from the call's
+/// first event until the microtasks its handlers queued ran. No other task can
+/// run in that span, so those mutations are the handlers' own, for example a
+/// button that reveals fields elsewhere without changing its own state. Each
+/// call waits a bounded 256 microtask turns, not for a later task: a task
+/// boundary would let unrelated timers and network callbacks change the page
+/// inside the count. A handler whose change comes later than that leaves the
+/// click `unverifiable`, never falsely `confirmed`.
+macro_rules! dom_event_pointer_prelude {
+    () => {
+        "const el = this; \
     const doc = el.ownerDocument; \
     const view = doc.defaultView; \
-    const r = el.getBoundingClientRect(); \
-    const x = r.left + r.width / 2, y = r.top + r.height / 2; \
     const root = el.getRootNode(); \
-    const hit = ('elementFromPoint' in root) ? root.elementFromPoint(x, y) : null; \
-    const target = (hit && el.contains(hit)) ? hit : el; \
+    const pointerKey = Symbol.for('cua.domEventPointer'); \
+    const { target, x, y } = el[pointerKey] || (() => { \
+        const r = el.getBoundingClientRect(); \
+        const x = r.left + r.width / 2, y = r.top + r.height / 2; \
+        const hit = ('elementFromPoint' in root) ? root.elementFromPoint(x, y) : null; \
+        return { target: (hit && el.contains(hit)) ? hit : el, x, y }; \
+    })(); \
+    el[pointerKey] = { target, x, y }; \
     const sx = x + (view.screenX || 0), sy = y + (view.screenY || 0); \
     const base = { bubbles: true, cancelable: true, composed: true, view, \
         clientX: x, clientY: y, screenX: sx, screenY: sy, button: 0 }; \
@@ -1958,20 +2051,63 @@ const DOM_EVENT_CLICK_SEQUENCE: &str = "function() { \
         { ...base, buttons, pointerId: 1, pointerType: 'mouse', isPrimary: true, \
           width: 1, height: 1, pressure: buttons ? 0.5 : 0, ...extra })); \
     const M = (type, buttons, extra) => target.dispatchEvent(new view.MouseEvent(type, \
-        { ...base, buttons, detail: 0, ...extra })); \
-    P('pointerover', 0); P('pointerenter', 0, { bubbles: false, cancelable: false }); \
+        { ...base, buttons, detail: 0, ...extra })); "
+    };
+}
+
+const DOM_EVENT_HOVER_SEQUENCE: &str = concat!(
+    "function() { delete this[Symbol.for('cua.domEventPointer')]; ",
+    dom_event_pointer_prelude!(),
+    "P('pointerover', 0); P('pointerenter', 0, { bubbles: false, cancelable: false }); \
     M('mouseover', 0); M('mouseenter', 0, { bubbles: false, cancelable: false }); \
     P('pointermove', 0); M('mousemove', 0); \
-    const compat = P('pointerdown', 1); \
-    if (compat && M('mousedown', 1, { detail: 1 })) { \
-        const focusable = target.closest('a[href],button,input,select,textarea,summary,[tabindex],[contenteditable=\"\"],[contenteditable=\"true\"]'); \
-        if (focusable && typeof focusable.focus === 'function') focusable.focus({ preventScroll: true }); \
-    } \
-    P('pointerup', 0); \
+    return true; \
+}"
+);
+
+macro_rules! dom_event_mutation_counter {
+    () => {
+        "const ancestors = new Set(); \
+    for (let node = el; node; node = node.parentNode || node.host) ancestors.add(node); \
+    const records = []; \
+    const observer = new view.MutationObserver(batch => { records.push(...batch); }); \
+    for (const scope of new Set([doc, root])) observer.observe(scope, \
+        { subtree: true, childList: true, attributes: true, characterData: true }); \
+    const settle = async () => { \
+        for (let turn = 0; turn < 256; turn++) await null; \
+        records.push(...observer.takeRecords()); \
+        observer.disconnect(); \
+        return records.filter(m => !el.contains(m.target) \
+            && !(m.type === 'attributes' && ancestors.has(m.target))).length; \
+    }; "
+    };
+}
+
+const DOM_EVENT_PRESS_SEQUENCE: &str = concat!(
+    "async function() { ",
+    dom_event_pointer_prelude!(),
+    dom_event_mutation_counter!(),
+    "const compat = P('pointerdown', 1); \
+    const focusable = (compat && M('mousedown', 1, { detail: 1 })) \
+        ? target.closest('a[href],button,input,select,textarea,summary,[tabindex],[contenteditable=\"\"],[contenteditable=\"true\"]') \
+        : null; \
+    const pageMutations = await settle(); \
+    if (focusable && typeof focusable.focus === 'function') focusable.focus({ preventScroll: true }); \
+    return { pageMutations, compat }; \
+}"
+);
+
+const DOM_EVENT_RELEASE_SEQUENCE: &str = concat!(
+    "async function(compat) { ",
+    dom_event_pointer_prelude!(),
+    dom_event_mutation_counter!(),
+    "P('pointerup', 0); \
     if (compat) M('mouseup', 0, { detail: 1 }); \
     M('click', 0, { detail: 1 }); \
-    return true; \
-}";
+    delete el[pointerKey]; \
+    return { pageMutations: await settle() }; \
+}"
+);
 
 // ── browser_type ─────────────────────────────────────────────────────────────
 

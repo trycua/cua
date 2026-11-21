@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.56.7](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.6...cua-driver-rs-v0.56.7) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-driver:** make accepted HTTP sockets non-inheritable on Windows ([#8469](https://github.com/trycua/cua/issues/8469)) ([6fc8742](https://github.com/trycua/cua/commit/6fc874292d599c555472842f00c98268c80d1ec4))
+
 ## [0.56.6](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.5...cua-driver-rs-v0.56.6) (2026-11-21)
 
 

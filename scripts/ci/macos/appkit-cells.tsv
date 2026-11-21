@@ -11,6 +11,8 @@ macos-appkit-content-bearing-group-ax-background	harness_appkit_a_content_bearin
 macos-appkit-custom-actions-ax-background	harness_appkit_custom_actions_are_published_and_dispatch_by_name_or_envelope
 macos-appkit-press-key-commit-ax-foreground	harness_appkit_element_foreground_press_key_commits_edit
 macos-appkit-press-key-chord-ax-foreground	harness_appkit_foreground_press_key_chord_carries_its_modifiers
+macos-appkit-set-value-commit-ax-background	harness_appkit_set_value_commits_the_edit
+macos-appkit-set-value-non-bmp-ax-background	harness_appkit_set_value_replaces_a_non_bmp_value_whole
 macos-appkit-modified-click-selection-ax-foreground	harness_appkit_modified_click_preserves_selection
 macos-appkit-type-text-ax-background	harness_appkit_type_text_background
 macos-appkit-scroll-ax-foreground	harness_appkit_scroll_foreground

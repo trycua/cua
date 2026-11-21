@@ -12,10 +12,16 @@
 //!   selection and closed again.  Safari `<select>` elements are set through
 //!   `osascript do JavaScript` instead.
 //!
-//! * **Everything else**: Write `AXValue` directly (sliders, steppers, native
-//!   text fields that expose a settable AXValue).
+//! * **Native single-line text roles**: Replace the text through the keystroke
+//!   rung. An `AXValue` write neither starts nor ends an editing session, so a
+//!   control whose value is a binding target keeps its own value while every
+//!   read-back the driver can perform returns the written string.
+//!
+//! * **Everything else**: Write `AXValue` directly (sliders, steppers, search
+//!   fields whose `AXConfirm` is the commit, web inputs).
 
 use async_trait::async_trait;
+use cua_driver_contract::ActionCommit;
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
@@ -25,12 +31,13 @@ use std::sync::Arc;
 
 use crate::apps;
 use crate::ax::bindings::{
-    copy_bool_attr, copy_children, copy_number_attr, copy_string_attr, copy_url_attr,
-    kAXErrorSuccess, perform_action, set_number_attr, set_string_attr, AXUIElementRef,
+    copy_action_names, copy_bool_attr, copy_children, copy_number_attr, copy_string_attr,
+    copy_url_attr, kAXErrorSuccess, perform_action, set_number_attr, set_range_attr,
+    set_string_attr, AXUIElementRef,
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
-use core_foundation::base::CFRelease;
+use core_foundation::base::{CFEqual, CFRelease, CFTypeRef};
 
 use super::ToolState;
 
@@ -49,7 +56,7 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "set_value".into(),
-        description: "Set an element's value by `element_token`. A popup button / select dropdown: selects the menu item whose title or value matches `value` (case-insensitive). Safari `<select>` is set through the DOM; AppKit and Chromium popups list items only while open, so the menu is opened, the item pressed and the menu closed again (in the background the user's front window keeps key focus). An unknown value lists the options. Any other element: writes AXValue (sliders, steppers, date pickers, native text fields).\n\
+        description: "Set an element's value by `element_token`. A popup button / select dropdown: selects the menu item whose title or value matches `value` (case-insensitive). Safari `<select>` is set through the DOM; AppKit and Chromium popups list items only while open, so the menu is opened, the item pressed and the menu closed again (in the background the user's front window keeps key focus). An unknown value lists the options. Native non-secure single-line text fields: select the whole value, type its replacement and end editing. Other elements: write AXValue (sliders, steppers, date pickers, search and secure fields). `committed` distinguishes an ended typed edit with the value in place from `not_committed` or an AX-only `unproven` readback. Committed does not mean saved to disk.\n\
             \n\
             A LibreOffice Calc cell ignores AXValue writes, so set_value on a cell goes to it through the Name Box with keys posted to its window (Cmd+Shift+F5, the address, Return), types the value and Return (an empty value clears the cell), and reads the cell back into cell_value; the app stays in the background. On the Name Box itself the value is a cell address to go to. A value with Tab or Return is refused: one cell takes one entry.\n\
             \n\
@@ -244,6 +251,19 @@ impl Tool for SetValueTool {
         // the write may take it once focused.
         let webkit_field = ax_echo_surface && !super::type_text::is_chromium_embedder(pid);
 
+        let plan = match resolve_write_plan(
+            &_mutation_lease,
+            window_id,
+            element_ptr,
+            &value,
+            ax_echo_surface,
+        )
+        .await
+        {
+            Ok(plan) => plan,
+            Err(refusal) => return refusal,
+        };
+
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // AXValue writes on popups / sliders can cause reflex activations
         // in Chromium-based apps; the AXPopUpButton path also AXPresses a
@@ -264,6 +284,7 @@ impl Tool for SetValueTool {
                         pid,
                         window_id,
                         &value,
+                        plan,
                         webkit_field,
                     )
                 })
@@ -296,16 +317,23 @@ impl Tool for SetValueTool {
             Ok(Ok(mut outcome)) => {
                 apply_surface_trust(&mut outcome, ax_echo_surface);
                 apply_verification_label(&mut outcome);
+                let committed = outcome.committed;
                 let mut msg = outcome.detail;
                 msg.push_str(&changes.result_suffix());
                 let verified = outcome.verified.unwrap_or(false);
                 let mut structured = serde_json::json!({
-                    "path": "ax",
+                    "path": outcome.path,
                     "verified": verified,
                     "effect": if verified { "confirmed" } else { "unverifiable" },
                 });
                 if let Some(edited) = outcome.document_edited {
                     structured["document_key_edit_sent"] = serde_json::json!(edited);
+                }
+                if let Some(committed) = committed {
+                    structured["committed"] = serde_json::json!(committed.as_wire());
+                }
+                if let Some(delivered) = outcome.delivered {
+                    structured["delivered_chars"] = serde_json::json!(delivered);
                 }
                 if ax_echo_surface {
                     structured["escalation"] = serde_json::json!({
@@ -622,6 +650,205 @@ fn file_name_needs_rename(pid: i32, window_id: u32, reason: &str) -> ToolResult 
     }))
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum WritePlan {
+    ValueOnly,
+    ValueThenConfirm,
+    ValueThenKey(&'static str),
+    Retype(&'static str),
+    Blocked(String),
+}
+
+const COMMIT_SETTLE: std::time::Duration = std::time::Duration::from_millis(120);
+
+const FOCUS_SETTLE: std::time::Duration = std::time::Duration::from_millis(60);
+
+pub(super) fn is_binding_target_role(role: &str, subrole: &str) -> bool {
+    role == "AXTextField" && !matches!(subrole, "AXSearchField" | "AXSecureTextField")
+}
+
+fn is_typeable(value: &str) -> bool {
+    !value.chars().any(char::is_control)
+}
+
+fn write_plan(role: &str, subrole: &str, advertised: &[String], value: &str) -> WritePlan {
+    if role == "AXSecureTextField" || subrole == "AXSecureTextField" {
+        return WritePlan::ValueOnly;
+    }
+    match role {
+        "AXTextArea" => WritePlan::Blocked(
+            "a multi-line AXTextArea has no end-of-edit gesture, so the app may never \
+             register the write"
+                .to_owned(),
+        ),
+        _ if is_binding_target_role(role, subrole) && is_typeable(value) => {
+            WritePlan::Retype("tab")
+        }
+        "AXTextField" | "AXSecureTextField" | "AXSearchField" | "AXComboBox" | "AXDateField"
+        | "AXTimeField" => {
+            if advertised.iter().any(|action| action == "AXConfirm") {
+                WritePlan::ValueThenConfirm
+            } else if role == "AXSearchField" || subrole == "AXSearchField" {
+                WritePlan::ValueThenKey("return")
+            } else {
+                WritePlan::ValueThenKey("tab")
+            }
+        }
+        _ => WritePlan::ValueOnly,
+    }
+}
+
+async fn resolve_write_plan(
+    lease: &super::BackgroundMutationLease,
+    window_id: u32,
+    element_ptr: usize,
+    value: &str,
+    ax_echo_surface: bool,
+) -> Result<WritePlan, ToolResult> {
+    if ax_echo_surface {
+        return Ok(WritePlan::Blocked(
+            "web content never observes an AXValue write, so there is nothing to commit".to_owned(),
+        ));
+    }
+    let Ok((role, subrole, advertised)) = tokio::task::spawn_blocking(move || unsafe {
+        let element = element_ptr as AXUIElementRef;
+        (
+            copy_string_attr(element, "AXRole").unwrap_or_default(),
+            copy_string_attr(element, "AXSubrole").unwrap_or_default(),
+            copy_action_names(element),
+        )
+    })
+    .await
+    else {
+        return Ok(WritePlan::Blocked(
+            "the element stopped answering AX reads before the write".to_owned(),
+        ));
+    };
+    let plan = write_plan(&role, &subrole, &advertised, value);
+    if matches!(plan, WritePlan::ValueThenKey(_) | WritePlan::Retype(_)) {
+        if let Err(refusal) = lease
+            .gate_again(
+                window_id,
+                Some(element_ptr),
+                cua_driver_core::background_input::BackgroundAction::GenericKey,
+            )
+            .await
+        {
+            return refused_keystroke_plan(&plan, &advertised).ok_or(refusal);
+        }
+    }
+    Ok(plan)
+}
+
+/// The write to make when the keystroke gate refused `plan`, or `None` when
+/// the refusal stands and nothing may be written.
+fn refused_keystroke_plan(plan: &WritePlan, advertised: &[String]) -> Option<WritePlan> {
+    let confirms = advertised.iter().any(|action| action == "AXConfirm");
+    (matches!(plan, WritePlan::Retype(_)) && confirms).then_some(WritePlan::ValueThenConfirm)
+}
+
+/// Focus `element_ptr` and confirm it holds keyboard focus, re-applying once:
+/// AppKit can clobber an accepted `AXFocused` write with the window's
+/// remembered first responder.
+fn take_keyboard_focus(pid: i32, element_ptr: usize) -> bool {
+    for _ in 0..2 {
+        let _ = crate::input::ax_actions::focus_element(element_ptr);
+        std::thread::sleep(FOCUS_SETTLE);
+        if crate::input::ax_actions::is_element_focused(pid, element_ptr) {
+            return true;
+        }
+    }
+    false
+}
+
+/// True only when the app's focused element is readable and is another
+/// element, so the edit session on `element_ptr` is known to have ended.
+fn focus_moved_off(pid: i32, element_ptr: usize) -> bool {
+    unsafe {
+        let Some(focused) = crate::ax::bindings::focused_element_of_pid(pid) else {
+            return false;
+        };
+        let same = CFEqual(focused as CFTypeRef, element_ptr as CFTypeRef) != 0;
+        CFRelease(focused as CFTypeRef);
+        !same
+    }
+}
+
+fn commit_written_value(
+    element: AXUIElementRef,
+    pid: i32,
+    requested: &str,
+    numeric: bool,
+    plan: WritePlan,
+) -> (Option<ActionCommit>, String) {
+    match plan {
+        WritePlan::ValueOnly => (None, String::new()),
+        WritePlan::Blocked(reason) => (
+            Some(ActionCommit::NotCommitted),
+            format!(" Not committed: {reason}."),
+        ),
+        WritePlan::Retype(_) => unreachable!("the retype route does not write AXValue"),
+        WritePlan::ValueThenConfirm => {
+            let dispatched = unsafe { perform_action(element, "AXConfirm") } == kAXErrorSuccess;
+            let survived = dispatched && {
+                std::thread::sleep(COMMIT_SETTLE);
+                let after = unsafe { copy_string_attr(element, "AXValue") };
+                value_matches(after.as_deref(), requested, numeric)
+            };
+            judge_commit(dispatched, survived, false, "AXConfirm")
+        }
+        WritePlan::ValueThenKey(key) => {
+            let focused = take_keyboard_focus(pid, element as usize);
+            let dispatched = focused && crate::input::keyboard::press_key(pid, key, &[]).is_ok();
+            let survived = dispatched && {
+                std::thread::sleep(COMMIT_SETTLE);
+                let after = unsafe { copy_string_attr(element, "AXValue") };
+                value_matches(after.as_deref(), requested, numeric)
+            };
+            judge_commit(dispatched, survived, false, key)
+        }
+    }
+}
+
+fn judge_commit(
+    dispatched: bool,
+    survived: bool,
+    typed_edit_ended: bool,
+    gesture: &str,
+) -> (Option<ActionCommit>, String) {
+    if !dispatched {
+        return (
+            Some(ActionCommit::NotCommitted),
+            format!(" Not committed: the {gesture} commit gesture could not be dispatched."),
+        );
+    }
+    if !survived {
+        return (
+            Some(ActionCommit::NotCommitted),
+            " Not committed: the value did not survive the app's end-of-edit, so the app \
+             still holds its own value."
+                .to_owned(),
+        );
+    }
+    if typed_edit_ended {
+        return (
+            Some(ActionCommit::Committed),
+            format!(
+                " Committed via {gesture}: the typed edit session ended with this value in \
+                 place."
+            ),
+        );
+    }
+    (
+        Some(ActionCommit::Unproven),
+        format!(
+            " Commit unproven: the value survived {gesture}, but the app's own model was not \
+             observed — an accessibility read-back is echoed by a bound control whether or not \
+             the app took the value. Check the app's own output."
+        ),
+    )
+}
+
 // ── Blocking implementation (runs on spawn_blocking thread) ─────────────────
 
 /// Outcome of a `set_value` write.
@@ -647,6 +874,9 @@ struct SetValueOutcome {
     /// The document's edited mark after the write; `None` outside a
     /// document or when the value did not move.
     document_edited: Option<bool>,
+    committed: Option<ActionCommit>,
+    path: &'static str,
+    delivered: Option<usize>,
 }
 
 fn apply_surface_trust(outcome: &mut SetValueOutcome, ax_echo_surface: bool) {
@@ -662,8 +892,11 @@ fn apply_surface_trust(outcome: &mut SetValueOutcome, ax_echo_surface: bool) {
 
 fn apply_verification_label(outcome: &mut SetValueOutcome) {
     if outcome.verified != Some(true) {
-        if let Some(rest) = outcome.detail.strip_prefix("✅ Set") {
-            outcome.detail = format!("📨 Sent (unverified){rest}");
+        for prefix in ["✅ Set", "✅ Typed", "✅ Cleared"] {
+            if let Some(rest) = outcome.detail.strip_prefix(prefix) {
+                outcome.detail = format!("📨 Sent (unverified){rest}");
+                return;
+            }
         }
     }
 }
@@ -674,6 +907,7 @@ fn set_value_blocking(
     pid: i32,
     window_id: u32,
     value: &str,
+    plan: WritePlan,
     webkit_field: bool,
 ) -> anyhow::Result<SetValueOutcome> {
     let element = element_ptr as AXUIElementRef;
@@ -698,7 +932,21 @@ fn set_value_blocking(
             changed: None,
             not_applied: false,
             document_edited: None,
+            committed: None,
+            path: "ax",
+            delivered: None,
         })
+    } else if let WritePlan::Retype(end) = plan {
+        retype_blocking(
+            element,
+            element_ptr,
+            element_index,
+            pid,
+            window_id,
+            value,
+            end,
+            &role,
+        )
     } else {
         // Default path: write AXValue directly. Numeric controls (AXSlider /
         // AXStepper) reject a CFString with -25201 and need a CFNumber; text
@@ -784,6 +1032,8 @@ fn set_value_blocking(
                     }
                 }
             }
+            let (committed, commit_detail) =
+                commit_written_value(element, pid, value, numeric_target.is_some(), plan);
             let suffix = match (verified, changed) {
                 (Some(true), Some(false)) => " Value already matched; write was idempotent.",
                 (Some(true), _) => "",
@@ -799,7 +1049,7 @@ fn set_value_blocking(
             };
             Ok(SetValueOutcome {
                 detail: format!(
-                    "✅ Set AXValue on [{element_index}] {role}{}.{suffix}{}",
+                    "✅ Set AXValue on [{element_index}] {role}{}.{suffix}{commit_detail}{}",
                     if focused_retry {
                         " after focusing it (the first write was not applied)"
                     } else {
@@ -814,6 +1064,9 @@ fn set_value_blocking(
                 // read-back proves nothing either way.
                 not_applied: !secure && write_not_applied(verified, changed),
                 document_edited: document.structured(),
+                committed,
+                path: "ax",
+                delivered: None,
             })
         } else if let Some(target) = numeric_target {
             // Both direct writes failed for a numeric target — fall back to
@@ -831,6 +1084,9 @@ fn set_value_blocking(
                     changed,
                     not_applied: false,
                     document_edited: None,
+                    committed: None,
+                    path: "ax",
+                    delivered: None,
                 })
             } else {
                 anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
@@ -947,6 +1203,134 @@ fn not_applied_result(element_index: usize, vcl: bool) -> ToolResult {
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
+fn retype_blocking(
+    element: AXUIElementRef,
+    element_ptr: usize,
+    element_index: usize,
+    pid: i32,
+    window_id: u32,
+    value: &str,
+    end: &'static str,
+    role: &str,
+) -> anyhow::Result<SetValueOutcome> {
+    let Some(before) = (unsafe { copy_string_attr(element, "AXValue") }) else {
+        anyhow::bail!(
+            "[{element_index}] {role} does not expose a readable AXValue, so its current text \
+             cannot be selected and typing could append to it"
+        );
+    };
+
+    if !take_keyboard_focus(pid, element_ptr) {
+        anyhow::bail!(
+            "[{element_index}] {role} did not take keyboard focus, so typed keystrokes cannot \
+             be proven to reach it; click the control first, or retry with \
+             delivery_mode \"foreground\""
+        );
+    }
+
+    let existing = before.encode_utf16().count();
+    if existing > 0 && !select_all_text(element, existing) {
+        anyhow::bail!(
+            "[{element_index}] {role} refused both an AXSelectedTextRange selection and an \
+             AXValue clear, so typing would append to its current value"
+        );
+    }
+
+    let (delivered_all, delivered) = if value.is_empty() {
+        crate::input::keyboard::press_key(pid, "delete", &[])?;
+        std::thread::sleep(COMMIT_SETTLE);
+        let after = unsafe { copy_string_attr(element, "AXValue") };
+        (after.as_deref() == Some(""), Some(0))
+    } else {
+        super::type_text::type_and_drain(
+            pid,
+            value,
+            0,
+            Some(""),
+            Some((element_ptr, Some(element_index))),
+            Some(window_id),
+        )?
+    };
+
+    let dispatched = crate::input::keyboard::press_key(pid, end, &[]).is_ok();
+    let (survived, edit_ended) = if dispatched {
+        std::thread::sleep(COMMIT_SETTLE);
+        let after = unsafe { copy_string_attr(element, "AXValue") };
+        (
+            value_matches(after.as_deref(), value, false),
+            focus_moved_off(pid, element_ptr),
+        )
+    } else {
+        (false, false)
+    };
+    let (committed, commit_detail) = judge_commit(dispatched, survived, edit_ended, end);
+
+    let after = unsafe { copy_string_attr(element, "AXValue") };
+    let (verified, changed) = classify_write(Some(&before), after.as_deref(), value, false);
+    let delivery = match (delivered_all, delivered) {
+        (true, _) => String::new(),
+        (false, Some(count)) => format!(
+            " Only {count} of {} character(s) were observed in the control.",
+            value.chars().count()
+        ),
+        (false, None) => " Delivery is not readable through AX.".to_owned(),
+    };
+    let gesture = if value.is_empty() {
+        format!("✅ Cleared [{element_index}] {role}")
+    } else {
+        format!(
+            "✅ Typed {} character(s) into [{element_index}] {role}",
+            value.chars().count()
+        )
+    };
+    Ok(SetValueOutcome {
+        detail: format!(
+            "{gesture} through the app's own editing pipeline.{delivery}{commit_detail}"
+        ),
+        value: after,
+        verified,
+        changed,
+        committed,
+        path: "key_events",
+        delivered,
+        not_applied: false,
+        document_edited: None,
+    })
+}
+
+fn select_all_text(element: AXUIElementRef, utf16_length: usize) -> bool {
+    if unsafe { set_range_attr(element, "AXSelectedTextRange", 0, utf16_length as isize) }
+        == kAXErrorSuccess
+    {
+        return true;
+    }
+    (unsafe { set_string_attr(element, "AXValue", "") }) == kAXErrorSuccess
+        && unsafe { copy_string_attr(element, "AXValue") }.as_deref() == Some("")
+}
+
+fn value_equal(observed: &str, expected: &str, numeric: bool) -> bool {
+    if observed == expected {
+        return true;
+    }
+    if !numeric {
+        return false;
+    }
+    match (
+        observed.trim().parse::<f64>(),
+        expected.trim().parse::<f64>(),
+    ) {
+        (Ok(a), Ok(b)) => {
+            let scale = a.abs().max(b.abs()).max(1.0);
+            (a - b).abs() <= 1e-9 * scale
+        }
+        _ => false,
+    }
+}
+
+fn value_matches(observed: Option<&str>, expected: &str, numeric: bool) -> bool {
+    observed.is_some_and(|observed| value_equal(observed, expected, numeric))
+}
 /// Decide what a post-write AXValue read proves.
 ///
 /// Returns `(verified, changed)`:
@@ -968,26 +1352,8 @@ fn classify_write(
     let Some(after) = after else {
         return (None, None);
     };
-    let matches = |observed: &str, expected: &str| -> bool {
-        if observed == expected {
-            return true;
-        }
-        if !numeric {
-            return false;
-        }
-        match (
-            observed.trim().parse::<f64>(),
-            expected.trim().parse::<f64>(),
-        ) {
-            (Ok(a), Ok(b)) => {
-                let scale = a.abs().max(b.abs()).max(1.0);
-                (a - b).abs() <= 1e-9 * scale
-            }
-            _ => false,
-        }
-    };
-    let verified = matches(after, requested);
-    let changed = before.map(|before| !matches(after, before));
+    let verified = value_equal(after, requested, numeric);
+    let changed = before.map(|before| !value_equal(after, before, numeric));
     (Some(verified), changed)
 }
 
@@ -1601,10 +1967,12 @@ fn hex_digit(n: u8) -> char {
 mod tests {
     use super::{
         apply_surface_trust, apply_verification_label, calc_cell_record, classify_write,
-        file_name_needs_rename, is_file_name_cell, is_get_info_name_field, not_applied_result,
-        write_not_applied, FieldSettle, SetValueOutcome, FIELD_QUIET, GET_INFO_RENAME_ROUTE,
+        commit_written_value, file_name_needs_rename, is_file_name_cell, is_get_info_name_field,
+        judge_commit, not_applied_result, refused_keystroke_plan, write_not_applied, write_plan,
+        FieldSettle, SetValueOutcome, WritePlan, FIELD_QUIET, GET_INFO_RENAME_ROUTE,
         LIST_RENAME_ROUTE,
     };
+    use cua_driver_contract::ActionCommit;
     use std::time::Duration;
 
     #[test]
@@ -1784,6 +2152,152 @@ mod tests {
         }
     }
 
+    fn outcome(
+        detail: &str,
+        verified: Option<bool>,
+        committed: Option<ActionCommit>,
+    ) -> SetValueOutcome {
+        SetValueOutcome {
+            detail: detail.to_owned(),
+            value: None,
+            verified,
+            changed: Some(true),
+            committed,
+            path: "ax",
+            delivered: None,
+            not_applied: false,
+            document_edited: None,
+        }
+    }
+
+    #[test]
+    fn a_binding_target_field_is_written_by_typing() {
+        assert_eq!(
+            write_plan("AXTextField", "", &["AXConfirm".to_owned()], "name.txt"),
+            WritePlan::Retype("tab")
+        );
+        assert_eq!(
+            write_plan("AXTextField", "", &[], "name.txt"),
+            WritePlan::Retype("tab")
+        );
+        assert_eq!(
+            write_plan("AXSecureTextField", "", &[], "name.txt"),
+            WritePlan::ValueOnly
+        );
+        assert_eq!(
+            write_plan("AXTextField", "AXSecureTextField", &[], "secret"),
+            WritePlan::ValueOnly
+        );
+    }
+
+    #[test]
+    fn a_value_keystrokes_cannot_carry_keeps_the_ax_value_route() {
+        for value in ["\n", " \tΩ café\n", "a\rb"] {
+            assert_eq!(
+                write_plan("AXTextField", "", &["AXConfirm".to_owned()], value),
+                WritePlan::ValueThenConfirm,
+                "{value:?}"
+            );
+        }
+        assert_eq!(
+            write_plan("AXTextField", "", &[], ""),
+            WritePlan::Retype("tab"),
+            "an empty value is delivered as a deletion, which is typeable"
+        );
+    }
+
+    #[test]
+    fn a_search_field_keeps_the_ax_value_route() {
+        assert_eq!(
+            write_plan(
+                "AXTextField",
+                "AXSearchField",
+                &["AXConfirm".to_owned()],
+                "name.txt"
+            ),
+            WritePlan::ValueThenConfirm
+        );
+        assert_eq!(
+            write_plan("AXSearchField", "", &[], "name.txt"),
+            WritePlan::ValueThenKey("return")
+        );
+        assert_eq!(
+            write_plan("AXComboBox", "", &[], "name.txt"),
+            WritePlan::ValueThenKey("tab")
+        );
+    }
+
+    #[test]
+    fn controls_without_an_editing_pipeline_report_no_commit() {
+        assert_eq!(
+            write_plan("AXSlider", "", &[], "name.txt"),
+            WritePlan::ValueOnly
+        );
+        assert_eq!(
+            write_plan("AXCheckBox", "", &[], "name.txt"),
+            WritePlan::ValueOnly
+        );
+        let (committed, detail) = commit_written_value(
+            std::ptr::null_mut(),
+            0,
+            "value",
+            false,
+            WritePlan::ValueOnly,
+        );
+        assert_eq!(committed, None, "a slider write has nothing to commit");
+        assert!(detail.is_empty());
+    }
+
+    #[test]
+    fn a_text_area_write_is_reported_as_uncommitted() {
+        let plan = write_plan("AXTextArea", "", &[], "name.txt");
+        assert!(matches!(plan, WritePlan::Blocked(_)), "{plan:?}");
+        let (committed, detail) =
+            commit_written_value(std::ptr::null_mut(), 0, "value", false, plan);
+        assert_eq!(committed, Some(ActionCommit::NotCommitted));
+        assert!(detail.contains("Not committed"), "{detail}");
+    }
+
+    #[test]
+    fn only_a_typed_ended_edit_is_a_commit() {
+        let (committed, detail) = judge_commit(true, true, false, "AXConfirm");
+        assert_eq!(committed, Some(ActionCommit::Unproven));
+        assert!(detail.contains("Commit unproven"), "{detail}");
+
+        assert_eq!(
+            judge_commit(true, true, false, "tab").0,
+            Some(ActionCommit::Unproven)
+        );
+        assert_eq!(
+            judge_commit(true, true, true, "tab").0,
+            Some(ActionCommit::Committed)
+        );
+        assert_eq!(
+            judge_commit(true, false, true, "tab").0,
+            Some(ActionCommit::NotCommitted)
+        );
+        assert_eq!(
+            judge_commit(false, false, false, "tab").0,
+            Some(ActionCommit::NotCommitted)
+        );
+    }
+
+    #[test]
+    fn a_refused_retype_falls_back_to_an_advertised_confirm() {
+        assert_eq!(
+            refused_keystroke_plan(
+                &WritePlan::Retype("tab"),
+                &["AXShowMenu".to_owned(), "AXConfirm".to_owned()],
+            ),
+            Some(WritePlan::ValueThenConfirm)
+        );
+        assert_eq!(refused_keystroke_plan(&WritePlan::Retype("tab"), &[]), None);
+        assert_eq!(
+            refused_keystroke_plan(&WritePlan::ValueThenKey("tab"), &["AXConfirm".to_owned()]),
+            None
+        );
+    }
+
     #[test]
     fn a_calc_cell_write_publishes_a_background_key_record() {
         use cua_driver_core::action_record::ActionEffect;
@@ -1885,50 +2399,44 @@ mod tests {
 
     #[test]
     fn web_content_ax_echo_is_never_reported_as_verified() {
-        let mut outcome = SetValueOutcome {
-            detail: "Set value.".to_owned(),
-            value: None,
-            verified: Some(true),
-            changed: Some(true),
-            not_applied: false,
-            document_edited: None,
-        };
-        apply_surface_trust(&mut outcome, true);
-        assert_eq!(outcome.verified, Some(false));
-        assert_eq!(outcome.changed, None);
-        assert!(outcome.detail.contains("not trusted for web content"));
+        let mut result = outcome("Set value.", Some(true), Some(ActionCommit::Committed));
+        apply_surface_trust(&mut result, true);
+        assert_eq!(result.verified, Some(false));
+        assert_eq!(result.changed, None);
+        assert!(result.detail.contains("not trusted for web content"));
     }
 
     #[test]
     fn native_read_back_remains_trusted() {
-        let mut outcome = SetValueOutcome {
-            detail: "Set value.".to_owned(),
-            value: None,
-            verified: Some(true),
-            changed: Some(true),
-            not_applied: false,
-            document_edited: None,
-        };
-        apply_surface_trust(&mut outcome, false);
-        assert_eq!(outcome.verified, Some(true));
-        assert_eq!(outcome.changed, Some(true));
-        assert_eq!(outcome.detail, "Set value.");
+        let mut result = outcome("Set value.", Some(true), Some(ActionCommit::Committed));
+        apply_surface_trust(&mut result, false);
+        assert_eq!(result.verified, Some(true));
+        assert_eq!(result.changed, Some(true));
+        assert_eq!(result.detail, "Set value.");
     }
 
     #[test]
     fn unverified_result_does_not_keep_a_success_checkmark() {
-        let mut outcome = SetValueOutcome {
-            detail: "✅ Set AXValue on [4] AXTextField.".to_owned(),
-            value: None,
-            verified: Some(false),
-            changed: Some(false),
-            not_applied: false,
-            document_edited: None,
-        };
-        apply_verification_label(&mut outcome);
+        let mut result = outcome(
+            "✅ Set AXValue on [4] AXTextField.",
+            Some(false),
+            Some(ActionCommit::NotCommitted),
+        );
+        apply_verification_label(&mut result);
         assert_eq!(
-            outcome.detail,
+            result.detail,
             "📨 Sent (unverified) AXValue on [4] AXTextField."
+        );
+
+        let mut typed = outcome(
+            "✅ Typed 4 character(s) into [4] AXTextField.",
+            Some(false),
+            Some(ActionCommit::Unproven),
+        );
+        apply_verification_label(&mut typed);
+        assert_eq!(
+            typed.detail,
+            "📨 Sent (unverified) 4 character(s) into [4] AXTextField."
         );
     }
 }

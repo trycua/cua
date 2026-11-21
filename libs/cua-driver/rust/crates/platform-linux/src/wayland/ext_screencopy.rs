@@ -28,10 +28,13 @@
 
 use std::time::Duration;
 
+use super::Answered;
+
 use wayland_client::{
     event_created_child,
     protocol::{
         wl_buffer::WlBuffer,
+        wl_callback::WlCallback,
         wl_output::WlOutput,
         wl_registry,
         wl_shm::{self, WlShm},
@@ -120,7 +123,9 @@ pub fn screenshot_via_ext_copy() -> anyhow::Result<Vec<u8>> {
 
     // Create source + capture it.
     let source: ExtImageCaptureSourceV1 = source_mgr.create_source(&output, &qh, ());
-    let png = capture_source_png(&source, &copy_mgr, &shm, &mut state, &mut queue, &qh)?;
+    let png = capture_source_png(
+        &source, &copy_mgr, &shm, &conn, None, &mut state, &mut queue, &qh,
+    )?;
     source.destroy();
     Ok(png)
 }
@@ -128,16 +133,18 @@ pub fn screenshot_via_ext_copy() -> anyhow::Result<Vec<u8>> {
 /// Capture one foreign toplevel by the identifier the compositor reported in
 /// `ext_foreign_toplevel_handle_v1.identifier`. niri's identifier is its IPC
 /// window id, so this captures a window exactly without knowing where it is
-/// on screen; no window needs to be focused.
+/// on screen; no window needs to be focused. Like every niri capture, it
+/// uses the attested socket and bounds every round trip by one deadline.
 pub fn screenshot_toplevel_via_ext_copy(window_id: u64) -> anyhow::Result<Option<Vec<u8>>> {
-    let conn = Connection::connect_to_env()?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let conn = super::wayland_connection(true)?;
     let mut queue = conn.new_event_queue::<CapState>();
     let qh = queue.handle().clone();
     conn.display().get_registry(&qh, ());
 
     let mut state = CapState::default();
     for _ in 0..4 {
-        queue.roundtrip(&mut state)?;
+        sync(&conn, Some(deadline), &mut state, &mut queue)?;
     }
 
     let Some(source_mgr) = state.toplevel_source_mgr.clone() else {
@@ -164,9 +171,31 @@ pub fn screenshot_toplevel_via_ext_copy(window_id: u64) -> anyhow::Result<Option
     })?;
 
     let source: ExtImageCaptureSourceV1 = source_mgr.create_source(&handle, &qh, ());
-    let png = capture_source_png(&source, &copy_mgr, &shm, &mut state, &mut queue, &qh);
+    let png = capture_source_png(
+        &source,
+        &copy_mgr,
+        &shm,
+        &conn,
+        Some(deadline),
+        &mut state,
+        &mut queue,
+        &qh,
+    );
     source.destroy();
     png.map(Some)
+}
+
+/// One round trip: bounded by `deadline` on niri, blocking elsewhere.
+fn sync(
+    conn: &Connection,
+    deadline: Option<std::time::Instant>,
+    state: &mut CapState,
+    queue: &mut EventQueue<CapState>,
+) -> anyhow::Result<()> {
+    match deadline {
+        Some(deadline) => super::bounded_roundtrip(conn, queue, state, deadline),
+        None => queue.roundtrip(state).map(drop).map_err(Into::into),
+    }
 }
 
 fn find_toplevel(
@@ -190,6 +219,8 @@ fn capture_source_png(
     source: &ExtImageCaptureSourceV1,
     copy_mgr: &ExtImageCopyCaptureManagerV1,
     shm: &WlShm,
+    conn: &Connection,
+    bounded: Option<std::time::Instant>,
     state: &mut CapState,
     queue: &mut EventQueue<CapState>,
     qh: &QueueHandle<CapState>,
@@ -212,7 +243,7 @@ fn capture_source_png(
     // Wait for the session to announce buffer dimensions + format + done.
     let deadline = std::time::Instant::now() + Duration::from_secs(3);
     while !state.done && std::time::Instant::now() < deadline {
-        queue.roundtrip(&mut *state)?;
+        sync(conn, bounded, state, queue)?;
         if state.width > 0 && state.height > 0 && state.fmt.is_some() {
             // Some compositors don't emit `done` explicitly — proceed once
             // we have geometry + format.
@@ -283,11 +314,11 @@ fn capture_source_png(
     let frame: ExtImageCopyCaptureFrameV1 = session.create_frame(&qh, ());
     frame.attach_buffer(&buffer);
     frame.capture();
-    queue.roundtrip(&mut *state)?;
+    sync(conn, bounded, state, queue)?;
 
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     while !state.ready && !state.failed && std::time::Instant::now() < deadline {
-        queue.roundtrip(&mut *state)?;
+        sync(conn, bounded, state, queue)?;
     }
     if state.failed {
         super::cleanup_mmap(ptr, size, fd);
@@ -308,7 +339,7 @@ fn capture_source_png(
     frame.destroy();
     session.destroy();
     pool.destroy();
-    queue.roundtrip(state).ok();
+    sync(conn, bounded, state, queue).ok();
     super::cleanup_mmap(ptr, size, fd);
 
     Ok(png)
@@ -540,6 +571,8 @@ impl Dispatch<ExtImageCopyCaptureFrameV1, ()> for CapState {
         }
     }
 }
+wayland_client::delegate_dispatch!(CapState: [WlCallback: Answered] => Answered);
+
 impl Dispatch<ExtForeignToplevelListV1, ()> for CapState {
     fn event(
         _: &mut Self,

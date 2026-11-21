@@ -42,10 +42,9 @@ use crate::browser_standard_user::{
     browser_launch_context, require_profile_writable, spawn_with_token, with_impersonation,
     BrowserLaunchContext,
 };
-use windows::core::PCWSTR;
+use windows::core::{BOOL, PCWSTR};
 use windows::Win32::Foundation::{
-    CloseHandle, BOOL, ERROR_INSUFFICIENT_BUFFER, E_ACCESSDENIED, FILETIME, HWND, LPARAM, NO_ERROR,
-    RECT,
+    CloseHandle, ERROR_INSUFFICIENT_BUFFER, E_ACCESSDENIED, FILETIME, HWND, LPARAM, NO_ERROR, RECT,
 };
 use windows::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, MonitorFromWindow, HDC, HMONITOR, MONITORINFO,
@@ -1092,7 +1091,7 @@ fn physical_displays() -> Vec<PhysicalDisplay> {
     let mut displays: Vec<PhysicalDisplay> = Vec::new();
     unsafe {
         let _ = EnumDisplayMonitors(
-            HDC::default(),
+            None,
             None,
             Some(collect),
             LPARAM(&mut displays as *mut Vec<PhysicalDisplay> as isize),

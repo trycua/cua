@@ -376,7 +376,7 @@ impl Tool for ScrollTool {
                 };
                 for _ in 0..amount {
                     unsafe {
-                        PostMessageW(hwnd_win, msg, WPARAM(code.0 as usize), LPARAM(0))?;
+                        PostMessageW(Some(hwnd_win), msg, WPARAM(code.0 as usize), LPARAM(0))?;
                     }
                 }
                 Ok(())

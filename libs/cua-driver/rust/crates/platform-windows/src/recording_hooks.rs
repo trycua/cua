@@ -60,11 +60,11 @@ pub fn set_snapshots(cache: Arc<Snapshots>) {
 pub fn resolve_window_for_recording(window_id: Option<u64>, pid: Option<i64>) -> Option<u64> {
     if let Some(window_id) = window_id {
         let hwnd = HWND(window_id as *mut _);
-        if unsafe { IsWindow(hwnd) }.as_bool() {
+        if unsafe { IsWindow(Some(hwnd)) }.as_bool() {
             let popup = unsafe { GetLastActivePopup(hwnd) };
             if !unsafe { IsWindowEnabled(hwnd) }.as_bool()
                 && popup != hwnd
-                && unsafe { IsWindow(popup) }.as_bool()
+                && unsafe { IsWindow(Some(popup)) }.as_bool()
                 && unsafe { IsWindowVisible(popup) }.as_bool()
             {
                 let mut popup_pid = 0;

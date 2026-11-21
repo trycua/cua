@@ -24,6 +24,7 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
+use windows::Win32::System::Variant::VT_BSTR;
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern,
     TreeScope_Subtree, UIA_ButtonControlTypeId, UIA_ComboBoxControlTypeId,
@@ -320,22 +321,17 @@ unsafe fn read_value_value(elem: &IUIAutomationElement) -> Option<String> {
     let v = elem
         .GetCurrentPropertyValue(UIA_ValueValuePropertyId)
         .ok()?;
-    let raw = v.as_raw();
-    if raw.Anonymous.Anonymous.vt != 8 {
-        // VT_BSTR = 8 — anything else (empty, VT_EMPTY=0) means no value.
+    if v.vt() != VT_BSTR {
+        // Anything else (empty, VT_EMPTY) means no value.
         return None;
     }
-    // Read the BSTR pointer; we don't free it (windows-rs handles VARIANT
-    // lifetime on drop of `v`).
-    let bstr_ptr = raw.Anonymous.Anonymous.Anonymous.bstrVal;
-    if bstr_ptr.is_null() {
+    // The VARIANT owns the BSTR and frees it on drop of `v`. A null BSTR
+    // means no value; an empty one is still a value.
+    let bstr: &windows::core::BSTR = &v.Anonymous.Anonymous.Anonymous.bstrVal;
+    if std::mem::transmute_copy::<_, *const u16>(bstr).is_null() {
         return None;
     }
-    let bstr = windows::core::BSTR::from_raw(bstr_ptr);
-    let s = bstr.to_string();
-    // Don't double-free: hand the BSTR back to the VARIANT by leaking ours.
-    std::mem::forget(bstr);
-    Some(s)
+    Some(bstr.to_string())
 }
 
 // Avoid an unused-import warning when none of the secondary properties are

@@ -46,11 +46,18 @@ pub fn guest_of(os: GuestOs) -> Guest {
 }
 
 /// Whether a missing or stopped container engine stops a Linux container
-/// create here. On a Mac the built-in Linux runtime stands in, unless the
-/// setting says to use only the Mac's own engine.
+/// create here. Where the built-in Linux runtime stands in (a Mac, and a
+/// Windows PC with its WSL 2 runtime) it does not, unless the setting says to
+/// use only the computer's own engine.
 pub fn engine_required() -> bool {
-    !cfg!(target_os = "macos")
-        || crate::managed::LinuxSource::current() == crate::managed::LinuxSource::System
+    engine_required_for(
+        crate::managed::supported(),
+        crate::managed::LinuxSource::current(),
+    )
+}
+
+fn engine_required_for(builtin_runtime: bool, source: crate::managed::LinuxSource) -> bool {
+    !builtin_runtime || source == crate::managed::LinuxSource::System
 }
 
 /// What is about to be created. `needed_bytes`: the image's size when known,
@@ -395,5 +402,19 @@ mod tests {
         let r = report().await;
         assert!(r.contains_key("linux_container") && r.contains_key("windows_vm"));
         assert_eq!(r.contains_key("macos_vm"), cfg!(target_os = "macos"));
+    }
+
+    /// A Windows PC with the built-in WSL 2 runtime is not told to install
+    /// Docker Desktop: the runtime stands in, as on a Mac.
+    #[test]
+    fn the_builtin_runtime_stands_in_for_a_missing_engine() {
+        use crate::managed::LinuxSource::{Auto, Builtin, System};
+        for source in [Auto, Builtin] {
+            assert!(!engine_required_for(true, source), "{source:?}");
+            assert!(engine_required_for(false, source), "{source:?}");
+        }
+        // `system` means only this computer's own engine, everywhere.
+        assert!(engine_required_for(true, System));
+        assert!(engine_required_for(false, System));
     }
 }

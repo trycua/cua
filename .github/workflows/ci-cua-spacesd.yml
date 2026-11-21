@@ -291,6 +291,16 @@ jobs:
             echo "the driver workspace depends on the teleport sender (cua-teleport)" >&2
             exit 1
           fi
+      # The static musl release builds of cua-spacesd (CD: cua-spacesd) cannot
+      # compile jemalloc on aarch64: it belongs to the cua-relay binary only,
+      # behind cua-relay's `jemalloc` feature, which cua-spacesd turns off.
+      # CI does not build that target, so check the dependency graph.
+      - name: No jemalloc in cua-spacesd
+        run: |
+          if cargo tree --locked -p cua-spacesd --target all -e normal,build --prefix none | grep -E '^tikv-jemalloc'; then
+            echo "cua-spacesd depends on jemalloc, which does not build for aarch64-unknown-linux-musl (the static release asset); keep it behind cua-relay's default 'jemalloc' feature" >&2
+            exit 1
+          fi
       # The shared media crates and the clients (cua-media-client,
       # cua-viewer) live in libs/cua; the client/server dependency boundary
       # is checked by ci-cua-sdk.yml.

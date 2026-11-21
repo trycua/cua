@@ -146,6 +146,22 @@ describe.skipIf(!wasmBuilt)("Settings and Notifications through the core", () =>
     expect(hooks.notifications.data?.view?.markAllLabel).toBeNull();
   });
 
+  it("deletes one notification or all of them, and the unread count follows", async () => {
+    const { hooks } = mount(await testCore());
+    await waitFor(() => expect(hooks.notifications.data?.unread).toBe(2));
+    const total = hooks.notifications.data!.feed.length;
+    const first = hooks.notifications.data!.feed.find((n) => !n.read)!;
+    await hooks.notifications.deleteOne(first.id);
+    await waitFor(() => expect(hooks.notifications.data?.unread).toBe(1));
+    expect(hooks.notifications.data?.feed.length).toBe(total - 1);
+    expect(hooks.notifications.data?.feed.some((n) => n.id === first.id)).toBe(false);
+    await hooks.notifications.deleteAll();
+    await waitFor(() => expect(hooks.notifications.data?.feed.length).toBe(0));
+    expect(hooks.notifications.data?.unread).toBe(0);
+    expect(hooks.notifications.data?.view?.rows).toEqual([]);
+    expect(hooks.notifications.data?.view?.emptyText).toBe("No notifications.");
+  });
+
   it("lists a Space that became ready and a create that failed, with why", async () => {
     const { hooks, adapter } = mount(await testCore());
     const call = adapter.call.bind(adapter);

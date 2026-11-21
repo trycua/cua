@@ -776,7 +776,7 @@ fn assert_waits_for_desktop_lane(
                     "pid": pid as i64, "window_id": window_id,
                     "from_x": x + width * 0.05, "from_y": y + height / 2.0,
                     "to_x": x + width * 0.90, "to_y": y + height / 2.0,
-                    "duration_ms": 3000, "steps": 60, "delivery_mode": "foreground"
+                    "duration_ms": 6000, "steps": 120, "delivery_mode": "foreground"
                 }),
             )
         });
@@ -795,7 +795,7 @@ fn assert_waits_for_desktop_lane(
             );
             std::thread::sleep(Duration::from_millis(50));
         };
-        // Over half of the drag (1.5 s) is left, so the call reaches the
+        // Over half of the drag (3 s) is left, so the call reaches the
         // daemon while the drag holds the lane unless this thread stalls.
         assert!(
             slider < 45 && !drag.is_finished(),

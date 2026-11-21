@@ -1441,7 +1441,7 @@ fn windows_loopback_listeners(allowed_pids: &[u32]) -> Result<Vec<(u16, u32)>, B
     windows_loopback_listeners_with(allowed_pids, query_tcp_owner_table)
 }
 
-fn system_directory_path() -> Result<PathBuf, BrowserRefusal> {
+pub(crate) fn system_directory_path() -> Result<PathBuf, BrowserRefusal> {
     let mut buffer = [0u16; 32768];
     let length = unsafe { GetSystemDirectoryW(Some(&mut buffer)) } as usize;
     if length == 0 || length >= buffer.len() {
@@ -1982,6 +1982,10 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             )
             .with_detail(serde_json::json!({ "candidates": diagnostics }))),
         }
+    }
+
+    fn managed_extension_policy(&self, executable: &str) -> Option<String> {
+        crate::browser_managed_policy::managed_extension_policy(executable)
     }
 
     fn spawn_isolated_browser(
@@ -2592,6 +2596,24 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 format!("could not roll back exact browser setup: {join_error}"),
             )
         })
+    }
+
+    async fn dismiss_abandoned_existing_profile_consent(
+        &self,
+        pid: i64,
+        window_id: u64,
+    ) -> Result<bool, BrowserRefusal> {
+        let Ok(pid) = u32::try_from(pid) else {
+            return Ok(false);
+        };
+        tokio::task::spawn_blocking(move || crate::browser_consent_ui::dismiss(pid, window_id))
+            .await
+            .unwrap_or_else(|join_error| {
+                Err(BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not close the abandoned browser consent prompt: {join_error}"),
+                ))
+            })
     }
 
     async fn handle_existing_profile_consent(

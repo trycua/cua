@@ -637,7 +637,9 @@ struct HubCaptureSink {
     target: ProviderTargetId,
     hub: WindowSessionHub,
     geometry: std::sync::Mutex<cua_media_protocol::SurfaceGeometry>,
-    active_generation: Arc<AtomicU64>,
+    /// Held while this sink publishes, so a session that advances it knows
+    /// no older sink is still publishing.
+    active_generation: Arc<std::sync::Mutex<u64>>,
     generation: u64,
 }
 
@@ -646,7 +648,7 @@ impl HubCaptureSink {
         target: ProviderTargetId,
         hub: WindowSessionHub,
         geometry: cua_media_protocol::SurfaceGeometry,
-        active_generation: Arc<AtomicU64>,
+        active_generation: Arc<std::sync::Mutex<u64>>,
         generation: u64,
     ) -> Self {
         Self {
@@ -661,7 +663,11 @@ impl HubCaptureSink {
 
 impl CaptureSink for HubCaptureSink {
     fn on_event(&self, event: CaptureEvent) {
-        if self.active_generation.load(Ordering::Acquire) != self.generation {
+        let mut active = self
+            .active_generation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *active != self.generation {
             return;
         }
         match event {
@@ -718,6 +724,9 @@ impl CaptureSink for HubCaptureSink {
             }
             CaptureEvent::Resumed => self.hub.mark_live_source(self.target.clone()),
             CaptureEvent::Closed => {
+                // Retire this sink first: a frame callback can still be
+                // delivering, and it must not bring the target back (#5376).
+                *active = active.wrapping_add(1);
                 self.hub.mark_target_closed(&self.target);
             }
         }
@@ -742,8 +751,24 @@ struct ActiveSession {
     last_geometry_revision: u64,
     awaiting_keyframe: bool,
     capture_format: PixelFormat,
-    capture_generation: Arc<AtomicU64>,
+    capture_generation: Arc<std::sync::Mutex<u64>>,
     codec_epoch_offset: u64,
+}
+
+impl ActiveSession {
+    /// Retire the capture's sink before stopping it: a lease may still
+    /// deliver a callback after `stop`, and it must not publish for a
+    /// closed session (#5376).
+    fn stop_capture(&self) {
+        {
+            let mut generation = self
+                .capture_generation
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *generation = generation.wrapping_add(1);
+        }
+        self.capture.stop();
+    }
 }
 
 pub struct Connection {
@@ -1033,7 +1058,7 @@ impl Connection {
         }
         for session_id in closed {
             if let Some(session) = self.sessions.remove(&session_id) {
-                session.capture.stop();
+                session.stop_capture();
                 self.release_geometry_owner(&session.target.id, &session_id);
             }
             self.pending_action_correlations
@@ -1455,7 +1480,7 @@ impl Connection {
             }
             owners.insert(target.id.clone(), session_id.clone());
         }
-        let capture_generation = Arc::new(AtomicU64::new(1));
+        let capture_generation = Arc::new(std::sync::Mutex::new(1));
         let sink = Arc::new(HubCaptureSink::new(
             target.id.clone(),
             self.hub.clone(),
@@ -1556,7 +1581,7 @@ impl Connection {
             )
         })?;
         let target = session.target.id.clone();
-        session.capture.stop();
+        session.stop_capture();
         self.release_geometry_owner(&target, session_id);
         self.hub.forget_target(&target);
         self.pending_action_correlations
@@ -2038,14 +2063,20 @@ impl Connection {
         let format = session.capture_format;
         let geometry = session.opened.geometry.clone();
         let generation_state = session.capture_generation.clone();
-        let old_generation = generation_state.load(Ordering::Acquire);
-        let Some(new_generation) = old_generation.checked_add(1) else {
-            return Err((
-                ServerErrorCode::Internal,
-                "capture generation exhausted".into(),
-            ));
+        let (old_generation, new_generation) = {
+            let mut generation = generation_state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let old_generation = *generation;
+            let Some(new_generation) = old_generation.checked_add(1) else {
+                return Err((
+                    ServerErrorCode::Internal,
+                    "capture generation exhausted".into(),
+                ));
+            };
+            *generation = new_generation;
+            (old_generation, new_generation)
         };
-        generation_state.store(new_generation, Ordering::Release);
         let sink = Arc::new(HubCaptureSink::new(
             target.clone(),
             self.hub.clone(),
@@ -2065,7 +2096,9 @@ impl Connection {
         ) {
             Ok(capture) => capture,
             Err(error) => {
-                generation_state.store(old_generation, Ordering::Release);
+                *generation_state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = old_generation;
                 return Err(server_error(error));
             }
         };
@@ -2162,7 +2195,7 @@ impl Drop for Connection {
     fn drop(&mut self) {
         let sessions = self.sessions.drain().collect::<Vec<_>>();
         for (session_id, session) in sessions {
-            session.capture.stop();
+            session.stop_capture();
             self.release_geometry_owner(&session.target.id, &session_id);
         }
         self.hub.unsubscribe(self.subscriber_id);
@@ -3124,6 +3157,51 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    /// #5376: a capture lease no longer waits for an in-flight callback, so
+    /// a frame can reach the sink after its session closed. It must not
+    /// bring the forgotten target back into the hub.
+    #[tokio::test]
+    async fn a_frame_after_close_does_not_revive_the_target() {
+        let provider = Arc::new(MockProvider::new());
+        let mut connection = runtime(provider.clone()).connect();
+        hello(&mut connection).await;
+        let session_id = open(&mut connection, SessionPolicy::BackgroundOnly).await;
+        let target = connection.sessions[&session_id].target.id.clone();
+        let sink = provider
+            .sinks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)[0]
+            .clone();
+
+        connection
+            .handle(ClientMessage::CloseSession { session_id })
+            .await;
+        sink.on_event(bgra_frame(4, 4, 30));
+
+        assert!(!connection.hub.is_live_source(&target));
+    }
+
+    /// #5376: a frame callback can still be delivering when the monitor
+    /// reports the window closed, before the connection drains the close.
+    #[tokio::test]
+    async fn a_frame_after_a_native_close_does_not_revive_the_target() {
+        let provider = Arc::new(MockProvider::new());
+        let mut connection = runtime(provider.clone()).connect();
+        hello(&mut connection).await;
+        let session_id = open(&mut connection, SessionPolicy::BackgroundOnly).await;
+        let target = connection.sessions[&session_id].target.id.clone();
+        let sink = provider
+            .sinks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)[0]
+            .clone();
+
+        sink.on_event(CaptureEvent::Closed);
+        sink.on_event(bgra_frame(4, 4, 30));
+
+        assert!(!connection.hub.is_live_source(&target));
     }
 
     #[tokio::test]

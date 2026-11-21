@@ -1,5 +1,321 @@
 # Changelog
 
+## [0.41.0](https://github.com/trycua/cua/compare/cua-spaces-v0.40.2...cua-spaces-v0.41.0) (2026-11-21)
+
+
+### Features
+
+* **cua-vmm:** Linux runtime in a Hyper-V VM on Windows without WSL 2 ([#8417](https://github.com/trycua/cua/issues/8417)) ([e1209b5](https://github.com/trycua/cua/commit/e1209b5ac48ac6ed9890871965b49150544e9b88))
+
+## [0.40.2](https://github.com/trycua/cua/compare/cua-spaces-v0.40.1...cua-spaces-v0.40.2) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-vmm:** pin runtime-gvisor 0.1.0-rc2 (the amd64 disk boots on Hyper-V) ([#8414](https://github.com/trycua/cua/issues/8414)) ([37123d2](https://github.com/trycua/cua/commit/37123d250f351fb03ea03c6adfb53ec7492f0237))
+
+## [0.40.1](https://github.com/trycua/cua/compare/cua-spaces-v0.40.0...cua-spaces-v0.40.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.30.0 in Cua Spaces ([#8406](https://github.com/trycua/cua/issues/8406)) ([a23ea76](https://github.com/trycua/cua/commit/a23ea760c327712f91f05ad7bfb67d8357d2b5cd))
+
+## [0.40.0](https://github.com/trycua/cua/compare/cua-spaces-v0.39.11...cua-spaces-v0.40.0) (2026-11-20)
+
+
+### Features
+
+* **spaces:** send Super from the right ⌘ to Linux and Windows Spaces ([#8236](https://github.com/trycua/cua/issues/8236)) ([711bb76](https://github.com/trycua/cua/commit/711bb769f2a6162e723257b878d76a218877ebd2))
+
+## [0.39.11](https://github.com/trycua/cua/compare/cua-spaces-v0.39.10...cua-spaces-v0.39.11) (2026-11-20)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.29.4 in Cua Spaces ([#8390](https://github.com/trycua/cua/issues/8390)) ([bc01f8b](https://github.com/trycua/cua/commit/bc01f8b2110d82e3e778fc085137b3cd14d2a61f))
+
+## [0.39.10](https://github.com/trycua/cua/compare/cua-spaces-v0.39.9...cua-spaces-v0.39.10) (2026-11-20)
+
+
+### Bug Fixes
+
+* **spaces:** Windows sets up WSL 2 in one step; Docker Desktop is never offered ([#8246](https://github.com/trycua/cua/issues/8246)) ([d9b030a](https://github.com/trycua/cua/commit/d9b030a10d4b2e95e627bde6c2066af4383f9afb))
+
+## [0.39.9](https://github.com/trycua/cua/compare/cua-spaces-v0.39.8...cua-spaces-v0.39.9) (2026-11-20)
+
+
+### Bug Fixes
+
+* **cua-host:** set the Windows host up over SSH, and say when nothing will start it after a restart ([#8274](https://github.com/trycua/cua/issues/8274)) ([3770bdb](https://github.com/trycua/cua/commit/3770bdb67a2638b3b6f0b64c112e7f51ccb77312))
+
+## [0.39.8](https://github.com/trycua/cua/compare/cua-spaces-v0.39.7...cua-spaces-v0.39.8) (2026-11-20)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.29.3 in Cua Spaces ([#8341](https://github.com/trycua/cua/issues/8341)) ([a77c6b4](https://github.com/trycua/cua/commit/a77c6b454605548ac10b365f87ada1b9fbb998e8))
+
+## [0.39.7](https://github.com/trycua/cua/compare/cua-spaces-v0.39.6...cua-spaces-v0.39.7) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** python security bumps (Twisted, pypdf, filelock, virtualenv, litellm, transformers, pyasn1, GitPython, fsspec, joserfc, black, langgraph-sdk) ([#8312](https://github.com/trycua/cua/issues/8312)) ([ee59258](https://github.com/trycua/cua/commit/ee592588b4a6ff6fc8ea929a4354dcb62c64076f))
+
+## [0.39.6](https://github.com/trycua/cua/compare/cua-spaces-v0.39.5...cua-spaces-v0.39.6) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** js security bumps (52 Dependabot alerts) ([#8313](https://github.com/trycua/cua/issues/8313)) ([38d718e](https://github.com/trycua/cua/commit/38d718e66565ec7a4490ff9dd63caee39ff157a2))
+
+## [0.39.5](https://github.com/trycua/cua/compare/cua-spaces-v0.39.4...cua-spaces-v0.39.5) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** bump Playwright to 1.65.1 (Chromium 159, CVE-2026-130959) ([#8321](https://github.com/trycua/cua/issues/8321)) ([7dcd4a9](https://github.com/trycua/cua/commit/7dcd4a9e86e04f3d15308762ee0e2f7f52ac632d))
+
+## [0.39.4](https://github.com/trycua/cua/compare/cua-spaces-v0.39.3...cua-spaces-v0.39.4) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** bump undici to patched versions (39 Dependabot alerts) ([#8311](https://github.com/trycua/cua/issues/8311)) ([3b44583](https://github.com/trycua/cua/commit/3b445836f13f768ba629441db4fdb5c6536578c4))
+
+## [0.39.3](https://github.com/trycua/cua/compare/cua-spaces-v0.39.2...cua-spaces-v0.39.3) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** bump aiohttp to 3.14.5 (44 Dependabot alerts) ([#8309](https://github.com/trycua/cua/issues/8309)) ([006c897](https://github.com/trycua/cua/commit/006c897412aef0820e43a67beab8fe262a4a9886))
+
+## [0.39.2](https://github.com/trycua/cua/compare/cua-spaces-v0.39.1...cua-spaces-v0.39.2) (2026-11-20)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.29.0 in Cua Spaces ([#8267](https://github.com/trycua/cua/issues/8267)) ([8ab798a](https://github.com/trycua/cua/commit/8ab798aad99ddda207a01070192143260be6126f))
+
+## [0.39.1](https://github.com/trycua/cua/compare/cua-spaces-v0.39.0...cua-spaces-v0.39.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.55.0 in Cua Spaces ([#8272](https://github.com/trycua/cua/issues/8272)) ([f376e91](https://github.com/trycua/cua/commit/f376e91748ee9898e765e2debb09440681e5b2fa))
+
+## [0.39.0](https://github.com/trycua/cua/compare/cua-spaces-v0.38.19...cua-spaces-v0.39.0) (2026-11-20)
+
+
+### Features
+
+* **spaces:** stream direct Spaces over the advertised QUIC media endpoint ([#8083](https://github.com/trycua/cua/issues/8083)) ([ecde561](https://github.com/trycua/cua/commit/ecde5618f7d20cff7fb66a6c2ce0dba16a473c55))
+
+## [0.38.19](https://github.com/trycua/cua/compare/cua-spaces-v0.38.18...cua-spaces-v0.38.19) (2026-11-19)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.28.6 in Cua Spaces ([#8256](https://github.com/trycua/cua/issues/8256)) ([894a6d7](https://github.com/trycua/cua/commit/894a6d70dc975e0dea4af2924f68ee2da70f2c86))
+
+## [0.38.18](https://github.com/trycua/cua/compare/cua-spaces-v0.38.17...cua-spaces-v0.38.18) (2026-11-19)
+
+
+### Bug Fixes
+
+* **spaces:** serve the loopback control server on Windows and Linux so open_space_viewer works ([#8255](https://github.com/trycua/cua/issues/8255)) ([7b7fb01](https://github.com/trycua/cua/commit/7b7fb01f05ce470847980f08570df84286f9c8ef)), closes [#8254](https://github.com/trycua/cua/issues/8254)
+
+## [0.38.17](https://github.com/trycua/cua/compare/cua-spaces-v0.38.16...cua-spaces-v0.38.17) (2026-11-19)
+
+
+### Bug Fixes
+
+* **cua-vmm:** wait for a starting container engine, name and retry its failed pings ([#8241](https://github.com/trycua/cua/issues/8241)) ([fd4e019](https://github.com/trycua/cua/commit/fd4e01991b42350dc8cf0e807c9f211ada44e0bd))
+* **spaces-macos:** bundle cua 0.28.5 in Cua Spaces ([#8232](https://github.com/trycua/cua/issues/8232)) ([1cc9693](https://github.com/trycua/cua/commit/1cc96937190e2a8f490c0b53b47c279120ff13dd))
+
+## [0.38.16](https://github.com/trycua/cua/compare/cua-spaces-v0.38.15...cua-spaces-v0.38.16) (2026-11-19)
+
+
+### Bug Fixes
+
+* **spaces:** deliver agent messages once ([#8218](https://github.com/trycua/cua/issues/8218)) ([a88ded9](https://github.com/trycua/cua/commit/a88ded951c5e66285bc788b75fddc1c1cdff5eb0))
+
+## [0.38.15](https://github.com/trycua/cua/compare/cua-spaces-v0.38.14...cua-spaces-v0.38.15) (2026-11-19)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.28.4 in Cua Spaces ([#8217](https://github.com/trycua/cua/issues/8217)) ([261871e](https://github.com/trycua/cua/commit/261871e28526da412b9d6ef3a6dfab8da51cbb0b))
+
+## [0.38.14](https://github.com/trycua/cua/compare/cua-spaces-v0.38.13...cua-spaces-v0.38.14) (2026-11-19)
+
+
+### Bug Fixes
+
+* **spaces:** send the Mac clipboard on paste in the native viewer ([#8145](https://github.com/trycua/cua/issues/8145)) ([54312cf](https://github.com/trycua/cua/commit/54312cfce862d13a57f0c28851bd399e261c8e70))
+
+## [0.38.13](https://github.com/trycua/cua/compare/cua-spaces-v0.38.12...cua-spaces-v0.38.13) (2026-11-18)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.54.0 in Cua Spaces ([#8183](https://github.com/trycua/cua/issues/8183)) ([cbb9b73](https://github.com/trycua/cua/commit/cbb9b73d691fc32149b0ba0eb0d3208a6266fdd1))
+
+## [0.38.12](https://github.com/trycua/cua/compare/cua-spaces-v0.38.11...cua-spaces-v0.38.12) (2026-11-18)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.28.3 in Cua Spaces ([#8186](https://github.com/trycua/cua/issues/8186)) ([27893d9](https://github.com/trycua/cua/commit/27893d90134bb1609593c07edd7caace056b5a9c))
+
+## [0.38.11](https://github.com/trycua/cua/compare/cua-spaces-v0.38.10...cua-spaces-v0.38.11) (2026-11-18)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** probe hardware encoders off the GetCapabilities path ([#8161](https://github.com/trycua/cua/issues/8161)) ([9346cab](https://github.com/trycua/cua/commit/9346cabc2e0614a2ec9d9b629ab0db39b44db4bb))
+
+## [0.38.10](https://github.com/trycua/cua/compare/cua-spaces-v0.38.9...cua-spaces-v0.38.10) (2026-11-18)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.53.2 in Cua Spaces ([#8140](https://github.com/trycua/cua/issues/8140)) ([e61a014](https://github.com/trycua/cua/commit/e61a014040bfdad19dff7e438409835b26dc9e81))
+
+## [0.38.9](https://github.com/trycua/cua/compare/cua-spaces-v0.38.8...cua-spaces-v0.38.9) (2026-11-17)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.28.2 in Cua Spaces ([#8061](https://github.com/trycua/cua/issues/8061)) ([4bd7c86](https://github.com/trycua/cua/commit/4bd7c8616698f83fe4618307cb1a5ee65a6da6b3))
+
+## [0.38.8](https://github.com/trycua/cua/compare/cua-spaces-v0.38.7...cua-spaces-v0.38.8) (2026-11-17)
+
+
+### Bug Fixes
+
+* **packaging:** ship LICENSE files in Python distributions ([#8056](https://github.com/trycua/cua/issues/8056)) ([be4ba4b](https://github.com/trycua/cua/commit/be4ba4ba8250e127aebc053b6450eb57710f40d5))
+
+## [0.38.7](https://github.com/trycua/cua/compare/cua-spaces-v0.38.6...cua-spaces-v0.38.7) (2026-11-17)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.53.0 in Cua Spaces ([#8049](https://github.com/trycua/cua/issues/8049)) ([01e8aa8](https://github.com/trycua/cua/commit/01e8aa87b3cd070f000714a3e2481b93d2bf1302))
+
+## [0.38.6](https://github.com/trycua/cua/compare/cua-spaces-v0.38.5...cua-spaces-v0.38.6) (2026-11-17)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.52.13 in Cua Spaces ([#8032](https://github.com/trycua/cua/issues/8032)) ([e5965ea](https://github.com/trycua/cua/commit/e5965ea2a053678def40ca2808f0bd59ff9a0a1e))
+
+## [0.38.5](https://github.com/trycua/cua/compare/cua-spaces-v0.38.4...cua-spaces-v0.38.5) (2026-11-17)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.52.11 in Cua Spaces ([#7976](https://github.com/trycua/cua/issues/7976)) ([949e46c](https://github.com/trycua/cua/commit/949e46cafe07fada77954c8e2d6fbbece1708e8d))
+
+## [0.38.4](https://github.com/trycua/cua/compare/cua-spaces-v0.38.3...cua-spaces-v0.38.4) (2026-11-17)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.28.1 in Cua Spaces ([#8017](https://github.com/trycua/cua/issues/8017)) ([a1c495f](https://github.com/trycua/cua/commit/a1c495f2572e7d1d55d7493428dd80a059b75e84))
+
+## [0.38.3](https://github.com/trycua/cua/compare/cua-spaces-v0.38.2...cua-spaces-v0.38.3) (2026-11-17)
+
+
+### Bug Fixes
+
+* **spaces:** keep a deleted prepared agent home removed ([#7979](https://github.com/trycua/cua/issues/7979)) ([59debb5](https://github.com/trycua/cua/commit/59debb541b94da819fb94869a3cabdec2f7f08b7))
+
+## [0.38.2](https://github.com/trycua/cua/compare/cua-spaces-v0.38.1...cua-spaces-v0.38.2) (2026-11-17)
+
+
+### Bug Fixes
+
+* **spaces:** a create's Making line names its step before its bytes ([#6975](https://github.com/trycua/cua/issues/6975)) ([bff492d](https://github.com/trycua/cua/commit/bff492d0b8508462477229ec5ee29336382ea064))
+
+## [0.38.1](https://github.com/trycua/cua/compare/cua-spaces-v0.38.0...cua-spaces-v0.38.1) (2026-11-17)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.28.0 in Cua Spaces ([#7994](https://github.com/trycua/cua/issues/7994)) ([e33d480](https://github.com/trycua/cua/commit/e33d480699974f6dc029b00077165f324c237bfe))
+* **spaces-macos:** the app comes to the front when the browser confirms the sign-in ([#6974](https://github.com/trycua/cua/issues/6974)) ([d67ddfd](https://github.com/trycua/cua/commit/d67ddfd6ffea9bb62155bff689460940186d97b3))
+* **spaces-macos:** the Local Network step waits on macOS's prompt when it is already open ([#6972](https://github.com/trycua/cua/issues/6972)) ([d2ceafb](https://github.com/trycua/cua/commit/d2ceafb1caa2e0cc2f2c6dc940c5612e7e6d5037))
+
+## [0.38.0](https://github.com/trycua/cua/compare/cua-spaces-v0.37.2...cua-spaces-v0.38.0) (2026-11-16)
+
+
+### Features
+
+* **cua-spaces:** eject the installer disk image after a drag install ([#4567](https://github.com/trycua/cua/issues/4567)) ([baf720c](https://github.com/trycua/cua/commit/baf720c2bf06da59bc938a4c331c00d496d7db93))
+
+
+### Bug Fixes
+
+* **spaces:** the Space's viewer waits for its first picture only while the window can be seen ([#6973](https://github.com/trycua/cua/issues/6973)) ([05fece5](https://github.com/trycua/cua/commit/05fece5da50377802b840621e1b782cbf433b22e))
+
+## [0.37.2](https://github.com/trycua/cua/compare/cua-spaces-v0.37.1...cua-spaces-v0.37.2) (2026-11-16)
+
+
+### Bug Fixes
+
+* **cua-cli:** say containers accept --network none under the Secure default ([#7990](https://github.com/trycua/cua/issues/7990)) ([3a0b44f](https://github.com/trycua/cua/commit/3a0b44fc40504ed146ff98dc06ced0d767d936b0))
+* **cua-sdk:** check image-pull free space on the engine's data root ([#7989](https://github.com/trycua/cua/issues/7989)) ([0efaeeb](https://github.com/trycua/cua/commit/0efaeeb15e4e0324c417c45ed9a31f0d9b802414))
+
+## [0.37.1](https://github.com/trycua/cua/compare/cua-spaces-v0.37.0...cua-spaces-v0.37.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* **cua-sdk:** keep HTTP MCP reply waits cancellable ([#7980](https://github.com/trycua/cua/issues/7980)) ([d735f38](https://github.com/trycua/cua/commit/d735f383d43a2abecc100c08be23c4540f4cba95))
+
+## [0.37.0](https://github.com/trycua/cua/compare/cua-spaces-v0.36.27...cua-spaces-v0.37.0) (2026-11-16)
+
+
+### Features
+
+* **spaces:** delete one or all notifications, and prune old read ones ([#7396](https://github.com/trycua/cua/issues/7396)) ([5fe2ca9](https://github.com/trycua/cua/commit/5fe2ca9a4715469a467c65e04ce7ca0a7b44a64d))
+
+
+### Bug Fixes
+
+* **agents:** install Hermes dependencies in macOS spaces ([#7978](https://github.com/trycua/cua/issues/7978)) ([a090ad5](https://github.com/trycua/cua/commit/a090ad5f5e7f3333b0c5649ff96ea1e34c607ac5))
+* **cua-spaces:** compile with reduced feature sets ([#4846](https://github.com/trycua/cua/issues/4846)) ([c871171](https://github.com/trycua/cua/commit/c8711718ebc2f4aad364caf3daed74631deab5fa))
+
+## [0.36.27](https://github.com/trycua/cua/compare/cua-spaces-v0.36.26...cua-spaces-v0.36.27) (2026-11-16)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.52.7 in Cua Spaces ([#7960](https://github.com/trycua/cua/issues/7960)) ([c3a48c0](https://github.com/trycua/cua/commit/c3a48c0e77486092c69e6672aaa816b0924fec5c))
+
+## [0.36.26](https://github.com/trycua/cua/compare/cua-spaces-v0.36.25...cua-spaces-v0.36.26) (2026-11-16)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.52.6 in Cua Spaces ([#7935](https://github.com/trycua/cua/issues/7935)) ([f286d94](https://github.com/trycua/cua/commit/f286d941554013976febc1db671028eede8c1f6a))
+
+## [0.36.25](https://github.com/trycua/cua/compare/cua-spaces-v0.36.24...cua-spaces-v0.36.25) (2026-11-16)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.52.4 in Cua Spaces ([#7898](https://github.com/trycua/cua/issues/7898)) ([133259a](https://github.com/trycua/cua/commit/133259a34f926d3e294e0399e9901b69f240a830))
+
+## [0.36.24](https://github.com/trycua/cua/compare/cua-spaces-v0.36.23...cua-spaces-v0.36.24) (2026-11-16)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.52.1 in Cua Spaces ([#7846](https://github.com/trycua/cua/issues/7846)) ([2e00a14](https://github.com/trycua/cua/commit/2e00a1463f8c70b021fe3cac381ca7ed42105cae))
+
 ## [0.36.23](https://github.com/trycua/cua/compare/cua-spaces-v0.36.22...cua-spaces-v0.36.23) (2026-11-15)
 
 

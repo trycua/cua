@@ -1,15 +1,17 @@
 """The cua-sandbox `driver` extra must cover the newest Cua Driver release.
 
-The extra pins a range (`cua-driver>=0.37.0,<0.53`). Cua Driver is 0.x, where a
+The extra pins a range (`cua-driver>=0.37.0,<0.NN`). Cua Driver is 0.x, where a
 minor may break the typed SDK, so the upper bound stays below the next minor
-instead of being open. That only works if a new minor cannot ship without
-someone raising the bound: until 12 Nov 2026 the bound sat at `<0.48` while
-Driver 0.48.0 shipped, and `pip install cua-sandbox[driver]` stayed on 0.47.x.
+instead of being open. That only works if a new minor cannot ship without the
+bound being raised: until 12 Nov 2026 the bound sat at `<0.48` while Driver
+0.48.0 shipped, and `pip install cua-sandbox[driver]` stayed on 0.47.x.
 
 The release-please manifest holds the version the Driver is released at. This
 test fails when that version is outside the range, so the release PR that moves
-the Driver to a new minor cannot merge until cua-sandbox's bound is checked and
-raised. Offline; no network.
+the Driver to a new minor cannot merge before the bound is raised. Nobody raises
+it by hand: release-please.yml notices the open Driver release PR and opens a
+`fix(cua-sandbox)` PR that runs .github/scripts/sync_cua_sandbox_driver_bound.py,
+gated by the cua-driver contract-clients CI. Offline; no network.
 """
 
 import json
@@ -48,12 +50,10 @@ class CuaSandboxDriverRange(unittest.TestCase):
             latest,
             req.specifier,
             f"cua-driver {latest} is outside cua-sandbox's driver extra "
-            f"({req.specifier}). Check the typed Driver API cua-sandbox calls "
-            "against the release notes, then raise the upper bound in "
-            "libs/python/cua-sandbox/pyproject.toml, its README, "
-            "libs/python/cua-sandbox/tests/test_driver_dependency.py, "
-            "docs/content/docs/cua-sdk/reference/runtime-support.mdx and the uv.lock "
-            "files that record it.",
+            f"({req.specifier}). The bound-bump PR (branch "
+            "automation/cua-sandbox-driver-bound) should be open or merging; if it is "
+            "not, run `python3 .github/scripts/sync_cua_sandbox_driver_bound.py "
+            f"--driver-version {latest}` and open the PR.",
         )
 
     def test_upper_bound_is_not_open(self):

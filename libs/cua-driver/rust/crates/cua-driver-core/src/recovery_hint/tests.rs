@@ -705,7 +705,25 @@ fn a_browser_key_blocked_by_a_dialog_resolves_it_first() {
     );
     assert_eq!(
         hint.hint,
-        "A page dialog opened before the key was pressed. Resolve it with browser_dialog, then read the page with get_browser_state."
+        "The key was not pressed and a page dialog is open. Resolve it with browser_dialog, then read the page with get_browser_state."
+    );
+}
+
+#[test]
+fn a_browser_key_of_unknown_delivery_behind_a_dialog_keeps_the_uncertainty() {
+    let hint = hint_for(
+        "browser_press_key",
+        &seed(json!({"target_id": "t", "tab_id": "x"})),
+        false,
+        json!({"status": "refused", "refusal": {
+            "code": "browser_input_incomplete",
+            "message": "m",
+            "detail": {"pressed": "unknown", "delivery": "unknown", "dialog": {"present": true}},
+        }}),
+    );
+    assert_eq!(
+        hint.hint,
+        "A page dialog is open and the key may have reached the page. Resolve the dialog with browser_dialog, then read the page with get_browser_state to see whether the key took effect before pressing it again."
     );
 }
 

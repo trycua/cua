@@ -435,7 +435,8 @@ impl BrowserPressKeyTool {
 }
 
 impl BrowserPressKeyTool {
-    /// A focus handler opened a page dialog before any key was sent.
+    /// A page dialog opened while the page was being focused, before any key
+    /// was sent.
     async fn dialog_before_keys(
         &self,
         conn: &CdpConnection,
@@ -451,8 +452,8 @@ impl BrowserPressKeyTool {
             .invalidate_tab_snapshots(session, target_id, tab_id);
         BrowserRefusal::new(
             BrowserRefusalCode::BrowserInputIncomplete,
-            "focusing the page opened a page dialog before any key was sent, so the key was not \
-             pressed; resolve the dialog with browser_dialog first",
+            "a page dialog opened before any key was sent, so the key was not pressed; resolve \
+             the dialog with browser_dialog first",
         )
         .with_detail(json!({
             "pressed": false,

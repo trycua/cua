@@ -818,9 +818,13 @@ static RULES: &[Rule] = &[
                 let dialog = detail
                     .and_then(|detail| detail.get("dialog"))
                     .is_some_and(|dialog| !dialog.is_null());
-                return RecoveryHint::new(if dialog {
-                    "A page dialog opened before the key was pressed. Resolve it with \
+                return RecoveryHint::new(if dialog && unpressed {
+                    "The key was not pressed and a page dialog is open. Resolve it with \
                      browser_dialog, then read the page with get_browser_state."
+                } else if dialog {
+                    "A page dialog is open and the key may have reached the page. Resolve the \
+                     dialog with browser_dialog, then read the page with get_browser_state to see \
+                     whether the key took effect before pressing it again."
                 } else if unpressed {
                     "The key was not pressed. Read the page with get_browser_state, then press it again."
                 } else {

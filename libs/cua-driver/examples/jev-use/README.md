@@ -315,6 +315,49 @@ native dispatch. The agents never retry that refusal as an unbound coordinate
 click. Stale, malformed, out-of-bounds, duplicate, or ambiguous visual results
 produce no executable visual candidate.
 
+### Literal text plans
+
+When the caller already holds the exact native text-field labels and literal
+values, asking a chooser to select each sole permitted setter only adds
+provider calls. [`python/literal_text_plan.py`](python/literal_text_plan.py)
+runs one to three such setters directly, with no model call. It is opt-in,
+Python only, and does not interpret a natural-language goal.
+
+```python
+from literal_text_plan import LiteralTextStep, execute_literal_text_plan
+
+# driver is run.Driver over one MCP session; the labels and values are the
+# caller's authorized intent, never a model's guess.
+receipt = await execute_literal_text_plan(
+    driver, pid=pid, window_id=window_id, platform="macos",
+    steps=(LiteralTextStep("Full name", name), LiteralTextStep("Email", email)),
+    verify_context=still_the_requested_record,
+    verify_step=application_has_step_value,
+    verify_final=application_has_final_state,
+)
+```
+
+Each step observes the window with `run_native.observe`, binds the label to
+exactly one eligible non-risky `text_input`, observes again, and types only if
+the fresh control has the same stable ID, label, value and selection. Input
+uses the fresh observation's token. A truncated tree, or a partial tree with no
+eligible control, is observed once more, as in `observe_step`. The caller's
+`verify_context` runs on every observation and must reject a different record,
+modal or owner even when the labels match. `verify_step` and `verify_final`
+must read application state independently; an input acknowledgement is not
+completion.
+
+The plan raises `LiteralPlanHandoff` on an ambiguous, missing, risky or changed
+field, a failed context guard or a failed oracle. Driver errors and refusals
+propagate, and the plan deadline (`timeout_s`) raises. Input is never retried:
+after any stop, observe the effect before starting another plan.
+
+If a model transcribes the plan, `validate_literal_text_plan` accepts only the
+caller's owner and steps, exactly and in order. It refuses extra fields or
+actions, changed literals, and missing, duplicate or reordered steps. The
+optional `choose` hook on `execute_literal_text_plan` exists for comparisons
+with a chooser; it may only return the sole candidate's ID.
+
 ## Install the prerequisites
 
 Install Cua Driver so that `cua-driver` is on `PATH`, or set `CUA_DRIVER_BIN`

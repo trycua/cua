@@ -11,6 +11,7 @@
     "desktop",
     "spacesd",
     "local-runtimes",
+    "hyperv-runtime",
     "docker-vm",
     "external-runtimes",
     "external-runtime-protocol",

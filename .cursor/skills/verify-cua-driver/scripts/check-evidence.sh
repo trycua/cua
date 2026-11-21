@@ -12,7 +12,9 @@ for trajectory in "${trajectories[@]}"; do
 done
 [[ -s "$root/cases.jsonl" ]] || fail 'missing cases.jsonl'
 cells=$(jq -er '
-  [.cell_id, .delivery, .action, .expected_behavior.kind] |
+  if (.oracles | type) != "array" then error("malformed declaration") else . end |
+  [.cell_id, .harness, .delivery, .action, .expected_behavior.kind,
+    (.oracles | map(tostring) | join(","))] |
   if all(type == "string" and length > 0) then @tsv else error("malformed declaration") end
 ' "$root/cases.jsonl") || fail 'malformed cases.jsonl'
 expect_recording() {
@@ -30,7 +32,7 @@ expect_recording environment-preflight
 for name in daemon.json health_report.json check_permissions.json; do
   [[ -s "$directory/$name" ]] || fail "missing preflight $name"
 done
-while IFS=$'\t' read -r label delivery action expected; do
+while IFS=$'\t' read -r label harness delivery action expected oracles; do
   expect_recording "$label"
   case "$expected" in
     deliver) observed=Delivered ;;
@@ -42,12 +44,24 @@ while IFS=$'\t' read -r label delivery action expected; do
       map(gsub("^\\s+|\\s+$"; "")) | select(.[1] == $label)] |
     length == 1 and (.[0][11] == $observed and .[0][12] == "Pass")
   ' "$root/summary.md" >/dev/null || fail "$label summary must observe $observed / Pass"
-  required=(tool-calls.jsonl fixture-state.json)
-  [[ "$delivery" == background ]] && required+=(sentinel-events.jsonl desktop-observation.txt)
+  # Only the shared web host runner writes its fixture journal and the
+  # background sentinel journal into the recording. Native harnesses report
+  # fixture state through the accessibility tree in tool-calls.jsonl.
+  case "$harness" in
+    electron | tauri | wkwebview | webview2) web_host=1 ;;
+    *) web_host=0 ;;
+  esac
+  journal=0
+  [[ "$web_host" == 1 && ",$oracles," == *,fixture_state,* ]] && journal=1
+  sentinel=0
+  [[ "$web_host" == 1 && "$delivery" == background ]] && sentinel=1
+  required=(tool-calls.jsonl)
+  (( journal == 1 )) && required+=(fixture-state.json)
+  (( sentinel == 1 )) && required+=(sentinel-events.jsonl desktop-observation.txt)
   for name in "${required[@]}"; do
     [[ -s "$directory/$name" ]] || fail "missing $label/$name"
   done
-  if [[ "$delivery" == background ]]; then
+  if (( sentinel == 1 )); then
     jq -se 'any(.[]; .kind == "heartbeat")' "$directory/sentinel-events.jsonl" >/dev/null || fail "$label missing heartbeat"
   fi
   # Only click cells have a fixed journal marker and MCP tool; the other
@@ -57,12 +71,14 @@ while IFS=$'\t' read -r label delivery action expected; do
     right_click | double_click) tool="$action" ;;
     *) tool= ;;
   esac
-  if [[ -n "$tool" && "$expected" == deliver ]]; then
+  if [[ -n "$tool" && "$expected" == deliver ]] && (( journal == 1 )); then
     jq -e --arg action "$action" \
       '[.. | strings | test("(^|[^[:alnum:]_])last_action=\($action)($|[^[:alnum:]_])")] | any' \
       "$directory/fixture-state.json" >/dev/null || fail "$label missing $action fixture marker"
   fi
   [[ "$label" == *-typed-sdk ]] && tool=
+  # A read-only cell dispatches no action, so it records no screenshot pair.
+  [[ "$delivery" == not_applicable ]] && continue
   paired=0
   for turn in "$directory"/turn-*; do
     [[ -s "$turn/before.png" && -s "$turn/after.png" ]] || continue

@@ -443,6 +443,37 @@ export function keyEventToInput(
   };
 }
 
+/**
+ * Which ⌘ keys are held, from the key events that press and release them.
+ * A Mac viewer sends the left ⌘ to a Linux or Windows guest as Control
+ * (`metaAsControl`) and the right ⌘ held alone as Super, so a desktop
+ * driven by Super (Hyprland) can be used from a Mac keyboard.
+ */
+export class CommandSides {
+  private left = false;
+  private right = false;
+
+  /** Notes the ⌘ key this event presses or releases, and whether its ⌘ is
+   * the right one alone (on a release, as it was before the release). */
+  rightOnly(event: { code: string; metaKey: boolean }, state: "down" | "up"): boolean {
+    if (state === "down") this.note(event, true);
+    const only = this.right && !this.left;
+    if (state === "up") this.note(event, false);
+    return only;
+  }
+
+  /** Forgets both keys (focus loss: their releases go elsewhere). */
+  reset(): void {
+    this.left = this.right = false;
+  }
+
+  private note(event: { code: string; metaKey: boolean }, down: boolean): void {
+    if (event.code === "MetaLeft") this.left = down;
+    else if (event.code === "MetaRight") this.right = down;
+    else if (!event.metaKey) this.left = this.right = false;
+  }
+}
+
 /** Coalesce adjacent text commits without crossing other events (keeps a
  * burst of typing to one event). */
 export function coalesceText(events: readonly InteractiveInputEvent[]): InteractiveInputEvent[] {

@@ -145,6 +145,24 @@ async fn health_carries_ok_in_every_mode() {
             .unwrap();
         assert_eq!(r.status(), 204, "{mode:?}");
         assert_eq!(marker(&r).as_deref(), Some("ok"), "{mode:?}");
+        // The boot identity: stable across requests to one process, public.
+        let boot = |r: &reqwest::Response, name: &str| {
+            r.headers()
+                .get(name)
+                .map(|v| v.to_str().unwrap().to_owned())
+        };
+        let id = boot(&r, cua_relay::route_marker::BOOT_HEADER).expect("boot id");
+        assert_eq!(id, cua_relay::route_marker::boot().id(), "{mode:?}");
+        assert_eq!(id.len(), 32, "{mode:?}");
+        assert_eq!(
+            boot(&r, cua_relay::route_marker::STARTED_HEADER),
+            Some(cua_relay::route_marker::boot().started().to_string()),
+            "{mode:?}"
+        );
+        assert!(
+            boot(&r, cua_relay::route_marker::VERSION_HEADER).is_some(),
+            "{mode:?}"
+        );
 
         let r = env
             .http
@@ -286,5 +304,8 @@ async fn the_probe_port_carries_ok() {
         .unwrap();
     assert_eq!(r.status(), 204);
     assert_eq!(marker(&r).as_deref(), Some("ok"));
+    assert!(r
+        .headers()
+        .contains_key(cua_relay::route_marker::BOOT_HEADER));
     task.abort();
 }

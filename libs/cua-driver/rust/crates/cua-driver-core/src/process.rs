@@ -524,11 +524,11 @@ mod win {
         #[test]
         fn command_line_quotes_like_the_msvc_runtime_parses() {
             let mut command = Command::new(r"C:\Program Files\cua\cua-driver.exe");
-            command.args(["serve", "", r#"a "b""#, r"c\d\", "plain"]);
+            command.args(["serve", "", r#"a "b""#, r"c d\", r"e\f", "plain"]);
             let line = String::from_utf16(&command_line(&command)).unwrap();
             assert_eq!(
                 line,
-                "\"C:\\Program Files\\cua\\cua-driver.exe\" serve \"\" \"a \\\"b\\\"\" \"c\\d\\\\\" plain\0"
+                "\"C:\\Program Files\\cua\\cua-driver.exe\" serve \"\" \"a \\\"b\\\"\" \"c d\\\\\" e\\f plain\0"
             );
         }
 

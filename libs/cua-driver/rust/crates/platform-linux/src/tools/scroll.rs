@@ -11,6 +11,8 @@ use cua_driver_core::{
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+use crate::routes::LinuxPointer as _;
+
 use super::impl_::{
     coordinate_frame_schema, desktop_frame_requested, desktop_frame_unmapped, desktop_input_space,
     desktop_to_window_local, explicit_keyboard_cursor_target, foreground_budget,
@@ -313,11 +315,13 @@ impl Tool for ScrollTool {
                 "desktop scroll",
                 foreground_budget(ticks as usize),
                 move || {
-                    if wayland {
-                        crate::wayland::scroll_desktop(&space, x, y, &direction, ticks)
-                    } else {
-                        crate::input::send_scroll_xtest_desktop(x, y, &direction, amount)
-                    }
+                    crate::routes::routes().scroll_desktop(
+                        &space,
+                        (x, y),
+                        &direction,
+                        ticks,
+                        amount,
+                    )
                 },
             )
             .await;

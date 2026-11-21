@@ -143,11 +143,87 @@ pub(crate) fn window_routes(desktop: Desktop) -> Vec<WindowRoute> {
     }
 }
 
+/// Pointer input at desktop-frame points (`scope: "desktop"`). Window-targeted
+/// pointer input still chooses its route in each tool.
+#[cfg(target_os = "linux")]
+pub(crate) trait LinuxPointer {
+    /// `count` presses of `button` at `at`. Only X11 carries `modifiers`: the
+    /// callers refuse modified clicks on native Wayland first.
+    fn click_desktop(
+        &self,
+        space: &crate::wayland::DesktopInputSpace,
+        at: (i32, i32),
+        count: usize,
+        button: u8,
+        modifiers: &[&str],
+    ) -> anyhow::Result<()>;
+    /// Wayland sends `ticks` wheel ticks, X11 `amount` wheel buttons.
+    fn scroll_desktop(
+        &self,
+        space: &crate::wayland::DesktopInputSpace,
+        at: (i32, i32),
+        direction: &str,
+        ticks: u32,
+        amount: usize,
+    ) -> anyhow::Result<()>;
+    fn drag_desktop(
+        &self,
+        space: &crate::wayland::DesktopInputSpace,
+        drag: DesktopDrag<'_>,
+    ) -> anyhow::Result<()>;
+    fn move_cursor_desktop(
+        &self,
+        space: &crate::wayland::DesktopInputSpace,
+        at: (i32, i32),
+    ) -> anyhow::Result<()>;
+}
+
+/// One desktop-frame drag.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DesktopDrag<'a> {
+    pub from: (i32, i32),
+    pub to: (i32, i32),
+    pub steps: usize,
+    pub duration_ms: u64,
+    pub button: u8,
+    /// Only X11 carries modifiers, as for [`LinuxPointer::click_desktop`].
+    pub modifiers: &'a [&'a str],
+}
+
+/// A desktop pointer route. The bodies are in `wayland/mod.rs`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DesktopPointerRoute {
+    /// The nested cua-compositor's control socket, while `CUA_INJECT_SOCKET`
+    /// is set. Clicks and scrolls only; terminal.
+    Injected,
+    /// zwlr_virtual_pointer_v1. A compositor without it passes on to libei,
+    /// except under niri, which refuses.
+    VirtualPointer,
+    /// libei through its EIS socket or the portal (`portal-input` builds).
+    Libei,
+    /// XTest on the root window.
+    X11,
+}
+
+/// The desktop pointer routes for `desktop`, in the order they are tried.
+/// XWayland takes the X11 route.
+pub(crate) fn desktop_pointer_routes(desktop: Desktop) -> Vec<DesktopPointerRoute> {
+    use DesktopPointerRoute::*;
+    match desktop {
+        Desktop::X11 | Desktop::XWayland(_) => vec![X11],
+        Desktop::Wayland(_) if cfg!(feature = "portal-input") => {
+            vec![Injected, VirtualPointer, Libei]
+        }
+        Desktop::Wayland(_) => vec![Injected, VirtualPointer],
+    }
+}
+
 /// Every capability's routes for one desktop.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct LinuxRoutes {
     display_capture: Vec<DisplayRoute>,
     window_capture: Vec<WindowRoute>,
+    desktop_pointer: Vec<DesktopPointerRoute>,
 }
 
 impl LinuxRoutes {
@@ -155,6 +231,7 @@ impl LinuxRoutes {
         Self {
             display_capture: display_routes(desktop),
             window_capture: window_routes(desktop),
+            desktop_pointer: desktop_pointer_routes(desktop),
         }
     }
 }
@@ -168,6 +245,55 @@ impl LinuxCapture for LinuxRoutes {
     fn capture_window(&self, xid: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
         first_route("window capture", &self.window_capture, |route| {
             route.run(xid, pid)
+        })
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl LinuxPointer for LinuxRoutes {
+    fn click_desktop(
+        &self,
+        space: &crate::wayland::DesktopInputSpace,
+        at: (i32, i32),
+        count: usize,
+        button: u8,
+        modifiers: &[&str],
+    ) -> anyhow::Result<()> {
+        first_route("desktop pointer", &self.desktop_pointer, |route| {
+            route.click(space, at, count, button, modifiers)
+        })
+    }
+
+    fn scroll_desktop(
+        &self,
+        space: &crate::wayland::DesktopInputSpace,
+        at: (i32, i32),
+        direction: &str,
+        ticks: u32,
+        amount: usize,
+    ) -> anyhow::Result<()> {
+        first_route("desktop pointer", &self.desktop_pointer, |route| {
+            route.scroll(space, at, direction, ticks, amount)
+        })
+    }
+
+    fn drag_desktop(
+        &self,
+        space: &crate::wayland::DesktopInputSpace,
+        drag: DesktopDrag<'_>,
+    ) -> anyhow::Result<()> {
+        first_route("desktop pointer", &self.desktop_pointer, |route| {
+            route.drag(space, drag)
+        })
+    }
+
+    fn move_cursor_desktop(
+        &self,
+        space: &crate::wayland::DesktopInputSpace,
+        at: (i32, i32),
+    ) -> anyhow::Result<()> {
+        first_route("desktop pointer", &self.desktop_pointer, |route| {
+            route.move_cursor(space, at)
         })
     }
 }
@@ -257,6 +383,36 @@ mod tests {
             assert_eq!(
                 window_routes(Desktop::Wayland(compositor)),
                 [KWin, Niri, GnomeHelper, OutputCrop],
+                "{compositor:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn x11_and_xwayland_point_through_xtest_only() {
+        let mut desktops = vec![Desktop::X11];
+        desktops.extend(COMPOSITORS.map(Desktop::XWayland));
+        for desktop in desktops {
+            assert_eq!(
+                desktop_pointer_routes(desktop),
+                [DesktopPointerRoute::X11],
+                "{desktop:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn wayland_points_through_the_injector_then_the_virtual_pointer_then_libei() {
+        use DesktopPointerRoute::*;
+        let expected: &[DesktopPointerRoute] = if cfg!(feature = "portal-input") {
+            &[Injected, VirtualPointer, Libei]
+        } else {
+            &[Injected, VirtualPointer]
+        };
+        for compositor in COMPOSITORS {
+            assert_eq!(
+                desktop_pointer_routes(Desktop::Wayland(compositor)),
+                expected,
                 "{compositor:?}"
             );
         }

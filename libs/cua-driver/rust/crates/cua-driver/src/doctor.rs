@@ -26,7 +26,9 @@
 //!   script), plus a hint to run `cua-driver diagnose` for a full
 //!   TCC / cdhash / install layout dump.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(target_os = "macos")]
+use std::path::PathBuf;
 
 /// Probe outcome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -310,15 +310,18 @@ fn read_response_line_within(
     reply_deadline: Duration,
 ) -> std::io::Result<Option<String>> {
     let deadline = Instant::now() + reply_deadline;
+    let timed_out = || {
+        std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            format!("timed out after {reply_deadline:?} waiting for trusted service response"),
+        )
+    };
     let mut bytes = Vec::new();
     loop {
-        match reader.read_until(b'\n', &mut bytes) {
-            Ok(0) if bytes.is_empty() => return Ok(None),
-            Ok(0) | Ok(_) => {
-                return String::from_utf8(bytes)
-                    .map(Some)
-                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error));
-            }
+        // Read one buffer at a time rather than with `read_until`, so a peer
+        // that keeps sending bytes without a newline still meets the deadline.
+        let available = match reader.fill_buf() {
+            Ok(available) => available,
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(error)
                 if matches!(
@@ -327,13 +330,26 @@ fn read_response_line_within(
                 ) =>
             {
                 if Instant::now() >= deadline {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut,
-                        format!("timed out after {reply_deadline:?} waiting for trusted service response"),
-                    ));
+                    return Err(timed_out());
                 }
+                continue;
             }
             Err(error) => return Err(error),
+        };
+        if available.is_empty() && bytes.is_empty() {
+            return Ok(None);
+        }
+        let line_end = available.iter().position(|&byte| byte == b'\n');
+        let used = line_end.map_or(available.len(), |newline| newline + 1);
+        bytes.extend_from_slice(&available[..used]);
+        reader.consume(used);
+        if line_end.is_some() || used == 0 {
+            return String::from_utf8(bytes)
+                .map(Some)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error));
+        }
+        if Instant::now() >= deadline {
+            return Err(timed_out());
         }
     }
 }
@@ -424,6 +440,30 @@ mod tests {
         assert_eq!(
             read_response_line(&mut reader).unwrap().as_deref(),
             Some("€\n")
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_reply_that_trickles_without_a_newline_meets_the_deadline() {
+        let (reader, mut writer) = std::os::unix::net::UnixStream::pair().unwrap();
+        reader
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
+        let server = std::thread::spawn(move || {
+            let started = Instant::now();
+            while started.elapsed() < Duration::from_secs(5) && writer.write_all(b"x").is_ok() {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+
+        let error =
+            read_response_line_within(&mut BufReader::new(reader), Duration::from_millis(300))
+                .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert_eq!(
+            error.to_string(),
+            "timed out after 300ms waiting for trusted service response"
         );
         server.join().unwrap();
     }
@@ -672,6 +712,43 @@ mod windows_tests {
             "timed out after 300ms waiting for trusted service response"
         );
         release_tx.send(()).unwrap();
+        served.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_service_reply_that_trickles_without_a_newline_meets_the_deadline() {
+        let name = format!(
+            r"\\.\pipe\cua-driver-trickling-service-{}",
+            std::process::id()
+        );
+        let mut server = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&name)
+            .unwrap();
+        let served = tokio::spawn(async move {
+            server.connect().await.unwrap();
+            let started = std::time::Instant::now();
+            while started.elapsed() < Duration::from_secs(5) && server.write_all(b"x").await.is_ok()
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        });
+
+        let error = tokio::task::spawn_blocking(move || {
+            let mut stream = connect(&name).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_millis(50)))
+                .unwrap();
+            read_response_line_within(&mut BufReader::new(stream), Duration::from_millis(300))
+                .unwrap_err()
+        })
+        .await
+        .unwrap();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert_eq!(
+            error.to_string(),
+            "timed out after 300ms waiting for trusted service response"
+        );
         served.await.unwrap();
     }
 }

@@ -150,7 +150,10 @@ impl PipeStream {
             offset_high: 0,
             event: event.as_raw_handle(),
         };
-        if start(file, &mut overlapped) == 0 {
+        // The kernel writes through this pointer until the operation settles,
+        // so every call below uses it and none takes a reference.
+        let overlapped = std::ptr::addr_of_mut!(overlapped);
+        if start(file, overlapped) == 0 {
             let error = std::io::Error::last_os_error();
             if error.raw_os_error() != Some(ERROR_IO_PENDING) {
                 return Err(broken_pipe_as_eof(error));
@@ -166,15 +169,15 @@ impl PipeStream {
             WAIT_TIMEOUT => {
                 // SAFETY: cancels only this operation; the wait below keeps
                 // `overlapped` and the buffer alive until it settles.
-                unsafe { CancelIoEx(file, &overlapped) };
+                unsafe { CancelIoEx(file, overlapped) };
                 true
             }
             _ => {
                 let error = std::io::Error::last_os_error();
                 // SAFETY: as above; the operation must settle before return.
                 unsafe {
-                    CancelIoEx(file, &overlapped);
-                    GetOverlappedResult(file, &overlapped, &mut 0, 1);
+                    CancelIoEx(file, overlapped);
+                    GetOverlappedResult(file, overlapped, &mut 0, 1);
                 }
                 return Err(error);
             }
@@ -182,7 +185,7 @@ impl PipeStream {
 
         let mut transferred = 0_u32;
         // SAFETY: waits for this operation to settle, cancelled or not.
-        if unsafe { GetOverlappedResult(file, &overlapped, &mut transferred, 1) } != 0 {
+        if unsafe { GetOverlappedResult(file, overlapped, &mut transferred, 1) } != 0 {
             return Ok(transferred as usize);
         }
         let error = std::io::Error::last_os_error();

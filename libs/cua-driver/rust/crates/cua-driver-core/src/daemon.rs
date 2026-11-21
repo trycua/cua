@@ -360,6 +360,9 @@ fn exchange(
 
     const READ_POLL: Duration = Duration::from_secs(10);
 
+    // One deadline covers connecting, writing and reading, so a short
+    // `reply_deadline` such as the presence probe's bounds the whole exchange.
+    let reply_by = Instant::now() + reply_deadline;
     #[cfg(unix)]
     let mut stream = std::os::unix::net::UnixStream::connect(socket_path)
         .map_err(|error| anyhow::anyhow!("connect to {socket_path}: {error}"))?;
@@ -373,14 +376,15 @@ fn exchange(
     // even when the peer's reply is still buffered for us to read. Treat that
     // as "peer already gone": the read below still drains buffered data and
     // reports a real close, instead of failing with a bare "Invalid argument".
-    set_timeout_unless_peer_closed(stream.set_write_timeout(Some(Duration::from_secs(5))))?;
+    let write_slice = reply_by
+        .saturating_duration_since(Instant::now())
+        .clamp(Duration::from_millis(1), Duration::from_secs(5));
+    set_timeout_unless_peer_closed(stream.set_write_timeout(Some(write_slice)))?;
 
     let mut writer = stream.try_clone()?;
     let line = serde_json::to_string(request)? + "\n";
-    let write_deadline = Instant::now() + reply_deadline;
-    crate::socket_io::write_all_with_retry(&mut writer, line.as_bytes(), write_deadline)?;
+    crate::socket_io::write_all_with_retry(&mut writer, line.as_bytes(), reply_by)?;
 
-    let reply_by = Instant::now() + reply_deadline;
     let mut buffer = Vec::with_capacity(64 * 1024);
     let mut chunk = [0_u8; 64 * 1024];
     let response_line = loop {

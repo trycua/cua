@@ -2,16 +2,22 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 use crate::protocol::ToolResult;
+use std::hash::{BuildHasher, Hasher, RandomState};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::LazyLock;
 
 pub const LRU_CAP_PER_PID: usize = 8;
 pub const STALE_TOKEN_ERROR: &str =
     "element_token is stale; call get_window_state again to refresh";
 
-static SNAPSHOT_COUNTER: AtomicU32 = AtomicU32::new(1);
+static SNAPSHOT_COUNTER: LazyLock<AtomicU32> = LazyLock::new(|| AtomicU32::new(snapshot_seed()));
 
 pub(crate) fn mint_snapshot_id() -> u32 {
     SNAPSHOT_COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
+fn snapshot_seed() -> u32 {
+    RandomState::new().build_hasher().finish() as u32
 }
 
 pub fn format_snapshot_id(snapshot_id: u32) -> String {
@@ -244,6 +250,11 @@ mod tests {
         let refused = fill_pid_from_token(&mut stale, |_| TokenOwner::default()).unwrap_err();
         let structured = refused.structured_content.unwrap();
         assert_eq!(structured["refusal"]["code"], "stale_element_token");
+    }
+
+    #[test]
+    fn each_seed_differs_from_the_one_before() {
+        assert_ne!(snapshot_seed(), snapshot_seed());
     }
 
     #[test]

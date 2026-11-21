@@ -4115,8 +4115,18 @@ mod runtime_isolation_tests {
         async fn invoke(&self, args: serde_json::Value) -> crate::protocol::ToolResult {
             self.hits.fetch_add(1, Ordering::SeqCst);
             self.last_args.lock().unwrap().replace(args.clone());
-            crate::protocol::ToolResult::text("file operation ran")
-                .with_structured(serde_json::json!({"received": args}))
+            let result = crate::protocol::ToolResult::text("file operation ran")
+                .with_structured(serde_json::json!({"received": args}));
+            // Like the real producers, a move_cursor attaches its own record.
+            if self.def.name == "move_cursor" {
+                return result.with_action_record(
+                    crate::action_record::ActionExecutionRecord::cursor_move(
+                        crate::action_record::ActionTransport::MacosCgEventHid,
+                        &args,
+                    ),
+                );
+            }
+            result
         }
     }
 

@@ -56,7 +56,7 @@ pub struct TunnelRec {
     pub unencrypted_port: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SandboxRec {
     pub id: String,
     pub key_id: String,
@@ -94,6 +94,40 @@ pub struct SandboxRec {
     /// path (`cloud_bucket_mount_credentials`).
     #[serde(default)]
     pub bucket_credentials: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+impl std::fmt::Debug for SandboxRec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SandboxRec")
+            .field("id", &self.id)
+            .field("key_id", &self.key_id)
+            .field("identity_daemon", &self.identity_daemon)
+            .field(
+                "identity_token",
+                &self.identity_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("app_id", &self.app_id)
+            .field("name", &self.name)
+            .field("tags", &self.tags)
+            .field("created_at", &self.created_at)
+            .field("image_id", &self.image_id)
+            .field("task_id", &self.task_id)
+            .field("cua_name", &self.cua_name)
+            .field("state", &self.state)
+            .field("started_at", &self.started_at)
+            .field("finished_at", &self.finished_at)
+            .field("result", &self.result)
+            .field("definition", &self.definition)
+            .field("env", &self.env)
+            .field("error", &self.error)
+            .field("tunnels", &self.tunnels)
+            .field("restored", &self.restored)
+            .field("v2", &self.v2)
+            .field("exit_snapshot", &self.exit_snapshot)
+            .field("exit_snapshot_error", &self.exit_snapshot_error)
+            .field("bucket_credentials", &format_args!("<redacted>"))
+            .finish()
+    }
 }
 
 impl SandboxRec {

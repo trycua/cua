@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Process-environment reads that unit tests can override per thread.
 //!
 //! Unit tests share one process and run on parallel threads, so they must

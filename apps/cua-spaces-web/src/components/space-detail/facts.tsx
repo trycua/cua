@@ -33,11 +33,7 @@ export function FactRow({ fact }: { fact: SpaceFact }) {
     <div data-fact={fact.label} className="flex min-h-10 items-center justify-between gap-6 px-4 py-2">
       <span className="shrink-0 text-[13px] text-muted-foreground">{fact.label}</span>
       <span className="flex min-w-0 items-center gap-1.5" data-help={help ?? undefined}>
-        {help ? (
-          <Tooltip content={<span className="block max-w-sm break-all whitespace-pre-line">{help}</span>}>{value}</Tooltip>
-        ) : (
-          value
-        )}
+        {help ? <Tooltip content={<span className="block max-w-sm break-all whitespace-pre-line">{help}</span>}>{value}</Tooltip> : value}
         {fact.warning ? (
           <Tooltip content={fact.warning.help}>
             <span data-fact-warning={fact.warning.help} aria-label={fact.warning.help} role="img" className="inline-flex shrink-0 text-warning">
@@ -66,7 +62,10 @@ function CopyButton({ copy }: { copy: NonNullable<SpaceFact["copy"]> }) {
         data-copy-text={copy.text}
         aria-label={label}
         onClick={() => {
-          void navigator.clipboard?.writeText(copy.text).then(() => setDone(true), () => {});
+          void navigator.clipboard?.writeText(copy.text).then(
+            () => setDone(true),
+            () => {},
+          );
         }}
         className="inline-flex size-6 shrink-0 cursor-default items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-foreground/[0.06] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
       >

@@ -1,11 +1,10 @@
 name: "Flaky job scan"
 
 # Nightly: finds jobs that failed and then passed when the same commit was rerun
-# (any workflow, any event, the last 26 hours) and opens or updates one GitHub
-# issue per job (label `flaky`) through .github/scripts/flaky/flaky.py. The issue
-# says how to quarantine the job in .github/flaky/quarantine.json (an owner, the
-# issue, a failure-log signature and a 7-day expiry) while the cause is fixed.
-# Test-level flakes inside a job are filed by "Flaky test issues".
+# (any workflow, any event, the last 26 hours) and records them (job summary + a `flaky-jobscan` artifact) through
+# .github/scripts/flaky/flaky.py. "Flaky test issues" turns them into the weekly
+# "Flaky tests this week" issue. To quarantine a job see .github/flaky/quarantine.json
+# (an owner, an issue, a failure-log signature and a 7-day expiry).
 
 on:
   schedule:
@@ -15,7 +14,6 @@ on:
 permissions:
   actions: read
   contents: read
-  issues: write
 
 concurrency:
   group: flaky-detect
@@ -35,7 +33,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 .github/scripts/flaky/flaky.py detect --out "$RUNNER_TEMP/flaky-results" --since-hours 26
-      - name: Open or update the issues
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 .github/scripts/flaky/flaky.py file-issues --dir "$RUNNER_TEMP/flaky-results"
+      - name: Write the job summary
+        run: python3 .github/scripts/flaky/flaky.py record --dir "$RUNNER_TEMP/flaky-results"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flaky-jobscan
+          path: ${{ runner.temp }}/flaky-results/
+          if-no-files-found: ignore
+          retention-days: 10

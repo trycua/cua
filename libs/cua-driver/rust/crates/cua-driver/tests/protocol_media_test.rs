@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Image / capture / recording tool tests.
 //!
 //! zoom + the zoom→from_zoom click round trip, the recording session

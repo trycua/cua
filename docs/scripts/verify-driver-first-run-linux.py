@@ -238,7 +238,13 @@ def main():
         save(evidence, "provenance.json", provenance)
         require(top == ROOT and sha == os.environ["CUA_DOCS_SOURCE_SHA"] and not dirty,
                 "Source preflight must match the exact clean checkout SHA")
-        require(source_version == baked, "Source and baked release differ; review the intended release before running")
+        # The installer bakes the last published release, which lags the source
+        # version between a release-please bump and its publish. Only a baked
+        # release newer than the source is wrong.
+        def release(text):
+            return tuple(int(part) for part in text.split("."))
+        require(release(baked) <= release(source_version),
+                "Installer bakes a release newer than the source version; review before running")
         # Fixed legacy cleanup is outside the overridden package home. Refuse
         # any existing installation, symlink or service rather than sweeping it.
         for relative in (".cua-driver-rs", ".cua-driver", ".local/bin/cua-driver",

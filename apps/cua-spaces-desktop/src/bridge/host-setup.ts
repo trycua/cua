@@ -61,7 +61,8 @@ export function settingsPaneUrl(url: string, platform: NodeJS.Platform): string 
 }
 
 export function hostSetupMethods({ model, platform, system }: BridgeContext): Handlers {
-  const unavailable = () => Failure.unsupported(`${platform === "darwin" ? "This Mac" : platform === "win32" ? "This PC" : "This machine"} can't be set up for access in this build`);
+  const unavailable = () =>
+    Failure.unsupported(`${platform === "darwin" ? "This Mac" : platform === "win32" ? "This PC" : "This machine"} can't be set up for access in this build`);
   return {
     "host.setUp": async (args) => {
       if (!model.host.host) throw unavailable();
@@ -90,7 +91,12 @@ export function hostSetupMethods({ model, platform, system }: BridgeContext): Ha
         if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > 1_000_000) throw Failure.badArgs(`${k}: a whole number, 0 or more`);
         return v;
       };
-      await model.host.setLimits({ maxSpaces: count("maxSpaces"), maxMemoryGb: count("maxMemoryGb"), maxDiskGb: count("maxDiskGb"), maxRunMinutes: count("maxRunMinutes") });
+      await model.host.setLimits({
+        maxSpaces: count("maxSpaces"),
+        maxMemoryGb: count("maxMemoryGb"),
+        maxDiskGb: count("maxDiskGb"),
+        maxRunMinutes: count("maxRunMinutes"),
+      });
       if (model.host.actionFailure) throw hostFailure(model.host.actionFailure);
       return hostStatus(model);
     },

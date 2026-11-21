@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! The one place that turns window-local screenshot pixels into screen
 //! coordinates for the pixel rungs (`click`, `double_click`, `right_click`,
 //! `drag`, `scroll`).

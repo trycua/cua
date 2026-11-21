@@ -77,10 +77,14 @@ describe("the one-time usage-data linking notice", () => {
       view.unmount();
     }
     const demo = createDemoAdapter({ latencyMs: 0 });
-    const failing = { ...demo, call: (async (op: string, args: never) => {
-      if (op === "telemetry.linkNotice") throw new Error("host is busy");
-      return demo.call(op as never, args);
-    }) as DataAdapter["call"], subscribe: demo.subscribe } as DataAdapter;
+    const failing = {
+      ...demo,
+      call: (async (op: string, args: never) => {
+        if (op === "telemetry.linkNotice") throw new Error("host is busy");
+        return demo.call(op as never, args);
+      }) as DataAdapter["call"],
+      subscribe: demo.subscribe,
+    } as DataAdapter;
     mount(failing);
     await new Promise((r) => setTimeout(r, 20));
     expect(screen.queryByText(NOTICE.title)).toBeNull();

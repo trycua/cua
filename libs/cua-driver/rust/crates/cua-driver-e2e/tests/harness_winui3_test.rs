@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Integration test against the CuaTestHarness.WinUI3 .NET 8 app.
 //!
 //! Pair-companion to harness_wpf_test.rs but exercises WinUI3 + DComp

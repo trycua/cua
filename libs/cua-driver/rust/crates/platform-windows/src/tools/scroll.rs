@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_contract::{ScrollDirection, ScrollInput};
 use cua_driver_core::{
@@ -158,21 +161,21 @@ impl Tool for ScrollTool {
         // UIA while their top-level HWND ignores WM_VSCROLL. Prefer the
         // accessibility channel for an indexed target; the message path below
         // remains the fallback for native Win32 scrollbars.
-        if delivery == DeliveryMode::Background && crate::input::is_chromium_target_window(hwnd) {
+        if delivery.is_background() && crate::input::is_chromium_target_window(hwnd) {
             return crate::input::delivery::background_unavailable_error(
                 hwnd,
                 EventKind::MouseScroll,
             );
         }
         if let Some(idx) = elem_idx {
-            let prev_fg_addr = if delivery == DeliveryMode::Background {
+            let prev_fg_addr = if delivery.is_background() {
                 Some(unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as isize
                 })
             } else {
                 None
             };
-            let _noact = if delivery == DeliveryMode::Background {
+            let _noact = if delivery.is_background() {
                 Some(crate::input::NoActivateGuard::arm(
                     windows::Win32::Foundation::HWND(hwnd as *mut _),
                 ))
@@ -201,7 +204,7 @@ impl Tool for ScrollTool {
             })
             .await;
             if matches!(uia_result, Ok(Ok(()))) {
-                if delivery == DeliveryMode::Background {
+                if delivery.is_background() {
                     // Keep WS_EX_NOACTIVATE armed through any WebView handler
                     // queued by the UIA operation.
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -238,7 +241,7 @@ impl Tool for ScrollTool {
             }
         }
 
-        if delivery == DeliveryMode::Background
+        if delivery.is_background()
             && args.get("x").is_some_and(serde_json::Value::is_number)
             && args.get("y").is_some_and(serde_json::Value::is_number)
         {
@@ -254,7 +257,7 @@ impl Tool for ScrollTool {
         // delivery_mode:"foreground") is now a real recovery because scroll's
         // foreground path is implemented below (SendInput wheel reaches the
         // Chromium/GTK targets PostMessage can't).
-        if delivery == DeliveryMode::Background
+        if delivery.is_background()
             && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseScroll)
         {
             return crate::input::delivery::background_unavailable_error(
@@ -373,7 +376,7 @@ impl Tool for ScrollTool {
                 };
                 for _ in 0..amount {
                     unsafe {
-                        PostMessageW(hwnd_win, msg, WPARAM(code.0 as usize), LPARAM(0))?;
+                        PostMessageW(Some(hwnd_win), msg, WPARAM(code.0 as usize), LPARAM(0))?;
                     }
                 }
                 Ok(())

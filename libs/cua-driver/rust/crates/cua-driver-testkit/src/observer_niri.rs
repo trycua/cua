@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Independent niri observations over niri's IPC socket. This module never
 //! calls the driver's niri adapter, capture, geometry, or input code.
 //!
@@ -1241,7 +1244,7 @@ mod tests {
 
     #[test]
     fn socket_peer_is_the_listening_process() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::socket_tempdir().unwrap();
         let path = directory.path().join("niri.sock");
         let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
         assert_eq!(socket_peer(&path).unwrap() as u32, std::process::id());

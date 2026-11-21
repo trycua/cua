@@ -13,7 +13,13 @@ import type { TelemetrySignal } from "../model/telemetry";
 // @ts-expect-error node:fs is untyped here
 import { readFileSync } from "node:fs";
 import { fakeDrive, MOUNT_OFF, MOUNTED, NEEDS_APPROVAL } from "../test/fakeDrive";
-import { DRIVE_APPROVAL_POLL_MS, DRIVE_PROMPT_POLL_MS, InstallerFlow, type InstallerAuth, summarizeAgent } from "./InstallerFlow";
+import {
+  DRIVE_APPROVAL_POLL_MS,
+  DRIVE_PROMPT_POLL_MS,
+  InstallerFlow,
+  type InstallerAuth,
+  summarizeAgent,
+} from "./InstallerFlow";
 
 // The Cua Volume page shows with its experiment on (Settings, Experiments);
 // "has no Volume page without the Cua Volume experiment" turns it off.
@@ -48,7 +54,14 @@ function fakeAuth() {
 function fakeTelemetry() {
   const log: string[] = [];
   const signals: TelemetrySignal[] = [];
-  const view = { enabled: true, source: "default", sourceKind: "default", noticeShown: true, noticeText: "", docsUrl: "" };
+  const view = {
+    enabled: true,
+    source: "default",
+    sourceKind: "default",
+    noticeShown: true,
+    noticeText: "",
+    docsUrl: "",
+  };
   const bridge: TelemetryBridge = {
     isNative: true,
     status: async () => view,
@@ -82,8 +95,7 @@ const click = (name: string | RegExp) => fireEvent.click(screen.getByRole("butto
 /** The page's bottom bar: [start corner], [end corner] button labels. */
 function corners() {
   const footer = document.querySelector(".ob-footer");
-  const labels = (sel: string) =>
-    Array.from(footer?.querySelectorAll(`${sel} button`) ?? []).map((b) => b.textContent);
+  const labels = (sel: string) => Array.from(footer?.querySelectorAll(`${sel} button`) ?? []).map((b) => b.textContent);
   return { start: labels(".ob-footer-start"), end: labels(".ob-footer-end") };
 }
 
@@ -103,14 +115,24 @@ describe("InstallerFlow", () => {
     unmount();
 
     const r2 = render(
-      <InstallerFlow installer={createFakeInstallerBridge()} host={createFakeHostBridge()} initialStep="agents" onDone={vi.fn()} />,
+      <InstallerFlow
+        installer={createFakeInstallerBridge()}
+        host={createFakeHostBridge()}
+        initialStep="agents"
+        onDone={vi.fn()}
+      />,
     );
     await screen.findByRole("group", { name: "Detected agents" });
     expect(corners()).toEqual({ start: ["Back"], end: ["Skip", "Set up"] });
     r2.unmount();
 
     const r3 = render(
-      <InstallerFlow installer={createFakeInstallerBridge()} host={createFakeHostBridge()} initialStep="presentation" onDone={vi.fn()} />,
+      <InstallerFlow
+        installer={createFakeInstallerBridge()}
+        host={createFakeHostBridge()}
+        initialStep="presentation"
+        onDone={vi.fn()}
+      />,
     );
     expect(corners()).toEqual({ start: ["Back"], end: ["Continue"] });
     r3.unmount();
@@ -122,7 +144,7 @@ describe("InstallerFlow", () => {
 
   it("Welcome has one clear action: a plain line, and Get started has focus so Enter works (CUA-1959)", () => {
     render(<InstallerFlow installer={createFakeInstallerBridge()} host={createFakeHostBridge()} onDone={vi.fn()} />);
-    expect(screen.getByText("Computers for you and your AI agents. Setup takes about a minute.")).toBeInTheDocument();
+    expect(screen.getByText("Computers for you and your AI agents.")).toBeInTheDocument();
     const start = screen.getByRole("button", { name: "Get started" });
     expect(start).toHaveFocus();
     // The only button on the page; the usage switch never blocks it.
@@ -152,7 +174,9 @@ describe("InstallerFlow", () => {
     expect(screen.getByText("Welcome to Cua Spaces")).toBeInTheDocument();
     // The telemetry notice is on Welcome: it is recorded as shown before
     // anything is recorded.
-    expect(screen.getByTestId("telemetry-notice")).toHaveTextContent("Change this here or in Settings, Privacy.");
+    expect(screen.getByTestId("telemetry-notice")).toHaveTextContent(
+      "Features you use and errors, linked to your account. Never your files, typing or screen.",
+    );
     expect(screen.getByRole("link", { name: "What is collected" })).toHaveAttribute(
       "href",
       "https://cua.ai/docs/cua-sdk/concepts/telemetry",
@@ -339,7 +363,12 @@ describe("InstallerFlow", () => {
     fireEvent.click(screen.getByLabelText("cua skills"));
     click("Set up");
     await screen.findByText("Your AI agents are set up");
-    expect(installer.setupRequests[0]).toEqual({ agents: ["claude-code", "codex"], skills: false, mcp: true, driver: false });
+    expect(installer.setupRequests[0]).toEqual({
+      agents: ["claude-code", "codex"],
+      skills: false,
+      mcp: true,
+      driver: false,
+    });
     unmount();
 
     const none = createFakeInstallerBridge();
@@ -454,9 +483,7 @@ describe("InstallerFlow Cua Volume page", () => {
     expect(screen.getByRole("heading", { name: "Cua Volume" })).toBeInTheDocument();
     await waitFor(() => expect(box()).toBeEnabled());
     const card = document.querySelector<HTMLElement>(".installer-drive")!;
-    expect(within(card).getByRole("img")).toHaveAccessibleName(
-      "Files from a Space arriving in Cua Volume in Finder",
-    );
+    expect(within(card).getByRole("img")).toHaveAccessibleName("Files from a Space arriving in Cua Volume in Finder");
     expect(card.querySelector('.obp-picture[data-preview="drive"]')).not.toBeNull();
     expect(card.querySelectorAll("input")).toHaveLength(1);
     expect(box()).not.toBeChecked();
@@ -567,7 +594,9 @@ describe("InstallerFlow Cua Volume page", () => {
   });
 
   it("says Mount Cua Volume on Linux and has no page on Windows", async () => {
-    const linux = fakeDrive({ volume_mount_status: { enabled: false, state: "off", method: "fuse", volume_name: "Cua Volume" } });
+    const linux = fakeDrive({
+      volume_mount_status: { enabled: false, state: "off", method: "fuse", volume_name: "Cua Volume" },
+    });
     const { unmount } = render(
       <InstallerFlow
         installer={createFakeInstallerBridge()}
@@ -637,7 +666,11 @@ describe("InstallerFlow Cua Volume storage choice", () => {
     const drive = fakeDrive({ volume_mount_status: MOUNT_OFF, volume_storage: FS, volume_mount: MOUNTED });
     flow(drive);
     const group = await choices();
-    expect(within(group).getAllByRole("radio").map((r) => [r.textContent, r.getAttribute("aria-checked")])).toEqual([
+    expect(
+      within(group)
+        .getAllByRole("radio")
+        .map((r) => [r.textContent, r.getAttribute("aria-checked")]),
+    ).toEqual([
       ["This Mac", "true"],
       ["Your S3 bucket", "false"],
       ["Set up later", "false"],
@@ -677,7 +710,9 @@ describe("InstallerFlow Cua Volume storage choice", () => {
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
     fireEvent.change(endpoint, { target: { value: "http://127.0.0.1:9000" } });
     fireEvent.change(screen.getByRole("textbox", { name: "Bucket" }), { target: { value: "cua-volume" } });
-    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Path-style URLs" })).getByRole("radio", { name: "On" }));
+    fireEvent.click(
+      within(screen.getByRole("radiogroup", { name: "Path-style URLs" })).getByRole("radio", { name: "On" }),
+    );
     fireEvent.change(screen.getByRole("textbox", { name: "Access key ID" }), { target: { value: "maya-drive" } });
     const secret = screen.getByLabelText("Secret access key");
     expect(secret).toHaveAttribute("type", "password");
@@ -689,7 +724,13 @@ describe("InstallerFlow Cua Volume storage choice", () => {
     click("Continue");
     expect(await screen.findByText("How do you want to use this Mac?")).toBeInTheDocument();
     const sets = drive.calls.filter((c) => c.tool === "volume_storage_set").map((c) => c.args);
-    const bucket = { endpoint: "http://127.0.0.1:9000", region: "us-east-1", bucket: "cua-volume", root: "", path_style: true };
+    const bucket = {
+      endpoint: "http://127.0.0.1:9000",
+      region: "us-east-1",
+      bucket: "cua-volume",
+      root: "",
+      path_style: true,
+    };
     const keys = { access_key_id: "maya-drive", secret_access_key: "fixture-secret" };
     expect(sets).toEqual([
       { backend: "s3", s3: bucket, ...keys, dry_run: true },
@@ -735,7 +776,13 @@ describe("InstallerFlow Cua Volume storage choice", () => {
     const S3 = {
       backend: "s3",
       fs_path: FS.fs_path,
-      s3: { endpoint: "https://acct.r2.cloudflarestorage.com", region: "auto", bucket: "maya-volume", root: "", path_style: false },
+      s3: {
+        endpoint: "https://acct.r2.cloudflarestorage.com",
+        region: "auto",
+        bucket: "maya-volume",
+        root: "",
+        path_style: false,
+      },
       has_keys: true,
     };
     let storage: object = FS;
@@ -764,7 +811,9 @@ describe("InstallerFlow Cua Volume storage choice", () => {
 
     // The user's agent saves the bucket; the 2 s poll finds it and the core adopts it.
     storage = S3;
-    expect(await screen.findByText("Connected, versioning on", undefined, { timeout: DRIVE_PROMPT_POLL_MS + 1500 })).toBeInTheDocument();
+    expect(
+      await screen.findByText("Connected, versioning on", undefined, { timeout: DRIVE_PROMPT_POLL_MS + 1500 }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
     const sets = drive.calls.filter((c) => c.tool === "volume_storage_set").map((c) => c.args);
     expect(sets).toEqual([{ backend: "s3", s3: S3.s3, access_key_id: null, secret_access_key: null, dry_run: false }]);
@@ -850,9 +899,12 @@ describe("onboarding helper text", () => {
   it("the telemetry notice and the card notes wrap instead of being cut short", async () => {
     const css = (readFileSync(`${cwd()}/src/styles/desktop.css`, "utf8") as string).replace(/\/\*[\s\S]*?\*\//g, "");
     const rule = (selector: string) => {
-      const blocks = css
-        .split("}")
-        .filter((b: string) => b.split("{")[0]!.split(",").some((sel: string) => sel.trim() === selector));
+      const blocks = css.split("}").filter((b: string) =>
+        b
+          .split("{")[0]!
+          .split(",")
+          .some((sel: string) => sel.trim() === selector),
+      );
       return blocks.map((b: string) => b.split("{")[1] ?? "").join("\n");
     };
     // The agent prompt reads in the notes' font, not monospace.

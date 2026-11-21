@@ -86,13 +86,7 @@ jobs:
 
           # Map paths to publishable services
           declare -A PATH_TO_SERVICE=(
-            ["libs/xfce-cua/"]="docker/xfce-cua"
-            ["libs/xfce/"]="docker/xfce"
-            ["libs/kasm/"]="docker/kasm"
             ["libs/lumier/"]="docker/lumier"
-            ["libs/qemu-docker/android/"]="docker/qemu-android"
-            ["libs/qemu-docker/linux/"]="docker/qemu-linux"
-            ["libs/qemu-docker/windows/"]="docker/qemu-windows"
           )
 
           # Find all affected services from changed files

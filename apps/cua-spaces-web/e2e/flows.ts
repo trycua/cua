@@ -34,10 +34,7 @@ export type ParityScreen =
   | "volume"
   | "onboarding";
 
-export type FlowPlan =
-  | { status: "run"; screen: ParityScreen }
-  | { status: "skip"; reason: string }
-  | { status: "native"; reason: string };
+export type FlowPlan = { status: "run"; screen: ParityScreen } | { status: "skip"; reason: string } | { status: "native"; reason: string };
 
 const native = (reason: string): FlowPlan => ({ status: "native", reason });
 
@@ -71,7 +68,8 @@ export const FLOW_PLAN: Record<string, FlowPlan> = {
   "menu-count": native("The menu bar item and the notch count Spaces natively; the web UI has neither"),
   "drive-onboarding": {
     status: "skip",
-    reason: "The 0.10.0 first run has no Cua Volume page (connect the agent, then this computer); Cua Volume is set up from its own page (drive-page, drive-storage)",
+    reason:
+      "The 0.10.0 first run has no Cua Volume page (connect the agent, then this computer); Cua Volume is set up from its own page (drive-page, drive-storage)",
   },
   "drive-storage": { status: "run", screen: "volume" },
   notifications: { status: "run", screen: "notifications" },
@@ -79,7 +77,8 @@ export const FLOW_PLAN: Record<string, FlowPlan> = {
   "agent-keys": { status: "run", screen: "settings/connected-apps" },
   connectors: {
     status: "skip",
-    reason: "The Connections page, an app's page, the @ picker and the agent list draw connectors.*, summon.* and agentList.view as is; the webview parity test replays this flow on the wasm core, and src/__tests__/connectors-redesign.test.tsx, ask-first-in-space.test.tsx and home-agents.test.tsx drive the screens",
+    reason:
+      "The Connections page, an app's page, the @ picker and the agent list draw connectors.*, summon.* and agentList.view as is; the webview parity test replays this flow on the wasm core, and src/__tests__/connectors-redesign.test.tsx, ask-first-in-space.test.tsx and home-agents.test.tsx drive the screens",
   },
   "your-cloud": { status: "run", screen: "new-space" },
   "telemetry-funnel": { status: "run", screen: "spaces" },
@@ -89,25 +88,30 @@ export const FLOW_PLAN: Record<string, FlowPlan> = {
   machines: { status: "run", screen: "machines" },
   prepare: {
     status: "skip",
-    reason: "The new setup (Settings, Advanced, Labs) draws prepare.view as is; bridge/prepare-core.ts drives the wasm core and src/__tests__/first-run-parity.test.ts replays the flow",
+    reason:
+      "The new setup (Settings, Advanced, Labs) draws prepare.view as is; bridge/prepare-core.ts drives the wasm core and src/__tests__/first-run-parity.test.ts replays the flow",
   },
   "first-run": {
     status: "skip",
-    reason: "The page draws firstRun.view as is; src/__tests__/first-run-parity.test.ts replays this flow on the wasm core and src/__tests__/first-run.test.tsx drives the screen",
+    reason:
+      "The page draws firstRun.view as is; src/__tests__/first-run-parity.test.ts replays this flow on the wasm core and src/__tests__/first-run.test.tsx drives the screen",
   },
   // The Spaces page (CUA-2204): bridge/__tests__/spaces-page.test.ts replays these flows through
   // bridge/spaces-page.ts on the wasm core; page tests drive the menus and bulk actions.
   "spaces-menu": {
     status: "skip",
-    reason: "The page draws spaces.menu as is for each Space (components/spaces/space-menu.tsx); bridge/__tests__/spaces-page.test.ts replays this flow on the wasm core and src/__tests__/spaces-page-bulk.test.tsx drives the menus",
+    reason:
+      "The page draws spaces.menu as is for each Space (components/spaces/space-menu.tsx); bridge/__tests__/spaces-page.test.ts replays this flow on the wasm core and src/__tests__/spaces-page-bulk.test.tsx drives the menus",
   },
   "bulk-confirm": {
     status: "skip",
-    reason: "The page draws spaces.bulkConfirm, bulkProgress and bulkDone as is (components/spaces/bulk-remove.tsx); bridge/__tests__/spaces-page.test.ts replays this flow on the wasm core and src/__tests__/spaces-page-bulk.test.tsx drives the confirm, count and toast",
+    reason:
+      "The page draws spaces.bulkConfirm, bulkProgress and bulkDone as is (components/spaces/bulk-remove.tsx); bridge/__tests__/spaces-page.test.ts replays this flow on the wasm core and src/__tests__/spaces-page-bulk.test.tsx drives the confirm, count and toast",
   },
   tips: {
     status: "skip",
-    reason: "The page draws tips.view as is (components/tips.tsx); src/__tests__/tips.test.tsx drives it, and bridge/__tests__/spaces-page.test.ts replays this flow through bridge/spaces-page.ts",
+    reason:
+      "The page draws tips.view as is (components/tips.tsx); src/__tests__/tips.test.tsx drives it, and bridge/__tests__/spaces-page.test.ts replays this flow through bridge/spaces-page.ts",
   },
   "pro-banner": {
     status: "skip",
@@ -115,18 +119,22 @@ export const FLOW_PLAN: Record<string, FlowPlan> = {
   },
   "github-connection": {
     status: "skip",
-    reason: "The Connections, GitHub rows and pages draw githubConnection.view as is (components/settings/connections/github-group.tsx); src/__tests__/github-connection.test.tsx drives them on the wasm core and the core's parity flow replays the view",
+    reason:
+      "The Connections, GitHub rows and pages draw githubConnection.view as is (components/settings/connections/github-group.tsx); src/__tests__/github-connection.test.tsx drives them on the wasm core and the core's parity flow replays the view",
   },
   "thread-cards": {
     status: "skip",
-    reason: "The push card and the author tag draw threadCards.exportCard and threadCards.author as is (components/space-thread/export-card.tsx); src/__tests__/cards-toolcalls.test.tsx drives them and the core's parity flow replays the views",
+    reason:
+      "The push card and the author tag draw threadCards.exportCard and threadCards.author as is (components/space-thread/export-card.tsx); src/__tests__/cards-toolcalls.test.tsx drives them and the core's parity flow replays the views",
   },
   "ci-runners": {
     status: "skip",
-    reason: "The CI Runners page draws ciRunners.view as is (components/ci); bridge/__tests__/ci-runners.test.ts replays this flow through bridge/ci-runners.ts on the wasm core and src/__tests__/ci-runners-page.test.tsx drives the page",
+    reason:
+      "The CI Runners page draws ciRunners.view as is (components/ci); bridge/__tests__/ci-runners.test.ts replays this flow through bridge/ci-runners.ts on the wasm core and src/__tests__/ci-runners-page.test.tsx drives the page",
   },
   checklist: {
     status: "skip",
-    reason: "The host app keeps the checklist and reads what it shows (checklist.observeFrom); the page only draws checklist.view of the host's copy (bridge/__tests__/checklist.test.ts)",
+    reason:
+      "The host app keeps the checklist and reads what it shows (checklist.observeFrom); the page only draws checklist.view of the host's copy (bridge/__tests__/checklist.test.ts)",
   },
 };

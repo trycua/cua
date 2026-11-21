@@ -79,7 +79,8 @@ async function once(n) {
       new Promise((resolve) => {
         // The grid draws only what is on screen, so the number of tiles may not change: the
         // first tile and the "N Spaces" line do.
-        const sig = () => `${document.querySelector("[data-space-id]")?.getAttribute("data-space-id")}|${document.querySelectorAll("[data-space-id]").length}|${document.querySelector("h1")?.parentElement?.textContent}`;
+        const sig = () =>
+          `${document.querySelector("[data-space-id]")?.getAttribute("data-space-id")}|${document.querySelectorAll("[data-space-id]").length}|${document.querySelector("h1")?.parentElement?.textContent}`;
         const before = sig();
         const input = document.activeElement;
         const t0 = performance.now();
@@ -101,10 +102,18 @@ async function once(n) {
   await page.waitForTimeout(500);
 
   // ⌘A on the grid: every Space shown picked, to the selection bar drawn.
-  await page.locator("main").first().click({ position: { x: 5, y: 5 } }).catch(() => {});
+  await page
+    .locator("main")
+    .first()
+    .click({ position: { x: 5, y: 5 } })
+    .catch(() => {});
   const t0 = await page.evaluate(() => performance.now());
   await page.keyboard.press("Meta+a");
-  await page.locator("[data-selection-bar], [data-picked-count]").first().waitFor({ timeout: 10_000 }).catch(() => {});
+  await page
+    .locator("[data-selection-bar], [data-picked-count]")
+    .first()
+    .waitFor({ timeout: 10_000 })
+    .catch(() => {});
   const selectAll = (await page.evaluate(() => performance.now())) - t0;
   await page.keyboard.press("Escape");
   await page.waitForTimeout(500);
@@ -134,7 +143,9 @@ const results = {};
 for (const n of SIZES) {
   const runs = [];
   for (let i = 0; i < RUNS; i++) runs.push(await once(n));
-  results[n] = Object.fromEntries(["firstTile", "filterKey", "selectAll", "pickOne", "longTasks", "drawn"].map((k) => [k, Math.round(median(runs.map((r) => r[k])))]));
+  results[n] = Object.fromEntries(
+    ["firstTile", "filterKey", "selectAll", "pickOne", "longTasks", "drawn"].map((k) => [k, Math.round(median(runs.map((r) => r[k])))]),
+  );
   results[n].tiles = runs[0].total;
   console.log(`N=${n}`, JSON.stringify(results[n]));
 }
@@ -142,7 +153,16 @@ await browser.close();
 stop();
 
 if (has("--update")) {
-  const budget = Object.fromEntries(Object.entries(results).map(([n, r]) => [n, Object.fromEntries(Object.entries(r).filter(([k]) => k !== "tiles").map(([k, v]) => [k, Math.max(k === "drawn" ? 20 : 50, Math.round(v * 1.5))]))]));
+  const budget = Object.fromEntries(
+    Object.entries(results).map(([n, r]) => [
+      n,
+      Object.fromEntries(
+        Object.entries(r)
+          .filter(([k]) => k !== "tiles")
+          .map(([k, v]) => [k, Math.max(k === "drawn" ? 20 : 50, Math.round(v * 1.5))]),
+      ),
+    ]),
+  );
   writeFileSync(budgetFile, JSON.stringify(budget, null, 2) + "\n");
   console.log(`wrote ${budgetFile}`);
 } else if (existsSync(budgetFile)) {

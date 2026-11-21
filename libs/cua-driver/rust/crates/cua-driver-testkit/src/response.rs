@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Normalized tool response — the common shape both transports return.
 
 use serde_json::Value;

@@ -103,6 +103,7 @@ both_transports!(
     capabilities_and_transport,
     run_collects_output_and_exit_codes,
     run_timeout,
+    a_silent_start_times_out,
     spawn_reattach_by_tag_with_scrollback,
     stdin_roundtrip,
     small_upload_download_and_typed_errors,
@@ -162,6 +163,32 @@ async fn run_timeout(t: Transport) {
         .await
         .unwrap();
     assert!(out.status.timed_out);
+}
+
+/// A start whose stream never answers (a relay that went quiet) fails with
+/// a timeout instead of hanging, with or without a command timeout.
+async fn a_silent_start_times_out(t: Transport) {
+    let srv = server().await;
+    let opts = ConnectOptions::parse(&srv.url())
+        .unwrap()
+        .token(TOKEN)
+        .transport(pref(t))
+        .start_timeout(Duration::from_millis(300));
+    let env = SpacesdClient::connect(opts).await.expect("connect");
+    srv.state.silent_start.store(true, Ordering::Relaxed);
+    let started = Instant::now();
+    let err = env.run(Command::shell("echo hi")).await.unwrap_err();
+    assert!(
+        matches!(err, Error::Timeout(d) if d == Duration::from_millis(300)),
+        "{err:?}"
+    );
+    let err = env.spawn(Command::shell("echo hi")).await.unwrap_err();
+    assert!(matches!(err, Error::Timeout(_)), "{err:?}");
+    assert!(started.elapsed() < Duration::from_secs(10));
+    // The deadline covers the start only: a reply that comes ends normally.
+    srv.state.silent_start.store(false, Ordering::Relaxed);
+    let out = env.run(Command::shell("echo hi")).await.unwrap();
+    assert_eq!(out.stdout_str(), "hi\n");
 }
 
 async fn spawn_reattach_by_tag_with_scrollback(t: Transport) {
@@ -995,10 +1022,90 @@ async fn sudo_is_the_fallback_for_older_and_sudo_agents_only() {
             .unwrap();
         assert!(h.via_sudo(), "{mode:?}");
         assert_eq!(
+            srv.state.process_user(h.pid()).as_deref(),
+            Some("alice"),
+            "{mode:?}"
+        );
+        assert_eq!(
             srv.state
                 .sudo_runs
                 .load(std::sync::atomic::Ordering::Relaxed),
             1
         );
     }
+}
+
+/// The mock agent runs as `cua`, not root, as on the Linux images: a
+/// command that names no user runs as `cua`, root work has to name root,
+/// and `sudo` runs as its `-u` user. The answers are what the guest's own
+/// `id` and `$HOME` say.
+#[tokio::test]
+async fn the_mock_runs_a_command_as_the_user_it_names() {
+    let srv = server().await;
+    let env = connect_to(&srv.url(), Transport::Native).await;
+    let run = |cmd: Command| {
+        let env = env.clone();
+        async move {
+            let out = env.run(cmd).await.unwrap();
+            assert!(out.success(), "{out:?}");
+            out.stdout_str().trim().to_string()
+        }
+    };
+    assert_eq!(run(Command::new("id").arg("-u")).await, "1000");
+    assert_eq!(run(Command::shell("whoami")).await, "cua");
+    assert_eq!(
+        srv.state
+            .process_user(srv.state.last_pid().unwrap())
+            .as_deref(),
+        Some("cua")
+    );
+    assert_eq!(run(Command::new("id").arg("-u").user("root")).await, "0");
+    assert_eq!(
+        run(Command::shell("printf %s \"$HOME\"").user("root")).await,
+        "/root"
+    );
+    assert_eq!(run(Command::shell("id -un").user("alice")).await, "alice");
+    assert_eq!(
+        run(Command::shell("printf %s \"$HOME\"")).await,
+        "/home/cua"
+    );
+    let sudo = |args: &[&str]| Command::new("sudo").args(args.iter().copied());
+    assert_eq!(run(sudo(&["-n", "id", "-u"])).await, "0");
+    assert_eq!(
+        run(sudo(&[
+            "-n", "-H", "-u", "bob", "--", "env", "A=1", "whoami"
+        ]))
+        .await,
+        "bob"
+    );
+    let as_bob = ["-n", "-H", "-u", "bob", "--preserve-env", "--", "whoami"];
+    assert_eq!(run(Command::new("/usr/bin/sudo").args(as_bob)).await, "bob");
+    assert_eq!(
+        run(sudo(&["-n", "-u", "alice", "-g", "staff", "id", "-un"])).await,
+        "alice"
+    );
+    // `sudo` refuses a user the guest does not have, or may not act as.
+    for user in ["nosuch", "locked"] {
+        env.run(sudo(&["-n", "-u", user, "whoami"]))
+            .await
+            .expect_err(user);
+    }
+
+    // A file written without a user belongs to the agent's user.
+    env.upload(
+        "/tmp/plain",
+        Bytes::from_static(b"x"),
+        UploadOptions::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(srv.state.file_owner("/tmp/plain").as_deref(), Some("cua"));
+    assert_eq!(env.stat("/tmp/plain").await.unwrap().owner, "cua");
+
+    // An agent that is root itself runs unnamed work as root.
+    set_run_as(&srv, Some("root"), false);
+    assert_eq!(run(Command::new("id").arg("-u")).await, "0");
+    // One that reports no way to switch users has no `sudo` either.
+    set_run_as(&srv, Some("none"), false);
+    env.run(sudo(&["-n", "whoami"])).await.expect_err("no sudo");
 }

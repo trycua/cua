@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Rust-owned lifecycle for a host-embedded Cua Driver daemon.
 //!
 //! Language bindings deliberately expose this object rather than reimplementing
@@ -7,6 +10,9 @@ use cua_driver_contract::{
     CAPABILITY_VERSION, CONTRACT_VERSION, MCP_PROTOCOL_VERSION, TOOLS_LIST_SCHEMA_VERSION,
 };
 use cua_driver_core::daemon::{request_daemon_metadata, DaemonMetadata};
+use cua_driver_core::input_pacing::{
+    CLICK_GAP_ENV, MOUSE_PRIMER_ENV, MULTI_CLICK_GAP_ENV, WEBKIT_SETTLE_ENV,
+};
 use cua_driver_core::key_pacing::KEY_GAP_ENV;
 use cua_driver_core::step_pacing::BATCH_PACING_ENV;
 use cua_driver_core::window_observation::{WINDOW_CHANGE_POLL_ENV, WINDOW_CHANGE_TIMEOUT_ENV};
@@ -28,6 +34,7 @@ const HANDSHAKE_ATTEMPT_TIMEOUT_MS: u64 = 500;
 const STDERR_TAIL_LIMIT_BYTES: usize = 65_536;
 const STDERR_DRAIN_TIMEOUT_MS: u64 = 500;
 const STDERR_TEE_QUEUE_CHUNKS: usize = 16;
+const EXIT_POLL_INTERVAL_MS: u64 = 50;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum EmbeddedPermissionMode {
@@ -551,38 +558,68 @@ impl EmbeddedCuaDriverHost {
         self: Arc<Self>,
         generation: String,
     ) -> Result<EmbeddedDriverExit, EmbeddedDriverError> {
-        loop {
-            {
-                let mut inner = self.inner.lock().unwrap();
-                self.refresh_exit_locked(&mut inner);
-                if let Some(exit) = &inner.last_exit {
-                    if exit.generation == generation {
-                        return Ok(exit.clone());
-                    }
-                }
-                let still_live = match &inner.phase {
-                    HostPhase::Starting {
-                        generation: current,
-                        ..
-                    }
-                    | HostPhase::Stopping {
-                        generation: current,
-                    } => current == &generation,
-                    HostPhase::Ready(running) => running.connection.generation == generation,
-                    HostPhase::Stopped => false,
-                };
-                if !still_live {
-                    return Err(EmbeddedDriverError::Lifecycle {
-                        reason: format!("generation {generation} is not live or recently exited"),
-                    });
+        if let Some(outcome) = self.exit_outcome(&generation) {
+            return outcome;
+        }
+        // A binding runtime re-polls this future across the FFI boundary on
+        // every wake, and a daemon can stay up for hours. Poll the child on the
+        // tokio runtime instead, so the caller is woken once. Dropping the set
+        // aborts the watcher when the caller cancels.
+        let mut watcher = tokio::task::JoinSet::new();
+        watcher.spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(EXIT_POLL_INTERVAL_MS)).await;
+                if let Some(outcome) = self.exit_outcome(&generation) {
+                    return outcome;
                 }
             }
-            tokio::time::sleep(Duration::from_millis(50)).await;
+        });
+        match watcher
+            .join_next()
+            .await
+            .expect("exit wait must own its watcher")
+        {
+            Ok(outcome) => outcome,
+            Err(error) => Err(EmbeddedDriverError::Lifecycle {
+                reason: format!("embedded daemon exit watcher failed: {error}"),
+            }),
         }
     }
 }
 
 impl EmbeddedCuaDriverHost {
+    /// The settled result of waiting on `generation`, or `None` while it is live.
+    fn exit_outcome(
+        &self,
+        generation: &str,
+    ) -> Option<Result<EmbeddedDriverExit, EmbeddedDriverError>> {
+        let mut inner = self.inner.lock().unwrap();
+        self.refresh_exit_locked(&mut inner);
+        if let Some(exit) = &inner.last_exit {
+            if exit.generation == generation {
+                return Some(Ok(exit.clone()));
+            }
+        }
+        let still_live = match &inner.phase {
+            HostPhase::Starting {
+                generation: current,
+                ..
+            }
+            | HostPhase::Stopping {
+                generation: current,
+            } => current == generation,
+            HostPhase::Ready(running) => running.connection.generation == generation,
+            HostPhase::Stopped => false,
+        };
+        if still_live {
+            None
+        } else {
+            Some(Err(EmbeddedDriverError::Lifecycle {
+                reason: format!("generation {generation} is not live or recently exited"),
+            }))
+        }
+    }
+
     async fn perform_start(
         self: Arc<Self>,
         generation: String,
@@ -1023,6 +1060,10 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
         || upper == WINDOW_CHANGE_TIMEOUT_ENV
         || upper == WINDOW_CHANGE_POLL_ENV
         || upper == KEY_GAP_ENV
+        || upper == MOUSE_PRIMER_ENV
+        || upper == CLICK_GAP_ENV
+        || upper == MULTI_CLICK_GAP_ENV
+        || upper == WEBKIT_SETTLE_ENV
         || upper == BATCH_PACING_ENV
         || matches!(
             upper.as_str(),
@@ -1161,7 +1202,7 @@ fn validate_metadata(
 fn default_socket_path(generation: &str) -> String {
     #[cfg(target_os = "windows")]
     {
-        return format!(r"\\.\pipe\cua-{}-{}", std::process::id(), &generation[..8]);
+        format!(r"\\.\pipe\cua-{}-{}", std::process::id(), &generation[..8])
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -1399,6 +1440,8 @@ fn prevent_console_window(command: &mut Command) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::future::Future as _;
 
     fn options(mode: EmbeddedPermissionMode) -> EmbeddedDriverHostOptions {
         EmbeddedDriverHostOptions {
@@ -1754,6 +1797,7 @@ mod tests {
             pid: 42,
             embedded: true,
             host_bundle_id: Some("com.example.host".into()),
+            permissions_pending: false,
         };
         assert!(validate_metadata(&metadata, 42, "com.example.host").is_ok());
         assert!(validate_metadata(&metadata, 43, "com.example.host").is_err());
@@ -1844,12 +1888,180 @@ mod tests {
         assert!(!socket_path.exists());
     }
 
+    /// Counts wakes and unparks the thread that drives the future.
+    #[cfg(unix)]
+    struct WakeCounter {
+        driver: std::thread::Thread,
+        wakes: std::sync::atomic::AtomicUsize,
+    }
+
+    #[cfg(unix)]
+    impl std::task::Wake for WakeCounter {
+        fn wake(self: Arc<Self>) {
+            self.wakes.fetch_add(1, Ordering::SeqCst);
+            self.driver.unpark();
+        }
+    }
+
+    /// Puts `host` in `Ready` on a stand-in daemon that exits with status 7
+    /// once the returned stdin handle is dropped.
+    #[cfg(unix)]
+    fn enter_ready_with_stand_in(
+        host: &EmbeddedCuaDriverHost,
+        directory: &std::path::Path,
+        generation: &str,
+    ) -> ChildStdin {
+        let socket_path = directory.join("driver.sock");
+        // The endpoint identity outlives the listener; nothing connects here.
+        drop(std::os::unix::net::UnixListener::bind(&socket_path).unwrap());
+        std::fs::set_permissions(
+            &socket_path,
+            std::os::unix::fs::PermissionsExt::from_mode(0o600),
+        )
+        .unwrap();
+        let endpoint_identity = capture_endpoint_identity(socket_path.to_str().unwrap()).unwrap();
+
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "read _; exit 7"])
+            .stdin(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        host.inner.lock().unwrap().phase = HostPhase::Ready(Box::new(RunningProcess {
+            connection: EmbeddedDriverConnection {
+                socket_path: socket_path.to_string_lossy().into_owned(),
+                pid: child.id().unwrap(),
+                generation: generation.to_owned(),
+                driver_version: env!("CARGO_PKG_VERSION").into(),
+                contract_version: CONTRACT_VERSION.into(),
+                mcp_protocol_version: MCP_PROTOCOL_VERSION.into(),
+                mcp: EmbeddedMcpConfiguration {
+                    command: "/example/cua-driver".into(),
+                    args: Vec::new(),
+                    environment: Vec::new(),
+                },
+            },
+            process: ManagedChild {
+                child,
+                liveness: None,
+                stderr_pump: None,
+                shutdown_timeout: Duration::from_millis(DEFAULT_SHUTDOWN_TIMEOUT_MS),
+            },
+            endpoint_identity,
+        }));
+        stdin
+    }
+
+    /// A binding runtime re-polls a pending exit wait across the FFI boundary
+    /// on every wake, so a live daemon must not wake its waiter at all. The
+    /// wait is driven as UniFFI scaffolding drives it: wrapped in `Compat` and
+    /// polled from a thread that has no tokio runtime.
+    #[cfg(unix)]
+    #[test]
+    fn pending_exit_wait_wakes_a_foreign_caller_only_when_the_daemon_exits() {
+        use uniffi::deps::async_compat::Compat;
+
+        let counter = Arc::new(WakeCounter {
+            driver: std::thread::current(),
+            wakes: Default::default(),
+        });
+        let waker = std::task::Waker::from(counter.clone());
+        let mut context = std::task::Context::from_waker(&waker);
+
+        let host = EmbeddedCuaDriverHost::new(
+            "/example/cua-driver".into(),
+            "com.example.exit-wait-wake".into(),
+        )
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let generation = "exit-wait-generation";
+        // Spawning the stand-in needs the runtime that `Compat` enters.
+        let mut setup = Box::pin(Compat::new(async {
+            enter_ready_with_stand_in(&host, directory.path(), generation)
+        }));
+        let std::task::Poll::Ready(stdin) = setup.as_mut().poll(&mut context) else {
+            panic!("the stand-in setup never suspends");
+        };
+
+        let mut wait = Box::pin(Compat::new(host.clone().wait_for_exit(generation.into())));
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(6 * EXIT_POLL_INTERVAL_MS));
+            drop(stdin);
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let exit = loop {
+            let seen = counter.wakes.load(Ordering::SeqCst);
+            if let std::task::Poll::Ready(exit) = wait.as_mut().poll(&mut context) {
+                break exit;
+            }
+            // `park` may return spuriously; only a counted wake earns a re-poll.
+            while counter.wakes.load(Ordering::SeqCst) == seen {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the daemon exit must wake the waiter"
+                );
+                std::thread::park_timeout(Duration::from_millis(100));
+            }
+        };
+        release.join().unwrap();
+
+        assert_eq!(
+            exit.unwrap(),
+            EmbeddedDriverExit {
+                generation: generation.into(),
+                code: Some(7),
+                success: false,
+            }
+        );
+        assert_eq!(counter.wakes.load(Ordering::SeqCst), 1);
+        assert_eq!(host.state(), EmbeddedDriverHostState::Stopped);
+    }
+
+    /// A cancelled exit wait must not leave its watcher polling the daemon and
+    /// holding the host alive.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancelled_exit_wait_releases_the_host() {
+        let host = EmbeddedCuaDriverHost::new(
+            "/example/cua-driver".into(),
+            "com.example.exit-wait-cancel".into(),
+        )
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let generation = "exit-wait-cancel-generation";
+        let _stdin = enter_ready_with_stand_in(&host, directory.path(), generation);
+
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        let mut wait = Box::pin(host.clone().wait_for_exit(generation.into()));
+        assert!(wait.as_mut().poll(&mut context).is_pending());
+        assert_eq!(Arc::strong_count(&host), 2);
+
+        drop(wait);
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while Arc::strong_count(&host) != 1 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("a cancelled exit wait must release the host");
+        assert_eq!(host.state(), EmbeddedDriverHostState::Ready);
+    }
+
     /// `CUA_DRIVER_KEY_GAP_MS` must survive both propagation paths into a child launch —
     /// inherited from the parent environment and supplied as an explicit
     /// override. An allowlist miss silently strips the deployment's
     /// override in embedded/worker modes.
     #[test]
     fn key_gap_env_propagates() {
+        for name in [
+            "CUA_DRIVER_MOUSE_PRIMER_MS",
+            "CUA_DRIVER_CLICK_GAP_MS",
+            "CUA_DRIVER_MULTI_CLICK_GAP_MS",
+            "CUA_DRIVER_WEBKIT_SETTLE_MS",
+        ] {
+            assert!(allowed_environment_name(name), "{name}");
+        }
         assert!(allowed_environment_name("CUA_DRIVER_KEY_GAP_MS"));
         let merged =
             merge_safe_environment([("CUA_DRIVER_KEY_GAP_MS".to_owned(), "7".to_owned())], &[]);

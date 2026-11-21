@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS Accessibility (AX) API bindings and tree walker.
 //!
 //! # AX element indexing
@@ -16,14 +19,18 @@
 //! - Non-indexed (no actions, not interesting): `- AXRole = "value"`
 //! - 2-space indent per depth level
 
+pub mod actions;
+pub(crate) mod batch;
 pub mod bindings;
 pub mod enablement;
 pub mod exact_target;
 pub mod launch;
+pub(crate) mod main_thread;
 pub mod reveal_scroll;
 pub mod snapshot;
 pub mod surface;
 pub mod tree;
+pub(crate) mod web_effect;
 pub mod window_scope;
 
 pub use snapshot::Snapshots;

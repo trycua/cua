@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows cursor-shape tables for the presence hit-test and the real cursor
 //! readout: UI Automation control types, `WM_NCHITTEST` codes and `IDC_*`
 //! system cursor ids.

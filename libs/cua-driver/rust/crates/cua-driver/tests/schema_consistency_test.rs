@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cross-platform tool-contract consistency gate.
 //!
 //! Spawns the active backend, asks it for `tools/list`, and runs every tool's

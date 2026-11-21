@@ -7,13 +7,14 @@ name = "cua-bench-ui"
 version = "0.7.1"
 description = "Lightweight webUI window controller for Cua bench using pywebview"
 readme = "README.md"
+classifiers = ["Development Status :: 7 - Inactive"]
 license = { text = "MIT" }
 authors = [
     { name = "TryCua", email = "gh@trycua.com" }
 ]
 dependencies = [
     "pywebview>=5.3",
-    "aiohttp>=3.9.0",
+    "aiohttp>=3.14.4",
     "psutil>=5.9",
 ]
 requires-python = ">=3.12"
@@ -23,4 +24,4 @@ distribution = true
 
 [tool.pdm.build]
 includes = ["bench_ui/"]
-source-includes = ["README.md"]
+source-includes = ["README.md", "LICENSE"]

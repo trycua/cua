@@ -1,0 +1,43 @@
+name: "Open or update a nightly failure issue"
+description: >-
+  A job that moved off pull requests to the nightly schedule (or to a path
+  filter on main) must still be heard when it fails. Call this from a final
+  job with `if: failure()` and `permissions: issues: write`: it opens ONE issue
+  per title, or comments on the open one, with the run link. The issue carries
+  the `flaky` and `ci-nightly` labels so the weekly "Flaky tests this week"
+  digest and the people who watch CI issues see it. Needs actions/checkout of
+  this directory first (sparse-checkout: .github/actions/nightly-issue).
+
+inputs:
+  title:
+    description: "Issue title; one open issue per title."
+    required: true
+  detail:
+    description: "One or two plain sentences on what failed and where to look."
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Open or update the issue
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TITLE: ${{ inputs.title }}
+        DETAIL: ${{ inputs.detail }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        SHA: ${{ github.sha }}
+      run: |
+        set -euo pipefail
+        gh label create ci-nightly --repo "$GITHUB_REPOSITORY" --color FBCA04 \
+          --description "A nightly or main-only CI job failed" 2>/dev/null || true
+        body="$DETAIL"$'\n\n'"Run: $RUN_URL"$'\n'"Commit: $SHA"
+        issue=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label ci-nightly \
+          --search "\"$TITLE\" in:title" --json number,title \
+          --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
+        if [[ -n "$issue" ]]; then
+          gh issue comment "$issue" --repo "$GITHUB_REPOSITORY" --body "$body"
+        else
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$body" \
+            --label ci-nightly --label flaky
+        fi

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Persistent stable/nightly update-channel preference.
 
 use std::fmt;
@@ -89,8 +92,8 @@ fn selected_at(path: &std::path::Path) -> Result<ReleaseChannel, String> {
 }
 
 pub fn set(channel: ReleaseChannel) -> Result<(), String> {
-    if crate::updater::is_pacman_managed() {
-        return Err(crate::updater::PACMAN_UPDATE_GUIDANCE.to_owned());
+    if let Some(owner) = crate::updater::update_owner() {
+        return Err(owner.guidance());
     }
     let path = state_path()?;
     set_at(&path, channel)

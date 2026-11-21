@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Foreground `type_text` through packaged Notepad, saved and compared (#4830).
 //!
 //! Manual. Arm A's failure rate was not measured, so this uses the floor of 5 trials.

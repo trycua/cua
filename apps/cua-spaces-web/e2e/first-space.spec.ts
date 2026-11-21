@@ -2,71 +2,50 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * The empty home (under the Spaces header) and New Space on the SwiftUI host's answer
+ * Your computers with no Space yet and New Space on the SwiftUI host's answer
  * (`?demo=mac-host`: `spaces.createOptions` in `WebUIBridge.createOptions`'s
  * shape, its own wizard env, two macOS VMs of Lume's running), loaded while
- * the launch is still at the Keychain: once it is ready, the empty home
- * offers Linux and macOS with the core's time and size; each tile opens New
- * Space with its system chosen (macOS says Apple's limit), New Space opens
- * on the defaults (its Resources step says what is free on Macintosh HD),
- * and no tile creates a Space by itself.
+ * the launch is still at the Keychain: once it is ready, New Space on This
+ * Mac opens on the defaults (its Resources step says what is free on
+ * Macintosh HD), macOS says Apple's limit, and nothing is created by itself.
  */
 
 import { expect, test } from "./host";
 
-test("empty home and New Space on the macOS host's answer, loaded before the host is ready", async ({ page }) => {
+test("your computers with no Space yet, and New Space on the macOS host's answer, loaded before the host is ready", async ({ page }) => {
   await page.goto("/spaces?bridge=demo&demo=empty,keychain,mac-host");
   await expect(page.getByTestId("startup-screen")).toBeVisible();
   await page.getByRole("button", { name: "Allow access" }).click();
   await expect(page.getByTestId("startup-screen")).toHaveCount(0, { timeout: 10_000 });
 
-  const home = page.locator("[data-empty-home]");
-  // Under the Spaces header, as with Spaces.
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Spaces");
-  await expect(page.getByText("0 Spaces on")).toBeVisible();
-  // The calm empty state: no toolbar until there is a Space to sort or filter.
-  await expect(page.getByLabel("Filter by state")).toHaveCount(0);
-  await expect(home.getByRole("heading")).toHaveText("Create your first Space");
-  await expect(home).toContainText("A separate computer on This Mac, for you and your agents.");
-  const linux = home.getByRole("button", { name: "Linux Space, About 3 minutes" });
-  const macos = home.getByRole("button", { name: "macOS Space, About 23 GB download" });
-  await expect(linux).toBeVisible();
-  await expect(macos).toBeVisible();
+  // Your computers, with no Space on them yet; New Space is in the header.
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Computers");
+  await page.locator("[data-spaces-tree]").waitFor();
+  await expect(page.locator('[data-tree-kind="space"]')).toHaveCount(0);
 
-  // macOS on This Mac stops before the download: New Space opens on it and says why.
-  await macos.click();
+  // New Space: the defaults (Linux on This Mac), then Resources.
+  await page.getByRole("button", { name: "New Space", exact: true }).click();
   const wizard = page.locator("[data-new-space]");
-  await expect(wizard).toHaveAttribute("data-step", "0");
-  await expect(wizard.locator('[data-tile="os:macos"]')).toHaveAttribute("aria-pressed", "true");
-  await expect(wizard.getByRole("alert").filter({ hasText: "2 macOS virtual machines" })).toBeVisible();
-  await expect(wizard.locator("[data-wizard-primary]")).toBeDisabled();
-  await wizard.locator("[data-wizard-cancel]").click();
-  await expect(wizard).toHaveCount(0);
-
-  // The header's New Space (the empty home has none of its own): the
-  // defaults (Linux on This Mac), then Resources.
-  await expect(home.getByRole("button", { name: "New Space" })).toHaveCount(0);
-  await page.getByRole("button", { name: "New Space" }).click();
   await expect(wizard).toHaveAttribute("data-step", "0");
   await expect(wizard.locator('[data-tile="os:linux"]')).toHaveAttribute("aria-pressed", "true");
   await wizard.locator("[data-wizard-primary]").click();
   await expect(wizard).toHaveAttribute("data-step", "1");
   await expect(wizard.locator('[data-fact="available"] [data-fact-value]')).toHaveText("212 GB on Macintosh HD");
-  await wizard.locator("[data-wizard-cancel]").click();
+  await wizard.locator("[data-wizard-back]").click();
 
-  // Linux: New Space with Linux chosen; nothing is created until Create.
-  await linux.click();
-  await expect(wizard).toHaveAttribute("data-step", "0");
-  await expect(wizard.locator('[data-tile="os:linux"]')).toHaveAttribute("aria-pressed", "true");
+  // macOS on This Mac stops before the download: it says why, and nothing is created.
+  await wizard.locator('[data-tile="os:macos"]').click();
+  await expect(wizard.getByRole("alert").filter({ hasText: "2 macOS virtual machines" })).toBeVisible();
+  await expect(wizard.locator("[data-wizard-primary]")).toBeDisabled();
   await wizard.locator("[data-wizard-cancel]").click();
-  await expect(page.locator("[data-space-id]")).toHaveCount(0);
-  await expect(home).toBeVisible();
+  await expect(wizard).toHaveCount(0);
+  await expect(page.locator('[data-tree-kind="space"]')).toHaveCount(0);
 });
 
 test("New Space stops a macOS create at Apple's limit when the Mac's two macOS VMs aren't Spaces", async ({ page }) => {
   // Spaces in the list (none of them a macOS Space on this Mac), two macOS VMs of Lume's running.
   await page.goto("/spaces?bridge=demo&demo=mac-host");
-  await page.locator("[data-space-id]").first().waitFor();
+  await page.locator("[data-spaces-tree]").waitFor();
   await page.getByRole("button", { name: "New Space" }).first().click();
   const wizard = page.locator("[data-new-space]");
   await expect(wizard).toHaveAttribute("data-step", "0");

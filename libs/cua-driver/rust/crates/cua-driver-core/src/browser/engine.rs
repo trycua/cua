@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! BrowserEngine — the semantic core behind the five browser tools.
 //!
 //! Owns the target/ref store, the CDP connection pool, and every
@@ -45,7 +48,7 @@ use super::platform::{
     BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
     BrowserVisualActionKind, ExistingProfileSetupRequest,
 };
-use super::prepare::ManagedBrowsers;
+use super::prepare::{IsolatedLaunchBreaker, ManagedBrowsers};
 use super::reconnect::{ReconnectGates, ReconnectKey};
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::semantic::{
@@ -73,14 +76,17 @@ pub const MAX_REFS_PER_SNAPSHOT: usize = 300;
 /// compromised or malformed endpoint before its response reaches consumers.
 const MAX_BROWSER_SCREENSHOT_BYTES: usize = 16 * 1024 * 1024;
 
-/// Reply deadline for the best-effort `Page.enable` sent on a tab's first attach.
-const DIALOG_SUBSCRIPTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+/// Reply deadline for the `Page.enable` dialog subscription, sent on a tab's
+/// first attach and retried by `browser_dialog`.
+pub(crate) const DIALOG_SUBSCRIPTION_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(2);
 
 pub struct BrowserEngine {
     pub(crate) platform: Arc<dyn BrowserPlatform>,
     pub(crate) store: BrowserStore,
     pub(crate) pool: CdpPool,
     pub(crate) managed_browsers: ManagedBrowsers,
+    pub(crate) isolated_launch_breaker: IsolatedLaunchBreaker,
     pub(crate) existing_profile_grants: ExistingProfileGrants,
     pub(crate) approval_broker: Arc<crate::consent::ApprovalBroker>,
     pub(crate) protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
@@ -216,6 +222,43 @@ fn with_existing_profile_next_call(
     );
     refusal.detail = Some(Value::Object(detail));
     refusal
+}
+
+/// An Electron app opens no DevTools endpoint unless it was started with one,
+/// and it has no remote-debugging page to turn one on, so the
+/// `existing_profile` setup that serves Chrome cannot attach it. Name the two
+/// routes that can.
+fn embedded_app_without_endpoint(
+    refusal: BrowserRefusal,
+    session: &str,
+    pid: i64,
+) -> BrowserRefusal {
+    if refusal.code != BrowserRefusalCode::BrowserRequiresSetup {
+        return refusal;
+    }
+    refuse(
+        BrowserRefusalCode::BrowserRequiresSetup,
+        format!(
+            "pid {pid} is an Electron app with no DevTools endpoint. To read and drive a copy of \
+             it, call browser_prepare in detail.next_call: it launches a separate driver-owned \
+             instance on a fresh profile (the user's open window and its data are not attached), \
+             then bind that instance's window. To attach the user's own instance instead, it \
+             must be restarted with --remote-debugging-port=0; only the user can decide that."
+        ),
+    )
+    .with_detail(json!({
+        "reason": "embedded_application_endpoint_closed",
+        "supported_strategies": ["isolated_new", "remote_debugging_port_at_launch"],
+        "next_call": {
+            "tool": "browser_prepare",
+            "arguments": {
+                "pid": pid,
+                "session": session,
+                "allow_launch": true,
+                "profile": { "mode": "isolated_new" },
+            },
+        },
+    }))
 }
 
 fn endpoint_access_class(
@@ -666,6 +709,7 @@ impl BrowserEngine {
             store: BrowserStore::new(),
             pool: CdpPool::new(),
             managed_browsers: Default::default(),
+            isolated_launch_breaker: Default::default(),
             existing_profile_grants: ExistingProfileGrants::new(),
             approval_broker,
             protected_resource_ownership,
@@ -996,6 +1040,12 @@ impl BrowserEngine {
                             // consent. Cancel it before grant revocation so no
                             // socket-pool resource can outlive this refusal.
                             drop(reconnect);
+                            // The browser keeps the prompt of the connection
+                            // just abandoned; approving it would attach nothing.
+                            let _ = self
+                                .platform
+                                .dismiss_abandoned_existing_profile_consent(pid, grant.window_id)
+                                .await;
                             if error.code == BrowserRefusalCode::BrowserConsentRevoked {
                                 self.revoke_existing_profile_grant(session, transport_session, pid)
                                     .await;
@@ -1289,7 +1339,12 @@ impl BrowserEngine {
         cdp_session: &str,
         cdp_target_id: &str,
     ) {
-        if conn.dialog_state(cdp_target_id).is_some() || conn.has_dialog_session(cdp_target_id) {
+        // A dialog whose session detached still blocks the page; a new
+        // subscriber is the only way its close can clear the record.
+        let dialog = conn.dialog_state(cdp_target_id);
+        if dialog.as_ref().is_some_and(|dialog| !dialog.detached)
+            || conn.has_dialog_session(cdp_target_id)
+        {
             return;
         }
         conn.register_dialog_session(cdp_session, cdp_target_id);
@@ -1303,6 +1358,11 @@ impl BrowserEngine {
             .await;
         if enabled.is_err() && conn.dialog_state(cdp_target_id).is_none() {
             conn.unregister_dialog_session(cdp_session, cdp_target_id);
+        }
+        // A blocked renderer cannot answer Page.enable, so a reply means the
+        // detached dialog closed while no session was listening.
+        if let (Ok(_), Some(stale)) = (&enabled, dialog) {
+            conn.clear_dialog_state(cdp_target_id, stale.generation);
         }
     }
 
@@ -1331,9 +1391,11 @@ impl BrowserEngine {
         let mut grant = self
             .existing_profile_grant(session, transport_session, pid)
             .await?;
-        let driver_owned = self.is_driver_owned_pid_for_session(session, pid)
-            || transport_session
-                .is_some_and(|owner| self.is_driver_owned_pid_for_session(owner, pid));
+        let driver_owned = self.is_driver_owned_pid_for_session(session, pid).await
+            || match transport_session {
+                Some(owner) => self.is_driver_owned_pid_for_session(owner, pid).await,
+                None => false,
+            };
         let access_class = endpoint_access_class(grant.is_some(), driver_owned, class.process_role)
             .map_err(|refusal| with_existing_profile_next_call(refusal, session, pid, window_id))?;
 
@@ -1343,7 +1405,13 @@ impl BrowserEngine {
             self.existing_profile_endpoint(pid, &live_grant.endpoint_ws_url)
                 .await?
         } else {
-            self.owned_endpoint(pid).await?
+            self.owned_endpoint(pid).await.map_err(|refusal| {
+                if access_class == EndpointAccessClass::EmbeddedApplication {
+                    embedded_app_without_endpoint(refusal, session, pid)
+                } else {
+                    refusal
+                }
+            })?
         };
         if let Some(grant) = &grant {
             if !grant.fingerprint.matches(&fingerprint)
@@ -1544,10 +1612,16 @@ impl BrowserEngine {
 
         match record.endpoint_access_class {
             EndpointAccessClass::DriverOwned => {
-                let lifecycle_is_live = self.is_driver_owned_pid_for_session(session, record.pid)
-                    || record.transport_session.as_deref().is_some_and(|owner| {
-                        self.is_driver_owned_pid_for_session(owner, record.pid)
-                    });
+                let lifecycle_is_live = self
+                    .is_driver_owned_pid_for_session(session, record.pid)
+                    .await
+                    || match record.transport_session.as_deref() {
+                        Some(owner) => {
+                            self.is_driver_owned_pid_for_session(owner, record.pid)
+                                .await
+                        }
+                        None => false,
+                    };
                 if !lifecycle_is_live {
                     return Err(refuse(
                         BrowserRefusalCode::BrowserConsentRequired,

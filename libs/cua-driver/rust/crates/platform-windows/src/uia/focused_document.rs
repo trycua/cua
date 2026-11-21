@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Conservative text insertion for the exact currently focused UIA Document.
 //!
 //! This is a capability probe for no-element foreground typing. It never
@@ -146,7 +149,7 @@ fn try_type_focused_document_append_unbounded(
             .is_ok_and(|selection| selection == SupportedTextSelection_Single);
         let document_matches = unsafe { text_pattern.DocumentRange() }
             .and_then(|range| unsafe { range.GetText(-1) })
-            .is_ok_and(|value| value.to_string() == initial_value);
+            .is_ok_and(|value| value == initial_value);
         if !focused_document_eligible(
             exact_foreground_target(target, Some(target_pid)),
             !initial_read_only.as_bool(),
@@ -173,12 +176,12 @@ fn try_type_focused_document_append_unbounded(
         let Ok(value_before_write) = (unsafe { value_pattern.CurrentValue() }) else {
             return not_applicable("value_unavailable_before_write");
         };
-        if read_only_before_write.as_bool() || value_before_write.to_string() != initial_value {
+        if read_only_before_write.as_bool() || value_before_write != initial_value {
             return not_applicable("value_changed_or_read_only_before_write");
         }
         if !unsafe { text_pattern.DocumentRange() }
             .and_then(|range| unsafe { range.GetText(-1) })
-            .is_ok_and(|value| value.to_string() == initial_value)
+            .is_ok_and(|value| value == initial_value)
         {
             return not_applicable("document_changed_before_write");
         }
@@ -322,7 +325,7 @@ fn focused_document_matches_target(
 
 fn exact_foreground_target(target: HWND, expected_pid: Option<u32>) -> bool {
     !target.0.is_null()
-        && unsafe { IsWindow(target) }.as_bool()
+        && unsafe { IsWindow(Some(target)) }.as_bool()
         && unsafe { GetForegroundWindow() } == target
         && crate::win32::windows::window_owner_pid(target.0 as usize as u64)
             .is_some_and(|pid| expected_pid.is_none_or(|expected| expected == pid))

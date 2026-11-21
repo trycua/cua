@@ -150,7 +150,8 @@ export function useSpacesSync(
   const publish = useCallback(() => {
     const timestamp = now();
     let spaces = rowsRef.current.map((row) => rowToSpace(row, timestamp));
-    if (live && thisMachineRef.current !== undefined) spaces = withThisMachine(spaces, thisMachineRef.current, timestamp);
+    if (live && thisMachineRef.current !== undefined)
+      spaces = withThisMachine(spaces, thisMachineRef.current, timestamp);
     dispatch({ type: "sync-spaces", spaces: composeCreates(spaces, createsRef.current) });
   }, [dispatch, now, live]);
 
@@ -394,7 +395,10 @@ export function useSpacesSync(
     [bridge, withPendingRow, defaultLocation.value],
   );
 
-  const dismissCreate = useCallback((pendingId: string) => sendCreate({ type: "dismiss", id: pendingId }), [sendCreate]);
+  const dismissCreate = useCallback(
+    (pendingId: string) => sendCreate({ type: "dismiss", id: pendingId }),
+    [sendCreate],
+  );
 
   const cancelCreate = useCallback(
     async (pendingId: string) => {

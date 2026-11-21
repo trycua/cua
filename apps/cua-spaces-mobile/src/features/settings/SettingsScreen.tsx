@@ -20,23 +20,67 @@ function Group({ title, footer, children }: { title?: string; footer?: string; c
   const { c } = useTheme();
   return (
     <View style={{ marginTop: 22 }}>
-      {title ? <Text variant="footnote" color="muted" style={{ marginLeft: 32, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.4 }}>{title}</Text> : null}
+      {title ? (
+        <Text variant="footnote" color="muted" style={{ marginLeft: 32, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.4 }}>
+          {title}
+        </Text>
+      ) : null}
       <View style={{ marginHorizontal: 16, borderRadius: 10, backgroundColor: c.card, overflow: "hidden" }}>{children}</View>
-      {footer ? <Text variant="footnote" color="muted" style={{ marginHorizontal: 32, marginTop: 6 }}>{footer}</Text> : null}
+      {footer ? (
+        <Text variant="footnote" color="muted" style={{ marginHorizontal: 32, marginTop: 6 }}>
+          {footer}
+        </Text>
+      ) : null}
     </View>
   );
 }
 
-function Row({ label, value, onPress, destructive, right, last }: { label: string; value?: string; onPress?(): void; destructive?: boolean; right?: ReactNode; last?: boolean }) {
+function Row({
+  label,
+  value,
+  onPress,
+  destructive,
+  right,
+  last,
+}: {
+  label: string;
+  value?: string;
+  onPress?(): void;
+  destructive?: boolean;
+  right?: ReactNode;
+  last?: boolean;
+}) {
   const { c } = useTheme();
   const body = (
-    <View style={{ minHeight: 46, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", gap: 10, borderBottomWidth: last ? 0 : 0.5, borderBottomColor: c.border }}>
-      <Text style={{ flex: 1 }} color={destructive ? "destructive" : "foreground"}>{label}</Text>
-      {value ? <Text color="muted" numberOfLines={1} style={{ maxWidth: "55%" }}>{value}</Text> : null}
+    <View
+      style={{
+        minHeight: 46,
+        paddingHorizontal: 16,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+        borderBottomWidth: last ? 0 : 0.5,
+        borderBottomColor: c.border,
+      }}
+    >
+      <Text style={{ flex: 1 }} color={destructive ? "destructive" : "foreground"}>
+        {label}
+      </Text>
+      {value ? (
+        <Text color="muted" numberOfLines={1} style={{ maxWidth: "55%" }}>
+          {value}
+        </Text>
+      ) : null}
       {right}
     </View>
   );
-  return onPress ? <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label}>{body}</Pressable> : body;
+  return onPress ? (
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label}>
+      {body}
+    </Pressable>
+  ) : (
+    body
+  );
 }
 
 export function SettingsScreen({ onClose }: { onClose(): void }) {
@@ -55,25 +99,40 @@ export function SettingsScreen({ onClose }: { onClose(): void }) {
   }, []);
   const push = usePushState();
   // The Notifications group: its rows, the one honest line about where push stands, and the action, are the core's.
-  const notif = pushSettingsView({ permission: perm, needsYou: prefs.notifyNeedsYou, done: prefs.notifyDone, registered: push.registered && push.configured, pushAvailable: !push.unavailable && push.configured });
+  const notif = pushSettingsView({
+    permission: perm,
+    needsYou: prefs.notifyNeedsYou,
+    done: prefs.notifyDone,
+    registered: push.registered && push.configured,
+    pushAvailable: !push.unavailable && push.configured,
+  });
   const doAction = async (a: "allow" | "open-settings") => {
     if (a === "open-settings") await Linking.openSettings();
     else {
       const granted = await askPermission();
       setPerm(granted ? "granted" : "denied");
       // Allowed just now: the relay learns this phone's token at once.
-      if (backend) await syncPush({ backend, deviceId: deviceId(), permission: granted ? "granted" : "denied", needsYou: prefs.notifyNeedsYou, done: prefs.notifyDone });
+      if (backend)
+        await syncPush({ backend, deviceId: deviceId(), permission: granted ? "granted" : "denied", needsYou: prefs.notifyNeedsYou, done: prefs.notifyDone });
     }
   };
   return (
     <View style={{ flex: 1, backgroundColor: c.grouped }}>
       <View style={{ paddingTop: 16, paddingHorizontal: 16, flexDirection: "row", alignItems: "center" }}>
-        <Text variant="title" style={{ flex: 1 }} accessibilityRole="header">Settings</Text>
-        <Pressable onPress={onClose} accessibilityRole="button" accessibilityLabel="Done" hitSlop={10}><Text weight="600" color="brand">Done</Text></Pressable>
+        <Text variant="title" style={{ flex: 1 }} accessibilityRole="header">
+          Settings
+        </Text>
+        <Pressable onPress={onClose} accessibilityRole="button" accessibilityLabel="Done" hitSlop={10}>
+          <Text weight="600" color="brand">
+            Done
+          </Text>
+        </Pressable>
       </View>
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}>
         <Group title="Account">
-          {sample ? <Row label="Sample data" value="Not your account" last /> : (
+          {sample ? (
+            <Row label="Sample data" value="Not your account" last />
+          ) : (
             <>
               <Row label={account?.name ?? "Signed in"} value={account?.email ?? undefined} />
               <Row
@@ -92,7 +151,18 @@ export function SettingsScreen({ onClose }: { onClose(): void }) {
         </Group>
         <Group title={notif?.title ?? "Notifications"} footer={notif?.footer}>
           {(notif?.rows ?? []).map((r) => (
-            <Row key={r.id} label={r.label} right={<Switch value={r.on} onValueChange={(v) => prefs.set(r.id === "needsYou" ? { notifyNeedsYou: v } : { notifyDone: v })} accessibilityLabel={r.accessibilityLabel} testID={`switch-${r.id}`} />} />
+            <Row
+              key={r.id}
+              label={r.label}
+              right={
+                <Switch
+                  value={r.on}
+                  onValueChange={(v) => prefs.set(r.id === "needsYou" ? { notifyNeedsYou: v } : { notifyDone: v })}
+                  accessibilityLabel={r.accessibilityLabel}
+                  testID={`switch-${r.id}`}
+                />
+              }
+            />
           ))}
           {notif ? (
             <Row
@@ -104,7 +174,10 @@ export function SettingsScreen({ onClose }: { onClose(): void }) {
           ) : null}
         </Group>
         {sample || !backend?.removeAllPhones ? null : (
-          <Group title="Lost a phone?" footer="Removes every phone from your account at once, this one too: their sessions, desktop views and alerts end. You sign in again on the ones you keep.">
+          <Group
+            title="Lost a phone?"
+            footer="Removes every phone from your account at once, this one too: their sessions, desktop views and alerts end. You sign in again on the ones you keep."
+          >
             <Row
               label="Remove all phones"
               destructive
@@ -124,13 +197,42 @@ export function SettingsScreen({ onClose }: { onClose(): void }) {
           </Group>
         )}
         {sample ? null : (
-          <Group title="Privacy" footer={canLock ? "Asked when you open Cua Spaces and before you open the desktop of a computer." : "This phone has no passcode, so nothing can be asked. Set one in the iOS Settings app."}>
-            <Row label="Require Face ID or passcode" right={<Switch value={prefs.requireUnlock} onValueChange={(v) => prefs.set({ requireUnlock: v })} accessibilityLabel="Require Face ID or passcode" testID="switch-lock" />} last />
+          <Group
+            title="Privacy"
+            footer={
+              canLock
+                ? "Asked when you open Cua Spaces and before you open the desktop of a computer."
+                : "This phone has no passcode, so nothing can be asked. Set one in the iOS Settings app."
+            }
+          >
+            <Row
+              label="Require Face ID or passcode"
+              right={
+                <Switch
+                  value={prefs.requireUnlock}
+                  onValueChange={(v) => prefs.set({ requireUnlock: v })}
+                  accessibilityLabel="Require Face ID or passcode"
+                  testID="switch-lock"
+                />
+              }
+              last
+            />
           </Group>
         )}
         {sample && backend?.sample ? (
           <Group title="Sample data" footer="Makes this sample phone behave as if it had no connection, to see the offline states. Nothing else changes.">
-            <Row label="Pretend this phone is offline" right={<Switch value={prefs.sampleOffline} onValueChange={(v) => prefs.set({ sampleOffline: v })} accessibilityLabel="Pretend this phone is offline" testID="switch-offline" />} last />
+            <Row
+              label="Pretend this phone is offline"
+              right={
+                <Switch
+                  value={prefs.sampleOffline}
+                  onValueChange={(v) => prefs.set({ sampleOffline: v })}
+                  accessibilityLabel="Pretend this phone is offline"
+                  testID="switch-offline"
+                />
+              }
+              last
+            />
           </Group>
         ) : null}
         <Group title="About">

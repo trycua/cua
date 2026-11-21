@@ -48,9 +48,12 @@ macOS Space needs an Apple silicon Mac and about 50 GB of free disk.
     instead, Windows may show a SmartScreen prompt the first time: choose **More info**,
     then **Run anyway**. The publisher shows as **Cua AI, Inc.**
 
-    Windows 11 Home is supported; Hyper-V is not required. Local Spaces use
-    Docker Desktop on WSL 2 (the app can install it for you) or QEMU with WHPX,
-    which needs the **Windows Hypervisor Platform** feature turned on.
+    Windows 11 Home is supported; Hyper-V is not required. Local Linux Spaces
+    run in a small runtime Cua Spaces sets up itself on WSL 2: if WSL 2 isn't on
+    yet, the app turns it on with one Windows prompt (a restart may be needed;
+    Cua Spaces opens again by itself). You don't install Docker. Local Windows
+    Spaces use QEMU with WHPX, which needs the **Windows Hypervisor Platform**
+    feature turned on.
   </Tab>
 </Tabs>
 
@@ -60,7 +63,7 @@ has the details for each system.
 
 ## 2. Pick your agent
 
-Open Cua Spaces. The first screen says "Your computers, shared by your team and its agents."
+Open Cua Spaces. The first screen says "Combine your existing computers into one supercomputer."
 Press **Get started**.
 
 **Pick your agent** lists the agents found on this computer, such as Hermes,

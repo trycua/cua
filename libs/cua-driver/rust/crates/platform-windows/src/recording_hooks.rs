@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Recording callbacks exposed to `cua_driver_core::recording`.
 //!
 //! Two hooks:
@@ -32,6 +35,19 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 #[cfg(target_os = "windows")]
+pub(crate) fn install() {
+    cua_driver_core::recording::set_classified_screenshot_fn(screenshot_for_recording);
+    cua_driver_core::recording::set_click_marker_fn(|png_bytes, x, y| {
+        crate::capture::crosshair_png_bytes(png_bytes, x, y).ok()
+    });
+    cua_driver_core::recording::set_budgeted_ax_snapshot_fn(app_state_json_for);
+    cua_driver_core::recording::set_element_bounds_fn(element_window_local_xy);
+    cua_driver_core::video::set_video_backend_factory(Box::new(
+        cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory,
+    ));
+}
+
+#[cfg(target_os = "windows")]
 pub fn set_snapshots(cache: Arc<Snapshots>) {
     register_runtime_store(&cache);
 }
@@ -44,11 +60,11 @@ pub fn set_snapshots(cache: Arc<Snapshots>) {
 pub fn resolve_window_for_recording(window_id: Option<u64>, pid: Option<i64>) -> Option<u64> {
     if let Some(window_id) = window_id {
         let hwnd = HWND(window_id as *mut _);
-        if unsafe { IsWindow(hwnd) }.as_bool() {
+        if unsafe { IsWindow(Some(hwnd)) }.as_bool() {
             let popup = unsafe { GetLastActivePopup(hwnd) };
             if !unsafe { IsWindowEnabled(hwnd) }.as_bool()
                 && popup != hwnd
-                && unsafe { IsWindow(popup) }.as_bool()
+                && unsafe { IsWindow(Some(popup)) }.as_bool()
                 && unsafe { IsWindowVisible(popup) }.as_bool()
             {
                 let mut popup_pid = 0;
@@ -105,20 +121,25 @@ pub fn app_state_json_for(
     pid: Option<i64>,
     budget: cua_driver_core::recording::StateCaptureBudget,
 ) -> Option<Vec<u8>> {
+    // The recorder runs this hook on its own state-capture thread.
+    if let Err(error) = crate::dpi::use_per_monitor_v2_for_current_thread() {
+        tracing::warn!(target: "recording", "application-state capture refused: {error}");
+        return None;
+    }
     let pid = u32::try_from(pid?).ok()?;
     let hwnd = resolve_window_for_recording(window_id, Some(pid.into()))?;
     let mut walk = cua_driver_core::walk_budget::WalkBudget::new(
         budget.timeout_ms,
         crate::uia::DEFAULT_MAX_TOTAL_ELEMENTS,
     );
-    let result =
+    let mut result =
         crate::uia::walk_tree_budgeted(hwnd, None, crate::uia::DEFAULT_MAX_DEPTH, &mut walk);
     let kind = if result.nodes.iter().any(|node| node.msaa_role.is_some()) {
         SnapshotKind::Msaa
     } else {
         SnapshotKind::Uia
     };
-    let _native_payload = UiaSnapshot::from_nodes(&result.nodes, kind);
+    let _native_payload = UiaSnapshot::from_nodes(&mut result.nodes, kind);
     let element_count = result
         .nodes
         .iter()

@@ -79,7 +79,6 @@ export interface HostSetupOps {
   "host.openSettings": { args: { url: string }; result: null };
 }
 
-
 /** The settings change a switch runs (`host::setting_change`). */
 export const HOST_SETTING_CHANGE: Partial<Record<HostActionId, { shareDesktop?: boolean; provideSpaces?: boolean }>> = {
   "share-desktop": { shareDesktop: true },

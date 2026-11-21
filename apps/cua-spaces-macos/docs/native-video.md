@@ -31,6 +31,7 @@ The page keeps one reporter, with one set of observers and one animation frame. 
 { type: "surfaces", update: [{ surfaceId, spaceId, tier: "tile" | "full", interactive,
                                rect, clip, radius, occluded, holes, visible }], remove: [surfaceId] }
 { type: "focus", surfaceId | null }
+{ type: "prewarm", spaceId }
 ```
 
 - **`rect`** is the video area inside the slot's border, in CSS px from the web view's top left.
@@ -47,6 +48,7 @@ The page keeps one reporter, with one set of observers and one animation frame. 
 
 **When it measures.**
 - **Events:** the slot's or the page's resize, a scroll in any container (in the capture phase), a window resize, a `devicePixelRatio` change, `visibilitychange`, and DOM mutations (portals mounting and `data-open` or `style` changes).
+- **Layout changes:** the Space page dispatches `cua:layout-change` on `window` after a divider drag, a dock change or a panel fold commits (`LAYOUT_CHANGE_EVENT`). The reporter measures and sends at once, in the same frame as the new layout, then keeps following it, so the host's layer never trails the pane by a frame.
 - **After each event:** every frame for 20 frames, so CSS transitions are followed to the end.
 - **Safety net:** a poll every 400 ms while any slot is mounted.
 
@@ -86,6 +88,12 @@ CSS px become points through `pageZoom × magnification`. A web view that isn't 
 
 Opening a stream no longer lists every Space on every machine first (`SpacesConnection.attachForStream`): that list waited for the relay directory, so a slow or unreachable relay delayed or failed the desktop of a Space on this Mac.
 
+**Opening fast.** Connecting to a desktop must feel instant (budget: a Space already running opens in 1 s or less, a first open in 2 s or less), so the connect is taken off the click:
+
+- *Intent.* The page tells the host `{ type: "prewarm", spaceId }` when the pointer rests on a link to a Space for 120 ms, or presses one (`lib/stream-intent.ts`, unless the person turned off connecting by itself). The host opens that Space's viewer stream at once (`WebUIVideoSurfaces.prewarm`), counts it as a warm stream (so `maxWarm` bounds it) and lets it go after `prewarmGrace` (15 s) when no slot takes it. The slot that follows binds to a stream that is connected or already connecting. A prewarm that failed is no verdict on the slot: it opens again.
+- *Poster.* When a slot connects, the Space's last picture (kept when its stream is let go, at most 8, 30 minutes) draws dimmed in its place and takes no input; the page's "Connecting…" shows through it, and the live picture replaces it.
+- *Timing.* Every open writes a `stream.open` span in the unified log (subsystem `ai.cua.spaces`, category `stream.timing`, debug): `slot`, `resolved`, `begun`, `presence`, `opened`, `decoded`, `painted` as ms from the first stamp, and `stream.slot ... first_frame_ms` per slot (click to first painted frame). The daemon and the streaming client log the rest (`cua::stream::timing`, debug: `connect_space`, `ticket`, `attached`, `connection_established`, `session_opened`, `first_frame`, `first_keyframe`). Times only, never frame content. The page marks `stream.open:<space>` in `performance`. `cargo test -p cua-spaces-ext --test e2e_docker_stream_timing` (see its header) fails when a cold open takes over 2 s or the warm p95 over 1 s.
+
 ### Input and keyboard focus
 
 - **Tiles** return nil from `hitTest`, so the page gets every click and scroll.
@@ -95,7 +103,7 @@ Opening a stream no longer lists every Space on every machine first (`SpacesConn
 - **While it has the keyboard:**
   - a small bar over the viewer's bottom edge (a hole in the video) says "Keys go to this Space. Press and release ⌃⌥ to stop." with a **Stop controlling** button;
   - every ⌘ chord (⌘Esc too) goes to the Space, because a local key monitor routes it to the view before the web view takes ⌘C and ⌘V (the view's `KeyCapture`, as in the Space window);
-  - on a Linux or Windows Space, ⌘ goes as Control: ⌘C arrives as Ctrl+C and ⌘⇧C as Ctrl+Shift+C. Sent as Command, the Space would get Super, and Super+C types "c". A macOS Space keeps ⌘. The Space window does the same, since both send through `LiveStreamSession`, and so does the HTML5 viewer (`metaAsControl`);
+  - on a Linux or Windows Space, ⌘ goes as Control: ⌘C arrives as Ctrl+C and ⌘⇧C as Ctrl+Shift+C. Sent as Command, the Space would get Super, and Super+C types "c". The right ⌘ held alone does go as Super, for the desktop's own shortcuts (Super+Return on Hyprland). A macOS Space keeps ⌘. The Space window does the same, since both send through `LiveStreamSession`, and so does the HTML5 viewer (`metaAsControl`);
   - plain Esc goes to the Space too. Remote apps need it.
 - **Giving it back:**
   - Control+Option pressed and released alone (⌃⌥T and other Control+Option chords still go to the Space);

@@ -236,7 +236,7 @@ pub fn is_relay_outdated(e: &Error) -> bool {
 }
 
 /// `POST /v1/machines` response.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Registration {
     /// The machine.
     pub machine: Machine,
@@ -245,6 +245,76 @@ pub struct Registration {
     /// The relay's signing keys (JWKS), pinned by the host.
     #[serde(default)]
     pub jwks: serde_json::Value,
+}
+
+impl std::fmt::Debug for Registration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Registration")
+            .field("machine", &self.machine)
+            .field("machine_token", &"<redacted>")
+            .field("jwks", &self.jwks)
+            .finish()
+    }
+}
+
+/// The account's default Space and the order to try when it is offline
+/// (`GET`/`PUT /v1/spaces/settings`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SpacesSettings {
+    /// `relay:<machine>` or `relay:<machine>/<name>`; none when unset.
+    #[serde(default)]
+    pub default_space: Option<String>,
+    /// Ids to try, in order, when the default is offline. Empty: every
+    /// online computer you can use, oldest first.
+    #[serde(default)]
+    pub fallback: Vec<String>,
+    /// false: only the default, then this device.
+    #[serde(default = "fallback_on_default")]
+    pub fallback_on: bool,
+    /// Unix seconds the relay saved it (ignored on write).
+    #[serde(default)]
+    pub updated_at: u64,
+}
+
+fn fallback_on_default() -> bool {
+    true
+}
+
+/// One entry of [`DefaultSpace::order`].
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DefaultSpaceStep {
+    /// The Space id.
+    pub space: String,
+    /// Its display name.
+    #[serde(default)]
+    pub name: String,
+    /// Connected and sharing now.
+    #[serde(default)]
+    pub online: bool,
+    /// `default`, `fallback` or `here`.
+    #[serde(default)]
+    pub role: String,
+}
+
+/// `GET /v1/spaces/default`: where "my default Space" resolves now.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DefaultSpace {
+    /// The first online entry of the order; none with reason `here` when
+    /// this device is the answer.
+    #[serde(default)]
+    pub space: Option<String>,
+    /// `default`, `fallback`, `here` or `unset`.
+    #[serde(default)]
+    pub reason: String,
+    /// The chosen default, online or not.
+    #[serde(default)]
+    pub default_space: Option<String>,
+    /// Whether the default is online (none when unset).
+    #[serde(default)]
+    pub default_online: Option<bool>,
+    /// The order the relay tried.
+    #[serde(default)]
+    pub order: Vec<DefaultSpaceStep>,
 }
 
 /// `PATCH /v1/machines/{id}` body.
@@ -458,9 +528,9 @@ pub struct RelayUsage {
     /// The team whose allowance is pooled, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub team: Option<RelayUsageTeam>,
-    /// Live sessions now.
+    /// Computers in use now.
     pub live_sessions: u32,
-    /// Live sessions allowed at once (none: no limit).
+    /// Computers in use allowed at once (none: no limit).
     pub live_sessions_limit: Option<u32>,
     /// Relay hours used this month (the team's, when pooled).
     pub hours_used: f64,
@@ -1055,6 +1125,66 @@ impl RelayClient {
         .await
     }
 
+    /// The account's default Space settings (`GET /v1/spaces/settings`).
+    /// A relay that predates them answers [`RELAY_NEEDS_UPDATE`]
+    /// ([`is_relay_outdated`]).
+    pub async fn spaces_settings(&self, account_token: &str) -> Result<SpacesSettings> {
+        self.spaces_route(
+            self.http.get(self.url("/v1/spaces/settings")),
+            account_token,
+        )
+        .await
+    }
+
+    /// Replaces the account's default Space settings (`PUT`, whole object).
+    pub async fn set_spaces_settings(
+        &self,
+        account_token: &str,
+        settings: &SpacesSettings,
+    ) -> Result<SpacesSettings> {
+        self.spaces_route(
+            self.http
+                .put(self.url("/v1/spaces/settings"))
+                .json(settings),
+            account_token,
+        )
+        .await
+    }
+
+    /// Where the default Space resolves now (`GET /v1/spaces/default`).
+    /// `here` is this computer's own machine id, when it has one.
+    pub async fn resolve_default_space(
+        &self,
+        account_token: &str,
+        here: Option<&str>,
+    ) -> Result<DefaultSpace> {
+        let mut url = self.url("/v1/spaces/default");
+        if let Some(h) = here.filter(|h| !h.is_empty()) {
+            url.push_str("?here=");
+            url.push_str(h);
+        }
+        self.spaces_route(self.http.get(url), account_token).await
+    }
+
+    /// One request to a `/v1/spaces/...` route, mapping "no such route" to
+    /// [`RELAY_NEEDS_UPDATE`].
+    async fn spaces_route<T: serde::de::DeserializeOwned>(
+        &self,
+        req: reqwest::RequestBuilder,
+        account_token: &str,
+    ) -> Result<T> {
+        match self.send_once::<T>(req, account_token).await {
+            Ok(r) => Ok(r),
+            Err((Error::NotFound(m), _)) if m.trim_end() == "relay:" => {
+                Err(Error::Relay(RELAY_NEEDS_UPDATE.into()))
+            }
+            Err((Error::Relay(m), _)) if m.starts_with("HTTP 405") => {
+                Err(Error::Relay(RELAY_NEEDS_UPDATE.into()))
+            }
+            Err((e, _)) => Err(e),
+        }
+    }
+
     /// Vouches for a machine that registered without proof (S5): shows it
     /// as "new" no longer. Owner only, from an enrolled device
     /// ([`RelayClient::with_device_session`]); a machine cannot confirm
@@ -1070,13 +1200,27 @@ impl RelayClient {
     }
 
     /// Deletes the machine and revokes its token (owner or machine token).
+    /// The Spaces it provides stay on the account, detached: they come
+    /// back when the computer registers again under the same id.
     pub async fn delete(&self, credential: &str, id: &str) -> Result<()> {
-        let _: serde_json::Value = self
-            .send(
-                self.http.delete(self.url(&format!("/v1/machines/{id}"))),
-                credential,
-            )
-            .await?;
+        self.delete_machine(credential, id, false).await
+    }
+
+    /// [`RelayClient::delete`], and with `delete_spaces` (owner only) the
+    /// records of the Spaces it provides go too
+    /// (`DELETE /v1/machines/{id}?spaces=delete`). Their files are the
+    /// caller's to delete through the computer first.
+    pub async fn delete_machine(
+        &self,
+        credential: &str,
+        id: &str,
+        delete_spaces: bool,
+    ) -> Result<()> {
+        let mut url = self.url(&format!("/v1/machines/{id}"));
+        if delete_spaces {
+            url.push_str("?spaces=delete");
+        }
+        let _: serde_json::Value = self.send(self.http.delete(url), credential).await?;
         Ok(())
     }
 
@@ -1200,14 +1344,50 @@ fn plan_limit(h: &reqwest::header::HeaderMap) -> Option<cua_home::plan_limit::Pl
     )
 }
 
+/// The `code` the relay sends with a refusal of a new computer that came
+/// with no proof it is the account's owner (an enrolled device, a sign-in
+/// with a second factor, or a pairing code). Mirrors the relay's
+/// `api::NEW_COMPUTER_NEEDS_PROOF`.
+pub const NEW_COMPUTER_NEEDS_PROOF: &str = "new_computer_needs_proof";
+
+/// What a relay from before the code said for [`NEW_COMPUTER_NEEDS_PROOF`].
+const NEW_COMPUTER_NEEDS_PROOF_REASON: &str =
+    "add computers from a computer you already added, or with a pairing code";
+
+/// The code a refusal carries (see [`refusal_code`]), in the error's own
+/// words: `relay: <reason> [code: <code>]`.
+const CODE_OPEN: &str = " [code: ";
+
+/// The relay's code for a refusal (HTTP 403), when it gave one: the
+/// machine-readable half of the error, which survives every layer that
+/// passes errors on as text (the SDK, the FFI, the apps' bridges).
+pub fn refusal_code(message: &str) -> Option<&str> {
+    let start = message.rfind(CODE_OPEN)? + CODE_OPEN.len();
+    let code = message[start..].strip_suffix(']')?;
+    (!code.is_empty() && code.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')).then_some(code)
+}
+
 fn http_error(status: u16, body: &str) -> Error {
-    let message = serde_json::from_str::<serde_json::Value>(body)
-        .ok()
+    let json = serde_json::from_str::<serde_json::Value>(body).ok();
+    let message = json
+        .as_ref()
         .and_then(|v| v["error"].as_str().map(str::to_string))
         .unwrap_or_else(|| body.chars().take(300).collect());
+    let code = json
+        .as_ref()
+        .and_then(|v| v["code"].as_str().map(str::to_string))
+        .filter(|c| !c.is_empty() && c.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'))
+        // A relay from before the code: the same refusal, by its words.
+        .or_else(|| {
+            (status == 403 && message == NEW_COMPUTER_NEEDS_PROOF_REASON)
+                .then(|| NEW_COMPUTER_NEEDS_PROOF.to_string())
+        });
     match status {
         401 => Error::Unauthenticated(format!("relay: {message}")),
-        403 => Error::PermissionDenied(format!("relay: {message}")),
+        403 => Error::PermissionDenied(match code {
+            Some(code) => format!("relay: {message}{CODE_OPEN}{code}]"),
+            None => format!("relay: {message}"),
+        }),
         404 => Error::NotFound(format!("relay: {message}")),
         409 => Error::Conflict(format!("relay: {message}")),
         _ => Error::Relay(format!("HTTP {status}: {message}")),
@@ -1215,7 +1395,7 @@ fn http_error(status: u16, body: &str) -> Error {
 }
 
 /// Body of a TCP share allocation (see the relay's `tcp_shares`).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TcpShareRequest {
     /// The share's token (40 hex).
     pub token: String,
@@ -1240,6 +1420,21 @@ pub struct TcpShareRequest {
     /// The most bytes the share may move (the owner's daily data cap).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_bytes: Option<u64>,
+}
+
+impl std::fmt::Debug for TcpShareRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TcpShareRequest")
+            .field("token", &"<redacted>")
+            .field("target_port", &self.target_port)
+            .field("ttl_secs", &self.ttl_secs)
+            .field("service", &self.service)
+            .field("name", &self.name)
+            .field("allow", &self.allow)
+            .field("check_host", &self.check_host)
+            .field("max_bytes", &self.max_bytes)
+            .finish()
+    }
 }
 
 /// One TCP share port as the relay reports it.
@@ -1338,6 +1533,53 @@ mod tests {
     }
 
     use super::*;
+
+    /// A refusal keeps the relay's code next to its reason, so an app can
+    /// tell which refusal it was after the error has crossed into text.
+    #[test]
+    fn a_refusal_keeps_the_relays_code() {
+        let e = http_error(
+            403,
+            r#"{"error":"add computers from a computer you already added, or with a pairing code","code":"new_computer_needs_proof"}"#,
+        );
+        assert!(matches!(&e, Error::PermissionDenied(_)), "{e:?}");
+        let m = e.to_string();
+        assert!(m.starts_with("relay: add computers from"), "{m}");
+        assert_eq!(refusal_code(&m), Some(NEW_COMPUTER_NEEDS_PROOF));
+        assert_eq!(e.http_status(), Some(403));
+
+        // A relay from before the code: the same refusal, by its words.
+        let old = http_error(
+            403,
+            r#"{"error":"add computers from a computer you already added, or with a pairing code"}"#,
+        );
+        assert_eq!(
+            refusal_code(&old.to_string()),
+            Some(NEW_COMPUTER_NEEDS_PROOF)
+        );
+
+        // Any other refusal keeps its own code; one without a code has none.
+        let other = http_error(
+            403,
+            r#"{"error":"a phone does not host computers","code":"phone"}"#,
+        );
+        assert_eq!(refusal_code(&other.to_string()), Some("phone"));
+        let bare = http_error(
+            403,
+            r#"{"error":"that host is shared with you to watch only"}"#,
+        );
+        assert_eq!(
+            bare.to_string(),
+            "relay: that host is shared with you to watch only"
+        );
+        assert_eq!(refusal_code(&bare.to_string()), None);
+        // A code that is not a plain word is not echoed.
+        let odd = http_error(403, r#"{"error":"no","code":"<b>x</b>"}"#);
+        assert_eq!(refusal_code(&odd.to_string()), None);
+        // Other statuses are unchanged.
+        let missing = http_error(404, r#"{"error":"no such device","code":"not_found"}"#);
+        assert_eq!(missing.to_string(), "relay: no such device");
+    }
 
     #[test]
     fn normalizes_relay_urls() {
@@ -1446,6 +1688,115 @@ mod tests {
         assert_eq!(e.to_string(), "relay: the Cua relay needs an update");
     }
 
+    /// The default-Space routes and `spaces=delete`, against a mock relay
+    /// that records what it was sent.
+    #[tokio::test]
+    async fn default_space_routes_send_what_the_contract_says() {
+        use axum::extract::{Query, State};
+        use std::collections::HashMap;
+        use std::sync::{Arc, Mutex};
+        type Log = Arc<Mutex<Vec<String>>>;
+        let log: Log = Arc::default();
+        let app = axum::Router::new()
+            .route(
+                "/v1/spaces/settings",
+                axum::routing::get(|| async {
+                    axum::Json(serde_json::json!({"default_space": "relay:abc",
+                        "fallback": ["relay:def"], "fallback_on": false, "updated_at": 7}))
+                })
+                .put(|State(l): State<Log>, body: String| async move {
+                    l.lock().unwrap().push(format!("PUT {body}"));
+                    axum::Json(serde_json::json!({"default_space": null,
+                        "fallback": [], "fallback_on": true, "updated_at": 9}))
+                }),
+            )
+            .route(
+                "/v1/spaces/default",
+                axum::routing::get(
+                    |State(l): State<Log>, Query(q): Query<HashMap<String, String>>| async move {
+                        l.lock().unwrap().push(format!("here={:?}", q.get("here")));
+                        axum::Json(serde_json::json!({"space": "relay:def", "reason": "fallback",
+                            "default_space": "relay:abc", "default_online": false,
+                            "order": [{"space": "relay:abc", "name": "Studio", "online": false, "role": "default"},
+                                      {"space": "relay:def", "name": "PC", "online": true, "role": "fallback"}]}))
+                    },
+                ),
+            )
+            .route(
+                "/v1/machines/m1",
+                axum::routing::delete(
+                    |State(l): State<Log>, Query(q): Query<HashMap<String, String>>| async move {
+                        l.lock().unwrap().push(format!("DELETE spaces={:?}", q.get("spaces")));
+                        axum::Json(serde_json::json!({"ok": true}))
+                    },
+                ),
+            )
+            .with_state(log.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = RelayClient::new(&format!("http://{addr}")).unwrap();
+
+        let got = client.spaces_settings("tok").await.unwrap();
+        assert_eq!(got.default_space.as_deref(), Some("relay:abc"));
+        assert_eq!(got.fallback, vec!["relay:def".to_string()]);
+        assert!(!got.fallback_on && got.updated_at == 7);
+
+        let put = SpacesSettings {
+            default_space: None,
+            fallback: vec![],
+            fallback_on: true,
+            updated_at: 0,
+        };
+        assert_eq!(
+            client
+                .set_spaces_settings("tok", &put)
+                .await
+                .unwrap()
+                .updated_at,
+            9
+        );
+
+        let d = client
+            .resolve_default_space("tok", Some("here1"))
+            .await
+            .unwrap();
+        assert_eq!(d.reason, "fallback");
+        assert_eq!(d.default_online, Some(false));
+        assert_eq!(d.order.len(), 2);
+        assert_eq!(d.order[1].role, "fallback");
+        client.resolve_default_space("tok", None).await.unwrap();
+
+        client.delete("tok", "m1").await.unwrap();
+        client.delete_machine("tok", "m1", true).await.unwrap();
+
+        let log = log.lock().unwrap().clone();
+        let put_body: serde_json::Value =
+            serde_json::from_str(log[0].strip_prefix("PUT ").unwrap()).unwrap();
+        assert_eq!(put_body["default_space"], serde_json::Value::Null);
+        assert_eq!(put_body["fallback_on"], true);
+        assert_eq!(
+            &log[1..],
+            [
+                "here=Some(\"here1\")",
+                "here=None",
+                "DELETE spaces=None",
+                "DELETE spaces=Some(\"delete\")"
+            ]
+        );
+
+        // A relay that predates the routes (its own 404 has no JSON error).
+        let old = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let old_addr = old.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(old, axum::Router::new()).await.unwrap() });
+        let e = RelayClient::new(&format!("http://{old_addr}"))
+            .unwrap()
+            .spaces_settings("tok")
+            .await
+            .unwrap_err();
+        assert!(is_relay_outdated(&e), "{e:?}");
+    }
+
     #[tokio::test]
     async fn a_plan_limit_refusal_is_one_plain_sentence_and_is_not_retried() {
         use std::sync::Arc;
@@ -1465,7 +1816,7 @@ mod tests {
                             ("x-cua-relay-used", "5"),
                             ("x-cua-relay-limit", "5"),
                         ],
-                        "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams: https://x",
+                        "You have 5 of 5 computers in use at once on Pro. Close one or upgrade to Teams: https://x",
                     )
                 }
             }),
@@ -1478,7 +1829,7 @@ mod tests {
         assert!(matches!(e, Error::PlanLimit(_)), "{e:?}");
         assert_eq!(
             e.to_string(),
-            "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams."
+            "You have 5 of 5 computers in use at once on Pro. Close one or upgrade to Teams."
         );
         assert_eq!(e.http_status(), Some(429));
         assert!(!e.is_transient());

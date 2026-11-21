@@ -33,7 +33,8 @@ const SHAPES = JSON.parse(readFileSync(path.resolve(__dirname, "../../cua-spaces
   webkit: Record<string, Schema>;
   $defs: Record<string, Schema>;
 };
-const shapeProblems = (method: string, answer: unknown) => validate(SHAPES.webkit[method]!, JSON.parse(JSON.stringify({ v: answer })).v as unknown, SHAPES.$defs).map((e) => `${method} ${e}`);
+const shapeProblems = (method: string, answer: unknown) =>
+  validate(SHAPES.webkit[method]!, JSON.parse(JSON.stringify({ v: answer })).v as unknown, SHAPES.$defs).map((e) => `${method} ${e}`);
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 
 describe.skipIf(!built)("agents", () => {
@@ -49,7 +50,14 @@ describe.skipIf(!built)("agents", () => {
 
   beforeAll(async () => {
     home = mkdtempSync(path.join(tmpdir(), "cua-agents-"));
-    Object.assign(process.env, { HOME: home, USERPROFILE: home, CUA_HOME: path.join(home, ".cua"), CUA_TELEMETRY: "0", DO_NOT_TRACK: "1", CUA_KEYCHAIN_NONINTERACTIVE: "1" });
+    Object.assign(process.env, {
+      HOME: home,
+      USERPROFILE: home,
+      CUA_HOME: path.join(home, ".cua"),
+      CUA_TELEMETRY: "0",
+      DO_NOT_TRACK: "1",
+      CUA_KEYCHAIN_NONINTERACTIVE: "1",
+    });
     native = await loadNative(dir);
   });
 
@@ -87,14 +95,23 @@ describe.skipIf(!built)("agents", () => {
       servicesIn: () => true,
       cpus: 8,
     });
-    const bridge = createBridge({ model, supervisor: null, version: "1.2.3", platform: "darwin", env: {}, ui: { openSpace: () => {}, setBackground: () => {}, activate: () => {} } });
+    const bridge = createBridge({
+      model,
+      supervisor: null,
+      version: "1.2.3",
+      platform: "darwin",
+      env: {},
+      ui: { openSpace: () => {}, setBackground: () => {}, activate: () => {} },
+    });
     bridge.events.subscribe((e) => events.push(e));
     return { model, bridge };
   }
 
   const call = (b: Bridge, method: string, args: Record<string, unknown> = {}) => b.registry.handle(method, args);
-  const code = (b: Bridge, method: string, args: Record<string, unknown> = {}) => b.registry.dispatch({ id: "x", method, args }).then((r) => (r.ok ? null : r.error.code));
-  const message = (b: Bridge, method: string, args: Record<string, unknown> = {}) => b.registry.dispatch({ id: "x", method, args }).then((r) => (r.ok ? null : r.error.message));
+  const code = (b: Bridge, method: string, args: Record<string, unknown> = {}) =>
+    b.registry.dispatch({ id: "x", method, args }).then((r) => (r.ok ? null : r.error.code));
+  const message = (b: Bridge, method: string, args: Record<string, unknown> = {}) =>
+    b.registry.dispatch({ id: "x", method, args }).then((r) => (r.ok ? null : r.error.message));
 
   // MARK: A Space's runs (AgentRunsTests)
 
@@ -162,7 +179,7 @@ describe.skipIf(!built)("agents", () => {
     await p.send(new A.Select({ name: "ada" }));
     expect(p.view(now).detail?.memory.map((l) => l.text)).toEqual(["hermes/MEMORY.md"]);
     await p.send(new A.AllowComputer({ machine: "relay:0123" }));
-    expect(p.view(now).detail?.access.map((l) => l.text)).toEqual(["This machine"]);
+    expect(p.view(now).detail?.access.map((l) => l.text)).toEqual(["This computer"]);
     await p.send(new A.Resume({ name: "ada" }));
     expect(daemon.calls).toContain("agent_resume");
     expect(p.view(now).rows[0]!.state).toBe("Running");
@@ -178,7 +195,14 @@ describe.skipIf(!built)("agents", () => {
     expect(shapeProblems("agents.readFile", file)).toEqual([]);
     expect((file as { text: string }).text).toBe("# Ada\n");
 
-    await call(bridge, "agents.addRoutine", { agent: "ada", title: "Inbox", prompt: "Sort my inbox", everyMinutes: null, dailyAt: null, weeklyOn: "mon 09:00" });
+    await call(bridge, "agents.addRoutine", {
+      agent: "ada",
+      title: "Inbox",
+      prompt: "Sort my inbox",
+      everyMinutes: null,
+      dailyAt: null,
+      weeklyOn: "mon 09:00",
+    });
     expect(daemon.calls.at(-1)).toBe("routine_add");
     expect(daemon.args.at(-1)).toEqual({ agent: "ada", title: "Inbox", prompt: "Sort my inbox", weekly_on: "mon 09:00" });
     await call(bridge, "agents.setRoutine", { id: "R1", enabled: false });
@@ -235,7 +259,12 @@ describe.skipIf(!built)("agents", () => {
 
   it("starts a run in a Space and sends it a reply", async () => {
     const { bridge } = makeBridge();
-    const run = (await call(bridge, "agents.start", { spaceId: "local:dev", agent: "claude-code", prompt: "Run the tests", repo: "https://github.com/trycua/cua" })) as Record<string, unknown>;
+    const run = (await call(bridge, "agents.start", {
+      spaceId: "local:dev",
+      agent: "claude-code",
+      prompt: "Run the tests",
+      repo: "https://github.com/trycua/cua",
+    })) as Record<string, unknown>;
     expect(run).toMatchObject({ run_id: "run-2", agent: "claude-code" });
     expect(daemon.calls.at(-1)).toBe("agent_start");
     expect(daemon.args.at(-1)).toEqual({ space: "local:dev", agent: "claude-code", prompt: "Run the tests", repo: "https://github.com/trycua/cua" });
@@ -374,12 +403,30 @@ describe.skipIf(!built)("agents", () => {
 
   it("registers the app's own cua as the MCP server, and counts the bundled skills", async () => {
     const seen: unknown[] = [];
-    const info = { id: "codex", name: "Codex", installed: true, evidence: [], skillsDir: undefined, mcpConfig: undefined, mcpFormat: undefined, cuaConfigured: false, cuaManaged: false, cuaDriverConfigured: false, skillsInstalled: [], skillsOutdated: [], error: undefined } as unknown as AgentInfo;
-    const outcome = (target: string, item: string): AgentSetupOutcome => ({ agents: ["codex"], target, item, path: "/x", change: "created", detail: "", backup: undefined }) as unknown as AgentSetupOutcome;
+    const info = {
+      id: "codex",
+      name: "Codex",
+      installed: true,
+      evidence: [],
+      skillsDir: undefined,
+      mcpConfig: undefined,
+      mcpFormat: undefined,
+      cuaConfigured: false,
+      cuaManaged: false,
+      cuaDriverConfigured: false,
+      skillsInstalled: [],
+      skillsOutdated: [],
+      error: undefined,
+    } as unknown as AgentInfo;
+    const outcome = (target: string, item: string): AgentSetupOutcome =>
+      ({ agents: ["codex"], target, item, path: "/x", change: "created", detail: "", backup: undefined }) as unknown as AgentSetupOutcome;
     const inner = {
       detect: () => [info],
       skills: () => [{}, {}, {}],
-      installSkills: async (agents: string[], skills: string[], force: boolean) => (seen.push(["skills", agents, skills, force]), [outcome("skill", "cua-spaces")]),
+      installSkills: async (agents: string[], skills: string[], force: boolean) => (
+        seen.push(["skills", agents, skills, force]),
+        [outcome("skill", "cua-spaces")]
+      ),
       configureMcp: async (agents: string[], server: unknown) => (seen.push(["mcp", agents, server]), [outcome("mcp", "cua")]),
       setupCuaDriver: async (agents: string[], command: unknown, skills: boolean, mcp: boolean) => (seen.push(["driver", agents, command, skills, mcp]), []),
       remove: async (agents: string[], skills: boolean, mcp: boolean) => (seen.push(["remove", agents, skills, mcp]), []),
@@ -437,6 +484,16 @@ describe.skipIf(!built)("agents", () => {
     expect(ok.env).toBe("GEMINI_API_KEY");
   });
 
+  it("warns that a development build keeps keys unencrypted and keeps the buttons on", async () => {
+    keys.insecure =
+      "Keychain not available in this development build: keys are stored unencrypted in ~/.cua-local/agent-keys. Do not use real production secrets";
+    const { model } = makeBridge();
+    await model.agents.keys.load();
+    expect(model.agents.keys.view.canEdit).toBe(true);
+    expect(model.agents.keys.view.notice).toContain("Keychain not available in this development build");
+    expect(agentKeysInput({ keys: [], available: false, insecure: "x" }, null).warning).toBeUndefined();
+  });
+
   it("says why keys can't be saved", async () => {
     keys.available = false;
     const { model } = makeBridge();
@@ -445,7 +502,10 @@ describe.skipIf(!built)("agents", () => {
     expect(model.agents.keys.view.notice).toContain("keeps credentials in a file");
     const none = makeBridge({ tools: null }).model.agents.keys;
     expect(none.view.notice).toContain("need the cua daemon");
-    expect(agentKeysInput({ keys: [{ provider: "x", env: "", last4: "1234", added_ms: 1 }], available: false }, null)).toMatchObject({ keys: [], unavailable: "this machine can't keep keys" });
+    expect(agentKeysInput({ keys: [{ provider: "x", env: "", last4: "1234", added_ms: 1 }], available: false }, null)).toMatchObject({
+      keys: [],
+      unavailable: "this machine can't keep keys",
+    });
   });
 
   it("routes agentKeys.* to the daemon, with answers that never carry a key", async () => {
@@ -470,7 +530,12 @@ describe.skipIf(!built)("agents", () => {
     expect(JSON.stringify(custom)).toContain("http://127.0.0.1:1234/v1");
     const removed = await call(bridge, "agentKeys.remove", { env: "ANTHROPIC_API_KEY" });
     expect(keys.calls.at(-1)).toEqual(["agent_keys.remove", { env: "ANTHROPIC_API_KEY" }]);
-    for (const [m, a] of [["agentKeys.list", listed], ["agentKeys.set", set], ["agentKeys.remove", removed]] as const) expect(shapeProblems(m, a)).toEqual([]);
+    for (const [m, a] of [
+      ["agentKeys.list", listed],
+      ["agentKeys.set", set],
+      ["agentKeys.remove", removed],
+    ] as const)
+      expect(shapeProblems(m, a)).toEqual([]);
     // A connection may have no key (a custom endpoint): the bridge forwards an empty value and the daemon decides; a provider is always required.
     await call(bridge, "agentKeys.set", { provider: "anthropic" });
     expect(keys.calls.at(-1)).toEqual(["agent_keys.set", { provider: "anthropic", value: "" }]);
@@ -481,13 +546,18 @@ describe.skipIf(!built)("agents", () => {
   it("keeps several keys for one provider and tells an app which one to use", async () => {
     const { bridge } = makeBridge();
     // Another key beside the first one, named; one removed by its slot; the first removed while the others stay.
-    const added = (await call(bridge, "agentKeys.set", { provider: "openai", value: "sk-work-0000-9z9z", add: true, label: "Work key" })) as { keys: { env: string; slot?: string; label?: string }[] };
+    const added = (await call(bridge, "agentKeys.set", { provider: "openai", value: "sk-work-0000-9z9z", add: true, label: "Work key" })) as {
+      keys: { env: string; slot?: string; label?: string }[];
+    };
     expect(keys.calls.at(-1)).toEqual(["agent_keys.set", { provider: "openai", value: "sk-work-0000-9z9z", add: true, label: "Work key" }]);
     const work = added.keys.find((k) => k.slot);
     expect(work).toMatchObject({ env: "OPENAI_API_KEY", label: "Work key" });
     expect(JSON.stringify(added)).not.toContain("sk-work");
     // Which key an app uses: names only, and nothing is signed out or deleted by choosing.
-    const used = (await call(bridge, "agentKeys.use", { app: "hermes", env: "OPENAI_API_KEY", slot: work!.slot })) as { keys: unknown[]; uses?: Record<string, { env: string; slot?: string }> };
+    const used = (await call(bridge, "agentKeys.use", { app: "hermes", env: "OPENAI_API_KEY", slot: work!.slot })) as {
+      keys: unknown[];
+      uses?: Record<string, { env: string; slot?: string }>;
+    };
     expect(keys.calls.at(-1)).toEqual(["agent_keys.use", { app: "hermes", env: "OPENAI_API_KEY", slot: work!.slot }]);
     expect(used.uses?.hermes).toMatchObject({ env: "OPENAI_API_KEY", slot: work!.slot });
     expect(used.keys).toHaveLength(2);
@@ -500,7 +570,17 @@ describe.skipIf(!built)("agents", () => {
     expect(keys.calls.at(-1)).toEqual(["agent_keys.remove", { env: "OPENAI_API_KEY", keep_others: true }]);
     expect(await code(bridge, "agentKeys.use", {})).toBe("bad_args");
     // A native row is the first key for a variable; the ones beside it are the web page's.
-    expect(agentKeysInput({ keys: [{ provider: "openai", env: "OPENAI_API_KEY", last4: "1111", added_ms: 1 }, { provider: "openai", env: "OPENAI_API_KEY", slot: "k1", last4: "2222", added_ms: 2 }] }, null).keys).toHaveLength(1);
+    expect(
+      agentKeysInput(
+        {
+          keys: [
+            { provider: "openai", env: "OPENAI_API_KEY", last4: "1111", added_ms: 1 },
+            { provider: "openai", env: "OPENAI_API_KEY", slot: "k1", last4: "2222", added_ms: 2 },
+          ],
+        },
+        null,
+      ).keys,
+    ).toHaveLength(1);
   });
 
   it("fails a key call in the daemon's words, or without a daemon", async () => {

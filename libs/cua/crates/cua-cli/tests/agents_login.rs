@@ -199,7 +199,7 @@ async fn browser_pkce_login_then_onboards_the_named_agents() {
         !seen.contains("WXYZ"),
         "no device code in the browser flow: {seen}"
     );
-    assert!(seen.contains("[5/5]"), "{seen}");
+    assert!(seen.contains("[6/6]"), "{seen}");
     assert!(
         seen.contains("Kiro: ~/.kiro/settings/mcp.json (added)"),
         "{seen}"
@@ -501,13 +501,30 @@ async fn the_local_cli_registers_cua_local_beside_stables_cua() {
     assert!(stable_skill.join("SKILL.md").is_file() && !local_skill.exists());
 }
 
+/// A stand-in cua-driver whose `mcp` answers one MCP `initialize`.
+#[cfg(unix)]
+fn fake_driver(h: &Home) -> String {
+    use std::os::unix::fs::PermissionsExt;
+    let p = h.dir.path().join("opt/drv/cua-driver");
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(
+        &p,
+        "#!/bin/sh\nread line\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"serverInfo\":{\"name\":\"cua-driver\",\"version\":\"9.9.9\"}}}'\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    p.display().to_string()
+}
+
 /// What `uninstall-local.sh` runs (`cua-local agents remove --yes`) removes
 /// Local's own MCP server and skills and nothing of the released app's: its
 /// `cua` and `cua-driver` entries and skills stay, also when Local was asked to
 /// set up `cua-driver` itself after Stable had (CUA-1776).
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_local_cli_removes_only_its_own_entries_and_leaves_stables_cua_and_cua_driver() {
     let mut h = home();
+    let drv = fake_driver(&h);
     mkdirs(&h, &[".cursor"]);
     let cursor = h.dir.path().join(".cursor/mcp.json");
     let root = h.dir.path().to_path_buf();
@@ -543,7 +560,7 @@ async fn the_local_cli_removes_only_its_own_entries_and_leaves_stables_cua_and_c
         "cursor",
         "--yes",
         "--mcp-command",
-        "/opt/drv/cua-driver",
+        &drv,
     ])
     .await
     .ok();
@@ -575,7 +592,7 @@ async fn the_local_cli_removes_only_its_own_entries_and_leaves_stables_cua_and_c
         "cursor",
         "--yes",
         "--mcp-command",
-        "/opt/drv/cua-driver",
+        &drv,
     ])
     .await
     .ok();
@@ -605,9 +622,11 @@ async fn the_local_cli_removes_only_its_own_entries_and_leaves_stables_cua_and_c
 /// later set up the same command. Local's record still says it wrote the entry,
 /// but the name is Cua Driver's, so removing Local's setup leaves it, and the
 /// released app's `cua-driver` skill, alone.
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_local_cli_leaves_cua_driver_alone_even_when_it_registered_it_first() {
     let mut h = home();
+    let drv = fake_driver(&h);
     mkdirs(&h, &[".cursor"]);
     let cursor = h.dir.path().join(".cursor/mcp.json");
     let root = h.dir.path().to_path_buf();
@@ -620,7 +639,7 @@ async fn the_local_cli_leaves_cua_driver_alone_even_when_it_registered_it_first(
         "cursor",
         "--yes",
         "--mcp-command",
-        "/opt/drv/cua-driver",
+        &drv,
     ];
 
     let local_home = h.dir.path().join(".cua-local");
@@ -651,7 +670,8 @@ async fn the_local_cli_leaves_cua_driver_alone_even_when_it_registered_it_first(
         serde_json::from_str(&std::fs::read_to_string(&cursor).unwrap()).unwrap();
     assert!(left["mcpServers"]["cua-local"].is_null(), "{left}");
     assert_eq!(
-        left["mcpServers"]["cua-driver"]["command"], "/opt/drv/cua-driver",
+        left["mcpServers"]["cua-driver"]["command"],
+        drv.as_str(),
         "Cua Driver's server stays: {left}"
     );
     assert!(
@@ -671,9 +691,11 @@ async fn the_local_cli_leaves_cua_driver_alone_even_when_it_registered_it_first(
     );
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
     let h = home();
+    let drv = fake_driver(&h);
     mkdirs(&h, &[".codex", ".claude"]);
     agent_owned(&h, &[".codex/auth.json", ".claude/settings.json"]);
     std::fs::write(
@@ -692,7 +714,7 @@ async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
             "all",
             "--yes",
             "--mcp-command",
-            "/opt/drv/cua-driver",
+            &drv,
         ])
         .await;
     o.ok();
@@ -709,9 +731,9 @@ async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
     assert!(!o.stdout.contains("not installed yet"), "{o:?}");
     let codex = std::fs::read_to_string(h.dir.path().join(".codex/config.toml")).unwrap();
     assert!(
-        codex.contains(
-            "[mcp_servers.cua-driver]\ncommand = \"/opt/drv/cua-driver\"\nargs = [\"mcp\"]"
-        ),
+        codex.contains(&format!(
+            "[mcp_servers.cua-driver]\ncommand = \"{drv}\"\nargs = [\"mcp\"]"
+        )),
         "{codex}"
     );
     assert!(
@@ -737,7 +759,7 @@ async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
             "--agents",
             "codex",
             "--mcp-command",
-            "/opt/drv/cua-driver",
+            &drv,
         ])
         .await;
     o.ok();
@@ -762,29 +784,6 @@ async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
     assert_eq!(codex["cua_driver_configured"], true, "{codex}");
     assert_eq!(codex["cua_configured"], false, "{codex}");
 
-    // Without an installed cua-driver it points at the bare name and says how
-    // to install it.
-    let o = h
-        .run(&[
-            "agents",
-            "setup",
-            "--cua-driver",
-            "--agents",
-            "claude",
-            "--mcp-only",
-            "--yes",
-        ])
-        .await;
-    o.ok();
-    // The install one-liner is PowerShell's `-Only` on Windows, sh's `--only`
-    // elsewhere.
-    let hint = if cfg!(windows) {
-        "-Only cua-driver"
-    } else {
-        "--only cua-driver"
-    };
-    assert!(o.stdout.contains(hint), "{o:?}");
-
     // Plain `cua agents remove` leaves it: it removes Cua Spaces' entries
     // only. `--include-cua-driver` undoes it.
     let o = h.run(&["agents", "remove", "--yes"]).await;
@@ -801,13 +800,45 @@ async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
     assert!(!h.dir.path().join(".claude/skills/cua-driver").exists());
 }
 
+/// Without an installed cua-driver nothing is written: the row fails with
+/// the reason and the CLI says how to install it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn agents_setup_cua_driver_without_cua_driver_writes_nothing() {
+    let h = home();
+    mkdirs(&h, &[".claude"]);
+    let o = h
+        .run(&[
+            "agents",
+            "setup",
+            "--cua-driver",
+            "--agents",
+            "claude",
+            "--mcp-only",
+            "--yes",
+        ])
+        .await;
+    assert_eq!(o.code, 1, "{o:?}");
+    assert!(o.stdout.contains("isn't installed"), "{o:?}");
+    // The install one-liner is PowerShell's `-Only` on Windows, sh's `--only`
+    // elsewhere.
+    let hint = if cfg!(windows) {
+        "-Only cua-driver"
+    } else {
+        "--only cua-driver"
+    };
+    assert!(o.stdout.contains(hint), "{o:?}");
+    assert!(!h.dir.path().join(".claude.json").exists());
+}
+
 /// `cua agents remove` (what the uninstaller runs) takes Cua Spaces' `cua`
 /// server and skills and leaves Cua Driver's `cua-driver` server and skill,
 /// in the configs of Claude Code, Codex and Cursor; `--dry-run` lists exactly
 /// that and changes nothing; `--include-cua-driver` takes Cua Driver's too.
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agents_remove_keeps_cua_driver_and_dry_run_lists_what_it_removes() {
     let h = home();
+    let drv = fake_driver(&h);
     mkdirs(&h, &[".claude", ".codex", ".cursor"]);
     let at = |rel: &str| h.dir.path().join(rel);
     std::fs::write(
@@ -845,7 +876,7 @@ async fn agents_remove_keeps_cua_driver_and_dry_run_lists_what_it_removes() {
         agents,
         "--yes",
         "--mcp-command",
-        "/opt/drv/cua-driver",
+        &drv,
     ])
     .await
     .ok();
@@ -854,7 +885,7 @@ async fn agents_remove_keeps_cua_driver_and_dry_run_lists_what_it_removes() {
     for c in configs {
         let text = read(c);
         assert!(text.contains("/opt/cua/bin/cua"), "{c}: {text}");
-        assert!(text.contains("/opt/drv/cua-driver"), "{c}: {text}");
+        assert!(text.contains(&drv), "{c}: {text}");
     }
     let state = at(".cua/agent-setup.json");
     let snapshot = || -> Vec<String> {
@@ -896,6 +927,7 @@ async fn agents_remove_keeps_cua_driver_and_dry_run_lists_what_it_removes() {
         "cua-volume",
         "cua-sandboxes",
         "gui-automation",
+        "supercomputer",
     ] {
         assert!(
             out.contains(&format!(
@@ -937,7 +969,7 @@ async fn agents_remove_keeps_cua_driver_and_dry_run_lists_what_it_removes() {
     for c in configs {
         let text = read(c);
         assert!(!text.contains("/opt/cua/bin/cua"), "{c}: {text}");
-        assert!(text.contains("/opt/drv/cua-driver"), "{c}: {text}");
+        assert!(text.contains(&drv), "{c}: {text}");
         assert!(text.contains("other"), "{c}: {text}");
     }
     assert!(!at(".claude/skills/cua-spaces").exists());
@@ -972,9 +1004,11 @@ async fn agents_remove_keeps_cua_driver_and_dry_run_lists_what_it_removes() {
     assert!(!at(".claude/skills/cua-driver").exists());
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agents_setup_cua_driver_says_where_the_skill_went_and_no_skills_skips_it() {
     let h = home();
+    let drv = fake_driver(&h);
     mkdirs(&h, &[".codex", ".claude"]);
     let skill = |rel: &str| h.dir.path().join(rel).join("cua-driver/SKILL.md");
 
@@ -988,7 +1022,7 @@ async fn agents_setup_cua_driver_says_where_the_skill_went_and_no_skills_skips_i
             "claude",
             "--yes",
             "--mcp-command",
-            "/opt/drv/cua-driver",
+            &drv,
         ])
         .await;
     o.ok();
@@ -1013,7 +1047,7 @@ async fn agents_setup_cua_driver_says_where_the_skill_went_and_no_skills_skips_i
             "--no-skills",
             "--yes",
             "--mcp-command",
-            "/opt/drv/cua-driver",
+            &drv,
         ])
         .await;
     o.ok();
@@ -1178,16 +1212,16 @@ async fn interactive_login_onboarding_prompts() {
         p.send("y\r");
         let at = p.expect("✓ Claude Code", at);
         let at = p.expect("✗ Cursor", at);
-        let at = p.expect("Install 5 default cua skills? [Y/n]", at);
+        let at = p.expect("Install 6 default cua skills? [Y/n]", at);
         p.send("\r");
-        let at = p.expect("[1/5] ✓ cua-driver (installed, 2 locations)", at);
-        let at = p.expect("[5/5]", at);
+        let at = p.expect("[1/6] ✓ cua-driver (installed, 2 locations)", at);
+        let at = p.expect("[6/6]", at);
         p.expect("Configure cua MCP server connection? [Y/n]", at);
         p.send("n\r");
         let (code, out) = p.wait();
         assert_eq!(code, 0, "{out}");
         assert!(
-            out.contains("Done: 5 skills in 2 locations; MCP configured for 0 agents."),
+            out.contains("Done: 6 skills in 2 locations; MCP configured for 0 agents."),
             "{out}"
         );
         assert!(

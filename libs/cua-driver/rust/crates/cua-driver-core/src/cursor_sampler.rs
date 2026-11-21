@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cross-platform cursor-position sampler. Runs on a dedicated thread
 //! during recording, polls the OS for the current mouse position every
 //! ~33 ms (≈30 Hz to match the video framerate), and writes one
@@ -97,10 +100,13 @@ impl Drop for CursorSampler {
 #[cfg(target_os = "windows")]
 fn sample_cursor() -> Option<(f64, f64)> {
     use windows::Win32::Foundation::POINT;
-    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    use windows::Win32::UI::WindowsAndMessaging::GetPhysicalCursorPos;
+    // This sampler thread does not run in the Cua Driver DPI context, so ask
+    // for physical pixels explicitly; an embedded DPI-unaware host would
+    // otherwise get virtualized coordinates from GetCursorPos.
     unsafe {
         let mut p = POINT::default();
-        if GetCursorPos(&mut p).is_ok() {
+        if GetPhysicalCursorPos(&mut p).is_ok() {
             Some((p.x as f64, p.y as f64))
         } else {
             None

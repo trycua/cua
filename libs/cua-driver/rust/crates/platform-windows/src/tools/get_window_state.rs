@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -24,6 +27,7 @@ mod get_window_state_actions_tests {
             actions,
             enabled: Some(true),
             selected: None,
+            is_password: None,
             element_ptr: 0,
             center_x: 0,
             center_y: 0,
@@ -43,10 +47,94 @@ mod get_window_state_actions_tests {
     }
 
     #[test]
+    fn display_only_rows_are_observations_without_action_handles() {
+        let mut text = node(Vec::new());
+        text.element_index = None;
+        text.control_type = "Text".to_owned();
+        text.name = Some("Display is 6".to_owned());
+        text.parent_element_index = Some(1);
+        let mut blank = node(Vec::new());
+        blank.element_index = None;
+        blank.name = None;
+        let nodes = vec![node(vec!["invoke".to_owned()]), text, blank];
+        assert!(build_element_entry(&nodes[1], None).is_none());
+        let observations = build_observations(&nodes);
+        assert_eq!(observations.len(), 1);
+        assert_eq!(
+            serde_json::to_value(&observations[0]).unwrap(),
+            json!({"role": "Text", "depth": 0, "label": "Display is 6", "parent_index": 1})
+        );
+    }
+
+    #[test]
     fn element_entry_omits_actions_when_empty() {
         let n = node(Vec::new());
         let entry = build_element_entry(&n, None).unwrap();
         assert!(entry.get("actions").is_none());
+    }
+
+    #[test]
+    fn element_entry_includes_is_password_when_known() {
+        let mut n = node(vec!["set_value".to_owned()]);
+        n.is_password = Some(true);
+        let entry = build_element_entry(&n, None).unwrap();
+        assert_eq!(entry["is_password"], json!(true));
+
+        n.is_password = Some(false);
+        let entry = build_element_entry(&n, None).unwrap();
+        assert_eq!(entry["is_password"], json!(false));
+    }
+
+    #[test]
+    fn element_entry_omits_is_password_when_unknown() {
+        let n = node(vec!["invoke".to_owned()]);
+        let entry = build_element_entry(&n, None).unwrap();
+        assert!(entry.get("is_password").is_none());
+    }
+
+    #[test]
+    fn is_password_false_is_kept_only_for_edit_controls() {
+        use crate::uia::text_entry_is_password;
+        assert_eq!(text_entry_is_password(Some(true), "Button"), Some(true));
+        assert_eq!(text_entry_is_password(Some(true), "Edit"), Some(true));
+        assert_eq!(text_entry_is_password(Some(false), "Edit"), Some(false));
+        assert_eq!(text_entry_is_password(Some(false), "Slider"), None);
+        assert_eq!(text_entry_is_password(Some(false), "Document"), None);
+        assert_eq!(text_entry_is_password(Some(false), "Button"), None);
+        assert_eq!(text_entry_is_password(None, "Edit"), None);
+    }
+
+    #[test]
+    fn markdown_line_marks_password_fields_only() {
+        use crate::uia::format_node_line;
+        let mut n = node(vec!["set_value".to_owned()]);
+        n.control_type = "Edit".to_owned();
+        n.name = Some("Password".to_owned());
+        n.is_password = Some(true);
+        assert_eq!(
+            format_node_line(&n),
+            "- [1] Edit \"Password\" [password actions=[set_value]]"
+        );
+        n.is_password = Some(false);
+        assert_eq!(
+            format_node_line(&n),
+            "- [1] Edit \"Password\" [actions=[set_value]]"
+        );
+
+        n.element_index = None;
+        n.is_password = Some(true);
+        assert_eq!(format_node_line(&n), "- Edit \"Password\" [password]");
+        n.is_password = Some(false);
+        assert_eq!(format_node_line(&n), "- Edit \"Password\"");
+    }
+
+    #[test]
+    fn password_field_value_is_never_echoed() {
+        use crate::uia::redact_password_value;
+        let secret = Some("hunter2".to_owned());
+        assert_eq!(redact_password_value(secret.clone(), Some(true)), None);
+        assert_eq!(redact_password_value(secret.clone(), Some(false)), secret);
+        assert_eq!(redact_password_value(secret.clone(), None), secret);
     }
 }
 
@@ -94,6 +182,9 @@ fn build_element_entry(
     if let Some(selected) = n.selected {
         entry["selected"] = json!(selected);
     }
+    if let Some(is_password) = n.is_password {
+        entry["is_password"] = json!(is_password);
+    }
     if !n.actions.is_empty() {
         entry["actions"] = json!(n.actions);
     }
@@ -109,6 +200,43 @@ fn build_element_entry(
         });
     }
     Some(entry)
+}
+
+/// The walk's display-only rows (static text, read-only values) as
+/// `observations`. They carry no `element_index` or `element_token` because
+/// no action can target them (#2958).
+fn build_observations(
+    nodes: &[crate::uia::UiaNode],
+) -> Vec<cua_driver_contract::WindowObservation> {
+    nodes
+        .iter()
+        .filter(|n| n.element_index.is_none())
+        .filter_map(|n| {
+            let value = n.value.clone().filter(|v| !v.is_empty());
+            let label = n
+                .name
+                .clone()
+                .or_else(|| n.value.clone())
+                .or_else(|| n.automation_id.clone())
+                .or_else(|| n.help_text.clone());
+            (label.is_some() || value.is_some()).then(|| cua_driver_contract::WindowObservation {
+                role: n.control_type.clone(),
+                depth: n.depth as u32,
+                label,
+                value,
+                frame: n
+                    .rect
+                    .map(|(l, t, r, b)| cua_driver_contract::ElementFrame {
+                        x: f64::from(l),
+                        y: f64::from(t),
+                        w: f64::from((r - l).max(0)),
+                        h: f64::from((b - t).max(0)),
+                    }),
+                parent_index: n.parent_element_index.map(|i| i as u64),
+                in_web_content: n.in_web_content.then_some(true),
+            })
+        })
+        .collect()
 }
 
 pub struct GetWindowStateTool {
@@ -137,7 +265,9 @@ impl Tool for GetWindowStateTool {
                 `snapshot_id` is printed in the response header and returned in structuredContent. \
                 Pass `tree_format:\"elements\"` for the structured `elements` array instead \
                 (explicit `element_token`, `frame`, `parent_index`, `value`, `actions` per row), \
-                or `\"both\"` for both (about twice the size).\n\n\
+                or `\"both\"` for both (about twice the size). `Edit` elements carry \
+                `is_password` (`true` for a password field), and the Markdown row marks a \
+                password field with `password`.\n\n\
                 Size: a read is bounded by default (`max_elements` 250). When the walk stops at \
                 that budget the response says `Tree truncated at max_elements=…` and `truncated: \
                 true`; pass a larger `max_elements`, or `query` / `max_depth`, to reach the rest. \
@@ -153,9 +283,9 @@ impl Tool for GetWindowStateTool {
                 back to a full read and `since_status` says why. The focused element is not \
                 reported on Windows yet.\n\n\
                 INVARIANT: call `get_window_state` once per turn per (pid, window_id) before \
-                any element action against that window. The next snapshot of the same \
-                (pid, window_id) replaces this one, stales its element tokens, and lists the \
-                replaced ids in `invalidated_snapshot_ids`. A screenshot-only read \
+                any element action against that window. This session's next snapshot of the \
+                same (pid, window_id) replaces this one, stales its element tokens, and lists \
+                the replaced ids in `invalidated_snapshot_ids`. A screenshot-only read \
                 (`include_accessibility_tree:false`) keeps the current snapshot's rows and \
                 tokens valid, and `display_only:true` also leaves its pixel frame alone.\n\n\
                 The UIA tree walked is the window's tree (HWND-scoped); the screenshot and \
@@ -164,8 +294,9 @@ impl Tool for GetWindowStateTool {
                 picks a window implicitly.\n\n\
                 `window_id` MUST belong to `pid`; the call returns `isError: true` otherwise. \
                 The driver does not auto-fall-back to a different window.\n\n\
-                Set `query` to a case-insensitive substring to project the tree to matching \
-                rows plus their ancestor chain. \
+                Set `query` to a case-insensitive substring (`a|b` for either) to project the \
+                tree to matching rows plus their ancestor chain, or to a `0 of N elements \
+                match` line when none matches. \
                 Original element indices are preserved. `total_element_count` reports the \
                 unprojected walked snapshot; `returned_element_count` reports the projection. \
                 `elements_complete` describes the underlying walk and is unaffected by query \
@@ -194,7 +325,7 @@ impl Tool for GetWindowStateTool {
                 CHROMIUM COVERAGE: a browser-owned permission bubble can be \
                 composited outside the requested native window. Chromium-family \
                 snapshots therefore describe this limit in structuredContent.capture_coverage. \
-                After a verified ineffective window action, call escalate_session, take a \
+                After a verified ineffective window action, take a \
                 fresh get_desktop_state snapshot, act explicitly in desktop scope if needed, \
                 then verify with another fresh desktop snapshot. \
                 This is separate from page JavaScript dialogs, which remain on \
@@ -208,7 +339,7 @@ impl Tool for GetWindowStateTool {
                 "include_accessibility_tree":{"type":"boolean","description":"Default true — walk the UIA tree and return it (per `tree_format`) alongside the screenshot. Set false to SKIP the UIA walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return)."},
                 "include_screenshot":{"type":"boolean","description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},
                 "screenshot_out_file":{"type":"string","description":"When set, write the PNG to this file path instead of embedding base64 in the response. The structured output will contain `screenshot_file_path` instead."},
-                "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count; elements_complete continues to describe the underlying unprojected walk."},
+                "query":{"type":"string","description":"Optional case-insensitive substring; `a|b` matches either. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count; elements_complete continues to describe the underlying unprojected walk. A query that matches nothing says `0 of N elements match`."},
                 "max_elements":{"type":"integer","minimum":1,"description":"Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Default 250 (5 000 with full_output:true); the response states when the tree was cut. Raise it to read further into a large window."},
                 "max_depth":{"type":"integer","minimum":1,"description":"Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees."},
                 "timeout_ms": cua_driver_core::tool_schema::timeout_ms_schema(),
@@ -383,14 +514,14 @@ impl Tool for GetWindowStateTool {
                 let mut budget =
                     cua_driver_core::walk_budget::WalkBudget::new(timeout_ms, max_elements);
                 let iconic_before = crate::input::window_is_iconic(hwnd);
-                let tree =
+                let mut tree =
                     crate::uia::walk_tree_budgeted(hwnd, q.as_deref(), max_depth, &mut budget);
                 let kind = if tree.nodes.iter().any(|node| node.msaa_role.is_some()) {
                     crate::uia::snapshot::SnapshotKind::Msaa
                 } else {
                     crate::uia::snapshot::SnapshotKind::Uia
                 };
-                let payload = crate::uia::snapshot::UiaSnapshot::from_nodes(&tree.nodes, kind)
+                let payload = crate::uia::snapshot::UiaSnapshot::from_nodes(&mut tree.nodes, kind)
                     .with_read_while_minimized(
                         iconic_before || crate::input::window_is_iconic(hwnd),
                     );
@@ -417,7 +548,7 @@ impl Tool for GetWindowStateTool {
                         elements_complete: false,
                     };
                     let payload = crate::uia::snapshot::UiaSnapshot::from_nodes(
-                        &[],
+                        &mut [],
                         crate::uia::snapshot::SnapshotKind::Uia,
                     );
                     Some((tree, payload, walk))
@@ -562,6 +693,11 @@ impl Tool for GetWindowStateTool {
                     structured["total_element_count"] = json!(count);
                     structured["returned_element_count"] = json!(elements.len());
                     structured["elements"] = json!(elements);
+                    cua_driver_core::element_query::publish_observations(
+                        &mut structured,
+                        build_observations(&tr.nodes),
+                        query.as_deref(),
+                    );
                     // Surface 6: snapshot id mirror for debug correlation.
                     if let Some(snapshot_id) = snapshot_id {
                         structured["snapshot_id"] = json!(
@@ -628,7 +764,7 @@ impl Tool for GetWindowStateTool {
                     );
                     if refreshed.is_none() {
                         let payload = crate::uia::snapshot::UiaSnapshot::from_nodes(
-                            &[],
+                            &mut [],
                             crate::uia::snapshot::SnapshotKind::Uia,
                         );
                         if let Some((_, replaced)) = state.snapshots.publish_for_session(

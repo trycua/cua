@@ -38,7 +38,10 @@ env:
 jobs:
   lane:
     name: doctor on ${{ matrix.provider }}
-    runs-on: ubuntu-latest
+    # Built on the release of the image the binaries run in
+    # (ghcr.io/trycua/linux:24.04, glibc 2.39): an ubuntu-26.04 build needs
+    # glibc 2.43 and its injected cua-spacesd never starts.
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
       fail-fast: false

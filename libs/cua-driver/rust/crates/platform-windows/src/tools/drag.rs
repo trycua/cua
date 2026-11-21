@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_contract::{ClickButton, DragInput};
 use cua_driver_core::{
@@ -118,7 +121,7 @@ impl Tool for DragTool {
                     to_y,
                     duration_ms,
                     steps,
-                    &button,
+                    button,
                     &modifier_refs,
                 )
             });
@@ -246,7 +249,7 @@ impl Tool for DragTool {
         // the structured error so the caller retries with delivery_mode:foreground
         // (a WinUI3 Slider can also be set with the set_value tool, which uses
         // UIA RangeValuePattern and holds the contract).
-        if delivery == DeliveryMode::Background {
+        if delivery.is_background() {
             if let Some(r) = winui3_background_gesture(&None, pid, hwnd, None, 1, &button).await {
                 return r;
             }
@@ -258,7 +261,7 @@ impl Tool for DragTool {
         // synthetic-pen drag injection instead of refusing. No foreground swap,
         // no cursor move; the target is held non-activatable + cloaked for the
         // stroke (mirrors the click pen path).
-        if delivery == DeliveryMode::Background
+        if delivery.is_background()
             && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseMove)
         {
             let target = hwnd;
@@ -297,10 +300,10 @@ impl Tool for DragTool {
                          from screen ({sx_from},{sy_from}) → ({sx_to},{sy_to}) \
                          (delivery_mode:background, PostMessage would have been dropped)."
                 )),
-                Ok(Err(e)) => crate::input::delivery::background_unavailable_error_with_cause(
+                Ok(Err(e)) => crate::input::delivery::background_injection_error(
                     hwnd,
                     EventKind::MouseMove,
-                    e.to_string(),
+                    &e,
                 ),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };

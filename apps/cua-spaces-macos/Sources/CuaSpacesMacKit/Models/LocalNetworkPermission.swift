@@ -75,10 +75,24 @@ public final class LocalNetworkGate {
         set { defaults.set(newValue, forKey: Self.askedKey) }
     }
 
+    /// The last check started: the next one waits for it, then checks
+    /// again, so one explanation shows at a time.
+    private var last: Task<Void, Error>?
+
     /// Returns when the create may go ahead; throws `LocalNetworkRefusal`
     /// (the create fails at once with it) or `CuaError.Cancelled` (Cancel
     /// on the explanation).
     public func check() async throws {
+        let before = last
+        let task = Task { @MainActor in
+            _ = try? await before?.value
+            try await self.checkOnce()
+        }
+        last = task
+        try await task.value
+    }
+
+    private func checkOnce() async throws {
         let routes = await probe.routes()
         // Not explained yet: no connect before the explanation (one would
         // make macOS ask first).
@@ -103,16 +117,17 @@ public final class LocalNetworkGate {
 
     /// Makes macOS ask (a connect while access is undecided) and waits for
     /// the answer: allowed as soon as a connect goes out; otherwise what a
-    /// connect finds once the prompt is gone (or never came).
+    /// connect finds once the prompt is gone (or never came). A prompt
+    /// already on screen counts: an earlier connect (at launch, say) may
+    /// have made macOS ask before the explanation did.
     func waitForAnswer() async -> AppLocalNetworkAccess {
-        let before = probe.promptsShowing()
         let start = Date()
         var appeared = false
         while true {
             let access = await probe.access()
             if access == .allowed { return access }
             let elapsed = Date().timeIntervalSince(start)
-            if probe.promptsShowing() > before {
+            if probe.promptsShowing() > 0 {
                 appeared = true
             } else if appeared || elapsed >= promptAppears {
                 return access

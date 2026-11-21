@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Trusted standalone-daemon assembly for the Computer History preview.
 
 use std::{
@@ -30,7 +33,6 @@ pub struct DaemonLaunchState {
     pub no_permissions_gate: bool,
     #[serde(default)]
     pub no_automation_prompts: bool,
-    pub claude_code_compat: bool,
     pub grants: Vec<String>,
 }
 
@@ -50,7 +52,6 @@ pub fn configure_daemon_launch_state(
     approve_capability_manifest: bool,
     no_permissions_gate: bool,
     no_automation_prompts: bool,
-    claude_code_compat: bool,
     grants: &[String],
 ) {
     let state = DAEMON_LAUNCH_STATE.get_or_init(|| Mutex::new(DaemonLaunchState::default()));
@@ -61,7 +62,6 @@ pub fn configure_daemon_launch_state(
         approve_capability_manifest,
         no_permissions_gate,
         no_automation_prompts,
-        claude_code_compat,
         grants: grants.to_vec(),
     };
 }
@@ -462,9 +462,8 @@ fn default_history_root() -> PathBuf {
         let root = std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("C:/Temp"));
-        return root
-            .join(crate::bundle::state_namespace())
-            .join("computer-history");
+        root.join(crate::bundle::state_namespace())
+            .join("computer-history")
     }
 }
 

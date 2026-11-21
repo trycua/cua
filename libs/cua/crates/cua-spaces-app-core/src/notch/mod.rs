@@ -522,10 +522,12 @@ pub fn tiles_matching(spaces: &[Space], targeted: Option<&str>, query: &str) -> 
 /// of another machine even when it cannot be opened now (offline, or no
 /// longer shared), so a pin is never silently dropped.
 fn has_tile(space: &Space, pinned: &[String]) -> bool {
-    !crate::spaces::is_machine_desktop(space)
-        || (is_remote_desktop(space)
-            && (desktop_availability(space) == DesktopAvailability::Available
-                || pinned.contains(&space.id)))
+    // Never the home warming for Home's prompt box (`Space::hidden`).
+    !space.hidden
+        && (!crate::spaces::is_machine_desktop(space)
+            || (is_remote_desktop(space)
+                && (desktop_availability(space) == DesktopAvailability::Available
+                    || pinned.contains(&space.id))))
 }
 
 /// [`tiles_matching`] with the pinned Spaces and desktops (`pinned`, in the
@@ -1260,7 +1262,7 @@ fn header(query: &str, matched: Option<u32>) -> NotchHeader {
     NotchHeader {
         query: query.into(),
         placeholder: "Search".into(),
-        search_label: "Filter Cua Spaces by name, OS, status, or location".into(),
+        search_label: "Filter Spaces".into(),
         match_count: matched,
         buttons: vec![
             NotchButton {

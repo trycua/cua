@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Facts an adapter reports to the shared policy, each one known or
 //! unknown with the reason it could not be observed.
 
@@ -28,10 +31,11 @@ const LOCK_PROBE_CAP: Duration = Duration::from_millis(250);
 /// lock state, and a missing service, a timeout or another session's owner
 /// leave it unknown.
 pub fn locked() -> Fact<bool> {
-    use crate::wayland::{hyprland, is_wayland, niri};
-    if niri::is_session()
-        || (is_wayland() && hyprland::is_session())
-        || std::env::var_os("SWAYSOCK").is_some()
+    use crate::desktop::{Compositor, Desktop};
+    if matches!(
+        crate::desktop::desktop().attested(),
+        Desktop::Wayland(Compositor::Hyprland | Compositor::Niri)
+    ) || std::env::var_os("SWAYSOCK").is_some()
     {
         return Fact::Unknown("this compositor reports no lock state".into());
     }

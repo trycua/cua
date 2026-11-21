@@ -27,7 +27,7 @@
  * page's shortcuts don't see them); on a Mac, Control+Option pressed and
  * released alone gives it back, Ctrl+Shift+F12 on Windows and Linux. On a
  * Mac, ⌘ goes to a Linux or Windows Space as Control (the Swift app's
- * `commandAsControl`), and a ⌘ chord goes whole (Chromium drops its key-up). Every session closes while the page is hidden (the
+ * `commandAsControl`) and the right ⌘ held alone as Super, and a ⌘ chord goes whole (Chromium drops its key-up). Every session closes while the page is hidden (the
  * window minimized or on another desktop) and reopens with a fresh ticket
  * when it shows again.
  *
@@ -193,7 +193,19 @@ export class WebCodecsSlots {
       outline: "none",
     });
     el.append(canvas);
-    const slot: Slot = { id, el, options, listener, canvas, session: null, status: { phase: "connecting", focused: false }, generation: 0, activate: false, presence: null, detach: [] };
+    const slot: Slot = {
+      id,
+      el,
+      options,
+      listener,
+      canvas,
+      session: null,
+      status: { phase: "connecting", focused: false },
+      generation: 0,
+      activate: false,
+      presence: null,
+      detach: [],
+    };
     if (options.tier === "full") {
       slot.presence = this.createPresence(this.desktop, canvas, el, {
         spaceId: options.spaceId,
@@ -336,7 +348,12 @@ export class WebCodecsSlots {
       for (const slot of this.slots.values()) this.stepBack(slot, now);
     };
     this.modalWatch = new View.MutationObserver(check);
-    this.modalWatch.observe(this.doc.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-closed", "data-ending-style", "data-open", "data-starting-style"] });
+    this.modalWatch.observe(this.doc.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-closed", "data-ending-style", "data-open", "data-starting-style"],
+    });
     check();
   }
 
@@ -364,7 +381,8 @@ export class WebCodecsSlots {
       delete next.reason;
       delete next.opening;
     }
-    if (next.phase === slot.status.phase && next.focused === slot.status.focused && next.reason === slot.status.reason && next.opening === slot.status.opening) return;
+    if (next.phase === slot.status.phase && next.focused === slot.status.focused && next.reason === slot.status.reason && next.opening === slot.status.opening)
+      return;
     slot.status = next;
     slot.presence?.setLive(next.phase === "live");
     slot.listener(next);
@@ -398,7 +416,8 @@ export class WebCodecsSlots {
           audio: false,
           ...sessionConfig(slot.options, this.desktop.platform),
           onFrame: (width, height) => {
-            if (stats && current()) stats.counts(slot.id, { received: session.stats?.framesReceived ?? 0, decoded: session.stats?.framesDecoded ?? 0, width, height });
+            if (stats && current())
+              stats.counts(slot.id, { received: session.stats?.framesReceived ?? 0, decoded: session.stats?.framesDecoded ?? 0, width, height });
             if (!current() || slot.status.phase === "live") return;
             slot.canvas.style.opacity = "1";
             this.set(slot, { phase: "live" });

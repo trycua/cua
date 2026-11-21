@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Deterministic in-process mock CDP endpoint for tests.
 //!
 //! A tiny scripted WebSocket server on a loopback port: each incoming
@@ -34,7 +37,10 @@ pub(crate) struct MockEvent {
 pub(crate) struct MockReply {
     pub events: Vec<MockEvent>,
     pub suppress_response: bool,
+    /// Hold the reply this long before sending it (a slow but live page).
+    pub delay: Option<std::time::Duration>,
     pub result: Result<Value, (i64, String)>,
+    pub response_ready: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl MockReply {
@@ -43,6 +49,8 @@ impl MockReply {
             events: Vec::new(),
             result: Ok(result),
             suppress_response: false,
+            delay: None,
+            response_ready: None,
         }
     }
 
@@ -52,6 +60,8 @@ impl MockReply {
             events: Vec::new(),
             result: Ok(json!({})),
             suppress_response: true,
+            delay: None,
+            response_ready: None,
         }
     }
 
@@ -60,7 +70,14 @@ impl MockReply {
             events: Vec::new(),
             result: Err((code, message.to_owned())),
             suppress_response: false,
+            delay: None,
+            response_ready: None,
         }
+    }
+
+    pub fn after_notification(mut self, ready: Arc<tokio::sync::Notify>) -> Self {
+        self.response_ready = Some(ready);
+        self
     }
 
     /// The exact shape Chromium uses for an unimplemented method.
@@ -138,6 +155,12 @@ impl MockCdpServer {
                         }
                         if reply.suppress_response {
                             continue;
+                        }
+                        if let Some(delay) = reply.delay {
+                            tokio::time::sleep(delay).await;
+                        }
+                        if let Some(ready) = reply.response_ready {
+                            ready.notified().await;
                         }
                         let mut response = match reply.result {
                             Ok(result) => json!({ "id": id, "result": result }),

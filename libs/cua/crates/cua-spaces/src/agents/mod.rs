@@ -20,7 +20,7 @@ pub mod keys;
 pub use cua_agents::{
     AgentEvent, Agents, Artifact, Attachment, Endpoint, EventPage, McpServer, RunInfo, RunOptions,
     RunResult, RunStatus, Started, Transcript, TranscriptItem, Wire, events, failure, harness,
-    installables, quote, runs, transcript,
+    installables, quote, remote_login, runs, transcript,
 };
 
 impl From<cua_agents::Error> for Error {
@@ -274,15 +274,29 @@ pub const HOST_ONLY_KEYS: &[&str] = &[
 
 /// The refusal for a host-only key named in `env_from_host`.
 pub fn refuse_host_only(name: &str) -> Result<()> {
-    // Only while Ask first is on: a build or a person that never turned it on keeps
-    // forwarding a saved key into a Space as before.
-    if github_auth::enabled() && HOST_ONLY_KEYS.contains(&name) {
+    if HOST_ONLY_KEYS.contains(&name) {
         return Err(Error::InvalidArgument(format!(
             "{name} is the host's own connection and never goes into a Space; \
              an agent asks the host for what it needs (for example with repo_push)"
         )));
     }
     Ok(())
+}
+
+/// The subscription sign-ins of Claude Code and Codex that Connect can keep in
+/// Keyvault. They reach a run only when the person turned on "Copy my sign-in
+/// to my other computers" ([`keys::AgentKeys::copy_sign_in`]); otherwise each
+/// computer's own `claude` / `codex` signs itself in (`cua_agents::remote_login`).
+pub const COPIED_SIGN_INS: &[&str] = &["CLAUDE_CODE_OAUTH_TOKEN", "CODEX_AUTH_JSON"];
+
+/// The saved values in `names` a run may be given: a copied sign-in only with
+/// the opt-in on.
+fn saved_values_for_run(saved: &keys::AgentKeys, names: &[&str]) -> BTreeMap<String, String> {
+    let mut v = saved.values(names);
+    if !saved.copy_sign_in() {
+        v.retain(|k, _| !COPIED_SIGN_INS.contains(&k.as_str()));
+    }
+    v
 }
 
 /// [`env_from_host`] over the given saved keys.
@@ -316,7 +330,7 @@ pub fn env_from_host_with(
     }
     if !missing.is_empty() {
         let names: Vec<&str> = missing.iter().map(String::as_str).collect();
-        let found = saved.values(&names);
+        let found = saved_values_for_run(saved, &names);
         missing.retain(|n| !found.contains_key(n));
         env.extend(found);
     }
@@ -349,7 +363,9 @@ pub fn run_env_with(
     let (host_env, missing) = env_from_host_with(saved, env_from_host)?;
     // A copy of Claude Code's own sign-in that is running out is read again
     // from Claude Code first (never refreshed by Cua: [`keys::AgentKeys::sync_claude_login`]).
-    if harness == "claude-code" {
+    // Only when copies are on: by default Claude Code's login is not read at all.
+    let copy = saved.copy_sign_in();
+    if harness == "claude-code" && copy {
         saved.sync_claude_login(&keys::HostClaudeLogin, true);
     }
     let mut out = env.clone();
@@ -358,14 +374,18 @@ pub fn run_env_with(
         // Every saved credential the app can use, by the registry's delivery
         // rules (a sign-in scoped to another app is never among them).
         let names = keys::registry::all_env_names();
-        let mut saved_values = saved.values(&names);
+        let mut saved_values = saved_values_for_run(saved, &names);
         // An app told which credential to use gets that one alone; if it is gone it gets
-        // none (never another one in its place).
+        // none (never another one in its place). A chosen copied sign-in with copies off
+        // gives nothing: the computer's own sign-in is used.
         let delivered = match saved.chosen(harness) {
             keys::Chosen::NoChoice => {
                 keys::registry::deliver(harness, &|n| saved_values.get(n).cloned())
             }
             keys::Chosen::Gone => BTreeMap::new(),
+            keys::Chosen::Found { env, .. } if !copy && COPIED_SIGN_INS.contains(&env.as_str()) => {
+                BTreeMap::new()
+            }
             keys::Chosen::Found {
                 provider,
                 env,
@@ -434,13 +454,17 @@ pub fn connection_plan(
         return plan;
     }
     let names = reg::all_env_names();
-    let mut saved_values = saved.values(&names);
+    let mut saved_values = saved_values_for_run(saved, &names);
     // What is connected: the saved connections (or the one credential the app was told
     // to use, or none when that one is gone), and the providers whose key the caller
     // passed in the run's env (never a sign-in scoped to another app).
+    let copy = saved.copy_sign_in();
     let mut connected = match saved.chosen(harness) {
         keys::Chosen::NoChoice => saved.connections(),
         keys::Chosen::Gone => vec![],
+        keys::Chosen::Found { env, .. } if !copy && COPIED_SIGN_INS.contains(&env.as_str()) => {
+            vec![]
+        }
         keys::Chosen::Found {
             provider,
             env,
@@ -577,14 +601,22 @@ pub fn start_options_with(
             .collect(),
         endpoint,
         model: a.model.clone(),
+        effort: a.effort.clone(),
         hermes_config: plan.hermes_config,
         files: attachments(&a.files)?,
         sandbox_mcp: a.sandbox_mcp,
         skills: a.skills,
         label: a.label.clone(),
         exit_when_idle: a.exit_when_idle.unwrap_or(false),
+        resume_session: a.resume_session.clone().filter(|s| !s.trim().is_empty()),
+        resume_context: a.resume_context.clone(),
         ..Default::default()
     };
+    if opts.resume_session.is_some() && a.home.is_some() {
+        return Err(Error::InvalidArgument(
+            "agent_start: resume_session continues the harness's own session; it can't run as a persistent agent (home)".into(),
+        ));
+    }
     Ok((opts, missing))
 }
 
@@ -660,6 +692,91 @@ mod tests {
         (k, dir)
     }
 
+    /// By default no saved Claude Code or ChatGPT sign-in reaches any run, by any route
+    /// (the saved keys, a chosen account, `env_from_host`): each computer signs in itself.
+    /// API keys still go. With "Copy my sign-in to my other computers" on, they go again.
+    #[test]
+    fn no_sign_in_is_copied_to_another_computer_unless_the_person_turns_it_on() {
+        let none = BTreeMap::new();
+        let token = format!("sk-ant-oat01-{}", "aB3_".repeat(24));
+        let (k, dir) = saved(&[
+            ("anthropic", None, "sk-ant-api03-team-key"),
+            ("openai", None, "sk-test-0000-bbbb"),
+        ]);
+        k.import(
+            "claude-code",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "Signed in as ada@example.com (Claude Max)",
+            &token,
+            Some(u64::MAX / 2),
+            Some("claude-login-file"),
+        )
+        .unwrap();
+        k.import(
+            "codex",
+            "CODEX_AUTH_JSON",
+            "ChatGPT sign-in",
+            "{\"tokens\":{}}",
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(!k.copy_sign_in(), "off by default");
+        assert!(!k.report().unwrap().copy_sign_in);
+        let leaked = |env: &BTreeMap<String, String>| {
+            env.contains_key("CLAUDE_CODE_OAUTH_TOKEN")
+                || env.contains_key("CODEX_AUTH_JSON")
+                || env
+                    .values()
+                    .any(|v| v.contains("sk-ant-oat") || v.contains("tokens"))
+        };
+        for h in harness::HARNESSES {
+            let (env, _) = run_env_with(&k, h.id, &none, &[], false).unwrap();
+            assert!(
+                !leaked(&env),
+                "{}: {:?}",
+                h.id,
+                env.keys().collect::<Vec<_>>()
+            );
+            let a = cua_spaces_contract::inputs::AgentStart {
+                agent: h.id.into(),
+                ..Default::default()
+            };
+            let (opts, _) = start_options_with(&k, &a).unwrap();
+            assert!(!leaked(&opts.env), "{}", h.id);
+        }
+        // API keys are the team route and still reach the apps that read them.
+        let (env, _) = run_env_with(&k, "claude-code", &none, &[], false).unwrap();
+        assert_eq!(env["ANTHROPIC_API_KEY"], "sk-ant-api03-team-key");
+        let (env, _) = run_env_with(&k, "openai-codex", &none, &[], false).unwrap();
+        assert_eq!(env["OPENAI_API_KEY"], "sk-test-0000-bbbb");
+        // Named in env_from_host: still not forwarded, and reported missing.
+        let (env, missing) = env_from_host_with(&k, &["CODEX_AUTH_JSON".into()]).unwrap();
+        assert!(env.is_empty() && missing == ["CODEX_AUTH_JSON"]);
+        // An account chosen for Claude Code that is a copied sign-in gives nothing (the
+        // computer's own sign-in is used), never another credential in its place.
+        k.set_use("claude-code", Some(("CLAUDE_CODE_OAUTH_TOKEN", None)))
+            .unwrap();
+        let (env, _) = run_env_with(&k, "claude-code", &none, &[], false).unwrap();
+        assert!(
+            !leaked(&env) && !env.contains_key("ANTHROPIC_API_KEY"),
+            "{env:?}"
+        );
+        k.set_use("claude-code", None).unwrap();
+        // Opted in: the copies go to their own app again.
+        k.set_copy_sign_in(true).unwrap();
+        assert!(k.report().unwrap().copy_sign_in);
+        let (env, _) = run_env_with(&k, "claude-code", &none, &[], false).unwrap();
+        assert_eq!(env["CLAUDE_CODE_OAUTH_TOKEN"], token);
+        let (env, _) = run_env_with(&k, "openai-codex", &none, &[], false).unwrap();
+        assert!(env.contains_key("CODEX_AUTH_JSON"));
+        // And off again.
+        k.set_copy_sign_in(false).unwrap();
+        let (env, _) = run_env_with(&k, "claude-code", &none, &[], false).unwrap();
+        assert!(!leaked(&env));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Hermes (and every harness but Claude Code) gets exactly what its own adapter takes
     /// as an API key: never the Claude subscription sign-in, in any slot.
     /// Hermes' adapter would use `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_TOKEN` or a token in
@@ -684,6 +801,8 @@ mod tests {
             Some("claude-login-file"),
         )
         .unwrap();
+        // Copies on (the person opted in), so the sign-in is there to be kept from Hermes.
+        k.set_copy_sign_in(true).unwrap();
         let (env, _) = run_env_with(&k, "hermes", &none, &[], false).unwrap();
         assert_eq!(
             env.keys().collect::<Vec<_>>(),
@@ -826,6 +945,26 @@ mod tests {
         let (opts, _) = start_options_with(&k, &ep).unwrap();
         assert!(opts.env.is_empty());
         assert_eq!(opts.endpoint.unwrap().wire, Some(Wire::Anthropic));
+        // Continuing the harness's own session (CUA-3319), never as a persistent agent.
+        let mut resume = a.clone();
+        resume.resume_session = Some("0b1e5c2a-1111".into());
+        resume.resume_context = Some("earlier".into());
+        resume.cwd = Some("/Users/sam/code/kettle".into());
+        let (opts, _) = start_options_with(&k, &resume).unwrap();
+        assert_eq!(
+            (
+                opts.resume_session.as_deref(),
+                opts.resume_context.as_deref(),
+                opts.cwd.as_deref()
+            ),
+            (
+                Some("0b1e5c2a-1111"),
+                Some("earlier"),
+                Some("/Users/sam/code/kettle")
+            )
+        );
+        resume.home = Some("helper".into());
+        assert!(start_options_with(&k, &resume).is_err());
         // Bad input is refused without quoting any key.
         let mut bad = a.clone();
         bad.wire = Some("smoke-signals".into());
@@ -942,6 +1081,7 @@ mod tests {
             None,
         )
         .unwrap();
+        k.set_copy_sign_in(true).unwrap();
         for h in harness::HARNESSES {
             let (env, _) = run_env_with(&k, h.id, &none, &[], false).unwrap();
             assert_eq!(
@@ -1235,18 +1375,12 @@ mod tests {
         }
     }
 
-    /// Fixed sign-in apps have nothing to choose, and the Claude token reaches no switchable app
-    /// whatever was chosen.
+    /// An app is never pointed at a credential it can't read, and the Claude token reaches no app that takes
+    /// any provider whatever was chosen.
     #[test]
     fn only_apps_that_take_any_provider_can_be_told_which_key() {
         let (k, dir) = saved(&[("anthropic", None, "sk-ant-api03-first-aaaa")]);
-        for app in [
-            "claude-code",
-            "openai-codex",
-            "codex",
-            "gemini-cli",
-            "google-antigravity",
-        ] {
+        for app in ["openai-codex", "codex", "gemini-cli", "google-antigravity"] {
             assert!(
                 k.set_use(app, Some(("ANTHROPIC_API_KEY", None))).is_err(),
                 "{app}"

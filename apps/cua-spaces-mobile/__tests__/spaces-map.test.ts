@@ -5,17 +5,59 @@ import type { ComputerRow, DirectorySpace } from "../src/core/views";
 import { mapDirectory } from "../src/data/live/spaces";
 import type { RelayMachine } from "../src/data/live/relay";
 
-const row = (id: string, over: Partial<RelayMachine> = {}): RelayMachine => ({ id, name: id, owner: { id: "acct:you" }, role: "owner", online: true, sharing: true, version: "1", url: "", host: null, meta: {}, confirmed: true, ...over });
-const computer = (id: string, over: Partial<ComputerRow> = {}): ComputerRow => ({
-  id, name: id, kind: "mac", state: "Online", online: true, line: "", note: "", hostsSpaces: false, spaces: 0, isPhone: false, current: false, unconfirmed: false,
-  capabilities: { v: 1, canHostSpaces: false, images: [], kinds: [], desktop: false }, ...over,
+const row = (id: string, over: Partial<RelayMachine> = {}): RelayMachine => ({
+  id,
+  name: id,
+  owner: { id: "acct:you" },
+  role: "owner",
+  online: true,
+  sharing: true,
+  version: "1",
+  url: "",
+  host: null,
+  meta: {},
+  confirmed: true,
+  ...over,
 });
-const space = (id: string, over: Partial<DirectorySpace> = {}): DirectorySpace => ({ id: `relay:${id}`, machine: id, name: id, host: "", hostName: "", state: "Running", online: true, os: "macos", kindLabel: "macOS VM", role: "owner", detail: "", ...over });
+const computer = (id: string, over: Partial<ComputerRow> = {}): ComputerRow => ({
+  id,
+  name: id,
+  kind: "mac",
+  state: "Online",
+  online: true,
+  line: "",
+  note: "",
+  hostsSpaces: false,
+  spaces: 0,
+  isPhone: false,
+  current: false,
+  unconfirmed: false,
+  capabilities: { v: 1, canHostSpaces: false, images: [], kinds: [], desktop: false },
+  ...over,
+});
+const space = (id: string, over: Partial<DirectorySpace> = {}): DirectorySpace => ({
+  id: `relay:${id}`,
+  machine: id,
+  name: id,
+  host: "",
+  hostName: "",
+  state: "Running",
+  online: true,
+  os: "macos",
+  kindLabel: "macOS VM",
+  role: "owner",
+  detail: "",
+  ...over,
+});
 
 describe("the core's pool becomes the computers a call can go to and the Spaces under them", () => {
   it("a computer's Spaces sit under it, and a computer is never one of them", () => {
     const rows = [row("studio", { name: "Studio Mac" }), row("space-1", { host: "studio" }), row("plain", { name: "Dillons-MacBook-Pro-2.local" })];
-    const r = mapDirectory(rows, [computer("studio", { name: "Studio Mac", hostsSpaces: true }), computer("plain", { name: "Dillons-MacBook-Pro-2.local" })], [space("space-1", { host: "studio", hostName: "Studio Mac" })]);
+    const r = mapDirectory(
+      rows,
+      [computer("studio", { name: "Studio Mac", hostsSpaces: true }), computer("plain", { name: "Dillons-MacBook-Pro-2.local" })],
+      [space("space-1", { host: "studio", hostName: "Studio Mac" })],
+    );
     expect(r.spaces).toHaveLength(1);
     expect(r.spaces[0]).toMatchObject({ hostId: "studio", threadOnHost: true, kindLabel: "macOS VM", role: "owner", state: "Running" });
     expect(r.spaces.map((s) => s.machine.id)).toEqual(["space-1"]);

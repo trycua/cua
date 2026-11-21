@@ -35,6 +35,8 @@ struct FakeCapture {
     bitrate: AtomicU64,
     /// Last `set_paused` value (0 never called, 1 paused, 2 resumed).
     paused: AtomicU64,
+    /// Runs inside the next `stop`, as a native capture drains its callbacks.
+    on_stop: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl FakeCapture {
@@ -70,7 +72,12 @@ impl CaptureLease for FakeLease {
         self.0.keyframe_requests.fetch_add(1, Ordering::SeqCst);
     }
 
-    fn stop(&self) {}
+    fn stop(&self) {
+        let on_stop = self.0.on_stop.lock().unwrap().take();
+        if let Some(on_stop) = on_stop {
+            on_stop();
+        }
+    }
 
     fn set_target_bitrate_kbps(&self, kbps: u32) {
         self.0.bitrate.store(u64::from(kbps), Ordering::SeqCst);
@@ -944,6 +951,141 @@ async fn acking_clients_are_held_to_an_ack_window() {
     assert!(viewer.stats().frames_dropped > 0);
 }
 
+/// Emit deltas every 100 ms for `duration`, so the stream stays active and
+/// idle refresh never fires.
+async fn keep_streaming(fixture: &Fixture, duration: Duration) {
+    let until = Instant::now() + duration;
+    while Instant::now() < until {
+        fixture.capture.emit(false, 640, 480, 1);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_viewer_dropped_by_the_ack_window_gets_a_keyframe_requested() {
+    let fixture = fixture();
+    fixture.runtime.set_idle_keyframe_interval(None);
+    let opened = open(&fixture, params(display())).await;
+    let mut viewer = opened.session.attach().unwrap();
+    let first = videos(&drain(&viewer));
+    viewer
+        .handle(ClientMessage::FrameAck(FrameAck {
+            session_id: WindowSessionId(String::new()),
+            sequence: first[0].sequence(),
+            decode_us: Some(100),
+            decode_queue: None,
+        }))
+        .await;
+    let mut last_sent = first[0].sequence();
+    for _ in 0..200 {
+        fixture.capture.emit(false, 640, 480, 1);
+        if let Some(packet) = videos(&drain(&viewer)).last() {
+            last_sent = packet.sequence();
+        }
+    }
+    assert!(
+        viewer.stats().frames_dropped > 0,
+        "the ack window overflowed"
+    );
+    // The client catches up: everything it was sent is acknowledged.
+    viewer
+        .handle(ClientMessage::FrameAck(FrameAck {
+            session_id: WindowSessionId(String::new()),
+            sequence: last_sent,
+            decode_us: Some(100),
+            decode_queue: None,
+        }))
+        .await;
+    let before = fixture.capture.keyframe_requests.load(Ordering::SeqCst);
+    keep_streaming(&fixture, Duration::from_millis(1_500)).await;
+    assert!(
+        fixture.capture.keyframe_requests.load(Ordering::SeqCst) > before,
+        "a viewer waiting for a keyframe asks the encoder for one"
+    );
+    fixture.capture.emit(true, 640, 480, 1);
+    let recovered = videos(&drain(&viewer));
+    assert!(recovered[0].keyframe);
+}
+
+#[tokio::test]
+async fn a_rate_limited_keyframe_request_is_retried_while_a_viewer_waits() {
+    let fixture = fixture();
+    fixture.runtime.set_idle_keyframe_interval(None);
+    let opened = open(&fixture, params(display())).await;
+    let slow = opened.session.attach().unwrap();
+    drain(&slow);
+    let sink = fixture
+        .capture
+        .sinks
+        .lock()
+        .unwrap()
+        .last()
+        .cloned()
+        .unwrap();
+    let big = Arc::<[u8]>::from({
+        let mut bytes = DELTA.to_vec();
+        bytes.resize(512 * 1024, 7);
+        bytes
+    });
+    let overflow = || {
+        for _ in 0..12 {
+            sink.on_event(CaptureEvent::Frame(OwnedFrame {
+                bytes: big.clone(),
+                format: PixelFormat::H264AnnexB,
+                width_px: 640,
+                height_px: 480,
+                bytes_per_row: None,
+                capture_timestamp_us: clock::now_us(),
+                encode_duration_us: None,
+                codec_epoch: 1,
+                keyframe: false,
+            }));
+        }
+    };
+    // First overflow: answered by an IDR right away.
+    overflow();
+    fixture.capture.emit(true, 640, 480, 1);
+    assert!(videos(&drain(&slow)).iter().any(|packet| packet.keyframe));
+    // Second overflow inside the rate limit: the immediate request is
+    // suppressed, so the session must ask again once the limit allows.
+    overflow();
+    let before = fixture.capture.keyframe_requests.load(Ordering::SeqCst);
+    keep_streaming(&fixture, Duration::from_millis(1_500)).await;
+    assert!(
+        fixture.capture.keyframe_requests.load(Ordering::SeqCst) > before,
+        "the suppressed request is retried"
+    );
+    fixture.capture.emit(true, 640, 480, 1);
+    let recovered = videos(&drain(&slow));
+    assert!(recovered[0].keyframe);
+}
+
+#[tokio::test]
+async fn concurrent_limited_keyframe_requests_reach_the_encoder_once() {
+    let fixture = fixture();
+    let opened = open(&fixture, params(display())).await;
+    tokio::time::sleep(Duration::from_millis(1_100)).await;
+    let before = fixture.capture.keyframe_requests.load(Ordering::SeqCst);
+    let start = Arc::new(std::sync::Barrier::new(8));
+    let callers: Vec<_> = (0..8)
+        .map(|_| {
+            let session = opened.session.clone();
+            let start = start.clone();
+            std::thread::spawn(move || {
+                start.wait();
+                session.request_keyframe_limited();
+            })
+        })
+        .collect();
+    for caller in callers {
+        caller.join().unwrap();
+    }
+    assert_eq!(
+        fixture.capture.keyframe_requests.load(Ordering::SeqCst),
+        before + 1
+    );
+}
+
 fn desktop_audio(source_ids: Vec<String>) -> AudioRequest {
     AudioRequest {
         downlink: true,
@@ -1179,6 +1321,36 @@ async fn close_is_terminal_and_emitted_exactly_once() {
     assert!(
         drain(&viewer).is_empty(),
         "a drain after close terminates empty"
+    );
+}
+
+/// #5376: a native lease's `stop` waits for an in-flight capture callback,
+/// and that callback can reach the session's capture lease (an H.264 viewer
+/// asking for a keyframe). Teardown must not hold the lease lock while it
+/// stops, or the two wait on each other forever.
+#[tokio::test]
+async fn closing_does_not_hold_the_capture_lease_while_it_stops() {
+    let fixture = fixture();
+    let opened = open(&fixture, params(display())).await;
+    let session = opened.session.clone();
+    let (callback_done, callback_returned) = std::sync::mpsc::channel();
+    let (stop_done, stop_returned) = std::sync::mpsc::channel();
+    *fixture.capture.on_stop.lock().unwrap() = Some(Box::new(move || {
+        std::thread::spawn(move || {
+            session.request_keyframe_now();
+            let _ = callback_done.send(());
+        });
+        let _ = stop_done.send(
+            callback_returned
+                .recv_timeout(Duration::from_secs(2))
+                .is_ok(),
+        );
+    }));
+    fixture.runtime.close(opened.session.id(), 4404);
+    assert_eq!(
+        stop_returned.recv_timeout(Duration::from_secs(5)),
+        Ok(true),
+        "a capture callback blocked on the lease lock while the lease stopped"
     );
 }
 

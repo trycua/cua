@@ -1066,14 +1066,19 @@ impl MediaSession {
     /// most one per second per session, so one bad client cannot flood a
     /// shared stream with IDRs.
     pub(crate) fn request_keyframe_limited(&self) {
-        let recent = self
-            .last_keyframe_request
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_some_and(|at| at.elapsed() < Duration::from_secs(1));
-        if !recent {
-            self.request_keyframe_now();
+        {
+            let mut last = self
+                .last_keyframe_request
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if last.is_some_and(|at| at.elapsed() < Duration::from_secs(1)) {
+                return;
+            }
+            // Claim the slot before releasing the lock so concurrent callers
+            // (maintenance tick, frame overflow) cannot both pass the check.
+            *last = Some(Instant::now());
         }
+        self.request_keyframe_now();
     }
 
     pub(crate) fn broadcast_control(&self, message: ServerMessage) {
@@ -1626,18 +1631,25 @@ impl MediaSession {
             return;
         }
         self.capture_generation.fetch_add(1, Ordering::AcqRel);
-        if let Some(lease) = self
+        // Stop each lease after its lock is released: a native stop waits for
+        // in-flight callbacks, and a callback can take that lock (#5376).
+        let capture = self
             .capture
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
-        {
+            .take();
+        if let Some(lease) = capture {
             lease.stop();
         }
-        for track in self.audio_tracks.lock().unwrap().iter() {
-            if let Some(lease) = track.lease.lock().unwrap().take() {
-                lease.stop();
-            }
+        let audio = self
+            .audio_tracks
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|track| track.lease.lock().unwrap().take())
+            .collect::<Vec<_>>();
+        for lease in audio {
+            lease.stop();
         }
         if let Some(uplink) = self.uplink.lock().unwrap().take() {
             uplink.sink.close();

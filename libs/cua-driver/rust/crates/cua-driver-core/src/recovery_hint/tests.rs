@@ -1,6 +1,14 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use super::*;
 
 const WINDOW: &Value = &Value::Null;
+
+const ELECTRON_SCROLL: &str =
+    "Electron/Chromium windows drop background wheel events and keystrokes on macOS";
+const ELECTRON_TEXT: &str =
+    "The Electron AX target cannot establish a safe exact background text route";
 
 fn seed(args: Value) -> Seed {
     Seed::from_args(&args)
@@ -79,6 +87,23 @@ fn every_hint_variant_stays_within_the_length_limit() {
         ("browser_prepare", json!({"code": "background_unavailable"})),
         ("scroll", json!({"code": "background_unavailable"})),
         (
+            "scroll",
+            json!({"code": "background_unavailable", "reason": ELECTRON_SCROLL}),
+        ),
+        (
+            "type_text",
+            json!({"code": "background_unavailable", "reason": ELECTRON_TEXT}),
+        ),
+        (
+            "press_key",
+            json!({"code": "background_unavailable", "reason": ELECTRON_TEXT}),
+        ),
+        ("click", json!({"code": "element_disabled"})),
+        (
+            "click",
+            json!({"code": "element_disabled", "escalation": {"recommended": "foreground"}}),
+        ),
+        (
             "click",
             json!({"code": "background_unavailable", "escalation": {"recommended": "page"}}),
         ),
@@ -97,6 +122,10 @@ fn every_hint_variant_stays_within_the_length_limit() {
         (
             "get_browser_state",
             json!({"code": "browser_consent_required"}),
+        ),
+        (
+            "browser_prepare",
+            json!({"code": "browser_consent_required", "detail": {"reason": "browser_consent_unanswered"}}),
         ),
         (
             "browser_click",
@@ -156,6 +185,7 @@ fn the_table_covers_every_code_agents_hit_most() {
         "permission_required",
         "permission_denied",
         "os_permission_prompt_requires_trusted_host",
+        "security_prompt_protected",
         "session_not_started",
         "session_ended",
         "session_required",
@@ -169,6 +199,12 @@ fn the_table_covers_every_code_agents_hit_most() {
         "lane_busy",
         "primary_target_busy",
         "invalid_arguments",
+        "element_disabled",
+        "invalid_element_token",
+        "input_delivery_unavailable",
+        "modified_pointer_unavailable",
+        "ax_timeout",
+        "window_target_mismatch",
     ] {
         assert!(covered.contains(&code), "no hint for {code}");
     }
@@ -193,8 +229,8 @@ fn a_drag_refused_by_macos_drag_and_drop_names_a_non_drag_route_and_the_foregrou
     );
     assert_eq!(
         hint.hint,
-        "No drop landed: macOS drag-and-drop needs the real pointer. Try a route that is not a drag first \
-         (Move button, menu item, shortcut). Retry with delivery_mode:\"foreground\" \
+        "No drop landed: the drag-and-drop session did not end at the drop point. Try a route that is \
+         not a drag first (Move button, menu item, shortcut). Retry with delivery_mode:\"foreground\" \
          only if the user allows the window to come forward."
     );
     assert_eq!(
@@ -218,6 +254,15 @@ fn a_next_call_never_asks_for_the_foreground() {
         ("invoke_menu", json!({"code": "background_unavailable"})),
         ("browser_prepare", json!({"code": "background_unavailable"})),
         ("scroll", json!({"code": "background_unavailable"})),
+        (
+            "scroll",
+            json!({"code": "background_unavailable", "reason": ELECTRON_SCROLL}),
+        ),
+        (
+            "type_text",
+            json!({"code": "background_unavailable", "reason": ELECTRON_TEXT}),
+        ),
+        ("click", json!({"code": "element_disabled"})),
         ("click", json!({"code": "target_occluded"})),
         ("click", json!({"code": "window_minimized"})),
     ] {
@@ -368,6 +413,19 @@ fn a_point_outside_the_window_asks_for_the_screenshot_only() {
 }
 
 #[test]
+fn a_security_prompt_refusal_tells_the_agent_to_leave_it_to_the_user() {
+    let result = crate::security_prompt::refusal("SecurityAgent");
+    let hint = hint_for(
+        "click",
+        &window_seed(),
+        true,
+        result.structured_content.unwrap(),
+    );
+    assert!(hint.hint.contains("the user's call"), "{}", hint.hint);
+    assert!(hint.next_call.is_none(), "no tool call answers a prompt");
+}
+
+#[test]
 fn permission_codes_split_into_policy_refusals_and_missing_os_grants() {
     let policy = hint_for(
         "click",
@@ -403,7 +461,7 @@ fn session_codes_name_start_session() {
         json!({"tool": "start_session", "arguments": {"session": "run-1"}})
     );
     let missing = hint_for(
-        "escalate_session",
+        "get_session",
         &Seed::default(),
         true,
         json!({"code": "session_not_started"}),
@@ -476,6 +534,26 @@ fn the_producers_own_attach_call_wins_over_the_rebuilt_one() {
         call_value(&hint),
         json!({"tool": "browser_prepare", "arguments": {"pid": 1, "window_id": 7}})
     );
+}
+
+#[test]
+fn an_unprepared_electron_app_keeps_the_launch_call_it_was_given() {
+    let launch = json!({"tool": "browser_prepare", "arguments": {
+        "pid": 659, "session": "web", "allow_launch": true,
+        "profile": {"mode": "isolated_new"},
+    }});
+    let hint = hint_for(
+        "get_browser_state",
+        &seed(json!({"pid": 659, "window_id": 12, "session": "web"})),
+        false,
+        json!({"status": "refused", "refusal": {
+            "code": "browser_requires_setup",
+            "message": "m",
+            "detail": {"next_call": launch.clone()},
+        }}),
+    );
+    assert!(hint.hint.contains("browser_prepare call in next_call"));
+    assert_eq!(call_value(&hint), launch);
 }
 
 #[test]
@@ -843,4 +921,149 @@ fn a_desktop_scope_action_points_at_the_window_target() {
         .hint
         .contains("Foreground only if the user allows the pointer to move."));
     assert!(hint.next_call.is_none(), "no window is known");
+}
+
+#[test]
+fn an_electron_refusal_names_what_works_without_fronting_the_window() {
+    let seed = window_seed();
+    let scroll = hint_for(
+        "scroll",
+        &seed,
+        true,
+        json!({"code": "background_unavailable", "reason": ELECTRON_SCROLL}),
+    );
+    assert!(scroll.hint.contains("get_window_state"), "{}", scroll.hint);
+    assert!(scroll.hint.contains("set_window_frame"), "{}", scroll.hint);
+    assert!(scroll.hint.contains("only if the user allows"));
+    assert_eq!(call_value(&scroll)["tool"], "get_window_state");
+
+    let typed = hint_for(
+        "type_text",
+        &seed,
+        true,
+        json!({"code": "background_unavailable", "reason": ELECTRON_TEXT}),
+    );
+    assert!(typed.hint.contains("set_value"), "{}", typed.hint);
+    assert!(typed.hint.contains("only if the user allows"));
+
+    let key = hint_for(
+        "press_key",
+        &seed,
+        true,
+        json!({"code": "background_unavailable", "reason": ELECTRON_TEXT}),
+    );
+    assert!(key.hint.contains("invoke_menu"), "{}", key.hint);
+}
+
+#[test]
+fn a_disabled_control_says_what_enables_it_and_never_asks_for_a_retry() {
+    let plain = hint_for(
+        "click",
+        &window_seed(),
+        true,
+        json!({"code": "element_disabled", "effect": "refused"}),
+    );
+    assert!(plain.hint.contains("select a row"), "{}", plain.hint);
+    assert!(plain.hint.contains("menu item or shortcut"));
+    assert_eq!(call_value(&plain)["tool"], "get_window_state");
+
+    let backgrounded = hint_for(
+        "click",
+        &window_seed(),
+        true,
+        json!({
+            "code": "element_disabled",
+            "escalation": {"recommended": "foreground", "reason": "background"},
+        }),
+    );
+    assert!(backgrounded
+        .hint
+        .contains("bring_to_front first only if the user allows"));
+}
+
+#[test]
+fn every_new_refusal_code_has_a_next_step() {
+    for code in [
+        "invalid_element_token",
+        "input_delivery_unavailable",
+        "modified_pointer_unavailable",
+        "ax_timeout",
+        "window_target_mismatch",
+        "bring_to_front_window_not_found",
+    ] {
+        let hint = hint_for("click", &window_seed(), true, json!({ "code": code }));
+        assert!(hint.hint.chars().count() > 40, "{code}: {}", hint.hint);
+    }
+}
+
+#[test]
+fn a_refusal_text_ends_with_the_hint_so_text_only_clients_read_it() {
+    let mut refused = ToolResult::error(
+        "click failed: refusing AXPress: the target reports AXEnabled=false",
+    )
+    .with_structured(
+        json!({"code": "element_disabled", "effect": "refused", "pid": 4242, "window_id": 17}),
+    );
+    annotate("click", &window_seed(), &mut refused);
+    let text = match &refused.content[0] {
+        Content::Text { text, .. } => text.clone(),
+        _ => panic!("text"),
+    };
+    let hint = refused.structured_content.as_ref().unwrap()["hint"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut lines = text.lines();
+    assert!(lines
+        .next()
+        .unwrap()
+        .starts_with("click failed: refusing AXPress"));
+    assert_eq!(lines.next().unwrap(), format!("Next: {hint}"));
+
+    // A second pass, or a producer that already wrote the hint, adds nothing.
+    annotate("click", &window_seed(), &mut refused);
+    let again = match &refused.content[0] {
+        Content::Text { text, .. } => text.clone(),
+        _ => panic!("text"),
+    };
+    assert_eq!(again, text);
+}
+
+#[test]
+fn a_confirmed_result_keeps_its_text_unchanged() {
+    let mut ok = ToolResult::text("Posted click").with_structured(json!({"effect": "confirmed"}));
+    annotate("click", &window_seed(), &mut ok);
+    assert!(matches!(&ok.content[0], Content::Text { text, .. } if text == "Posted click"));
+}
+
+#[test]
+fn an_unanswered_browser_prompt_asks_the_user_to_allow_and_retries_the_attach() {
+    let hint = hint_for(
+        "browser_prepare",
+        &window_seed(),
+        true,
+        json!({"status": "refused", "refusal": {
+            "code": "browser_consent_required",
+            "detail": {"reason": "browser_consent_unanswered"},
+        }}),
+    );
+    assert!(
+        hint.hint.contains("Allow remote debugging?"),
+        "{}",
+        hint.hint
+    );
+    assert!(!hint.hint.contains("Retrying will not"), "{}", hint.hint);
+    let call = call_value(&hint);
+    assert_eq!(call["tool"], "browser_prepare");
+    assert_eq!(call["arguments"]["strategy"]["kind"], "existing_profile");
+    assert!(call["arguments"].get("delivery_mode").is_none());
+
+    // Missing authorization keeps its own advice.
+    let hint = hint_for(
+        "browser_prepare",
+        &window_seed(),
+        true,
+        json!({"status": "refused", "refusal": {"code": "browser_consent_required"}}),
+    );
+    assert!(hint.hint.contains("Retrying will not"), "{}", hint.hint);
 }

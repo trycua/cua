@@ -65,9 +65,7 @@ export function cursorShapeToCss(shape: unknown): string | null {
       for (const byte of bytes) binary += String.fromCharCode(byte);
       const hotX = Number((shape as { hotspot_x?: unknown }).hotspot_x) || 0;
       const hotY = Number((shape as { hotspot_y?: unknown }).hotspot_y) || 0;
-      return `url(data:image/png;base64,${btoa(binary)}) ${Math.round(hotX)} ${Math.round(
-        hotY,
-      )}, default`;
+      return `url(data:image/png;base64,${btoa(binary)}) ${Math.round(hotX)} ${Math.round(hotY)}, default`;
     }
     // `unknown` means the host cannot report a shape. It is NOT `default`:
     // returning null holds whatever shape the cursor already had rather than
@@ -92,7 +90,5 @@ export function applyCursorShape(el: HTMLElement, shape: unknown): void {
   if (css == null) return;
   el.style.cursor = css;
   el.dataset.cursorShape =
-    typeof shape === "object" && shape != null
-      ? String((shape as { kind?: unknown }).kind ?? "")
-      : "";
+    typeof shape === "object" && shape != null ? String((shape as { kind?: unknown }).kind ?? "") : "";
 }

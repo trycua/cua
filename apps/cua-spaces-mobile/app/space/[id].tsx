@@ -15,14 +15,14 @@ export default function SpaceRoute() {
   if (layout !== "phone") return <Redirect href={{ pathname: "/", params: { space: id, ...(entry ? { entry } : {}) } }} />;
   return (
     <Gated>
-    <ThreadScreen
-      spaceId={id}
-      focusSeq={entry ? Number(entry) : null}
-      initialStreamOpen={stream === "1"}
-      onBack={() => (router.canGoBack() ? router.back() : router.replace("/"))}
-      onFullStream={() => router.push({ pathname: "/stream/[id]", params: { id } })}
-      onOpenChanges={() => router.push({ pathname: "/diff/[id]", params: { id } })}
-    />
+      <ThreadScreen
+        spaceId={id}
+        focusSeq={entry ? Number(entry) : null}
+        initialStreamOpen={stream === "1"}
+        onBack={() => (router.canGoBack() ? router.back() : router.replace("/"))}
+        onFullStream={() => router.push({ pathname: "/stream/[id]", params: { id } })}
+        onOpenChanges={() => router.push({ pathname: "/diff/[id]", params: { id } })}
+      />
     </Gated>
   );
 }

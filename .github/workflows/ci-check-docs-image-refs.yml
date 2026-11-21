@@ -7,20 +7,11 @@ name: "CI: Check Docs Image Refs"
 # scripts/images/docs-image-refs-baseline.json, which may only shrink. Also
 # runs nightly: a nightly image regression flips a ledger entry and turns this
 # red until the image is fixed or the guide changes.
+#
+# Pull requests are checked by `CI: Quick` (`bin/ci --quick`, check `docs-image-refs`), so this
+# workflow now runs only on its nightly schedule and on demand (CUA-3558).
 
 on:
-  pull_request:
-    paths:
-      - "docs/**"
-      - "skills/**"
-      - "README.md"
-      - "libs/**/README.md"
-      - "libs/cua/crates/cua-image/src/canonical.rs"
-      - "libs/cua/crates/cua-image/src/resolve.rs"
-      - "scripts/images/check-docs-image-refs.py"
-      - "scripts/images/doctor_ledger.py"
-      - "scripts/images/docs-image-refs-baseline.json"
-      - ".github/workflows/ci-check-docs-image-refs.yml"
   schedule:
     - cron: "11 7 * * *"
   workflow_dispatch:

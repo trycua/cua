@@ -72,7 +72,6 @@ import { ThisMachinePanel } from '../ThisMachinePanel';
 import { THIS_MACHINE_ID } from '../../model/host';
 import { Thumbnail } from '../Thumbnail';
 import { NewSpaceWizard, type CreatePlan, type SpaceHost } from './NewSpaceWizard';
-import type { Experiments } from '../../model/experiments';
 import { useExperiments } from '../../state/experiments';
 import { createLoginItemBridge, type LoginItemBridge } from '../../native/loginItem';
 import { launchPlan, readLaunchChoice, writeLaunchChoice } from '../../model/loginItem';
@@ -117,10 +116,9 @@ function viewerRequest(space: Space): ViewerWindowRequest {
 function detailOf(
   space: Space,
   usage: SpaceUsage | null | undefined,
-  hostArch: string | null | undefined,
-  experiments: Experiments
+  hostArch: string | null | undefined
 ): SpaceDetailView {
-  return spaceDetail(space, usage, hostArch, experiments);
+  return spaceDetail(space, usage, hostArch);
 }
 
 /**
@@ -224,7 +222,7 @@ export function MainWindow({
   const [local, setLocal] = useState<LocalStatus | null>(null);
   const [gpus, setGpus] = useState<GpuChoice[] | null>(null);
   const [hosts, setHosts] = useState<SpaceHost[]>([]);
-  // Settings, Experiments: what the window shows (Share, your clouds).
+  // Settings, Experiments: what the window shows.
   const experiments = useExperiments();
   // `?view=new-space|settings|this-machine|host-setup|drive|onboarding-presentation|onboarding-drive|onboarding-done` opens that
   // view on load (the shell sets it from CUA_SPACES_START_VIEW, for demos
@@ -549,8 +547,7 @@ export function MainWindow({
     ? detailOf(
         selected,
         usage?.id === selected.id ? usage.usage : null,
-        sync.hostArch,
-        experiments
+        sync.hostArch
       )
     : null;
   const isHost = Boolean(detail?.isHost);

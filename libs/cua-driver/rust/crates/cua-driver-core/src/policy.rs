@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Optional permission-policy enforcement for MCP tool calls.
 
 use std::path::{Path, PathBuf};
@@ -116,6 +119,8 @@ impl PolicyEngine {
     /// "no-args" sentinel if finer control is needed.
     pub fn is_potentially_listable(&self, tool: &str) -> bool {
         let tool = canonical_tool_name(tool);
+        #[cfg(not(any(feature = "yaml", feature = "rego")))]
+        let _ = tool;
         match self {
             #[cfg(feature = "yaml")]
             Self::Yaml(policy) => policy.is_potentially_listable(tool),
@@ -318,21 +323,22 @@ pub fn authorize_tool_call(tool: &str, args: &Value) -> Result<(), Authorization
 /// `allow.rules` are still listed so that callers can attempt a constrained
 /// invocation.  When no policy is configured, all tools are listable.
 ///
-/// On a policy loading error, this returns `true` (fail-open for listing).
-/// The error will surface at invocation time through [`authorize_tool_call`],
-/// and [`validate_configured_policy`] is expected to have caught it at startup.
+/// A policy layer that failed to load lists nothing, so `tools/list` never
+/// advertises tools that [`authorize_tool_call`] will refuse.
+/// [`validate_configured_policy`] normally stops startup before this point.
 pub fn is_tool_listable(tool: &str) -> bool {
-    let managed = match configured_managed_policy() {
-        Ok(policy) => policy,
-        Err(_) => return true,
-    };
-    let user = match configured_policy() {
-        Ok(policy) => policy,
-        Err(_) => return true,
-    };
-    for policy in [managed, user].into_iter().flatten() {
-        if !policy.is_potentially_listable(tool) {
-            return false;
+    tool_listable_in(tool, [configured_managed_policy(), configured_policy()])
+}
+
+fn tool_listable_in(tool: &str, layers: [Result<Option<&PolicyEngine>, String>; 2]) -> bool {
+    for layer in layers {
+        match layer {
+            Ok(Some(policy)) if !policy.is_potentially_listable(tool) => return false,
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(%error, "permission policy failed to load; listing no tools");
+                return false;
+            }
         }
     }
     true
@@ -542,11 +548,14 @@ struct RawYamlRule {
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawConstraint {
+    #[serde(default)]
+    optional: bool,
     min: Option<f64>,
     max: Option<f64>,
     max_length: Option<usize>,
     pattern: Option<String>,
     allowed: Option<Vec<Value>>,
+    items: Option<Box<RawConstraint>>,
 }
 
 #[cfg(feature = "yaml")]
@@ -582,10 +591,11 @@ impl YamlRule {
             .as_object()
             .ok_or_else(|| "arguments must be a JSON object".to_owned())?;
         for (argument, constraint) in &self.constraints {
-            let value = object
-                .get(argument)
-                .ok_or_else(|| format!("missing required argument '{argument}'"))?;
-            constraint.matches(argument, value)?;
+            match object.get(argument) {
+                Some(value) => constraint.matches(argument, value)?,
+                None if constraint.optional => {}
+                None => return Err(format!("missing required argument '{argument}'")),
+            }
         }
         Ok(())
     }
@@ -594,11 +604,14 @@ impl YamlRule {
 #[cfg(feature = "yaml")]
 #[derive(Debug, Clone)]
 struct Constraint {
+    /// An absent argument passes, so the tool applies its own default.
+    optional: bool,
     min: Option<f64>,
     max: Option<f64>,
     max_length: Option<usize>,
     pattern: Option<regex::Regex>,
     allowed: Option<Vec<Value>>,
+    items: Option<Box<Constraint>>,
 }
 
 #[cfg(feature = "yaml")]
@@ -609,6 +622,7 @@ impl Constraint {
             && raw.max_length.is_none()
             && raw.pattern.is_none()
             && raw.allowed.is_none()
+            && raw.items.is_none()
         {
             bail!("constraint must define at least one check");
         }
@@ -622,12 +636,24 @@ impl Constraint {
             .map(|pattern| regex::Regex::new(&pattern))
             .transpose()
             .context("invalid regex pattern")?;
+        let items = raw
+            .items
+            .map(|items| {
+                if items.optional {
+                    bail!("array items cannot be optional");
+                }
+                Self::compile(*items).map(Box::new)
+            })
+            .transpose()
+            .context("invalid items constraint")?;
         Ok(Self {
+            optional: raw.optional,
             min: raw.min,
             max: raw.max,
             max_length: raw.max_length,
             pattern,
             allowed: raw.allowed,
+            items,
         })
     }
 
@@ -671,6 +697,14 @@ impl Constraint {
                 return Err(format!(
                     "argument '{argument}' is not in the allowed values"
                 ));
+            }
+        }
+        if let Some(items) = &self.items {
+            let elements = value
+                .as_array()
+                .ok_or_else(|| format!("argument '{argument}' must be an array"))?;
+            for (index, element) in elements.iter().enumerate() {
+                items.matches(&format!("{argument}[{index}]"), element)?;
             }
         }
         Ok(())
@@ -898,6 +932,107 @@ allow:
 
     #[cfg(feature = "yaml")]
     #[test]
+    fn yaml_optional_constraint_lets_an_absent_argument_take_its_default() {
+        let policy = yaml_policy(
+            r#"
+allow:
+  rules:
+    - tool: click
+      constraints:
+        delivery_mode: { optional: true, allowed: [background] }
+"#,
+        );
+        // run_script's app.click sends no delivery_mode.
+        assert_eq!(
+            policy.evaluate(
+                "click",
+                &serde_json::json!({"pid": 1, "element_token": "s:1"})
+            ),
+            PolicyDecision::Allow
+        );
+        assert_eq!(
+            policy.evaluate("click", &serde_json::json!({"delivery_mode": "background"})),
+            PolicyDecision::Allow
+        );
+        assert!(matches!(
+            policy.evaluate("click", &serde_json::json!({"delivery_mode": "foreground"})),
+            PolicyDecision::Deny(reason) if reason.contains("'delivery_mode' is not in the allowed values")
+        ));
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn yaml_constrains_launch_app_path_and_argument_items() {
+        let policy = yaml_policy(
+            r#"
+allow:
+  rules:
+    - tool: launch_app
+      constraints:
+        path: { pattern: '^C:\\Windows\\System32\\notepad\.exe$' }
+        launch_path: { optional: true, allowed: [] }
+        additional_arguments:
+          optional: true
+          items: { pattern: '^[A-Za-z0-9_.-]+\.txt$' }
+"#,
+        );
+        let notepad = r"C:\Windows\System32\notepad.exe";
+        assert_eq!(
+            policy.evaluate("launch_app", &serde_json::json!({"path": notepad})),
+            PolicyDecision::Allow
+        );
+        assert_eq!(
+            policy.evaluate(
+                "launch_app",
+                &serde_json::json!({"path": notepad, "additional_arguments": ["notes.txt"]})
+            ),
+            PolicyDecision::Allow
+        );
+        assert!(matches!(
+            policy.evaluate(
+                "launch_app",
+                &serde_json::json!({"path": notepad, "additional_arguments": ["notes.txt", "/p"]})
+            ),
+            PolicyDecision::Deny(reason) if reason.contains("'additional_arguments[1]' does not match")
+        ));
+        assert!(matches!(
+            policy.evaluate(
+                "launch_app",
+                &serde_json::json!({"path": notepad, "additional_arguments": "notes.txt"})
+            ),
+            PolicyDecision::Deny(reason) if reason.contains("'additional_arguments' must be an array")
+        ));
+        // launch_path takes precedence over path, so a matching path must not carry one.
+        assert!(matches!(
+            policy.evaluate(
+                "launch_app",
+                &serde_json::json!({"path": notepad, "launch_path": r"C:\Windows\System32\cmd.exe"})
+            ),
+            PolicyDecision::Deny(reason) if reason.contains("'launch_path' is not in the allowed values")
+        ));
+        assert!(matches!(
+            policy.evaluate("launch_app", &serde_json::json!({"name": "cmd"})),
+            PolicyDecision::Deny(reason) if reason.contains("missing required argument 'path'")
+        ));
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn yaml_optional_alone_or_on_items_fails_at_load_time() {
+        let error = YamlPolicy::from_str(
+            "allow:\n  rules:\n    - tool: click\n      constraints:\n        delivery_mode: { optional: true }\n",
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("at least one check"));
+        let error = YamlPolicy::from_str(
+            "allow:\n  rules:\n    - tool: launch_app\n      constraints:\n        additional_arguments: { items: { optional: true, max_length: 5 } }\n",
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("array items cannot be optional"));
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
     fn explicit_deny_overrides_allow() {
         let policy = yaml_policy(
             "allow:\n  tools: [get_window_state]\ndeny:\n  tools: [get_window_state]\n",
@@ -1044,5 +1179,26 @@ allow if {
         assert!(error
             .to_string()
             .contains("configured permission policy path does not exist"));
+    }
+
+    #[test]
+    fn a_policy_layer_that_failed_to_load_lists_no_tools() {
+        assert!(tool_listable_in("list_apps", [Ok(None), Ok(None)]));
+        assert!(!tool_listable_in(
+            "list_apps",
+            [Err("managed policy missing".into()), Ok(None)]
+        ));
+        assert!(!tool_listable_in(
+            "list_apps",
+            [Ok(None), Err("user policy missing".into())]
+        ));
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn a_loaded_layer_still_filters_listing_when_the_other_is_unset() {
+        let policy = yaml_policy("allow:\n  tools: [list_apps]\n");
+        assert!(tool_listable_in("list_apps", [Ok(None), Ok(Some(&policy))]));
+        assert!(!tool_listable_in("kill_app", [Ok(Some(&policy)), Ok(None)]));
     }
 }

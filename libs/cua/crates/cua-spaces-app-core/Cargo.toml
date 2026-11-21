@@ -27,6 +27,8 @@ cua-home.workspace = true
 # A failed create's cause as a fixed telemetry word (no dependencies, so
 # also in the wasm build).
 cua-create-failure.workspace = true
+# The friendly default names a Space gets (lists only; also in the wasm build).
+cua-spaces-contract.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 cua-keyvault = { workspace = true, optional = true }

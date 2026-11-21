@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Window capture: the output region a niri window occupies, and its capture.
 
 use super::*;

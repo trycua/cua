@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cross-platform PNG / JPEG / crosshair / resize helpers.
 //!
 //! These functions are pure consumers of the [`image`] crate with no

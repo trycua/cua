@@ -132,8 +132,8 @@ class PerCrate(unittest.TestCase):
     def test_many_run_one_at_a_time_and_fail_if_any_failed(self):
         cmd = ci.per_crate("cargo test {p}", ["a", "b"], " -- x")
         self.assertEqual(cmd, "rc=0; cargo test -p a -- x || rc=1; cargo test -p b -- x || rc=1; exit $rc")
-        self.assertEqual(subprocess.run(["bash", "-c", ci.per_crate("{p}", ["true", "false"]).replace("-p ", "")]).returncode, 1)
-        self.assertEqual(subprocess.run(["bash", "-c", ci.per_crate("{p}", ["true", "true"]).replace("-p ", "")]).returncode, 0)
+        self.assertEqual(subprocess.run([ci.BASH, "-c", ci.per_crate("{p}", ["true", "false"]).replace("-p ", "")]).returncode, 1)
+        self.assertEqual(subprocess.run([ci.BASH, "-c", ci.per_crate("{p}", ["true", "true"]).replace("-p ", "")]).returncode, 0)
 
 
 class Plan(unittest.TestCase):

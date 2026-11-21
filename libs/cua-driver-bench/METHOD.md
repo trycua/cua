@@ -121,6 +121,17 @@ and seed. They are reported side by side and never pooled.
   app or window to the front, and do not type or click into the User activity
   window. Do this task in the background."
 
+### Foreground-only tasks
+
+MB-10 (hover-only toolbar) and MB-11 (native tooltip) show their readout only
+while the real pointer hovers, so no setup can do them without moving the user's
+pointer. `taskpack/v2-taskset.json` lists them as `foreground` only: the runner
+skips them in the background condition, and they are not part of the background
+headline. They are scored in the foreground condition like every other task. If
+a run does put them in the background (for example to compare with another
+runner), report that apart from the headline, as a note on the driver gap, never
+inside it.
+
 ## GUI-only guard
 
 No setup gets a shell, file or web tool. During every trial a guard samples the
@@ -140,6 +151,29 @@ At the first violation the trial is ended and failed, the same way for every
 setup. The evidence is kept in the row. A side-door app in front for one or two
 samples, or a tool input that only names such an app, is recorded but is not a
 violation.
+
+**Windows.** The Windows guard has no list of side-door apps to look for, so it
+counts any shell or script host (PowerShell, cmd, Windows Terminal, the script
+hosts, mshta, WSL) that starts in the desktop session outside the runner's own
+processes, plus the same tool-input scan. One rule keeps it equal to macOS for
+every setup: a shell whose parent process is the setup's own binary (the
+`--tool-exe` of `launch/windows_session.py`: `cua-driver.exe`,
+`agent-desktop-win32-x64.exe`, `windows-harness.exe`, `codex-computer-use.exe`)
+is part of the tool. It is logged in the row (`gui_only.tool_helpers`) and is
+not a violation. On macOS the process rule names only side-door apps ("a process
+named Script Editor, Automator, iTerm2 or Shortcuts exists"), and the input rule
+flags only "a computer-use tool input [that] contains code that runs outside the
+GUI or touches files", so a driver's own helper processes were never violations
+there either. A shell started from code the agent supplied (Python passed to a
+harness's `exec`, JavaScript passed to a REPL) has an interpreter as its parent
+(`python.exe`, `node.exe`), which is never a `--tool-exe`, and still counts. The
+rule was added on 6 November 2026, during the Windows multi-app run. Cua Driver
+starts PowerShell to read browser processes in `get_browser_state` and
+`browser_prepare`; before the rule, 7 of its 10 CDB-G04 trials were stopped for
+that. Those trials were rerun with the same seeds. Applied to every earlier
+Windows row, the rule changes no other verdict: every other process violation
+on Windows followed a tool input in which the agent itself asked for PowerShell
+or a subprocess.
 
 ## Metrics
 
@@ -169,6 +203,17 @@ frontmost status the whole time:
 A window owned by the computer-use tool itself (an agent cursor, a status
 banner) is logged but not counted as a raise.
 
+**Full pass.** The term used in the release tables. In the foreground
+condition a full pass is a trial whose checker passed and that had no GUI-only
+violation. In the background condition it is the Amendment 22 background
+completion: checker passed, no GUI-only violation, and all eight user-undisturbed
+criteria held (key focus, window raised, typing, pointer, clipboard, Space,
+dialog, activation; one that was not measured counts as disturbed). The
+background headline covers only the tasks that run in the background (the ten
+core tasks minus MB-10 and MB-11, so eight). Alongside it the tables split every
+background trial into task failed, passed but the user was disturbed, and full
+pass, and list the eight criteria per setup.
+
 **Secondary:** success regardless of focus; the number of focus steals; key
 loss; windows raised; simulated user keystrokes swallowed (ticks when the user
 window was not active and key); pointer movement over 10 px (recorded, not part
@@ -183,6 +228,19 @@ task first, then runs 4 and 5), with setups interleaved inside each task and
 run. Every setup in a run uses the same seed. Only complete task blocks are
 analysed. Rate-limit interruptions are retried with the same trial id;
 infrastructure failures are excluded after bounded retries and reported.
+
+**Harness errors are re-run, never scored.** A trial is scored only when the
+harness gave the agent a working environment: the tool server answered its
+preflight and was connected in the agent's session; after the reset, every app
+the task automates accepted Apple events, loopback and the task's local web app
+were up, and the checker's programs were on its PATH; the environment stayed up;
+and the export step and the evaluator produced a result. Otherwise the attempt is
+a harness error: it is re-run with the same seed and never counted as a pass or a
+fail, and a trial that keeps failing this way is excluded and reported. The checks
+and their exact rules are in [`fairness/SPEC.md`](fairness/SPEC.md), with a
+runner-agnostic reference implementation. Seeds are per task and run index
+(`int(sha256(f"{task}:{run_index}")[:8], 16) mod 10^6`, run index from 0), the
+same for every setup and for a re-run.
 
 ## Analysis
 
@@ -219,5 +277,37 @@ differences are directional only.
   BenchLab, not by macOS or Chrome.
 * **Small samples.** 5 runs per cell; a 5/5 has a Wilson 95% lower bound of
   0.57.
-* **One model, one OS build.** Not a claim about other models, apps, Windows or
-  Linux.
+* **One model, one OS build per platform.** Not a claim about other models or
+  apps. The Windows and Linux ports run the BenchLab tasks with the same seeds,
+  checkers and sentinel measures as macOS, but a Windows or Linux result is its
+  own condition: a different desktop, accessibility stack and window manager, so
+  compare setups within a platform, not across platforms. The Windows release
+  run covers all ten tasks: the seven BenchLab tasks and CDB-G02 to CDB-G04
+  (LibreOffice 26.2.6.3, GnuCash 5.17, Google Chrome 157, the pack's Electron
+  43.8.1 apps), with the same seeds as macOS.
+* **Vendor setups are driven through Cua's adapters.** agent-desktop, the Browser Use
+  harnesses and OpenAI's computer-use plugin are not built for Claude Code as their
+  client, so each is run through a small adapter in `automated-eval/macos_bench/tools/`
+  (`agent_desktop`, `browser_use_harness`, `codex_cu`). The adapters map each tool or
+  command one to one and add no behaviour; the vendor's own skill or help text is the
+  server instructions. The Codex setup is OpenAI's plugin with Claude choosing the
+  actions, not OpenAI's own agent, and it needs the reader's own ChatGPT sign-in (Work or
+  Codex access) and the ChatGPT desktop app with Computer Use enabled. It is not
+  available on Linux yet and runs foreground only on Windows. A setup's result says how
+  well that tool layer works under this client and prompt, not how well the vendor's own
+  agent works.
+* **Driver versions are named per platform.** The release tables name the
+  version of each tool layer, and a table never mixes versions silently. macOS,
+  foreground and background alike: Cua Driver 0.38.0, agent-desktop 1.2.0 and
+  the Browser Use macOS harness 0.2.1 (Codex computer use as installed for the
+  run; Claude Code 2.1.318, Claude Sonnet 5.5, 3 trials with the same seeds in
+  the foreground run). Windows: the Cua Driver 0.38.0 Windows build,
+  agent-desktop 1.2.0, the Browser Use Windows harness 0.2.2 and Codex computer
+  use from the ChatGPT app 26.1029.9216.0 (Claude Code 2.1.316, Claude Sonnet 5.5).
+
+## Amendment 24 (6 November 2026): pointer park before each trial
+
+Before every trial the harness moves the real pointer to a fixed point (1000, 12) outside every registered
+window, reads the position back and records it in the trial row, and a failed park fails the trial setup,
+because a pointer left over the test app by an earlier task made macOS activate the app when it showed a
+background sheet, and that changed the interruption results under every tool.

@@ -3,6 +3,7 @@
   "private": true,
   "license": "FSL-1.1-MIT",
   "version": "0.1.0",
+  "packageManager": "pnpm@9.0.4",
   "description": "OpenKoalaBots on the cua SDK Rust crates, with a Tauri 2 shell",
   "type": "module",
   "scripts": {
@@ -24,9 +25,9 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.4.1",
-    "happy-dom": "^20.14.5",
+    "happy-dom": "^21.0.4",
     "typescript": "^5.8.3",
-    "vite": "^6.3.5",
-    "vitest": "^3.1.3"
+    "vite": "^6.4.6",
+    "vitest": "^4.1.12"
   }
 }

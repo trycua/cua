@@ -53,10 +53,13 @@ export const demoGithubState = (start: DemoGithubStart): DemoGithub => ({
   scannedMs: 0,
 });
 
-const NOTHING = (host: string) => (host === "github.com" ? "No GitHub sign-in found: run gh auth login or paste a token" : `No sign-in found for ${host}: run gh auth login --hostname ${host}`);
+const NOTHING = (host: string) =>
+  host === "github.com" ? "No GitHub sign-in found: run gh auth login or paste a token" : `No sign-in found for ${host}: run gh auth login --hostname ${host}`;
 
 const BROAD: Record<string, string> = { workflow: "change GitHub Actions workflows", delete_repo: "delete repositories" };
-const broader = (scopes: string[]): string[] => [...new Set(scopes.flatMap((s) => (BROAD[s] ? [BROAD[s]] : s.startsWith("admin:") ? ["administer organizations and settings"] : [])))];
+const broader = (scopes: string[]): string[] => [
+  ...new Set(scopes.flatMap((s) => (BROAD[s] ? [BROAD[s]] : s.startsWith("admin:") ? ["administer organizations and settings"] : []))),
+];
 const warningFor = (scopes: string[]): string | undefined => {
   const b = broader(scopes);
   if (!b.length) return undefined;
@@ -65,7 +68,12 @@ const warningFor = (scopes: string[]): string | undefined => {
 };
 
 function report(s: DemoGithub): GithubReport {
-  const hostNames = ["github.com", ...Object.keys(s.gh).filter((h) => h !== "github.com").sort()];
+  const hostNames = [
+    "github.com",
+    ...Object.keys(s.gh)
+      .filter((h) => h !== "github.com")
+      .sort(),
+  ];
   const hosts = hostNames.map((host): GithubHost => {
     const accts = s.gh[host] ?? [];
     const enabled = !s.off.includes(host);
@@ -73,12 +81,20 @@ function report(s: DemoGithub): GithubReport {
     const pick = accts.find((a) => a.login === s.chosen[host]) ?? accts.find((a) => a.active) ?? accts[0];
     const source: GithubSource | undefined = saved ? "saved" : pick ? "gh" : undefined;
     const rows: GithubSourceRow[] = [
-      ...(host === "github.com" ? [{ id: "saved" as const, used: saved, present: saved, line: saved ? "A token saved in Settings, Connections" : "No saved token" }] : []),
+      ...(host === "github.com"
+        ? [{ id: "saved" as const, used: saved, present: saved, line: saved ? "A token saved in Settings, Connections" : "No saved token" }]
+        : []),
       { id: "env", used: false, present: false, line: "No GH_TOKEN in the Cua daemon's environment" },
       { id: "gh", used: !saved && Boolean(pick), present: Boolean(pick), line: pick ? `gh, signed in as ${pick.login}` : `gh is not signed in on ${host}` },
     ];
     const login = saved ? "carol" : pick?.login;
-    const line = !enabled ? "Turned off: Cua will not use GitHub on this host" : saved ? "Signed in as carol with a saved token" : pick ? `Signed in as ${pick.login} with gh` : NOTHING(host);
+    const line = !enabled
+      ? "Turned off: Cua will not use GitHub on this host"
+      : saved
+        ? "Signed in as carol with a saved token"
+        : pick
+          ? `Signed in as ${pick.login} with gh`
+          : NOTHING(host);
     const scopes = saved ? ["repo"] : (pick?.scopes ?? []);
     const warning = enabled ? warningFor(scopes) : undefined;
     return {
@@ -89,14 +105,33 @@ function report(s: DemoGithub): GithubReport {
       line,
       problem: false,
       ...(warning ? { warning } : {}),
-      accounts: accts.map((a): GithubAccount => ({ login: a.login, active: a.active, selected: enabled && source === "gh" && a.login === pick?.login, chosen: s.chosen[host] === a.login, valid: true, scopes: a.scopes })),
+      accounts: accts.map(
+        (a): GithubAccount => ({
+          login: a.login,
+          active: a.active,
+          selected: enabled && source === "gh" && a.login === pick?.login,
+          chosen: s.chosen[host] === a.login,
+          valid: true,
+          scopes: a.scopes,
+        }),
+      ),
       sources: rows,
     };
   });
   return { hosts, ghFound: true, ghOld: false, canSave: true, scannedMs: s.scannedMs };
 }
 
-export function demoGithubHandlers({ state, wait, stepMs, now }: { state: DemoGithub; wait(ms: number): Promise<void>; stepMs: number; now: () => number }): DemoHandlers<"github.status" | "github.rescan" | "github.use" | "github.enable"> {
+export function demoGithubHandlers({
+  state,
+  wait,
+  stepMs,
+  now,
+}: {
+  state: DemoGithub;
+  wait(ms: number): Promise<void>;
+  stepMs: number;
+  now: () => number;
+}): DemoHandlers<"github.status" | "github.rescan" | "github.use" | "github.enable"> {
   return {
     "github.status": () => report(state),
     "github.rescan": async () => {
@@ -105,7 +140,8 @@ export function demoGithubHandlers({ state, wait, stepMs, now }: { state: DemoGi
       return report(state);
     },
     "github.use": ({ host, login }) => {
-      if (login && !(state.gh[host] ?? []).some((a) => a.login === login)) throw new HostError(`gh is not signed in as ${login} on ${host}: run gh auth login --hostname ${host}`);
+      if (login && !(state.gh[host] ?? []).some((a) => a.login === login))
+        throw new HostError(`gh is not signed in as ${login} on ${host}: run gh auth login --hostname ${host}`);
       if (login) state.chosen[host] = login;
       else delete state.chosen[host];
       return report(state);

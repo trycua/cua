@@ -48,8 +48,7 @@ export function ConnectCloudDialog() {
                 </DialogTitle>
               </div>
               <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground" data-cloud-intro="">
-                {v.intro}{" "}
-                {/* The one cua.ai compare page the product links to (tests/test_product_compare_links.py, CUA-2200). */}
+                {v.intro} {/* The one cua.ai compare page the product links to (tests/test_product_compare_links.py, CUA-2200). */}
                 <button
                   type="button"
                   data-compare-clouds=""
@@ -105,7 +104,12 @@ export function ConnectCloudDialog() {
                       {v.detailsLabel ? (
                         <>
                           {" "}
-                          <button type="button" onClick={() => connect.openPage(v.detailsUrl)} className="text-brand-strong hover:underline" data-cloud-details="">
+                          <button
+                            type="button"
+                            onClick={() => connect.openPage(v.detailsUrl)}
+                            className="text-brand-strong hover:underline"
+                            data-cloud-details=""
+                          >
                             {v.detailsLabel}
                           </button>
                         </>
@@ -143,9 +147,25 @@ export function ConnectCloudDialog() {
 }
 
 /** One line of the sheet: its label, and the control on the right. */
-function FieldRow({ field: f, token, setToken, send }: { field: CloudSheetField; token: string; setToken: (t: string) => void; send: (a: CloudSheetAction) => void }) {
+function FieldRow({
+  field: f,
+  token,
+  setToken,
+  send,
+}: {
+  field: CloudSheetField;
+  token: string;
+  setToken: (t: string) => void;
+  send: (a: CloudSheetAction) => void;
+}) {
   const action = (text: string): CloudSheetAction =>
-    f.id === "place" ? { type: "set-place", text } : f.id === "budget" ? { type: "set-budget", text } : f.id === "size" ? { type: "set-size", text } : { type: "set-account-id", text };
+    f.id === "place"
+      ? { type: "set-place", text }
+      : f.id === "budget"
+        ? { type: "set-budget", text }
+        : f.id === "size"
+          ? { type: "set-size", text }
+          : { type: "set-account-id", text };
   return (
     <div className="flex items-center justify-between gap-4 py-2" data-cloud-field={f.id}>
       <label htmlFor={`cc-${f.id}`} className="text-[13px]">
@@ -204,7 +224,12 @@ function TrustStep({ trust, openPage }: { trust: NonNullable<CloudSheetView["tru
     <div className="mt-3 space-y-2" data-cloud-trust="">
       <p className="text-[13px] leading-relaxed text-muted-foreground">{trust.text}</p>
       {trust.openUrl ? (
-        <button type="button" onClick={() => openPage(trust.openUrl)} className="inline-flex items-center gap-1 text-[13px] text-brand-strong hover:underline" data-cloud-open="">
+        <button
+          type="button"
+          onClick={() => openPage(trust.openUrl)}
+          className="inline-flex items-center gap-1 text-[13px] text-brand-strong hover:underline"
+          data-cloud-open=""
+        >
           {trust.openLabel}
           <ExternalLinkIcon className="size-3" />
         </button>

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use std::sync::Arc;
 
 use cua_driver_core::capture_runtime::{
@@ -155,7 +158,7 @@ fn live_geometry(target: WindowsCaptureTarget) -> anyhow::Result<CaptureGeometry
             use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsWindow};
             let hwnd = HWND(window_id as usize as *mut std::ffi::c_void);
             anyhow::ensure!(
-                unsafe { IsWindow(hwnd).as_bool() },
+                unsafe { IsWindow(Some(hwnd)).as_bool() },
                 "native window was replaced"
             );
             let mut owner_pid = 0_u32;

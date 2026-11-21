@@ -10,6 +10,8 @@ fixture window (GTK3 on Linux, WinForms on Windows) and checks:
   * run_steps (one batch with an end-of-batch observation),
   * run_script (listed by default; a script loop clicks by token; no I/O),
   * set_value on a drop-down combo box and on an editable combo box,
+  * set_value in the foreground on a combo box with no options (Linux) is
+    refused as option_not_found and leaves no popup behind,
   * display_only previews (and plain screenshot-only reads) keep the agent's
     element tokens valid.
 
@@ -440,6 +442,10 @@ def run_checks(smoke):
         evidence,
     )
 
+    # 9. A combo box with no options, through the foreground popup fallback.
+    if not WINDOWS:
+        empty_combo_check(smoke)
+
 
 def hard(status):
     """A combo-box status under COMBO_HARD: anything but pass fails."""
@@ -737,6 +743,39 @@ def unknown_option_check(smoke):
     else:
         status, evidence = "pass", f"option_not_found: {result.first_line()}"
     smoke.record(check, hard(status), evidence)
+
+
+def empty_combo_check(smoke):
+    """set_value in the foreground on a drop-down that lists no options:
+    the popup fallback refuses it as option_not_found, changes nothing and
+    leaves no popup holding the pointer."""
+    check = "set_value on a combo box with no options refuses it (foreground)"
+    state = smoke.read()
+    combo = find_row(tree(state), COMBO, "Empty")
+    if combo is None:
+        smoke.record(check, "fail", "no combo row named 'Empty' in the tree")
+        return
+    args = {"pid": smoke.pid, "element_token": token(state, combo), "value": "Blue",
+            "delivery_mode": "foreground"}
+    result = smoke.call("set_value", args)
+    fresh = smoke.read()
+    code = result.structured.get("code")
+    problems = []
+    if not result.is_error:
+        problems.append(f"reported success: {result.first_line()}")
+    elif code != "option_not_found":
+        problems.append(f"refused with code {code!r}, expected 'option_not_found': "
+                        f"{result.first_line()}")
+    if "Empty: none" not in tree(fresh):
+        problems.append("the Empty label changed")
+    landed, detail = click_still_lands(smoke)
+    if not landed:
+        problems.append(detail)
+    smoke.record(
+        check,
+        "fail" if problems else "pass",
+        "; ".join(problems) or f"option_not_found: {result.first_line()}; {detail}",
+    )
 
 
 def row_text(markdown, index):

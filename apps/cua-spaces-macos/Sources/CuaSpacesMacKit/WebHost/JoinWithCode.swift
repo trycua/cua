@@ -82,7 +82,7 @@ enum JoinWithCode {
         let items = parts.queryItems ?? []
         let raw = segments.count > 1 ? segments[1] : items.first { $0.name == "code" }?.value
         guard segments.count <= 2, let raw, let code = normalizeCode(raw) else { return nil }
-        var route = "/machines?join=\(code)"
+        var route = "/spaces?join=\(code)"
         if let relay = items.first(where: { $0.name == "relay" })?.value, !relay.isEmpty {
             route += "&relay=\(MainUIRoute.encodeComponent(relay))"
         }

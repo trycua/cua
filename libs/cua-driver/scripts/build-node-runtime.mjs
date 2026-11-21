@@ -17,7 +17,8 @@
  * (#440) by caching one trampoline per callback name and JS function. That
  * release also changes the RustBuffer boundary patched below, so this build
  * backports only the cache: node-runtime-trampoline-cache.rs is UBRN's
- * callback/cache.rs from that change, unmodified.
+ * callback/cache.rs from that change, unmodified apart from an added SPDX
+ * license header line.
  *
  * The patched source remains MPL-2.0 and comes from the exact, pinned
  * uniffi-bindgen-react-native development dependency.

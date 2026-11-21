@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Immutable capability manifest loaded at trusted daemon startup.
 //!
 //! The agent may propose this file, but selecting and approving it is a
@@ -5,7 +8,9 @@
 //! managed, and user policy layers; it cannot introduce unreviewed tools.
 
 use std::collections::HashSet;
-use std::path::{Component, Path, PathBuf};
+#[cfg(feature = "yaml")]
+use std::path::Component;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -64,6 +69,8 @@ struct ApplicationGrant {
     terminate: TerminationGrant,
 }
 
+// Only the YAML manifest parser constructs these variants.
+#[cfg_attr(not(feature = "yaml"), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TerminationGrant {
     Deny,
@@ -275,14 +282,6 @@ impl SessionManifest {
                 "browser_target" | "authenticated_browser_tab" => {
                     self.authorize_resource_origin(resource)
                 }
-                // `escalate_session` always expands a browser-scoped session
-                // to desktop scope; it has no caller-selectable capture_scope
-                // argument. Require the immutable manifest's display grant
-                // directly instead of keying enforcement on a field the tool
-                // can never send.
-                "session_capture_scope" => self.desktop_display.then_some(()).ok_or_else(|| {
-                    "desktop capture escalation is outside the capability manifest".to_owned()
-                }),
                 "session_trajectory_recording" => Ok(()),
                 _ => refused(),
             },
@@ -409,8 +408,9 @@ impl SessionManifest {
             .and_then(serde_json::Value::as_str);
         // The process path the platform adapter read from the OS for this
         // exact pid. Unlike `bundle_id` and `launch_path`, which come from
-        // `list_apps` (and on Windows are matched to a running process by file
-        // name only), this cannot be influenced by naming a program.
+        // `list_apps` (and on Windows are matched to a running unpackaged
+        // process by file name only), this cannot be influenced by naming a
+        // program.
         let attested_executable = resource
             .pointer("/fingerprint/executable")
             .and_then(serde_json::Value::as_str);
@@ -1390,9 +1390,11 @@ fn normalize_windows_executable_path(path: &str) -> Option<String> {
 ///   names and AUMIDs) are compared with the claimed identity, as before.
 /// - A grant that is a Windows file path is compared with the attested
 ///   executable path only. The claimed identity is ignored because Windows
-///   `list_apps` pairs a running process with an installed app by file name,
-///   so any program named like the granted one would otherwise inherit the
-///   grant. A missing or unusable path never matches.
+///   `list_apps` pairs a running unpackaged process with an installed app by
+///   file name, so any program named like the granted one would otherwise
+///   inherit the grant. A missing or unusable path never matches. A packaged
+///   process is paired by the package identity Windows reports for it, so its
+///   claimed package family name is trustworthy.
 fn bundle_grant_matches(
     granted_bundle_id: &str,
     claimed_bundle_id: Option<&str>,
@@ -1929,56 +1931,6 @@ allow:
                 &serde_json::json!({
                     "kind": "authenticated_browser_tab",
                     "live_origin": "about:blank"
-                }),
-            )
-            .unwrap();
-    }
-
-    #[cfg(feature = "yaml")]
-    #[test]
-    fn desktop_escalation_requires_the_manifest_display_grant() {
-        let without_display = manifest(
-            r#"
-version: 1
-mode: bounded
-expires_after: 8h
-idle_timeout: 30m
-resources: {}
-allow:
-  tools: [escalate_session]
-"#,
-        )
-        .unwrap();
-        assert!(without_display
-            .authorize_protected_resource(
-                "private_observation",
-                &serde_json::json!({
-                    "kind": "session_capture_scope",
-                    "capture_scope": "desktop"
-                }),
-            )
-            .is_err());
-
-        let with_display = manifest(
-            r#"
-version: 1
-mode: bounded
-expires_after: 8h
-idle_timeout: 30m
-resources:
-  desktop:
-    display: true
-allow:
-  tools: [escalate_session]
-"#,
-        )
-        .unwrap();
-        with_display
-            .authorize_protected_resource(
-                "private_observation",
-                &serde_json::json!({
-                    "kind": "session_capture_scope",
-                    "capture_scope": "desktop"
                 }),
             )
             .unwrap();

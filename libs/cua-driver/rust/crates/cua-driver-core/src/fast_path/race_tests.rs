@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Race tests over a simulated window: the UI changes between the read and
 //! the act, and the guards must refuse or relocate, never act on the wrong
 //! target. Platform fixtures repeat these cases against real apps.

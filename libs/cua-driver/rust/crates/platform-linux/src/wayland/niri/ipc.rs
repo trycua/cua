@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! The niri IPC transport: socket attestation, requests and the serde subset of
 //! niri's replies.
 
@@ -111,7 +114,13 @@ pub(super) fn probe(
 /// tell (see [`Probed::Unknown`]), so niri's routes refuse.
 pub fn is_session() -> bool {
     if let Some(known) = session_check(
-        !super::super::is_inject_mode() && super::super::is_wayland(),
+        // Not limited to a niri claim: a niri started from Hyprland keeps
+        // its signature, and only the socket attestation tells them apart.
+        matches!(
+            crate::desktop::desktop(),
+            crate::desktop::Desktop::Wayland(compositor)
+                if compositor != crate::desktop::Compositor::Injected
+        ),
         RECOGNIZED.get().is_some(),
         std::env::var_os("NIRI_SOCKET").is_some_and(|socket| !socket.is_empty()),
     ) {

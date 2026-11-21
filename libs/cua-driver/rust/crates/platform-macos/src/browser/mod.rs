@@ -1,8 +1,12 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 pub mod ax_page_reader;
 pub mod browser_js;
 pub mod cdp_client;
 mod consent_ui;
 pub mod electron_js;
+mod managed_policy;
 pub mod platform;
 mod setup_ui;
 pub mod wk_web_view;

@@ -292,6 +292,11 @@ pub(crate) struct Engine {
     relay_only: AtomicBool,
     /// [`Prefer`], as its `u8`.
     prefer: AtomicU8,
+    /// Whether the local network may be used at all (default). Off for a node
+    /// whose network refuses it (a Space on the internet-only default): it
+    /// then never pings, answers on or advertises a local address, so the
+    /// refusing network sees nothing to refuse.
+    lan_allowed: AtomicBool,
     peers_changed: tokio::sync::watch::Sender<u64>,
 }
 
@@ -318,6 +323,7 @@ impl Engine {
             disco_kick: Notify::new(),
             relay_only: AtomicBool::new(relay_only),
             prefer: AtomicU8::new(Prefer::Auto.to_u8()),
+            lan_allowed: AtomicBool::new(true),
             peers_changed,
         });
         let out: Arc<dyn Outbound> = engine.clone();
@@ -334,12 +340,18 @@ impl Engine {
     /// (Re)binds the UDP sockets: `port` 0 picks a fresh one.
     pub(crate) async fn bind(self: &Arc<Self>, port: u16) -> io::Result<()> {
         let v4 = bind_udp(SocketAddr::from(([0, 0, 0, 0], port)))?;
-        let v6 = bind_udp(SocketAddr::from((
-            Ipv6Addr::UNSPECIFIED,
-            v4.local_addr()?.port(),
-        )))
-        .or_else(|_| bind_udp(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0))))
-        .ok();
+        // IPv6 asks for the same `port`, so an ephemeral request stays
+        // ephemeral: never the explicit port number IPv4 was given. Binding
+        // every address to an explicit UDP port is what makes Windows
+        // Firewall stop and ask the user to allow the app ("Do you want to
+        // allow public and private networks to access this app?"), which it
+        // did for `cua` and `cua-spacesd` (CUA-3515); an ephemeral bind never
+        // asks. Direct paths need no inbound rule: both peers send first, and
+        // the firewall lets each one's answers in. The two sockets need not
+        // share a port: each one's is advertised (`local_ports`, STUN).
+        let v6 = bind_udp(SocketAddr::from((Ipv6Addr::UNSPECIFIED, port)))
+            .or_else(|_| bind_udp(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0))))
+            .ok();
         let mut tasks = Vec::new();
         for sock in std::iter::once(v4.clone()).chain(v6.clone()) {
             let weak = Arc::downgrade(self);
@@ -424,12 +436,45 @@ impl Engine {
         self.forget_paths();
     }
 
+    /// Allows or forbids paths on the local network. Forbidding drops what
+    /// was learned on it (a best path included) and stops advertising local
+    /// addresses; paths across the internet and the relay are untouched.
+    pub(crate) fn set_lan_allowed(&self, on: bool) {
+        self.lan_allowed.store(on, Ordering::SeqCst);
+        if !on {
+            for p in self.peers() {
+                let mut ps = p.path.lock().expect("path");
+                ps.candidates.retain(|a, _| !is_lan(a));
+                ps.pending.retain(|_, (a, _)| !is_lan(a));
+                if ps.best.is_some_and(|(a, _, _)| is_lan(&a)) {
+                    ps.best = None;
+                }
+            }
+            let kept: Vec<SocketAddr> = self
+                .local_endpoints
+                .read()
+                .expect("endpoints")
+                .iter()
+                .copied()
+                .filter(|a| !is_lan(a))
+                .collect();
+            self.set_local_endpoints(kept);
+        }
+    }
+
+    /// Whether `addr` may be sent to or pinged: not a local-network address
+    /// while the local network is forbidden ([`Self::set_lan_allowed`]).
+    fn may_use(&self, addr: &SocketAddr) -> bool {
+        self.lan_allowed.load(Ordering::Relaxed) || !is_lan(addr)
+    }
+
     /// Whether relay-only is on (a pin or `CUA_MESH_RELAY_ONLY`).
     pub(crate) fn relay_only(&self) -> bool {
         self.relay_only.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn set_local_endpoints(&self, endpoints: Vec<SocketAddr>) {
+    pub(crate) fn set_local_endpoints(&self, mut endpoints: Vec<SocketAddr>) {
+        endpoints.retain(|a| self.may_use(a));
         let changed = {
             let mut eps = self.local_endpoints.write().expect("endpoints");
             let changed = *eps != endpoints;
@@ -472,7 +517,7 @@ impl Engine {
                         // Keep learned candidates; refresh advertised ones.
                         path.candidates
                             .retain(|_, c| !c.advertised || c.last_pong.is_some());
-                        for e in &info.endpoints {
+                        for e in info.endpoints.iter().filter(|e| self.may_use(e)) {
                             path.candidates.entry(*e).or_default().advertised = true;
                         }
                     }
@@ -508,7 +553,7 @@ impl Engine {
         );
         let sealer = Sealer::new(&self.identity.disco, &info.disco_key);
         let mut path = PathState::default();
-        for e in &info.endpoints {
+        for e in info.endpoints.iter().filter(|e| self.may_use(e)) {
             path.candidates.entry(*e).or_default().advertised = true;
         }
         Peer {
@@ -564,6 +609,14 @@ impl Engine {
     // ---- sending ----
 
     fn send_udp(&self, dst: SocketAddr, data: &[u8]) -> io::Result<()> {
+        // The one place a datagram leaves: nothing goes to a local address
+        // while the network refuses them (not even a reply to a ping).
+        if !self.may_use(&dst) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "the local network is off for this node",
+            ));
+        }
         let s = self.sockets.read().expect("sockets");
         let s = s
             .as_ref()
@@ -717,7 +770,7 @@ impl Engine {
         if let Path::Direct(addr) = path {
             // Authenticated traffic from an endpoint: worth probing.
             let mut ps = peer.path.lock().expect("path");
-            if ps.best.is_none() && !ps.candidates.contains_key(&addr) {
+            if ps.best.is_none() && !ps.candidates.contains_key(&addr) && self.may_use(&addr) {
                 ps.candidates.insert(addr, Candidate::default());
                 drop(ps);
                 self.disco_kick.notify_one();
@@ -764,6 +817,7 @@ impl Engine {
                 };
                 if let Path::Direct(a) = path
                     && !self.relay_only.load(Ordering::Relaxed)
+                    && self.may_use(&a)
                 {
                     let mut ps = peer.path.lock().expect("path");
                     let fresh = !ps.candidates.contains_key(&a);
@@ -828,7 +882,7 @@ impl Engine {
                 drop(ps);
                 if !src.ip().is_unspecified() {
                     let mut eps = self.local_endpoints.write().expect("endpoints");
-                    if !eps.contains(&src) && eps.len() < 32 {
+                    if !eps.contains(&src) && eps.len() < 32 && self.may_use(&src) {
                         // Peer-reflexive: how the peer sees us.
                         eps.push(src);
                     }
@@ -842,7 +896,7 @@ impl Engine {
                 // peer is pinging us right now, so both NATs open.
                 let targets: Vec<SocketAddr> = {
                     let mut ps = peer.path.lock().expect("path");
-                    for e in &endpoints {
+                    for e in endpoints.iter().filter(|e| self.may_use(e)) {
                         ps.candidates.entry(*e).or_default();
                     }
                     ps.candidates.keys().copied().collect()
@@ -858,6 +912,9 @@ impl Engine {
     }
 
     fn ping(&self, peer: &Peer, addr: SocketAddr) {
+        if !self.may_use(&addr) {
+            return;
+        }
         let tx: disco::TxId = rand::random();
         {
             let mut ps = peer.path.lock().expect("path");
@@ -1064,7 +1121,7 @@ fn bind_udp(addr: SocketAddr) -> io::Result<Arc<UdpSocket>> {
     };
     let s = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
     if addr.is_ipv6() {
-        // Native IPv6 only; IPv4 has its own socket on the same port.
+        // Native IPv6 only; IPv4 has its own socket.
         s.set_only_v6(true)?;
     }
     // Best effort: the kernel caps these (net.core.*mem_max on Linux).
@@ -1176,5 +1233,117 @@ mod prefer_tests {
             assert_eq!(Prefer::from_u8(p.to_u8()), p);
         }
         assert_eq!(Prefer::parse("nope"), None);
+    }
+}
+
+#[cfg(test)]
+mod lan_tests {
+    use super::*;
+    use crate::proto::NodeKind;
+
+    fn a(s: &str) -> SocketAddr {
+        s.parse().unwrap()
+    }
+
+    fn info(endpoints: Vec<SocketAddr>) -> PeerInfo {
+        let id = NodeIdentity::generate().unwrap();
+        PeerInfo {
+            node_key: id.public(),
+            disco_key: id.disco.public(),
+            quic_pin: id.cert_pin(),
+            kind: NodeKind::Machine,
+            machine_id: Some("m1".into()),
+            name: "m1".into(),
+            endpoints,
+            online: true,
+            version: crate::proto::VERSION,
+            grant: None,
+        }
+    }
+
+    fn candidates(e: &Engine) -> Vec<SocketAddr> {
+        let mut c: Vec<SocketAddr> = e
+            .peers()
+            .iter()
+            .flat_map(|p| {
+                p.path
+                    .lock()
+                    .unwrap()
+                    .candidates
+                    .keys()
+                    .copied()
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        c.sort();
+        c
+    }
+
+    /// A Space whose network refuses the local network (the internet-only default):
+    /// its node never learns, pings, answers on or advertises a local address, so
+    /// there is no packet for that network to refuse and count.
+    #[tokio::test]
+    async fn a_node_that_may_not_use_the_local_network_never_touches_it() {
+        let e = Engine::new(NodeIdentity::generate().unwrap(), 0, false)
+            .await
+            .unwrap();
+        e.set_lan_allowed(false);
+        e.set_peers(vec![info(vec![
+            a("192.168.0.20:41641"),
+            a("10.1.2.3:1"),
+            a("203.0.113.9:41641"),
+        ])]);
+        // Only the internet endpoint is a candidate.
+        assert_eq!(candidates(&e), vec![a("203.0.113.9:41641")]);
+        // Nothing leaves for a local address, whoever asks (a ping, a reply, the tunnel).
+        for lan in [
+            "192.168.0.20:41641",
+            "10.1.2.3:1",
+            "169.254.1.1:5",
+            "[fd00::1]:9",
+        ] {
+            let err = e.send_udp(a(lan), b"x").unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{lan}");
+        }
+        let peer = e.peers().remove(0);
+        e.ping(&peer, a("192.168.0.20:41641"));
+        assert!(peer.path.lock().unwrap().pending.is_empty());
+        // Our own local addresses are not advertised either.
+        e.set_local_endpoints(vec![a("192.168.64.2:4000"), a("198.51.100.4:4000")]);
+        assert_eq!(
+            *e.local_endpoints.read().unwrap(),
+            vec![a("198.51.100.4:4000")]
+        );
+    }
+
+    /// Turning it off later forgets what was learned on the local network.
+    #[tokio::test]
+    async fn forbidding_the_local_network_later_drops_what_it_learned() {
+        let e = Engine::new(NodeIdentity::generate().unwrap(), 0, false)
+            .await
+            .unwrap();
+        e.set_peers(vec![info(vec![
+            a("192.168.0.20:41641"),
+            a("203.0.113.9:41641"),
+        ])]);
+        assert_eq!(candidates(&e).len(), 2);
+        {
+            let peer = e.peers().remove(0);
+            peer.path.lock().unwrap().best = Some((
+                a("192.168.0.20:41641"),
+                Duration::from_millis(1),
+                Instant::now(),
+            ));
+        }
+        e.set_lan_allowed(false);
+        assert_eq!(candidates(&e), vec![a("203.0.113.9:41641")]);
+        assert!(e.peers()[0].path.lock().unwrap().best.is_none());
+        // And allowed (the default) it is back to what it was.
+        e.set_lan_allowed(true);
+        assert_ne!(
+            e.send_udp(a("192.168.0.20:41641"), b"x")
+                .map_err(|e| e.kind()),
+            Err(io::ErrorKind::PermissionDenied)
+        );
     }
 }

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Linux adapters for encrypted Computer History.
 
 use cua_driver_core::history::{ApplicationIdentity, ApplicationIdentityProvider};

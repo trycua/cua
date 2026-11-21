@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Startup "new version available" banner.
 //!
 //! On the interactive entry points (`mcp`, `serve`, `doctor`) we resolve the
@@ -197,16 +200,19 @@ fn install_one_liner() -> String {
 /// `UpdateState.error` with a non-empty `current_version` so consumers
 /// always get a well-formed payload they can branch on.
 pub fn check_update_state(no_cache: bool) -> UpdateState {
-    check_update_state_with_ownership(no_cache, crate::updater::is_pacman_managed())
+    check_update_state_with_owner(no_cache, crate::updater::update_owner())
 }
 
-pub(crate) fn check_update_state_with_ownership(no_cache: bool, managed: bool) -> UpdateState {
+pub(crate) fn check_update_state_with_owner(
+    no_cache: bool,
+    owner: Option<crate::updater::UpdateOwner>,
+) -> UpdateState {
     let current = env!("CARGO_PKG_VERSION").to_owned();
     let now = unix_now();
     let checked_at = iso8601(now);
 
     let current_channel = crate::release_channel::ReleaseChannel::from_version(&current);
-    if managed {
+    if let Some(owner) = owner {
         return UpdateState {
             current_version: current,
             current_channel: current_channel.map(|channel| channel.as_str()),
@@ -218,7 +224,7 @@ pub(crate) fn check_update_state_with_ownership(no_cache: bool, managed: bool) -
             cache_hit: false,
             install_command: None,
             release_notes_url: None,
-            error: Some(crate::updater::PACMAN_UPDATE_GUIDANCE.to_owned()),
+            error: Some(owner.guidance()),
         };
     }
     let selected_channel = match crate::release_channel::selected() {
@@ -420,26 +426,26 @@ where
     F: FnOnce() -> Result<String, String>,
     W: std::io::Write,
 {
-    run_check_and_announce_with_ownership(
+    run_check_and_announce_with_owner(
         current,
         fetch,
         &mut writer,
         capture_telemetry,
-        crate::updater::is_pacman_managed(),
+        crate::updater::update_owner(),
     );
 }
 
-fn run_check_and_announce_with_ownership<F, W>(
+fn run_check_and_announce_with_owner<F, W>(
     current: &str,
     fetch: F,
     mut writer: W,
     capture_telemetry: bool,
-    managed: bool,
+    owner: Option<crate::updater::UpdateOwner>,
 ) where
     F: FnOnce() -> Result<String, String>,
     W: std::io::Write,
 {
-    if managed {
+    if owner.is_some() {
         return;
     }
     let now = unix_now();
@@ -758,10 +764,8 @@ pub fn fetch_latest_version() -> Result<String, crate::release_source::FetchErro
 pub fn fetch_latest_version_for(
     channel: crate::release_channel::ReleaseChannel,
 ) -> Result<String, crate::release_source::FetchError> {
-    if crate::updater::is_pacman_managed() {
-        return Err(crate::release_source::FetchError::Other(
-            crate::updater::PACMAN_UPDATE_GUIDANCE.to_owned(),
-        ));
+    if let Some(owner) = crate::updater::update_owner() {
+        return Err(crate::release_source::FetchError::Other(owner.guidance()));
     }
     crate::release_source::resolve_latest(
         &crate::release_source::UreqClient::new(),
@@ -902,7 +906,10 @@ mod tests {
             .unwrap();
             let before = std::fs::read(cache_path().unwrap()).unwrap();
             for no_cache in [false, true] {
-                let state = check_update_state_with_ownership(no_cache, true);
+                let state = check_update_state_with_owner(
+                    no_cache,
+                    Some(crate::updater::UpdateOwner::Pacman),
+                );
                 assert!(!state.update_available);
                 assert!(!state.cache_hit);
                 assert!(state.latest_version.is_none());
@@ -918,13 +925,18 @@ mod tests {
     #[test]
     fn pacman_managed_startup_never_fetches_or_prints_banner() {
         let mut banner = Vec::new();
-        run_check_and_announce_with_ownership(
-            "0.24.0",
-            || panic!("managed startup must not fetch"),
-            &mut banner,
-            false,
-            true,
-        );
+        for owner in [
+            crate::updater::UpdateOwner::Pacman,
+            crate::updater::UpdateOwner::HostApp("Cua Spaces".to_owned()),
+        ] {
+            run_check_and_announce_with_owner(
+                "0.24.0",
+                || panic!("managed startup must not fetch"),
+                &mut banner,
+                false,
+                Some(owner),
+            );
+        }
         assert!(banner.is_empty());
     }
 

@@ -59,6 +59,18 @@ fn deny<T>() -> R<T> {
     Err(refused("create, list and manage its own children"))
 }
 
+/// `(power, power_state)` as an agent in a Space sees them. `power` is how the Space turns off (`stop` or `suspend`);
+/// the guest tools and the `cua spaces ls` an image shipped before 0.14 print it as the Space's state, so a running
+/// child read "stop" and agents said "the Space shows as stopped" about a Space they were using. On this channel
+/// `power` therefore carries the state itself (`running`, `stopped`, `suspended`); `power_state` is unchanged.
+pub(crate) fn state_for_agents((power, state): (String, String)) -> (String, String) {
+    if state.is_empty() {
+        (power, state)
+    } else {
+        (state.clone(), state)
+    }
+}
+
 /// The scoped services of one Space's channel.
 #[derive(Clone)]
 pub struct Scoped {
@@ -113,12 +125,54 @@ impl Scoped {
             .into_iter()
             .filter(|r| below.contains(&r.id))
             .collect();
-        for r in &mut records {
-            (r.power, r.power_state) = self.spaces().power_of(&r.id);
+        self.fill(&mut records);
+        Ok(records)
+    }
+
+    /// Power, stop reason and the rest of a record's live fields.
+    fn fill(&self, records: &mut [pb::Space]) {
+        for r in records.iter_mut() {
+            (r.power, r.power_state) = state_for_agents(self.spaces().power_of(&r.id));
             r.stop_reason = self.spaces().stop_reason_of(&r.id);
         }
-        self.spaces().fill_records(&mut records);
-        crate::spaces_svc::imp::mark_children(self.spaces(), &mut records);
+        self.spaces().fill_records(records);
+        crate::spaces_svc::imp::mark_children(self.spaces(), records);
+    }
+
+    /// What an agent home reaches beyond its tree (none for any other Space).
+    fn home_scope(&self) -> super::home::HomeScope {
+        // What the home was made with, plus what the person approved since.
+        self.own_meta()
+            .map(|m| super::home::HomeScope::from_labels(&m.labels))
+            .unwrap_or_default()
+            .with_grants(super::home::read_grants(
+                self.spaces().home_dir(),
+                &self.space,
+            ))
+    }
+
+    /// The Spaces outside the caller's subtree that an agent home may see:
+    /// the ones the person @mentioned, or all once the person approved
+    /// listing all. Read only: they are never resolved by the calls that
+    /// change or connect to a Space.
+    fn granted_records(&self, seen: &[pb::Space]) -> Result<Vec<pb::Space>, Status> {
+        let scope = self.home_scope();
+        if !scope.is_home {
+            return Ok(Vec::new());
+        }
+        let mut records: Vec<pb::Space> = self
+            .spaces()
+            .registry()
+            .list()
+            .map_err(|e| Status::internal(e.to_string()))?
+            .into_iter()
+            .filter(|r| {
+                !seen.iter().any(|s| s.id == r.id)
+                    && !super::home::is_warming_home(&r.labels)
+                    && scope.may_list(&r.id, &r.name)
+            })
+            .collect();
+        self.fill(&mut records);
         Ok(records)
     }
 
@@ -149,6 +203,122 @@ impl Scoped {
                     .join(", ")
             ))),
         }
+    }
+
+    /// One request to the account's pool, from a Space of the tree under
+    /// `root`: `cua run`, `cua jobs` and `cua computers` inside the Space.
+    /// What the Space submits is recorded under it ([`super::runs`]); it sees,
+    /// reads and cancels only its own tree's runs; the pool's other methods
+    /// are refused.
+    async fn scoped_pool_request(
+        &self,
+        root: &str,
+        max_depth: u32,
+        mut r: pb::PoolRequestRequest,
+    ) -> R<pb::PoolRequestResponse> {
+        use serde_json::json;
+        let home = self.spaces().home_dir().to_path_buf();
+        let mut params: Value = if r.params_json.trim().is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_str(&r.params_json)
+                .map_err(|e| Status::invalid_argument(format!("params_json: {e}")))?
+        };
+        let run_of = |p: &Value| p["run"].as_str().unwrap_or_default().to_string();
+        let own = |run: &str| super::runs::Ledger::load(&home).visible(run, root);
+        let method = r.method.clone();
+        use super::runs::PoolOp;
+        match super::runs::pool_op(method.as_str()) {
+            // The computers and the queue: read only.
+            PoolOp::Read => {}
+            PoolOp::Submit => {
+                let mut run = run_of(&params);
+                if run.trim().is_empty() {
+                    run = format!("p-{:08x}", rand::random::<u32>());
+                    params["run"] = json!(run);
+                }
+                // The job's Space is a child of this one wherever it runs
+                // ([`cua_cluster::model::ENV_PARENT_SPACE`]).
+                let (_, depth) = position(self.spaces(), &self.space);
+                if depth.saturating_add(1) > max_depth {
+                    return Err(Status::resource_exhausted(format!(
+                        "this Space is {depth} level(s) below its tree's root and the tree allows                          {max_depth}: a run is a child Space, so it cannot start one"
+                    )));
+                }
+                if let Err(why) = super::runs::confine_submit(
+                    &mut params,
+                    &run,
+                    &self.space,
+                    root,
+                    depth,
+                    &self.own_network(),
+                ) {
+                    self.audit("refuse", &run, &why);
+                    return Err(refused(&why));
+                }
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let (space, root) = (self.space.clone(), root.to_string());
+                let (jname, jgpu) = super::runs::job_facts(&params);
+                let ok = super::runs::Ledger::update(&home, |l| {
+                    let ok = l.claim(&run, &space, &root, now);
+                    if ok {
+                        l.describe(&run, &jname, jgpu);
+                    }
+                    ok
+                });
+                if !ok {
+                    return Err(not_found(&run));
+                }
+                self.audit("pool-submit", &run, "a run submitted from a Space");
+            }
+            PoolOp::List => {}
+            PoolOp::OwnRun => {
+                let run = run_of(&params);
+                if !own(&run) {
+                    return Err(not_found(&run));
+                }
+            }
+            PoolOp::OwnJob => {
+                // A job id names a run only by asking for the job first.
+                let probe = self
+                    .owner()
+                    .pool_request(Request::new(pb::PoolRequestRequest {
+                        target: r.target.clone(),
+                        method: "job".into(),
+                        params_json: params.to_string(),
+                    }))
+                    .await?
+                    .into_inner();
+                let body: Value = serde_json::from_str(&probe.body_json).unwrap_or(Value::Null);
+                let run = body["run"]
+                    .as_str()
+                    .or_else(|| body["run_id"].as_str())
+                    .unwrap_or_default();
+                if probe.status == 200 && !own(run) {
+                    return Err(not_found(&params["id"].to_string()));
+                }
+            }
+            PoolOp::Refused => return deny(),
+        }
+        r.params_json = params.to_string();
+        let out = self.owner().pool_request(Request::new(r)).await?;
+        if method != "runs" {
+            return Ok(out);
+        }
+        // The list holds this tree's runs only.
+        let mut resp = out.into_inner();
+        if resp.status == 200 {
+            let mut body: Value = serde_json::from_str(&resp.body_json).unwrap_or(Value::Null);
+            if let Some(list) = body["runs"].as_array_mut() {
+                let ledger = super::runs::Ledger::load(&home);
+                list.retain(|v| ledger.visible(v["run"].as_str().unwrap_or_default(), root));
+            }
+            resp.body_json = body.to_string();
+        }
+        Ok(Response::new(resp))
     }
 
     /// The caller's own record (its egress, lifetime).
@@ -203,6 +373,17 @@ impl Scoped {
                 return Err(Status::failed_precondition(format!(
                     "a child goes on this computer, `auto`, one of your computers \
                      (`host:<name>`) or a linked cloud; on={location:?} is not one"
+                )));
+            }
+        }
+        // An agent home puts children on the person's computers only where
+        // the person said so (an approval, or an @mention).
+        if let On::Host(machine) = &on {
+            let scope = self.home_scope();
+            if scope.is_home && !scope.may_use_machine(machine) {
+                return Err(refused(&format!(
+                    "use the computer {machine:?} once the person lets this agent use it \
+                     (ask them, or have them @mention it); for now it can make children here or with `auto`"
                 )));
             }
         }
@@ -391,8 +572,26 @@ impl Scoped {
         Some(match name {
             "stop_space" | "start_space" | "space_bash" | "space_write" | "upload" | "download"
             | "list_tools" | "call_tool" | "list_space_windows" => "space",
+            // What the person sees of the Space (its own too): a window or the
+            // whole desktop on their screen.
+            "stream_space_window" | "show_space_pip" | "hide_space_pip" | "open_space_viewer" => {
+                "space"
+            }
             _ => return None,
         })
+    }
+
+    /// Whether the tool shows a Space on the person's desktop: it may name the
+    /// caller itself, not only its children.
+    fn shows_on_desktop(name: &str) -> bool {
+        matches!(
+            name,
+            "stream_space_window"
+                | "show_space_pip"
+                | "hide_space_pip"
+                | "open_space_viewer"
+                | "list_space_windows"
+        )
     }
 
     /// Rewrites a tool call's Space argument to the child's id, refusing
@@ -401,19 +600,184 @@ impl Scoped {
         let Some(key) = Self::tool_target(name) else {
             return Err(refused("use its children's own tools"));
         };
-        let q = args
-            .get(key)
-            .and_then(Value::as_str)
-            .ok_or_else(|| Status::invalid_argument(format!("{name} needs `{key}`")))?
-            .to_owned();
+        let own_name = self
+            .space
+            .split_once(':')
+            .map(|(_, n)| n.to_owned())
+            .unwrap_or_default();
+        let q = match args.get(key).and_then(Value::as_str) {
+            Some(q) => q.to_owned(),
+            // The window or desktop of the Space asking, when it names none.
+            None if Self::shows_on_desktop(name) => self.space.clone(),
+            None => {
+                return Err(Status::invalid_argument(format!("{name} needs `{key}`")));
+            }
+        };
+        if Self::shows_on_desktop(name)
+            && (q == self.space || q == "self" || (!own_name.is_empty() && q == own_name))
+        {
+            args[key] = Value::String(self.space.clone());
+            return Ok(());
+        }
         let child = self.resolve(&q)?;
         args[key] = Value::String(child.id);
+        // A window it shows goes into the Stream section of the Space that
+        // asks, never another Space's or the person's desktop.
+        pin_stream_target(name, args, &self.space);
         Ok(())
+    }
+}
+
+/// A Space shows a child's window only in its own Stream section: whatever
+/// `into` the agent passed (another Space, `desktop`) is replaced.
+fn pin_stream_target(name: &str, args: &mut Value, caller: &str) {
+    if name == "stream_space_window" {
+        args["into"] = Value::String(caller.to_string());
     }
 }
 
 /// What a create of a child asks of its tree's budget (a child on this
 /// machine costs nothing per hour).
+/// A create refused for a reason the agent can do nothing about, in words it can pass on to the
+/// person: what is missing, and that retrying from inside the Space will not help. The host's own
+/// wording talks to someone at a terminal (`cua cache prune`, a build script); an agent that
+/// repeats it sends the person to commands they do not need.
+/// What the thread shows of one create an agent asked for: recorded in
+/// [`cua_spaces::child_creates`] as it goes, so every client draws the same row.
+struct Tracked {
+    home: std::path::PathBuf,
+    /// This create's own record (two creates under one name never share one).
+    id: String,
+    /// Whether it ended in a result or an error. One that is dropped before either (its stream was
+    /// cut) is failed, not left on "creating".
+    done: std::sync::atomic::AtomicBool,
+    os: &'static str,
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+}
+
+impl Tracked {
+    fn start(home: &std::path::Path, parent: &str, child: &pb::CreateSpaceRequest) -> Tracked {
+        let os = cua_spaces::child_creates::os_of_image(&child.image);
+        Tracked {
+            home: home.to_path_buf(),
+            id: cua_spaces::child_creates::start(
+                home,
+                parent,
+                &child.name,
+                &child.name,
+                os,
+                now_ms(),
+            ),
+            done: std::sync::atomic::AtomicBool::new(false),
+            os,
+        }
+    }
+
+    fn set(&self, f: impl FnOnce(&mut cua_spaces::child_creates::Entry)) {
+        cua_spaces::child_creates::update_id(&self.home, &self.id, f);
+    }
+
+    fn progress(&self, p: &pb::CreateSpaceProgress) {
+        let words = cua_spaces::child_creates::phase_words(&p.phase, self.os);
+        self.set(|e| {
+            if !words.is_empty() {
+                e.phase = words;
+            }
+            e.code = p.phase.clone();
+            e.percent = p.fraction.map(|f| (f.clamp(0.0, 1.0) * 100.0) as u8);
+            if !p.space.is_empty() {
+                e.space = p.space.clone();
+            }
+        });
+    }
+
+    fn ready(&self, id: &str) {
+        self.done.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.set(|e| {
+            e.state = cua_spaces::child_creates::State::Ready;
+            e.space = id.to_string();
+            e.phase = "Ready".into();
+            e.percent = None;
+            e.ended_ms = Some(now_ms());
+        });
+    }
+
+    fn failed(&self, why: &str) {
+        self.done.store(true, std::sync::atomic::Ordering::Relaxed);
+        let reason = cua_spaces::child_creates::person_reason(why);
+        // A create the person cancelled is not a failure to show on a row.
+        let cancelled = why.to_lowercase().contains("cancel");
+        self.set(|e| {
+            e.hidden = cancelled;
+            e.state = cua_spaces::child_creates::State::Failed;
+            e.error = reason;
+            e.percent = None;
+            e.ended_ms = Some(now_ms());
+        });
+    }
+}
+
+impl Drop for Tracked {
+    fn drop(&mut self) {
+        if !self.done.load(std::sync::atomic::Ordering::Relaxed) {
+            // The stream was dropped (the agent or its connection went away) before the create ended: it
+            // is cancelled with it, so its row says so instead of staying on "creating".
+            self.failed("The create was interrupted before it finished");
+        }
+    }
+}
+
+pub(crate) fn for_the_agent(status: Status) -> Status {
+    match agent_words(status.message()) {
+        Some(m) => Status::new(status.code(), m),
+        None => status,
+    }
+}
+
+fn agent_words(msg: &str) -> Option<String> {
+    let l = msg.to_lowercase();
+    if l.contains("probe port") && l.contains("not published") {
+        // The agent repeats what it is told to the person: no port numbers or internals.
+        return Some(
+            "The Space's network setup did not come up, so it was not made. Say that plainly; do not quote ports or internals. Offer to try a Linux Space instead, or to try this one again later."
+                .into(),
+        );
+    }
+    if l.contains("stopped while booting") {
+        return Some(
+            "The Space stopped while starting up, so it was not made. Say that plainly and offer to try again or to use a Linux Space instead."
+                .into(),
+        );
+    }
+    if l.contains("not enough disk space") {
+        let between = |a: &str, b: &str| -> Option<String> {
+            let from = msg.find(a)? + a.len();
+            let rest = &msg[from..];
+            Some(rest[..rest.find(b)?].trim().to_string())
+        };
+        let needed = between("needs about ", " and").unwrap_or_else(|| "more than is free".into());
+        let free = between("but only ", " is available").unwrap_or_else(|| "too little".into());
+        return Some(format!(
+            "There is not enough free disk on the person's computer to make this computer: it needs about {needed} and only {free} is free. \
+             Nothing in this Space can free it. Tell the person to free disk space on their computer (delete computers they no longer use in Cua Spaces, \
+             or empty the Trash) and then try again. A Linux computer needs far less, if that can do the job."
+        ));
+    }
+    if l.contains("cua-netgw") && (l.contains("not installed") || l.contains("ships next to")) {
+        return Some(
+            "This installation of Cua Spaces is missing its network gateway, which a child computer needs so its network stays inside its parent's limits. \
+             That is a problem with the install, not with the request: tell the person to update Cua Spaces. Trying again will not help."
+                .into(),
+        );
+    }
+    None
+}
+
 fn ask_of(r: &pb::CreateSpaceRequest) -> super::budget::Ask {
     super::budget::Ask {
         vcpus: if r.cpus == 0 { 2 } else { r.cpus },
@@ -549,8 +913,11 @@ impl SpaceService for Scoped {
     }
 
     async fn list_spaces(&self, _: Request<pb::ListSpacesRequest>) -> R<pb::ListSpacesResponse> {
+        let mut spaces = self.subtree_records()?;
+        let granted = self.granted_records(&spaces)?;
+        spaces.extend(granted);
         Ok(Response::new(pb::ListSpacesResponse {
-            spaces: self.subtree_records()?,
+            spaces,
             ..Default::default()
         }))
     }
@@ -612,8 +979,20 @@ impl SpaceService for Scoped {
         let _held = super::admit(&self.shared, &claims.root, ask).inspect_err(|e| {
             self.audit("refuse", &name, e.message());
         })?;
-        let resp = self.owner().create_space(Request::new(child)).await?;
+        let tracked = Tracked::start(self.spaces().home_dir(), &self.space, &child);
+        let mut resp = match self.owner().create_space(Request::new(child)).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracked.failed(e.message());
+                return Err(for_the_agent(e));
+            }
+        };
+        if let Some(s) = resp.get_mut().space.as_mut() {
+            // The result says how the Space is now (running or not), read now, not left to the registry's last word.
+            (s.power, s.power_state) = state_for_agents(self.spaces().power_of(&s.id));
+        }
         if let Some(s) = &resp.get_ref().space {
+            tracked.ready(&s.id);
             self.audit("spawn", &s.id, &name);
             self.adopt(&claims, &s.id);
             super::record_cost(&self.shared, &claims.root, &s.id, ask);
@@ -633,22 +1012,50 @@ impl SpaceService for Scoped {
         let child = self.child_request(&claims, inner.create.unwrap_or_default())?;
         let ask = priced(self.spaces(), &child, ask_of(&child)).await?;
         let held = super::admit(&self.shared, &claims.root, ask)?;
-        let stream = self
+        let tracked = std::sync::Arc::new(Tracked::start(
+            self.spaces().home_dir(),
+            &self.space,
+            &child,
+        ));
+        let stream = match self
             .owner()
             .create_space_stream(Request::new(pb::CreateSpaceStreamRequest {
                 create: Some(child),
             }))
-            .await?
-            .into_inner();
+            .await
+        {
+            Ok(r) => r.into_inner(),
+            Err(e) => {
+                tracked.failed(e.message());
+                return Err(for_the_agent(e));
+            }
+        };
         let me = self.clone();
         // The reservation lasts as long as the create's stream.
         let adopted = stream.map(move |item| {
             let _ = &held;
+            match &item {
+                Ok(pb::CreateSpaceStreamResponse {
+                    event: Some(pb::create_space_stream_response::Event::Progress(p)),
+                }) => tracked.progress(p),
+                Err(e) => tracked.failed(e.message()),
+                _ => {}
+            }
+            let mut item = item.map_err(for_the_agent);
+            if let Ok(pb::CreateSpaceStreamResponse {
+                event: Some(pb::create_space_stream_response::Event::Result(r)),
+            }) = &mut item
+                && let Some(s) = r.space.as_mut()
+            {
+                // The result says how the Space is now, read now.
+                (s.power, s.power_state) = state_for_agents(me.spaces().power_of(&s.id));
+            }
             if let Ok(pb::CreateSpaceStreamResponse {
                 event: Some(pb::create_space_stream_response::Event::Result(r)),
             }) = &item
                 && let Some(s) = &r.space
             {
+                tracked.ready(&s.id);
                 me.adopt(&claims, &s.id);
                 super::record_cost(&me.shared, &claims.root, &s.id, ask);
             }
@@ -855,6 +1262,21 @@ impl SpaceService for Scoped {
         deny()
     }
 
+    async fn list_stream_windows(
+        &self,
+        _: Request<pb::ListStreamWindowsRequest>,
+    ) -> R<pb::ListStreamWindowsResponse> {
+        // Watching is the person's; an agent shows a window with `stream_space_window`.
+        deny()
+    }
+
+    async fn open_stream_entry(
+        &self,
+        _: Request<pb::OpenStreamEntryRequest>,
+    ) -> R<pb::OpenStreamEntryResponse> {
+        deny()
+    }
+
     async fn get_space_network(
         &self,
         _: Request<pb::GetSpaceNetworkRequest>,
@@ -1005,8 +1427,13 @@ impl SpaceService for Scoped {
         deny()
     }
 
-    async fn pool_request(&self, _: Request<pb::PoolRequestRequest>) -> R<pb::PoolRequestResponse> {
-        deny()
+    async fn pool_request(
+        &self,
+        req: Request<pb::PoolRequestRequest>,
+    ) -> R<pb::PoolRequestResponse> {
+        let claims = claims(&req)?;
+        self.scoped_pool_request(&claims.root, claims.max_depth, req.into_inner())
+            .await
     }
 
     async fn get_space_thumbnail(
@@ -1184,5 +1611,130 @@ impl cua_proto::daemon::v1::share_service_server::ShareService for Scoped {
         _: Request<pb::RemoveShareEdgeRequest>,
     ) -> R<pb::RemoveShareEdgeResponse> {
         Err(refused("share settings are the owner's"))
+    }
+}
+
+#[cfg(test)]
+mod agent_words_tests {
+    use super::*;
+
+    #[test]
+    fn a_network_or_boot_failure_is_said_without_ports_or_internals() {
+        let a = agent_words("invalid request: probe port 3211 is not published by this sandbox")
+            .unwrap();
+        assert!(
+            !a.contains("3211") && a.contains("network setup did not come up"),
+            "{a}"
+        );
+        let b = agent_words("local runtime: lume VM 'mac1' stopped while booting").unwrap();
+        assert!(
+            !b.to_lowercase().contains("lume") && b.contains("stopped while starting up"),
+            "{b}"
+        );
+    }
+
+    #[test]
+    fn a_full_disk_is_said_for_the_person_not_the_terminal() {
+        let m = "not enough disk space to pull ghcr.io/trycua/macos:26: it needs about 55.0 GiB and cua keeps 5.0 GiB free, but only 24.5 GiB is available on /Users/a/.cua (run `cua cache prune` to free space, or lower CUA_DISK_MIN_FREE)";
+        let w = agent_words(m).unwrap();
+        assert!(
+            w.contains("needs about 55.0 GiB") && w.contains("only 24.5 GiB is free"),
+            "{w}"
+        );
+        assert!(!w.contains("cache prune") && !w.contains("CUA_DISK_MIN_FREE"));
+        assert!(w.contains("Tell the person"));
+    }
+
+    #[test]
+    fn a_missing_gateway_is_an_install_problem() {
+        let w = agent_words("cua-netgw is missing: the network gateway ships next to `cua`; set CUA_NETGW to its path (libs/cua/netgw/build.sh builds it)").unwrap();
+        assert!(w.contains("update Cua Spaces") && !w.contains("build.sh"));
+    }
+
+    #[test]
+    fn other_errors_pass_through() {
+        assert!(agent_words("the budget is spent").is_none());
+        assert_eq!(
+            for_the_agent(Status::resource_exhausted("the budget is spent")).message(),
+            "the budget is spent"
+        );
+    }
+}
+
+#[cfg(test)]
+mod stream_scope_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_child_window_can_only_be_shown_in_the_callers_own_space() {
+        for asked in [json!("desktop"), json!("local:other"), Value::Null] {
+            let mut args = json!({"space": "local:kid", "app_name": "Safari", "into": asked});
+            pin_stream_target("stream_space_window", &mut args, "local:me");
+            assert_eq!(args["into"], "local:me");
+        }
+        // Other tools are left alone.
+        let mut args = json!({"space": "local:kid"});
+        pin_stream_target("space_bash", &mut args, "local:me");
+        assert!(args.get("into").is_none());
+    }
+
+    #[test]
+    fn the_tools_for_driving_and_showing_a_child_are_all_scoped() {
+        for tool in [
+            "call_tool",
+            "list_tools",
+            "space_bash",
+            "list_space_windows",
+            "stream_space_window",
+        ] {
+            assert_eq!(Scoped::tool_target(tool), Some("space"), "{tool}");
+        }
+        assert_eq!(Scoped::tool_target("stream_endpoint"), None);
+    }
+}
+
+#[cfg(test)]
+mod tracked_tests {
+    use super::*;
+
+    fn req(name: &str) -> pb::CreateSpaceRequest {
+        pb::CreateSpaceRequest {
+            name: name.into(),
+            image: "linux:24.04".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_create_whose_stream_is_dropped_is_failed_not_left_on_creating() {
+        let d = tempfile::tempdir().unwrap();
+        let t = Tracked::start(d.path(), "local:p", &req("a"));
+        drop(t);
+        let e = &cua_spaces::child_creates::of(d.path(), "local:p")[0];
+        assert_eq!(e.state, cua_spaces::child_creates::State::Failed);
+        assert!(e.error.contains("interrupted"), "{}", e.error);
+    }
+
+    #[test]
+    fn a_create_that_finished_is_not_touched_when_dropped() {
+        let d = tempfile::tempdir().unwrap();
+        let t = Tracked::start(d.path(), "local:p", &req("a"));
+        t.ready("local:a");
+        drop(t);
+        let e = &cua_spaces::child_creates::of(d.path(), "local:p")[0];
+        assert_eq!(e.state, cua_spaces::child_creates::State::Ready);
+    }
+
+    #[test]
+    fn two_creates_under_one_name_are_tracked_apart() {
+        let d = tempfile::tempdir().unwrap();
+        let a = Tracked::start(d.path(), "local:p", &req("same"));
+        let b = Tracked::start(d.path(), "local:p", &req("same"));
+        b.failed("nope");
+        let all = cua_spaces::child_creates::of(d.path(), "local:p");
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].state, cua_spaces::child_creates::State::Creating);
+        drop(a);
     }
 }

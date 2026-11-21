@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Window scroll pixels use the same screenshot context as pixel clicks.
 
 use cua_driver_core::{

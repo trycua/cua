@@ -44,7 +44,14 @@ describe("the bundled daemon's signature", () => {
   });
 
   it("leaves every other file as electron-builder has it", () => {
-    for (const file of [app, `${app}/Contents/MacOS/Cua Spaces`, `${app}/Contents/Resources/native/libcua_spaces_ffi.dylib`, `${app}/Contents/Resources/native/cua_node_runtime.node`, `${app}/Contents/Helpers/Cua Spaces Notch.app`, `${app}/Contents/Resources/web/cua`]) {
+    for (const file of [
+      app,
+      `${app}/Contents/MacOS/Cua Spaces`,
+      `${app}/Contents/Resources/native/libcua_spaces_ffi.dylib`,
+      `${app}/Contents/Resources/native/cua_node_runtime.node`,
+      `${app}/Contents/Helpers/Cua Spaces Notch.app`,
+      `${app}/Contents/Resources/web/cua`,
+    ]) {
       const base = { entitlements: "x.plist", additionalArguments: [] };
       expect(signer.withDaemonIdentity(base, file)).toBe(base);
     }
@@ -115,7 +122,12 @@ describe("the Linux policy", () => {
 
 describe("the Windows daemon's signature", () => {
   const configPath = require.resolve("../electron-builder.config.cjs");
-  const azure = { AZURE_SIGNING_ENDPOINT: "https://eus.codesigning.azure.net", AZURE_SIGNING_ACCOUNT: "acct", AZURE_SIGNING_PROFILE: "profile", AZURE_SIGNING_PUBLISHER: "Cua AI, Inc." };
+  const azure = {
+    AZURE_SIGNING_ENDPOINT: "https://eus.codesigning.azure.net",
+    AZURE_SIGNING_ACCOUNT: "acct",
+    AZURE_SIGNING_PROFILE: "profile",
+    AZURE_SIGNING_PUBLISHER: "Cua AI, Inc.",
+  };
 
   /** The config as CI loads it with `env`. */
   function load(env: Record<string, string>) {

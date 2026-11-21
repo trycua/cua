@@ -13,7 +13,6 @@
 #[cfg(windows)]
 mod windows;
 
-use std::io::{Read, Write};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
@@ -61,13 +60,22 @@ impl ConnectPolicy {
         }
     }
 
+    /// The pause before the next attempt, cut to what is left of the budget,
+    /// or `None` once the budget is spent.
+    fn pause(self, give_up: Instant) -> Option<Duration> {
+        let left = give_up.saturating_duration_since(Instant::now());
+        (!left.is_zero()).then(|| self.retry.min(left))
+    }
+
     fn retry<T>(self, mut attempt: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
         let give_up = Instant::now() + self.budget;
         loop {
             match attempt() {
                 Ok(connected) => return Ok(connected),
-                Err(_) if Instant::now() < give_up => std::thread::sleep(self.retry),
-                Err(error) => return Err(error),
+                Err(error) => match self.pause(give_up) {
+                    Some(pause) => std::thread::sleep(pause),
+                    None => return Err(error),
+                },
             }
         }
     }
@@ -96,7 +104,7 @@ type Stream = std::os::unix::net::UnixStream;
 #[cfg(windows)]
 type Stream = self::windows::PipeStream;
 
-/// A blocking connection to a Unix socket or named pipe.
+/// A synchronous connection to a Unix socket or named pipe.
 #[derive(Debug)]
 pub struct LocalIpcClient {
     stream: Stream,
@@ -107,6 +115,10 @@ pub struct LocalIpcClient {
 impl LocalIpcClient {
     pub fn connect(path: &str, policy: ConnectPolicy) -> std::io::Result<Self> {
         let stream = policy.retry(|| Stream::connect(path))?;
+        // Every read and write waits in `poll` for at most what is left of
+        // its slice, so none can outlast the exchange deadline.
+        #[cfg(unix)]
+        stream.set_nonblocking(true)?;
         Ok(Self {
             stream,
             pending: Vec::new(),
@@ -138,28 +150,66 @@ impl LocalIpcClient {
     }
 }
 
-/// The timeouts each poll slice sets, on a socket or a pipe.
-trait Timeouts {
-    fn set_read_timeout(&self, timeout: Duration) -> std::io::Result<()>;
-    fn set_write_timeout(&self, timeout: Duration) -> std::io::Result<()>;
+/// One read or write that waits at most `timeout` for the peer. A wait that
+/// runs out fails with `TimedOut` or `WouldBlock`.
+trait Transport {
+    fn read_within(&mut self, buffer: &mut [u8], timeout: Duration) -> std::io::Result<usize>;
+    fn write_within(&mut self, buffer: &[u8], timeout: Duration) -> std::io::Result<usize>;
 }
 
+/// On a nonblocking socket.
 #[cfg(unix)]
-impl Timeouts for std::os::unix::net::UnixStream {
-    fn set_read_timeout(&self, timeout: Duration) -> std::io::Result<()> {
-        std::os::unix::net::UnixStream::set_read_timeout(self, Some(timeout))
+impl Transport for std::os::unix::net::UnixStream {
+    fn read_within(&mut self, buffer: &mut [u8], timeout: Duration) -> std::io::Result<usize> {
+        use std::io::Read as _;
+        let stream: &Self = self;
+        when_ready(stream, libc::POLLIN, timeout, || {
+            let mut stream = stream;
+            stream.read(buffer)
+        })
     }
-    fn set_write_timeout(&self, timeout: Duration) -> std::io::Result<()> {
-        std::os::unix::net::UnixStream::set_write_timeout(self, Some(timeout))
+
+    fn write_within(&mut self, buffer: &[u8], timeout: Duration) -> std::io::Result<usize> {
+        use std::io::Write as _;
+        let stream: &Self = self;
+        when_ready(stream, libc::POLLOUT, timeout, || {
+            let mut stream = stream;
+            stream.write(buffer)
+        })
     }
 }
 
-/// macOS rejects `setsockopt` with `EINVAL` once the peer has closed its end,
-/// even while the peer's reply is still buffered for us to read. The read or
-/// write that follows reports the close itself.
-fn unless_peer_closed(result: std::io::Result<()>) -> std::io::Result<()> {
-    match result {
-        Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => Ok(()),
+/// Run `io`; if the socket is not ready, wait up to `timeout` for `events`
+/// and run it once more.
+#[cfg(unix)]
+fn when_ready<T>(
+    stream: &std::os::unix::net::UnixStream,
+    events: libc::c_short,
+    timeout: Duration,
+    mut io: impl FnMut() -> std::io::Result<T>,
+) -> std::io::Result<T> {
+    use std::os::fd::AsRawFd as _;
+    match io() {
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+            let mut descriptor = libc::pollfd {
+                fd: stream.as_raw_fd(),
+                events,
+                revents: 0,
+            };
+            let milliseconds = timeout
+                .as_nanos()
+                .div_ceil(1_000_000)
+                .min(libc::c_int::MAX as u128) as libc::c_int;
+            // SAFETY: one valid `pollfd` that outlives the call.
+            match unsafe { libc::poll(&mut descriptor, 1, milliseconds) } {
+                -1 => Err(std::io::Error::last_os_error()),
+                0 => Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!("socket not ready after {milliseconds} ms"),
+                )),
+                _ => io(),
+            }
+        }
         other => other,
     }
 }
@@ -175,11 +225,7 @@ fn is_poll_timeout(error: &std::io::Error) -> bool {
 
 /// Write all of `bytes`, treating a write that times out as a peer that is
 /// still draining, until `deadline`.
-fn write_all<S: Write + Timeouts>(
-    stream: &mut S,
-    bytes: &[u8],
-    deadline: Instant,
-) -> std::io::Result<()> {
+fn write_all<S: Transport>(stream: &mut S, bytes: &[u8], deadline: Instant) -> std::io::Result<()> {
     let mut written = 0;
     while written < bytes.len() {
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -192,8 +238,7 @@ fn write_all<S: Write + Timeouts>(
                 ),
             ));
         }
-        unless_peer_closed(stream.set_write_timeout(remaining.min(WRITE_POLL)))?;
-        match stream.write(&bytes[written..]) {
+        match stream.write_within(&bytes[written..], remaining.min(WRITE_POLL)) {
             Ok(0) => {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::WriteZero,
@@ -205,12 +250,12 @@ fn write_all<S: Write + Timeouts>(
             Err(error) => return Err(error),
         }
     }
-    stream.flush()
+    Ok(())
 }
 
 /// Read up to the next newline, keeping any bytes after it in `pending` for
 /// the next line.
-fn read_line<S: Read + Timeouts>(
+fn read_line<S: Transport>(
     stream: &mut S,
     pending: &mut Vec<u8>,
     deadline: Instant,
@@ -232,9 +277,7 @@ fn read_line<S: Read + Timeouts>(
                 received: pending.len(),
             });
         }
-        unless_peer_closed(stream.set_read_timeout(remaining.min(poll)))
-            .map_err(ExchangeError::Read)?;
-        match stream.read(&mut chunk) {
+        match stream.read_within(&mut chunk, remaining.min(poll)) {
             Ok(0) if pending.is_empty() => return Err(ExchangeError::Closed),
             Ok(0) => break std::mem::take(pending),
             Ok(read) => pending.extend_from_slice(&chunk[..read]),
@@ -266,8 +309,10 @@ impl LocalIpcStream {
             let attempt = tokio::net::windows::named_pipe::ClientOptions::new().open(path);
             match attempt {
                 Ok(stream) => return Ok(Self(stream)),
-                Err(_) if Instant::now() < give_up => tokio::time::sleep(policy.retry).await,
-                Err(error) => return Err(error),
+                Err(error) => match policy.pause(give_up) {
+                    Some(pause) => tokio::time::sleep(pause).await,
+                    None => return Err(error),
+                },
             }
         }
     }
@@ -303,8 +348,8 @@ impl tokio::io::AsyncWrite for LocalIpcStream {
 
 #[cfg(test)]
 mod tests {
-    use super::{read_line, write_all, ExchangeError, Timeouts};
-    use std::io::{Error, ErrorKind, Read, Write};
+    use super::{read_line, write_all, ConnectPolicy, ExchangeError, Transport};
+    use std::io::{Error, ErrorKind};
     use std::time::{Duration, Instant};
 
     /// Refuses its first `stalls` writes with `WouldBlock`, then takes at most
@@ -315,8 +360,8 @@ mod tests {
         written: Vec<u8>,
     }
 
-    impl Write for SlowPeer {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+    impl Transport for SlowPeer {
+        fn write_within(&mut self, buf: &[u8], _: Duration) -> std::io::Result<usize> {
             if self.stalls > 0 {
                 self.stalls -= 1;
                 return Err(Error::new(ErrorKind::WouldBlock, "stalled"));
@@ -325,24 +370,28 @@ mod tests {
             self.written.extend_from_slice(&buf[..taken]);
             Ok(taken)
         }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl Read for SlowPeer {
-        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+        fn read_within(&mut self, _: &mut [u8], _: Duration) -> std::io::Result<usize> {
             Err(Error::new(ErrorKind::WouldBlock, "nothing yet"))
         }
     }
 
-    impl Timeouts for SlowPeer {
-        fn set_read_timeout(&self, _: Duration) -> std::io::Result<()> {
-            Ok(())
-        }
-        fn set_write_timeout(&self, _: Duration) -> std::io::Result<()> {
-            Ok(())
-        }
+    #[test]
+    fn a_retry_never_sleeps_past_its_budget() {
+        let policy = ConnectPolicy {
+            retry: Duration::from_secs(5),
+            budget: Duration::from_millis(100),
+        };
+        let started = Instant::now();
+        let mut attempts = 0;
+        let error = policy
+            .retry(|| -> std::io::Result<()> {
+                attempts += 1;
+                Err(Error::new(ErrorKind::NotFound, "absent"))
+            })
+            .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::NotFound);
+        assert_eq!(attempts, 2);
+        assert!(started.elapsed() < Duration::from_millis(600));
     }
 
     fn soon() -> Instant {
@@ -491,7 +540,37 @@ mod tests {
                 "{error:?}"
             );
             assert!(started.elapsed() >= Duration::from_millis(300));
-            assert!(started.elapsed() < Duration::from_secs(3));
+            assert!(started.elapsed() < Duration::from_millis(500));
+            release.send(()).unwrap();
+            server.join().unwrap();
+        }
+
+        #[test]
+        fn a_server_that_never_reads_hits_the_write_deadline() {
+            let directory = socket_dir();
+            let path = directory.path().join("full.sock");
+            let listener = UnixListener::bind(&path).unwrap();
+            let (release, released) = std::sync::mpsc::channel::<()>();
+            let server = std::thread::spawn(move || {
+                let (_stream, _) = listener.accept().unwrap();
+                let _ = released.recv();
+            });
+            let mut client =
+                LocalIpcClient::connect(path.to_str().unwrap(), ConnectPolicy::ONCE).unwrap();
+            let request = vec![b'x'; 16 * 1024 * 1024];
+            let started = Instant::now();
+            let error = client
+                .exchange_line(&request, Instant::now() + Duration::from_millis(200))
+                .unwrap_err();
+            let ExchangeError::Write(error) = error else {
+                panic!("{error:?}");
+            };
+            assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+            assert!(
+                started.elapsed() < Duration::from_millis(400),
+                "{:?}",
+                started.elapsed()
+            );
             release.send(()).unwrap();
             server.join().unwrap();
         }

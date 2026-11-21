@@ -11,9 +11,7 @@
 //! fails with `TimedOut`, as a socket read past `SO_RCVTIMEO` does, which lets
 //! the shared poll loops run unchanged over it.
 
-use std::cell::Cell;
 use std::fs::File;
-use std::io::{Read, Write};
 use std::os::windows::ffi::OsStrExt as _;
 use std::os::windows::fs::OpenOptionsExt as _;
 use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle};
@@ -48,30 +46,24 @@ pub(crate) fn wait_named_pipe(path: &str) -> std::io::Result<()> {
 #[derive(Debug)]
 pub(super) struct PipeStream {
     file: File,
-    read_timeout: Cell<Option<Duration>>,
-    write_timeout: Cell<Option<Duration>>,
 }
 
 impl PipeStream {
-    /// Open `path` once. Reads and writes start with no timeout.
+    /// Open `path` once.
     pub(super) fn connect(path: &str) -> std::io::Result<Self> {
         let file = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .custom_flags(FILE_FLAG_OVERLAPPED.0)
             .open(path)?;
-        Ok(Self {
-            file,
-            read_timeout: Cell::new(None),
-            write_timeout: Cell::new(None),
-        })
+        Ok(Self { file })
     }
 
     /// Start one overlapped operation with `start` and wait at most `timeout`
     /// for it. Returns the bytes it transferred.
     fn transfer(
         &self,
-        timeout: Option<Duration>,
+        timeout: Duration,
         start: impl FnOnce(HANDLE, *mut OVERLAPPED) -> windows::core::Result<()>,
     ) -> std::io::Result<usize> {
         let file = HANDLE(self.file.as_raw_handle());
@@ -92,9 +84,10 @@ impl PipeStream {
             }
         }
 
-        let milliseconds = timeout.map_or(INFINITE, |timeout| {
-            timeout.as_millis().clamp(1, u128::from(INFINITE - 1)) as u32
-        });
+        let milliseconds = timeout
+            .as_nanos()
+            .div_ceil(1_000_000)
+            .clamp(1, u128::from(INFINITE - 1)) as u32;
         // SAFETY: `event` stays open for the whole wait.
         let waited = unsafe { WaitForSingleObject(HANDLE(event.as_raw_handle()), milliseconds) };
         let timed_out = if waited == WAIT_OBJECT_0 {
@@ -132,18 +125,6 @@ impl PipeStream {
     }
 }
 
-impl super::Timeouts for PipeStream {
-    fn set_read_timeout(&self, timeout: Duration) -> std::io::Result<()> {
-        self.read_timeout.set(Some(timeout));
-        Ok(())
-    }
-
-    fn set_write_timeout(&self, timeout: Duration) -> std::io::Result<()> {
-        self.write_timeout.set(Some(timeout));
-        Ok(())
-    }
-}
-
 fn is_win32(error: &windows::core::Error, code: WIN32_ERROR) -> bool {
     error.code() == HRESULT::from_win32(code.0)
 }
@@ -169,11 +150,11 @@ fn broken_pipe_as_eof(error: std::io::Error) -> std::io::Error {
     }
 }
 
-impl Read for PipeStream {
-    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+impl super::Transport for PipeStream {
+    fn read_within(&mut self, buffer: &mut [u8], timeout: Duration) -> std::io::Result<usize> {
         let len = buffer.len().min(u32::MAX as usize);
         let buffer = &mut buffer[..len];
-        let result = self.transfer(self.read_timeout.get(), |file, overlapped| {
+        let result = self.transfer(timeout, |file, overlapped| {
             // SAFETY: `transfer` keeps the buffer borrowed until the read settles.
             unsafe { ReadFile(file, Some(buffer), None, Some(overlapped)) }
         });
@@ -182,12 +163,10 @@ impl Read for PipeStream {
             other => other,
         }
     }
-}
 
-impl Write for PipeStream {
-    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+    fn write_within(&mut self, buffer: &[u8], timeout: Duration) -> std::io::Result<usize> {
         let buffer = &buffer[..buffer.len().min(u32::MAX as usize)];
-        self.transfer(self.write_timeout.get(), |file, overlapped| {
+        self.transfer(timeout, |file, overlapped| {
             // SAFETY: `transfer` keeps the buffer borrowed until the write settles.
             unsafe { WriteFile(file, Some(buffer), None, Some(overlapped)) }
         })
@@ -199,17 +178,12 @@ impl Write for PipeStream {
             }
         })
     }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::{ConnectPolicy, ExchangeError, LocalIpcClient, LocalIpcStream, Timeouts};
+    use super::super::{ConnectPolicy, ExchangeError, LocalIpcClient, LocalIpcStream, Transport};
     use super::PipeStream;
-    use std::io::{Read, Write};
     use std::time::{Duration, Instant};
     use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
     use tokio::net::windows::named_pipe::ServerOptions;
@@ -237,17 +211,19 @@ mod tests {
 
         tokio::task::spawn_blocking(move || {
             let mut client = PipeStream::connect(&name).unwrap();
-            client.set_read_timeout(Duration::from_millis(200)).unwrap();
             let mut buffer = [0_u8; 16];
             let started = Instant::now();
-            let error = client.read(&mut buffer).unwrap_err();
+            let error = client
+                .read_within(&mut buffer, Duration::from_millis(200))
+                .unwrap_err();
             assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
             assert!(started.elapsed() >= Duration::from_millis(200));
             assert!(started.elapsed() < Duration::from_secs(5));
 
             release_tx.send(()).unwrap();
-            client.set_read_timeout(Duration::from_secs(5)).unwrap();
-            let read = client.read(&mut buffer).unwrap();
+            let read = client
+                .read_within(&mut buffer, Duration::from_secs(5))
+                .unwrap();
             assert_eq!(&buffer[..read], b"late\n");
         })
         .await
@@ -270,11 +246,19 @@ mod tests {
 
         tokio::task::spawn_blocking(move || {
             let mut client = PipeStream::connect(&name).unwrap();
-            client.set_read_timeout(Duration::from_secs(5)).unwrap();
             let mut received = Vec::new();
-            client.read_to_end(&mut received).unwrap();
+            let mut buffer = [0_u8; 16];
+            loop {
+                match client
+                    .read_within(&mut buffer, Duration::from_secs(5))
+                    .unwrap()
+                {
+                    0 => break,
+                    read => received.extend_from_slice(&buffer[..read]),
+                }
+            }
             assert_eq!(received, b"bye\n");
-            assert!(client.write(b"x").is_err());
+            assert!(client.write_within(b"x", Duration::from_secs(5)).is_err());
         })
         .await
         .unwrap();
@@ -314,7 +298,40 @@ mod tests {
             "{error:?}"
         );
         assert!(elapsed >= Duration::from_millis(300));
-        assert!(elapsed < Duration::from_secs(3));
+        assert!(elapsed < Duration::from_millis(500));
+        release_tx.send(()).unwrap();
+        served.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_server_that_never_reads_hits_the_write_deadline() {
+        let name = pipe_name("full");
+        let server = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&name)
+            .unwrap();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+        let served = tokio::spawn(async move {
+            server.connect().await.unwrap();
+            release_rx.await.unwrap();
+        });
+
+        let (error, elapsed) = tokio::task::spawn_blocking(move || {
+            let mut client = LocalIpcClient::connect(&name, ConnectPolicy::REQUEST).unwrap();
+            let request = vec![b'x'; 16 * 1024 * 1024];
+            let started = Instant::now();
+            let error = client
+                .exchange_line(&request, Instant::now() + Duration::from_millis(200))
+                .unwrap_err();
+            (error, started.elapsed())
+        })
+        .await
+        .unwrap();
+        let ExchangeError::Write(error) = error else {
+            panic!("{error:?}");
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(elapsed < Duration::from_millis(400), "{elapsed:?}");
         release_tx.send(()).unwrap();
         served.await.unwrap();
     }

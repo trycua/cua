@@ -555,6 +555,15 @@
       "description": "Target process ID. Required unless scope is \"desktop\" or element_token is supplied (the token carries the pid).",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "Wait for a window change this action caused: \"default\" (macOS none, Linux X11 150 ms), \"report\" (300 ms, Linux X11 800 ms) or \"none\". See EMBEDDING.md.",
+      "enum": [
+       "default",
+       "report",
+       "none"
+      ],
+      "type": "string"
+     },
      "scope": {
       "default": "window",
       "description": "Coordinate frame (default \"window\"). Pass \"desktop\" with x,y and no pid/window_id for a screen-absolute click in get_desktop_state coordinates.",
@@ -656,6 +665,15 @@
       "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "Wait for a window change this action caused: \"default\" (macOS none, Linux X11 150 ms), \"report\" (300 ms, Linux X11 800 ms) or \"none\". See EMBEDDING.md.",
+      "enum": [
+       "default",
+       "report",
+       "none"
+      ],
+      "type": "string"
+     },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
@@ -726,6 +744,15 @@
      "pid": {
       "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
+     },
+     "post_action_wait": {
+      "description": "Wait for a window change this action caused: \"default\" (macOS none, Linux X11 150 ms), \"report\" (300 ms, Linux X11 800 ms) or \"none\". See EMBEDDING.md.",
+      "enum": [
+       "default",
+       "report",
+       "none"
+      ],
+      "type": "string"
      },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
@@ -815,6 +842,15 @@
      "pid": {
       "description": "Target process ID. Required unless scope is \"desktop\".",
       "type": "integer"
+     },
+     "post_action_wait": {
+      "description": "Wait for a window change this action caused: \"default\" (macOS none, Linux X11 150 ms), \"report\" (300 ms, Linux X11 800 ms) or \"none\". See EMBEDDING.md.",
+      "enum": [
+       "default",
+       "report",
+       "none"
+      ],
+      "type": "string"
      },
      "scope": {
       "default": "window",
@@ -1204,6 +1240,15 @@
       "description": "Target process ID. Omit with scope \"desktop\" to type into the focused application.",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "Wait for a window change this action caused: \"default\" (macOS none, Linux X11 150 ms), \"report\" (300 ms, Linux X11 800 ms) or \"none\". See EMBEDDING.md.",
+      "enum": [
+       "default",
+       "report",
+       "none"
+      ],
+      "type": "string"
+     },
      "scope": {
       "default": "window",
       "description": "Use \"desktop\" with no pid to type into the focused application. Default \"window\".",
@@ -1314,6 +1359,15 @@
       "description": "Target process ID. Omit with scope \"desktop\" to send the key to the focused application.",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "Wait for a window change this action caused: \"default\" (macOS none, Linux X11 150 ms), \"report\" (300 ms, Linux X11 800 ms) or \"none\". See EMBEDDING.md.",
+      "enum": [
+       "default",
+       "report",
+       "none"
+      ],
+      "type": "string"
+     },
      "scope": {
       "default": "window",
       "description": "Use \"desktop\" with no pid to send the key to the focused application. Default \"window\".",
@@ -1409,6 +1463,15 @@
       "description": "Target process ID. Omit with scope \"desktop\" to send the chord to the focused application.",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "Wait for a window change this action caused: \"default\" (macOS none, Linux X11 150 ms), \"report\" (300 ms, Linux X11 800 ms) or \"none\". See EMBEDDING.md.",
+      "enum": [
+       "default",
+       "report",
+       "none"
+      ],
+      "type": "string"
+     },
      "scope": {
       "default": "window",
       "description": "Use \"desktop\" with no pid to send the chord to the focused application. Default \"window\".",
@@ -1496,6 +1559,15 @@
       "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "Wait for a window change this action caused: \"default\" (macOS none, Linux X11 150 ms), \"report\" (300 ms, Linux X11 800 ms) or \"none\". See EMBEDDING.md.",
+      "enum": [
+       "default",
+       "report",
+       "none"
+      ],
+      "type": "string"
+     },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
@@ -1577,6 +1649,15 @@
      "pid": {
       "description": "Target process ID. Required unless scope is \"desktop\" or element_token is supplied (the token carries the pid).",
       "type": "integer"
+     },
+     "post_action_wait": {
+      "description": "Wait for a window change this action caused: \"default\" (macOS none, Linux X11 150 ms), \"report\" (300 ms, Linux X11 800 ms) or \"none\". See EMBEDDING.md.",
+      "enum": [
+       "default",
+       "report",
+       "none"
+      ],
+      "type": "string"
      },
      "scope": {
       "default": "window",

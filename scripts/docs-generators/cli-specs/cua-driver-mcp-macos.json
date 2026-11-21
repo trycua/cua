@@ -568,9 +568,10 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "\"none\" returns without waiting up to 300 ms for a new window, menu, dialog or foreground change; a change seen later is reported on the next action's result.",
+      "description": "Wait for a window change this action caused: \"default\" (macOS none, Linux X11 150 ms), \"report\" (300 ms, Linux X11 800 ms) or \"none\". See EMBEDDING.md.",
       "enum": [
        "default",
+       "report",
        "none"
       ],
       "type": "string"
@@ -659,9 +660,10 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "\"none\" returns without waiting up to 300 ms for a new window, menu, dialog or foreground change; a change seen later is reported on the next action's result.",
+      "description": "Wait for a window change this action caused: \"default\" (macOS none, Linux X11 150 ms), \"report\" (300 ms, Linux X11 800 ms) or \"none\". See EMBEDDING.md.",
       "enum": [
        "default",
+       "report",
        "none"
       ],
       "type": "string"
@@ -721,9 +723,10 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "\"none\" returns without waiting up to 300 ms for a new window, menu, dialog or foreground change; a change seen later is reported on the next action's result.",
+      "description": "Wait for a window change this action caused: \"default\" (macOS none, Linux X11 150 ms), \"report\" (300 ms, Linux X11 800 ms) or \"none\". See EMBEDDING.md.",
       "enum": [
        "default",
+       "report",
        "none"
       ],
       "type": "string"
@@ -805,9 +808,10 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "\"none\" returns without waiting up to 300 ms for a new window, menu, dialog or foreground change; a change seen later is reported on the next action's result.",
+      "description": "Wait for a window change this action caused: \"default\" (macOS none, Linux X11 150 ms), \"report\" (300 ms, Linux X11 800 ms) or \"none\". See EMBEDDING.md.",
       "enum": [
        "default",
+       "report",
        "none"
       ],
       "type": "string"
@@ -914,9 +918,10 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "\"none\" returns without waiting up to 300 ms for a new window, menu, dialog or foreground change; a change seen later is reported on the next action's result.",
+      "description": "Wait for a window change this action caused: \"default\" (macOS none, Linux X11 150 ms), \"report\" (300 ms, Linux X11 800 ms) or \"none\". See EMBEDDING.md.",
       "enum": [
        "default",
+       "report",
        "none"
       ],
       "type": "string"
@@ -1023,9 +1028,10 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "\"none\" returns without waiting up to 300 ms for a new window, menu, dialog or foreground change; a change seen later is reported on the next action's result.",
+      "description": "Wait for a window change this action caused: \"default\" (macOS none, Linux X11 150 ms), \"report\" (300 ms, Linux X11 800 ms) or \"none\". See EMBEDDING.md.",
       "enum": [
        "default",
+       "report",
        "none"
       ],
       "type": "string"
@@ -1125,9 +1131,10 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "\"none\" returns without waiting up to 300 ms for a new window, menu, dialog or foreground change; a change seen later is reported on the next action's result.",
+      "description": "Wait for a window change this action caused: \"default\" (macOS none, Linux X11 150 ms), \"report\" (300 ms, Linux X11 800 ms) or \"none\". See EMBEDDING.md.",
       "enum": [
        "default",
+       "report",
        "none"
       ],
       "type": "string"
@@ -1211,9 +1218,10 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "\"none\" returns without waiting up to 300 ms for a new window, menu, dialog or foreground change; a change seen later is reported on the next action's result.",
+      "description": "Wait for a window change this action caused: \"default\" (macOS none, Linux X11 150 ms), \"report\" (300 ms, Linux X11 800 ms) or \"none\". See EMBEDDING.md.",
       "enum": [
        "default",
+       "report",
        "none"
       ],
       "type": "string"
@@ -1288,9 +1296,10 @@
       "type": "integer"
      },
      "post_action_wait": {
-      "description": "\"none\" returns without waiting up to 300 ms for a new window, menu, dialog or foreground change; a change seen later is reported on the next action's result.",
+      "description": "Wait for a window change this action caused: \"default\" (macOS none, Linux X11 150 ms), \"report\" (300 ms, Linux X11 800 ms) or \"none\". See EMBEDDING.md.",
       "enum": [
        "default",
+       "report",
        "none"
       ],
       "type": "string"

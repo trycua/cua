@@ -824,9 +824,19 @@ pub(crate) fn new_menu_windows(pid: i32, before: &[u32]) -> Option<usize> {
 /// (polled for up to 400 ms), `Some(false)` when one still is, `None` when
 /// that could not be read.
 pub(crate) fn wait_for_new_menus_closed(pid: i32, before: &[u32]) -> Option<bool> {
+    poll_until_no_menu(|| new_menu_windows(pid, before), MENU_CLOSE_TIMEOUT)
+}
+
+/// How long a press on a menu item waits for its menu to close.
+pub(crate) const MENU_CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// `Some(true)` once none of the menu windows `open` of `pid` is on screen
+/// (polled for up to [`MENU_CLOSE_TIMEOUT`]), `Some(false)` when one still is,
+/// `None` when that could not be read.
+pub(crate) fn wait_for_menus_closed(pid: i32, open: &[u32]) -> Option<bool> {
     poll_until_no_menu(
-        || new_menu_windows(pid, before),
-        std::time::Duration::from_millis(400),
+        || menu_window_ids(pid).map(|ids| ids.iter().filter(|id| open.contains(id)).count()),
+        MENU_CLOSE_TIMEOUT,
     )
 }
 

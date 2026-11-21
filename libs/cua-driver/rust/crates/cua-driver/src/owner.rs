@@ -30,6 +30,14 @@ pub(crate) fn watch(pid: u32) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// What `Owner::open` returns when no running process has the PID.
+fn not_running() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        "no running process has this PID",
+    )
+}
+
 /// Resolves once the watched owner has exited; never, when none is watched.
 pub(crate) async fn exited() {
     if let Some(receiver) = OWNER_EXITED.get() {
@@ -42,7 +50,7 @@ pub(crate) async fn exited() {
 
 #[cfg(target_os = "windows")]
 mod imp {
-    use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
+    use windows::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, HANDLE, WAIT_OBJECT_0};
     use windows::Win32::System::Threading::{
         OpenProcess, WaitForSingleObject, INFINITE, PROCESS_SYNCHRONIZE,
     };
@@ -57,12 +65,18 @@ mod imp {
             // SAFETY: plain Win32 call; the returned handle is owned by `Owner`.
             let owner = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) }
                 .map(Self)
-                .map_err(std::io::Error::from)?;
+                .map_err(|error| {
+                    if error.code() == ERROR_INVALID_PARAMETER.to_hresult() {
+                        super::not_running()
+                    } else {
+                        std::io::Error::from(error)
+                    }
+                })?;
             // A process object outlives its process while any handle to it is
             // open, so a signalled handle is an owner that already exited.
             // SAFETY: `owner.0` is a live process handle opened with SYNCHRONIZE.
             if unsafe { WaitForSingleObject(owner.0, 0) } == WAIT_OBJECT_0 {
-                return Err(std::io::Error::other("the process has already exited"));
+                return Err(super::not_running());
             }
             Ok(owner)
         }
@@ -120,7 +134,7 @@ mod imp {
                 )
             };
             if registered < 0 {
-                return Err(std::io::Error::last_os_error());
+                return Err(gone_as_not_running(std::io::Error::last_os_error()));
             }
             let owner = Self(queue);
             let now = libc::timespec {
@@ -128,7 +142,7 @@ mod imp {
                 tv_nsec: 0,
             };
             if owner.next_event(&now) != 0 {
-                return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+                return Err(super::not_running());
             }
             Ok(owner)
         }
@@ -165,6 +179,14 @@ mod imp {
     fn interrupted(result: libc::c_int) -> bool {
         result < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
     }
+
+    fn gone_as_not_running(error: std::io::Error) -> std::io::Error {
+        if error.raw_os_error() == Some(libc::ESRCH) {
+            super::not_running()
+        } else {
+            error
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -190,16 +212,18 @@ mod imp {
                 let fd = unsafe { OwnedFd::from_raw_fd(fd as i32) };
                 // pidfd_open accepts an exited owner that is not yet reaped.
                 if exited(&fd, 0) {
-                    return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+                    return Err(super::not_running());
                 }
                 return Ok(Self::Pidfd(fd));
             }
             let error = std::io::Error::last_os_error();
-            if error.raw_os_error() != Some(libc::ENOSYS) {
-                return Err(error);
+            match error.raw_os_error() {
+                Some(libc::ENOSYS) => {}
+                Some(libc::ESRCH) => return Err(super::not_running()),
+                _ => return Err(error),
             }
             if !alive(pid) {
-                return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+                return Err(super::not_running());
             }
             Ok(Self::Polled(pid))
         }
@@ -237,22 +261,35 @@ mod imp {
     }
 
     /// EPERM still proves the PID exists; only ESRCH proves it is gone. A
-    /// zombie still answers `kill`, so its `/proc` state is checked too.
+    /// zombie still answers `kill`, so its `/proc` stat is checked too.
     pub(super) fn alive(pid: libc::pid_t) -> bool {
         // SAFETY: signal 0 checks existence without delivering a signal.
         let signalled = unsafe { libc::kill(pid, 0) };
         if signalled != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
             return false;
         }
-        !std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| zombie(&stat))
+        !std::fs::read(format!("/proc/{pid}/stat")).is_ok_and(|stat| exited_stat(&stat))
     }
 
-    /// The state field follows the parenthesised command, which may itself
-    /// contain spaces or parentheses.
-    fn zombie(stat: &str) -> bool {
-        stat.rsplit_once(')')
-            .and_then(|(_, rest)| rest.split_whitespace().next())
-            .is_some_and(|state| matches!(state, "Z" | "X"))
+    /// Whether a `/proc/<pid>/stat` line is a process that has exited: its
+    /// leader is a zombie and no other thread is left. A leader that called
+    /// `pthread_exit` is a zombie too while its other threads run. The
+    /// command is parenthesised and may hold spaces, parentheses or bytes
+    /// that are not UTF-8.
+    pub(super) fn exited_stat(stat: &[u8]) -> bool {
+        let Some(close) = stat.iter().rposition(|&byte| byte == b')') else {
+            return false;
+        };
+        let mut fields = stat[close + 1..]
+            .split(u8::is_ascii_whitespace)
+            .filter(|field| !field.is_empty());
+        // The state is field 3, and the thread count field 20.
+        let state = fields.next();
+        let threads = fields
+            .nth(16)
+            .and_then(|field| std::str::from_utf8(field).ok())
+            .and_then(|field| field.parse::<u32>().ok());
+        matches!(state, Some(b"Z" | b"X")) && threads.is_some_and(|threads| threads <= 1)
     }
 }
 
@@ -322,7 +359,8 @@ mod tests {
         wait_without_reaping(&child);
         let opened = super::imp::Owner::open(child.id());
         child.wait().expect("reap the child");
-        assert!(opened.is_err(), "an exited owner was accepted");
+        let error = opened.err().expect("an exited owner was accepted");
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound, "{error}");
     }
 
     #[cfg(target_os = "linux")]
@@ -341,6 +379,29 @@ mod tests {
         let pid = child.id();
         child.wait().expect("child exits");
         drop(child);
-        assert!(super::imp::Owner::open(pid).is_err());
+        let error = super::imp::Owner::open(pid)
+            .err()
+            .expect("a gone owner was accepted");
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound, "{error}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_polling_fallback_reads_exit_from_the_whole_thread_group() {
+        let stat = |state: &str, threads: u32| {
+            let mut line = b"42 (a) Z (\xff) ".to_vec();
+            line.extend_from_slice(state.as_bytes());
+            line.extend_from_slice(b" 1 42 42 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 ");
+            line.extend_from_slice(threads.to_string().as_bytes());
+            line.extend_from_slice(b" 0 123\n");
+            line
+        };
+        assert!(super::imp::exited_stat(&stat("Z", 1)));
+        assert!(super::imp::exited_stat(&stat("X", 0)));
+        assert!(
+            !super::imp::exited_stat(&stat("Z", 3)),
+            "a leader that called pthread_exit counted as exited"
+        );
+        assert!(!super::imp::exited_stat(&stat("S", 1)));
     }
 }

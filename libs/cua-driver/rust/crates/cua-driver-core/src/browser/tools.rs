@@ -2188,12 +2188,28 @@ fn enter_key_event(phase: &str) -> Value {
     event
 }
 
+/// How far a trailing Enter got. A failed key event may still have reached
+/// the page (a reply timeout or a dropped socket looks the same as a refusal),
+/// so once one is sent a failure is uncertain, never "not delivered".
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EnterDelivery {
+    NotSent,
+    Uncertain,
+    Pressed,
+}
+
 /// Press Enter as a complete keyDown/char/keyUp sequence.
-async fn press_enter(conn: &CdpConnection, cdp: &str) -> anyhow::Result<()> {
+async fn press_enter(
+    conn: &CdpConnection,
+    cdp: &str,
+    delivery: &mut EnterDelivery,
+) -> anyhow::Result<()> {
+    *delivery = EnterDelivery::Uncertain;
     for phase in ["keyDown", "char", "keyUp"] {
         conn.call(Some(cdp), "Input.dispatchKeyEvent", enter_key_event(phase))
             .await?;
     }
+    *delivery = EnterDelivery::Pressed;
     Ok(())
 }
 
@@ -2545,13 +2561,22 @@ impl Tool for BrowserTypeTool {
                         }),
                     )
                     .await;
-                if matches!(
-                    single_line,
-                    Ok(ref value) if value["result"]["value"].as_bool() == Some(true)
-                ) {
-                    (rest.to_string(), true)
-                } else {
-                    (text, false)
+                // Guessing "multiline" on a failed probe would send the newline
+                // through insertText, which a single-line input drops silently.
+                match single_line
+                    .ok()
+                    .and_then(|value| value["result"]["value"].as_bool())
+                {
+                    Some(true) => (rest.to_string(), true),
+                    Some(false) => (text, false),
+                    None => {
+                        return BrowserRefusal::new(
+                            BrowserRefusalCode::BrowserInputTrustUnavailable,
+                            "could not tell whether the ref is a single-line field, so the \
+                             trailing newline was not sent; nothing was typed",
+                        )
+                        .to_tool_result()
+                    }
                 }
             }
             None => (text, false),
@@ -2574,20 +2599,23 @@ impl Tool for BrowserTypeTool {
 
         let requested_chars = text.chars().count();
         let mut replaced_chars = 0usize;
-        let mut enter_pressed = false;
+        let mut enter = EnterDelivery::NotSent;
         let (typed, delivered_chars) = if mode == "insert_text" {
-            if replace {
+            // Replacement and the trailing Enter are key-path input, which an
+            // inactive tab drops without focus emulation.
+            let emulate_focus = replace || submit_enter;
+            if emulate_focus {
                 if let Err(detail) =
                     enter_focus_emulation(conn, cdp, entry.backend_node_id, &object_id).await
                 {
                     return BrowserRefusal::new(
                         BrowserRefusalCode::BrowserInputTrustUnavailable,
-                        format!(
-                            "the inactive tab could not prepare trusted replacement input: {detail}"
-                        ),
+                        format!("the inactive tab could not prepare trusted key input: {detail}"),
                     )
                     .to_tool_result();
                 }
+            }
+            if replace {
                 match select_all_in_element(conn, cdp, &object_id).await {
                     Ok(n) => replaced_chars = n,
                     Err(detail) => {
@@ -2650,12 +2678,11 @@ impl Tool for BrowserTypeTool {
             };
             let inserted = call.is_ok();
             if inserted && submit_enter {
-                match press_enter(conn, cdp).await {
-                    Ok(()) => enter_pressed = true,
-                    Err(error) => call = Err(error),
+                if let Err(error) = press_enter(conn, cdp, &mut enter).await {
+                    call = Err(error);
                 }
             }
-            if replace {
+            if emulate_focus {
                 if let Err(error) = conn
                     .call(
                         Some(cdp),
@@ -2857,9 +2884,8 @@ impl Tool for BrowserTypeTool {
                 tokio::time::sleep(std::time::Duration::from_millis(15)).await;
             }
             if result.is_ok() && submit_enter {
-                match press_enter(conn, cdp).await {
-                    Ok(()) => enter_pressed = true,
-                    Err(error) => result = Err(error),
+                if let Err(error) = press_enter(conn, cdp, &mut enter).await {
+                    result = Err(error);
                 }
             }
             if let Err(error) = conn
@@ -2875,6 +2901,7 @@ impl Tool for BrowserTypeTool {
             (result, delivered)
         };
 
+        let enter_pressed = enter == EnterDelivery::Pressed;
         match typed {
             Ok(()) => ToolResult::text(format!(
                 "typed {requested_chars} char(s) into {tab_id}{}{}",
@@ -2906,10 +2933,17 @@ impl Tool for BrowserTypeTool {
             })),
             Err(e) => BrowserRefusal::new(
                 BrowserRefusalCode::BrowserInputIncomplete,
-                if submit_enter && delivered_chars == requested_chars {
+                if enter == EnterDelivery::Uncertain {
                     format!(
-                        "trusted Input typed all {requested_chars} character(s) but the \
-                         trailing Enter was not delivered: {e}"
+                        "trusted Input typed all {requested_chars} character(s), but the \
+                         trailing Enter key press failed partway, so the page may or may not \
+                         have acted on it; read the page before retrying: {e}"
+                    )
+                } else if enter_pressed {
+                    // Only the focus-emulation cleanup after the Enter failed.
+                    format!(
+                        "trusted Input typed all {requested_chars} character(s) and pressed \
+                         Enter, but focus emulation could not be turned off: {e}"
                     )
                 } else {
                     format!(
@@ -2921,6 +2955,7 @@ impl Tool for BrowserTypeTool {
                 "requested_chars": requested_chars,
                 "delivered_chars": delivered_chars,
                 "enter_pressed": enter_pressed,
+                "enter_uncertain": enter == EnterDelivery::Uncertain,
                 "retryable": false,
             }))
             .to_tool_result(),

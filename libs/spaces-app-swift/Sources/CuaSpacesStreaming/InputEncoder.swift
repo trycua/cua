@@ -94,8 +94,10 @@ public struct InputEncoder {
     /// Whether a guest takes ⌘ as Control. A Linux or Windows Space gets
     /// Command as Super, and Super+C types "c" in a terminal or does nothing,
     /// so a Mac viewer sends ⌘C as Ctrl+C there (⌘⇧C as Ctrl+Shift+C),
-    /// the same mapping as the HTML5 viewer's `metaAsControl`. A macOS
-    /// guest, or one whose OS isn't known, keeps ⌘.
+    /// the same mapping as the HTML5 viewer's `metaAsControl`. The right ⌘
+    /// held alone still goes as Super (`InputModifier.superKey`), for the
+    /// desktop's own shortcuts. A macOS guest, or one whose OS isn't known,
+    /// keeps ⌘.
     public static func commandAsControl(guestOS: String) -> Bool {
         switch guestOS.lowercased() {
         case "linux", "windows": return true
@@ -104,8 +106,8 @@ public struct InputEncoder {
     }
 
     /// `events` with Command replaced by Control on key events (no
-    /// duplicate when both were held). Pointer modifiers are left alone, as
-    /// in the HTML5 viewer.
+    /// duplicate when both were held); `superKey` stays. Pointer modifiers
+    /// are left alone, as in the HTML5 viewer.
     public static func commandAsControl(_ events: [InteractiveInputEvent]) -> [InteractiveInputEvent] {
         events.map { event in
             guard case let .key(key, down, modifiers, repeatKey) = event, modifiers.contains(.command) else { return event }
@@ -119,9 +121,18 @@ public struct InputEncoder {
     }
 
     #if canImport(AppKit)
+    /// `NX_DEVICELCMDKEYMASK` and `NX_DEVICERCMDKEYMASK`: which ⌘ is down.
+    private static let leftCommandMask: UInt = 0x08
+    private static let rightCommandMask: UInt = 0x10
+
+    /// The modifiers held. The right ⌘ held without the left one is
+    /// `superKey`, so a Linux or Windows guest gets Super from it.
     public static func modifiers(from flags: NSEvent.ModifierFlags) -> [InputModifier] {
         var result: [InputModifier] = []
-        if flags.contains(.command) { result.append(.command) }
+        if flags.contains(.command) {
+            let rightOnly = flags.rawValue & rightCommandMask != 0 && flags.rawValue & leftCommandMask == 0
+            result.append(rightOnly ? .superKey : .command)
+        }
         if flags.contains(.shift) { result.append(.shift) }
         if flags.contains(.option) { result.append(.option) }
         if flags.contains(.control) { result.append(.control) }
@@ -156,7 +167,7 @@ public struct InputEncoder {
     /// `keyEvents(for:down:)` over the event's parts, for tests.
     public static func keyEvents(name: String, characters: String?, modifiers: [InputModifier],
                                  down: Bool, isRepeat: Bool) -> [InteractiveInputEvent] {
-        let chord = modifiers.contains(.command) || modifiers.contains(.control)
+        let chord = modifiers.contains(.command) || modifiers.contains(.superKey) || modifiers.contains(.control)
         if !chord, let characters, !characters.isEmpty, !isNonPrintable(characters) {
             return down ? [.textCommit(characters)] : []
         }

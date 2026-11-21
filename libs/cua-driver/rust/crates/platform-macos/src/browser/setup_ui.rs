@@ -1160,6 +1160,14 @@ impl SetupUiHandle {
                                 }
                             } else if self.descriptor.product == BrowserProduct::MicrosoftEdge
                                 && !trusted_fallback_attempted
+                                && super::platform::guarded_attach_active()
+                            {
+                                trusted_fallback_attempted = true;
+                                release_actionable_nodes(&tree.nodes);
+                                toggle_checkbox_by_keyboard(pid, window_id, self.descriptor);
+                                continue;
+                            } else if self.descriptor.product == BrowserProduct::MicrosoftEdge
+                                && !trusted_fallback_attempted
                             {
                                 let center =
                                     unsafe { element_screen_center(element as AXUIElementRef) };
@@ -1551,7 +1559,8 @@ fn set_remote_debugging(
                 .nodes
                 .iter()
                 .any(|node| node.element_ptr == omnibox && has_action(node, "AXConfirm"));
-            let confirmed = can_confirm
+            let confirmed = exact_value
+                && can_confirm
                 && unsafe { perform_action(omnibox as AXUIElementRef, "AXConfirm") }
                     == kAXErrorSuccess;
             unsafe { CFRetain(omnibox as CFTypeRef) };
@@ -1657,6 +1666,29 @@ fn set_remote_debugging(
                                 ),
                             ));
                         }
+                    }
+                    Ok(None) if super::platform::guarded_attach_active() => {
+                        unsafe { CFRelease(omnibox as CFTypeRef) };
+                        return Err(handle.abort(
+                            pid,
+                            window_id,
+                            BrowserRefusal::new(
+                                BrowserRefusalCode::BackgroundUnavailable,
+                                format!(
+                                    "{} did not open the setup page in the background, and the \
+                                     remaining route needs the foreground, which a background \
+                                     attach never takes. The setup was rolled back; \
+                                     setup_side_effects lists anything left. Retry with \
+                                     delivery_mode:\"foreground\" only when nobody is using this \
+                                     screen or the user agreed to the browser coming forward.",
+                                    descriptor.product_name
+                                ),
+                            )
+                            .with_detail(serde_json::json!({
+                                "limitation": "setup_requires_foreground",
+                                "alternative_delivery_mode": "foreground",
+                            })),
+                        ));
                     }
                     Ok(None) => {
                         handle.foregrounded_window = true;
@@ -1829,6 +1861,16 @@ fn set_remote_debugging(
                                     "the exact remote-debugging checkbox became stale before AXPress",
                                 )));
                             }
+                            continue;
+                        }
+
+                        if descriptor.product == BrowserProduct::MicrosoftEdge
+                            && !handle.trusted_checkbox_fallback_attempted
+                            && super::platform::guarded_attach_active()
+                        {
+                            handle.trusted_checkbox_fallback_attempted = true;
+                            release_actionable_nodes(&tree.nodes);
+                            toggle_checkbox_by_keyboard(pid, window_id, descriptor);
                             continue;
                         }
 

@@ -79,9 +79,15 @@ pub(crate) fn reclassify() -> Desktop {
     desktop
 }
 
+/// Whether [`ENABLE_WAYLAND_ENV`] opts into the native Wayland backend,
+/// whatever the session.
+pub fn wayland_opted_in() -> bool {
+    opted_in(std::env::var(ENABLE_WAYLAND_ENV).ok().as_deref())
+}
+
 /// Whether `value` of [`ENABLE_WAYLAND_ENV`] opts in: any
 /// value other than empty, `0` or `false`.
-pub(crate) fn opted_in(value: Option<&str>) -> bool {
+fn opted_in(value: Option<&str>) -> bool {
     value.is_some_and(|value| {
         let value = value.trim();
         !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
@@ -110,16 +116,59 @@ fn classify(var: impl Fn(&str) -> Option<OsString>) -> Desktop {
     }
 }
 
+/// Whether this is a KDE Plasma session on X11, read fresh: an explicit
+/// `XDG_SESSION_TYPE`, else `WAYLAND_DISPLAY` or `DISPLAY`, decides X11, and
+/// any desktop-name variable or `KDE_FULL_SESSION` names KDE.
+pub(crate) fn kde_x11() -> bool {
+    kde_x11_from(|name| std::env::var_os(name))
+}
+
+fn kde_x11_from(var: impl Fn(&str) -> Option<OsString>) -> bool {
+    let text = |name| var(name).and_then(|value| value.into_string().ok());
+    let set = |name| text(name).is_some_and(|value| !value.trim().is_empty());
+    let session_type = text("XDG_SESSION_TYPE");
+    let explicit_x11 = session_type
+        .as_deref()
+        .is_some_and(|value| value.eq_ignore_ascii_case("x11"));
+    let explicit_wayland = session_type
+        .as_deref()
+        .is_some_and(|value| value.eq_ignore_ascii_case("wayland"));
+    if explicit_wayland || (!explicit_x11 && set("WAYLAND_DISPLAY")) {
+        return false;
+    }
+    let names_kde = |name| {
+        text(name).is_some_and(|value| {
+            value.split([':', ';', ',']).map(str::trim).any(|token| {
+                token.eq_ignore_ascii_case("kde") || token.eq_ignore_ascii_case("plasma")
+            })
+        })
+    };
+    let kde = names_kde("XDG_CURRENT_DESKTOP")
+        || names_kde("XDG_SESSION_DESKTOP")
+        || names_kde("DESKTOP_SESSION")
+        || text("KDE_FULL_SESSION").is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        });
+    (explicit_x11 || set("DISPLAY")) && kde
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn classify_env(vars: &[(&str, &str)]) -> Desktop {
-        classify(|name| {
+    fn env<'a>(vars: &'a [(&str, &str)]) -> impl Fn(&str) -> Option<OsString> + 'a {
+        |name| {
             vars.iter()
                 .find(|(key, _)| *key == name)
                 .map(|(_, value)| OsString::from(value))
-        })
+        }
+    }
+
+    fn classify_env(vars: &[(&str, &str)]) -> Desktop {
+        classify(env(vars))
     }
 
     const WAYLAND: [(&str, &str); 2] = [
@@ -190,5 +239,98 @@ mod tests {
             ]),
             Desktop::XWayland(Compositor::Hyprland)
         );
+    }
+
+    #[test]
+    fn kde_on_x11_is_named_by_any_desktop_variable_unless_the_session_is_wayland() {
+        let kde_x11 = |vars: &[(&str, &str)]| kde_x11_from(env(vars));
+        let table: &[(&[(&str, &str)], bool)] = &[
+            (
+                &[
+                    ("XDG_SESSION_TYPE", "x11"),
+                    ("XDG_CURRENT_DESKTOP", "KDE"),
+                    ("DISPLAY", ":0"),
+                ],
+                true,
+            ),
+            (
+                &[
+                    ("XDG_SESSION_TYPE", "x11"),
+                    ("XDG_CURRENT_DESKTOP", "KDE"),
+                    ("DISPLAY", ":0"),
+                    ("WAYLAND_DISPLAY", "wayland-0"),
+                ],
+                true,
+            ),
+            (
+                &[
+                    ("XDG_SESSION_DESKTOP", "plasma"),
+                    ("KDE_FULL_SESSION", "true"),
+                    ("DISPLAY", ":1"),
+                ],
+                true,
+            ),
+            (
+                &[("DESKTOP_SESSION", "ubuntu;KDE"), ("DISPLAY", ":0")],
+                true,
+            ),
+            (&[("KDE_FULL_SESSION", " Yes "), ("DISPLAY", ":0")], true),
+            (
+                &[
+                    ("XDG_SESSION_TYPE", "wayland"),
+                    ("XDG_CURRENT_DESKTOP", "KDE"),
+                    ("KDE_FULL_SESSION", "true"),
+                    ("DISPLAY", ":0"),
+                ],
+                false,
+            ),
+            (
+                &[
+                    ("XDG_CURRENT_DESKTOP", "KDE"),
+                    ("DISPLAY", ":0"),
+                    ("WAYLAND_DISPLAY", "wayland-0"),
+                ],
+                false,
+            ),
+            (
+                &[
+                    ("XDG_CURRENT_DESKTOP", "KDE"),
+                    ("DISPLAY", ":0"),
+                    ("WAYLAND_DISPLAY", " "),
+                ],
+                true,
+            ),
+            (
+                &[
+                    ("XDG_SESSION_TYPE", "x11"),
+                    ("XDG_CURRENT_DESKTOP", "GNOME"),
+                    ("DISPLAY", ":0"),
+                ],
+                false,
+            ),
+            (&[("XDG_CURRENT_DESKTOP", "KDE")], false),
+            (
+                &[("XDG_SESSION_TYPE", "x11"), ("XDG_CURRENT_DESKTOP", "KDE")],
+                true,
+            ),
+            (&[("KDE_FULL_SESSION", "0"), ("DISPLAY", ":0")], false),
+        ];
+        for (vars, expected) in table {
+            assert_eq!(kde_x11(vars), *expected, "{vars:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_non_false_value_opts_into_native_wayland() {
+        for (value, expected) in [
+            (None, false),
+            (Some(""), false),
+            (Some(" 0 "), false),
+            (Some("FALSE"), false),
+            (Some("1"), true),
+            (Some("yes"), true),
+        ] {
+            assert_eq!(opted_in(value), expected, "{value:?}");
+        }
     }
 }

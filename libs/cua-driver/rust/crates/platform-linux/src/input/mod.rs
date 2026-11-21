@@ -3715,21 +3715,34 @@ impl Drop for Delivered {
 
 fn release_abandoned(action: Arc<action::Action>, presses: Vec<(u8, u8)>) -> Result<()> {
     use x11rb::protocol::xtest::ConnectionExt as _;
+    on_fresh_connection(Some(action), "the releases", move |conn| {
+        for &(kind, detail) in presses.iter().rev() {
+            conn.xtest_fake_input(kind, detail, 0, x11rb::NONE, 0, 0, 0)?;
+        }
+        conn.get_input_focus()?.reply()?;
+        Ok(())
+    })
+}
+
+/// Send `requests` on a new connection, for cleanup an abandoned call's
+/// shut connection can no longer carry, and wait up to
+/// [`ABANDONED_RELEASE_WAIT`] for them. The sending thread keeps `action`,
+/// and so the call's desktop lease, until they return.
+fn on_fresh_connection(
+    action: Option<Arc<action::Action>>,
+    what: &'static str,
+    requests: impl FnOnce(&RustConnection) -> Result<()> + Send + 'static,
+) -> Result<()> {
     let (done, finished) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let _desktop = action;
-        let released = (|| -> Result<()> {
-            let (conn, _) = RustConnection::connect(None)?;
-            for &(kind, detail) in presses.iter().rev() {
-                conn.xtest_fake_input(kind, detail, 0, x11rb::NONE, 0, 0, 0)?;
-            }
-            conn.get_input_focus()?.reply()?;
-            Ok(())
-        })();
-        let _ = done.send(released);
+        let sent = RustConnection::connect(None)
+            .map_err(anyhow::Error::from)
+            .and_then(|(conn, _)| requests(&conn));
+        let _ = done.send(sent);
     });
     finished.recv_timeout(ABANDONED_RELEASE_WAIT).map_err(|_| {
-        anyhow!("the X server did not take the releases within {ABANDONED_RELEASE_WAIT:?}")
+        anyhow!("the X server did not take {what} within {ABANDONED_RELEASE_WAIT:?}")
     })?
 }
 
@@ -4054,7 +4067,7 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
     let (conn, _) = connect_x11_for_input()?;
     let window = xid as u32;
     let root = conn.setup().roots[0].root;
-    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mapping = keyboard_mapping(&conn)?;
     let client = RefCell::new(TextClient::new(&conn, Some(window)));
     type_text_in_spare_batches(
         text,
@@ -4138,7 +4151,7 @@ pub fn send_type_text_xtest_paced(text: &str, pacing: TypePacing) -> Result<()> 
     use x11rb::protocol::xtest::ConnectionExt as _;
     let sent = std::cell::Cell::new(0usize);
     let (conn, _) = connect_x11_for_input()?;
-    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mapping = keyboard_mapping(&conn)?;
     // Shift keycode (modifier index 0) for shifted characters.
     let modmap = conn.get_modifier_mapping()?.reply()?;
     let kpm = modmap.keycodes_per_modifier() as usize;
@@ -4206,7 +4219,7 @@ pub fn send_type_text_xtest_paced(text: &str, pacing: TypePacing) -> Result<()> 
 pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (conn, _) = connect_x11_for_input()?;
-    let mut mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mut mapping = keyboard_mapping(&conn)?;
 
     // Resolve modifier keycodes first. Keep any spare-keycode remap guards alive
     // until after the events are delivered (drop at end of fn).
@@ -4326,7 +4339,7 @@ pub fn send_click_xtest_desktop_with_modifiers(
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (conn, screen_num) = connect_x11_for_input()?;
     let root = conn.setup().roots[screen_num].root;
-    let mut mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mut mapping = keyboard_mapping(&conn)?;
     let mut guards = Vec::new();
     let mut modifier_keycodes = Vec::new();
     for modifier in modifiers {
@@ -4436,7 +4449,7 @@ pub fn send_drag_xtest_desktop_with_modifiers(
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (conn, screen_num) = connect_x11_for_input()?;
     let root = conn.setup().roots[screen_num].root;
-    let mut mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mut mapping = keyboard_mapping(&conn)?;
     let mut guards = Vec::new();
     let mut modifier_keycodes = Vec::new();
     for modifier in modifiers {
@@ -4561,7 +4574,7 @@ fn send_key_to_target(
     // `keycode_for_keysym` instead borrows a spare keycode and hands back a guard
     // that restores the original mapping once the event has been delivered.
     let keysym = key_name_to_keysym(key)?;
-    let mut mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mut mapping = keyboard_mapping(&conn)?;
     let (keycode, remap_guard) = keycode_for_keysym(&conn, &mut mapping, keysym, key)?;
 
     // XSendEvent's state mask describes modifiers for one key event, but does
@@ -4836,7 +4849,7 @@ mod spare_keycode_restore_tests {
         assert_eq!(typed, "?".repeat(TEXT.chars().count()));
     }
 
-    fn type_into_a_late_reader(answers_ping: bool, lookup_after: Duration) -> String {
+    fn xvfb() -> (Server, String) {
         let mut server = Server(
             Command::new("Xvfb")
                 .args(["-displayfd", "1", "-nolisten", "tcp"])
@@ -4848,7 +4861,156 @@ mod spare_keycode_restore_tests {
         BufReader::new(server.0.stdout.take().unwrap())
             .read_line(&mut number)
             .unwrap();
-        let display = format!(":{}", number.trim());
+        (server, format!(":{}", number.trim()))
+    }
+
+    const HELD_KEYSYM: u32 = 0x100_4e2d;
+    const HOLDER: &str = "CUA_TEST_SPARE_KEYCODE_HOLDER";
+
+    fn keysyms_of(conn: &RustConnection, keycode: u8) -> Vec<u32> {
+        conn.get_keyboard_mapping(keycode, 1)
+            .unwrap()
+            .reply()
+            .unwrap()
+            .keysyms
+    }
+
+    fn marked_by(conn: &RustConnection, pid: u32) -> Vec<u32> {
+        let root = conn.setup().roots[0].root;
+        let name = format!("_CUA_DRIVER_SPARE_KEYCODES_{pid}");
+        let atom = conn
+            .intern_atom(false, name.as_bytes())
+            .unwrap()
+            .reply()
+            .unwrap()
+            .atom;
+        let property = conn
+            .get_property(false, root, atom, AtomEnum::CARDINAL, 0, 256)
+            .unwrap()
+            .reply()
+            .unwrap();
+        property.value32().into_iter().flatten().collect()
+    }
+
+    /// The driver the next test kills: it binds a spare keycode, reports
+    /// it on stderr, where libtest writes nothing, and waits. Outside that test it does nothing.
+    #[test]
+    #[ignore = "starts its own Xvfb"]
+    fn spare_keycode_holder() {
+        if std::env::var_os(HOLDER).is_none() {
+            return;
+        }
+        let (conn, _) = RustConnection::connect(None).unwrap();
+        let mut mapping = keyboard_mapping(&conn).unwrap();
+        let (keycode, guard) =
+            keycode_for_keysym(&conn, &mut mapping, HELD_KEYSYM, "\u{4e2d}").unwrap();
+        std::mem::forget(guard);
+        eprintln!("bound {keycode}");
+        loop {
+            sleep(Duration::from_secs(60));
+        }
+    }
+
+    /// Run [`spare_keycode_holder`] on `display`, kill it once it has
+    /// bound a spare keycode, and return that keycode and its pid. Keep a
+    /// connection to `display` open: Xvfb resets its keymap when its last
+    /// client leaves.
+    fn spare_keycode_of_a_killed_driver(display: &str) -> (u8, u32) {
+        let mut holder = Server(
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "spare_keycode_restore_tests::spare_keycode_holder",
+                    "--ignored",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env(HOLDER, "1")
+                .env("DISPLAY", display)
+                .env_remove("WAYLAND_DISPLAY")
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        let keycode: u8 = BufReader::new(holder.0.stderr.take().unwrap())
+            .lines()
+            .map(Result::unwrap)
+            .find_map(|line| line.strip_prefix("bound ").map(|k| k.parse().unwrap()))
+            .expect("the holder bound no spare keycode");
+        let pid = holder.0.id();
+        drop(holder);
+        (keycode, pid)
+    }
+
+    #[test]
+    #[ignore = "starts its own Xvfb"]
+    fn the_next_driver_restores_the_spare_keycodes_of_one_that_was_killed() {
+        let (_server, display) = xvfb();
+        let (conn, _) = RustConnection::connect(Some(&display)).unwrap();
+        let (keycode, pid) = spare_keycode_of_a_killed_driver(&display);
+
+        assert_eq!(keysyms_of(&conn, keycode)[0], HELD_KEYSYM);
+        assert_eq!(marked_by(&conn, pid), [u32::from(keycode), HELD_KEYSYM]);
+        keyboard_mapping(&conn).unwrap();
+        assert!(
+            keysyms_of(&conn, keycode).iter().all(|&s| s == 0),
+            "keycode {keycode} still holds the killed driver's keysym"
+        );
+        assert_eq!(marked_by(&conn, pid), Vec::<u32>::new());
+    }
+
+    #[test]
+    #[ignore = "starts its own Xvfb"]
+    fn a_killed_drivers_spare_keycode_that_was_rebound_since_is_left_alone() {
+        const F13: u32 = 0xffca;
+        let (_server, display) = xvfb();
+        let (conn, _) = RustConnection::connect(Some(&display)).unwrap();
+        let (keycode, pid) = spare_keycode_of_a_killed_driver(&display);
+        let per = conn
+            .get_keyboard_mapping(keycode, 1)
+            .unwrap()
+            .reply()
+            .unwrap()
+            .keysyms_per_keycode;
+        conn.change_keyboard_mapping(1, keycode, per, &vec![F13; usize::from(per)])
+            .unwrap();
+        conn.get_input_focus().unwrap().reply().unwrap();
+        assert_eq!(marked_by(&conn, pid), [u32::from(keycode), HELD_KEYSYM]);
+
+        keyboard_mapping(&conn).unwrap();
+        assert_eq!(keysyms_of(&conn, keycode)[0], F13);
+        assert_eq!(marked_by(&conn, pid), Vec::<u32>::new());
+    }
+
+    #[test]
+    #[ignore = "starts its own Xvfb"]
+    fn an_abandoned_call_still_restores_its_spare_keycode() {
+        let (_server, display) = xvfb();
+        let _display = crate::test_env::x11_display(&display);
+        let (observer, _) = RustConnection::connect(Some(&display)).unwrap();
+        let action = action::Action::new(Duration::from_secs(60));
+        let _bound = action::bind(action.clone());
+        let (conn, _) = connect_x11_for_input().unwrap();
+        let mut mapping = keyboard_mapping(&conn).unwrap();
+        let (keycode, guard) =
+            keycode_for_keysym(&conn, &mut mapping, HELD_KEYSYM, "\u{4e2d}").unwrap();
+        keyboard_mapping(&observer).unwrap();
+        assert_eq!(
+            keysyms_of(&observer, keycode)[0],
+            HELD_KEYSYM,
+            "loading the keymap took a live driver's spare keycode"
+        );
+
+        action.abandon();
+        drop(guard);
+        assert!(
+            keysyms_of(&observer, keycode).iter().all(|&s| s == 0),
+            "the abandoned call left keycode {keycode} bound"
+        );
+        assert_eq!(marked_by(&observer, std::process::id()), Vec::<u32>::new());
+    }
+
+    fn type_into_a_late_reader(answers_ping: bool, lookup_after: Duration) -> String {
+        let (_server, display) = xvfb();
         let (reader, screen) = RustConnection::connect(Some(&display)).unwrap();
         let root = reader.setup().roots[screen].root;
         let win = reader.generate_id().unwrap();
@@ -4938,7 +5100,7 @@ mod spare_keycode_restore_tests {
         });
 
         let (conn, _) = RustConnection::connect(Some(&display)).unwrap();
-        let mapping = conn.get_keyboard_mapping(8, 248).unwrap().reply().unwrap();
+        let mapping = keyboard_mapping(&conn).unwrap();
         let client = RefCell::new(TextClient::new(&conn, None));
         type_text_in_spare_batches(
             TEXT,
@@ -5385,7 +5547,8 @@ mod key_name_alias_tests {
 /// A keycode we have *temporarily* rebound to host a keysym that is absent from
 /// the current X keyboard map (sparse/headless keymaps such as a minimal
 /// Xwayland). On drop it reinstates the keycode's original keysyms so the
-/// server's mapping is left exactly as we found it. The remap goes through
+/// server's mapping is left exactly as we found it, on a fresh connection
+/// when an abandoned call's is shut. The remap goes through
 /// `XChangeKeyboardMapping` on a spare keycode.
 pub(crate) struct RemappedKeycode<'a> {
     conn: &'a RustConnection,
@@ -5396,14 +5559,178 @@ pub(crate) struct RemappedKeycode<'a> {
 
 impl Drop for RemappedKeycode<'_> {
     fn drop(&mut self) {
-        let _ = self.conn.change_keyboard_mapping(
-            1,
-            self.keycode,
-            self.keysyms_per_keycode,
-            &self.original_keysyms,
-        );
-        let _ = self.conn.get_input_focus().map(|cookie| cookie.reply());
+        let (keycode, per) = (self.keycode, self.keysyms_per_keycode);
+        if restore_spare(self.conn, keycode, per, &self.original_keysyms).is_ok() {
+            return;
+        }
+        let original = std::mem::take(&mut self.original_keysyms);
+        let restored = on_fresh_connection(action::current(), "the keycode restore", move |conn| {
+            restore_spare(conn, keycode, per, &original)
+        });
+        if let Err(error) = restored {
+            tracing::warn!("restoring spare keycode {keycode} failed: {error:#}");
+        }
     }
+}
+
+fn restore_spare(conn: &RustConnection, keycode: u8, per: u8, original: &[u32]) -> Result<()> {
+    conn.change_keyboard_mapping(1, keycode, per, original)?;
+    unmark_spare(conn, keycode)
+}
+
+/// Prefixes the root-window property, named for a driver's pid, that lists
+/// the spare keycodes that driver has bound, each followed by its keysym. The property outlives the
+/// process, so the keycodes a killed or crashed driver left bound are
+/// restored the next time a driver loads the keyboard map.
+const SPARE_MARKER_PREFIX: &str = "_CUA_DRIVER_SPARE_KEYCODES_";
+
+/// Serializes this process's edits of its own marker.
+static SPARE_MARKER_EDIT: Mutex<()> = Mutex::new(());
+
+fn spare_marker(conn: &RustConnection) -> Result<(Window, Atom)> {
+    let root = conn.setup().roots[0].root;
+    let name = format!("{SPARE_MARKER_PREFIX}{}", std::process::id());
+    Ok((
+        root,
+        conn.intern_atom(false, name.as_bytes())?.reply()?.atom,
+    ))
+}
+
+/// The (keycode, keysym) pairs `marker` lists.
+fn marked_keycodes(conn: &RustConnection, root: Window, marker: Atom) -> Result<Vec<(u8, u32)>> {
+    let property = conn
+        .get_property(false, root, marker, AtomEnum::CARDINAL, 0, 512)?
+        .reply()?;
+    let values = property.value32().into_iter().flatten().collect::<Vec<_>>();
+    Ok(values
+        .chunks_exact(2)
+        .filter_map(|pair| Some((u8::try_from(pair[0]).ok()?, pair[1])))
+        .collect())
+}
+
+/// List `keycode` and the `keysym` it is about to hold in this driver's
+/// marker. Called before it is bound.
+fn mark_spare(conn: &RustConnection, keycode: u8, keysym: u32) -> Result<()> {
+    use x11rb::wrapper::ConnectionExt as _;
+    let _edit = SPARE_MARKER_EDIT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (root, marker) = spare_marker(conn)?;
+    let pair = [u32::from(keycode), keysym];
+    conn.change_property32(PropMode::APPEND, root, marker, AtomEnum::CARDINAL, &pair)?;
+    Ok(())
+}
+
+/// Drop `keycode` from this driver's marker. Called after it is restored.
+fn unmark_spare(conn: &RustConnection, keycode: u8) -> Result<()> {
+    use x11rb::wrapper::ConnectionExt as _;
+    let _edit = SPARE_MARKER_EDIT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (root, marker) = spare_marker(conn)?;
+    let rest = marked_keycodes(conn, root, marker)?
+        .into_iter()
+        .filter(|&(k, _)| k != keycode)
+        .flat_map(|(k, keysym)| [u32::from(k), keysym])
+        .collect::<Vec<_>>();
+    if rest.is_empty() {
+        conn.delete_property(root, marker)?;
+    } else {
+        conn.change_property32(PropMode::REPLACE, root, marker, AtomEnum::CARDINAL, &rest)?;
+    }
+    conn.get_input_focus()?.reply()?;
+    Ok(())
+}
+
+/// Every driver marker on the root window, with the pid it names.
+fn spare_markers(conn: &RustConnection, root: Window) -> Result<Vec<(Atom, u32)>> {
+    let atoms = conn.list_properties(root)?.reply()?.atoms;
+    let names = atoms
+        .iter()
+        .map(|&atom| conn.get_atom_name(atom))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut markers = Vec::new();
+    for (atom, name) in atoms.into_iter().zip(names) {
+        let name = name.reply()?.name;
+        let pid = std::str::from_utf8(&name)
+            .ok()
+            .and_then(|name| name.strip_prefix(SPARE_MARKER_PREFIX))
+            .and_then(|pid| pid.parse::<u32>().ok());
+        markers.extend(pid.map(|pid| (atom, pid)));
+    }
+    Ok(markers)
+}
+
+fn process_is_alive(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    let signalled = unsafe { libc::kill(pid, 0) };
+    signalled == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+/// Restore the spare keycodes that drivers which no longer run left bound,
+/// and remove their markers. The server is grabbed while the markers are
+/// read and the keycodes restored, so no driver binds or restores a spare
+/// keycode in between.
+fn restore_dead_drivers_spares(conn: &RustConnection) -> Result<()> {
+    let root = conn.setup().roots[0].root;
+    if spare_markers(conn, root)?
+        .iter()
+        .all(|&(_, pid)| process_is_alive(pid))
+    {
+        return Ok(());
+    }
+    conn.grab_server()?;
+    let restored = restore_spares_under_grab(conn, root);
+    let ungrabbed = conn.ungrab_server();
+    restored?;
+    ungrabbed?;
+    conn.get_input_focus()?.reply()?;
+    Ok(())
+}
+
+/// Whether `keysyms` is what [`reserve_spare_keycode`] binds for `keysym`:
+/// that keysym on every level the server reports back. Under XKB the core
+/// map can read some levels back as NoSymbol.
+fn holds_keysym(keysyms: &[u32], keysym: u32) -> bool {
+    keysym != 0
+        && keysyms.first() == Some(&keysym)
+        && keysyms.iter().all(|&level| level == keysym || level == 0)
+}
+
+/// A dead driver's keycode is restored only while it still holds the
+/// keysym its marker lists ([`holds_keysym`]) and no running driver lists
+/// it, so a binding someone made since is left alone.
+fn restore_spares_under_grab(conn: &RustConnection, root: Window) -> Result<()> {
+    let mut live = std::collections::HashSet::new();
+    let mut dead = Vec::new();
+    for (marker, pid) in spare_markers(conn, root)? {
+        let keycodes = marked_keycodes(conn, root, marker)?;
+        if process_is_alive(pid) {
+            live.extend(keycodes.into_iter().map(|(keycode, _)| keycode));
+        } else {
+            dead.push((marker, keycodes));
+        }
+    }
+    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let per = mapping.keysyms_per_keycode;
+    for (marker, keycodes) in dead {
+        for (keycode, keysym) in keycodes.into_iter().filter(|(k, _)| !live.contains(k)) {
+            let Some(at) = usize::from(keycode).checked_sub(8) else {
+                continue;
+            };
+            let at = at * usize::from(per);
+            let Some(keysyms) = mapping.keysyms.get(at..at + usize::from(per)) else {
+                continue;
+            };
+            if holds_keysym(keysyms, keysym) {
+                conn.change_keyboard_mapping(1, keycode, per, &vec![0; usize::from(per)])?;
+            }
+        }
+        conn.delete_property(root, marker)?;
+    }
+    Ok(())
 }
 
 /// The spare keycodes one text has borrowed and when it last sent a key on
@@ -5454,6 +5781,18 @@ impl Drop for BorrowedKeycodes<'_> {
     fn drop(&mut self) {
         self.restore();
     }
+}
+
+/// The keyboard map, keycodes 8..=255: the range `char_to_keycode_shift`
+/// and the spare-keycode remap index from. The spare keycodes that stopped
+/// drivers left bound are restored first, so they can be borrowed again.
+pub(crate) fn keyboard_mapping(
+    conn: &RustConnection,
+) -> Result<GetKeyboardMappingReply, x11rb::errors::ReplyError> {
+    if let Err(error) = restore_dead_drivers_spares(conn) {
+        tracing::warn!("restoring the spare keycodes of stopped drivers failed: {error:#}");
+    }
+    conn.get_keyboard_mapping(8, 248)?.reply()
 }
 
 /// Whether a text may borrow `keycode`: every keysym slot is NoSymbol (0) — i.e.
@@ -5521,6 +5860,7 @@ fn keycode_for_keysym<'a>(
 
     // Not in the map — fall back to remapping a spare keycode.
     let (keycode, guard) = reserve_spare_keycode(mapping, keysym, |spare, per, original, new| {
+        mark_spare(conn, spare, keysym)?;
         conn.change_keyboard_mapping(1, spare, per, new)?;
         let guard = RemappedKeycode {
             conn,

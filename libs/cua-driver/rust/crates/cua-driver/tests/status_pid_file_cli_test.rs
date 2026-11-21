@@ -171,6 +171,96 @@ fn status_reports_the_pid_stored_in_the_file_named_by_pid_file() {
 
     assert_eq!(
         status_pid(home.path(), &["status", "--socket", &socket]),
-        "unknown (no pid file)",
+        daemon_pid,
+    );
+}
+
+fn spawn_daemon(home: &Path, args: &[&str]) -> Child {
+    let mut serve = driver(home, args);
+    // Serve in this process instead of a disclaimed macOS child, so the
+    // spawned child's PID is the daemon's PID.
+    serve
+        .env("CUA_DRIVER_RS_RESPONSIBILITY_DISCLAIMED", "1")
+        .stdout(Stdio::null())
+        .stderr(if std::env::var_os("CUA_TEST_DRIVER_STDERR").is_some() {
+            Stdio::inherit()
+        } else {
+            Stdio::null()
+        });
+    spawn_in_job(&mut serve).expect("spawn source-built daemon")
+}
+
+fn wait_until_serving(daemon: &mut Child, home: &Path, status_args: &[&str]) {
+    let deadline = Instant::now() + BOUND;
+    loop {
+        if let Ok(Some(status)) = daemon.try_wait() {
+            panic!(
+                "daemon exited before becoming ready: {status}. \
+                 Set CUA_TEST_DRIVER_STDERR=1 to inherit daemon stderr."
+            );
+        }
+        if run_status(home, status_args, PROBE_BOUND).is_some_and(|output| output.status.success())
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "daemon did not become ready within {BOUND:?}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+// Windows' default endpoint is a machine-wide pipe name, so only Unix can run a
+// test-owned daemon on the default endpoint without touching a real install.
+#[cfg(unix)]
+#[test]
+fn status_reports_the_daemon_serving_each_socket() {
+    // A short home keeps the default socket path under the Unix socket limit.
+    let home = tempfile::Builder::new()
+        .prefix("cua-status-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let custom_socket = home.path().join("custom.sock").display().to_string();
+    let mut reaper = ChildReaper::new();
+
+    let mut default_daemon = spawn_daemon(
+        home.path(),
+        &["serve", "--no-overlay", "--no-permissions-gate"],
+    );
+    wait_until_serving(&mut default_daemon, home.path(), &["status"]);
+    let default_pid = default_daemon.id().to_string();
+    reaper.push(default_daemon);
+
+    let mut custom_daemon = spawn_daemon(
+        home.path(),
+        &[
+            "serve",
+            "--socket",
+            &custom_socket,
+            "--no-overlay",
+            "--no-permissions-gate",
+        ],
+    );
+    wait_until_serving(
+        &mut custom_daemon,
+        home.path(),
+        &["status", "--socket", &custom_socket],
+    );
+    let custom_pid = custom_daemon.id().to_string();
+    reaper.push(custom_daemon);
+
+    assert_eq!(status_pid(home.path(), &["status"]), default_pid);
+    assert_eq!(
+        status_pid(home.path(), &["status", "--socket", &custom_socket]),
+        custom_pid,
+    );
+    #[cfg(target_os = "macos")]
+    let default_pid_file = home.path().join("Library/Caches/cua-driver/cua-driver.pid");
+    #[cfg(not(target_os = "macos"))]
+    let default_pid_file = home.path().join(".cache/cua-driver/cua-driver.pid");
+    assert_eq!(
+        std::fs::read_to_string(default_pid_file).unwrap().trim(),
+        default_pid,
     );
 }

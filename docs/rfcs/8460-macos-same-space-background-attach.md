@@ -145,7 +145,7 @@ driver-level grant, checked before any setup starts.
 | case | refusal | effects |
 | --- | --- | --- |
 | window not eligible (table above) | `background_unavailable`, `background_attach_requires: "browser_window_shown_or_on_another_space"` | none |
-| a setup step has no background route | `background_unavailable`, `limitation: "setup_requires_foreground"`, `alternative_delivery_mode: "foreground"` | rolled back, listed in `setup_side_effects` |
+| a setup step has no background route | `background_unavailable`, `cause: {limitation: "setup_requires_foreground", alternative_delivery_mode: "foreground"}` | rolled back, listed in `setup_side_effects` |
 | any other setup or consent failure | unchanged | rolled back, unchanged |
 
 ## Alternatives considered
@@ -166,7 +166,8 @@ driver-level grant, checked before any setup starts.
   and its description changes.
 - `background_attach_requires` keeps its name and gets a new value. A caller
   that compares it to `"browser_window_on_another_space"` must update.
-- `limitation: "setup_requires_foreground"` is a new value of an existing field.
+- `limitation: "setup_requires_foreground"` is a new value of an existing
+  field, reported under `cause` like other setup refusals.
 - Rollback: revert the implementation; the refusal comes back.
 
 ## Security, privacy, and telemetry
@@ -180,9 +181,10 @@ driver-level grant, checked before any setup starts.
 ## Implementation plan
 
 1. #7482: the eligibility table, refusal detail, tool description and e2e rows.
-2. In #7482 as well: under the guard, replace the three foreground-assist
-   routes with a rollback and `setup_requires_foreground`, and check the
-   address field before `AXConfirm`.
+2. In #7482 as well: under the guard, navigation with no background route
+   rolls back and refuses with `setup_requires_foreground`, Edge's checkbox
+   and rollback clicks use the pid-routed keyboard toggle the pixel route
+   already uses, and the address field is checked before `AXConfirm`.
 
 ## Test and acceptance plan
 

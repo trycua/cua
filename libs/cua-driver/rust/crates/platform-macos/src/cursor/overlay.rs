@@ -103,36 +103,78 @@ const ARRIVAL_TIMEOUT: Duration = Duration::from_secs(8);
 /// change and no cursor is animating.
 static REPIN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
-/// How long after [`request_repin`] the render loop keeps re-ordering the
-/// overlay. Raising a window and handing the front back to the previous app
-/// are asynchronous WindowServer changes: one reorder issued right after them
-/// can land before they settle, and the overlay then stays behind the target
-/// (a hosted macOS run left the agent cursor hidden for the rest of a clip).
-/// Re-ordering until the front stops changing converges whichever order they
-/// finish in.
-const REPIN_SETTLE: Duration = Duration::from_millis(600);
-
-/// How often the parked render loop wakes to re-order during the settle window.
-const REPIN_SETTLE_POLL: Duration = Duration::from_millis(50);
-
-/// The end of the current settle window, if one is open.
-static REPIN_SETTLE_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
-
 /// Re-order the overlay above its pinned window. Call after raising a window
 /// for input: the raise puts it over the normal-level overlay, and a resting
-/// cursor's parked render loop would otherwise leave it covered. The overlay
-/// keeps being re-ordered for [`REPIN_SETTLE`], not just once.
+/// cursor's parked render loop would otherwise leave it covered.
 pub(crate) fn request_repin() {
-    *REPIN_SETTLE_UNTIL.lock().unwrap() = Some(Instant::now() + REPIN_SETTLE);
     REPIN_REQUESTED.store(true, Ordering::Release);
     if let Some(tx) = CMD_TX.get() {
         let _ = tx.try_send(OverlayMsg::Wake);
     }
 }
 
-/// Whether a repin settle window is open at `now`.
-fn repin_settling(until: Option<Instant>, now: Instant) -> bool {
-    until.is_some_and(|end| now < end)
+/// Re-order the overlay when the active application actually changes.
+///
+/// A foreground input raises the target window over the normal-level overlay
+/// and hands the front back to the previous app. Both are asynchronous
+/// WindowServer changes, so one re-order issued by the caller can land before
+/// they finish and leave the overlay behind the target (a hosted macOS run
+/// hid the agent cursor for the rest of a clip). The overlay stays at the
+/// normal window level on purpose: it is ordered directly above its target
+/// window so it never paints over an unrelated foreground app, and it must
+/// appear in `list_windows` (CGWindowList layer 0). So the order is repaired
+/// on the event that changes it, not on a timer: every application
+/// activation requests a repin, after the activation has completed.
+///
+/// An activation of this process never moves another window over the overlay.
+fn repin_on_application_activation(activated_pid: i32, own_pid: i32) {
+    if activated_pid != own_pid {
+        request_repin();
+    }
+}
+
+/// Observe `NSWorkspaceDidActivateApplicationNotification` for the process
+/// lifetime. The block runs on a private background queue, so it needs no
+/// running main run loop, and `request_repin` is thread-safe.
+fn install_activation_repin_observer() {
+    use block2::RcBlock;
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    use objc2_app_kit::{
+        NSWorkspace, NSWorkspaceApplicationKey, NSWorkspaceDidActivateApplicationNotification,
+    };
+    use objc2_foundation::{NSNotification, NSOperationQueue};
+    use std::ptr::NonNull;
+
+    let own_pid = std::process::id() as i32;
+    let block = RcBlock::new(move |note: NonNull<NSNotification>| {
+        // SAFETY: AppKit lends the notification for the duration of the block.
+        let note = unsafe { note.as_ref() };
+        let Some(info) = (unsafe { note.userInfo() }) else {
+            return;
+        };
+        let app: *mut AnyObject =
+            unsafe { msg_send![&*info, objectForKey: NSWorkspaceApplicationKey] };
+        if app.is_null() {
+            return;
+        }
+        let pid: i32 = unsafe { msg_send![app, processIdentifier] };
+        repin_on_application_activation(pid, own_pid);
+    });
+    unsafe {
+        let center = NSWorkspace::sharedWorkspace().notificationCenter();
+        let queue = NSOperationQueue::new();
+        queue.setMaxConcurrentOperationCount(1);
+        let token = center.addObserverForName_object_queue_usingBlock(
+            Some(NSWorkspaceDidActivateApplicationNotification),
+            None,
+            Some(&queue),
+            &block,
+        );
+        // Process-lifetime observer: never torn down.
+        std::mem::forget(token);
+        std::mem::forget(queue);
+    }
 }
 
 /// Whether the render loop re-orders the overlay above `pinned` this frame.
@@ -962,6 +1004,8 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         RENDER_LOOP_RUNNING.store(false, Ordering::Release);
     });
 
+    install_activation_repin_observer();
+
     // ---- NSApplication run loop (blocks until process exits) ----
     let _: () = msg_send![app, run];
     OVERLAY_WINDOW_IDS.lock().unwrap().clear();
@@ -987,17 +1031,8 @@ fn render_loop(
         // When no cursor animation/fade is active, block until the MCP side
         // sends a command. This is the idle-server fast path: no fullscreen
         // pixmap allocation, no CGImage conversion, no 60fps wakeup.
-        let settling = repin_settling(*REPIN_SETTLE_UNTIL.lock().unwrap(), Instant::now());
         let (first_msg, hover_poll_tick) = if frame_tick_needed {
             (None, hover_poll_needed)
-        } else if settling {
-            // A repin settle window is open: wake often enough to keep
-            // re-ordering the overlay, without repainting.
-            match rx.recv_timeout(REPIN_SETTLE_POLL) {
-                Ok(msg) => (Some(msg), hover_poll_needed),
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => (None, hover_poll_needed),
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-            }
         } else if hover_poll_needed {
             match rx.recv_timeout(hover_poll_ms) {
                 Ok(msg) => (Some(msg), true),
@@ -1131,12 +1166,11 @@ fn render_loop(
         // Repin: immediately on target change, then defensive every ~1 s while
         // the render loop is active. When quiescent, z-order is left unchanged
         // until the next command wakes the loop.
-        let settling = repin_settling(*REPIN_SETTLE_UNTIL.lock().unwrap(), Instant::now());
-        if frame_tick_needed || had_msg || settling {
+        if frame_tick_needed || had_msg {
             repin_frames += 1;
             let pin_changed = pinned_wid != last_pinned;
             last_pinned = pinned_wid;
-            let requested = REPIN_REQUESTED.swap(false, Ordering::AcqRel) || settling;
+            let requested = REPIN_REQUESTED.swap(false, Ordering::AcqRel);
             if should_repin(pinned_wid, pin_changed || refit, requested, repin_frames) {
                 for surface in &surfaces {
                     MacZOrderEnforcer {
@@ -1541,19 +1575,12 @@ mod tests {
     /// even with no pin change and a parked render loop; nothing re-orders
     /// an overlay that has no pin target.
     #[test]
-    fn a_repin_settle_window_keeps_reordering_until_it_ends() {
-        let start = Instant::now();
-        let until = Some(start + REPIN_SETTLE);
-        assert!(repin_settling(until, start));
-        assert!(repin_settling(
-            until,
-            start + REPIN_SETTLE - Duration::from_millis(1)
-        ));
-        assert!(!repin_settling(until, start + REPIN_SETTLE));
-        assert!(!repin_settling(None, start));
-        // The window outlasts several polls, so one reorder that lands before
-        // the front settles is followed by more.
-        assert!(REPIN_SETTLE >= REPIN_SETTLE_POLL * 8);
+    fn another_apps_activation_requests_a_repin_and_our_own_does_not() {
+        REPIN_REQUESTED.store(false, Ordering::Release);
+        repin_on_application_activation(100, 100);
+        assert!(!REPIN_REQUESTED.load(Ordering::Acquire));
+        repin_on_application_activation(200, 100);
+        assert!(REPIN_REQUESTED.swap(false, Ordering::AcqRel));
     }
 
     #[test]

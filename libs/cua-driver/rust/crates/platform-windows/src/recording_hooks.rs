@@ -132,14 +132,14 @@ pub fn app_state_json_for(
         budget.timeout_ms,
         crate::uia::DEFAULT_MAX_TOTAL_ELEMENTS,
     );
-    let result =
+    let mut result =
         crate::uia::walk_tree_budgeted(hwnd, None, crate::uia::DEFAULT_MAX_DEPTH, &mut walk);
     let kind = if result.nodes.iter().any(|node| node.msaa_role.is_some()) {
         SnapshotKind::Msaa
     } else {
         SnapshotKind::Uia
     };
-    let _native_payload = UiaSnapshot::from_nodes(&result.nodes, kind);
+    let _native_payload = UiaSnapshot::from_nodes(&mut result.nodes, kind);
     let element_count = result
         .nodes
         .iter()

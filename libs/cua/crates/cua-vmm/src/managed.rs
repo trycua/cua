@@ -86,18 +86,18 @@ pub const LIMA_VERSION: &str = "2.2.0";
 /// The runtime disk's repository and pinned tag.
 pub const DISK_REPOSITORY: &str = "trycua/runtime-gvisor";
 /// The pinned tag (for people; the digests below are what is checked).
-pub const DISK_TAG: &str = "0.1.0-rc1";
+pub const DISK_TAG: &str = "0.1.0-rc2";
 /// gVisor release baked into the disk.
 pub const GVISOR_VERSION: &str = "20260921.0";
 
 /// The arm64 disk layer's digest (sha256 of the `.raw.gz`) and size.
 pub const DISK_SHA256_ARM64: &str =
-    "0fa448f22f97dc54416cff056ae82d3bb194ec8ec58dd0983440eaecb2921fa0";
-pub const DISK_SIZE_ARM64: u64 = 424_641_499;
+    "3c59ae07834ec0eba8a4d975ba1e6a988cbc50317d28c18dc4b718f7342a3ae2";
+pub const DISK_SIZE_ARM64: u64 = 424_645_618;
 /// The amd64 disk layer's digest and size.
 pub const DISK_SHA256_AMD64: &str =
-    "3f2b0446e7694417a0956c786c7de76a083fe9e3ad0794879a99d3b69044bd4a";
-pub const DISK_SIZE_AMD64: u64 = 457_760_272;
+    "1505fd0d14e86fc5a211dd18779a4541e95952b32ecef6ef88256d9c3547b254";
+pub const DISK_SIZE_AMD64: u64 = 467_981_723;
 
 /// One pinned download.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

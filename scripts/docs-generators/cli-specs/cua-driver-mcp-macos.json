@@ -375,6 +375,51 @@
    "read_only": false
   },
   {
+   "description": "Create, list or remove a virtual display the agent works on, so app windows can be moved off the user's screen with set_window_frame (use the returned x, y, width, height as the target area; screenshots of a virtual display are 1:1, not Retina). `create` adds an extra display of width x height pixels owned by the calling session, removed by `remove`, when that session ends or idles out, or when the daemon exits; `list` returns the displays this daemon created; `remove` needs a display_id. Requires no TCC permissions.",
+   "destructive": false,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "action": {
+      "description": "create a display, list this daemon's displays, or remove one.",
+      "enum": [
+       "create",
+       "list",
+       "remove"
+      ],
+      "type": "string"
+     },
+     "display_id": {
+      "description": "remove: id returned by create or list.",
+      "type": "integer"
+     },
+     "height": {
+      "description": "create: pixels, default 1080.",
+      "type": "integer"
+     },
+     "name": {
+      "description": "create: display name, default \"Agent Desktop\".",
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
+      "type": "string"
+     },
+     "width": {
+      "description": "create: pixels, default 1920.",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   },
+   "name": "agent_display",
+   "read_only": false
+  },
+  {
    "description": "Persistently activate an app and leave it in the foreground. Most input does not need this; use it only for a focus-proxy surface that must remain foreground across interactions. With window_id, success means the exact ordinary macOS window was independently verified as the frontmost process's focused window and the front window of that process on the display it sits on. `exact_window_effect.frontmost_ordinary` additionally reports whether it is first in the global WindowServer layer-0 order; another application (an always-raised utility window, another display's front window) can hold that spot without the requested window losing keyboard focus, so it is reported and not required. Request acceptance alone is reported as a partial result, never as activation. This DOES steal foreground and does NOT restore the previously frontmost application.",
    "destructive": false,
    "idempotent": true,

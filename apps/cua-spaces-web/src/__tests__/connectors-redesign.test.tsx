@@ -56,6 +56,24 @@ function host(calls: { op: string; args: unknown }[]) {
 }
 
 describe.skipIf(!wasmBuilt)("Settings, Connections", () => {
+  it("explains local and remote Space sign-ins separately from access by another computer, and changes sharing only when asked", async () => {
+    const calls: { op: string; args: unknown }[] = [];
+    await mountApp("/settings/connections", host(calls));
+    const group = await found("[data-connectors-sign-in-sharing]");
+    expect(group.closest("section")?.querySelector("h2")?.textContent).toBe("Sign-ins in Spaces");
+    expect(group.textContent).toContain("local Spaces/VMs and remote Spaces");
+    expect(group.textContent).toContain("When off, sign in separately inside each Space");
+    expect(q("[data-connectors-other-machine-group] [data-connectors-copy-sign-in]")).toBeNull();
+    const toggle = group.querySelector("[data-connectors-copy-sign-in]")!;
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(calls.filter((c) => c.op === "agentKeys.copySignIn")).toEqual([]);
+    await click(toggle);
+    await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("true"));
+    await click(toggle);
+    await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("false"));
+    expect(calls.filter((c) => c.op === "agentKeys.copySignIn").map((c) => c.args)).toEqual([{ on: true }, { on: false }]);
+  });
+
   it("lists the connections, then apps with Connect and a chevron; no switches per app", async () => {
     await mountApp("/settings/connections", host([]));
     const claude = await found("[data-connector-app=claude-code]");

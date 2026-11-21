@@ -906,8 +906,11 @@ pub mod conformance {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // These run the job scripts with /bin/sh, as a Space does; the rest run anywhere.
+    #[cfg(unix)]
     use std::process::Command;
 
+    #[cfg(unix)]
     fn run_sh(home: &std::path::Path, script: &str) -> (bool, Vec<u8>, String) {
         let out = Command::new("/bin/sh")
             .arg("-c")
@@ -922,6 +925,7 @@ mod tests {
         )
     }
 
+    #[cfg(unix)]
     fn start(home: &std::path::Path, a: &i::SpaceJob) -> JobStatus {
         let id = new_job_id();
         let (ok, out, err) = run_sh(home, &start_script(&id, a).unwrap());
@@ -929,12 +933,14 @@ mod tests {
         parse_status(&String::from_utf8_lossy(&out)).unwrap()
     }
 
+    #[cfg(unix)]
     fn status(home: &std::path::Path, id: &str) -> JobStatus {
         let (ok, out, err) = run_sh(home, &status_script(id).unwrap());
         assert!(ok, "{err}");
         parse_status(&String::from_utf8_lossy(&out)).unwrap()
     }
 
+    #[cfg(unix)]
     fn wait_done(home: &std::path::Path, id: &str) -> JobStatus {
         for _ in 0..100 {
             let s = status(home, id);
@@ -946,6 +952,7 @@ mod tests {
         panic!("job {id} did not end");
     }
 
+    #[cfg(unix)]
     fn job(command: &str) -> i::SpaceJob {
         i::SpaceJob {
             action: "start".into(),
@@ -965,6 +972,7 @@ mod tests {
         assert!(valid_job_id("").is_err());
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_job_runs_detached_and_keeps_its_exit_status() {
         let home = tempfile::tempdir().unwrap();
@@ -981,6 +989,7 @@ mod tests {
         assert!(!logs.more);
     }
 
+    #[cfg(unix)]
     #[test]
     fn logs_read_on_from_an_offset_without_losing_bytes() {
         let home = tempfile::tempdir().unwrap();
@@ -1004,6 +1013,7 @@ mod tests {
         assert_eq!((c.text.as_str(), c.offset), ("hij", 7));
     }
 
+    #[cfg(unix)]
     #[test]
     fn cwd_and_env_reach_the_command() {
         let home = tempfile::tempdir().unwrap();
@@ -1025,6 +1035,7 @@ mod tests {
         assert!(start_script("j1", &a).is_err());
     }
 
+    #[cfg(unix)]
     #[test]
     fn cancel_stops_the_whole_process_tree() {
         let home = tempfile::tempdir().unwrap();
@@ -1045,6 +1056,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_timeout_stops_the_job_and_says_so() {
         let home = tempfile::tempdir().unwrap();
@@ -1055,6 +1067,7 @@ mod tests {
         assert_eq!(done.state, "timed_out");
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_runner_that_died_without_a_record_is_lost() {
         let home = tempfile::tempdir().unwrap();
@@ -1080,6 +1093,7 @@ mod tests {
         assert_eq!(status(home.path(), &st.job).state, "lost");
     }
 
+    #[cfg(unix)]
     #[test]
     fn listing_is_newest_first_and_unknown_jobs_are_not_found() {
         let home = tempfile::tempdir().unwrap();
@@ -1104,6 +1118,7 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_file_condition_ends_when_the_file_appears() {
         let home = tempfile::tempdir().unwrap();
@@ -1126,6 +1141,7 @@ mod tests {
         assert_eq!((done.state.as_str(), done.exit_code), ("exited", Some(0)));
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_command_condition_ends_when_it_passes() {
         let home = tempfile::tempdir().unwrap();

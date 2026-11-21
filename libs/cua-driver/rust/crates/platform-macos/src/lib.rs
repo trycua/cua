@@ -49,6 +49,8 @@ pub mod input;
 #[cfg(target_os = "macos")]
 pub mod key_focus_guard;
 #[cfg(target_os = "macos")]
+mod native_window_geometry;
+#[cfg(target_os = "macos")]
 mod permission_observation;
 #[cfg(target_os = "macos")]
 pub mod permissions;

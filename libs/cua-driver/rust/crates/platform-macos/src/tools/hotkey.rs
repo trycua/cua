@@ -158,9 +158,9 @@ async fn web_ax_focus_point(
     window_id: u32,
     element: Option<crate::ax::snapshot::RetainedElement>,
     element_index: Option<usize>,
-) -> Option<(f64, f64)> {
+) -> Result<Option<(f64, f64)>, ToolResult> {
     let (Some(element), Some(index)) = (element, element_index) else {
-        return None;
+        return Ok(None);
     };
     let web_element = element.clone();
     let is_web = tokio::task::spawn_blocking(move || {
@@ -173,20 +173,34 @@ async fn web_ax_focus_point(
     .await
     .unwrap_or(true);
     if !is_web {
-        return None;
+        return Ok(None);
     }
-    tokio::task::spawn_blocking(move || unsafe {
-        let (screen_x, screen_y) = crate::ax::bindings::element_screen_center(
-            element.as_ptr() as crate::ax::bindings::AXUIElementRef
-        )?;
-        let frame = super::px_frame::resolve_window_px_frame(window_id).ok()?;
-        Some((
+    let target = tokio::task::spawn_blocking(move || unsafe {
+        let Some((screen_x, screen_y)) = crate::ax::bindings::element_screen_center(
+            element.as_ptr() as crate::ax::bindings::AXUIElementRef,
+        ) else {
+            return Ok(None);
+        };
+        let frame = match super::px_frame::resolve_window_px_frame(pid, window_id) {
+            Ok(frame) => frame,
+            Err(error @ super::px_frame::PxFrameError::NativeGeometryMismatch { .. }) => {
+                return Err(error)
+            }
+            Err(_) => return Ok(None),
+        };
+        Ok(Some((
             (screen_x - frame.bounds.x) * frame.scale,
             (screen_y - frame.bounds.y) * frame.scale,
-        ))
+        )))
     })
-    .await
-    .unwrap_or(None)
+    .await;
+    match target {
+        Ok(Ok(point)) => Ok(point),
+        Ok(Err(error)) => Err(super::px_frame::refusal(&error)),
+        Err(error) => Err(ToolResult::error(format!(
+            "Native focus lookup failed: {error}"
+        ))),
+    }
 }
 
 fn screen_sharing_modifier_delivery_error(
@@ -343,6 +357,14 @@ impl Tool for HotkeyTool {
             return error;
         }
 
+        if px.is_some() {
+            if let Err(refusal) =
+                super::px_frame::refuse_pixel_on_native_mismatch(pid, window_id).await
+            {
+                return refusal;
+            }
+        }
+
         // ── Menu key equivalents in a background app ──
         // Background key events reach a window's views but never its app's
         // menu key equivalents, so a background cmd+s to TextEdit saved
@@ -370,13 +392,6 @@ impl Tool for HotkeyTool {
                 .ok()
                 .flatten();
                 if let Some(item) = menu_item {
-                    // The menu command acts on the app's key window. Make the
-                    // addressed window key first, confirmed, or refuse: never
-                    // act on another window (CUA-1767).
-                    match super::acquire_key_scope(pid, Some(wid), false).await {
-                        Ok(scope) => key_scope = scope,
-                        Err(refusal) => return refusal,
-                    }
                     // The menu command acts on the focused element. A pixel
                     // target, or an element in web content (where AXFocused
                     // can be acknowledged without moving the page's focus),
@@ -384,10 +399,23 @@ impl Tool for HotkeyTool {
                     let focus_xy = match (px, py) {
                         (Some(x), Some(y)) => Some((x, y)),
                         (None, None) => {
-                            web_ax_focus_point(pid, wid, element_guard.clone(), element_index).await
+                            match web_ax_focus_point(pid, wid, element_guard.clone(), element_index)
+                                .await
+                            {
+                                Ok(point) => point,
+                                Err(refusal) => return refusal,
+                            }
                         }
                         _ => None,
                     };
+                    // The menu command acts on the app's key window. Make the
+                    // addressed window key, confirmed, or refuse: never act on
+                    // another window (CUA-1767). Taken after the focus lookup,
+                    // which can refuse on a native geometry mismatch.
+                    match super::acquire_key_scope(pid, Some(wid), false).await {
+                        Ok(scope) => key_scope = scope,
+                        Err(refusal) => return refusal,
+                    }
                     if let Some((x, y)) = focus_xy {
                         let lease = match super::gate_background_window_action(
                             pid,
@@ -505,14 +533,6 @@ impl Tool for HotkeyTool {
             None
         };
 
-        // Key post: the addressed window must be the confirmed key window.
-        if key_scope.is_none() {
-            match super::acquire_key_scope(pid, window_id, fg).await {
-                Ok(scope) => key_scope = scope,
-                Err(refusal) => return refusal,
-            }
-        }
-
         // Web-content AX nodes can acknowledge AXFocused without moving the
         // renderer's real first responder. That makes a direct focus write an
         // unsafe oracle for Chromium/WebKit hotkeys: the following PID/HID
@@ -522,9 +542,24 @@ impl Tool for HotkeyTool {
         // targeting; only the focus transport falls back through a hit-test
         // and, on the explicit foreground rung, a real click when required.
         let web_ax_focus_xy = match window_id {
-            Some(wid) => web_ax_focus_point(pid, wid, element_guard.clone(), element_index).await,
+            Some(wid) => {
+                match web_ax_focus_point(pid, wid, element_guard.clone(), element_index).await {
+                    Ok(point) => point,
+                    Err(refusal) => return refusal,
+                }
+            }
             None => None,
         };
+
+        // Key post: the addressed window must be the confirmed key window.
+        // Taken after the web focus lookup, which can refuse on a native
+        // geometry mismatch before the key window changes.
+        if key_scope.is_none() {
+            match super::acquire_key_scope(pid, window_id, fg).await {
+                Ok(scope) => key_scope = scope,
+                Err(refusal) => return refusal,
+            }
+        }
 
         // PX form, plus the web-content AX fallback above: focus the field
         // before sending the combo. Foreground delivery still needs to front

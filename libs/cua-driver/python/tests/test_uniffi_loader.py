@@ -65,7 +65,7 @@ class GeneratedOptionsTests(unittest.TestCase):
             "AppInfo", "ClickPosition", "ElementFrame", "GetWindowStateInput",
             "InputDeliveryMode", "ListAppsInput", "ListAppsOutput", "ListWindowsInput",
             "ListWindowsOutput", "SnapshotImage", "WindowBounds", "WindowElement",
-            "WindowInfo", "WindowStateOutput",
+            "WindowInfo", "WindowStateOutput", "NativeWindowGeometry",
             "ParseVisualRegionsInput", "ParseVisualRegionsOptions",
             "ParseVisualRegionsOutput", "VisualCaptureProvenance",
             "VisualParseError", "VisualParseErrorCode", "VisualRegion",

@@ -3532,8 +3532,17 @@ mod tests {
     #[test]
     fn observer_distinguishes_explicit_idle_revival_and_control_cleanup() {
         let probe = probe_observer();
-        let _ = set_cursor_outcome_reader(Arc::new(|_| {
-            bounded_cursor_outcome(true, true, true, Some("cua.default"), false, 2)
+        // Observe only this test's sessions: an end stops at the first reader
+        // that observes, so a catch-all would hide other tests' readers.
+        let _ = set_cursor_outcome_reader(Arc::new(|id| {
+            bounded_cursor_outcome(
+                id.contains("test-observer-"),
+                true,
+                true,
+                Some("cua.default"),
+                false,
+                2,
+            )
         }));
         let explicit = "test-observer-explicit-IJ90";
         begin_tool_call(

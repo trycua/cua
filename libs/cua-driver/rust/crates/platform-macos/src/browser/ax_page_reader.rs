@@ -138,7 +138,7 @@ impl AxRoleFilter {
 }
 
 /// The selectors [`AxRoleFilter::from_css`] accepts, for refusal messages.
-pub const AX_SELECTORS: &str = "a, button, input, h1-h6, p, li, img, select, *";
+pub const AX_SELECTORS: &str = "a, link, button, input, h1-h6, p, li, img, select, *";
 
 /// Parse a single AX tree markdown line into an AXElement.
 ///

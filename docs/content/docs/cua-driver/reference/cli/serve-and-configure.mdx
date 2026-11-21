@@ -213,6 +213,7 @@ cua-driver call [OPTIONS] <tool-name> [<json-args>]
 | --- | --- | --- | --- |
 | <span id="cua-driver-call--screenshot-out-file"></span>`--screenshot-out-file` | path |  | Write the first image content block from the response to this path. |
 | <span id="cua-driver-call--socket"></span>`--socket` | string |  | Override the daemon socket or named-pipe path. |
+| <span id="cua-driver-call--text"></span>`--text` | boolean | `false` | Print the result's text content instead of its structured JSON, for tools whose output is text (for example get_guide). |
 
 **Examples**
 
@@ -225,6 +226,9 @@ cua-driver call click '{"pid":844,"x":100,"y":200}'
 
 # Save the screenshot from a tool response
 cua-driver call get_window_state '{"pid":844,"window_id":10725}' --screenshot-out-file state.png
+
+# Print a tool's text output (guides, summaries) instead of its structured JSON
+cua-driver call --text get_guide '{"topic":"overview"}'
 
 # Read only what changed since an earlier snapshot_id
 cua-driver call get_window_state '{"pid":844,"window_id":10725,"since":"s0000002a"}'

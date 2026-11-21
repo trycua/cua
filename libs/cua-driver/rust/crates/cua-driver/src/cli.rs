@@ -38,6 +38,9 @@ pub enum Command {
         tool: String,
         json_args: Option<serde_json::Value>,
         screenshot_out_file: Option<String>,
+        /// Print the result's text content blocks (`--text`) instead of its
+        /// structured JSON. For tools whose real output is text, e.g. `get_guide`.
+        text: bool,
         /// Override the required daemon socket/pipe path (matches `--socket`
         /// semantics for `serve` / `status` / `stop`). Defaults to
         /// `serve::default_socket_path()` when None.
@@ -790,6 +793,7 @@ pub fn parse_command() -> Command {
 
     // Collect named flag values we care about.
     let screenshot_out_file = flag_value(&args, "--screenshot-out-file");
+    let text_output = args.iter().any(|a| a == "--text");
     let mcp_client = flag_value(&args, "--client");
     let socket = flag_value(&args, "--socket");
     let approval_session = flag_value(&args, "--session");
@@ -1069,6 +1073,7 @@ pub fn parse_command() -> Command {
                 tool,
                 json_args,
                 screenshot_out_file,
+                text: text_output,
                 socket: socket.clone(),
             }
         }
@@ -1166,6 +1171,7 @@ pub fn parse_command() -> Command {
                     tool: "set_agent_cursor_motion".to_owned(),
                     json_args: Some(json_args),
                     screenshot_out_file,
+                    text: text_output,
                     socket: socket.clone(),
                 },
                 Err(message) => {
@@ -1209,6 +1215,7 @@ pub fn parse_command() -> Command {
                 tool,
                 json_args,
                 screenshot_out_file,
+                text: text_output,
                 socket: socket.clone(),
             }
         }
@@ -2215,6 +2222,7 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "tool", "type": "positional-string", "description": "Tool name." },
                   { "name": "json-args", "type": "positional-json", "description": "Tool input JSON (or read from stdin)." },
                   { "name": "--screenshot-out-file", "type": "string", "description": "Write image content to this path instead of emitting base64." },
+                  { "name": "--text", "type": "flag", "description": "Print the result's text content instead of its structured JSON (for tools whose output is text, such as get_guide)." },
                   { "name": "--socket", "type": "string", "description": "Override the required daemon socket path." }
               ] },
             { "name": "connect",
@@ -2688,32 +2696,19 @@ mod daemon_compatibility_tests {
     }
 }
 
-fn call_text<'a>(
-    tool: &str,
-    args: Option<&serde_json::Value>,
-    result: &'a serde_json::Value,
-    printed: bool,
-) -> Vec<&'a str> {
-    let page_read = tool == "page"
+/// `page` reads (`get_text`, `query_dom`) return the page text as a text
+/// block next to structured metadata, so `call` prints both by default.
+fn call_keeps_text(tool: &str, args: Option<&serde_json::Value>) -> bool {
+    tool == "page"
         && matches!(
             args.and_then(|a| a["action"].as_str()),
             Some("get_text" | "query_dom")
-        );
-    if printed && !page_read {
-        return Vec::new();
-    }
-    result["content"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|item| item["type"] == "text")
-        .filter_map(|item| item["text"].as_str())
-        .collect()
+        )
 }
 
 #[cfg(test)]
 mod call_tests {
-    use super::call_text;
+    use super::{call_keeps_text, render_call_stdout};
 
     #[test]
     fn call_page_read_preserves_text_with_structured_content() {
@@ -2723,19 +2718,17 @@ mod call_tests {
         });
         for action in ["get_text", "query_dom"] {
             let args = serde_json::json!({"action": action});
-            assert_eq!(
-                call_text("page", Some(&args), &result, true),
-                vec!["Page body"]
-            );
+            let with_text = call_keeps_text("page", Some(&args));
+            let out = render_call_stdout(&result, None, false, with_text).unwrap();
+            assert!(out.ends_with("\nPage body"), "{out}");
         }
-        assert!(call_text("other", None, &result, true).is_empty());
-        assert!(call_text(
+        assert!(!call_keeps_text("other", None));
+        assert!(!call_keeps_text(
             "page",
-            Some(&serde_json::json!({"action": "click"})),
-            &result,
-            true
-        )
-        .is_empty());
+            Some(&serde_json::json!({"action": "click"}))
+        ));
+        let out = render_call_stdout(&result, None, false, false).unwrap();
+        assert!(!out.contains("Page body"), "{out}");
     }
 }
 
@@ -2804,6 +2797,7 @@ pub fn run_call(
     tool: &str,
     json_args: Option<serde_json::Value>,
     screenshot_out_file: Option<String>,
+    text_only: bool,
     socket_override: Option<String>,
 ) {
     // One-shot public calls remain service-backed so policy, session state,
@@ -2879,7 +2873,6 @@ pub fn run_call(
                         // Walk the content array once: pick up any Image
                         // payloads (either to write to --screenshot-out-file
                         // or to merge into structuredContent below).
-                        let mut printed = false;
                         let mut image_b64: Option<(String, String)> = None;
                         if let Some(content) = result.get("content").and_then(|v| v.as_array()) {
                             for item in content {
@@ -2916,32 +2909,11 @@ pub fn run_call(
                                 }
                             }
                         }
-                        if let Some(sc) = result.get("structuredContent") {
-                            // Merge image data into the structured payload so
-                            // a daemon-routed image response still emits
-                            // `screenshot_png_b64`. Previously this path
-                            // dropped the image entirely when no
-                            // --screenshot-out-file was given.
-                            let mut obj = sc.clone();
-                            if let Some((b64, mime)) = image_b64 {
-                                if let serde_json::Value::Object(ref mut map) = obj {
-                                    map.insert(
-                                        "screenshot_png_b64".into(),
-                                        serde_json::Value::String(b64),
-                                    );
-                                    map.insert(
-                                        "screenshot_mime_type".into(),
-                                        serde_json::Value::String(mime),
-                                    );
-                                }
-                            }
-                            let pretty = serde_json::to_string_pretty(&obj)
-                                .unwrap_or_else(|_| obj.to_string());
-                            println!("{pretty}");
-                            printed = true;
-                        }
-                        for text in call_text(tool, json_args.as_ref(), &result, printed) {
-                            println!("{text}");
+                        let with_text = call_keeps_text(tool, json_args.as_ref());
+                        if let Some(out) =
+                            render_call_stdout(&result, image_b64, text_only, with_text)
+                        {
+                            println!("{out}");
                         }
                         if is_error {
                             process::exit(1);
@@ -2960,6 +2932,65 @@ pub fn run_call(
                 process::exit(1);
             }
         }
+    }
+}
+
+/// What `cua-driver call` prints to stdout for one tool result.
+///
+/// By default a tool's `structuredContent` is printed as JSON (with any image
+/// payload merged in) and its text blocks are left out, because for most tools
+/// the text only restates the structured data. A few tools put their real
+/// output in the text block: `get_guide` returns the guide itself as text and
+/// only its metadata as structured content, so the default output never showed
+/// a guide. `text_only` (`--text`) prints the text blocks instead; a result
+/// with no text blocks falls back to the default output. `with_text` prints
+/// the text blocks after the JSON, for the `page` reads in `call_keeps_text`.
+fn render_call_stdout(
+    result: &serde_json::Value,
+    image: Option<(String, String)>,
+    text_only: bool,
+    with_text: bool,
+) -> Option<String> {
+    let text_blocks: Vec<&str> = result
+        .get("content")
+        .and_then(serde_json::Value::as_array)
+        .map(|content| {
+            content
+                .iter()
+                .filter(|item| item.get("type").and_then(serde_json::Value::as_str) == Some("text"))
+                .filter_map(|item| item.get("text").and_then(serde_json::Value::as_str))
+                .collect()
+        })
+        .unwrap_or_default();
+    if text_only && !text_blocks.is_empty() {
+        return Some(text_blocks.join("\n"));
+    }
+    if let Some(structured) = result.get("structuredContent") {
+        // Merge image data into the structured payload so a daemon-routed
+        // image response still emits `screenshot_png_b64`.
+        // Previously this path dropped the image entirely when no
+        // --screenshot-out-file was given.
+        let mut obj = structured.clone();
+        if let Some((b64, mime)) = image {
+            if let serde_json::Value::Object(ref mut map) = obj {
+                map.insert("screenshot_png_b64".into(), serde_json::Value::String(b64));
+                map.insert(
+                    "screenshot_mime_type".into(),
+                    serde_json::Value::String(mime),
+                );
+            }
+        }
+        let mut out = serde_json::to_string_pretty(&obj).unwrap_or_else(|_| obj.to_string());
+        if with_text && !text_blocks.is_empty() {
+            out.push('\n');
+            out.push_str(&text_blocks.join("\n"));
+        }
+        return Some(out);
+    }
+    if text_blocks.is_empty() {
+        None
+    } else {
+        Some(text_blocks.join("\n"))
     }
 }
 
@@ -4824,7 +4855,7 @@ fn cli_docs_literal() -> serde_json::Value {
                     {"name":"screenshot-out-file","short_name":null,"help":"Write the first image content block from the response to this path.","type":"Path","default_value":null,"is_optional":true},
                     {"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true}
                 ],
-                "flags": no_flags,
+                "flags": [{"name":"text","short_name":null,"help":"Print the result's text content instead of its structured JSON, for tools whose output is text (for example get_guide).","default_value":false}],
                 "subcommands": no_subcommands
             },
             {
@@ -5229,6 +5260,7 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
         ("cua-driver call list_apps", "Call a tool with no arguments"),
         ("cua-driver call click '{\"pid\":844,\"x\":100,\"y\":200}'", "Click at window coordinates"),
         ("cua-driver call get_window_state '{\"pid\":844,\"window_id\":10725}' --screenshot-out-file state.png", "Save the screenshot from a tool response"),
+        ("cua-driver call --text get_guide '{\"topic\":\"overview\"}'", "Print a tool's text output (guides, summaries) instead of its structured JSON"),
         ("cua-driver call get_window_state '{\"pid\":844,\"window_id\":10725,\"since\":\"s0000002a\"}'", "Read only what changed since an earlier snapshot_id"),
         ("cua-driver call get_window_state '{\"pid\":844,\"window_id\":10725,\"tree_format\":\"elements\"}'", "Return the structured elements instead of the markdown tree"),
     ]),
@@ -6016,6 +6048,80 @@ mod tests {
             socket.to_str().unwrap(),
             0
         ));
+    }
+
+    /// The shape `get_guide` returns: the guide as a text block, only its
+    /// metadata as structured content.
+    fn guide_shaped_result() -> serde_json::Value {
+        serde_json::json!({
+            "content": [{"type": "text", "text": "# Drag\nPress, move, release."}],
+            "structuredContent": {"topic": "drag", "platform": "macOS"}
+        })
+    }
+
+    #[test]
+    fn call_output_defaults_to_structured_json_and_leaves_text_out() {
+        let out = super::render_call_stdout(&guide_shaped_result(), None, false, false).unwrap();
+        let printed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(printed["topic"], "drag");
+        assert!(!out.contains("Press, move, release."));
+    }
+
+    #[test]
+    fn call_text_flag_prints_the_text_blocks_instead_of_structured_json() {
+        let out = super::render_call_stdout(&guide_shaped_result(), None, true, false).unwrap();
+        assert_eq!(out, "# Drag\nPress, move, release.");
+    }
+
+    #[test]
+    fn call_text_flag_joins_several_text_blocks_and_skips_other_content() {
+        let result = serde_json::json!({
+            "content": [
+                {"type": "text", "text": "first"},
+                {"type": "image", "data": "AAAA", "mimeType": "image/png"},
+                {"type": "text", "text": "second"}
+            ],
+            "structuredContent": {"ok": true}
+        });
+        let out = super::render_call_stdout(&result, None, true, false).unwrap();
+        assert_eq!(out, "first\nsecond");
+    }
+
+    #[test]
+    fn call_text_flag_falls_back_to_structured_json_when_there_is_no_text() {
+        let result = serde_json::json!({"structuredContent": {"x": 1, "y": 2}});
+        let out = super::render_call_stdout(&result, None, true, false).unwrap();
+        let printed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(printed, serde_json::json!({"x": 1, "y": 2}));
+    }
+
+    #[test]
+    fn call_output_without_structured_content_prints_the_text() {
+        let result = serde_json::json!({
+            "content": [{"type": "text", "text": "one"}, {"type": "text", "text": "two"}]
+        });
+        assert_eq!(
+            super::render_call_stdout(&result, None, false, false).unwrap(),
+            "one\ntwo"
+        );
+    }
+
+    #[test]
+    fn call_output_with_nothing_printable_prints_nothing() {
+        let result = serde_json::json!({"content": []});
+        assert!(super::render_call_stdout(&result, None, false, false).is_none());
+        assert!(super::render_call_stdout(&result, None, true, false).is_none());
+    }
+
+    #[test]
+    fn call_output_still_merges_the_image_into_structured_json() {
+        let result = serde_json::json!({"structuredContent": {"snapshot_id": "s1"}});
+        let image = Some(("QUJD".to_owned(), "image/png".to_owned()));
+        let out = super::render_call_stdout(&result, image, false, false).unwrap();
+        let printed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(printed["snapshot_id"], "s1");
+        assert_eq!(printed["screenshot_png_b64"], "QUJD");
+        assert_eq!(printed["screenshot_mime_type"], "image/png");
     }
 
     #[test]

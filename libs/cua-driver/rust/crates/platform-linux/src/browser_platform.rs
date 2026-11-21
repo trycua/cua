@@ -413,9 +413,10 @@ fn parse_proc_net_loopback_listeners(text: &str) -> Vec<(u16, u64)> {
 ///
 /// The kernel's `Inode` column is `%5lu`: right-justified in a minimum
 /// five-character field, so a small inode number is left-padded with extra
-/// spaces. Splitting on runs of whitespace (rather than a fixed column
-/// offset) is what keeps that padding from being misread as additional
-/// fields.
+/// spaces. The seven leading columns are therefore split on runs of
+/// whitespace, while the path is everything after the single space the
+/// kernel writes past the inode, kept verbatim: a profile under a `TMPDIR`
+/// with consecutive spaces must keep them to match its singleton socket.
 ///
 /// The table is read as bytes: a socket path need not be UTF-8, and one such
 /// unrelated path must not hide every other listener.
@@ -433,31 +434,28 @@ fn parse_unix_listener_table(table: &[u8]) -> HashMap<PathBuf, u64> {
         .split(|byte| *byte == b'\n')
         .skip(1)
         .filter_map(|line| {
-            let mut fields = line
-                .split(u8::is_ascii_whitespace)
-                .filter(|field| !field.is_empty())
-                .skip(3);
-            let flags = u32::from_str_radix(std::str::from_utf8(fields.next()?).ok()?, 16).ok()?;
-            let kind = fields.next()?;
-            let inode = std::str::from_utf8(fields.nth(1)?)
-                .ok()?
-                .parse::<u64>()
-                .ok()?;
-            if kind != SOCK_STREAM || flags & SO_ACCEPTCON == 0 {
+            let mut columns = Vec::with_capacity(7);
+            let mut rest = line;
+            while columns.len() < 7 {
+                let start = rest.iter().position(|byte| !byte.is_ascii_whitespace())?;
+                let column = &rest[start..];
+                let end = column
+                    .iter()
+                    .position(u8::is_ascii_whitespace)
+                    .unwrap_or(column.len());
+                columns.push(&column[..end]);
+                rest = &column[end..];
+            }
+            let flags = u32::from_str_radix(std::str::from_utf8(columns[3]).ok()?, 16).ok()?;
+            let inode = std::str::from_utf8(columns[6]).ok()?.parse::<u64>().ok()?;
+            if columns[4] != SOCK_STREAM || flags & SO_ACCEPTCON == 0 {
                 return None;
             }
             // Only a filesystem-bound socket carries a path column; an
             // abstract-namespace socket has none and never matches an
-            // absolute target. A path containing internal runs of more than
-            // one space is an inherent ambiguity in this whitespace-delimited
-            // encoding, not one this parser can resolve — Chromium's own
-            // singleton-socket path is a single-token generated directory
-            // name and never hits it.
-            let rest: Vec<&[u8]> = fields.collect();
-            (!rest.is_empty()).then(|| {
-                let path = rest.join(&b' ');
-                (PathBuf::from(std::ffi::OsStr::from_bytes(&path)), inode)
-            })
+            // absolute target.
+            let path = rest.strip_prefix(b" ").filter(|path| !path.is_empty())?;
+            Some((PathBuf::from(std::ffi::OsStr::from_bytes(path)), inode))
         })
         .collect()
 }
@@ -2095,6 +2093,20 @@ mod tests {
             Some(&4242)
         );
         assert!(!listeners.contains_key(&PathBuf::from("/tmp/connected.sock")));
+    }
+
+    #[test]
+    fn unix_listener_table_keeps_consecutive_spaces_in_a_path() {
+        let table = b"Num       RefCount Protocol Flags    Type St Inode Path\n\
+            0000000000000000: 00000002 00000000 00010000 0001 01    17 /tmp/a  b/SingletonSocket\n\
+            0000000000000000: 00000002 00000000 00010000 0001 01    18\n";
+        let listeners = parse_unix_listener_table(table);
+        assert_eq!(
+            listeners.get(&PathBuf::from("/tmp/a  b/SingletonSocket")),
+            Some(&17)
+        );
+        assert!(!listeners.contains_key(&PathBuf::from("/tmp/a b/SingletonSocket")));
+        assert_eq!(listeners.len(), 1);
     }
 
     #[test]

@@ -53,8 +53,9 @@ export function keyvaultUnlockWay(platform?: string): string {
 }
 
 /** The line under Settings' "Global shortcut" row: none while the keys work
- * (the row's label says what they do); when the system refused them, why they
- * do nothing and how to fix it (the host tries again each time Settings opens). */
+ * (the row's label says what they do) or are turned off (an empty label); when
+ * the system refused them, why they do nothing and how to fix it (the host
+ * tries again each time Settings opens). */
 export function globalShortcutLine(shortcut: { label: string; registered: boolean }): string | null {
-  return shortcut.registered ? null : t("computers.status.shortcut_taken", { shortcut: shortcut.label });
+  return shortcut.registered || shortcut.label === "" ? null : t("computers.status.shortcut_taken", { shortcut: shortcut.label });
 }

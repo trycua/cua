@@ -353,6 +353,7 @@ function LaunchAtLogin() {
  * The key that brings Cua Spaces forward from any app (the Mac hosts register
  * one). Change waits for the next keys pressed (Esc cancels); the host says
  * whether the system gave them, and a taken shortcut shows as the old line.
+ * Turn off frees the keys (the host's label is then empty).
  */
 function ShortcutRow({ shortcut, onChange }: { shortcut: GlobalShortcut | null | undefined; onChange: (accelerator: string) => Promise<void> }) {
   const t = useT();
@@ -372,16 +373,22 @@ function ShortcutRow({ shortcut, onChange }: { shortcut: GlobalShortcut | null |
     return () => window.removeEventListener("keydown", onKey, true);
   }, [recording, onChange, t]);
   if (!shortcut) return null;
+  const off = shortcut.label === "";
   return (
-    <div data-global-shortcut={shortcut.registered ? "registered" : "taken"}>
+    <div data-global-shortcut={off ? "off" : shortcut.registered ? "registered" : "taken"}>
       <SettingsRow
         label={t("settings.general.shortcut")}
         description={recording ? t("settings.general.shortcut_recording") : (globalShortcutLine(shortcut) ?? undefined)}
         control={
           <div className="flex items-center gap-2">
             <span className="text-[13px] text-muted-foreground" data-shortcut-label="">
-              {recording ? "…" : shortcut.label}
+              {recording ? "…" : off ? t("settings.general.shortcut_off") : shortcut.label}
             </span>
+            {off || recording ? null : (
+              <Button variant="outline" size="sm" data-shortcut-off="" onClick={() => void onChange("off").catch(fail(t("settings.general.shortcut_failed")))}>
+                {t("settings.general.shortcut_turn_off")}
+              </Button>
+            )}
             <Button variant="outline" size="sm" data-shortcut-change="" onClick={() => setRecording((r) => !r)}>
               {recording ? t("settings.general.shortcut_cancel") : t("settings.general.shortcut_change")}
             </Button>

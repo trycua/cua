@@ -47,6 +47,7 @@ import { demoAgentDetailHandlers } from "./demo/agent-detail";
 import { demoAccountKeys, demoAgentKeysHandlers, demoKeyStore, type DemoKeyStore } from "./demo/agent-keys";
 import { demoKeyvaultManageHandlers, demoKeyvaultManageState, withDemoCopies, type DemoKeyvaultManageState } from "./demo/keyvault-manage";
 import { demoKeyvaultSetupHandlers, demoKeyvaultSetupState, demoNoVaultOverview, type DemoKeyvaultSetupState } from "./demo/keyvault-setup";
+import { shortcutLabel } from "@/lib/shortcut-keys";
 import { unsupportedStreamOps } from "../ops/stream";
 import { unsupportedPresenceOps } from "../ops/presence";
 import { unsupportedRuntimeFixOps } from "../ops/runtime-fix";
@@ -603,7 +604,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     telemetry: demoTelemetry(state.settings.telemetry),
     hostSettings: { ...state.hostSettings, runtimes: demoRuntimesInput(state.runtimes) },
     // The macOS hosts register ⌘⇧Space; the Windows and Linux shells have none.
-    globalShortcut: state.platform.os === "macos" ? { label: state.settings.hotkey, registered: true } : null,
+    globalShortcut: state.platform.os === "macos" ? { label: state.settings.hotkey, registered: state.settings.hotkey !== "" } : null,
     // What a host's CLI install plan names (`CuaChannel::cli_name`): Local's is `cua-local`.
     cli: { name: cliName, installed: cliInstalled },
     // The released app on production unless `?demo=local-staging` (or another) says otherwise.
@@ -891,6 +892,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     },
     // The host's own rows: only the Keyvault's switches, as `?demo=mac-host`.
     "settings.choose": async ({ row, option }) => {
+      // General's shortcut: the keys recorded, or `off` (an empty label).
+      if (row === "global-shortcut") state.settings.hotkey = option === "off" ? "" : shortcutLabel(option);
       const key = DEMO_KEYVAULT_ROWS[row];
       if (key && state.hostSettings) state.hostSettings = { ...state.hostSettings, [key]: option === "on" };
       // Settings, Advanced's runtime rows: the kind's source or its path.

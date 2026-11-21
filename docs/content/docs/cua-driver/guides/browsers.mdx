@@ -105,6 +105,26 @@ launches are refused for a back-off that starts at 30 seconds
 (`detail.reason` is `isolated_launch_backoff`, with `retry_after_seconds`).
 Fix the cause before retrying.
 
+An isolated browser starts with extensions, background networking and
+component updates off. The exception is a browser whose administrator forces
+extensions through managed policy (`ExtensionInstallForcelist`, or an
+`ExtensionSettings` entry with `installation_mode` `force_installed` or
+`normal_installed`). Then the browser starts with all three on, so it installs
+those extensions, and an `isolated_named` profile keeps them across relaunches.
+Only policy a standard user cannot write counts:
+
+| Platform | Policy source |
+| --- | --- |
+| Linux | `*.json` files in the browser's `/etc/.../policies/managed` directory (for example `/etc/opt/chrome/policies/managed`). The file and every directory above it must be root-owned and not group- or world-writable. |
+| macOS | Forced values in the browser's managed preferences domain (`com.google.Chrome`, `com.microsoft.Edge`), set by a configuration profile or in `/Library/Managed Preferences`. |
+| Windows | `HKLM\SOFTWARE\Policies\Google\Chrome` or `HKLM\SOFTWARE\Policies\Microsoft\Edge`. |
+
+Other managed policies apply to isolated browsers either way. With extensions
+on, the browser's own extension rules decide what else can be installed; an
+administrator who wants only the forced ones can add
+`"ExtensionInstallBlocklist": ["*"]` to the same policy. The driver never
+passes `--load-extension`.
+
 The result's optional `lifecycle` object describes how long the browser
 process lives: `owner` is `session`, `idle_expires_in_seconds` is how long the
 session may stay idle after this call before it and the browser end,
@@ -204,7 +224,7 @@ off Chrome's remote-debugging setting; do that in Chrome.
 
 Supported: Chrome and Edge on macOS, Windows, and Linux X11; Chrome on GNOME
 Wayland; Chrome, Edge, and Chromium on Sway. On Linux, start the browser
-with `--force-renderer-accessibility`. Setup recognizes English UI labels only.
+with `--force-renderer-accessibility`. On macOS, setup recognizes English UI labels only. On Windows, setup does not depend on the UI language. On Linux, setup accepts a localized browser, but the browser's internal setup page must show its English heading and checkbox.
 
 On macOS 27 and later, reading the Chrome and Edge profile folders needs Full
 Disk Access or a per-app grant, so attachment through the daemon refuses with
@@ -221,7 +241,7 @@ Disk Access in System Settings, then restart the daemon. A runtime started with
 | `browser_consent_revoked` | The host denied, or the browser's prompt was dismissed. |
 | `browser_ref_stale`, `browser_binding_stale` | Snapshot or bind again. |
 | `browser_wrong_target_refused`, `browser_endpoint_owner_mismatch` | Window, prompt, or endpoint identity is not exact. |
-| `browser_input_trust_unavailable` | Trusted input would activate the browser; use `input_route: "dom_event"` if acceptable. |
+| `browser_input_trust_unavailable` | Trusted input would activate the browser, or (with `detail.hit_test`) a ref's click point is covered or off screen; use `input_route: "dom_event"` if acceptable. |
 | `browser_route_unavailable` | No typed route for this engine or platform. |
 | `browser_origin_outside_scope` | The tab left the manifest's origins; mutation pauses. |
 | `browser_action_unavailable` | The ref does not declare the needed action. |

@@ -315,6 +315,22 @@ pub struct SessionRun {
 pub const MAX_SESSIONS: u32 = 8;
 
 impl AgentRecord {
+    /// Resolve the provider settings again for every start and credential check.
+    fn run_options(&self, saved: &ag::keys::AgentKeys) -> Result<(RunOptions, Vec<String>)> {
+        ag::start_options_with(
+            saved,
+            &cua_spaces_contract::inputs::AgentStart {
+                agent: self.harness.clone(),
+                env: self.env.clone(),
+                env_from_host: self.env_from_host.clone(),
+                base_url: self.base_url.clone(),
+                model: self.model.clone(),
+                effort: self.effort.clone(),
+                ..Default::default()
+            },
+        )
+    }
+
     /// What its Space calls it: the `@handle`.
     pub fn handle(&self) -> &str {
         self.handle.as_deref().unwrap_or(&self.name)
@@ -1357,12 +1373,7 @@ impl Persistent {
         }
         // Its env, its env_from_host keys, and the keys saved in Cua Spaces
         // that its harness reads.
-        let (env, missing) = cua_spaces::agents::run_env(
-            &rec.harness,
-            &rec.env,
-            &rec.env_from_host,
-            rec.base_url.is_some(),
-        )?;
+        let (opts, missing) = rec.run_options(ag::keys::global())?;
         if !missing.is_empty() {
             self.release_writer(&rec).await;
             return Err(Error::invalid(format!(
@@ -1370,11 +1381,6 @@ impl Persistent {
                 missing.join(", ")
             )));
         }
-        let endpoint = rec.base_url.clone().map(|base_url| ag::Endpoint {
-            base_url,
-            wire: None,
-            model: rec.model.clone(),
-        });
         let (durable, redrive) = if rec.policy.durable && k == 1 {
             let (d, r) = Self::durable_run(&rec, restore);
             (Some(d), r)
@@ -1386,10 +1392,6 @@ impl Persistent {
                 &rec.harness,
                 prompt,
                 RunOptions {
-                    env,
-                    endpoint,
-                    model: rec.model.clone(),
-                    effort: rec.effort.clone(),
                     home: Some(rec.name.clone()),
                     home_dir,
                     bridge: true,
@@ -1401,7 +1403,7 @@ impl Persistent {
                     durable,
                     // A standby run waits for its messages for as long as it lives.
                     idle_exit_secs: self.idle_exit_for(&rec),
-                    ..Default::default()
+                    ..opts
                 },
             )
             .await;
@@ -1620,14 +1622,10 @@ impl Persistent {
             let now = match cached {
                 Some(h) => h,
                 None => {
-                    let h = cua_spaces::agents::run_env(
-                        &rec.harness,
-                        &rec.env,
-                        &rec.env_from_host,
-                        rec.base_url.is_some(),
-                    )
-                    .ok()
-                    .map(|(env, _)| ag::runs::credential_hash(&rec.harness, &env));
+                    let h = rec
+                        .run_options(ag::keys::global())
+                        .ok()
+                        .map(|(opts, _)| ag::runs::credential_hash(&rec.harness, &opts.env));
                     self.live
                         .lock()
                         .await
@@ -3402,6 +3400,9 @@ pub fn parse_schedule(
         )),
     }
 }
+
+#[cfg(test)]
+mod connection_tests;
 
 #[cfg(test)]
 mod tests {

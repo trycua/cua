@@ -675,12 +675,12 @@ impl RecordingInner {
             Some(meta) => video_session_payload(true, None, Some(meta)),
             None => video_session_payload(false, self.last_error.as_deref(), None),
         };
-        let session_payload = serde_json::json!({
-            "schema_version": 1,
-            "started_at_monotonic_ms": live.started_at_ms,
-            "video": video_block,
-            "cursor": { "present": cursor_samples > 0, "sample_count": cursor_samples }
-        });
+        let session_payload = session_manifest(
+            live.started_at_ms,
+            video_block,
+            cursor_samples > 0,
+            cursor_samples,
+        );
         let _ = write_json_atomic(&live.dir.join("session.json"), &session_payload);
         self.recorder = Recorder::Idle {
             last_video: video_meta,
@@ -859,12 +859,12 @@ impl RecordingSession {
         // stop. We mark `present` based on whether ffmpeg actually started,
         // not just whether the caller asked for video.
         let started_at_ms = now_ms();
-        let session_payload = serde_json::json!({
-            "schema_version": 1,
-            "started_at_monotonic_ms": started_at_ms,
-            "video": video_session_payload(video.is_some(), video_error.as_deref(), None),
-            "cursor": { "present": cursor.is_some(), "sample_count": 0 }
-        });
+        let session_payload = session_manifest(
+            started_at_ms,
+            video_session_payload(video.is_some(), video_error.as_deref(), None),
+            cursor.is_some(),
+            0,
+        );
         let _ = write_json_atomic(&dir.join("session.json"), &session_payload);
 
         inner.generation = inner.generation.wrapping_add(1);
@@ -1632,6 +1632,25 @@ fn iso8601_utc_from_unix_ms(ms: u64) -> String {
         t.second(),
         t.millisecond()
     )
+}
+
+/// Build `session.json`. `started_at_ms` is the wall-clock start in Unix
+/// epoch milliseconds, captured once in `start` and written unchanged on
+/// stop. `started_at_unix_ms` names it correctly; `started_at_monotonic_ms`
+/// carries the same value for readers of the original schema.
+fn session_manifest(
+    started_at_ms: u64,
+    video: Value,
+    cursor_present: bool,
+    cursor_samples: usize,
+) -> Value {
+    serde_json::json!({
+        "schema_version": 1,
+        "started_at_unix_ms": started_at_ms,
+        "started_at_monotonic_ms": started_at_ms,
+        "video": video,
+        "cursor": { "present": cursor_present, "sample_count": cursor_samples }
+    })
 }
 
 /// Build the `session.json` `video` field. Three shapes:
@@ -3110,9 +3129,11 @@ mod tests {
         let root = tempfile::tempdir().expect("temp dir");
         let output_dir = root.path().join("recording");
         let session = RecordingSession::new();
+        let earliest = now_ms();
         session
             .start(output_dir.to_str().expect("utf-8 output dir"), false, None)
             .expect("start recording");
+        let latest = now_ms();
 
         let read_manifest = || -> Value {
             serde_json::from_slice(
@@ -3120,18 +3141,30 @@ mod tests {
             )
             .expect("parse session manifest")
         };
-        let started_at_ms = read_manifest()["started_at_monotonic_ms"]
+        let started = read_manifest();
+        let started_at_ms = started["started_at_unix_ms"]
             .as_u64()
             .expect("start timestamp is an integer");
+        assert!(
+            (earliest..=latest).contains(&started_at_ms),
+            "started_at_unix_ms {started_at_ms} must be the Unix epoch start time, \
+             between {earliest} and {latest} ms"
+        );
+        assert_eq!(
+            started["started_at_monotonic_ms"], started_at_ms,
+            "the legacy key carries the same start time"
+        );
 
         std::thread::sleep(Duration::from_millis(100));
         session.stop(StopBy::Anyone).expect("stop recording");
 
-        assert_eq!(
-            read_manifest()["started_at_monotonic_ms"],
-            started_at_ms,
-            "finalizing the manifest must not replace the recording start time"
-        );
+        let stopped = read_manifest();
+        for key in ["started_at_unix_ms", "started_at_monotonic_ms"] {
+            assert_eq!(
+                stopped[key], started_at_ms,
+                "finalizing the manifest must not replace {key}"
+            );
+        }
     }
 
     #[test]

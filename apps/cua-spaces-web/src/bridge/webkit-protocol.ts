@@ -167,6 +167,8 @@ export const WEBKIT_METHODS = [
   "notifications.list",
   "notifications.markAllRead",
   "notifications.markRead",
+  "notifications.delete",
+  "notifications.deleteAll",
   "telemetry.track",
   "telemetry.linkNotice",
   "telemetry.acknowledgeLinkNotice",

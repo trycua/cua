@@ -53,7 +53,7 @@ pub(crate) const DEFAULT_WAIT_TIMEOUT_MS: u64 = 5_000;
 pub(crate) const DEFAULT_EXPECT_TIMEOUT_MS: u64 = 2_000;
 /// Longest wait any single check may ask for.
 pub(crate) const MAX_CHECK_TIMEOUT_MS: u64 = 10_000;
-const POLL_INTERVAL: Duration = Duration::from_millis(250);
+use crate::expectation::STATE_POLL_INTERVAL as POLL_INTERVAL;
 const CANDIDATES_SHOWN: usize = 5;
 /// Most windows of one app a lookup reads per poll.
 const MAX_WINDOWS_SEARCHED: usize = 4;

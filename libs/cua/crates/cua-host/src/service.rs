@@ -1230,14 +1230,32 @@ pub struct WindowsTask {
     pub names: ServiceNames,
 }
 
+/// `DOMAIN\\user` for the logon trigger: what `whoami` printed when it is a
+/// `domain\\user` name, else `USERDOMAIN\\USERNAME`, else the bare user name.
+fn account_name(whoami: &str, domain: &str, user: &str) -> String {
+    let whoami = whoami.trim();
+    if whoami.contains('\\') {
+        return whoami.to_owned();
+    }
+    if !domain.is_empty() && !user.is_empty() {
+        return format!("{domain}\\{user}");
+    }
+    user.to_owned()
+}
+
 impl WindowsTask {
-    /// The current user (`USERDOMAIN\\USERNAME`).
+    /// The current user, as Windows names the account (`COMPUTER\\user`).
     pub fn for_current_user(host_dir: &Path, names: ServiceNames) -> Self {
-        let user = match (std::env::var("USERDOMAIN"), std::env::var("USERNAME")) {
-            (Ok(d), Ok(u)) if !d.is_empty() && !u.is_empty() => format!("{d}\\{u}"),
-            (_, Ok(u)) => u,
-            _ => String::new(),
-        };
+        // `whoami` is the account's own name. `USERDOMAIN` is not: in an SSH session
+        // on a computer that isn't in a domain it is `WORKGROUP`, which names no
+        // account, and the task then fails with "No mapping between account names
+        // and security IDs was done".
+        let whoami = run(&mut Command::new("whoami")).unwrap_or_default();
+        let user = account_name(
+            &whoami,
+            &std::env::var("USERDOMAIN").unwrap_or_default(),
+            &std::env::var("USERNAME").unwrap_or_default(),
+        );
         Self {
             xml_path: host_dir.join("task.xml"),
             user,
@@ -1717,6 +1735,32 @@ It will not come back after a reboot or a crash. To fix it, either:\n\
 \x20 - run `cua host start` after each boot (from your init system or container start script).\n\
 Pass `--runner process` to keep the plain process without this warning.",
     )
+}
+
+/// The warning `cua host setup` prints when the host runs from a Windows logon
+/// task (`resolved` is `windows-task`) and the computer does not sign in by
+/// itself: the task starts at a sign-in, so after a restart nothing is shared
+/// until someone signs in. `None` otherwise.
+pub fn windows_logon_warning(resolved: &str, auto_logon: bool) -> Option<&'static str> {
+    (resolved == RunnerKind::WindowsTask.as_str() && !auto_logon).then_some(
+        "warning: Windows starts this computer's access when someone signs in, so after a restart nothing is shared until a sign-in.\n\
+For a computer nobody sits at, turn on automatic sign-in for a dedicated account that is not an administrator, with Sysinternals Autologon (it keeps the password out of the registry): https://learn.microsoft.com/sysinternals/downloads/autologon",
+    )
+}
+
+/// Whether Windows signs the user in by itself at start (`AutoAdminLogon` is 1).
+pub fn windows_auto_logon() -> bool {
+    let key = r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon";
+    no_window(Command::new("reg").args(["query", key, "/v", "AutoAdminLogon"]))
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .is_some_and(|o| {
+            console_text(&o.stdout)
+                .split_whitespace()
+                .last()
+                .is_some_and(|v| v == "1")
+        })
 }
 
 /// The note `cua host status` prints under a `process` runner.
@@ -2422,6 +2466,30 @@ pub fn manager_for(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_windows_logon_task_warns_unless_the_computer_signs_in_by_itself() {
+        let w = super::windows_logon_warning("windows-task", false).unwrap();
+        assert!(
+            w.contains("until a sign-in") && w.contains("Autologon"),
+            "{w}"
+        );
+        assert!(super::windows_logon_warning("windows-task", true).is_none());
+        assert!(super::windows_logon_warning("systemd", false).is_none());
+        assert!(super::windows_logon_warning("process", false).is_none());
+    }
+
+    #[test]
+    fn the_logon_account_is_the_one_whoami_names_not_the_workgroup() {
+        // An SSH session on a computer outside a domain: USERDOMAIN is the workgroup.
+        assert_eq!(
+            super::account_name("desktop-m0pjbr5\\cua\r\n", "WORKGROUP", "cua"),
+            "desktop-m0pjbr5\\cua"
+        );
+        // No whoami: the environment, as before.
+        assert_eq!(super::account_name("", "PC", "Ada"), "PC\\Ada");
+        assert_eq!(super::account_name("garbage", "", "Ada"), "Ada");
+        assert_eq!(super::account_name("", "", ""), "");
+    }
 
     /// A scripted `launchctl`: `loaded` says whether `print` succeeds (by
     /// call), `bootstrap` whether each bootstrap succeeds.

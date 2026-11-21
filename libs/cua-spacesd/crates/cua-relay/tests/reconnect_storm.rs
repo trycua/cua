@@ -378,3 +378,37 @@ async fn a_busy_relay_answers_503_with_a_retry_after() {
         ),
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refused_token_gets_401_and_takes_no_join_slot() {
+    use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Error};
+    let (_relay, addr) = start_relay(RelayConfig {
+        tokens: vec![TOKEN.into()],
+        require_client_credentials: false,
+        // One join, then one every five seconds.
+        join_burst: 1,
+        join_rate_per_sec: 0.2,
+        ..RelayConfig::default()
+    })
+    .await;
+    let join = |token: &str, id: &str| {
+        let mut request = format!("ws://{addr}{}", cua_relay::CONNECT_PATH)
+            .into_client_request()
+            .unwrap();
+        let h = request.headers_mut();
+        h.insert("authorization", format!("Bearer {token}").parse().unwrap());
+        h.insert(cua_relay::MACHINE_ID_HEADER, id.parse().unwrap());
+        async move { tokio_tungstenite::connect_async(request).await }
+    };
+    // A crowd of stale tokens: each is a plain 401, none a 503, and none
+    // spends the one slot.
+    for i in 0..5 {
+        match join("stale-token", &format!("stale-{i:04}")).await {
+            Err(Error::Http(response)) => assert_eq!(response.status(), 401),
+            other => panic!("expected 401, got {:?}", other.map(|_| ())),
+        }
+    }
+    join(TOKEN, "real-aaaa")
+        .await
+        .expect("the real machine still gets the slot");
+}

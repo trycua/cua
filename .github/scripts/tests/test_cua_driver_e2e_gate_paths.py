@@ -32,6 +32,15 @@ R = "libs/cua-driver/rust/crates/"
         R + "cua-driver-core/src/agent_cursor.rs",
         R + "cua-driver-core/src/browser/routes.rs",
         R + "cua-driver-e2e/tests/standalone_browser_behavior_test.rs",
+        # The two files that shipped broken unseen (#8089, #8220).
+        R + "platform-macos/src/tools/type_text.rs",
+        R + "platform-macos/src/apps/mod.rs",
+        R + "platform-macos/src/apps/nsworkspace.rs",
+        R + "cua-perception/src/lib.rs",
+        R + "cua-driver/src/updater.rs",
+        R + "platform-macos/src/history.rs",
+        "libs/cua-driver/rust/Cargo.lock",
+        "libs/cua-driver/contract/tools.json",
         "scripts/ci/macos/run-rust-e2e.sh",
         "scripts/ci/lib/e2e-retry-once.sh",
         ".github/workflows/e2e-rust-linux.yml",
@@ -46,9 +55,9 @@ def test_gated(path: str) -> None:
     [
         "docs/guide.md",
         "libs/cua-driver/docs/test-harnesses-guide.md",
-        R + "cua-perception/src/lib.rs",
-        R + "cua-driver/src/updater.rs",
-        R + "platform-macos/src/history.rs",
+        "libs/cua-driver/rust/CHANGELOG.md",
+        R + "platform-macos/README.md",
+        "libs/cua-driver/rust/Skills/cua-driver/SKILL.md",
         "libs/lume/Package.swift",
     ],
 )

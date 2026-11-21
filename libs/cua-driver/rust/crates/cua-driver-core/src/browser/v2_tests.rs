@@ -1786,6 +1786,12 @@ async fn existing_profile_bind_refuses_when_the_endpoint_reproof_stalls() {
 
 #[tokio::test]
 async fn existing_profile_reconnect_refuses_within_its_bound_when_a_process_check_stalls() {
+    for dial_first in [false, true] {
+        existing_profile_reconnect_stalls_in_a_process_check(dial_first).await;
+    }
+}
+
+async fn existing_profile_reconnect_stalls_in_a_process_check(dial_first: bool) {
     const TRANSPORT: &str = "transport-v2-reconnect-stall";
     let stalls = Arc::new(FixtureStalls::default());
     // Setup turned remote debugging on, so ending the grant turns it back off.
@@ -1808,8 +1814,16 @@ async fn existing_profile_reconnect_refuses_within_its_bound_when_a_process_chec
             SharedSocketRelease::Close,
         )
         .await;
-    stalls.fingerprints.store(1, Ordering::SeqCst);
-    stalls.dismissals.store(0, Ordering::SeqCst);
+    if dial_first {
+        // The first dial fails, so the next attempt's process check stalls
+        // after this reconnect dialed and may have raised a prompt.
+        drop(f._server);
+        stalls.fingerprints.store(2, Ordering::SeqCst);
+        stalls.dismissals.store(0, Ordering::SeqCst);
+    } else {
+        stalls.fingerprints.store(1, Ordering::SeqCst);
+        stalls.dismissals.store(1, Ordering::SeqCst);
+    }
     stalls.hold_cleanup.store(true, Ordering::SeqCst);
     // The clock is advanced by hand: tokio stops auto-advancing a paused
     // clock while a blocking task runs, and the held cleanup is one.
@@ -1845,6 +1859,13 @@ async fn existing_profile_reconnect_refuses_within_its_bound_when_a_process_chec
             .is_none(),
         "a reconnect that ran out of time ends the grant"
     );
+    if !dial_first {
+        assert_eq!(
+            stalls.dismissals.load(Ordering::SeqCst),
+            1,
+            "a reconnect that never dialed leaves a prompt in the window alone"
+        );
+    }
     assert!(
         !stalls.cleanup_finished.load(Ordering::SeqCst),
         "the refusal must not wait for a stalled remote-debugging cleanup"
@@ -1863,6 +1884,7 @@ async fn existing_profile_reconnect_refuses_within_its_bound_when_a_process_chec
         tokio::task::yield_now().await;
     }
     assert_eq!(queued(), 1, "a late cleanup failure is queued for retry");
+    tokio::time::resume();
 }
 
 fn queued_cleanups(engine: &BrowserEngine, session: &str) -> usize {

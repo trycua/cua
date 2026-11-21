@@ -27,6 +27,7 @@
 //!   omitted from the snapshot — never guessed.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -1067,43 +1068,45 @@ impl BrowserEngine {
         else {
             return Err(reconnect_exhausted(Some("reconnect_in_progress")));
         };
-        let grant = self
-            .existing_profile_grant(session, transport_session, pid)
-            .await?
-            .ok_or_else(|| {
-                refuse(
-                    BrowserRefusalCode::BrowserConsentRequired,
-                    "the existing-profile grant ended while reconnecting",
-                )
-            })?;
-        if let Ok(conn) = self
-            .pool
-            .get_existing(&grant.endpoint_ws_url, grant.generation)
-            .await
-        {
-            return Ok((conn, grant));
-        }
-
         let window_id = grant.window_id;
-        match tokio::time::timeout_at(
-            deadline,
-            self.redial_existing_profile(session, transport_session, pid, grant, deadline),
-        )
-        .await
-        {
+        let dialed = AtomicBool::new(false);
+        let reconnect = async {
+            let grant = self
+                .existing_profile_grant(session, transport_session, pid)
+                .await?
+                .ok_or_else(|| {
+                    refuse(
+                        BrowserRefusalCode::BrowserConsentRequired,
+                        "the existing-profile grant ended while reconnecting",
+                    )
+                })?;
+            if let Ok(conn) = self
+                .pool
+                .get_existing(&grant.endpoint_ws_url, grant.generation)
+                .await
+            {
+                return Ok((conn, grant));
+            }
+            self.redial_existing_profile(session, transport_session, pid, grant, deadline, &dialed)
+                .await
+        };
+        match tokio::time::timeout_at(deadline, reconnect).await {
             Ok(result) => result,
             Err(_) => {
                 self.revoke_existing_profile_grant(session, transport_session, pid)
                     .await;
-                // A redial cut short here may have raised a browser prompt
-                // that approving would no longer attach to anything. Closing
-                // it is best effort and must not outlive the refusal.
-                let _ = tokio::time::timeout(
-                    ABANDONED_CONSENT_DISMISS_TIMEOUT,
-                    self.platform
-                        .dismiss_abandoned_existing_profile_consent(pid, window_id),
-                )
-                .await;
+                // A dial cut short here may have raised a browser prompt that
+                // approving would no longer attach to anything. Before any
+                // dial, a prompt in the window is someone else's to answer.
+                // Closing it is best effort and must not outlive the refusal.
+                if dialed.load(Ordering::SeqCst) {
+                    let _ = tokio::time::timeout(
+                        ABANDONED_CONSENT_DISMISS_TIMEOUT,
+                        self.platform
+                            .dismiss_abandoned_existing_profile_consent(pid, window_id),
+                    )
+                    .await;
+                }
                 Err(reconnect_exhausted(Some("timed_out")))
             }
         }
@@ -1118,6 +1121,7 @@ impl BrowserEngine {
         pid: i64,
         mut grant: ExistingProfileGrant,
         deadline: tokio::time::Instant,
+        dialed: &AtomicBool,
     ) -> Result<(Arc<CdpConnection>, ExistingProfileGrant), BrowserRefusal> {
         let mut last_error = None;
         while tokio::time::Instant::now() < deadline && grant.reconnect_attempts_remaining > 0 {
@@ -1182,6 +1186,7 @@ impl BrowserEngine {
             let attempt = super::grant::MAX_RECONNECT_ATTEMPTS
                 .saturating_sub(grant.reconnect_attempts_remaining)
                 .saturating_add(1);
+            dialed.store(true, Ordering::SeqCst);
             let mut reconnect = Box::pin(self.pool.reconnect_existing(
                 &endpoint.ws_url,
                 old_generation,

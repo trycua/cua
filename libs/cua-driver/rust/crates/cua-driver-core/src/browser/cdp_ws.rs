@@ -274,18 +274,29 @@ async fn read_loop(mut read: SplitStream<WsStream>, demux: Arc<Demux>) {
     demux.close();
 }
 
-/// A single browser-endpoint connection.
-/// Closes the socket when dropped; forgotten once a frame is fully sent.
-struct CloseUnlessSent<'a>(&'a Demux);
+/// Holds the writer for one send. Unless the frame was fully sent, dropping
+/// it shuts the socket down: it drops the write half and stops the reader,
+/// which drops the read half, so the browser sees the connection end even
+/// while the pool still holds this connection.
+struct SendInFlight<'a> {
+    writer: tokio::sync::MutexGuard<'a, Option<SplitSink<WsStream, Message>>>,
+    conn: &'a CdpConnection,
+    sent: bool,
+}
 
-impl Drop for CloseUnlessSent<'_> {
+impl Drop for SendInFlight<'_> {
     fn drop(&mut self) {
-        self.0.close();
+        if !self.sent {
+            *self.writer = None;
+            self.conn.reader.abort();
+            self.conn.demux.close();
+        }
     }
 }
 
+/// A single browser-endpoint connection.
 pub struct CdpConnection {
-    writer: Mutex<SplitSink<WsStream, Message>>,
+    writer: Mutex<Option<SplitSink<WsStream, Message>>>,
     demux: Arc<Demux>,
     next_id: AtomicU64,
     existing_profile_policy: AtomicBool,
@@ -321,7 +332,7 @@ impl CdpConnection {
         });
         let reader = tokio::spawn(read_loop(read, demux.clone()));
         Ok(Self {
-            writer: Mutex::new(write),
+            writer: Mutex::new(Some(write)),
             demux,
             next_id: AtomicU64::new(1),
             existing_profile_policy: AtomicBool::new(false),
@@ -477,20 +488,25 @@ impl CdpConnection {
         // stalls a send while it holds the writer, which would otherwise keep
         // every later call on this socket waiting with no deadline at all.
         let deadline = tokio::time::Instant::now() + timeout;
-        let Ok(mut writer) = tokio::time::timeout_at(deadline, self.writer.lock()).await else {
+        let Ok(writer) = tokio::time::timeout_at(deadline, self.writer.lock()).await else {
             self.demux.pending.lock().unwrap().remove(&id);
             anyhow::bail!("CDP {method} timed out after {timeout:?} waiting to send");
         };
-        if self.is_closed() {
+        if self.is_closed() || writer.is_none() {
             self.demux.pending.lock().unwrap().remove(&id);
             anyhow::bail!("CDP socket closed before {method}");
         }
         // Until the frame is fully written, a cancelled or failed send leaves
-        // a partial frame on the wire. The guard closes the socket before the
-        // writer is released, so no later call frames another command on it.
-        let in_flight = CloseUnlessSent(&self.demux);
-        match tokio::time::timeout_at(deadline, writer.send(Message::Text(msg.to_string()))).await {
-            Ok(Ok(())) => std::mem::forget(in_flight),
+        // a partial frame on the wire. The guard shuts the socket down before
+        // the writer is released, so no later call frames another command on it.
+        let mut in_flight = SendInFlight {
+            writer,
+            conn: self,
+            sent: false,
+        };
+        let sink = in_flight.writer.as_mut().expect("checked above");
+        match tokio::time::timeout_at(deadline, sink.send(Message::Text(msg.to_string()))).await {
+            Ok(Ok(())) => in_flight.sent = true,
             Ok(Err(e)) => {
                 drop(in_flight);
                 self.demux.pending.lock().unwrap().remove(&id);
@@ -502,7 +518,7 @@ impl CdpConnection {
                 anyhow::bail!("CDP {method} timed out after {timeout:?} while sending");
             }
         }
-        drop(writer);
+        drop(in_flight);
 
         match tokio::time::timeout_at(deadline, rx).await {
             Err(_) => {
@@ -1089,23 +1105,30 @@ mod tests {
 
     /// A browser that completes the handshake and then stops reading, the
     /// way a renderer or browser process blocked on the main thread does.
-    async fn unread_browser() -> (String, tokio::task::JoinHandle<()>) {
+    /// Once told to resume, it reads until the connection ends.
+    async fn unread_browser() -> (String, oneshot::Sender<()>, tokio::task::JoinHandle<()>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
+        let (resume, resumed) = oneshot::channel();
         let task = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
-            let _ws = tokio_tungstenite::accept_async(stream).await.unwrap();
-            std::future::pending::<()>().await;
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let _ = resumed.await;
+            // Raw bytes: a websocket read would refuse the oversized frame
+            // and end on its own, whether or not the driver closed.
+            let mut buf = vec![0u8; 1 << 20];
+            while let Ok(1..) = tokio::io::AsyncReadExt::read(ws.get_mut(), &mut buf).await {}
         });
         (
             format!("ws://127.0.0.1:{port}/devtools/browser/unread"),
+            resume,
             task,
         )
     }
 
     #[tokio::test]
     async fn a_stalled_send_cannot_hold_other_calls_past_their_timeout() {
-        let (url, _browser) = unread_browser().await;
+        let (url, resume_reading, browser) = unread_browser().await;
         let conn = Arc::new(CdpConnection::connect(&url).await.unwrap());
         // Larger than the loopback socket buffers, so the send never finishes
         // while the peer does not read.
@@ -1147,6 +1170,15 @@ mod tests {
             conn.is_closed(),
             "a socket with a partly written frame cannot carry another command"
         );
+
+        // The connection is still held, as the pool holds it until it is
+        // replaced, but the browser must already see the socket end.
+        resume_reading.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(10), browser)
+            .await
+            .expect("the browser must see the interrupted socket close")
+            .unwrap();
+        drop(conn);
     }
 
     #[tokio::test]

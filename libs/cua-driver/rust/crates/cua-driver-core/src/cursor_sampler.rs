@@ -31,7 +31,6 @@ use std::time::{Duration, Instant};
 pub const SAMPLE_RATE_HZ: u32 = 30;
 
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(1000 / SAMPLE_RATE_HZ as u64);
-const STOP_POLL: Duration = Duration::from_millis(5);
 
 /// One running cursor sampler. Drop or `stop()` to terminate.
 pub struct CursorSampler {
@@ -75,7 +74,7 @@ impl CursorSampler {
                         count += 1;
                     }
                 }
-                sleep_interruptibly(&flag_for_thread, SAMPLE_INTERVAL);
+                park_until_stopped(&flag_for_thread, SAMPLE_INTERVAL);
             }
             let _ = writer.flush();
             let _ = path_for_thread; // keep path moved (warning silencer)
@@ -90,8 +89,18 @@ impl CursorSampler {
 
     /// Stop the sampler. Returns the number of samples written.
     pub fn stop(mut self) -> usize {
+        self.shutdown()
+    }
+
+    fn shutdown(&mut self) -> usize {
         self.stop_flag.store(true, Ordering::Relaxed);
-        self.handle.take().and_then(|h| h.join().ok()).unwrap_or(0)
+        self.handle
+            .take()
+            .and_then(|h| {
+                h.thread().unpark();
+                h.join().ok()
+            })
+            .unwrap_or(0)
     }
 
     pub fn output_path(&self) -> &std::path::Path {
@@ -101,21 +110,19 @@ impl CursorSampler {
 
 impl Drop for CursorSampler {
     fn drop(&mut self) {
-        self.stop_flag.store(true, Ordering::Relaxed);
-        if let Some(h) = self.handle.take() {
-            let _ = h.join();
-        }
+        self.shutdown();
     }
 }
 
-fn sleep_interruptibly(stop: &AtomicBool, total: Duration) {
+/// Waits out `total` on the sampler thread; `shutdown` unparks it early.
+fn park_until_stopped(stop: &AtomicBool, total: Duration) {
     let deadline = Instant::now() + total;
     while !stop.load(Ordering::Relaxed) {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             return;
         }
-        std::thread::sleep(remaining.min(STOP_POLL));
+        std::thread::park_timeout(remaining);
     }
 }
 
@@ -298,6 +305,9 @@ fn query_hyprland_cursor(path: &std::path::Path, stop: &AtomicBool) -> Option<(f
             return None;
         }
         match stream.read(&mut chunk) {
+            // The peer can close after the deadline or a stop while this
+            // thread was descheduled past the check above.
+            Ok(0) if stop.load(Ordering::Relaxed) || Instant::now() >= deadline => return None,
             Ok(0) => return parse_hypr_cursorpos_json(&reply),
             Ok(n) if reply.len() + n <= HYPRLAND_REPLY_LIMIT => {
                 reply.extend_from_slice(&chunk[..n])

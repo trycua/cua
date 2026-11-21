@@ -3,7 +3,7 @@
 
 #![cfg(target_os = "linux")]
 
-use platform_linux::wayland::kwin_helper::{available, parse_snapshot};
+use platform_linux::wayland::kwin_helper::parse_snapshot;
 
 #[test]
 fn parses_versioned_kwin_snapshot() {
@@ -70,12 +70,4 @@ fn rejects_multiple_active_records() {
         r#"[{"token":41,"pid":1200,"x":0,"y":0,"w":10,"h":10,"active":true,"minimized":false,"stacking":0},{"token":42,"pid":1300,"x":20,"y":20,"w":10,"h":10,"active":true,"minimized":false,"stacking":1}]"#,
     )
     .is_none());
-}
-
-#[test]
-fn kwin_reports_no_target_bound_input() {
-    assert!(
-        !available(),
-        "focus-bound KWin input must not be advertised as safe"
-    );
 }

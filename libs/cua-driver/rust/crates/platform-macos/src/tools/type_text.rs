@@ -1402,7 +1402,7 @@ fn retype_from(
     let (false, Some(done)) = outcome else {
         return None;
     };
-    (done < total && !is_terminal_target && !is_web()).then_some(done)
+    (done > 0 && done < total && !is_terminal_target && !is_web()).then_some(done)
 }
 
 fn appends_prefix(before: Option<&str>, after: Option<&str>, text: &str, done: usize) -> bool {
@@ -2593,7 +2593,7 @@ mod tests {
         assert_eq!(retype_from((false, Some(5)), 5, false, || false), None);
         assert_eq!(retype_from((true, Some(5)), 5, false, || false), None);
         assert_eq!(retype_from((false, None), 5, false, || false), None);
-        assert_eq!(retype_from((false, Some(0)), 5, false, || false), Some(0));
+        assert_eq!(retype_from((false, Some(0)), 5, false, || false), None);
         assert!(appends_prefix(Some("ab"), Some("ab"), "cde", 0));
         assert!(!appends_prefix(Some("ab"), Some("aX"), "cde", 0));
     }

@@ -63,6 +63,9 @@ fn configured_port_from(value: Option<std::ffi::OsString>) -> anyhow::Result<Opt
 /// while the connection is open would keep a copy of the socket: the server's
 /// close then sends no FIN, the client sees a reset once the child exits, and a
 /// long-lived child keeps a handle to an authenticated connection.
+///
+/// Windows has no accept flag for this, so a child spawned on another thread
+/// between `accept` and this call can still inherit the socket.
 pub(crate) fn clear_inherit_flag(stream: &TcpStream) {
     #[cfg(windows)]
     {
@@ -581,6 +584,35 @@ mod tests {
         client.read_to_end(&mut response).await.unwrap();
         server.await.unwrap();
         String::from_utf8(response).unwrap()
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn accepted_sockets_are_made_non_inheritable() {
+        use std::os::windows::io::AsRawSocket;
+        use windows::Win32::Foundation::{GetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT};
+        let inheritable = |stream: &TcpStream| {
+            let mut flags = 0u32;
+            unsafe {
+                GetHandleInformation(
+                    HANDLE(stream.as_raw_socket() as *mut std::ffi::c_void),
+                    &mut flags,
+                )
+            }
+            .unwrap();
+            flags & HANDLE_FLAG_INHERIT.0 != 0
+        };
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let _client = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        assert!(
+            inheritable(&server),
+            "tokio accepted a non-inheritable socket"
+        );
+        clear_inherit_flag(&server);
+        assert!(!inheritable(&server));
     }
 
     async fn parse_request(request: &str) -> (String, bool) {

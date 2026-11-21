@@ -5341,7 +5341,8 @@ pub fn run_dump_docs_with_type(tools_list: &serde_json::Value, pretty: bool, doc
 
 /// `cua-driver diagnose` — print a paste-able platform diagnostic report.
 ///
-/// Windows reuses the native doctor probes and reports named-pipe availability.
+/// Windows reuses the native doctor probes and reports whether the daemon
+/// answers on its named pipe.
 /// The macOS report mirrors Swift `DiagnoseCommand`. Covers:
 ///   - running process identity (path, pid, version)
 ///   - codesign info (cdhash, team-id, authority) via `codesign -dvvv`
@@ -5382,20 +5383,18 @@ fn windows_diagnose_report(
     runtime: &str,
     report: &crate::doctor::Report,
     socket: &str,
-    pipe_available: bool,
+    daemon_answers: bool,
 ) -> String {
-    // WaitNamedPipe only establishes whether an instance is available. It does
-    // not prove daemon health, and a busy pipe is not an absent daemon.
-    let availability = if pipe_available {
-        "available"
+    let availability = if daemon_answers {
+        "answers"
     } else {
-        "not available (absent, busy, or inaccessible)"
+        "does not answer (absent, starting, busy, or inaccessible)"
     };
     format!(
         "{runtime}\n\n\
          ## daemon endpoint\n\
          named pipe: {socket}\n\
-         pipe instance: {availability}\n\n\
+         daemon: {availability}\n\n\
          ## Windows diagnostics\n\
          {}",
         report.to_text().trim_end()
@@ -5941,18 +5940,18 @@ mod tests {
         );
         report.push(Probe::err("Screen capture", "D3D11 device unavailable"));
 
-        for (available, expected) in [
-            (true, "pipe instance: available"),
+        for (answers, expected) in [
+            (true, "daemon: answers"),
             (
                 false,
-                "pipe instance: not available (absent, busy, or inaccessible)",
+                "daemon: does not answer (absent, starting, busy, or inaccessible)",
             ),
         ] {
             let text = super::windows_diagnose_report(
                 "## running process\nversion: test",
                 &report,
                 r"\\.\pipe\cua-driver-local",
-                available,
+                answers,
             );
             assert!(text.contains(r"named pipe: \\.\pipe\cua-driver-local"));
             assert!(text.contains(expected));

@@ -2551,6 +2551,38 @@ fn await_save_sheet_closed(driver: &mut McpDriver, pid: u32, wid: u64, state: &s
     }
 }
 
+/// Wait until the button labelled `label` is published enabled and return its
+/// token from that fresh snapshot. NSSavePanel re-validates the name after the
+/// field's value changes and reports its Save button `AXEnabled=false` until
+/// that settles, so a token read right after typing the name can name a button
+/// that is still disabled; the driver refuses to press one (`element_disabled`).
+fn await_enabled_button(driver: &mut McpDriver, pid: u32, wid: u64, label: &str) -> String {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let snapshot = snapshot_elements(driver, pid, wid);
+        let token = snapshot.structured()["elements"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|element| {
+                element["role"] == "AXButton"
+                    && element["label"] == label
+                    && element["enabled"] != false
+            })
+            .and_then(|element| element["element_token"].as_str())
+            .map(str::to_owned);
+        if let Some(token) = token {
+            return token;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the {label} button never reported enabled:\n{}",
+            snapshot.tree_text()
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 /// An NSSavePanel shown as a sheet has its own CGWindowID, but its controls
 /// are in the accessibility tree of the window it is attached to (#3351,
 /// #4392). Its name field and Save button act by element token through that
@@ -2609,8 +2641,7 @@ fn harness_appkit_save_sheet_controls_act_through_their_window() {
                         own.raw
                     );
 
-                    let save = element_token_by_role_text(&snapshot, "AXButton", "Save")
-                        .unwrap_or_else(|| panic!("no Save button:\n{}", snapshot.tree_text()));
+                    let save = await_enabled_button(driver, pid, wid, "Save");
                     let saved = driver.call(
                         "click",
                         serde_json::json!({

@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.41.2](https://github.com/trycua/cua/compare/cua-spaces-v0.41.1...cua-spaces-v0.41.2) (2026-11-21)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.56.4 in Cua Spaces ([#8452](https://github.com/trycua/cua/issues/8452)) ([b648172](https://github.com/trycua/cua/commit/b648172831009e86f23953ff74ed228eeb91f1de))
+
+## [0.41.1](https://github.com/trycua/cua/compare/cua-spaces-v0.41.0...cua-spaces-v0.41.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.31.0 in Cua Spaces ([#8429](https://github.com/trycua/cua/issues/8429)) ([2d13206](https://github.com/trycua/cua/commit/2d13206b04fad486cc9a4ebf8ae576da0abc67ef))
+
+## [0.41.0](https://github.com/trycua/cua/compare/cua-spaces-v0.40.2...cua-spaces-v0.41.0) (2026-11-21)
+
+
+### Features
+
+* **cua-vmm:** Linux runtime in a Hyper-V VM on Windows without WSL 2 ([#8417](https://github.com/trycua/cua/issues/8417)) ([e1209b5](https://github.com/trycua/cua/commit/e1209b5ac48ac6ed9890871965b49150544e9b88))
+
 ## [0.40.2](https://github.com/trycua/cua/compare/cua-spaces-v0.40.1...cua-spaces-v0.40.2) (2026-11-21)
 
 

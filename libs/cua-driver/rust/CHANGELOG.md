@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.56.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.4...cua-driver-rs-v0.56.5) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-driver:** add GNOME/Mutter notes to the skill ([#8303](https://github.com/trycua/cua/issues/8303)) ([5b8a2b4](https://github.com/trycua/cua/commit/5b8a2b47f374e441019db7562423f7e8f5af4cd8))
+* **cua-driver:** wait for the Save sheet's Save button to report enabled in the AppKit E2E ([#8446](https://github.com/trycua/cua/issues/8446)) ([c657f8c](https://github.com/trycua/cua/commit/c657f8c002fead6946bf16c7d1ac3a3e0c3d61df))
+
+## [0.56.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.3...cua-driver-rs-v0.56.4) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-driver:** restore macOS web type_text keys and unhide reopened apps ([#8434](https://github.com/trycua/cua/issues/8434)) ([ebe3d86](https://github.com/trycua/cua/commit/ebe3d867784de608adee2def1930313a8a449e80))
+
+## [0.56.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.2...cua-driver-rs-v0.56.3) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep fast-path guard state per runtime and session ([#8416](https://github.com/trycua/cua/issues/8416)) ([b7f3630](https://github.com/trycua/cua/commit/b7f363051d5ab4c17d3bae54d6c9bc5b93848172))
+
+## [0.56.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.1...cua-driver-rs-v0.56.2) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-driver:** admit input lanes after consent, with explicit lane and gate state ([#8344](https://github.com/trycua/cua/issues/8344)) ([d6e4876](https://github.com/trycua/cua/commit/d6e48769dfb04e69d0bf83a472a2b048b32ad9bd))
+* **cua-driver:** refuse removed --session-policy and Claude Code compat flags ([#8339](https://github.com/trycua/cua/issues/8339)) ([cac2c10](https://github.com/trycua/cua/commit/cac2c10af703be40f719a2f9eb8c7f938f8a9bfe))
+
+## [0.56.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.0...cua-driver-rs-v0.56.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-driver:** refuse a zoom made against a screenshot frame a refresh replaced ([#8415](https://github.com/trycua/cua/issues/8415)) ([314cdaa](https://github.com/trycua/cua/commit/314cdaa49cae49d6faebaab73426b05c17150926))
+
 ## [0.56.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.55.5...cua-driver-rs-v0.56.0) (2026-11-20)
 
 

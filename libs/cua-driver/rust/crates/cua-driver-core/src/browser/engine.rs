@@ -1074,6 +1074,7 @@ impl BrowserEngine {
             return Err(reconnect_exhausted(Some("reconnect_in_progress")));
         };
         let window_id = grant.window_id;
+        let endpoint_ws_url = grant.endpoint_ws_url.clone();
         let dials = tokio::sync::watch::channel(0).0;
         let reconnect = async {
             let grant = self
@@ -1105,7 +1106,8 @@ impl BrowserEngine {
                 // dial, a prompt in the window is someone else's to answer.
                 // Closing it is best effort and must not outlive the refusal.
                 if *dials.borrow() > 0 {
-                    self.dismiss_abandoned_consent(pid, window_id).await;
+                    self.dismiss_abandoned_consent(&endpoint_ws_url, pid, window_id)
+                        .await;
                 }
                 Err(reconnect_exhausted(Some("timed_out")))
             }
@@ -1114,17 +1116,19 @@ impl BrowserEngine {
 
     /// Close the prompt of a dial this reconnect abandoned. The platform
     /// finds a prompt by its window, not by its dial, so this runs only while
-    /// no other dial is in progress: once the abandoned dial released the
-    /// pool's dial gate, another caller may have started one whose prompt
-    /// is now on screen. The dismissal runs as its own task that keeps the
-    /// gate until the platform's native work has exited, even after the
-    /// caller stops waiting, and it does not start once the bound has passed.
-    async fn dismiss_abandoned_consent(&self, pid: i64, window_id: u64) {
+    /// no other dial to the same browser endpoint is in progress: once the
+    /// abandoned dial ended, another caller may have started one whose
+    /// prompt is now on screen. The dismissal runs as its own task that keeps
+    /// that endpoint's dials waiting until the platform's native work has
+    /// exited, even after the caller stops waiting, and it does not start
+    /// once the bound has passed. Dials to other browsers are unaffected.
+    async fn dismiss_abandoned_consent(&self, ws_url: &str, pid: i64, window_id: u64) {
         let deadline = tokio::time::Instant::now() + ABANDONED_CONSENT_DISMISS_TIMEOUT;
         let pool = self.pool.clone();
         let platform = self.platform.clone();
+        let ws_url = ws_url.to_owned();
         let dismissal = tokio::spawn(async move {
-            pool.while_no_dial_runs(async {
+            pool.while_no_dial_runs(&ws_url, async {
                 if tokio::time::Instant::now() < deadline {
                     let _ = platform
                         .dismiss_abandoned_existing_profile_consent(pid, window_id)
@@ -1245,7 +1249,12 @@ impl BrowserEngine {
                             // just abandoned; approving it would attach nothing.
                             // Without a dial of ours, the prompt is not ours.
                             if *dials.borrow() > 0 {
-                                self.dismiss_abandoned_consent(pid, grant.window_id).await;
+                                self.dismiss_abandoned_consent(
+                                    &endpoint.ws_url,
+                                    pid,
+                                    grant.window_id,
+                                )
+                                .await;
                             }
                             if error.code == BrowserRefusalCode::BrowserConsentRevoked {
                                 self.revoke_existing_profile_grant(session, transport_session, pid)

@@ -1847,14 +1847,6 @@ async fn existing_profile_reconnect_stalls_in_a_process_check(case: ReconnectSta
     stalls
         .dismissals
         .store(if may_dismiss { 0 } else { 1 }, Ordering::SeqCst);
-    // The other caller's browser accepts the connection and never answers
-    // the handshake, so its dial holds the pool's dial gate until the
-    // connect timeout, past the reconnect bound and the dismissal bound.
-    let other_browser = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let other_url = format!(
-        "ws://127.0.0.1:{}/devtools/browser/other",
-        other_browser.local_addr().unwrap().port()
-    );
     let mut other_dial = None;
     stalls.hold_cleanup.store(true, Ordering::SeqCst);
     let calls_before = stalls.fingerprint_calls.load(Ordering::SeqCst);
@@ -1878,6 +1870,16 @@ async fn existing_profile_reconnect_stalls_in_a_process_check(case: ReconnectSta
         stalled_check,
         "the reconnect must reach its stalled process check"
     );
+    // Past its failed dial, the browser comes back but never answers a
+    // handshake, so another caller's dial to it runs until its connect
+    // timeout, past the reconnect bound and the dismissal bound.
+    let _browser_back = if case == ReconnectStall::AfterADialWhileAnotherDials {
+        let addr = grant.endpoint_ws_url.trim_start_matches("ws://");
+        let addr = addr.split('/').next().unwrap().to_owned();
+        Some(tokio::net::TcpListener::bind(addr).await.unwrap())
+    } else {
+        None
+    };
     tokio::time::pause();
     for second in 0..120 {
         if bind.is_finished() {
@@ -1885,7 +1887,7 @@ async fn existing_profile_reconnect_stalls_in_a_process_check(case: ReconnectSta
         }
         if second == 28 && case == ReconnectStall::AfterADialWhileAnotherDials {
             let pool = f.engine.pool.clone();
-            let url = other_url.clone();
+            let url = grant.endpoint_ws_url.clone();
             other_dial = Some(tokio::spawn(async move {
                 pool.claim_existing(&url, u64::MAX).await
             }));
@@ -1917,19 +1919,26 @@ async fn existing_profile_reconnect_stalls_in_a_process_check(case: ReconnectSta
         "a reconnect that ran out of time ends the grant"
     );
     if may_dismiss {
-        // The stalled dismissal still runs, so no other dial may start yet.
-        let gate_probe = tokio::spawn({
+        // The stalled dismissal still runs, so no other dial to this browser
+        // may start yet, while other browsers stay free to dial.
+        let probe = |url: String| {
             let pool = f.engine.pool.clone();
-            async move { pool.while_no_dial_runs(async {}).await }
-        });
+            tokio::spawn(async move { pool.while_no_dial_runs(&url, async {}).await })
+        };
+        let this_browser = probe(grant.endpoint_ws_url.clone());
+        let other_browser = probe("ws://127.0.0.1:9/devtools/browser/other".to_owned());
         for _ in 0..3 {
             tokio::time::advance(std::time::Duration::from_secs(1)).await;
         }
         assert!(
-            !gate_probe.is_finished(),
-            "the dial gate stays held until the dismissal's native work exits"
+            !this_browser.is_finished(),
+            "this browser's dials wait until the dismissal's native work exits"
         );
-        gate_probe.abort();
+        assert!(
+            other_browser.is_finished(),
+            "a stalled dismissal must not hold up dials to other browsers"
+        );
+        this_browser.abort();
     } else {
         assert_eq!(
             stalls.dismissals.load(Ordering::SeqCst),

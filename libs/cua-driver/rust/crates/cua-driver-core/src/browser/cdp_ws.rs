@@ -680,11 +680,24 @@ struct PoolInner {
     /// Serializes every browser-level dial for grant-owned sockets so two
     /// sessions can never open two sockets (and two consent prompts) at once.
     dial_gate: Mutex<()>,
+    /// One lock per endpoint, held by each dial to it (taken before the dial
+    /// gate) and by each dismissal of a prompt in its browser, so closing an
+    /// abandoned prompt never touches one a running dial raised.
+    prompt_locks: StdMutex<HashMap<String, Arc<Mutex<()>>>>,
     markers: StdMutex<Markers>,
     ttl: SharedSocketTtl,
 }
 
 impl PoolInner {
+    fn prompt_lock(&self, ws_url: &str) -> Arc<Mutex<()>> {
+        self.prompt_locks
+            .lock()
+            .unwrap()
+            .entry(ws_url.to_owned())
+            .or_default()
+            .clone()
+    }
+
     async fn close_parked(&self) -> usize {
         let mut conns = self.conns.lock().await;
         let parked: Vec<String> = conns
@@ -799,6 +812,7 @@ impl CdpPool {
         let inner = Arc::new(PoolInner {
             conns: Mutex::new(HashMap::new()),
             dial_gate: Mutex::new(()),
+            prompt_locks: StdMutex::new(HashMap::new()),
             markers: StdMutex::new(Markers::default()),
             ttl: SharedSocketTtl { idle, absolute },
         });
@@ -846,6 +860,7 @@ impl CdpPool {
     ) -> anyhow::Result<Arc<CdpConnection>> {
         loopback_port(ws_url)
             .ok_or_else(|| anyhow::anyhow!("existing-profile endpoint has no loopback port"))?;
+        let _prompt = self.inner.prompt_lock(ws_url).lock_owned().await;
         let _dial = self.inner.dial_gate.lock().await;
         {
             let now = Instant::now();
@@ -952,6 +967,7 @@ impl CdpPool {
             ws_url,
             generation: old_generation,
         };
+        let _prompt = self.inner.prompt_lock(ws_url).lock_owned().await;
         let _dial = self.inner.dial_gate.lock().await;
         {
             let now = Instant::now();
@@ -989,10 +1005,15 @@ impl CdpPool {
         Ok(conn)
     }
 
-    /// Run `work` while no grant-owned dial is in progress, so browser UI it
-    /// touches cannot belong to a dial that is still waiting for consent.
-    pub async fn while_no_dial_runs<F: std::future::Future>(&self, work: F) -> F::Output {
-        let _dial = self.inner.dial_gate.lock().await;
+    /// Run `work` while no dial to `ws_url` is in progress, so browser UI
+    /// it touches cannot belong to a dial still waiting for consent. Dials to
+    /// other endpoints, and so other browsers, are not held up.
+    pub async fn while_no_dial_runs<F: std::future::Future>(
+        &self,
+        ws_url: &str,
+        work: F,
+    ) -> F::Output {
+        let _prompt = self.inner.prompt_lock(ws_url).lock_owned().await;
         work.await
     }
 

@@ -262,12 +262,14 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
-    fn routes_follow_the_classified_desktop() {
-        let wayland = Desktop::Wayland(Compositor::Other);
-        assert_eq!(*rebuild(wayland), LinuxRoutes::new(wayland));
-        assert_eq!(*routes(), LinuxRoutes::new(wayland));
-        assert_eq!(*rebuild(Desktop::X11), LinuxRoutes::new(Desktop::X11));
+    fn reclassifying_the_desktop_rebuilds_its_routes() {
+        // The override holds the environment lock, so no other test
+        // reclassifies in between, and reclassifies again when dropped.
+        let _x11 = crate::test_env::x11_display(":9999999");
+        rebuild(Desktop::Wayland(Compositor::Other));
+        crate::desktop::reclassify();
         assert_eq!(*routes(), LinuxRoutes::new(Desktop::X11));
     }
 

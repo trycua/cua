@@ -1109,6 +1109,7 @@ pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
 )> {
     use cursor_overlay::capture_exclusion::{capture_excluding_overlays, ResidualCheck};
     refuse_without_direct_capture_consent()?;
+    crate::display_awake::wake_for_capture()?;
     capture_excluding_overlays(&OverlayExcluder, |overlay| {
         let Some(&overlay_window_id) = overlay else {
             return match run_native_capture_worker(
@@ -1229,6 +1230,9 @@ pub fn capture_probe_frame() -> bool {
     use screencapturekit::prelude::{SCContentFilter, SCShareableContent, SCStreamConfiguration};
     use screencapturekit::screenshot_manager::SCScreenshotManager;
 
+    if crate::display_awake::wake_for_capture().is_err() {
+        return false;
+    }
     let Ok(content) = SCShareableContent::get() else {
         return false;
     };

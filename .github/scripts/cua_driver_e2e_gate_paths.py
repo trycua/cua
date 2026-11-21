@@ -17,6 +17,8 @@ GATED_PATTERNS = (
     # driver crate, by directory or by file name.
     RUST + r"crates/[^/]+/src/(.*/)?(cursor|overlay|focus|background|browser|input|pointer)[^/]*",
     RUST + r"crates/[^/]+/src/(.*/)?[^/]*(cursor|overlay|focus|background_|browser|pointer_shape|key_focus)[^/]*",
+    # The macOS accessibility tree every scroll, click and type case reads.
+    RUST + r"crates/platform-macos/src/ax/",
     RUST + r"crates/cua-driver-core/src/(browser|background_input|agent_cursor)",
     RUST + r"crates/cua-driver-contract/src/cursor",
     # The behavior harness the lanes execute.

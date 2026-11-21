@@ -21,8 +21,9 @@ name: "E2E: Cua Driver release gate"
 #
 # A PR gets the quick lane when the `e2e-gate` label is present or it touches the
 # gated paths (.github/scripts/cua_driver_e2e_gate_paths.py: cursor overlay,
-# focus, background input, browser routing, the harness). release-please PRs
-# skip the lanes unless labelled.
+# focus, background input, browser routing, the harness). The Cua Driver release-please PR always gets the quick lane (so a regression
+# blocks the release PR, not the tag); other release-please PRs skip the lanes
+# unless labelled.
 #
 # A full run that fails on main alerts (workflow-failure-alerts.yml, Alertmanager)
 # and opens or updates ONE tracking issue (the nightly-report job). The break is
@@ -172,11 +173,15 @@ jobs:
             emit false pr "draft PR without the e2e-gate label"; exit 0
           fi
           files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename')
+          if [[ "$PR_HEAD_REPO" == "$REPO" && "$PR_HEAD_REF" == release-please--branches--*--components--cua-driver-rs ]]; then
+            # The Cua Driver release PR runs the quick lanes (hosted macOS included), so a break that
+            # merged without a gated path fails the release PR instead of the tag run. The tag run
+            # still reruns every lane on the exact release commit.
+            emit true pr "Cua Driver release-please PR (regressions block the release PR, not the tag)" quick; exit 0
+          fi
           if [[ "$PR_HEAD_REPO" == "$REPO" && "$PR_HEAD_REF" == release-please--branches--* ]]; then
-            # Release PRs only change versions, changelogs and lockfiles. The
-            # tag run in cd-rust-cua-driver.yml runs every lane on the exact
-            # release commit and blocks publishing, so the PR skips them.
-            # Add the e2e-gate label to run the lanes on a release PR anyway.
+            # Other release PRs only change versions, changelogs and lockfiles; the tag runs gate
+            # their releases. Add the e2e-gate label to run the lanes anyway.
             emit false pr "release-please PR (the tag release gate runs the lanes)"; exit 0
           fi
           if [[ ! -f .github/scripts/cua_driver_e2e_gate_paths.py ]]; then

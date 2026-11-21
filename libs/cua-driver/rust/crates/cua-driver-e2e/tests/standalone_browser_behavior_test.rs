@@ -2878,15 +2878,15 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
         assert!(!started.is_error(), "start_session failed: {}", started.raw);
         driver.start_behavior_recording();
 
-        let prepared = driver.call(
-            "browser_prepare",
-            serde_json::json!({
-                "session": session,
-                "allow_launch": true,
-                "pid": seed.as_ref().map(|fixture| fixture.pid as i64),
-                "profile": {"mode": "isolated_new"},
-            }),
-        );
+        let mut prepare_args = serde_json::json!({
+            "session": session,
+            "allow_launch": true,
+            "profile": {"mode": "isolated_new"},
+        });
+        if let Some(seed) = &seed {
+            prepare_args["pid"] = serde_json::json!(seed.pid as i64);
+        }
+        let prepared = driver.call("browser_prepare", prepare_args);
         assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
         assert_eq!(
             prepared.structured()["action"],

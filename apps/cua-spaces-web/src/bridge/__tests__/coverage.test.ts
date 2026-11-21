@@ -156,6 +156,8 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "notifications.list": {},
   "notifications.markAllRead": {},
   "notifications.markRead": { ids: ["n1"] },
+  "notifications.delete": { ids: ["n1"] },
+  "notifications.deleteAll": {},
   "telemetry.track": { signals: [{ type: "step", step: "app_launched", ok: true }] },
   "telemetry.linkNotice": {},
   "telemetry.acknowledgeLinkNotice": {},

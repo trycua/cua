@@ -1417,6 +1417,92 @@ fn any_typing_delay_gives_a_budget() {
     crate::input::action::Action::new(longest);
 }
 
+/// The result for AT-SPI input that was sent and whose effect is unknown: an
+/// error with `effect: unverifiable` and `delivery.mode: unknown`. It has no
+/// `background_unavailable` code and no foreground escalation, so neither the
+/// caller nor `run_steps` sends the input a second time.
+pub(crate) fn atspi_outcome_unknown(
+    summary: String,
+    transport: cua_driver_core::action_record::ActionTransport,
+    delivery: crate::input::delivery::DeliveryMode,
+    detail: Option<String>,
+) -> ToolResult {
+    use cua_driver_core::action_record::{
+        ActionEffect, ActionExecutionRecord, ActualDelivery, RequestedDelivery,
+    };
+    let requested = if delivery.is_foreground() {
+        RequestedDelivery::Foreground
+    } else {
+        RequestedDelivery::Background
+    };
+    let mut record =
+        ActionExecutionRecord::builder(ActionEffect::Unverifiable, transport, requested)
+            .actual_delivery(ActualDelivery::Unknown);
+    if let Some(detail) = detail {
+        record = record.detail(detail);
+    }
+    let record = record
+        .build()
+        .expect("uncertain semantic activation has no delivered count or replay");
+    let public = serde_json::to_value(record.public_result().unwrap()).unwrap();
+    ToolResult::error(summary)
+        .with_structured(public)
+        .with_action_record(record)
+}
+
+/// [`atspi_outcome_unknown`] for a `doAction` that failed after it was sent
+/// ([`crate::atspi::InputMayHaveLanded`]).
+pub(crate) fn atspi_click_outcome_unknown(
+    target: &str,
+    delivery: crate::input::delivery::DeliveryMode,
+    error: &anyhow::Error,
+) -> ToolResult {
+    atspi_outcome_unknown(
+        format!(
+            "click: the AT-SPI action for {target} was sent, but {error}; whether it took \
+             effect is unknown. Refresh state (get_window_state or a screenshot) before \
+             clicking again."
+        ),
+        cua_driver_core::action_record::ActionTransport::LinuxAtSpiAction,
+        delivery,
+        Some(error.to_string()),
+    )
+}
+
+/// [`atspi_outcome_unknown`] for an `EditableText` write that failed after it
+/// was sent ([`crate::atspi::InputMayHaveLanded`]).
+pub(crate) fn atspi_text_outcome_unknown(
+    delivery: crate::input::delivery::DeliveryMode,
+    error: &anyhow::Error,
+) -> ToolResult {
+    atspi_outcome_unknown(
+        format!(
+            "type_text: the AT-SPI text write was sent, but {error}; whether the text \
+             landed is unknown. Read the field back (get_window_state) before typing again."
+        ),
+        cua_driver_core::action_record::ActionTransport::LinuxAtSpiValue,
+        delivery,
+        Some(error.to_string()),
+    )
+}
+
+/// Report a cleanup step that failed after the input was sent, without
+/// changing the input's own outcome: a sentence appended to the text and a
+/// `warning` field.
+pub(crate) fn with_cleanup_warning(mut result: ToolResult, warning: Option<String>) -> ToolResult {
+    let Some(warning) = warning else {
+        return result;
+    };
+    if let Some(cua_driver_core::protocol::Content::Text { text, .. }) = result.content.first_mut()
+    {
+        text.push_str(&format!(" Warning: {warning}."));
+    }
+    if let Some(Value::Object(structured)) = result.structured_content.as_mut() {
+        structured.insert("warning".into(), json!(warning));
+    }
+    result
+}
+
 /// Map an input-path error to a tool error, attaching the structured
 /// foreground `code` (`foreground_unavailable` / `foreground_timeout`) when the
 /// message carries one so the caller can branch instead of parsing prose.
@@ -3349,15 +3435,28 @@ pub(crate) fn hyprland_input_result(result: anyhow::Result<Value>, foreground: b
         "background_unavailable"
     };
     match result {
-        Ok(value) if value["ok"] == true => ToolResult::text(
-            "Dispatched exact-target Hyprland input; application effect is unverifiable.",
-        )
-        .with_action_record(
-            record(ActionEffect::Unverifiable)
-                .actual_delivery(actual)
-                .build()
-                .expect("isolated input record is valid"),
-        ),
+        Ok(value) if value["ok"] == true => {
+            let outcome = record(ActionEffect::Unverifiable).actual_delivery(actual);
+            if value["admission"] == "user" {
+                let detail = "Admitted by the user's hyprland-apps.txt, not qualified by Cua.";
+                ToolResult::text(format!(
+                    "Dispatched exact-target Hyprland input; application effect is unverifiable. \
+                     {detail}"
+                ))
+                .with_structured(json!({"ok": true, "admission": "user"}))
+                .with_action_record(
+                    outcome
+                        .detail(detail)
+                        .build()
+                        .expect("isolated input record is valid"),
+                )
+            } else {
+                ToolResult::text(
+                    "Dispatched exact-target Hyprland input; application effect is unverifiable.",
+                )
+                .with_action_record(outcome.build().expect("isolated input record is valid"))
+            }
+        }
         Ok(mut value) => {
             if foreground && value["code"] == "foreground_partial_unknown" {
                 return hyprland_input_result(
@@ -3408,12 +3507,13 @@ pub(crate) fn hyprland_input_result(result: anyhow::Result<Value>, foreground: b
                 .as_u64()
                 .and_then(|count| u32::try_from(count).ok())
                 .filter(|count| *count > 0);
-            let outcome = if value["effect"] == "partial"
-                && delivered.is_some_and(|count| foreground || count == 1)
-            {
+            // Keys or wheel packets the compositor acknowledged before the
+            // stop stay reported, so a caller does not read them as unsent.
+            let partial = delivered.filter(|_| value["effect"] == "partial");
+            let outcome = if let Some(count) = partial {
                 record(ActionEffect::Partial)
                     .actual_delivery(actual)
-                    .delivered_count(delivered.unwrap())
+                    .delivered_count(count)
             } else {
                 value["effect"] = json!("refused");
                 value
@@ -3770,6 +3870,33 @@ fn persistent_wayland_pointer_coordinates_include_window_origin() {
 
 #[cfg(test)]
 #[test]
+fn nested_inject_focus_point_maps_screenshot_pixels_or_refuses() {
+    let state = ToolState::new();
+    let args = json!({ "pid": 41, "window_id": 9, "x": 387.0, "y": 133.5 });
+    let refusal = nested_inject_focus_point(&state, &args, 41, 9, (387.0, 133.5))
+        .expect_err("a point read off no screenshot must not be clicked");
+    assert_eq!(
+        refusal.structured_content.as_ref().unwrap()["code"],
+        "screenshot_context_missing"
+    );
+
+    // A screenshot downscaled to half the window's size: its pixels are
+    // doubled into the window-local frame the compositor clicks in.
+    state.snapshots.publish_capture_for_session(
+        41,
+        9,
+        crate::atspi::snapshot::AtspiSnapshot::from_nodes(&[]),
+        None,
+        Some(2.0),
+    );
+    assert_eq!(
+        nested_inject_focus_point(&state, &args, 41, 9, (387.0, 133.5)).unwrap(),
+        (774.0, 267.0)
+    );
+}
+
+#[cfg(test)]
+#[test]
 fn session_end_releases_only_its_hold_before_discarding_state() {
     let state = ToolState::new();
     let session_id = "ending-session";
@@ -3870,6 +3997,29 @@ fn failed_session_end_release_remains_retryable_and_bounded() {
 
 #[cfg(test)]
 #[test]
+fn a_user_admitted_dispatch_says_the_user_qualified_it() {
+    let user = isolated_hyprland_result(Ok(json!({"ok": true, "admission": "user"})));
+    assert_eq!(user.is_error, None);
+    assert_eq!(
+        user.structured_content.as_ref().unwrap()["admission"],
+        "user"
+    );
+    assert!(serde_json::to_string(&user.content)
+        .unwrap()
+        .contains("not qualified by Cua"));
+    assert!(user
+        .action_record
+        .unwrap()
+        .detail
+        .unwrap()
+        .contains("hyprland-apps.txt"));
+    let driver = isolated_hyprland_result(Ok(json!({"ok": true})));
+    assert!(driver.structured_content.is_none());
+    assert!(driver.action_record.unwrap().detail.is_none());
+}
+
+#[cfg(test)]
+#[test]
 fn background_client_refusals_name_the_alternatives() {
     for code in ["client_not_bound", "client_xwayland", "client_unattested"] {
         let result = isolated_hyprland_result(Ok(json!({"ok":false,"code":code,"detail":code})));
@@ -3941,6 +4091,26 @@ fn isolated_hyprland_refused_partial_and_unknown_outcomes_stay_distinct() {
     let public = partial.action_record.unwrap().public_result().unwrap();
     assert_eq!(public.effect, cua_driver_contract::ActionEffect::Partial);
     assert_eq!(public.delivery.unwrap().delivered_count, Some(1));
+
+    // Text interrupted after three keys: those keys landed, so the result is
+    // partial with its count, never a refusal that reads as "nothing sent".
+    let typed = isolated_hyprland_result(Ok(json!({
+        "ok": false, "code": "text_interrupted", "detail": "lane lost",
+        "effect": "partial", "delivery": {"mode": "background", "delivered_count": 3}
+    })));
+    let content = typed.structured_content.as_ref().unwrap();
+    assert_eq!(content["effect"], "partial");
+    assert_eq!(content["delivery"]["delivered_count"], 3);
+    assert!(content.get("escalation").is_none());
+    let public = typed.action_record.unwrap().public_result().unwrap();
+    public.validate_invariants().unwrap();
+    assert_eq!(public.effect, cua_driver_contract::ActionEffect::Partial);
+    let delivery = public.delivery.unwrap();
+    assert_eq!(
+        delivery.mode,
+        cua_driver_contract::ActionDeliveryMode::Background
+    );
+    assert_eq!(delivery.delivered_count, Some(3));
 
     let unknown = isolated_hyprland_result(Err(anyhow::anyhow!("connection lost")));
     let public = unknown.action_record.unwrap().public_result().unwrap();
@@ -4800,10 +4970,36 @@ pub(crate) async fn focus_by_pixel(
     Ok(())
 }
 
+/// Map a keyboard tool's PX focus point into the window-local frame the
+/// nested compositor clicks in, as the pointer tools map theirs. Screenshot
+/// pixels need this session's screenshot of the window, so a point read off
+/// no screenshot is refused instead of clicking an arbitrary spot.
+pub(crate) fn nested_inject_focus_point(
+    state: &ToolState,
+    args: &Value,
+    pid: u32,
+    window_id: u64,
+    (x, y): (f64, f64),
+) -> Result<(f64, f64), ToolResult> {
+    if desktop_frame_requested(args) {
+        return desktop_to_window_local(window_id, x, y)
+            .map_err(|error| desktop_frame_unmapped(window_id, error));
+    }
+    if args.bool_or("from_zoom", false) {
+        return state
+            .zoom_context(args, pid, Some(window_id))
+            .map(|context| context.zoom_to_window(x, y));
+    }
+    screenshot_scale(state, args, pid, Some(window_id)).map(|scale| (x * scale, y * scale))
+}
+
 /// Establish widget-local focus inside a nested-compositor target without
 /// changing the compositor's focused toplevel. AX uses Component.GrabFocus;
-/// PX sends a private per-surface left click at the requested local point.
+/// PX sends a private per-surface left click at the requested point, mapped
+/// by [`nested_inject_focus_point`].
 pub(crate) async fn focus_nested_inject_target(
+    state: &ToolState,
+    args: &Value,
     pid: u32,
     window_id: u64,
     element: Option<crate::atspi::TokenElement>,
@@ -4823,7 +5019,8 @@ pub(crate) async fn focus_nested_inject_target(
             Err(error) => Err(ToolResult::error(format!("Task error: {error}"))),
         };
     }
-    if let Some((x, y)) = pixel {
+    if let Some(pixel) = pixel {
+        let (x, y) = nested_inject_focus_point(state, args, pid, window_id, pixel)?;
         return match tokio::task::spawn_blocking(move || {
             crate::wayland::inject_click(pid, window_id, x, y, 1, 1)
         })

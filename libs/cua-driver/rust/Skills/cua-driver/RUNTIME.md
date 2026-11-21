@@ -83,8 +83,9 @@ cua-driver mcp \
 Capability manifest v3 omits file-level `mode` and `ask.tools`. Its
 `allow.tools` list is nonempty. Lifetime fields are optional in `standard` and
 `unrestricted`; `bounded` requires both `expires_after` and `idle_timeout`.
-The older `--session-policy` names remain compatibility aliases and must not be
-used in new configurations.
+The older `--session-policy` and `--approve-session-policy` flags have been
+removed; `cua-driver` refuses them and names `--capability-manifest` or
+`--approve-capability-manifest` instead.
 
 Starting, ending, naming, reconnecting, or omitting a session never changes
 permission authority. A public session label is lifecycle metadata, never a

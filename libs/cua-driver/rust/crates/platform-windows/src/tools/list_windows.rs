@@ -72,7 +72,7 @@ impl Tool for ListWindowsTool {
         if let Some(filter) = args.opt_str("app") {
             windows.retain(|w| {
                 let app_name = pid_to_name.get(&w.pid).map(String::as_str).unwrap_or("");
-                cua_driver_core::tool_args::app_filter_matches(&filter, app_name, None)
+                cua_driver_core::tool_args::app_filter_matches(&filter, &[app_name], None)
             });
         }
 
@@ -100,14 +100,10 @@ impl Tool for ListWindowsTool {
             None
         };
 
-        // z_index: list_windows merges EnumWindows first (which the Win32
-        // window manager returns in canonical top-to-bottom z-order), then
-        // appends any UIA-only HWNDs UIA found that EnumWindows missed
-        // (UIA-only entries land at the bottom of the z-stack — they have
-        // no canonical Win32 ordering). Higher list index = farther from
-        // front. Swift convention: higher z_index = closer to front.
-        // Invert via `(len - 1 - i)` so the front-most window gets the
-        // largest z.
+        // z_index: list_windows returns EnumWindows' top-to-bottom z-order
+        // first, then the immersive shell windows EnumWindows skips, which
+        // have no canonical Win32 ordering and land at the bottom. Swift
+        // convention: higher z_index = closer to front, so invert the index.
         let n = windows.len();
         let records: Vec<serde_json::Value> = windows
             .iter()

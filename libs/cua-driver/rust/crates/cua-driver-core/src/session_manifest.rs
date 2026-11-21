@@ -1909,12 +1909,15 @@ allow:
                 &serde_json::json!({"url": "https://app.example.com/inbox"}),
             )
             .unwrap();
-        assert!(manifest
-            .authorize_call(
-                "browser_new_tab",
-                &serde_json::json!({"url": "https://evil.example/"}),
-            )
-            .is_err());
+        assert_eq!(
+            manifest
+                .authorize_call(
+                    "browser_new_tab",
+                    &serde_json::json!({"url": "https://evil.example/"}),
+                )
+                .unwrap_err(),
+            "the live browser origin is outside the capability manifest"
+        );
     }
 
     #[cfg(feature = "yaml")]

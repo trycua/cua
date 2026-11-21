@@ -1466,7 +1466,7 @@ impl Tool for BrowserNewTabTool {
         };
         if let Some(failure) = failure {
             return ToolResult::error(format!(
-                "{failure}; new tab {tab_id} stays open on about:blank"
+                "{failure}; new tab {tab_id} is open, but its page is unknown"
             ));
         }
         ToolResult::text(format!("opened {tab_id} at {url}")).with_structured(json!({
@@ -4716,6 +4716,11 @@ mod tests {
             }))
             .await;
         assert_eq!(new_tab.is_error, Some(true));
+        assert!(matches!(
+            &new_tab.content[0],
+            Content::Text { text, .. }
+                if text == "browser_new_tab only accepts http/https/about URLs, got: javascript:alert(1)"
+        ));
 
         let click = BrowserClickTool::new(e)
             .invoke(json!({

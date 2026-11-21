@@ -111,6 +111,29 @@ fn standalone_focus_gated_click_html() -> String {
     )
 }
 
+/// The fixture page with every control hidden and a canvas over the lower 60%
+/// of the viewport. The canvas has no accessibility element of its own; it
+/// publishes the page x of each pointerdown it receives.
+#[cfg(target_os = "macos")]
+fn standalone_canvas_html() -> String {
+    standalone_fixture_html().replace(
+        "</body>",
+        r#"<style>body > *:not(script):not(style) { visibility: hidden !important; }</style>
+<canvas id="pixel-canvas"
+        style="visibility:visible !important;position:fixed;left:0;top:40%;width:100vw;height:60vh"></canvas>
+<span id="canvas-point" data-cua-id="canvas-point">canvas=idle</span>
+<script>
+  let canvasClicks = 0;
+  document.getElementById('pixel-canvas').addEventListener('pointerdown', event => {
+    canvasClicks += 1;
+    document.getElementById('canvas-point').textContent =
+      `canvas=${canvasClicks}:${Math.round(event.clientX)}`;
+  });
+</script>
+</body>"#,
+    )
+}
+
 fn standalone_reduced_motion_html() -> String {
     standalone_fixture_html().replace(
         "</body>",
@@ -2690,6 +2713,78 @@ fn run_background_web_click_noop(spec: &BrowserSpec) {
     });
 }
 
+/// #5484: a background pixel click on web content lands at the requested
+/// point. An accessibility press on the element the point hit-tests to drops
+/// the coordinates, so a canvas saw no click, or one at its centre.
+#[cfg(target_os = "macos")]
+fn run_background_canvas_pixel_click(spec: &BrowserSpec) {
+    let scenario = format!(
+        "macos-{}-standalone-background-canvas-pixel-click",
+        spec.name
+    );
+    let case = CaseSpec::delivered(
+        scenario.clone(),
+        spec.name.clone(),
+        "standalone-chromium",
+        "background_canvas_pixel_click",
+        Targeting::Px,
+        Delivery::Background,
+        Scope::Window,
+        DriverRoute::MacosCgEventPid,
+        vec![
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+        ],
+    );
+    execute_case(case, |evidence| {
+        let mut fixture = launch_browser_with_html(spec, &scenario, standalone_canvas_html());
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        wait_for_text(&fixture.server, "canvas-point", "canvas=idle");
+        let session = format!("standalone-canvas-click-{}", fixture.pid);
+        run_with_background_oracles(&mut fixture, |fixture| {
+            // Click at `fraction` of the default point's x and return the
+            // page x the canvas saw.
+            let click_at = |fixture: &mut BrowserFixture, nth: usize, fraction: f64| {
+                let mut args = standalone_pixel_click_args(fixture, &session);
+                args["x"] = serde_json::json!((args["x"].as_f64().expect("x") * fraction).round());
+                let click = fixture.driver.call("click", args);
+                assert!(!click.is_error(), "canvas click: {}", click.raw);
+                assert_eq!(
+                    click.action_delivery_mode(),
+                    Some("background"),
+                    "{}",
+                    click.raw
+                );
+                let prefix = format!("canvas={nth}:");
+                let deadline = Instant::now() + Duration::from_secs(3);
+                loop {
+                    let seen = fixture.server.text("canvas-point").unwrap_or_default();
+                    if let Some(x) = seen.strip_prefix(&prefix) {
+                        return x.parse::<f64>().expect("canvas page x");
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "the canvas saw no click {nth} ({seen}): {}",
+                        click.raw
+                    );
+                    thread::sleep(Duration::from_millis(50));
+                }
+            };
+            // The page starts at the window's left edge, so a click at half
+            // the x lands at half the page x, whatever the display scale.
+            let centre = click_at(fixture, 1, 1.0);
+            let half = click_at(fixture, 2, 0.5);
+            assert!(
+                (centre - 2.0 * half).abs() <= 6.0,
+                "the clicks landed at page x {centre} and {half}, not at the requested points"
+            );
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        })
+    });
+}
+
 fn run_trusted_click(spec: &BrowserSpec) {
     let scenario = format!(
         "{}-{}-standalone-trusted-click",
@@ -5159,7 +5254,7 @@ fn standalone_pixel_target_html() -> String {
 
 /// Capture id and the click arguments for a background pixel click below the
 /// browser toolbar, inside the page.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn standalone_pixel_click_args(fixture: &mut BrowserFixture, session: &str) -> serde_json::Value {
     let state = fixture.driver.call(
         "get_window_state",
@@ -5901,6 +5996,11 @@ standalone_browser_test!(
 standalone_browser_test!(
     standalone_browser_background_web_click_noop,
     run_background_web_click_noop
+);
+#[cfg(target_os = "macos")]
+standalone_browser_test!(
+    standalone_browser_background_canvas_pixel_click,
+    run_background_canvas_pixel_click
 );
 standalone_browser_test!(standalone_browser_trusted_click, run_trusted_click);
 standalone_browser_test!(

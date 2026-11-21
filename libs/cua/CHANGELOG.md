@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.30.1](https://github.com/trycua/cua/compare/cua-sdk-v0.30.0...cua-sdk-v0.30.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-vmm:** pin runtime-gvisor 0.1.0-rc2 (the amd64 disk boots on Hyper-V) ([#8414](https://github.com/trycua/cua/issues/8414)) ([37123d2](https://github.com/trycua/cua/commit/37123d250f351fb03ea03c6adfb53ec7492f0237))
+
+## [0.30.0](https://github.com/trycua/cua/compare/cua-sdk-v0.29.4...cua-sdk-v0.30.0) (2026-11-20)
+
+
+### Features
+
+* **spaces:** send Super from the right ⌘ to Linux and Windows Spaces ([#8236](https://github.com/trycua/cua/issues/8236)) ([711bb76](https://github.com/trycua/cua/commit/711bb769f2a6162e723257b878d76a218877ebd2))
+
+## [0.29.4](https://github.com/trycua/cua/compare/cua-sdk-v0.29.3...cua-sdk-v0.29.4) (2026-11-20)
+
+
+### Bug Fixes
+
+* **cua-host:** set the Windows host up over SSH, and say when nothing will start it after a restart ([#8274](https://github.com/trycua/cua/issues/8274)) ([3770bdb](https://github.com/trycua/cua/commit/3770bdb67a2638b3b6f0b64c112e7f51ccb77312))
+
+## [0.29.3](https://github.com/trycua/cua/compare/cua-sdk-v0.29.2...cua-sdk-v0.29.3) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** python security bumps (Twisted, pypdf, filelock, virtualenv, litellm, transformers, pyasn1, GitPython, fsspec, joserfc, black, langgraph-sdk) ([#8312](https://github.com/trycua/cua/issues/8312)) ([ee59258](https://github.com/trycua/cua/commit/ee592588b4a6ff6fc8ea929a4354dcb62c64076f))
+
 ## [0.29.2](https://github.com/trycua/cua/compare/cua-sdk-v0.29.1...cua-sdk-v0.29.2) (2026-11-20)
 
 

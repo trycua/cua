@@ -2673,14 +2673,21 @@ fn stop_daemon(
 
 /// Whether a probe that found no daemon answering still sees its endpoint
 /// held: on Windows any instance of its pipe, free or busy; on Unix a socket
-/// that still accepts connections. An embedded daemon takes no lock, so this
-/// is the only sign of one that answers late.
+/// that still accepts connections, reached directly or through a symlink. An
+/// embedded daemon takes no lock, so this is the only sign of one that
+/// answers late.
 fn endpoint_still_held(socket_path: &str, presence: &DaemonPresence) -> bool {
     let _ = socket_path;
     match presence {
         DaemonPresence::Serving { .. } => false,
         #[cfg(unix)]
         DaemonPresence::Stale { .. } => socket_accepts(socket_path),
+        #[cfg(unix)]
+        DaemonPresence::Absent => {
+            std::fs::metadata(socket_path).is_ok_and(|metadata| {
+                std::os::unix::fs::FileTypeExt::is_socket(&metadata.file_type())
+            }) && socket_accepts(socket_path)
+        }
         #[cfg(target_os = "windows")]
         _ => named_pipe_exists(socket_path),
         #[cfg(not(target_os = "windows"))]
@@ -2750,9 +2757,9 @@ fn is_released(socket_path: &str) -> bool {
         #[cfg(unix)]
         DaemonPresence::Starting { .. } => std::fs::symlink_metadata(socket_path).is_err(),
         #[cfg(unix)]
-        DaemonPresence::Stale { .. } => !socket_accepts(socket_path),
-        #[cfg(unix)]
-        DaemonPresence::Absent => true,
+        presence @ (DaemonPresence::Stale { .. } | DaemonPresence::Absent) => {
+            !endpoint_still_held(socket_path, &presence)
+        }
         #[cfg(target_os = "windows")]
         DaemonPresence::Absent | DaemonPresence::Stale { .. } | DaemonPresence::Starting { .. } => {
             !named_pipe_exists(socket_path)
@@ -3239,6 +3246,45 @@ mod presence_tests {
         drop(listener);
         assert!(is_released(path));
         assert_eq!(serving_daemon(path), None);
+    }
+
+    #[test]
+    fn a_symlink_to_a_socket_that_never_answers_is_held() {
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
+        let target = directory.path().join("target.sock");
+        let socket = directory.path().join("driver.sock");
+        let path = socket.to_str().unwrap();
+        let listener = std::os::unix::net::UnixListener::bind(&target).unwrap();
+        std::os::unix::fs::symlink(&target, &socket).unwrap();
+        assert_eq!(probe_presence(path), DaemonPresence::Absent);
+        assert!(!is_released(path));
+        assert_eq!(serving_daemon(path), Some(None));
+
+        drop(listener);
+        assert!(is_released(path));
+        assert_eq!(serving_daemon(path), None);
+    }
+
+    #[test]
+    fn a_fifo_at_the_lock_path_never_blocks_a_probe() {
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
+        let socket = directory.path().join("driver.sock");
+        let path = socket.to_str().unwrap().to_owned();
+        let fifo = std::ffi::CString::new(
+            daemon_lock_path(&path)
+                .into_os_string()
+                .into_encoded_bytes(),
+        )
+        .unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        let (presence_tx, presence_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = presence_tx.send(probe_presence(&path));
+        });
+        assert_eq!(
+            presence_rx.recv_timeout(Duration::from_secs(10)).unwrap(),
+            DaemonPresence::Absent
+        );
     }
 
     /// A Unix listener with a backlog of zero, so one pending connection

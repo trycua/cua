@@ -83,18 +83,19 @@ impl PlatformMainHooks for Platform {
         work: impl FnOnce() -> i32 + Send + 'static,
         on_main: impl FnOnce() -> bool,
     ) -> i32 {
-        // AppKit's event loop is process-long, so `work` finishing is what
-        // ends the process.
+        // AppKit's event loop is process-long, so `work` finishing, or
+        // panicking, is what ends the process.
         let worker = std::thread::Builder::new()
             .name("cua-serve".into())
-            .spawn(move || std::process::exit(work()))
+            .spawn(move || {
+                let code = std::panic::catch_unwind(std::panic::AssertUnwindSafe(work));
+                std::process::exit(code.unwrap_or(101))
+            })
             .expect("spawn long-lived worker thread");
         if on_main() {
             platform_macos::cursor::overlay::run_on_main_thread();
         }
         let _ = worker.join();
-        // The worker exits the process itself, so reaching here means it
-        // panicked.
         101
     }
 }

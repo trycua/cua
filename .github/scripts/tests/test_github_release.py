@@ -193,6 +193,77 @@ def test_github_api_retries_transient_server_error(monkeypatch: pytest.MonkeyPat
     assert sleeps == [0.25]
 
 
+@pytest.mark.parametrize(
+    ("headers", "expected_delay"),
+    [
+        ({"Retry-After": "3"}, 3.0),
+        ({"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "105"}, 5.0),
+    ],
+)
+def test_github_api_retries_rate_limited_403(monkeypatch, headers, expected_delay):
+    class Response(BytesIO):
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    responses = iter(
+        [
+            HTTPError(
+                "https://api.github.com/repos/trycua/cua/releases",
+                403,
+                "Forbidden",
+                headers,
+                BytesIO(b"rate limited"),
+            ),
+            Response(b'{"ok": true}'),
+        ]
+    )
+    calls = []
+    sleeps = []
+
+    def fake_urlopen(*args, **kwargs):
+        calls.append(args)
+        response = next(responses)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    monkeypatch.setattr(github_release, "urlopen", fake_urlopen)
+    monkeypatch.setattr(github_release.time, "sleep", sleeps.append)
+    monkeypatch.setattr(github_release.time, "time", lambda: 100.0)
+
+    assert GitHubApi("token", max_attempts=2).get("repos/trycua/cua/releases") == {"ok": True}
+    assert len(calls) == 2
+    assert sleeps == [expected_delay]
+
+
+def test_github_api_does_not_retry_permission_403(monkeypatch):
+    calls = []
+    sleeps = []
+
+    def fake_urlopen(*args, **kwargs):
+        calls.append(args)
+        raise HTTPError(
+            "https://api.github.com/repos/trycua/cua/releases",
+            403,
+            "Forbidden",
+            {},
+            BytesIO(b"permission denied"),
+        )
+
+    monkeypatch.setattr(github_release, "urlopen", fake_urlopen)
+    monkeypatch.setattr(github_release.time, "sleep", sleeps.append)
+
+    with pytest.raises(ReleaseError, match="403 permission denied"):
+        GitHubApi("token", max_attempts=2).get("repos/trycua/cua/releases")
+    assert len(calls) == 1
+    assert sleeps == []
+
+
 def test_nightly_can_create_a_private_draft_at_the_exact_sha():
     sha = "a" * 40
     tag = "nightly-lume-v0.5.4-nightly.20260812.42"

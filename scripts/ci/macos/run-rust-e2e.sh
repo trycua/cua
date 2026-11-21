@@ -360,6 +360,9 @@ if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
   run_test embedded-browser-routes cargo test -p cua-driver-e2e --test cross_platform_behavior_test -- \
     --ignored --exact embedded_browser_routes_are_exact_or_refused \
     --nocapture --test-threads=1
+  run_test webkit-background-paste cargo test -p cua-driver-e2e --test cross_platform_behavior_test -- \
+    --ignored --exact webkit_background_paste_runs_the_edit_menu_item \
+    --nocapture --test-threads=1
 fi
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
   NATIVE_FILTER_MATCHES=0
@@ -381,6 +384,7 @@ macos-swiftui-ax-tree-ax-not-applicable|harness_swiftui_smoke
 macos-swiftui-left-click-ax-background|harness_swiftui_counter_background
 macos-swiftui-set-value-ax-background|harness_swiftui_set_value_background
 macos-swiftui-popover-open-ax-foreground|harness_swiftui_popover_foreground
+macos-swiftui-menu-open-ax-background|harness_swiftui_menu_button_background
 macos-swiftui-verify-state-ax-not-applicable|harness_swiftui_verify_state
 EOF
 
@@ -401,6 +405,9 @@ EOF
     run_test installed-app-textedit-hotkey-sibling cargo test -p cua-driver-e2e --test installed_app_textedit_macos_test -- \
       --ignored --exact foreground_window_hotkey_reaches_an_unfocused_sibling_of_the_frontmost_app \
       --nocapture --test-threads=1
+    run_test installed-app-calculator env -u CUA_E2E_RECORDINGS_ROOT \
+      cargo test -p cua-driver-e2e --test installed_app_calculator_macos_test -- \
+      --ignored --nocapture --test-threads=1
     run_test installed-app-screen-sharing cargo test -p cua-driver-e2e --test screen_sharing_macos_test -- \
       --ignored --exact foreground_type_text_reaches_a_minimized_screen_sharing_window \
       --nocapture --test-threads=1

@@ -108,9 +108,9 @@ pub(crate) fn create_process(
     let mut process = PROCESS_INFORMATION::default();
     unsafe {
         CreateProcessAsUserW(
-            token.raw(),
+            Some(token.raw()),
             PCWSTR(application.as_ptr()),
-            PWSTR(command_line.as_mut_ptr()),
+            Some(PWSTR(command_line.as_mut_ptr())),
             None,
             None,
             false,
@@ -169,17 +169,10 @@ pub(crate) fn shell_execute(
         .map_err(|error| format!("could not share the helper result pipe: {error}"))?;
 
     let mut attribute_size = 0usize;
-    let _ = unsafe {
-        InitializeProcThreadAttributeList(
-            LPPROC_THREAD_ATTRIBUTE_LIST(std::ptr::null_mut()),
-            1,
-            0,
-            &mut attribute_size,
-        )
-    };
+    let _ = unsafe { InitializeProcThreadAttributeList(None, 1, None, &mut attribute_size) };
     let mut attribute_storage = vec![0u64; attribute_size.div_ceil(8)];
     let attributes = LPPROC_THREAD_ATTRIBUTE_LIST(attribute_storage.as_mut_ptr().cast());
-    unsafe { InitializeProcThreadAttributeList(attributes, 1, 0, &mut attribute_size) }
+    unsafe { InitializeProcThreadAttributeList(Some(attributes), 1, None, &mut attribute_size) }
         .map_err(|error| format!("could not prepare the helper handle list: {error}"))?;
     let inherited = [write.raw()];
     let updated = unsafe {
@@ -206,9 +199,9 @@ pub(crate) fn shell_execute(
     let mut process = PROCESS_INFORMATION::default();
     let created = updated.and_then(|()| unsafe {
         CreateProcessAsUserW(
-            token.raw(),
+            Some(token.raw()),
             PCWSTR(application.as_ptr()),
-            PWSTR(command_line.as_mut_ptr()),
+            Some(PWSTR(command_line.as_mut_ptr())),
             None,
             None,
             true,

@@ -75,6 +75,6 @@ def test_ordinary_installers_have_no_optional_perception_download_path() -> None
 
     unix = UNIX_INSTALLER.read_text()
     windows = WINDOWS_INSTALLER.read_text(encoding="utf-8-sig")
-    assert "releases/download/${TAG}/$tarball" in unix
+    assert "$RELEASE_DOWNLOAD_BASE/${TAG}/$tarball" in unix
     assert '"cua-driver-rs-$version-$archLabel.zip"' in windows
-    assert "releases/download/$Script:CuaDriverRsReleaseTag/$zipName" in windows
+    assert "$ReleaseDownloadBase/$Script:CuaDriverRsReleaseTag/$zipName" in windows

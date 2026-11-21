@@ -372,9 +372,10 @@ impl<S: Read + Write> RfbClient<S> {
     }
 
     /// Type `text` key by key, then press Return.
+    /// The keysyms spell out `text`, so they are zeroized like it.
     pub fn type_line(&mut self, text: &str) -> Result<()> {
-        let keysyms = text.chars().map(keysym).collect::<Result<Vec<_>>>()?;
-        for keysym in keysyms.into_iter().chain([KEYSYM_RETURN]) {
+        let keysyms = Zeroizing::new(text.chars().map(keysym).collect::<Result<Vec<_>>>()?);
+        for &keysym in keysyms.iter().chain(&[KEYSYM_RETURN]) {
             self.key(keysym, true)?;
             self.key(keysym, false)?;
         }
@@ -391,9 +392,9 @@ impl<S: Read + Write> RfbClient<S> {
     }
 
     fn key(&mut self, keysym: u32, down: bool) -> Result<()> {
-        let mut message = vec![4u8, u8::from(down), 0, 0];
-        message.extend_from_slice(&keysym.to_be_bytes());
-        self.stream.write_all(&message)?;
+        let mut message = Zeroizing::new([4u8, u8::from(down), 0, 0, 0, 0, 0, 0]);
+        message[4..].copy_from_slice(&keysym.to_be_bytes());
+        self.stream.write_all(&message[..])?;
         Ok(())
     }
 }
@@ -535,11 +536,24 @@ pub fn ard_response(
     }
     let key_len = prime.len();
     let prime = BigUint::from_bytes_be(prime);
+    let server_key = BigUint::from_bytes_be(server_key);
+    // The server's parameters are not authenticated. Refuse values that make
+    // the shared secret predictable: an even or tiny prime, or a generator or
+    // server key of 0, 1 or p-1.
+    let one = BigUint::from(1u8);
+    let usable = |value: &BigUint| value > &one && value < &(&prime - &one);
+    if prime.bits() < 3
+        || !prime.bit(0)
+        || !usable(&BigUint::from(generator))
+        || !usable(&server_key)
+    {
+        return Err(RfbError::Protocol(
+            "the server's Diffie-Hellman parameters are unusable".into(),
+        ));
+    }
     let public = BigUint::from(generator).modpow(private, &prime);
     let shared = Zeroizing::new(pad(
-        &BigUint::from_bytes_be(server_key)
-            .modpow(private, &prime)
-            .to_bytes_be(),
+        &server_key.modpow(private, &prime).to_bytes_be(),
         key_len,
     ));
     let digest = <md5::Md5 as md5::Digest>::digest(&shared[..]);
@@ -642,6 +656,34 @@ mod tests {
         assert_eq!(
             hex(&response),
             "d0a01da7270c19ac89c4d7efe3c552ba1a08f15feaa1063075c7ba5380ec06291a08f15feaa1063075c7ba5380ec06291a08f15feaa1063075c7ba5380ec0629cb32b037baea6e91eb00e9bcbcd6f56c1a08f15feaa1063075c7ba5380ec06291a08f15feaa1063075c7ba5380ec06291a08f15feaa1063075c7ba5380ec0629a49e9861bc70128ad73c00744f1a57162275939d9b10479c65510b2fd00e423dda598d341906f21c98535be518dd6f589f3a613aeaada094c7be7464fce38f26ac1acf4058ac2e7ae09c3593af1ffee8e085a1fa26f49f83afd529048e6d418abd12155718227767bfac45c71de1b09d88b2fe2e057f4bccdaa65d676a097cdf"
+        );
+    }
+
+    #[test]
+    fn ard_refuses_degenerate_server_parameters() {
+        let prime = unhex(OAKLEY_GROUP_2);
+        let p = BigUint::from_bytes_be(&prime);
+        let private = BigUint::from(0xc0ffee_u32);
+        let unusable = Err(RfbError::Protocol(
+            "the server's Diffie-Hellman parameters are unusable".into(),
+        ));
+        for server_key in [BigUint::from(0u8), BigUint::from(1u8), &p - 1u8] {
+            let server_key = pad(&server_key.to_bytes_be(), 128);
+            assert_eq!(
+                ard_response(2, &prime, &server_key, &private, "admin", "pw"),
+                unusable
+            );
+        }
+        let two = pad(&[2], 128);
+        assert_eq!(
+            ard_response(1, &prime, &two, &private, "admin", "pw"),
+            unusable
+        );
+        let mut even = prime.clone();
+        even[127] &= 0xfe;
+        assert_eq!(
+            ard_response(2, &even, &two, &private, "admin", "pw"),
+            unusable
         );
     }
 

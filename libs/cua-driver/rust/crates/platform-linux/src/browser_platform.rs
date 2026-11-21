@@ -416,19 +416,33 @@ fn parse_proc_net_loopback_listeners(text: &str) -> Vec<(u16, u64)> {
 /// spaces. Splitting on runs of whitespace (rather than a fixed column
 /// offset) is what keeps that padding from being misread as additional
 /// fields.
+///
+/// The table is read as bytes: a socket path need not be UTF-8, and one such
+/// unrelated path must not hide every other listener.
 fn unix_listener_inodes() -> HashMap<PathBuf, u64> {
-    const SO_ACCEPTCON: u32 = 1 << 16;
-    const SOCK_STREAM: &str = "0001";
-    let Ok(text) = std::fs::read_to_string("/proc/net/unix") else {
+    let Ok(table) = std::fs::read("/proc/net/unix") else {
         return HashMap::new();
     };
-    text.lines()
+    parse_unix_listener_table(&table)
+}
+
+fn parse_unix_listener_table(table: &[u8]) -> HashMap<PathBuf, u64> {
+    const SO_ACCEPTCON: u32 = 1 << 16;
+    const SOCK_STREAM: &[u8] = b"0001";
+    table
+        .split(|byte| *byte == b'\n')
         .skip(1)
         .filter_map(|line| {
-            let mut fields = line.split_whitespace().skip(3);
-            let flags = u32::from_str_radix(fields.next()?, 16).ok()?;
+            let mut fields = line
+                .split(u8::is_ascii_whitespace)
+                .filter(|field| !field.is_empty())
+                .skip(3);
+            let flags = u32::from_str_radix(std::str::from_utf8(fields.next()?).ok()?, 16).ok()?;
             let kind = fields.next()?;
-            let inode = fields.nth(1)?.parse::<u64>().ok()?;
+            let inode = std::str::from_utf8(fields.nth(1)?)
+                .ok()?
+                .parse::<u64>()
+                .ok()?;
             if kind != SOCK_STREAM || flags & SO_ACCEPTCON == 0 {
                 return None;
             }
@@ -439,8 +453,11 @@ fn unix_listener_inodes() -> HashMap<PathBuf, u64> {
             // encoding, not one this parser can resolve — Chromium's own
             // singleton-socket path is a single-token generated directory
             // name and never hits it.
-            let rest: Vec<&str> = fields.collect();
-            (!rest.is_empty()).then(|| (PathBuf::from(rest.join(" ")), inode))
+            let rest: Vec<&[u8]> = fields.collect();
+            (!rest.is_empty()).then(|| {
+                let path = rest.join(&b' ');
+                (PathBuf::from(std::ffi::OsStr::from_bytes(&path)), inode)
+            })
         })
         .collect()
 }
@@ -2058,6 +2075,26 @@ mod tests {
         FORK_EXCLUSION
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    #[test]
+    fn unix_listener_table_keeps_listeners_beside_a_non_utf8_path() {
+        let table = b"Num       RefCount Protocol Flags    Type St Inode Path\n\
+            0000000000000000: 00000002 00000000 00010000 0001 01  4242 /tmp/bad-\xff.sock\n\
+            0000000000000000: 00000002 00000000 00010000 0001 01    17 /tmp/helium profile/SingletonSocket\n\
+            0000000000000000: 00000002 00000000 00000000 0001 03  4343 /tmp/connected.sock\n";
+        let listeners = parse_unix_listener_table(table);
+        assert_eq!(
+            listeners.get(&PathBuf::from("/tmp/helium profile/SingletonSocket")),
+            Some(&17)
+        );
+        assert_eq!(
+            listeners.get(&PathBuf::from(std::ffi::OsStr::from_bytes(
+                b"/tmp/bad-\xff.sock"
+            ))),
+            Some(&4242)
+        );
+        assert!(!listeners.contains_key(&PathBuf::from("/tmp/connected.sock")));
     }
 
     #[test]

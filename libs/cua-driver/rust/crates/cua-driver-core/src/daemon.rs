@@ -665,7 +665,7 @@ mod tests {
                 observation_origin: None,
                 client_kind: None,
             };
-            super::exchange(&name, &request, reply_deadline).unwrap_err()
+            super::exchange(&name, &request, reply_deadline, None).unwrap_err()
         })
         .await
         .unwrap();

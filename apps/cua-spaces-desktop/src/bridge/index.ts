@@ -35,6 +35,7 @@ import { cliMethods } from "./cli";
 import { ciMethods } from "./ci";
 import { threadMethods } from "./thread";
 import { agentThreadsMethods } from "./agent-threads";
+import { agentSignInMethods } from "./agent-sign-in";
 import { relayUsageMethods } from "./relay-usage";
 import { spacesSettingsMethods } from "./spaces-settings";
 import { resourcesMethods } from "./resources";
@@ -89,6 +90,7 @@ export const AREAS = [
   ciMethods,
   threadMethods,
   agentThreadsMethods,
+  agentSignInMethods,
   driverMethods,
   presenceMethods,
 ];

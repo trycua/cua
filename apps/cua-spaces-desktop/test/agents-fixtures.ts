@@ -89,6 +89,7 @@ export class FakeAgentKeysTools {
   available = true;
   /** A Local development build keeping keys in an unencrypted file: the daemon's warning. */
   insecure: string | null = null;
+  copySignIn = false;
 
   run: ToolRunner = async (tool, args) => {
     this.calls.push([tool, args]);
@@ -124,6 +125,9 @@ export class FakeAgentKeysTools {
         k.label = String(args.label ?? "");
         break;
       }
+      case "agent_keys.copy_sign_in":
+        this.copySignIn = args.on === true;
+        break;
       case "agent_keys.use": {
         const app = String(args.app ?? "");
         if (typeof args.env === "string")
@@ -138,6 +142,7 @@ export class FakeAgentKeysTools {
       keys: this.keys,
       providers: [],
       available: this.available,
+      copy_sign_in: this.copySignIn,
       ...(Object.keys(this.uses).length ? { uses: this.uses } : {}),
     };
     if (!this.available) report.unavailable = "this build keeps credentials in a file";
@@ -255,7 +260,12 @@ export class FixtureAgentSetup implements AgentSetupRunning {
   async connectJson(agents: string[], signIn: boolean, skills: boolean, mcp: boolean) {
     await this.setUp(agents, skills, mcp);
     this.calls.push(`connect:${agents.join(",")}:${signIn}`);
-    return JSON.stringify(agents.map((agent) => ({ agent, tools_ok: true, tools_line: null, sign_in: null })));
+    const parts = (agent: string) => [
+      ...(skills ? [{ part: "skills", status: "done", where: `~/.${agent}/skills`, line: null }] : []),
+      ...(mcp ? [{ part: "mcp", status: "done", where: `~/.${agent}.json`, line: null }] : []),
+      ...(signIn ? [{ part: "sign_in", status: "skipped", where: null, line: `${agent} has no sign-in to save` }] : []),
+    ];
+    return JSON.stringify(agents.map((agent) => ({ agent, tools_ok: true, tools_line: null, sign_in: null, parts: parts(agent) })));
   }
 
   async disconnectJson(agents: string[], _signIn: boolean) {
@@ -330,6 +340,8 @@ export const AGENT_METHODS = [
   // "Pick up where you left off" (test/agent-threads.test.ts): the daemon's person-only tools agent_threads and agent_thread_history.
   "agents.recentThreads",
   "agents.threadHistory",
+  // An agent's own sign-in on another computer (test/agent-sign-in.test.ts): the daemon's person-only tool agent_sign_in.
+  "agents.computerSignIn",
   "agentKeys.list",
   "agentKeys.check",
   "agentKeys.set",
@@ -338,6 +350,7 @@ export const AGENT_METHODS = [
   "agentKeys.rename",
   "agentKeys.shell",
   "agentKeys.fromShell",
+  "agentKeys.copySignIn",
   // Settings, Connections, GitHub (test/github.test.ts): answered by the daemon's tools.
   "github.status",
   "github.rescan",

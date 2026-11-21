@@ -13,9 +13,26 @@ const EMAIL = /[A-Za-z0-9._%+'-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
 const HOME_UNIX = /(?:\/Users|\/home)\/[^/\\\s"'`:;,)\]}]+/g;
 const HOME_WIN = /[A-Za-z]:[\\/]+Users[\\/]+[^\\/"'`:;,)\]}]+/gi;
 
+const REDACTED = "[redacted]";
+const JWT = /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/g;
+const BEARER = /\b(bearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi;
+const AWS_KEY_ID = /\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA|AIPA|ABIA|ACCA)[A-Z0-9]{16}\b/g;
+const KEYED_SECRET = /\b([a-z0-9_.-]*(?:token|key|secret)[a-z0-9_-]*["']?\s*[=:]\s*["']?)[A-Za-z0-9+/_~.=-]{16,}/gi;
+const KEYED_PASSWORD = /\b([a-z0-9_.-]*(?:password|passwd)[a-z0-9_-]*["']?\s*[=:]\s*["']?)[^\s"'&,;)}\]]{8,}/gi;
+
+/** JWTs, `Bearer` credentials, AWS key ids and long secrets after token=, key=, secret=, password= become `[redacted]`. */
+export function scrubSecrets(value: string): string {
+  return value
+    .replace(JWT, REDACTED)
+    .replace(BEARER, `$1${REDACTED}`)
+    .replace(AWS_KEY_ID, REDACTED)
+    .replace(KEYED_SECRET, `$1${REDACTED}`)
+    .replace(KEYED_PASSWORD, `$1${REDACTED}`);
+}
+
 /** Home folders (`/Users/x`, `/home/x`, `C:\Users\x`) become `~`, emails `[email]`. */
 export function scrubString(value: string): string {
-  return value.replace(HOME_WIN, "~").replace(HOME_UNIX, "~").replace(EMAIL, "[email]");
+  return scrubSecrets(value).replace(HOME_WIN, "~").replace(HOME_UNIX, "~").replace(EMAIL, "[email]");
 }
 
 /** A URL without its query string and fragment. */

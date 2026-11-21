@@ -205,7 +205,7 @@ impl Probe {
 /// How to get an SSH login into a VM guest. For QEMU the runtime forwards guest
 /// port 22 and, when no user-data is given, seeds `authorized_keys` through a
 /// cloud-init NoCloud ISO.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SshAccess {
     pub user: String,
     /// Private key used to log in. Its `.pub` sibling is injected via cloud-init.
@@ -213,6 +213,16 @@ pub struct SshAccess {
     /// Password, for images that allow password auth (e.g. lume `lume`/`lume`).
     #[serde(default)]
     pub password: Option<String>,
+}
+
+impl std::fmt::Debug for SshAccess {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SshAccess")
+            .field("user", &self.user)
+            .field("private_key", &self.private_key)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 /// Everything needed to start (or create-and-start) one sandbox.
@@ -746,7 +756,7 @@ pub struct HostPort {
 }
 
 /// VNC access to the guest framebuffer (VMM-level; no guest agent needed).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VncEndpoint {
     pub host: String,
     pub port: u16,
@@ -754,8 +764,18 @@ pub struct VncEndpoint {
     pub password: Option<String>,
 }
 
+impl std::fmt::Debug for VncEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VncEndpoint")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
 /// SSH access into the guest, when the image has sshd.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SshEndpoint {
     pub host: String,
     pub port: u16,
@@ -764,6 +784,18 @@ pub struct SshEndpoint {
     pub private_key: Option<PathBuf>,
     #[serde(default)]
     pub password: Option<String>,
+}
+
+impl std::fmt::Debug for SshEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SshEndpoint")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("user", &self.user)
+            .field("private_key", &self.private_key)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 /// How to reach a running instance from the host.

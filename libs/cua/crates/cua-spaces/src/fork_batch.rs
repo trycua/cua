@@ -80,6 +80,11 @@ pub struct BatchSpec {
     /// The size of each checkpoint's forks when not asked for: vCPUs and
     /// MiB (filled from the checkpoints' records).
     pub sizes: BTreeMap<String, (u32, u64)>,
+    /// The kind of Space each checkpoint's forks are (`container`, `vm`,
+    /// `microvm`), from the engine that holds it. A checkpoint missing here
+    /// has an engine this machine cannot name: its forks are placed with no
+    /// kind asked for (the ABI and the holder decide).
+    pub kinds: BTreeMap<String, String>,
     /// Where machines fetch a checkpoint when its holder cannot be reached.
     pub fallback: Option<pb::SnapshotFallback>,
     /// Times forks of a failed machine are placed again.
@@ -182,6 +187,7 @@ impl BatchSpec {
             cpus: (r.cpus > 0).then_some(r.cpus),
             memory_mb: (r.memory_mb > 0).then_some(r.memory_mb),
             sizes: BTreeMap::new(),
+            kinds: BTreeMap::new(),
             fallback: r.fallback,
             retries: if r.no_retry {
                 0
@@ -203,6 +209,11 @@ impl BatchSpec {
                 .or(known.map(|k| k.1))
                 .unwrap_or(DEFAULT_FORK_MEMORY_MB),
         )
+    }
+
+    /// The kind of Space the forks of `world` are (empty: not known).
+    pub fn kind_of(&self, world: &str) -> String {
+        self.kinds.get(world).cloned().unwrap_or_default()
     }
 
     /// Every fork of the batch: `(group, source, name)`, in index order.
@@ -424,12 +435,13 @@ pub async fn run(
                 let items = &by_group[g];
                 let world = items[0].source.clone();
                 let (cpus, memory_mb) = spec.size_of(&world);
+                let kind = spec.kind_of(&world);
                 BatchGroup {
                     abi: abis.get(&world).cloned().unwrap_or_default(),
                     world,
                     count: items.len() as u32,
                     member: Need {
-                        kind: "vm".into(),
+                        kind,
                         millicpus: cpus * 1000,
                         memory_mb,
                         ..Default::default()
@@ -982,6 +994,47 @@ impl crate::spaces::Spaces {
                 );
             }
         }
+        // The kind of Space each checkpoint's forks are: its engine says
+        // (never "vm" for all: a container checkpoint forks a container).
+        // A checkpoint this machine does not hold is looked up on the
+        // machines that do.
+        let unknown: Vec<String> = spec
+            .groups
+            .iter()
+            .map(|g| g.source.clone())
+            .filter(|w| !spec.kinds.contains_key(w))
+            .collect();
+        if !unknown.is_empty() {
+            let remote = if unknown
+                .iter()
+                .all(|w| self.sandboxes().checkpoint_record(w).is_some())
+            {
+                Vec::new()
+            } else {
+                let listing: std::pin::Pin<
+                    Box<
+                        dyn std::future::Future<
+                                Output = Result<Vec<crate::pool_checkpoints::PoolCheckpoint>>,
+                            > + Send
+                            + '_,
+                    >,
+                > = Box::pin(self.pool_checkpoints());
+                listing.await.unwrap_or_default()
+            };
+            for w in unknown {
+                let engine = match self.sandboxes().checkpoint_record(&w) {
+                    Some(rec) => rec.runtime_type,
+                    None => remote
+                        .iter()
+                        .find(|c| c.snapshot.name == w)
+                        .map(|c| c.snapshot.runtime_type.clone())
+                        .unwrap_or_default(),
+                };
+                if let Some(k) = crate::pool_checkpoints::kind_of_engine(&engine) {
+                    spec.kinds.insert(w, k.as_str().to_string());
+                }
+            }
+        }
         // Who holds each checkpoint, and its ABI (the holder's).
         let mut holders: BTreeMap<String, Vec<Option<String>>> = BTreeMap::new();
         let mut abis: BTreeMap<String, String> = BTreeMap::new();
@@ -1062,7 +1115,7 @@ impl crate::spaces::Spaces {
                         world: w.clone(),
                         count: *n,
                         member: Need {
-                            kind: "vm".into(),
+                            kind: spec.kind_of(w),
                             millicpus: cpus * 1000,
                             memory_mb: *mem,
                             ..Default::default()
@@ -1145,6 +1198,8 @@ mod tests {
         name: String,
         holds: Vec<String>,
         mem_gb: u64,
+        /// The kinds it lists (empty: `vm`).
+        kinds: Vec<String>,
         /// Fails every fork with a transport error after this many.
         dies_after: Option<u32>,
         /// Refuses (full) after this many.
@@ -1172,7 +1227,11 @@ mod tests {
                     millicpus_free: 64_000,
                     memory_total_mb: self.mem_gb * 1024,
                     memory_free_mb: self.mem_gb * 1024,
-                    kinds: vec!["vm".into()],
+                    kinds: if self.kinds.is_empty() {
+                        vec!["vm".into()]
+                    } else {
+                        self.kinds.clone()
+                    },
                     snapshot_abis: vec![ABI.into()],
                     snapshots: self
                         .holds
@@ -1624,5 +1683,70 @@ mod tests {
             Failure::NoCapacity
         );
         assert_eq!(classify(&Error::invalid("x")), Failure::ForkFailed);
+    }
+
+    /// A fork is placed as the kind its checkpoint's engine makes: a
+    /// container checkpoint on a host that lists only `container` (a Linux
+    /// direct host), a QEMU checkpoint on one that lists no `vm`.
+    #[tokio::test]
+    async fn forks_are_placed_as_their_checkpoints_kind() {
+        for (kind, listed, abi) in [("container", "container", ""), ("vm", "container", ABI)] {
+            let h = Arc::new(Fake {
+                name: "linux".into(),
+                holds: vec!["w".into()],
+                mem_gb: 64,
+                kinds: vec![listed.into()],
+                ..Default::default()
+            });
+            let mut s = spec(&["w"], 1);
+            s.on = "host:linux".into();
+            s.kinds.insert("w".into(), kind.into());
+            let (tx, mut rx) = mpsc::channel(64);
+            let origins = Arc::new(Origins(Mutex::new(vec![])));
+            let abis = if abi.is_empty() {
+                BTreeMap::new()
+            } else {
+                BTreeMap::from([("w".to_string(), abi.to_string())])
+            };
+            let hosts: Vec<Arc<dyn BatchHost>> = vec![h.clone()];
+            let summary = run(hosts, origins, abis, s, tx).await;
+            let mut errors = vec![];
+            while let Ok(e) = rx.try_recv() {
+                if let Some(dpb::fork_sandbox_batch_response::Event::Item(i)) = e.event
+                    && !i.error.is_empty()
+                {
+                    errors.push(i.error);
+                }
+            }
+            assert_eq!((summary.ok, summary.failed), (1, 0), "{kind}: {errors:?}");
+        }
+        // A checkpoint of a kind the host does not list and does not hold is
+        // refused, naming the kind it asked for (not always `vm`).
+        let h = Arc::new(Fake {
+            name: "linux".into(),
+            mem_gb: 64,
+            kinds: vec!["vm".into()],
+            ..Default::default()
+        });
+        let mut s = spec(&["c"], 1);
+        s.kinds.insert("c".into(), "container".into());
+        let (tx, mut rx) = mpsc::channel(64);
+        let hosts: Vec<Arc<dyn BatchHost>> = vec![h];
+        let summary = run(
+            hosts,
+            Arc::new(Origins(Mutex::new(vec![]))),
+            BTreeMap::new(),
+            s,
+            tx,
+        )
+        .await;
+        assert_eq!(summary.failed, 1);
+        let mut msg = String::new();
+        while let Ok(e) = rx.try_recv() {
+            if let Some(dpb::fork_sandbox_batch_response::Event::Item(i)) = e.event {
+                msg = i.error;
+            }
+        }
+        assert!(msg.contains("does not create container Spaces"), "{msg}");
     }
 }

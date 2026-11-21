@@ -108,11 +108,25 @@ export type ChildNote =
     }
   | {
       kind: "child_space";
-      /** The child Space's id (the page opens it). */
+      /** The child Space's id (the page opens it, also while it is being made). */
       space: string;
+      /** One create: the notes of a Space being made fold into one row. Absent on a note from before. */
+      key?: string;
       name: string;
       os: string;
+      /** The agent member that made it (a handle). */
       agent: string;
+      /** The person that made it, when a person did (the row then sits under their header). */
+      by?: { id: string; name: string } | null;
+      /** Where the create is. Absent on a note from before: it is made. */
+      state?: "creating" | "ready" | "failed";
+      /** The step in plain words ("Cloning the disk for the macOS Space"). */
+      phase?: string;
+      percent?: number | null;
+      /** Why it failed, in plain words. */
+      error?: string;
+      startedMs?: number | null;
+      endedMs?: number | null;
     };
 
 /** A subagent that runs now, on the agent's live row. */
@@ -359,6 +373,8 @@ export interface ThreadAgentAddArgs {
   harness: string;
   /** The model its next message uses (an open session switches to it before the turn). On a member that exists, it is updated. */
   model?: string;
+  /** The reasoning level its runs take (Claude Code and Codex). */
+  effort?: string;
   /** Keep its run open with the session ready, so a message starts its turn at once. */
   standby?: boolean;
   /** Standing instructions: the first message each run takes carries them in front of its text. */
@@ -544,6 +560,7 @@ export const threadAgentAddArgs = (a: ThreadAgentAddArgs): Json => ({
   name: a.name,
   agent: a.harness,
   ...(a.model ? { model: a.model } : {}),
+  ...(a.effort ? { effort: a.effort } : {}),
   ...(a.standby !== undefined ? { standby: a.standby } : {}),
   ...(a.brief ? { brief: a.brief } : {}),
 });
@@ -663,8 +680,19 @@ function childNote(v: unknown): ChildNote | null {
       endedMs: num(e.ended_ms),
     };
   }
-  if (e.kind === "child_space" && str(e.space))
-    return { kind: "child_space", space: str(e.space), name: str(e.name) || str(e.space), os: str(e.os), agent: str(e.agent) };
+  if (e.kind === "child_space" && str(e.space)) {
+    const state = e.state === "creating" || e.state === "ready" || e.state === "failed" ? e.state : undefined;
+    return {
+      kind: "child_space",
+      space: str(e.space),
+      name: str(e.name) || str(e.space),
+      os: str(e.os),
+      agent: str(e.agent),
+      ...(obj(e.by) && str(obj(e.by)!.id) ? { by: { id: str(obj(e.by)!.id), name: str(obj(e.by)!.name) || str(obj(e.by)!.id) } } : {}),
+      ...(str(e.key) ? { key: str(e.key) } : {}),
+      ...(state ? { state, phase: str(e.phase), percent: num(e.percent), error: str(e.error), startedMs: num(e.started_ms), endedMs: num(e.ended_ms) } : {}),
+    };
+  }
   return null;
 }
 

@@ -18,15 +18,13 @@ import { Link } from "@tanstack/react-router";
 import { ArrowDownCircleIcon, EyeOffIcon, KeyRoundIcon, LoaderCircleIcon, PinIcon, PowerIcon } from "lucide-react";
 import { useEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from "react";
 
+import { useT } from "@/i18n";
 import { useBridge, useNotchPins, useSpaceFiles, useSpaces, useSpaceThumbnail, useTips, useWindowDropTarget, type Space, type SpaceAccess } from "@/bridge";
 import { OsIcon } from "@/components/os-icon";
 import { StateLabel } from "@/components/state-dot";
 import { toast, toastError } from "@/components/ui/toast";
 import { useTileVideo } from "@/components/video/tile-video";
 import { useInView } from "@/hooks/use-in-view";
-import { useT } from "@/i18n";
-import { useChildren } from "@/components/children/use-children";
-import { useIsHomeSpace } from "@/lib/agent-home/home-space";
 import { creatingLine } from "@/lib/host-labels";
 import { createError, createProgress, osLabel, powerButton, powerError, type PowerButton } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
@@ -46,6 +44,8 @@ export interface SpaceTileProps {
   topLeft?: ReactNode;
   /** After the text, on hover (the "⋯" menu). */
   more?: ReactNode;
+  /** A quiet line under where it runs ("2 child Spaces", "parent removed"). */
+  note?: string;
   /** A machine's desktop: Hide, in place of the power button, on hover. */
   hide?: () => void;
   /** A click on the tile; call `preventDefault` to keep it from opening. */
@@ -61,7 +61,7 @@ export interface SpaceTileProps {
  */
 export const TILE_CELL = "-m-1 p-1 [content-visibility:auto] [contain-intrinsic-size:auto_240px]";
 
-export function SpaceTile({ item, accessKey, selected = false, busy = false, topLeft, more, hide, onClick }: SpaceTileProps) {
+export function SpaceTile({ item, accessKey, selected = false, busy = false, topLeft, more, hide, onClick, note }: SpaceTileProps) {
   const t = useT();
   const { space, state, access } = item;
   const drop = useTileDrop(space, state === "running" && item.desktop !== "off");
@@ -102,7 +102,6 @@ export function SpaceTile({ item, accessKey, selected = false, busy = false, top
               </p>
               <PinnedMark id={space.id} />
               {item.desktop ? <DesktopTag /> : null}
-              <HomeTag spaceId={space.id} />
               {/* The state, in the core's words ("Running", "Suspended", "Turning off…"), flush right; the hover "⋯" takes its place. */}
               <StateLabel
                 state={item.desktop === "off" ? "stopped" : state}
@@ -122,6 +121,11 @@ export function SpaceTile({ item, accessKey, selected = false, busy = false, top
               </span>
               <PeopleStack access={access} />
             </p>
+            {note ? (
+              <p data-tile-note="" className="mt-0.5 truncate text-xs text-muted-foreground">
+                {note}
+              </p>
+            ) : null}
             {/* Downloading: how far, how fast, how long is left. */}
             {creating && space.progress?.transfer ? (
               <p data-create-transfer="" className="mt-0.5 truncate text-xs tabular-nums text-muted-foreground">
@@ -204,21 +208,7 @@ export function DesktopTag() {
   );
 }
 
-/** The "Home" tag beside an agent's home Space (the Space its requests from Home go to). */
-export function HomeTag({ spaceId }: { spaceId: string }) {
-  const t = useT();
-  const remembered = useIsHomeSpace(spaceId);
-  // The host knows a home by its label, so the tag shows on a new device too.
-  const labelled = Boolean(useChildren()?.node(spaceId)?.home);
-  if (!remembered && !labelled) return null;
-  return (
-    <span data-home-tag="" className="shrink-0 text-xs text-muted-foreground">
-      {t("computers.tile.home")}
-    </span>
-  );
-}
-
-/** Hide, on a desktop's hover where a Space has its power button: the tile leaves Home until "N hidden · Show" or the computer's "Show on Home". */
+/** Hide, on a desktop's hover where a Space has its power button: the row leaves the list until "Show hidden". */
 function TileHide({ name, onHide }: { name: string; onHide: () => void }) {
   const t = useT();
   return (

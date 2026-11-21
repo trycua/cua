@@ -1148,6 +1148,26 @@ impl AgentSetup {
 
     /// Configures `server` in the MCP config of each of `agents`.
     pub fn configure_mcp(&self, agents: &[String], server: &McpServer) -> Result<Vec<Outcome>> {
+        self.write_mcp(agents, server, true)
+    }
+
+    /// [`Self::configure_mcp`] without its removal of the retired
+    /// `cua-spaces` entry, so only `server` changes (`cua-driver connect
+    /// --replace`).
+    pub fn configure_mcp_only(
+        &self,
+        agents: &[String],
+        server: &McpServer,
+    ) -> Result<Vec<Outcome>> {
+        self.write_mcp(agents, server, false)
+    }
+
+    fn write_mcp(
+        &self,
+        agents: &[String],
+        server: &McpServer,
+        drop_legacy: bool,
+    ) -> Result<Vec<Outcome>> {
         if server.name.trim().is_empty() || server.command.trim().is_empty() {
             return Err(Error::InvalidArgument(
                 "the MCP server needs a name and a command".into(),
@@ -1189,7 +1209,10 @@ impl AgentSetup {
             // The old entry is the released app's to clean up. Local never
             // wrote it, and removing it would break a Stable setup that
             // still has it.
-            if server.name != LEGACY_SPACES_MCP_NAME && self.env.channel == CuaChannel::Stable {
+            if drop_legacy
+                && server.name != LEGACY_SPACES_MCP_NAME
+                && self.env.channel == CuaChannel::Stable
+            {
                 out.extend(self.drop_legacy_spaces_mcp(&mut state, a, m, &file));
             }
         }

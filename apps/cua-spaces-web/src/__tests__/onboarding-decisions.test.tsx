@@ -25,7 +25,7 @@ import { PICK_UP_LIMIT } from "@/components/ask-first/pick-up";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
 import { permissionsStepView } from "@/lib/app-permissions";
 import { resetAskTasks } from "@/lib/ask-first";
-import { NEW_RUN_EMPTY, NEW_RUN_SCREENS, whereView, type WhereInput } from "@/lib/first-run-new";
+import { NEW_RUN_EMPTY, NEW_RUN_SCREENS, readyComputers } from "@/lib/first-run-new";
 import { resetPrepare } from "@/lib/prepare/store";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
@@ -99,7 +99,7 @@ describe("Ready screen chat pickup (A, CUA-3319)", () => {
     "shows on the setup's Ready screen without a flag or a question, and is hidden when there are no chats",
     { timeout: 60_000 },
     async () => {
-      writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reached: 3 } });
+      writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reachedStep: "ready" } });
       await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: false, noSpaces: true } });
       await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });
       // Listed straight away: nothing to press first, and no Labs flag in the way. Only Codex's chats: Codex was picked.
@@ -107,7 +107,7 @@ describe("Ready screen chat pickup (A, CUA-3319)", () => {
       expect(screen.queryByRole("button", { name: /show my recent chats/i })).toBeNull();
       cleanup();
       resetFirstRunCache();
-      writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reached: 3 } });
+      writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reachedStep: "ready" } });
       await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: false, noSpaces: true, noChats: true } });
       await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });
       await new Promise((r) => setTimeout(r, 200));
@@ -122,7 +122,7 @@ describe("Ready screen chat pickup (A, CUA-3319)", () => {
     { timeout: 60_000 },
     async () => {
       const calls: Calls = [];
-      writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reached: 3 } });
+      writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reachedStep: "ready" } });
       const { router } = await mountApp("/onboarding", {
         failsCreates: false,
         listsGhost: false,
@@ -155,48 +155,18 @@ describe("Ready screen chat pickup (A, CUA-3319)", () => {
   );
 });
 
-describe("Always-on machine (B, CUA-3691): opt-in only", () => {
-  const NOW = 1_800_000_000_000;
-  const input: WhereInput = {
-    os: "macos",
-    signedIn: true,
-    thisState: "added",
-    addedInRun: true,
-    addError: null,
-    model: "MacBook Pro",
-    machines: [
-      { id: "here", name: "Francesco's MacBook", os: "macos", online: true, current: true },
-      // An always-on server in the account: online, sharing, with room.
-      { id: "build", name: "Build server", os: "linux", online: true, current: false },
-      { id: "mini", name: "Mac mini", os: "macos", online: true, current: false },
-    ],
-    picks: NEW_RUN_EMPTY.picks,
-    canMakeSeparate: true,
-    separateBlocked: null,
-    separate: { phase: "none", name: null, error: null },
-    now: NOW,
-  };
-
-  it("starts with only this computer picked; a server in the account is offered, never preselected", () => {
-    expect(NEW_RUN_EMPTY.picks).toEqual(["this"]);
-    const view = whereView(input);
-    expect(view.thisRow.picked).toBe(true);
-    expect(view.others!.map((o) => [o.name, o.disabled, o.picked])).toEqual([
-      ["Build server", false, false],
-      ["Mac mini", false, false],
-    ]);
-  });
-
-  it.skipIf(!wasmBuilt)("on the real route, signed in with online computers in the account, only this Mac is checked", { timeout: 60_000 }, async () => {
-    writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "where", reached: 1 } });
-    await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: false, noSpaces: true } });
-    await waitFor(() => expect(heading()).toBe("Pick where your agents work"), { timeout: 15_000 });
-    await waitFor(
-      () => expect(all("[data-new-run-computer]").filter((r) => r.dataset.newRunComputer !== "this" && !("offline" in r.dataset)).length).toBeGreaterThan(0),
-      { timeout: 15_000 },
-    );
-    const checked = all("[data-new-run-computer]").filter((r) => r.querySelector("[data-check=on]"));
-    expect(checked.map((r) => r.dataset.newRunComputer)).toEqual(["this"]);
+describe("Always-on machine (B, CUA-3691), updated 8 Nov 2026: no step to pick computers", () => {
+  // Francesco took "Pick where your agents work" out of setup: agents can use every ready computer, an always-on
+  // server included; Settings changes that. Nothing is made for it either.
+  it("an always-on server in the account is one of the computers agents can use", () => {
+    expect(
+      readyComputers([
+        { name: "Francesco's MacBook", online: true, current: true },
+        { name: "Build server", online: true, current: false },
+        { name: "Mac mini", online: true, current: false },
+      ]),
+    ).toEqual(["this", "Build server", "Mac mini"]);
+    expect(NEW_RUN_SCREENS).not.toContain("where");
   });
 });
 
@@ -211,17 +181,17 @@ describe("Cua Driver in setup (A, CUA-2706): the permissions step is the Cua Dri
     ],
   };
 
-  it("is one screen with two Allow buttons and Later, and names Cua Driver", () => {
+  it("is one screen with two Allow buttons and a way on without them, and names Cua Driver", () => {
     const allow = vi.fn(async () => {});
     const onContinue = vi.fn();
     render(
       <PermissionsScreen view={permissionsStepView({ appName: "Cua Spaces", allGranted: false })} perms={{ data: missing, allow }} onContinue={onContinue} />,
     );
     const buttons = screen.getAllByRole("button").map((b) => b.textContent);
-    expect(buttons).toEqual(["Allow", "Allow", "Later"]);
+    expect(buttons).toEqual(["Allow", "Allow", "Continue without them", "Still off: See the screen and Use the mouse and keyboard"]);
     expect(all("[data-app-permission]").map((r) => r.dataset.appPermission)).toEqual(["screen", "accessibility"]);
     expect(document.body.textContent).toContain("Cua Driver");
-    fireEvent.click(screen.getByRole("button", { name: "Later" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue without them" }));
     expect(onContinue).toHaveBeenCalledTimes(1);
   });
 
@@ -242,17 +212,19 @@ describe("Cua Driver in setup (A, CUA-2706): the permissions step is the Cua Dri
       const h = heading();
       if (h && seen.at(-1) !== h) seen.push(h);
     };
-    await waitFor(() => expect(heading()).toBe("Combine your existing computers into one supercomputer."));
+    await waitFor(() => expect(heading()).toBe("Combine all your computers into one supercomputer."));
     note();
     fireEvent.click(q("[data-onboarding-later]")!);
-    await waitFor(() => expect(heading()).toBe("Pick where your agents work"));
-    note();
-    fireEvent.click(q("[data-onboarding-primary]")!);
     await waitFor(() => expect(heading()).toBe("Let Cua Spaces see and use apps"), { timeout: 15_000 });
     note();
     await waitFor(() => expect(all("[data-app-permission]").length).toBe(2));
-    fireEvent.click(q("[data-new-run-permissions-next=Later]")!);
-    await waitFor(() => expect(heading()).toBe("Use Codex on all your computers"), { timeout: 15_000 });
+    fireEvent.click(q("[data-onboarding-primary]")!);
+    await waitFor(() => expect(heading()).toBe("Which agents do you use?"), { timeout: 15_000 });
+    note();
+    fireEvent.click(q("[data-onboarding-primary]")!);
+    // Cua Driver is one row of the agents' checklist (CUA-4067), not a screen of its own.
+    await waitFor(() => expect(q("[data-checklist-row='codex:driver']")).not.toBeNull(), { timeout: 15_000 });
+    await waitFor(() => expect((q("[data-onboarding-primary]") as HTMLButtonElement).disabled).toBe(false), { timeout: 20_000 });
     note();
     fireEvent.click(q("[data-onboarding-primary]")!);
     await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });

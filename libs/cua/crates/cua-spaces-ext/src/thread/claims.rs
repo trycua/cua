@@ -97,11 +97,27 @@ impl Claim {
     }
 }
 
+/// What the thread says when an agent stops working on a task: no ids,
+/// sessions or timestamps, one sentence for what happened and one for what
+/// happens next.
+pub fn stopped_text(agent: &str, task_text: &str, resumes: bool) -> String {
+    let words = super::task_words(task_text);
+    let next = if resumes {
+        "It will pick it up again."
+    } else {
+        "Nothing is running it yet."
+    };
+    format!("{agent} stopped working on {words}. {next}")
+}
+
 /// `task_claimed`: the task is someone else's (or a newer epoch's) now.
-pub fn claimed(seq: u64, holder: &str, until_ms: u64) -> Error {
+pub fn claimed(_seq: u64, holder: &str, _until_ms: u64) -> Error {
+    // The code stays machine-readable; the text is for people (no task id,
+    // session or time).
+    let agent = holder.split('/').next().unwrap_or("agent");
     Error::extension(
         TASK_CLAIMED,
-        format!("task #{seq} is claimed by {holder} until {until_ms}"),
+        format!("Another {agent} run is already working on this task."),
     )
 }
 
@@ -150,46 +166,104 @@ impl ThreadStore {
         entries: ClaimEntries,
     ) -> Result<(Claim, Vec<ThreadEntry>)> {
         let _l = self.lock()?;
-        let fold = self.fold()?;
-        let t = fold
-            .tasks
-            .get(&seq)
-            .ok_or_else(|| Error::NotFound(format!("task #{seq} in this thread")))?;
-        if t.state.is_closed() {
-            return Err(Error::invalid(format!(
-                "task #{seq} is {}",
-                t.state.as_str()
-            )));
+        self.claim_locked(seq, holder, ttl_ms, entries, vec![])
+    }
+
+    /// [`Self::claim`] for a dispatcher that read `seq` as queued: refused
+    /// with [`TASK_CLAIMED`] when the task is no longer queued. A session
+    /// claiming again is a renewal for [`Self::claim`], so without this a
+    /// dispatcher would send a task its own session was already handed.
+    pub fn claim_queued(
+        &self,
+        seq: u64,
+        holder: &Holder,
+        ttl_ms: u64,
+        entries: ClaimEntries,
+    ) -> Result<(Claim, Vec<ThreadEntry>)> {
+        let _l = self.lock()?;
+        if let Some(t) = self.fold()?.tasks.get(&seq)
+            && matches!(t.state, TaskState::Claimed | TaskState::Working)
+        {
+            let all = self.claims()?;
+            let (who, until) = all
+                .get(&seq)
+                .map(|c| (c.holder.clone(), c.expires_ms))
+                .unwrap_or_else(|| (holder.to_string(), 0));
+            return Err(claimed(seq, &who, until));
         }
-        if t.to != holder.member {
-            return Err(Error::invalid(format!(
-                "task #{seq} is for {}, not {}",
-                t.to, holder.member
-            )));
-        }
+        self.claim_locked(seq, holder, ttl_ms, entries, vec![])
+    }
+
+    /// Appends `task` (a message that tasks `holder`'s member) already
+    /// claimed by `holder`, in one write under the thread's lock: the task
+    /// is never visible as queued, so the dispatcher cannot deliver a
+    /// message the caller has just delivered itself.
+    pub fn append_claimed(
+        &self,
+        task: Draft,
+        holder: &Holder,
+        ttl_ms: u64,
+        entries: ClaimEntries,
+    ) -> Result<(ThreadEntry, Claim)> {
+        let _l = self.lock()?;
+        let seq = self.recovered_head()?.next_seq;
+        let (claim, mut written) = self.claim_locked(seq, holder, ttl_ms, entries, vec![task])?;
+        Ok((written.remove(0), claim))
+    }
+
+    /// [`Self::claim`] with the lock held; `before` is written in the same
+    /// batch ahead of the updates (the task entry, when it is new).
+    fn claim_locked(
+        &self,
+        seq: u64,
+        holder: &Holder,
+        ttl_ms: u64,
+        entries: ClaimEntries,
+        before: Vec<Draft>,
+    ) -> Result<(Claim, Vec<ThreadEntry>)> {
         let now = cua_volume::now_ms();
         let mut all = self.claims()?;
-        match all.get(&seq) {
-            Some(c) if c.live(now) => {
-                let cur = c.holder();
-                let ok = cur
-                    .as_ref()
-                    .is_some_and(|h| h.same_session(holder) && holder.epoch >= h.epoch);
-                if !ok {
-                    return Err(claimed(seq, &c.holder, c.expires_ms));
-                }
+        // A new task has no earlier state or claim to check.
+        if before.is_empty() {
+            let fold = self.fold()?;
+            let t = fold
+                .tasks
+                .get(&seq)
+                .ok_or_else(|| Error::NotFound(format!("task #{seq} in this thread")))?;
+            if t.state.is_closed() {
+                return Err(Error::invalid(format!(
+                    "task #{seq} is {}",
+                    t.state.as_str()
+                )));
             }
-            Some(_) => {}
-            // A claim from before claims were stored (only its entry).
-            None if matches!(t.state, TaskState::Claimed | TaskState::Working)
-                && t.lease_until_ms.is_some_and(|l| l > now) =>
-            {
-                let h = Holder::new(&t.to, t.session.unwrap_or(1), 1);
-                if !h.same_session(holder) {
-                    return Err(claimed(seq, &h.to_string(), t.lease_until_ms.unwrap_or(0)));
-                }
+            if t.to != holder.member {
+                return Err(Error::invalid(format!(
+                    "task #{seq} is for {}, not {}",
+                    t.to, holder.member
+                )));
             }
-            None => {}
+            match all.get(&seq) {
+                Some(c) if c.live(now) => {
+                    let cur = c.holder();
+                    let ok = cur
+                        .as_ref()
+                        .is_some_and(|h| h.same_session(holder) && holder.epoch >= h.epoch);
+                    if !ok {
+                        return Err(claimed(seq, &c.holder, c.expires_ms));
+                    }
+                }
+                Some(_) => {}
+                // A claim from before claims were stored (only its entry).
+                None if matches!(t.state, TaskState::Claimed | TaskState::Working)
+                    && t.lease_until_ms.is_some_and(|l| l > now) =>
+                {
+                    let h = Holder::new(&t.to, t.session.unwrap_or(1), 1);
+                    if !h.same_session(holder) {
+                        return Err(claimed(seq, &h.to_string(), t.lease_until_ms.unwrap_or(0)));
+                    }
+                }
+                None => {}
+            }
         }
         let acquired_ms = match all.get(&seq) {
             Some(c) if c.live(now) && c.holder == holder.to_string() => c.acquired_ms,
@@ -205,22 +279,19 @@ impl ThreadStore {
         let author = entries
             .author
             .unwrap_or_else(|| Author::agent(&holder.member));
-        let drafts = entries
-            .states
-            .iter()
-            .map(|state| {
-                Draft::update(
-                    author.clone(),
-                    Update {
-                        task: seq,
-                        state: *state,
-                        session: Some(holder.session),
-                        lease_until_ms: Some(claim.expires_ms),
-                        note: entries.note.clone(),
-                    },
-                )
-            })
-            .collect();
+        let updates = entries.states.iter().map(|state| {
+            Draft::update(
+                author.clone(),
+                Update {
+                    task: seq,
+                    state: *state,
+                    session: Some(holder.session),
+                    lease_until_ms: Some(claim.expires_ms),
+                    note: entries.note.clone(),
+                },
+            )
+        });
+        let drafts = before.into_iter().chain(updates).collect();
         let written = self.append_locked(drafts)?;
         Ok((claim, written))
     }
@@ -277,19 +348,24 @@ impl ThreadStore {
     /// except those in `keep` (a session still working on them). A task
     /// claimed before claims were stored expires by its entry's lease.
     /// Returns the tasks requeued.
-    pub fn requeue_expired(&self, member: &str, keep: &[u64]) -> Result<Vec<u64>> {
+    ///
+    /// The system note says, in plain words, that the agent stopped working
+    /// on the task and what happens next (`resumes`: an agent will take it,
+    /// else nothing is running it yet).
+    pub fn requeue_expired(&self, member: &str, keep: &[u64], resumes: bool) -> Result<Vec<u64>> {
         let now = cua_volume::now_ms();
-        let pick = |fold: &Fold, all: &BTreeMap<u64, Claim>| -> Vec<(u64, String)> {
+        let pick = |fold: &Fold, all: &BTreeMap<u64, Claim>| -> Vec<(u64, String, String)> {
             fold.open_tasks(Some(member))
                 .into_iter()
                 .filter(|t| !keep.contains(&t.seq))
                 .filter(|t| matches!(t.state, TaskState::Claimed | TaskState::Working))
                 .filter_map(|t| match all.get(&t.seq) {
-                    Some(c) if !c.live(now) => Some((t.seq, c.holder.clone())),
+                    Some(c) if !c.live(now) => Some((t.seq, c.holder.clone(), t.text.clone())),
                     Some(_) => None,
                     None if t.lease_until_ms.is_some_and(|l| l < now) => Some((
                         t.seq,
                         Holder::new(&t.to, t.session.unwrap_or(1), 1).to_string(),
+                        t.text.clone(),
                     )),
                     None => None,
                 })
@@ -302,9 +378,8 @@ impl ThreadStore {
         let mut all = self.claims()?;
         let expired = pick(&self.fold()?, &all);
         let mut drafts = vec![];
-        for (seq, holder) in &expired {
+        for (seq, _holder, text) in &expired {
             all.remove(seq);
-            let session = Holder::parse(holder).map_or(1, |h| h.session);
             drafts.push(Draft::update(
                 Author::system("dispatch"),
                 Update {
@@ -312,20 +387,18 @@ impl ThreadStore {
                     state: TaskState::Queued,
                     session: None,
                     lease_until_ms: None,
-                    note: "the claim's lease ran out".into(),
+                    note: "stopped working".into(),
                 },
             ));
             drafts.push(Draft::note(
                 "dispatch",
                 Some(*seq),
-                format!(
-                    "Session {session}'s claim on task #{seq} ran out ({holder}); the task is queued again."
-                ),
+                stopped_text(member, text, resumes),
             ));
         }
         self.write_claims(&all)?;
         self.append_locked(drafts)?;
-        Ok(expired.into_iter().map(|(s, _)| s).collect())
+        Ok(expired.into_iter().map(|(s, _, _)| s).collect())
     }
 
     /// `tasks` with their live claims filled in (holder, session, lease).
@@ -356,6 +429,52 @@ mod tests {
         (d, s)
     }
 
+    /// No task id, session number, slash handle, timestamp or internal word
+    /// in a notice a person reads.
+    pub(crate) fn assert_plain(text: &str) {
+        let low = text.to_lowercase();
+        for bad in ["session", "claim", "lease", "queued"] {
+            assert!(!low.contains(bad), "{bad} in {text:?}");
+        }
+        assert!(
+            !text.contains('#') && !text.contains('/') && !text.contains('@'),
+            "{text:?}"
+        );
+        assert!(!text.chars().any(|c| c.is_ascii_digit()), "{text:?}");
+    }
+
+    #[test]
+    fn the_refusal_text_is_plain_and_the_code_unchanged() {
+        let e = claimed(84, "claude/1@2", 1794003972443);
+        assert_eq!(e.tag(), TASK_CLAIMED);
+        let msg = e.to_string();
+        assert!(
+            msg.contains("Another claude run is already working on this task."),
+            "{msg}"
+        );
+        assert!(!msg.contains("84") && !msg.contains("1794"), "{msg}");
+    }
+
+    #[test]
+    fn the_stop_notice_names_the_task_and_what_happens_next() {
+        let a = stopped_text(
+            "claude",
+            "@claude look at the flaky checkout test please today now",
+            true,
+        );
+        assert_eq!(
+            a,
+            "claude stopped working on \u{201c}look at the flaky checkout test…\u{201d}. It will pick it up again."
+        );
+        let b = stopped_text("claude", "@claude fix it.", false);
+        assert_eq!(
+            b,
+            "claude stopped working on \u{201c}fix it\u{201d}. Nothing is running it yet."
+        );
+        assert_plain(&a);
+        assert_plain(&b);
+    }
+
     fn task(s: &ThreadStore, to: &str) -> u64 {
         let mut d = Draft::new(Author::owner(), EntryKind::Message, format!("@{to} go"));
         d.task = Some(TaskTo {
@@ -370,6 +489,43 @@ mod tests {
             states: vec![TaskState::Claimed],
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_task_written_claimed_is_never_queued_and_cannot_be_claimed_again() {
+        let (_d, s) = store();
+        let holder = Holder::new("ada", 1, 1);
+        let mut d = Draft::new(Author::owner(), EntryKind::Message, "@ada go");
+        d.task = Some(TaskTo {
+            to: "ada".into(),
+            session: Some(1),
+        });
+        let (e, claim) = s
+            .append_claimed(
+                d,
+                &holder,
+                60_000,
+                ClaimEntries {
+                    states: vec![TaskState::Claimed, TaskState::Working],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(claim.holder, "ada/1@1");
+        let f = s.fold().unwrap();
+        assert_eq!(f.tasks[&e.seq].state, TaskState::Working);
+        assert!(s.holds(e.seq, &holder).unwrap());
+        // A dispatcher that read it as queued before is refused, also as the
+        // same session (which `claim` would take as a renewal).
+        let err = s
+            .claim_queued(e.seq, &holder, 60_000, claimed_entries())
+            .unwrap_err();
+        assert_eq!(err.tag(), TASK_CLAIMED);
+        // A queued task is claimed as usual.
+        let q = task(&s, "ada");
+        s.claim_queued(q, &holder, 60_000, claimed_entries())
+            .unwrap();
+        assert_eq!(s.fold().unwrap().tasks[&q].state, TaskState::Claimed);
     }
 
     #[test]
@@ -404,7 +560,10 @@ mod tests {
         for r in results.iter().filter(|r| r.is_err()) {
             let e = r.as_ref().unwrap_err();
             assert_eq!(e.tag(), TASK_CLAIMED);
-            assert!(e.to_string().contains(&winner), "{e}");
+            assert!(
+                e.to_string().contains("already working on this task"),
+                "{winner}: {e}"
+            );
         }
         // One claim, one entry.
         let f = s.fold().unwrap();
@@ -429,7 +588,10 @@ mod tests {
             .claim(seq, &Holder::new("ada", 1, 5), 60_000, claimed_entries())
             .unwrap_err();
         assert_eq!(e.tag(), TASK_CLAIMED);
-        assert!(e.to_string().contains("ada/2@1"));
+        assert!(
+            !e.to_string().contains("ada/2@1"),
+            "no holder id for people: {e}"
+        );
         // The same session re-claims (a renewal) ...
         s.claim(seq, &e1, 60_000, claimed_entries()).unwrap();
         // ... and its re-drive at epoch 2 takes it over before it expires.
@@ -463,8 +625,8 @@ mod tests {
         let h = Holder::new("ada", 3, 1);
         s.claim(seq, &h, 0, claimed_entries()).unwrap();
         // Kept while a session still works on it.
-        assert!(s.requeue_expired("ada", &[seq]).unwrap().is_empty());
-        assert_eq!(s.requeue_expired("ada", &[]).unwrap(), vec![seq]);
+        assert!(s.requeue_expired("ada", &[seq], true).unwrap().is_empty());
+        assert_eq!(s.requeue_expired("ada", &[], true).unwrap(), vec![seq]);
         assert_eq!(s.fold().unwrap().tasks[&seq].state, TaskState::Queued);
         let note = s
             .read(0, 100)
@@ -473,10 +635,16 @@ mod tests {
             .rfind(|e| e.kind == EntryKind::System)
             .unwrap();
         assert_eq!(note.task_seq, Some(seq));
-        assert!(note.text.contains("Session 3"), "{}", note.text);
+        assert!(
+            note.text.starts_with("ada stopped working on")
+                && note.text.ends_with("pick it up again."),
+            "{}",
+            note.text
+        );
+        assert_plain(&note.text);
         assert!(s.claims().unwrap().is_empty());
         // Nothing more to do on the next pass.
-        assert!(s.requeue_expired("ada", &[]).unwrap().is_empty());
+        assert!(s.requeue_expired("ada", &[], true).unwrap().is_empty());
         s.claim(seq, &Holder::new("ada", 1, 1), 60_000, claimed_entries())
             .unwrap();
     }

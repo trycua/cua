@@ -105,7 +105,7 @@ jobs:
             } >>"$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          sudo chmod 666 /dev/kvm
+          "$GITHUB_WORKSPACE/scripts/images/enable-kvm.sh" --require
       - uses: ./.github/actions/linux-rust-prep
         with:
           free-more: "true"
@@ -127,7 +127,7 @@ jobs:
           sudo apt-get install -y -qq --no-install-recommends \
             qemu-utils qemu-system-x86 ovmf musl-tools e2fsprogs squashfs-tools
           # Installing QEMU re-applies the udev rules to /dev/kvm; open it again.
-          sudo chmod 666 /dev/kvm
+          "$GITHUB_WORKSPACE/scripts/images/enable-kvm.sh" --require
       - name: A Linux cloud image and the microVM init
         working-directory: libs/cua
         run: |

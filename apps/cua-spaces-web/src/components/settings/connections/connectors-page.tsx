@@ -144,6 +144,21 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
           </Button>
         </GroupedRow>
         {otherOpen ? <OtherMachineBlock /> : null}
+        {keys.report && typeof keys.report.copySignIn === "boolean" ? (
+          <SettingsRow
+            label={t("settings.connections.page.copy_sign_in")}
+            description={t("settings.connections.page.copy_sign_in_help", { name: hereName })}
+            htmlFor="connectors-copy-sign-in"
+            control={
+              <Switch
+                id="connectors-copy-sign-in"
+                data-connectors-copy-sign-in=""
+                checked={keys.report.copySignIn}
+                onCheckedChange={(on) => void keys.setCopySignIn(on).catch(toastError(t("settings.connections.page.copy_sign_in_failed")))}
+              />
+            }
+          />
+        ) : null}
       </SettingsGroup>
 
       <SettingsGroup title={view.providersTitle} footer={view.providersFooter} data-connectors-providers="">

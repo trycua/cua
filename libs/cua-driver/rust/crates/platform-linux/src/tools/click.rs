@@ -12,20 +12,21 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use super::impl_::{
-    apply_foreground_report, attach_focus_guard, capture_admission_error,
-    checked_element_local_coords, coordinate_frame_schema, desktop_frame_requested,
-    desktop_frame_unmapped, desktop_input_space, desktop_to_window_local, element_is_menu_role,
-    element_needs_real_click, element_screen_center, foreground_budget, foreground_hyprland_action,
-    foreground_hyprland_refusal, foreground_structured, hyprland_foreground, input_error_result,
-    isolated_hyprland_action, isolated_hyprland_background, isolated_hyprland_refusal,
-    isolated_hyprland_result, isolated_hyprland_task_error, named_session_cursor_key,
-    non_ax_escalation, parse_mouse_button, prove_token_element, push_evidence, require_point_args,
-    resolve_cursor_key, resolve_element_local_coords, reveal_pointer_action_for,
-    reveal_pointer_action_target_for, screenshot_scale, spawn_blocking_bounded,
-    spawn_isolated_hyprland, synthetic_pointer_is_dropped, unavailable_chromium_background,
-    unavailable_wayland_focused_input_background, window_local_to_screen,
-    window_scope_unproven_refusal, with_pixel_points, x11_pixel_click_no_focus_steal, AimedPoint,
-    CoordinateContext, PointerRoute, ToolState,
+    apply_foreground_report, atspi_click_outcome_unknown, atspi_outcome_unknown,
+    attach_focus_guard, capture_admission_error, checked_element_local_coords,
+    coordinate_frame_schema, desktop_frame_requested, desktop_frame_unmapped, desktop_input_space,
+    desktop_to_window_local, element_is_menu_role, element_needs_real_click, element_screen_center,
+    emit_cursor_hook, foreground_budget, foreground_hyprland_action, foreground_hyprland_refusal,
+    foreground_structured, hyprland_foreground, input_error_result, isolated_hyprland_action,
+    isolated_hyprland_background, isolated_hyprland_refusal, isolated_hyprland_result,
+    isolated_hyprland_task_error, named_session_cursor_key, non_ax_escalation, parse_mouse_button,
+    prepare_desktop_click_cursor, prove_token_element, push_evidence, refuse_if_disabled,
+    require_point_args, resolve_cursor_key, resolve_element_local_coords,
+    reveal_pointer_action_for, reveal_pointer_action_target_for, screenshot_scale,
+    spawn_blocking_bounded, spawn_isolated_hyprland, synthetic_pointer_is_dropped,
+    unavailable_chromium_background, unavailable_wayland_focused_input_background,
+    window_local_to_screen, window_scope_unproven_refusal, with_pixel_points,
+    x11_pixel_click_no_focus_steal, AimedPoint, CoordinateContext, PointerRoute, ToolState,
 };
 
 #[cfg(test)]
@@ -102,6 +103,7 @@ mod token_window_scope_tests {
             identity: identity(path),
             object_ref: object_ref(path),
             role: "text".into(),
+            disabled: false,
             in_web_content: false,
             bounds: None,
         }
@@ -116,7 +118,9 @@ mod token_window_scope_tests {
             checked: None,
             enabled: Some(true),
             selected: None,
+            focused: None,
             description: None,
+            document_uri: None,
             actions: Vec::new(),
             element_key: 0,
             identity: Some(identity(path)),
@@ -307,24 +311,30 @@ fn element_click_prefers_ax(
     !has_modifiers && (!hyprland_foreground || (button == 1 && count == 1))
 }
 
-fn foreground_ax_click_unknown(pid: u32, idx: usize) -> ToolResult {
-    use cua_driver_core::action_record::{
-        ActionEffect, ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
-    };
-    let record = ActionExecutionRecord::builder(
-        ActionEffect::Unverifiable,
-        ActionTransport::LinuxAtSpiAction,
-        RequestedDelivery::Foreground,
-    )
-    .actual_delivery(ActualDelivery::Unknown)
-    .build()
-    .expect("uncertain semantic activation has no delivered count or replay");
-    let public = serde_json::to_value(record.public_result().unwrap()).unwrap();
+/// The token click's AT-SPI action did not finish within [`ELEMENT_AX_BUDGET`].
+/// It may still land, so the result carries no escalation: `run_steps` must
+/// not send it again before the caller has looked.
+fn element_ax_timeout(idx: usize) -> ToolResult {
     ToolResult::error(format!(
-        "click: AT-SPI activation outcome is unknown for element [{idx}] (pid {pid}); refresh state before another action."
+        "click: the AT-SPI action for element [{idx}] did not complete within \
+         {ELEMENT_AX_BUDGET:?}; its effect is unknown. Take a screenshot; only if the \
+         click did not land, retry by pixel (x/y) or with delivery_mode:\"foreground\"."
     ))
-    .with_structured(public)
-    .with_action_record(record)
+    .with_structured(json!({
+        "code": "ax_timeout",
+        "effect": "unknown",
+    }))
+}
+
+fn foreground_ax_click_unknown(pid: u32, idx: usize) -> ToolResult {
+    atspi_outcome_unknown(
+        format!(
+            "click: AT-SPI activation outcome is unknown for element [{idx}] (pid {pid}); refresh state before another action."
+        ),
+        cua_driver_core::action_record::ActionTransport::LinuxAtSpiAction,
+        crate::input::delivery::DeliveryMode::Foreground,
+        None,
+    )
 }
 
 #[cfg(test)]
@@ -344,6 +354,69 @@ fn foreground_ax_click_error_does_not_claim_delivery_or_request_replay() {
     assert_eq!(public["delivery"]["mode"], "unknown");
     assert!(public.get("escalation").is_none());
     assert!(public["delivery"].get("delivered_count").is_none());
+}
+
+#[cfg(test)]
+#[test]
+fn atspi_input_that_may_have_landed_is_reported_without_a_retry_hint() {
+    use super::impl_::atspi_text_outcome_unknown;
+    use super::invoke_menu::menu_command_outcome_unknown;
+    use crate::input::delivery::DeliveryMode;
+    let sent = anyhow::Error::new(crate::atspi::InputMayHaveLanded(
+        "EditableText.InsertText did not answer in time".into(),
+    ));
+    for (result, route) in [
+        (
+            atspi_text_outcome_unknown(DeliveryMode::BackgroundPreferred, &sent),
+            "accessibility",
+        ),
+        (
+            atspi_click_outcome_unknown(
+                "the point (4.0, 5.0)",
+                DeliveryMode::BackgroundPreferred,
+                &sent,
+            ),
+            "accessibility",
+        ),
+        (
+            menu_command_outcome_unknown(DeliveryMode::BackgroundPreferred, &sent),
+            "accessibility",
+        ),
+        (element_ax_timeout(3), ""),
+    ] {
+        assert_eq!(result.is_error, Some(true));
+        let wire = serde_json::to_value(&result).unwrap();
+        let structured = &wire["structuredContent"];
+        // Neither the code, a refusal nor an escalation invites a second
+        // delivery.
+        assert_ne!(structured["code"], "background_unavailable", "{structured}");
+        assert!(structured.get("refusal").is_none(), "{structured}");
+        assert!(structured.get("escalation").is_none(), "{structured}");
+        assert!(structured.get("suggestion").is_none(), "{structured}");
+        let text = wire["content"][0]["text"].as_str().unwrap();
+        assert!(
+            !text.contains("Retry this action with delivery_mode"),
+            "{text}"
+        );
+        if route.is_empty() {
+            assert_eq!(structured["effect"], "unknown");
+            continue;
+        }
+        // The public action contract: effect unknown to the driver, delivery
+        // happened in an unknown way, no delivered count claimed.
+        assert_eq!(structured["effect"], "unverifiable");
+        assert_eq!(structured["route"], route);
+        assert_eq!(structured["delivery"], json!({"mode": "unknown"}));
+        let record = result.action_record.unwrap();
+        assert_eq!(
+            record.requested_delivery,
+            cua_driver_core::action_record::RequestedDelivery::Background
+        );
+        assert_eq!(
+            *structured,
+            serde_json::to_value(record.public_result().unwrap()).unwrap()
+        );
+    }
 }
 
 #[cfg(test)]
@@ -573,7 +646,7 @@ impl ClickTool {
                         let confirmed = report.window_change_confirms();
                         let result = ToolResult::text(format!(
                             "Clicked element [{idx}] (pid {pid}) with a real pointer click \
-                             (delivery_mode=foreground, focus_after={}){}{}",
+                             (delivery_mode=foreground, focus_after={}){}{}{}",
                             report.focus_after.as_str(),
                             if confirmed {
                                 format!("; {}.", report.window_change.as_deref().unwrap_or(""))
@@ -584,6 +657,7 @@ impl ClickTool {
                                 .as_deref()
                                 .map(|n| format!(" ({n})."))
                                 .unwrap_or_default(),
+                            report.focus_note(),
                         ))
                         .with_structured(foreground_structured(
                             "x11_xtest_fg",
@@ -679,48 +753,100 @@ impl ClickTool {
                             "Clicked element [{idx}] (pid {pid}) through its AT-SPI action \
                              \"{action}\" with the window activated (delivery_mode=foreground, \
                              path=ax_fg, focus_after={}): the element had no usable \
-                             on-screen bounds ({reason}), so no pointer was moved.{}",
+                             on-screen bounds ({reason}), so no pointer was moved.{}{}",
                             report.focus_after.as_str(),
                             match &report.window_change {
                                 Some(change) => format!(" {change}."),
                                 None => " Not verified — confirm with a screenshot.".to_owned(),
-                            }
+                            },
+                            report.focus_note()
                         ))
                         .with_structured(foreground_structured("ax_fg", report, extra))
                     }
-                    Ok(Err(error)) => {
-                        if error.is::<crate::atspi::native::CachedElementGone>() {
-                            return ToolResult::error(format!(
-                                "click: stale_element_token: observed AT-SPI object [{idx}] is no \
-                                 longer present ({error}); re-snapshot with get_window_state"
-                            ))
-                            .with_structured(json!({
-                                "code": "stale_element_token",
-                                "effect": "none",
-                            }));
-                        }
-                        if crate::input::foreground::error_code(&error).is_some() {
-                            return input_error_result(error);
-                        }
-                        ToolResult::error(format!(
-                            "click: element [{idx}] (pid {pid}) has no usable on-screen bounds \
-                             ({reason}) and its AT-SPI action failed ({error:#}); no input was \
-                             sent. Open the containing menu first, re-snapshot with \
-                             get_window_state, or click by pixel from a screenshot."
-                        ))
-                        .with_structured(json!({
-                            "code": "element_bounds_unavailable",
-                            "effect": "none",
-                            "element_index": idx,
-                            "reason": reason,
-                            "ax_error": format!("{error:#}"),
-                        }))
-                    }
+                    Ok(Err(error)) => foreground_ax_action_error(pid, idx, &reason, error),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 }
             }
         }
     }
+}
+
+/// The result for a failed AT-SPI action of an X11 foreground element click
+/// whose element has no usable bounds. A `doAction` that failed after it was
+/// sent may have clicked, so it is an unknown outcome, never the
+/// "no input was sent" bounds refusal that invites a second click.
+fn foreground_ax_action_error(
+    pid: u32,
+    idx: usize,
+    reason: &str,
+    error: anyhow::Error,
+) -> ToolResult {
+    if crate::atspi::input_may_have_landed(&error) {
+        return atspi_click_outcome_unknown(
+            &format!("element [{idx}] (pid {pid})"),
+            crate::input::delivery::DeliveryMode::Foreground,
+            &error,
+        );
+    }
+    if error.is::<crate::atspi::native::CachedElementGone>() {
+        return ToolResult::error(format!(
+            "click: stale_element_token: observed AT-SPI object [{idx}] is no \
+             longer present ({error}); re-snapshot with get_window_state"
+        ))
+        .with_structured(json!({
+            "code": "stale_element_token",
+            "effect": "none",
+        }));
+    }
+    if crate::input::foreground::error_code(&error).is_some() {
+        return input_error_result(error);
+    }
+    ToolResult::error(format!(
+        "click: element [{idx}] (pid {pid}) has no usable on-screen bounds \
+         ({reason}) and its AT-SPI action failed ({error:#}); no input was \
+         sent. Open the containing menu first, re-snapshot with \
+         get_window_state, or click by pixel from a screenshot."
+    ))
+    .with_structured(json!({
+        "code": "element_bounds_unavailable",
+        "effect": "none",
+        "element_index": idx,
+        "reason": reason,
+        "ax_error": format!("{error:#}"),
+    }))
+}
+
+#[cfg(test)]
+#[test]
+fn a_boundless_foreground_click_whose_action_may_have_landed_is_not_refused() {
+    let sent = anyhow::Error::new(crate::atspi::InputMayHaveLanded(
+        "doAction failed: raised after acting".into(),
+    ));
+    let result = foreground_ax_action_error(123, 4, "menu_closed", sent);
+    assert_eq!(result.is_error, Some(true));
+    let wire = serde_json::to_value(&result).unwrap();
+    let structured = &wire["structuredContent"];
+    assert_ne!(
+        structured["code"], "element_bounds_unavailable",
+        "{structured}"
+    );
+    assert_eq!(structured["effect"], "unverifiable");
+    assert_eq!(structured["delivery"], json!({"mode": "unknown"}));
+    assert!(structured.get("escalation").is_none(), "{structured}");
+    assert!(structured.get("suggestion").is_none(), "{structured}");
+    let text = wire["content"][0]["text"].as_str().unwrap();
+    assert!(!text.contains("no input was sent"), "{text}");
+    assert!(text.contains("before clicking again"), "{text}");
+
+    // An action that failed before it was sent keeps the bounds refusal.
+    let unsent = anyhow::anyhow!("element has no Action interface");
+    let refusal = foreground_ax_action_error(123, 4, "menu_closed", unsent);
+    let wire = serde_json::to_value(&refusal).unwrap();
+    assert_eq!(
+        wire["structuredContent"]["code"],
+        "element_bounds_unavailable"
+    );
+    assert_eq!(wire["structuredContent"]["effect"], "none");
 }
 
 /// Decide whether a foreground element click has a real point to press.
@@ -942,14 +1068,42 @@ impl Tool for ClickTool {
             // sees the cursor "click somewhere else."
             // The overlay draws in layout coordinates, like the input below.
             let (overlay_x, overlay_y) = space.to_layout(sx, sy);
-            reveal_pointer_action_for(
-                &self.state,
-                &cursor_id,
-                f64::from(overlay_x),
-                f64::from(overlay_y),
-                true,
+            let arrival = prepare_desktop_click_cursor(
+                crate::wayland::is_wayland()
+                    && crate::overlay::wayland_overlay_backend()
+                        == crate::overlay::WaylandOverlayBackend::LayerShell,
+                async {
+                    self.state.cursor_registry.set_enabled(&cursor_id, true);
+                    self.state.cursor_registry.update_position(
+                        &cursor_id,
+                        f64::from(overlay_x),
+                        f64::from(overlay_y),
+                    );
+                    emit_cursor_hook(
+                        &cursor_id,
+                        f64::from(overlay_x),
+                        f64::from(overlay_y),
+                        false,
+                    );
+                    crate::wayland::overlay::animate_and_wait(
+                        cursor_id.clone(),
+                        f64::from(overlay_x),
+                        f64::from(overlay_y),
+                    )
+                    .await
+                },
+                reveal_pointer_action_for(
+                    &self.state,
+                    &cursor_id,
+                    f64::from(overlay_x),
+                    f64::from(overlay_y),
+                    false,
+                ),
             )
             .await;
+            if let Err(error) = arrival {
+                return ToolResult::error(error.to_string());
+            }
             let r = spawn_blocking_bounded("desktop click", foreground_budget(0), move || {
                 if crate::wayland::is_wayland() {
                     if !modifiers.is_empty() {
@@ -971,6 +1125,16 @@ impl Tool for ClickTool {
                 }
             })
             .await;
+            if matches!(&r, Ok(Ok(()))) {
+                emit_cursor_hook(&cursor_id, f64::from(overlay_x), f64::from(overlay_y), true);
+                crate::overlay::send_command_for(
+                    cursor_id,
+                    cursor_overlay::OverlayCommand::ClickPulse {
+                        x: f64::from(overlay_x),
+                        y: f64::from(overlay_y),
+                    },
+                );
+            }
             return match r {
                 // Screen-absolute click — never driver-verifiable (no
                 // read-back); the caller confirms via screenshot.
@@ -1023,6 +1187,9 @@ impl Tool for ClickTool {
             Ok(token) => token,
             Err(refusal) => return refusal,
         };
+        if let Some(refusal) = refuse_if_disabled(pid, &resolved, "click").await {
+            return refusal;
+        }
         let elem_idx_resolved: Option<usize> = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
                 Some(*element_index)
@@ -1200,16 +1367,7 @@ impl Tool for ClickTool {
                 .await
                 {
                     Ok(joined) => joined,
-                    Err(_elapsed) => {
-                        return ToolResult::error(format!(
-                            "click: the AT-SPI action for element [{idx}] did not complete                              within {ELEMENT_AX_BUDGET:?}; its effect is unknown. Take a                              screenshot, then retry by pixel (x/y) or with                              delivery_mode:\"foreground\"."
-                        ))
-                        .with_structured(json!({
-                            "code": "ax_timeout",
-                            "effect": "unknown",
-                            "escalation": non_ax_escalation(),
-                        }));
-                    }
+                    Err(_elapsed) => return element_ax_timeout(idx),
                 };
                 if let Ok(Ok(((_action, suspected_noop, unacknowledged), guard))) = ax_result {
                     let mut structured = json!({
@@ -1250,6 +1408,17 @@ impl Tool for ClickTool {
                 // primary-seat replay when its semantic outcome is uncertain.
                 if foreground_hyprland {
                     return foreground_ax_click_unknown(pid, idx);
+                }
+                // A doAction that failed after it was sent may have clicked: a
+                // pointer click on top of it would click twice.
+                if let Ok(Err(error)) = &ax_result {
+                    if crate::atspi::input_may_have_landed(error) {
+                        return atspi_click_outcome_unknown(
+                            &format!("element [{idx}] (pid {pid})"),
+                            delivery,
+                            error,
+                        );
+                    }
                 }
             }
             if foreground_hyprland {
@@ -1382,8 +1551,9 @@ impl Tool for ClickTool {
                                 )
                             },
                         )
-                        .map(|(value, _report)| value)
-                        .map(|()| PointerRoute::Foreground)
+                        .map(|((), report)| PointerRoute::Foreground {
+                            menu_open: report.menu_open,
+                        })
                     } else if modifier_refs.is_empty() && !crate::wayland::is_wayland() {
                         x11_pixel_click_no_focus_steal(
                             &cursor_id_for_fallback,
@@ -1432,11 +1602,17 @@ impl Tool for ClickTool {
             };
         }
 
-        if !isolated_background {
-            if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
-                return refusal;
-            }
-        }
+        // Chromium drops background pointer events, but on X11 the AT-SPI
+        // action of the control under a plain left click still lands: that
+        // route tries it first and refuses only on a miss.
+        let plain_left = button == 1 && count == 1 && modifiers.is_empty();
+        let chromium_atspi_only = match (!isolated_background)
+            .then(|| unavailable_chromium_background(pid, delivery))
+            .flatten()
+        {
+            Some(refusal) if crate::wayland::is_wayland() || !plain_left => return refusal,
+            refusal => refusal.is_some(),
+        };
 
         // Coordinate-based path.
         if let Some(refusal) = require_point_args("click", &args) {
@@ -1465,24 +1641,43 @@ impl Tool for ClickTool {
         let native_refusal = (!isolated_background)
             .then(|| unavailable_wayland_focused_input_background(delivery, true))
             .flatten();
+        // The screenshot point the capture was bound to, before it is mapped.
+        let capture_point = (x, y);
         if desktop_frame {
             // Desktop pixels: no zoom/screenshot scaling; translated once below.
             if let Some(refusal) = native_refusal {
                 return refusal;
             }
-        } else if let Some(capture_id) = capture_id_arg {
+        } else if let Some(capture_id) = capture_id_arg.clone() {
             if let Some(refusal) = native_refusal {
                 return refusal;
             }
-            match crate::capture_action_frame::admit_window_click(
-                &self.state.capture_service,
-                &args,
-                &capture_id,
-                pid,
-                xid,
-                x,
-                y,
-            ) {
+            // A click that may still be refused after its point is mapped (a
+            // Chromium background click that finds no accessible control)
+            // must not spend the one-shot capture: the foreground retry
+            // reuses it. Spend it once the click is dispatched.
+            let admitted = if chromium_atspi_only {
+                crate::capture_action_frame::preview_window_click(
+                    &self.state.capture_service,
+                    &args,
+                    &capture_id,
+                    pid,
+                    xid,
+                    x,
+                    y,
+                )
+            } else {
+                crate::capture_action_frame::admit_window_click(
+                    &self.state.capture_service,
+                    &args,
+                    &capture_id,
+                    pid,
+                    xid,
+                    x,
+                    y,
+                )
+            };
+            match admitted {
                 Ok(point) => (x, y) = point,
                 Err(error) => return capture_admission_error(error),
             }
@@ -1587,10 +1782,23 @@ impl Tool for ClickTool {
                     crate::atspi::perform_action_at_screen_point(pid, xid, output_x, output_y)
                 })
                 .await;
-                if matches!(semantic, Ok(Ok(Some(_)))) {
-                    return ToolResult::text("Dispatched AT-SPI click.").with_structured(json!({
-                        "path": "wayland_atspi", "verified": false, "effect": "unverifiable"
-                    }));
+                match &semantic {
+                    Ok(Ok(Some(_))) => {
+                        return ToolResult::text("Dispatched AT-SPI click.").with_structured(
+                            json!({
+                                "path": "wayland_atspi", "verified": false, "effect": "unverifiable"
+                            }),
+                        );
+                    }
+                    // Sent and failed: an isolated pointer click would click twice.
+                    Ok(Err(error)) if crate::atspi::input_may_have_landed(error) => {
+                        return atspi_click_outcome_unknown(
+                            &format!("the point ({x:.1}, {y:.1})"),
+                            delivery,
+                            error,
+                        );
+                    }
+                    _ => {}
                 }
             }
             return isolated_hyprland_action(
@@ -1610,7 +1818,8 @@ impl Tool for ClickTool {
         let modifiers_for_task = modifiers.clone();
         // delivery_mode: background (default) = no-focus-steal injection;
         // foreground = activate the target window (EWMH) first, then inject,
-        // then restore prior active. Mirrors macOS/Windows.
+        // then restore the prior active window unless the click opened a menu.
+        // Mirrors macOS/Windows.
         let fg_budget = foreground_budget(0);
         let result = spawn_blocking_bounded("foreground click", fg_budget, move || -> anyhow::Result<(&'static str, Option<crate::input::ForegroundReport>, Option<PointerRoute>, Option<crate::input::FocusGuardReport>)> {
             if crate::wayland::is_wayland() {
@@ -1628,10 +1837,15 @@ impl Tool for ClickTool {
                 // working. (x,y) are screen coords here, matching the frames in
                 // `get_window_state`. Miss → fall through to the injection paths.
                 if !delivery.is_foreground() && button == 1 && count == 1 {
-                    if let Ok(Some(_)) =
-                        crate::atspi::perform_action_at_screen_point(pid, xid, output_x, output_y)
+                    match crate::atspi::perform_action_at_screen_point(pid, xid, output_x, output_y)
                     {
-                        return Ok(("wayland_atspi", None, None, None));
+                        Ok(Some(_)) => return Ok(("wayland_atspi", None, None, None)),
+                        // Sent and failed: neither another route nor a
+                        // foreground retry may click a second time.
+                        Err(error) if crate::atspi::input_may_have_landed(&error) => {
+                            return Err(error)
+                        }
+                        _ => {}
                     }
                 }
                 if crate::wayland::is_inject_mode() {
@@ -1663,22 +1877,32 @@ impl Tool for ClickTool {
                     // real pointer available, an entry / spin button / cell
                     // under the point is left to the MPX click below (its
                     // `doAction` would not focus it for a following type_text).
+                    // Chromium: an editable's action does not focus it for a
+                    // following type, so leave it to the refusal.
                     let real_click_for_focus_roles =
-                        crate::input::real_pointer_input_available();
+                        chromium_atspi_only || crate::input::real_pointer_input_available();
                     let (hit, guard) = crate::input::focus_guard::guarded(Some(pid), || {
-                        Ok(crate::atspi::perform_action_at_point_in(
+                        Ok(match crate::atspi::perform_action_at_point_in(
                             pid,
                             xid,
                             xi,
                             yi,
                             real_click_for_focus_roles,
-                        )
-                        .ok()
-                        .flatten())
+                        ) {
+                            Ok(hit) => Ok(hit),
+                            // Sent and failed: a pointer click would click twice.
+                            Err(error) if crate::atspi::input_may_have_landed(&error) => {
+                                Err(error)
+                            }
+                            Err(_) => Ok(None),
+                        })
                     })?;
-                    if let Some(hit) = hit {
+                    if let Some(hit) = hit? {
                         return Ok(("x11_atspi", Some(PointerRoute::Atspi(hit)), guard));
                     }
+                }
+                if chromium_atspi_only {
+                    return Ok(("background_unavailable_chromium", None, None));
                 }
                 if !fg
                     && !crate::input::real_pointer_input_available()
@@ -1755,10 +1979,42 @@ impl Tool for ClickTool {
         } else {
             "background"
         };
+        if chromium_atspi_only
+            && !matches!(
+                &result,
+                Ok(Ok(("background_unavailable_chromium", _, _, _)))
+            )
+        {
+            if let Some(capture_id) = capture_id_arg.as_deref() {
+                // Dispatched (or failed after dispatch): the capture is spent
+                // exactly as a plain admission would have spent it.
+                let _ = crate::capture_action_frame::admit_window_click(
+                    &self.state.capture_service,
+                    &args,
+                    capture_id,
+                    pid,
+                    xid,
+                    capture_point.0,
+                    capture_point.1,
+                );
+            }
+        }
         let outcome = match result {
+            Ok(Err(error)) if crate::atspi::input_may_have_landed(&error) => {
+                atspi_click_outcome_unknown(
+                    &format!("the point ({x:.1}, {y:.1})"),
+                    delivery,
+                    &error,
+                )
+            }
             Ok(Ok(("background_unavailable", _, _, _))) => {
                 crate::input::delivery::background_unavailable_error(
                     crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+                )
+            }
+            Ok(Ok(("background_unavailable_chromium", _, _, _))) => {
+                crate::input::delivery::background_unavailable_error(
+                    crate::input::delivery::BackgroundUnavailable::ChromiumInput,
                 )
             }
             Ok(Ok(("background_unavailable_pointer", _, _, _))) => {
@@ -1792,16 +2048,19 @@ impl Tool for ClickTool {
                         "delivery_mode": mode_label,
                     }),
                 };
-                if let Some(report) = report {
-                    apply_foreground_report(&mut structured, &report);
+                if let Some(report) = &report {
+                    apply_foreground_report(&mut structured, report);
                 }
-                let suffix = match &route {
+                let mut suffix = match &route {
                     Some(route) => route.text_suffix(mode_label),
                     None => format!(
                         "(delivery_mode={mode_label}, path={path}); not verified — confirm \
                          with a screenshot."
                     ),
                 };
+                if let Some(report) = &report {
+                    suffix.push_str(&report.focus_note());
+                }
                 attach_focus_guard(
                     ToolResult::text(format!("Clicked at ({x:.1}, {y:.1}) × {count} {suffix}"))
                         .with_structured(structured),

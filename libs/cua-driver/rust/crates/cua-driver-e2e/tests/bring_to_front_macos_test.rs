@@ -13,7 +13,7 @@
 
 #![cfg(target_os = "macos")]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -52,14 +52,6 @@ struct Occluder {
     pid: u32,
 }
 
-impl Drop for Occluder {
-    fn drop(&mut self) {
-        let _ = Command::new("kill")
-            .args(["-TERM", &self.pid.to_string()])
-            .status();
-    }
-}
-
 fn harness_exe() -> std::path::PathBuf {
     std::env::var("HARNESS_APPKIT_APP")
         .map(std::path::PathBuf::from)
@@ -79,6 +71,10 @@ fn occluder_exe() -> std::path::PathBuf {
 }
 
 fn launch(driver: &mut McpDriver, mode: Option<&str>) -> Fixture {
+    launch_with_env(driver, mode, &[])
+}
+
+fn launch_with_env(driver: &mut McpDriver, mode: Option<&str>, env: &[(&str, &str)]) -> Fixture {
     let exe = harness_exe();
     assert!(exe.exists(), "required AppKit harness missing at {exe:?}");
     let report = tempfile::NamedTempFile::new().expect("create AppKit window report");
@@ -88,60 +84,26 @@ fn launch(driver: &mut McpDriver, mode: Option<&str>) -> Fixture {
     if let Some(mode) = mode {
         command.env("CUA_HARNESS_BRING_TO_FRONT_MODE", mode);
     }
+    command.envs(env.iter().copied());
     let child = cua_driver_testkit::spawn_in_job(&mut command).expect("launch AppKit harness");
     let pid = child.id();
     driver.reaper().push(child);
     Fixture { pid, report }
 }
 
-fn running_executable_pids(exe: &std::path::Path) -> HashSet<u32> {
-    let output = Command::new("pgrep")
-        .args([
-            "-f",
-            "-x",
-            "--",
-            exe.to_str().expect("UTF-8 SwiftUI fixture path"),
-        ])
-        .output()
-        .expect("query SwiftUI fixture processes");
-    if !output.status.success() {
-        return HashSet::new();
-    }
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| line.trim().parse().ok())
-        .collect()
-}
-
-fn launch_occluder(_driver: &mut McpDriver) -> Occluder {
+fn launch_occluder(driver: &mut McpDriver) -> Occluder {
     let exe = occluder_exe();
     assert!(
         exe.exists(),
         "required distinct-bundle SwiftUI occluder missing at {exe:?}"
     );
-    let app = exe
-        .ancestors()
-        .nth(3)
-        .expect("SwiftUI executable is inside an app bundle");
-    let previous = running_executable_pids(&exe);
-    let opened = Command::new("open")
-        .args(["-n", "-g"])
-        .arg(app)
-        .status()
-        .expect("launch SwiftUI occluder through LaunchServices");
-    assert!(opened.success(), "LaunchServices rejected SwiftUI occluder");
-
-    let deadline = Instant::now() + Duration::from_secs(12);
-    loop {
-        if let Some(pid) = running_executable_pids(&exe).difference(&previous).next() {
-            return Occluder { pid: *pid };
-        }
-        assert!(
-            Instant::now() < deadline,
-            "LaunchServices SwiftUI process did not appear"
-        );
-        std::thread::sleep(Duration::from_millis(100));
-    }
+    let mut command = Command::new(exe);
+    command.stdout(Stdio::null()).stderr(Stdio::null());
+    let child = cua_driver_testkit::spawn_in_job(&mut command)
+        .expect("launch SwiftUI occluder in the test job");
+    let pid = child.id();
+    driver.reaper().push(child);
+    Occluder { pid }
 }
 
 fn wait_for_ordinary_window(pid: u32) -> u32 {
@@ -347,6 +309,20 @@ fn exact_secondary_window_is_verified_and_prior_app_can_recover_focus() {
 
     assert_ne!(focused_window_title(target.pid), MAIN_TITLE);
 
+    let repeated = driver.call(
+        "bring_to_front",
+        serde_json::json!({"pid": target.pid, "window_id": secondary}),
+    );
+    assert!(
+        !repeated.is_error(),
+        "repeated exact bring_to_front failed: {}; raw={}",
+        repeated.text(),
+        repeated.raw
+    );
+    assert_eq!(repeated.structured()["path"], "already_front");
+    assert_eq!(repeated.structured()["activated"], true);
+    assert_eq!(layer_zero_front().id, secondary);
+
     let recovered = driver.call(
         "bring_to_front",
         serde_json::json!({"pid": occluder.pid, "window_id": occluder_main}),
@@ -515,6 +491,97 @@ fn sheet_and_parent_ids_both_reach_the_sheet_and_the_sheet_snapshot_is_isolated(
     );
     assert!(!result.is_error(), "set_value in the sheet: {}", result.raw);
     wait_for_sheet_field(target.pid, "token", "set_value in the sheet");
+}
+
+/// A native Open panel attached as a sheet, browsing a folder whose file
+/// list alone outgrows a default read, still shows its Cancel and Open
+/// buttons in a default read of either the sheet's own id or its parent's,
+/// and Cancel pressed by token at the sheet's own id in the background
+/// dismisses the panel (issue #3351).
+#[test]
+#[ignore]
+fn open_panel_buttons_are_read_and_pressed_at_either_window_id() {
+    let folder = tempfile::tempdir().expect("create Open panel folder");
+    for n in 0..400 {
+        std::fs::write(folder.path().join(format!("file-{n:03}.txt")), "")
+            .expect("populate Open panel folder");
+    }
+    let folder_path = folder.path().to_str().expect("utf-8 temp path");
+    let mut driver = McpDriver::spawn_macos_daemon_proxy_named("macos-open-panel")
+        .expect("start installed macOS daemon proxy");
+    let target = launch_with_env(
+        &mut driver,
+        Some("open-panel"),
+        &[("CUA_HARNESS_OPEN_PANEL_DIR", folder_path)],
+    );
+    let windows = wait_for_window_ids(&target, &["main", "sheet"]);
+    let (parent, sheet) = (windows["main"], windows["sheet"]);
+
+    let button_token = |state: &serde_json::Value, title: &str| {
+        state["elements"]
+            .as_array()
+            .expect("elements")
+            .iter()
+            .find(|element| element["role"] == "AXButton" && element["title"] == title)
+            .and_then(|element| element["element_token"].as_str())
+            .map(str::to_owned)
+    };
+    let mut sheet_cancel = None;
+    for window_id in [parent, sheet] {
+        // The panel fills its file list asynchronously; read until the list
+        // is populated, so a read that stops early proves the budget is shared.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let state = loop {
+            let result = driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": target.pid, "window_id": window_id,
+                    "include_screenshot": false, "tree_format": "elements",
+                }),
+            );
+            assert!(
+                !result.is_error(),
+                "get_window_state {window_id}: {}",
+                result.raw
+            );
+            let state = result.structured().clone();
+            if state["truncated"] == true || Instant::now() >= deadline {
+                break state;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        };
+        assert_eq!(
+            state["truncated"], true,
+            "precondition: the panel's file list outgrows a default read of {window_id}"
+        );
+        for title in ["Cancel", "Open"] {
+            assert!(
+                button_token(&state, title).is_some(),
+                "default read of window {window_id} has no {title} button: {state}"
+            );
+        }
+        if window_id == sheet {
+            sheet_cancel = button_token(&state, "Cancel");
+        }
+    }
+
+    let result = driver.call(
+        "click",
+        serde_json::json!({
+            "pid": target.pid, "window_id": sheet,
+            "element_token": sheet_cancel.expect("sheet Cancel token"),
+            "delivery_mode": "background",
+        }),
+    );
+    assert!(!result.is_error(), "Cancel at the sheet id: {}", result.raw);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while cg_windows().iter().any(|window| window.id == sheet) {
+        assert!(
+            Instant::now() < deadline,
+            "Open panel {sheet} still on screen after Cancel"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 #[test]

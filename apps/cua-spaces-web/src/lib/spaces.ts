@@ -97,9 +97,16 @@ export const countedSpaces = <T extends Pick<Space, "id" | "status">>(listed: re
 export function orderSpaces<T extends Pick<Space, "id" | "status" | "power" | "lastUsedAt" | "provider" | "host"> & { progress?: Space["progress"] }>(
   spaces: readonly T[],
 ): T[] {
-  // A machine's desktop follows the Spaces in its state (its "last used" is always now), and This Mac's unshared one is last.
+  // A machine's desktop follows the Spaces in its state, and This Mac's unshared one is last.
   const rank = (s: T) => (isUnsharedDesktop(s) ? 9 : ORDER[spaceState(s)] + (isMachineDesktop(s) ? 0.5 : 0));
-  return spaces.toSorted((a, b) => rank(a) - rank(b) || b.lastUsedAt - a.lastUsedAt);
+  // A desktop has no "last used": the host stamps it with the time it read the list (This Mac's
+  // with the time it composed it, another machine's with the time the registry answered), and
+  // those move apart on every poll. Sorted by it, desktops swapped tiles on each refresh; they keep
+  // a fixed order instead, This Mac first, then by id. Every tie ends on the id, so the order never
+  // depends on the order the host listed the rows in.
+  const used = (s: T) => (isMachineDesktop(s) ? 0 : s.lastUsedAt);
+  const mac = (s: T) => (isThisMacDesktop(s) ? 0 : 1);
+  return spaces.toSorted((a, b) => rank(a) - rank(b) || used(b) - used(a) || mac(a) - mac(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
 export type SpaceFilter = "all" | "running" | "stopped" | "creating";
@@ -170,6 +177,12 @@ export function macosLimitText(
 /** Why a create failed, in the core's words; null for any other Space. */
 export function createError(space: Pick<Space, "status" | "progress">): string | null {
   return space.status === "suspended" ? (space.progress?.error ?? null) : null;
+}
+
+/** A create's one line: its step, then its bytes. A first Linux create downloads the runtime and then the image,
+ * two totals, so the bytes alone read as one total that jumps. */
+export function createLine(progress: Pick<NonNullable<Space["progress"]>, "label" | "transfer"> | undefined): string | null {
+  return [progress?.label, progress?.transfer].filter(Boolean).join(" \u00b7 ") || null;
 }
 
 /** 0..1 while a Space is being created. */

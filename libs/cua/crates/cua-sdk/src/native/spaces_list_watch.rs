@@ -77,7 +77,7 @@ async fn embedded_list_watch(
 }
 
 async fn daemon_list_watch(
-    daemon: cua_daemon::client::DaemonClient,
+    daemon: cua_daemon_core::client::DaemonClient,
     mut stop: tokio::sync::watch::Receiver<bool>,
     listener: Arc<dyn SpacesListListener>,
 ) {

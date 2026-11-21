@@ -239,7 +239,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "mcp", specifier = ">=1.26.0,<2" },
+    { name = "mcp", specifier = ">=1.30.0,<2" },
     { name = "typesafe-sdk", specifier = ">=0.6.0,<1" },
 ]
 

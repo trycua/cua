@@ -20,12 +20,23 @@ import { installBridgeIpc } from "./bridge/ipc";
 import { installMenu } from "./menu";
 import { appCoreStatePaths, migrateFromSwiftApp, SWIFT_BUNDLE_ID } from "./migrate-swift";
 import { openedAtLogin } from "./login-item";
+import { cuaHome } from "./model/daemon";
 import { makeModel, readOnboardingCompleted } from "./model/environment";
 import { recordLaunch, refreshAfterUpdate } from "./model/update-refresh";
 import { loadNative } from "./native/load";
 import { nativeDir } from "./native/location";
 import { connectNotch, type NotchCore } from "./notch";
-import { dropOnSpace, feedNotch, followDragReadiness, notchTeleport, notchThumbnail, openSpaceFromNotch, teleportFromNotch, type NotchFeedUi } from "./notch-feed";
+import {
+  dropOnSpace,
+  feedNotch,
+  followDragReadiness,
+  notchTeleport,
+  notchThumbnail,
+  openSpaceFromNotch,
+  teleportFromNotch,
+  type NotchFeedUi,
+} from "./notch-feed";
+import { resolveSpace, startControlServer } from "./control-server";
 import { createPipWindows } from "./pip";
 import { electronKeyvaultPrompts } from "./prompts";
 import { APP_ORIGIN, handleAppProtocol, registerSchemePrivileges, resolveWebRoot } from "./protocol";
@@ -202,7 +213,9 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
         windowDrops.set(dropWindow(win), targets);
         if (process.env.CUA_SPACES_NOTCH_DEBUG) {
           const at = win.getContentBounds();
-          console.log(`[cua-spaces] notch drop targets: ${targets.map((t) => t.spaceId).join(", ") || "none"} in window ${win.getMediaSourceId()} at ${at.x},${at.y}`);
+          console.log(
+            `[cua-spaces] notch drop targets: ${targets.map((t) => t.spaceId).join(", ") || "none"} in window ${win.getMediaSourceId()} at ${at.x},${at.y}`,
+          );
         }
       },
       chooseFiles: async (win) => {
@@ -212,8 +225,22 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
         const r = win instanceof BrowserWindow ? await dialog.showOpenDialog(win, { properties }) : await dialog.showOpenDialog({ properties });
         return r.canceled ? null : r.filePaths;
       },
+      chooseIso: async (win) => {
+        const options = {
+          properties: ["openFile" as const],
+          filters: [{ name: "Windows disc image", extensions: ["iso"] }],
+          title: "Choose the Windows ISO you downloaded from Microsoft",
+          buttonLabel: "Use This ISO",
+        };
+        const r = win instanceof BrowserWindow ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+        return r.canceled ? null : (r.filePaths[0] ?? null);
+      },
       chooseProgram: async (win) => {
-        const options = { properties: ["openFile", "showHiddenFiles", "treatPackageAsDirectory"] as ("openFile" | "showHiddenFiles" | "treatPackageAsDirectory")[], defaultPath: process.platform === "win32" ? undefined : "/usr/local/bin", buttonLabel: "Use" };
+        const options = {
+          properties: ["openFile", "showHiddenFiles", "treatPackageAsDirectory"] as ("openFile" | "showHiddenFiles" | "treatPackageAsDirectory")[],
+          defaultPath: process.platform === "win32" ? undefined : "/usr/local/bin",
+          buttonLabel: "Use",
+        };
         const r = win instanceof BrowserWindow ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
         return r.canceled ? null : (r.filePaths[0] ?? null);
       },
@@ -222,6 +249,16 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
     },
   });
   env.model.startListPoll();
+  // `cua mcp` asks this app to open a Space's viewer through a loopback server whose port and token
+  // are in `<cua home>/spaces-control.json` (open_space_viewer); without it the tool says the app isn't running.
+  const control = await startControlServer(path.join(cuaHome(process.env), "spaces-control.json"), {
+    resolve: (requested) => resolveSpace(env.model.spaces, requested),
+    openViewer: (spaceId) => {
+      const space = env.model.spaces.find((s) => s.id === spaceId);
+      viewers.open(spaceId, space?.name ?? spaceId, space ? String(space.os) : undefined);
+    },
+  });
+  if (control) app.on("will-quit", () => void control.stop());
   // A deleted Space's viewer closes (a loaded list only: an empty one is a launch).
   env.model.subscribe((change) => {
     if (change === "spaces" && env.model.loaded) viewers.prune(new Set(env.model.spaces.map((s) => s.id)));

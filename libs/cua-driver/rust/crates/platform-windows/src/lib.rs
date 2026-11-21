@@ -27,9 +27,10 @@
 use cua_driver_core::tool::ToolRegistry;
 
 pub mod diagnostics;
+#[cfg(target_os = "windows")]
+pub mod dpi;
 pub mod health_report;
 pub mod overlay;
-pub mod pip;
 pub mod recording_hooks;
 pub mod terminal;
 pub mod tools;
@@ -93,6 +94,12 @@ pub mod browser_platform;
 // tests run on any host.
 #[cfg(any(target_os = "windows", test))]
 mod browser_isolated_selection;
+
+// Machine policy that forces extensions on an isolated browser; the key
+// choice and policy assembly are cfg-independent so their unit tests run on
+// any host.
+#[cfg(any(target_os = "windows", test))]
+mod browser_managed_policy;
 
 // Pure path normalization and reparse-point resolution for the isolated
 // browser installation check; cfg-independent so its unit tests run on any

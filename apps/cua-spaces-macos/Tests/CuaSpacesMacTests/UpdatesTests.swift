@@ -263,6 +263,58 @@ struct UpdatesTests {
         #expect(choices == [.install])
     }
 
+    /// 0.20.0 to 0.22.0: the click did nothing. When the app is still running
+    /// a few seconds after "Restart to update", it quits, so Sparkle's own
+    /// installer applies the staged update; if that does not end the app, the
+    /// page says to quit and reopen.
+    @Test func aRestartThatDoesNothingQuitsTheApp() {
+        let driver = UpdateUserDriver(currentVersion: "0.9.2")
+        var timers: [() -> Void] = []
+        var quits = 0
+        driver.schedule = { _, work in timers.append(work) }
+        driver.quitApp = { quits += 1 }
+        driver.resumeSilentUpdate = {}
+        driver.silentlyDownloaded(version: "0.9.3")
+        #expect(driver.installNow())
+        #expect(quits == 0 && timers.count == 1)
+        timers.removeFirst()()
+        #expect(quits == 1 && driver.state.status != .error)
+        // Still running after the quit: say what to do.
+        timers.removeFirst()()
+        #expect(driver.state.status == .error)
+        #expect(driver.state.message == UpdateUserDriver.restartStuckMessage)
+    }
+
+    @Test func aNewerClickSupersedesAnOlderRestartTimer() {
+        let driver = UpdateUserDriver(currentVersion: "0.9.2")
+        var timers: [() -> Void] = []
+        var quits = 0
+        driver.schedule = { _, work in timers.append(work) }
+        driver.quitApp = { quits += 1 }
+        driver.resumeSilentUpdate = {}
+        driver.silentlyDownloaded(version: "0.9.3")
+        #expect(driver.installNow())
+        #expect(driver.installNow())
+        timers.removeFirst()()
+        #expect(quits == 0)
+        timers.removeFirst()()
+        #expect(quits == 1)
+    }
+
+    @Test func aHeldReplyRestartIsWatchedToo() {
+        let driver = UpdateUserDriver(currentVersion: "0.9.2")
+        var timers: [() -> Void] = []
+        var quits = 0
+        driver.schedule = { _, work in timers.append(work) }
+        driver.quitApp = { quits += 1 }
+        var choices: [SPUUserUpdateChoice] = []
+        driver.handleFound(version: "0.9.3", informationOnly: false) { _ in }
+        driver.showReady(toInstallAndRelaunch: { choices.append($0) })
+        #expect(driver.installNow() && choices == [.install])
+        timers.removeFirst()()
+        #expect(quits == 1)
+    }
+
     @Test func aFailedResumeDoesNotInstallALaterPrompt() {
         let driver = UpdateUserDriver(currentVersion: "0.9.2")
         var choices: [SPUUserUpdateChoice] = []

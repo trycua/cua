@@ -10,6 +10,7 @@ import {
   canPower,
   countedSpaces,
   createError,
+  createLine,
   isUnsharedDesktop,
   listedSpaces,
   machineName,
@@ -66,6 +67,17 @@ describe("a failed create", () => {
     // A stopped Space has no create error.
     expect(createError(SPACES[0]!)).toBeNull();
     expect(spaceState(space("pending:x", "provisioning", 1, { progress: progress() }))).toBe("creating");
+  });
+});
+
+// Regression (first run): the Making row showed "201 of 456 MB", then "0.9 of 1.2 GB" with nothing to say a second
+// download (the image, after the Linux runtime) had started.
+describe("createLine", () => {
+  it("names the step before its bytes, so a second download reads as a new step", () => {
+    expect(createLine({ label: "Setting up Linux runtime…", transfer: "201 of 456 MB · 57 MB/s" })).toBe("Setting up Linux runtime… · 201 of 456 MB · 57 MB/s");
+    expect(createLine({ label: "Downloading the image…", transfer: "0.9 of 1.2 GB" })).toBe("Downloading the image… · 0.9 of 1.2 GB");
+    expect(createLine({ label: "Booting Linux…" })).toBe("Booting Linux…");
+    expect(createLine(undefined)).toBeNull();
   });
 });
 
@@ -255,5 +267,24 @@ describe("orderSpaces: running first, then the most recently used", () => {
       space("b", "suspended", 2),
     ];
     expect(orderSpaces(all).map((s) => s.id)).toEqual(["a", "relay:studio", "b", "this-mac"]);
+  });
+
+  it("keeps desktops in one order however the host stamped them on this poll", () => {
+    // The host stamps a desktop with the time it read the list, so This Mac's and another machine's
+    // move past each other from one poll to the next.
+    const poll = (mac: number, studio: number, mini: number) => [
+      space("relay:mini", "running", mini, { provider: "relay" }),
+      space("this-mac", "local", mac, { provider: "local" }),
+      space("relay:studio", "running", studio, { provider: "relay" }),
+    ];
+    const first = orderSpaces(poll(1_000, 2_000, 3_000)).map((s) => s.id);
+    expect(first).toEqual(["this-mac", "relay:mini", "relay:studio"]);
+    expect(orderSpaces(poll(3_000, 1_000, 2_000).reverse()).map((s) => s.id)).toEqual(first);
+  });
+
+  it("orders Spaces used at the same time by id, not by the host's row order", () => {
+    const rows = [space("b", "running", 5), space("a", "running", 5), space("c", "running", 5)];
+    expect(orderSpaces(rows).map((s) => s.id)).toEqual(["a", "b", "c"]);
+    expect(orderSpaces(rows.toReversed()).map((s) => s.id)).toEqual(["a", "b", "c"]);
   });
 });

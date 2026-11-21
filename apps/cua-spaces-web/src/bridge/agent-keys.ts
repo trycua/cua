@@ -290,6 +290,15 @@ export class AgentKeysStore {
     this.set({ report, error: null });
   }
 
+  /** Turns "Copy my sign-in to my other computers" on or off. Throws the host's words. */
+  async setCopySignIn(on: boolean): Promise<void> {
+    this.epoch++;
+    const report = await this.adapter.call("agentKeys.copySignIn", { on });
+    this.epoch++;
+    this.pinned = false;
+    this.set({ report, error: null });
+  }
+
   /** Gives a saved key or sign-in a name (`slot` null: the first saved for `env`). Throws the host's words. */
   async rename(env: string, slot: string | null, label: string): Promise<void> {
     this.epoch++;
@@ -352,6 +361,8 @@ export interface AgentKeysHook extends AgentKeysState {
   use(app: string, choice: { env: string; slot?: string } | null): Promise<void>;
   /** Gives a saved key or sign-in a name. */
   rename(env: string, slot: string | null, label: string): Promise<void>;
+  /** Turns "Copy my sign-in to my other computers" on or off. */
+  setCopySignIn(on: boolean): Promise<void>;
   openSheet(provider: AgentKeyProvider, env?: string | null): void;
   closeSheet(): void;
   askRemove(env: string | null): void;
@@ -400,6 +411,7 @@ export function useAgentKeys({ watch = false }: { watch?: boolean } = {}): Agent
     remove: (env, which) => need().remove(env, which),
     use: (app, choice) => need().use(app, choice),
     rename: (env, slot, label) => need().rename(env, slot, label),
+    setCopySignIn: (on) => need().setCopySignIn(on),
     openSheet: (provider, env = null) => store?.openSheet(provider, env),
     closeSheet: () => store?.closeSheet(),
     askRemove: (env) => store?.askRemove(env),

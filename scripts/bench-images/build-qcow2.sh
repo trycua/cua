@@ -73,7 +73,7 @@ SRC_IN="/src/$(basename "$SRC")"
 manifest_for() { # VARIANT OUT
     if [ ! -s "$BUILD/spacesd/build-info.json" ]; then
         docker run --rm --platform "linux/$ARCH" --memory=2g -v "$BUILD/spacesd:/g:ro" ubuntu:22.04 bash -c \
-            'apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends libx11-6 libxi6 >/dev/null && /g/cua-spacesd build-info' \
+            'apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0 libxkbcommon-x11-0 >/dev/null && /g/cua-spacesd build-info' \
             >"$BUILD/spacesd/build-info.json"
     fi
     python3 "$REPO/libs/images/common/tools/cua-image-manifest" generate \

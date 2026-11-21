@@ -82,6 +82,61 @@ impl LocalRuntime for FakeRuntime {
     }
 }
 
+#[cfg(feature = "mcp")]
+#[tokio::test]
+async fn mcp_create_space_forwards_resource_sizes_for_every_member() {
+    use cua_spaces::mcp::McpServer;
+    use serde_json::json;
+
+    for (cpus, memory_mb, count) in [
+        (None, None, 1),
+        (Some(1), None, 1),
+        (None, Some(1536), 1),
+        (Some(1), Some(1536), 1),
+        (Some(1), Some(1536), 2),
+    ] {
+        let srv = MockServer::start(MockAuth::default()).await;
+        let rt = Arc::new(FakeRuntime {
+            port: srv.addr.port(),
+            started: Mutex::new(vec![]),
+            deleted: Mutex::new(vec![]),
+            running: Mutex::new(BTreeMap::new()),
+        });
+        let reg = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let spaces = Spaces::builder()
+            .home(reg.path())
+            .sandboxes(
+                cua_sandbox_core::Sandboxes::builder()
+                    .local(rt.clone())
+                    .state_dir(state.path())
+                    .build(),
+            )
+            .build();
+        let mut arguments = json!({
+            "on": "local",
+            "image": "cua-e2e-local/linux:docker-local-arm64",
+            "spacesd": true,
+            "name": "sized",
+            "count": count,
+        });
+        if let Some(cpus) = cpus {
+            arguments["cpus"] = json!(cpus);
+        }
+        if let Some(memory_mb) = memory_mb {
+            arguments["memory_mb"] = json!(memory_mb);
+        }
+        let outcome = McpServer::new(spaces).call("create_space", arguments).await;
+        assert!(!outcome.is_error, "{outcome:?}");
+        let started = rt.started.lock().unwrap();
+        assert_eq!(started.len(), count);
+        for spec in started.iter() {
+            assert_eq!(spec.cpus, cpus.unwrap_or(2), "{}", spec.name);
+            assert_eq!(spec.memory_mb, memory_mb.unwrap_or(4096), "{}", spec.name);
+        }
+    }
+}
+
 #[tokio::test]
 async fn create_locally_starts_with_a_fresh_token_and_delete_deletes() {
     let srv = MockServer::start(MockAuth::default()).await;
@@ -200,7 +255,12 @@ async fn a_local_space_is_named_what_it_was_created_as() {
     assert_eq!(named.name, "todo7b-probe");
     let generated = spaces.create(create(None)).await.unwrap().ready().unwrap();
     let short = generated.id.strip_prefix("local:").unwrap();
-    assert!(short.starts_with("space-"), "{}", generated.id);
+    // A Space made without a name gets a friendly one (`brave-otter`).
+    assert!(
+        cua_spaces_contract::names::is_pet_name(short),
+        "{}",
+        generated.id
+    );
     assert_eq!(generated.name, short);
     let listed: BTreeMap<String, String> = spaces
         .list()
@@ -642,7 +702,9 @@ async fn a_space_that_fails_to_start_leaves_no_instance() {
     let deleted = rt.deleted.lock().unwrap().clone();
     assert!(!deleted.is_empty(), "{deleted:?}");
     assert!(
-        deleted.iter().all(|d| d.starts_with("space-")),
+        deleted
+            .iter()
+            .all(|d| cua_spaces_contract::names::is_pet_name(d)),
         "{deleted:?}"
     );
     assert!(rt.running.lock().unwrap().is_empty());

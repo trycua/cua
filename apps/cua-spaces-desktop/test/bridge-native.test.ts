@@ -173,6 +173,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       ["startup.get", {}],
       ["startup.act", { action: "tryAgain" }],
       ["spaces.usage", { spaceId: space }],
+      ["spaces.reach", { spaceId: space }],
       ["spaces.windows", { spaceId: space }],
       ["stream.pip", { spaceId: space, command: { type: "open", row: "w-1" } }],
       ["spaces.thumbnail", { spaceId: space }],
@@ -264,6 +265,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       "presence.publish",
       "presence.leave",
       "spaces.fixRuntime",
+      "windows.chooseIso",
       "cli.install",
       "runtimes.check",
       "runtimes.browse",
@@ -297,7 +299,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
 
   it("checks spaces.fixRuntime's action, and has no runtime fix off Windows", async () => {
     await expect(call("spaces.fixRuntime", { action: "reboot" })).rejects.toMatchObject({ code: "bad_args" });
-    await expect(call("spaces.fixRuntime", { action: "start-docker" })).rejects.toMatchObject({ code: "unsupported" });
+    await expect(call("spaces.fixRuntime", { action: "setup-wsl" })).rejects.toMatchObject({ code: "unsupported" });
   });
 
   it("answers New Space's options while starting and once ready", () => {
@@ -756,6 +758,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       "telemetry.track": { signals: [{ type: "feature", feature: "space_open" }] },
       "startup.act": { action: "tryAgain" },
       "spaces.usage": { spaceId: "local:aurora" },
+      "spaces.reach": { spaceId: "local:aurora" },
       "spaces.windows": { spaceId: "local:aurora" },
       "stream.pip": { spaceId: "local:aurora", command: { type: "open", row: "w-1" } },
       "spaces.thumbnail": { spaceId: "local:aurora" },
@@ -843,6 +846,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       "presence.publish",
       "presence.leave",
       "spaces.fixRuntime",
+      "windows.chooseIso",
       "cli.install",
       "runtimes.check",
       "runtimes.browse",

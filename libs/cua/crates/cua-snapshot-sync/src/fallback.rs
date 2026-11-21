@@ -136,19 +136,23 @@ pub struct S3Location {
 }
 
 /// An S3 bucket, with the host's AWS default credentials (environment,
-/// profile, SSO, instance role).
+/// profile, SSO, instance role). Needs the `s3` feature.
+#[cfg(feature = "s3")]
 pub struct S3Store {
     client: aws_sdk_s3::Client,
     bucket: String,
 }
 
 /// Parts of a multipart upload (S3 allows 10,000 parts of at least 5 MiB).
+#[cfg(feature = "s3")]
 const PART: u64 = 64 << 20;
 
+#[cfg(feature = "s3")]
 fn s3err(op: &str, key: &str, e: impl std::fmt::Display) -> Error {
     Error::Unavailable(format!("s3 {op} {key}: {e}"))
 }
 
+#[cfg(feature = "s3")]
 impl S3Store {
     /// The bucket at `loc`.
     pub async fn new(loc: &S3Location) -> Result<S3Store> {
@@ -174,6 +178,7 @@ impl S3Store {
     }
 }
 
+#[cfg(feature = "s3")]
 #[async_trait::async_trait]
 impl ObjectStore for S3Store {
     async fn head(&self, key: &str) -> Result<Option<u64>> {
@@ -383,11 +388,21 @@ impl FallbackStore {
     }
 
     /// An S3 bucket under `prefix`, reported as `s3`.
+    #[cfg(feature = "s3")]
     pub async fn s3(loc: &S3Location, prefix: &str) -> Result<FallbackStore> {
         Ok(FallbackStore::new(
             Arc::new(S3Store::new(loc).await?),
             prefix,
             "s3",
+        ))
+    }
+
+    /// This build has no S3 support: says so, so a request that names a
+    /// bucket fails with a clear error instead of being ignored.
+    #[cfg(not(feature = "s3"))]
+    pub async fn s3(_loc: &S3Location, _prefix: &str) -> Result<FallbackStore> {
+        Err(Error::Unavailable(
+            "this build doesn't include AWS (S3) support".into(),
         ))
     }
 

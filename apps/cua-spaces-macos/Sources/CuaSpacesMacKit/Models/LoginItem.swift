@@ -358,7 +358,12 @@ public enum HelperService {
         var failure: String?
         switch args.first {
         case "register":
-            do { try service.register() } catch { failure = error.localizedDescription }
+            // Registered again when macOS says enabled but launchd lost the
+            // job (`LaunchAgentRegistration`), so cua-host can start it.
+            do {
+                try LaunchAgentRegistration.ensureLoaded(LaunchAgentItem(plistName: plistName),
+                                                         isLoaded: { LaunchAgentRegistration.isLoaded(label: label) })
+            } catch { failure = error.localizedDescription }
         case "unregister":
             // Not registered is already done. So is an item that ends up
             // not registered or not found (a bundle moved or replaced since

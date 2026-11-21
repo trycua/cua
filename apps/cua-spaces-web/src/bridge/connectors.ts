@@ -27,6 +27,8 @@ export interface ConnectorAppInput {
   skills: boolean;
   mcp: boolean | null;
   mcpConfig: string | null;
+  /** The app's own sign-in is on this computer: a run here uses it, nothing to sign in to. */
+  signedIn?: boolean;
 }
 
 export interface ConnectorsInput {
@@ -293,6 +295,7 @@ export function connectorsInputOf(
       skills: r.skillsTotal > 0 ? r.skillsInstalled >= r.skillsTotal : r.configured,
       mcp: r.mcpConfig ? r.configured || /MCP/i.test(r.detail) : null,
       mcpConfig: r.mcpConfig,
+      signedIn: r.signedIn,
     })),
     keys: { keys: keys.keys, unavailable: keys.unavailable, ...(keys.warning ? { warning: keys.warning } : {}), error: keys.error },
     ...(keys.extras?.length ? { keyExtras: keys.extras } : {}),

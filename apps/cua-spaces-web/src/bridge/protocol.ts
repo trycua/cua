@@ -70,6 +70,7 @@ import { THREAD_OPERATIONS, type ThreadOps } from "./ops/thread";
 import { PRESENCE_OPERATIONS, type PresenceOps } from "./ops/presence";
 import { CLOUD_APPROVE_OPERATIONS, type CloudApproveOps } from "./ops/cloud-approve";
 import { AGENT_THREADS_OPERATIONS, type AgentThreadsOps } from "./ops/agent-threads";
+import { AGENT_SIGN_IN_OPERATIONS, type AgentSignInOps } from "./ops/agent-sign-in";
 import { RUNTIME_FIX_OPERATIONS, type RuntimeFixOps } from "./ops/runtime-fix";
 import { DRIVER_OPERATIONS, type DriverOps } from "./ops/driver";
 import { TELEMETRY_OPERATIONS, type TelemetryOps } from "./ops/telemetry";
@@ -195,6 +196,10 @@ export interface HostSettings {
   autoConnect?: boolean | null;
   /** New Spaces overflow into your linked cloud when this machine is full (`placement.overflow`). */
   overflow?: boolean | null;
+  /** The Mac app's background service: the close button keeps Cua Spaces running (none: no rows). */
+  closeWindowKeepsRunning?: boolean | null;
+  /** The notice that Cua Spaces keeps running is on. */
+  closeNotice?: boolean | null;
   /** The Keyvault wipes access from Spaces automatically. */
   keyvaultAutoWipe?: boolean | null;
   /** The Keyvault explains unattended access before allowing it (off after "Never ask again"). */
@@ -282,6 +287,7 @@ export interface HostOperations
     PresenceOps,
     CloudApproveOps,
     AgentThreadsOps,
+    AgentSignInOps,
     RuntimeFixOps,
     DriverOps {
   "spaces.list": { args: Record<string, never>; result: SpaceRow[] };
@@ -415,7 +421,8 @@ export interface HostOperations
   /** Whether each agent on This Mac is really connected (`AgentSetup.connectionStatusJson`, `cua connect status --json`); `refresh` skips the few-second cache. */
   "agents.status": { args: { refresh?: boolean }; result: ConnectionReport };
   /** Connect and Reconnect: Cua's tools and, with `signIn`, the agent's sign-in copied to Keyvault on This Mac (`cua connect setup --sign-in`). */
-  "agents.connect": { args: { agents: string[]; signIn: boolean; skills?: boolean; mcp?: boolean }; result: ConnectResult[] };
+  /** `driver`: also the Cua Driver the app carries (its `driver` part); a host without one reports no such part. */
+  "agents.connect": { args: { agents: string[]; signIn: boolean; skills?: boolean; mcp?: boolean; driver?: boolean }; result: ConnectResult[] };
   /** Disconnect: Cua's entry out of the agent's config (the previous one back) and, with `signIn`, the copy in Keyvault (`cua connect remove --sign-in`). */
   "agents.disconnect": { args: { agents: string[]; signIn: boolean; skills?: boolean; mcp?: boolean }; result: { removed_sign_ins: string[] } };
   /** Starts an agent's device-code sign-in made for Cua (Codex: `codex login --device-auth` in a folder Cua owns): the link and the code to show. */
@@ -601,18 +608,21 @@ export const OPERATIONS = [
   ...PRESENCE_OPERATIONS,
   ...CLOUD_APPROVE_OPERATIONS,
   ...AGENT_THREADS_OPERATIONS,
+  ...AGENT_SIGN_IN_OPERATIONS,
   ...RUNTIME_FIX_OPERATIONS,
   ...DRIVER_OPERATIONS,
   ...SETTINGS_OPERATIONS,
   ...NOTIFICATIONS_OPERATIONS,
   ...TELEMETRY_OPERATIONS,
   "spaces.usage",
+  "spaces.reach",
   "spaces.windows",
   "stream.pip",
   "spaces.thumbnail",
   "spaces.chooseFiles",
   "spaces.droppedFiles",
   "spaces.sendFiles",
+  "windows.chooseIso",
   "host.setUp",
   "host.joinWithCode",
   "host.action",

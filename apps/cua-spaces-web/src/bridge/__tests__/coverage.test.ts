@@ -28,6 +28,7 @@ import { THREAD_ARGS } from "../ops/thread";
 import { PRESENCE_ARGS } from "../ops/presence";
 import { CLOUD_APPROVE_ARGS } from "../ops/cloud-approve";
 import { AGENT_THREADS_ARGS } from "../ops/agent-threads";
+import { AGENT_SIGN_IN_ARGS } from "../ops/agent-sign-in";
 import { RUNTIME_FIX_ARGS } from "../ops/runtime-fix";
 import { DRIVER_ARGS } from "../ops/driver";
 import type { HostWindow } from "../detect";
@@ -155,16 +156,20 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "notifications.list": {},
   "notifications.markAllRead": {},
   "notifications.markRead": { ids: ["n1"] },
+  "notifications.delete": { ids: ["n1"] },
+  "notifications.deleteAll": {},
   "telemetry.track": { signals: [{ type: "step", step: "app_launched", ok: true }] },
   "telemetry.linkNotice": {},
   "telemetry.acknowledgeLinkNotice": {},
   "crashReporting.config": {},
   "spaces.usage": { spaceId: "s1" },
+  "spaces.reach": { spaceId: "s1" },
   "spaces.windows": { spaceId: "s1" },
   "stream.pip": { spaceId: "s1", command: { type: "open", row: "desktop" } },
   "spaces.thumbnail": { spaceId: "s1" },
   "spaces.chooseFiles": {},
   "spaces.droppedFiles": { names: ["notes.txt"] },
+  "windows.chooseIso": { image: "ghcr.io/trycua/windows:11" },
   "spaces.sendFiles": { spaceId: "s1", paths: ["/tmp/notes.txt"] },
   "host.setUp": { request: { mode: "relay" } },
   "host.joinWithCode": { code: "K7QM-4XPB-2RHD" },
@@ -187,6 +192,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   ...PRESENCE_ARGS,
   ...CLOUD_APPROVE_ARGS,
   ...AGENT_THREADS_ARGS,
+  ...AGENT_SIGN_IN_ARGS,
   ...RUNTIME_FIX_ARGS,
   ...DRIVER_ARGS,
 };

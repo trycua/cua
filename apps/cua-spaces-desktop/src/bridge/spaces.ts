@@ -51,7 +51,7 @@ export function createOptions(env: AppWizardEnv, macosVmsRunning: number | null,
       available: env.localAvailable,
       backends: env.localBackends ?? [],
       error: env.localReason ?? null,
-      // Windows without a runtime: what the app can do about it ("Install Docker Desktop").
+      // Windows without a runtime: what the app can do about it ("Set up Linux support").
       fix: env.localAvailable ? null : fix,
       hostArch: env.hostArch ?? null,
       storage: encode(env.storage),
@@ -245,7 +245,7 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
       await b.setAccess(string(args, "spaceId"), clipboard, volume);
       return {};
     },
-    // Child Spaces (the Child Spaces experiment; the daemon refuses them while it is off).
+    // Child Spaces: the tree of Spaces, children, budgets and kept services.
     "spaces.tree": async () => {
       const b = model.backend;
       return b.spaceTree ? await b.spaceTree() : [];

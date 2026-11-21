@@ -249,7 +249,10 @@ direct-capture prompt. Then add Terminal under System Settings > Privacy &
 Security > Accessibility: the `bring_to_front` oracles raise fixture windows and
 read `AXFocusedWindow` through System Events UI scripting, which needs it. The
 switch is saved only after the admin-password dialog accepts the account
-password; until then the runner's `AXRole` probe still fails. The
+password; until then the runner's `AXRole` probe still fails. A driver can
+answer that dialog only when its daemon runs in unrestricted mode; any other
+mode refuses input to system security and consent prompts with
+`security_prompt_protected`. The
 runner checks both Terminal grants before it builds. CuaDriverLocal app enumeration must not ask for System
 Events. Target-specific Automation prompts may still appear later when a user
 explicitly requests an Apple Events-backed browser or app operation; do not
@@ -524,8 +527,9 @@ After a failing full matrix the runner retries only when all of these hold:
 Otherwise it prints why the retry was refused and exits with the matrix's
 failure. Shared web-action cells and the five typed SwiftUI cells are retryable.
 The runner routes a `macos-swiftui-*` selection to the native lane and invokes
-only the test that owns that exact cell. Reproduce other native, capture, or
-embedded-browser failures with a full rerun.
+only the test that owns that exact cell. AppKit supports the explicit single-cell
+mode below, not automatic retries after a full-matrix failure. Reproduce other
+native, capture, or embedded-browser failures with a full rerun.
 
 To rerun just that cell later in the same booted worker after the first run
 already restored standard mode, use `--retry-only`. It reinstalls the exact
@@ -594,6 +598,30 @@ domain in which to start the daemon. The runner records
 place so macOS loads it in standard mode at the next GUI login. This is the only
 deferred restoration case; a live GUI session that cannot return to standard
 mode still fails the run.
+
+## Focused AppKit development
+
+For a native red/green iteration, run one registered AppKit cell from the same
+logged-in guest Terminal and with the same signing prerequisites:
+
+```bash
+libs/cua-driver/tests/runners/macos-lume/run-all.sh \
+  --retry-cell macos-appkit-ax-tree-ax-not-applicable \
+  --retry-harness appkit --retry-only --retry-attempts 1
+```
+
+The single-attempt invocation keeps exact-source installation, the unrestricted
+daemon preflight, native oracles, evidence validation, and standard-daemon
+restoration. It is focused evidence, not full-matrix certification. A failure
+stays a failure; this command does not retry it.
+
+`scripts/ci/macos/appkit-cells.tsv` maps each AppKit cell ID to its exact Rust test
+name, separated by a tab. The full native lane and single-cell selection read the
+same list, and a host-side test fails when an ignored `harness_appkit_*` test is
+missing from it. Add a row there when registering a new AppKit case. Unknown cells
+or a mismatched harness cannot fall back to running the full suite. AppKit
+selection requires `--retry-only`; full-matrix automatic retry eligibility is
+unchanged.
 
 ## Test the runner itself
 

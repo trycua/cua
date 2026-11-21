@@ -23,14 +23,7 @@ import { thisComputerText } from "@/lib/host-labels";
 const SELF_HOSTED = "self-hosted";
 
 /** Experiments that stay as Labs. "Your cloud" and "Sharing" have no switch any more: the plan decides on the server. */
-const LABS = new Set([
-  "experiment:cua_volume",
-  "experiment:child_spaces",
-  "experiment:ci_runners",
-  "experiment:tcp_shares",
-  "experiment:mobile",
-  "experiment:warm_pools",
-]);
+const LABS = new Set(["experiment:cua_volume", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile"]);
 
 /**
  * Settings, Advanced: the update channel (Stable or Nightly), Labs, which software runs Spaces on
@@ -188,11 +181,9 @@ function Labs() {
   const rows = (data?.page?.sections.flatMap((s) => s.rows) ?? []).filter((r) => LABS.has(r.id));
   const note: Record<string, string> = {
     "experiment:cua_volume": t("settings.advanced.labs_cua_volume"),
-    "experiment:child_spaces": t("settings.advanced.labs_child_spaces"),
     "experiment:ci_runners": t("settings.advanced.labs_ci_runners"),
     "experiment:tcp_shares": t("settings.advanced.labs_tcp_shares"),
     "experiment:mobile": t("settings.advanced.labs_mobile"),
-    "experiment:warm_pools": t("settings.advanced.labs_warm_pools"),
   };
   if (!rows.length) return null;
   return (

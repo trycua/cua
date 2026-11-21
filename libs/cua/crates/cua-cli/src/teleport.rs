@@ -63,7 +63,7 @@ pub struct AppArgs {
     pub display_name: Option<String>,
 }
 
-#[derive(Args, Debug, Clone)]
+#[derive(Args, Clone)]
 pub struct PushArgs {
     #[command(flatten)]
     pub app: AppArgs,
@@ -112,6 +112,23 @@ pub struct PushArgs {
     /// unaffected either way.
     #[arg(long)]
     pub relay_plaintext_ack: bool,
+}
+
+impl std::fmt::Debug for PushArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PushArgs")
+            .field("app", &self.app)
+            .field("sandbox", &self.sandbox)
+            .field("url", &self.url)
+            .field("read_as_caller", &self.read_as_caller)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("include", &self.include)
+            .field("all", &self.all)
+            .field("no_launch", &self.no_launch)
+            .field("progress", &self.progress)
+            .field("relay_plaintext_ack", &self.relay_plaintext_ack)
+            .finish()
+    }
 }
 
 /// `tabs` or `full` (also `tabs-only`, `full-profile` and their `_`

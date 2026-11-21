@@ -84,6 +84,7 @@
     "embedded.d.ts": [
       "EmbeddedCuaDriverHost",
       "EmbeddedDriverConnection",
+      "EmbeddedDriverDiagnostics",
       "EmbeddedPermissionMode"
     ],
     "electron.d.ts": [

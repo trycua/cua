@@ -161,6 +161,11 @@ pub struct RelayConfig {
     /// machines of the relay this one took over from are on their way
     /// (CUA-1774). Zero: fail at once.
     pub reconnect_grace: Duration,
+    /// On SIGTERM, how long to keep machine tunnels open for client
+    /// streams still running before closing them (connection draining). New
+    /// tunnels are refused for that time. Zero: close at once. Bounded by
+    /// the shutdown grace in the binary.
+    pub drain: Duration,
     /// The OIDC web client behind the browser sign-in of `cua share`
     /// links (see [`crate::share_web`]). `None`: no browser sign-in.
     pub share_web: Option<crate::share_web::ShareWebConfig>,
@@ -223,6 +228,7 @@ impl Default for RelayConfig {
             #[cfg(feature = "hosted")]
             org_access: crate::org_access::OrgAccessConfig::default(),
             reconnect_grace: Duration::ZERO,
+            drain: Duration::ZERO,
             share_web: None,
             share_limits: crate::share_web::ShareLimits::default(),
             analytics_key_file: None,
@@ -433,10 +439,40 @@ pub struct Relay {
     join_limiter: Arc<Mutex<crate::join_limit::JoinLimiter>>,
     /// When this relay started (the reconnect grace counts from it).
     started: Instant,
+    /// Set on SIGTERM: no new machine tunnels or mesh connections.
+    draining: Arc<std::sync::atomic::AtomicBool>,
     /// Share links: browser sign-in state and public-link rate limits.
     pub(crate) share: Arc<crate::share_web::ShareState>,
     /// Public TCP shares, when configured.
     pub(crate) tcp: Option<Arc<crate::tcp_shares::TcpShares>>,
+}
+
+/// What [`Relay::drain`] did.
+#[derive(Debug, Clone, Copy)]
+pub struct DrainReport {
+    /// Machine tunnels open when the drain began.
+    pub machines: usize,
+    /// Mesh connections open when the drain began.
+    pub mesh: usize,
+    /// Client streams open when the drain began.
+    pub streams_at_start: u64,
+    /// Client streams still open when the tunnels were closed (cut).
+    pub streams_left: u64,
+    /// How long the relay waited for the streams.
+    pub waited: Duration,
+}
+
+impl DrainReport {
+    fn log(&self) {
+        tracing::info!(
+            machines = self.machines,
+            mesh = self.mesh,
+            streams_at_start = self.streams_at_start,
+            streams_cut = self.streams_left,
+            waited_ms = self.waited.as_millis() as u64,
+            "drained: closed machine and mesh connections"
+        );
+    }
 }
 
 /// One row of `/relay/v1/machines`.
@@ -615,6 +651,7 @@ impl Relay {
             conns: Arc::default(),
             join_limiter,
             started: Instant::now(),
+            draining: Arc::default(),
             share: Arc::default(),
             tcp,
         };
@@ -1024,6 +1061,60 @@ impl Relay {
         }
     }
 
+    /// True once [`Self::drain`] has started: new tunnels are refused.
+    pub fn is_draining(&self) -> bool {
+        self.draining.load(Ordering::SeqCst)
+    }
+
+    /// Connection draining, run once the stop signal has arrived. In order:
+    ///
+    /// 1. New machine tunnels and mesh connections are refused (503 with
+    ///    `Retry-After`: the relay that replaces this one takes them).
+    ///    Heartbeats and streams already open keep working.
+    /// 2. Waits, up to [`RelayConfig::drain`], for the open client streams
+    ///    to finish. The tunnels stay up meanwhile, so nothing running is cut.
+    /// 3. Closes every machine tunnel cleanly (yamux GoAway and a close
+    ///    frame) and tells every mesh node to reconnect (close code 4000),
+    ///    right before the process exits, so the relay that takes over the
+    ///    state directory finds the lock free at once.
+    ///
+    /// Returns what happened, for the log.
+    pub async fn drain(&self) -> DrainReport {
+        let begun = Instant::now();
+        self.draining.store(true, Ordering::SeqCst);
+        let streams_at_start = self.global_streams.load(Ordering::SeqCst);
+        let machines = self.machine_ids().len();
+        let mesh = self.mesh.connected();
+        let deadline = begun + self.config.drain;
+        while self.global_streams.load(Ordering::SeqCst) > 0 && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let streams_left = self.global_streams.load(Ordering::SeqCst);
+        let waited = begun.elapsed();
+        // Orderly close first; the abort below only catches what did not end.
+        for machine in self.machines.lock().expect("machines").values() {
+            machine.handle.close();
+        }
+        self.mesh.disconnect_all();
+        let flush = Instant::now() + Duration::from_millis(1000);
+        while Instant::now() < flush && !self.machines.lock().expect("machines").is_empty() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        if mesh > 0 {
+            // The close frames are queued to each connection's writer.
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        }
+        self.disconnect_all();
+        self.mesh.disconnect_all();
+        DrainReport {
+            machines,
+            mesh,
+            streams_at_start,
+            streams_left,
+            waited,
+        }
+    }
+
     /// Serves on `listener` until the future `shutdown` resolves.
     pub async fn serve(
         self,
@@ -1078,16 +1169,13 @@ impl Relay {
         )
         .with_graceful_shutdown(async move {
             shutdown.await;
-            // Machines and mesh nodes reconnect at once, to the relay that
-            // replaces this one (CUA-1774), instead of holding the shutdown
-            // open until the process exits.
-            let machines = handle.machine_ids().len();
-            let mesh = handle.mesh.connected();
-            handle.disconnect_all();
-            handle.mesh.disconnect_all();
-            tracing::info!(machines, mesh, "closed machine and mesh connections");
-            // Keep the last minutes of usage across a restart.
+            // Drain, then machines and mesh nodes reconnect at once, to the
+            // relay that replaces this one (CUA-1774).
+            handle.drain().await.log();
+            // Keep the last minutes of usage and of mesh `last_seen`
+            // across a restart.
             handle.meter.persist(true);
+            handle.mesh.flush_last_seen();
         })
         .await
     }
@@ -1109,16 +1197,13 @@ impl Relay {
             let handle = self.clone();
             async move {
                 shutdown.await;
-                // Machines and mesh nodes reconnect at once, to the relay that
-                // replaces this one (CUA-1774), instead of holding the shutdown
-                // open until the process exits.
-                let machines = handle.machine_ids().len();
-                let mesh = handle.mesh.connected();
-                handle.disconnect_all();
-                handle.mesh.disconnect_all();
-                tracing::info!(machines, mesh, "closed machine and mesh connections");
-                // Keep the last minutes of usage across a restart.
+                // Drain, then machines and mesh nodes reconnect at once, to the
+                // relay that replaces this one (CUA-1774).
+                handle.drain().await.log();
+                // Keep the last minutes of usage and of mesh `last_seen`
+                // across a restart.
                 handle.meter.persist(true);
+                handle.mesh.flush_last_seen();
             }
         };
         tokio::pin!(stop);
@@ -1186,6 +1271,18 @@ pub(crate) fn bearer<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> 
 pub(crate) fn account_token(headers: &HeaderMap) -> Option<&str> {
     bearer(headers, RELAY_AUTHORIZATION_HEADER)
         .or_else(|| bearer(headers, header::AUTHORIZATION.as_str()))
+}
+
+/// The answer to a new tunnel while the relay drains for a restart.
+pub(crate) fn draining_response() -> Response {
+    let mut response = text(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "the relay is restarting; try again shortly",
+    );
+    response
+        .headers_mut()
+        .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
+    response
 }
 
 pub(crate) fn text(status: StatusCode, message: impl Into<String>) -> Response {
@@ -1387,27 +1484,8 @@ async fn machine_connect_inner(
     else {
         return text(StatusCode::BAD_REQUEST, "missing or invalid computer id");
     };
-    // A reconnect storm (every machine back at once after a restart) is let
-    // in at a steady rate; the rest are told when to come back.
-    let admitted = relay
-        .join_limiter
-        .lock()
-        .expect("join limiter")
-        .admit(Instant::now());
-    if let Err(wait) = admitted {
-        let unit = {
-            use rand::Rng as _;
-            rand::thread_rng().gen::<f64>()
-        };
-        let secs = crate::join_limit::retry_after_secs(wait, Duration::from_secs(5), unit);
-        let mut response = text(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "the relay is busy; try again shortly",
-        );
-        if let Ok(v) = HeaderValue::from_str(&secs.to_string()) {
-            response.headers_mut().insert(header::RETRY_AFTER, v);
-        }
-        return response;
+    if relay.is_draining() {
+        return draining_response();
     }
     let registrant = if let Some(index) = relay.token_index(&headers) {
         if relay.directory.get(&id).is_some() {
@@ -1443,6 +1521,31 @@ async fn machine_connect_inner(
             }
         }
     };
+    // After the credential is checked: a computer the relay does not know
+    // (removed, rotated) is refused with a 401 that holds no state and takes no
+    // slot, so a crowd of stale tokens cannot starve real machines of joins.
+    // A reconnect storm (every machine back at once after a restart) is let
+    // in at a steady rate; the rest are told when to come back.
+    let admitted = relay
+        .join_limiter
+        .lock()
+        .expect("join limiter")
+        .admit(Instant::now());
+    if let Err(wait) = admitted {
+        let unit = {
+            use rand::Rng as _;
+            rand::thread_rng().gen::<f64>()
+        };
+        let secs = crate::join_limit::retry_after_secs(wait, Duration::from_secs(5), unit);
+        let mut response = text(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the relay is busy; try again shortly",
+        );
+        if let Ok(v) = HeaderValue::from_str(&secs.to_string()) {
+            response.headers_mut().insert(header::RETRY_AFTER, v);
+        }
+        return response;
+    }
     let version = headers
         .get(VERSION_HEADER)
         .and_then(|v| v.to_str().ok())
@@ -1520,6 +1623,13 @@ async fn machine_connect_inner(
             // join that upgraded earlier but arrives later from pushing the count past it.
             let (replaced, over_limit) = {
                 let mut machines = relay.machines.lock().expect("machines");
+                // The drain began after the check above: do not take a tunnel
+                // the drain would not see (it closes what is registered).
+                if relay.is_draining() {
+                    drop(machines);
+                    driver.abort();
+                    return;
+                }
                 let over_limit = matches!(machine.registrant, Registrant::Static(_))
                     && machines
                         .values()
@@ -1539,7 +1649,16 @@ async fn machine_connect_inner(
                 return;
             }
             if let Some(old) = replaced {
-                tracing::info!(machine = %id, "replacing previous session");
+                // Both versions and the old session's age: two installs that
+                // share one computer id (and replace each other every few
+                // seconds) show as two versions alternating.
+                tracing::info!(
+                    machine = %id,
+                    version = %machine.version,
+                    old_version = %old.version,
+                    old_age_s = old.connected_at.elapsed().map_or(0, |d| d.as_secs()),
+                    "replacing previous session"
+                );
                 old.cut_clients();
                 old.abort.abort();
             }

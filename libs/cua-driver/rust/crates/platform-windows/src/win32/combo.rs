@@ -184,8 +184,8 @@ fn edit_child(combo: isize) -> Option<isize> {
     let class = wide("Edit");
     unsafe {
         FindWindowExW(
-            hwnd(combo),
-            HWND::default(),
+            Some(hwnd(combo)),
+            None,
             PCWSTR(class.as_ptr()),
             PCWSTR::null(),
         )

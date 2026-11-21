@@ -471,6 +471,7 @@ pub async fn guard_element(
 /// The pixel path: window guards for every click, then the AX check where
 /// the tree saw an element at the point, or the pixel check where it did
 /// not (sparse, no tree, remote surfaces).
+#[allow(clippy::too_many_arguments)]
 pub async fn guard_pixel(
     store: Arc<GuardStore>,
     session: Option<String>,

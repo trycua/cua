@@ -612,6 +612,12 @@ fn main() {
             grants,
             experimental_history,
         } => {
+            // Claim the socket before building the desktop runtime, so from
+            // here on `stop` and `status` see this launch as starting. A
+            // disclaimed relaunch inherits the claim.
+            let socket_lock = serve::claim_socket_for_launch(
+                &socket.clone().unwrap_or_else(serve::default_socket_path),
+            );
             if let Err(error) = configure_startup_permission_mode(
                 permission_mode.as_deref(),
                 dangerously_bypass_approvals,
@@ -622,7 +628,7 @@ fn main() {
                 eprintln!("cua-driver: authorization startup error: {error}");
                 std::process::exit(64);
             }
-            responsibility::reexec_disclaimed_if_needed();
+            responsibility::reexec_disclaimed_if_needed(socket_lock.as_ref());
             responsibility::warn_if_unbundled();
             if let Err(error) = history_runtime::configure_admission(history_admission_requested(
                 experimental_history,
@@ -717,7 +723,7 @@ fn main() {
             let serve_handle = std::thread::Builder::new()
                 .name("cua-serve".into())
                 .spawn(move || {
-                    serve::run_serve_cmd(driver, &sp, Some(&pid_path));
+                    serve::run_serve_cmd(driver, &sp, Some(&pid_path), socket_lock);
                     std::process::exit(0);
                 })
                 .expect("spawn serve thread");
@@ -1056,6 +1062,12 @@ fn main() -> anyhow::Result<()> {
             grants,
             experimental_history,
         } => {
+            // Claim the socket before building the desktop runtime, so from
+            // here on `stop` and `status` see this launch as starting. A
+            // disclaimed relaunch inherits the claim.
+            let socket_lock = serve::claim_socket_for_launch(
+                &socket.clone().unwrap_or_else(serve::default_socket_path),
+            );
             configure_startup_permission_mode(
                 permission_mode.as_deref(),
                 dangerously_bypass_approvals,
@@ -1063,7 +1075,7 @@ fn main() -> anyhow::Result<()> {
                 approve_capability_manifest,
                 &grants,
             )?;
-            responsibility::reexec_disclaimed_if_needed();
+            responsibility::reexec_disclaimed_if_needed(socket_lock.as_ref());
             responsibility::warn_if_unbundled();
             history_runtime::configure_admission(history_admission_requested(
                 experimental_history,
@@ -1102,7 +1114,7 @@ fn main() -> anyhow::Result<()> {
             let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
             // run_serve_cmd builds its own runtime; must run on a fresh thread.
             std::thread::spawn(move || {
-                serve::run_serve_cmd(driver, &sp, Some(&pid_path));
+                serve::run_serve_cmd(driver, &sp, Some(&pid_path), socket_lock);
             })
             .join()
             .ok();

@@ -93,13 +93,7 @@ function Body({ session: s, teleport, images }: { session: TeleportSession; tele
           />
           <div className="relative">
             <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              aria-label="Search"
-              placeholder="Search"
-              className="pl-8"
-              value={s.query}
-              onChange={(e) => teleport.setQuery(e.target.value)}
-            />
+            <Input aria-label="Search" placeholder="Search" className="pl-8" value={s.query} onChange={(e) => teleport.setQuery(e.target.value)} />
           </div>
           {s.tab === "space" && s.remoteError ? <p className="text-xs text-muted-foreground">{s.remoteError}</p> : null}
           <TeleportGrid session={s} teleport={teleport} images={images} />
@@ -137,17 +131,18 @@ function Busy({ children }: { children: ReactNode }) {
 
 /** What moves, and the signed-in state move's opt-ins (each unchecked until chosen). */
 function Options({ state, session, teleport }: { state: PickerState; session: TeleportSession; teleport: TeleportStore }) {
+  const [fileError, setFileError] = useState<string | null>(null);
+  const chooseFiles = async () => {
+    setFileError(null);
+    setFileError(await teleport.chooseFiles());
+  };
   const moves = state.entry?.moves ?? [];
   return (
     <div className="space-y-4 px-5 pb-4">
       <section>
         <SectionHeading className="mt-0">Move</SectionHeading>
         <GroupedSection>
-          <RadioGroup
-            value={state.move ?? "app_only"}
-            onValueChange={(v) => teleport.send({ type: "move", move: v as TeleportMove })}
-            aria-label="Move"
-          >
+          <RadioGroup value={state.move ?? "app_only"} onValueChange={(v) => teleport.send({ type: "move", move: v as TeleportMove })} aria-label="Move">
             {moves.map((m) => (
               <label key={m} className="flex cursor-default items-center gap-3 px-4 py-2.5 text-[13px]" data-move={m}>
                 <Radio.Root
@@ -166,11 +161,7 @@ function Options({ state, session, teleport }: { state: PickerState; session: Te
         <GroupedSection>
           {session.frame.sensitive.map((o) => (
             <label key={o.group} className="flex cursor-default items-start gap-3 px-4 py-2.5" data-sensitive={o.group} data-checked={o.checked || undefined}>
-              <Checkbox
-                className="mt-0.5"
-                checked={o.checked}
-                onCheckedChange={(value) => teleport.send({ type: "sensitive", group: o.group, value })}
-              />
+              <Checkbox className="mt-0.5" checked={o.checked} onCheckedChange={(value) => teleport.send({ type: "sensitive", group: o.group, value })} />
               <span className="min-w-0">
                 <span className="block text-[13px]" data-sensitive-label>
                   {messageText(o.label)}
@@ -194,6 +185,18 @@ function Options({ state, session, teleport }: { state: PickerState; session: Te
             </div>
           ))}
         </GroupedSection>
+      ) : null}
+      {state.move === "app_with_files" ? (
+        <div className="space-y-2">
+          <Button variant="secondary" onClick={() => void chooseFiles()}>
+            Add files or folders…
+          </Button>
+          {fileError ? (
+            <p role="alert" className="text-xs text-muted-foreground">
+              {fileError}
+            </p>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

@@ -311,7 +311,8 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "spaces.windows": call("spaces.windows"),
     "stream.pip": list("stream.pip"),
     "spaces.thumbnail": call("spaces.thumbnail"),
-    "spaces.chooseFiles": list("spaces.chooseFiles"),
+    // A person browsing files can take longer than the normal bridge timeout.
+    "spaces.chooseFiles": async (args) => arr(await request("spaces.chooseFiles", { ...args }, null)) as string[],
     "spaces.droppedFiles": list("spaces.droppedFiles"),
     "spaces.sendFiles": list("spaces.sendFiles"),
     "windows.chooseIso": call("windows.chooseIso"),

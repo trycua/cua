@@ -7176,7 +7176,7 @@ pub(crate) fn x11_window_origin(xid: u64) -> Option<(i32, i32)> {
     x11_window_geometry(xid).map(|(x, y, _, _)| (x, y))
 }
 
-fn x11_window_geometry(xid: u64) -> Option<(i32, i32, i32, i32)> {
+pub(crate) fn x11_window_geometry(xid: u64) -> Option<(i32, i32, i32, i32)> {
     use x11rb::protocol::xproto::*;
     use x11rb::rust_connection::RustConnection;
 

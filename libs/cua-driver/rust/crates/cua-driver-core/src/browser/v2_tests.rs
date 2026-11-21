@@ -87,6 +87,9 @@ pub(super) struct FixtureState {
     /// Tab sessions that enabled the Page domain. Chromium reports a dialog
     /// to each of them, not to the session whose call opened it.
     page_sessions: Vec<String>,
+    /// The typed element keeps a newline as content (textarea or
+    /// contenteditable) instead of being a single-line input.
+    multiline_field: bool,
     semantic_large_page: bool,
     semantic_html_style: String,
     semantic_full_dom_fails: bool,
@@ -95,6 +98,21 @@ pub(super) struct FixtureState {
     screenshot_data: String,
     viewport_css_width: f64,
     viewport_css_height: f64,
+    /// Layout-viewport document scroll offset, as `cssLayoutViewport.pageY`.
+    layout_scroll_y: f64,
+    /// A node rendered over every point, answered by `DOM.getNodeForLocation`.
+    covering_node: Option<i64>,
+    /// Entering focus emulation runs a page focus handler that draws this
+    /// node over every point.
+    focus_emulation_covers: Option<i64>,
+    /// Leaving focus emulation fails.
+    focus_emulation_restore_fails: bool,
+    /// The covering node is a descendant of the hit-tested ref.
+    covering_node_is_descendant: bool,
+    /// Scrolling this backend into view moves every main-frame box by `dy`.
+    scroll_into_view_shifts: Option<(i64, f64)>,
+    /// Accumulated main-frame box shift from such scrolls.
+    box_shift_y: f64,
     tab_visible: bool,
     select_outcome: Value,
     /// Extra page targets Chromium reports but cannot map to any browser
@@ -104,6 +122,10 @@ pub(super) struct FixtureState {
     /// Extra page targets living in the bound window, after T1 in the
     /// browser's `Target.getTargets` order.
     sibling_tabs: Vec<Value>,
+    /// Fail the read-only prepare probe without closing the WebSocket.
+    fail_get_targets: bool,
+    silent_get_targets: bool,
+    probe_reply_ready: Option<Arc<tokio::sync::Notify>>,
     /// Drop the primary tab target T1 from `Target.getTargets`.
     omit_primary_target: bool,
     /// Make `Browser.getWindowForTarget` for T1 answer this CDP error.
@@ -142,6 +164,9 @@ impl Default for FixtureState {
             windowless_targets: Vec::new(),
             sibling_tabs: Vec::new(),
             omit_primary_target: false,
+            fail_get_targets: false,
+            silent_get_targets: false,
+            probe_reply_ready: None,
             primary_window_error: None,
             dialog_open: false,
             page_enable_hangs: false,
@@ -161,6 +186,7 @@ impl Default for FixtureState {
             fail_next_emulated_media: false,
             gone_sessions: Vec::new(),
             page_sessions: Vec::new(),
+            multiline_field: false,
             semantic_large_page: false,
             semantic_html_style: String::new(),
             semantic_full_dom_fails: false,
@@ -169,6 +195,13 @@ impl Default for FixtureState {
             screenshot_data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZJrAAAAAASUVORK5CYII=".into(),
             viewport_css_width: 800.0,
             viewport_css_height: 600.0,
+            layout_scroll_y: 0.0,
+            covering_node: None,
+            focus_emulation_covers: None,
+            focus_emulation_restore_fails: false,
+            covering_node_is_descendant: false,
+            scroll_into_view_shifts: None,
+            box_shift_y: 0.0,
             tab_visible: true,
             select_outcome: Value::Null,
             dom_click_changes_readback: true,
@@ -517,6 +550,16 @@ fn fixture_handler(state: SharedState) -> MockHandler {
 
         match call.method.as_str() {
             "Target.getTargets" => {
+                if st.silent_get_targets {
+                    return MockReply::hang();
+                }
+                if st.fail_get_targets {
+                    let reply = MockReply::method_not_found("Target.getTargets");
+                    return match &st.probe_reply_ready {
+                        Some(ready) => reply.after_notification(ready.clone()),
+                        None => reply,
+                    };
+                }
                 let mut infos: Vec<Value> = Vec::new();
                 if !st.omit_primary_target {
                     infos.push(json!({
@@ -683,14 +726,47 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 &[90, 100],
                 &[[0.0, 0.0, 300.0, 100.0], [10.0, 10.0, 120.0, 30.0]],
             )),
+            // The OOPIF child's box models sit near (1000, 1000), so its own
+            // viewport is large enough to contain them.
+            "Page.getLayoutMetrics" if is_oopif => MockReply::ok(json!({
+                "cssVisualViewport": {
+                    "offsetX": 0.0, "offsetY": 0.0, "pageX": 0.0, "pageY": 0.0,
+                    "clientWidth": 2_000.0, "clientHeight": 2_000.0
+                },
+                "cssLayoutViewport": { "pageX": 0.0, "pageY": 0.0 }
+            })),
             "Page.getLayoutMetrics" => MockReply::ok(json!({
                 "cssVisualViewport": {
+                    "offsetX": 0.0,
+                    "offsetY": 0.0,
                     "pageX": 0.0,
-                    "pageY": 0.0,
+                    "pageY": st.layout_scroll_y,
                     "clientWidth": st.viewport_css_width,
                     "clientHeight": st.viewport_css_height
-                }
+                },
+                "cssLayoutViewport": { "pageX": 0.0, "pageY": st.layout_scroll_y }
             })),
+            // Like Chromium, hit-test in document coordinates and answer an
+            // empty point with an error.
+            "DOM.getNodeForLocation" => {
+                let x = call.params["x"].as_f64().unwrap_or(f64::NAN);
+                let y = call.params["y"].as_f64().unwrap_or(f64::NAN)
+                    - if is_oopif {
+                        0.0
+                    } else {
+                        st.layout_scroll_y + st.box_shift_y
+                    };
+                let known: &[i64] = if is_oopif { &[100] } else { &[10, 20, 21, 30] };
+                let under = known.iter().copied().find(|backend| {
+                    let origin = (*backend * 10) as f64;
+                    x >= origin && x < origin + 20.0 && y >= origin && y < origin + 10.0
+                });
+                match (st.covering_node, under) {
+                    (Some(cover), _) => MockReply::ok(json!({ "backendNodeId": cover })),
+                    (None, Some(backend)) => MockReply::ok(json!({ "backendNodeId": backend })),
+                    (None, None) => MockReply::err(-32000, "No node found at given location"),
+                }
+            }
             "Runtime.evaluate"
                 if call.params["expression"] == "document.visibilityState === 'visible'" =>
             {
@@ -767,7 +843,14 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 }
                 MockReply::ok(json!({})).with_events(events)
             }
-            "DOM.scrollIntoViewIfNeeded" => MockReply::ok(json!({})),
+            "DOM.scrollIntoViewIfNeeded" => {
+                if let Some((backend, dy)) = st.scroll_into_view_shifts {
+                    if !is_oopif && call.params["backendNodeId"] == backend {
+                        st.box_shift_y += dy;
+                    }
+                }
+                MockReply::ok(json!({}))
+            }
             "DOM.getBoxModel" => {
                 let backend = call.params["backendNodeId"].as_i64().unwrap_or(0);
                 let known = if is_oopif {
@@ -776,7 +859,8 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     [10, 20, 21, 30].contains(&backend)
                 };
                 if known {
-                    let (x, y) = ((backend * 10) as f64, (backend * 10) as f64);
+                    let shift = if is_oopif { 0.0 } else { st.box_shift_y };
+                    let (x, y) = ((backend * 10) as f64, (backend * 10) as f64 + shift);
                     MockReply::ok(json!({
                         "model": {
                             "content": [x, y, x + 20.0, y, x + 20.0, y + 10.0, x, y + 10.0]
@@ -826,6 +910,17 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 }
                 MockReply::ok(json!({}))
             }
+            "Emulation.setFocusEmulationEnabled"
+                if call.params["enabled"] == false && st.focus_emulation_restore_fails =>
+            {
+                MockReply::err(-32000, "fixture focus restore failure")
+            }
+            "Emulation.setFocusEmulationEnabled"
+                if call.params["enabled"] == true && st.focus_emulation_covers.is_some() =>
+            {
+                st.covering_node = st.focus_emulation_covers;
+                MockReply::ok(json!({}))
+            }
             "DOM.focus" | "Emulation.setFocusEmulationEnabled" | "Input.insertText" => {
                 MockReply::ok(json!({}))
             }
@@ -835,6 +930,13 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             "DOM.resolveNode" => MockReply::ok(json!({
                 "object": { "objectId": format!("obj-{}", call.params["backendNodeId"]) }
             })),
+            "Runtime.callFunctionOn"
+                if call.params["functionDeclaration"]
+                    .as_str()
+                    .is_some_and(|declaration| declaration.contains("cua_trusted_ref_hit")) =>
+            {
+                MockReply::ok(json!({ "result": { "value": st.covering_node_is_descendant } }))
+            }
             "Runtime.callFunctionOn"
                 if call.params["functionDeclaration"]
                     .as_str()
@@ -874,6 +976,15 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 let mut reply = MockReply::ok(json!({ "result": { "value": value } }));
                 reply.delay = st.dom_click_readback_delay;
                 reply
+            }
+            "Runtime.callFunctionOn"
+                if call.params["functionDeclaration"]
+                    .as_str()
+                    .is_some_and(|declaration| {
+                        declaration.contains("!this.isContentEditable && this.tagName === 'INPUT'")
+                    }) =>
+            {
+                MockReply::ok(json!({ "result": { "value": !st.multiline_field } }))
             }
             "Runtime.callFunctionOn" => {
                 st.dom_click_focused = true;
@@ -948,6 +1059,9 @@ struct FixturePlatform {
 /// and which restores core asked for.
 #[derive(Default)]
 struct FixtureFocus {
+    accept_consent: bool,
+    consent_response_ready: Option<Arc<tokio::sync::Notify>>,
+    consent_attempts: StdMutex<Vec<u8>>,
     attach_activates_browser: bool,
     frontmost: StdMutex<Option<i64>>,
     restores: StdMutex<Vec<(i64, i64)>>,
@@ -1147,8 +1261,21 @@ impl BrowserPlatform for FixturePlatform {
 
     async fn handle_existing_profile_consent(
         &self,
-        _request: BrowserConsentRequest,
+        request: BrowserConsentRequest,
     ) -> Result<BrowserConsentOutcome, BrowserRefusal> {
+        if self.focus.accept_consent {
+            request.action.perform(|| {
+                self.focus
+                    .consent_attempts
+                    .lock()
+                    .unwrap()
+                    .push(request.attempt)
+            });
+            if let Some(ready) = &self.focus.consent_response_ready {
+                ready.notify_one();
+            }
+            return Ok(BrowserConsentOutcome::Accepted);
+        }
         if self.stall_consent {
             tokio::time::sleep(std::time::Duration::from_secs(10)).await;
             return Ok(BrowserConsentOutcome::NotPresent);
@@ -1253,6 +1380,13 @@ impl crate::consent::ProtectedConsentProvider for FixtureProtectedProvider {
 }
 
 async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedProvider>) {
+    protected_existing_profile_fixture_with_consent(Default::default(), false).await
+}
+
+async fn protected_existing_profile_fixture_with_consent(
+    focus: Arc<FixtureFocus>,
+    stall_consent: bool,
+) -> (Fixture, Arc<FixtureProtectedProvider>) {
     let state = Arc::new(StdMutex::new(FixtureState::default()));
     let server = MockCdpServer::start(fixture_handler(state.clone())).await;
     let setup_invoked = Arc::new(AtomicBool::new(false));
@@ -1270,8 +1404,8 @@ async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedP
             existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
             setup_invoked: setup_invoked.clone(),
             setup_aborted: Arc::new(AtomicBool::new(false)),
-            stall_consent: false,
-            focus: Default::default(),
+            stall_consent,
+            focus,
         }),
         Some(provider.clone()),
     );
@@ -1340,6 +1474,7 @@ async fn attach_fixture_with_space(
         restores: StdMutex::new(Vec::new()),
         browser_off_space,
         guards: StdMutex::new(Vec::new()),
+        ..Default::default()
     });
     let provider = Arc::new(FixtureProtectedProvider {
         consent_seen: AtomicBool::new(false),
@@ -1489,6 +1624,226 @@ async fn approved_existing_profile_attach_claims_then_binds_one_generation() {
         .await;
     assert_eq!(structured(&state)["status"], "ok", "{}", structured(&state));
     crate::session::fire_session_end("transport-v2-attach");
+}
+
+#[tokio::test]
+async fn failed_prepare_probe_releases_only_the_preparing_session() {
+    for with_peer in [false, true] {
+        let (f, _) = protected_existing_profile_fixture().await;
+        let prepare = |session: &'static str| {
+            let engine = f.engine.clone();
+            async move {
+                let result = BrowserPrepareTool::new(engine)
+                    .invoke(json!({
+                        "pid": 1,
+                        "window_id": 7,
+                        "session": session,
+                        "_transport_session_id": session,
+                        "strategy": { "kind": "existing_profile" }
+                    }))
+                    .await;
+                structured(&result).clone()
+            }
+        };
+        if with_peer {
+            let peer = prepare("prepare-probe-peer").await;
+            assert_eq!(peer["status"], "ok", "{peer}");
+        }
+        f.state.lock().unwrap().fail_get_targets = true;
+        let result = prepare("prepare-probe-failure").await;
+        assert_eq!(result["status"], "refused", "{result}");
+        assert_eq!(result["refusal"]["code"], "browser_reconnect_exhausted");
+        assert_eq!(result["refusal"]["detail"]["retried_after_consent"], false);
+        assert_eq!(f._server.accepted_connections(), 1);
+        assert!(f
+            .engine
+            .existing_profile_grant("prepare-probe-failure", Some("prepare-probe-failure"), 1)
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            f.engine
+                .pool
+                .shared_socket_holders(&f._server.ws_url())
+                .await,
+            with_peer.then_some(1),
+            "failure must release this holder without evicting a peer"
+        );
+
+        f.state.lock().unwrap().fail_get_targets = false;
+        let result = prepare("prepare-probe-recovery").await;
+        assert_eq!(result["status"], "ok", "{result}");
+        assert_eq!(
+            f._server.accepted_connections(),
+            if with_peer { 1 } else { 2 }
+        );
+        if with_peer {
+            let state = GetBrowserStateTool::new(f.engine.clone())
+                .invoke(json!({
+                    "pid": 1, "window_id": 7,
+                    "session": "prepare-probe-peer",
+                    "_transport_session_id": "prepare-probe-peer"
+                }))
+                .await;
+            assert_eq!(structured(&state)["status"], "ok", "{}", structured(&state));
+            crate::session::fire_session_end("prepare-probe-peer");
+        }
+        crate::session::fire_session_end("prepare-probe-recovery");
+    }
+}
+
+#[tokio::test]
+async fn silent_prepare_socket_is_refused_and_released() {
+    let (f, _) = protected_existing_profile_fixture().await;
+    f.state.lock().unwrap().silent_get_targets = true;
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        BrowserPrepareTool::new(f.engine.clone()).invoke(json!({
+            "pid": 1, "window_id": 7, "session": "prepare-silent",
+            "_transport_session_id": "prepare-silent",
+            "strategy": { "kind": "existing_profile" }
+        })),
+    )
+    .await
+    .expect("unavailable consent must settle without waiting for the CDP timeout");
+    let result = structured(&result);
+    assert_eq!(result["status"], "refused", "{result}");
+    assert_eq!(result["refusal"]["code"], "browser_route_unavailable");
+    assert!(f
+        .state
+        .lock()
+        .unwrap()
+        .calls
+        .iter()
+        .any(|(_, method, _)| method == "Target.getTargets"));
+    assert_eq!(
+        f.engine
+            .pool
+            .shared_socket_holders(&f._server.ws_url())
+            .await,
+        None
+    );
+    assert!(f
+        .engine
+        .existing_profile_grant("prepare-silent", Some("prepare-silent"), 1)
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn cancelled_prepare_probe_releases_only_its_socket_hold() {
+    for with_peer in [false, true] {
+        let (f, _) =
+            protected_existing_profile_fixture_with_consent(Default::default(), true).await;
+        let url = f._server.ws_url();
+        let peer = if with_peer {
+            Some(f.engine.pool.claim_existing(&url, u64::MAX).await.unwrap())
+        } else {
+            None
+        };
+        f.state.lock().unwrap().silent_get_targets = true;
+        let engine = f.engine.clone();
+        let pending = tokio::spawn(async move {
+            BrowserPrepareTool::new(engine)
+                .invoke(json!({
+                    "pid": 1, "window_id": 7, "session": "prepare-cancelled-probe",
+                    "_transport_session_id": "prepare-cancelled-probe",
+                    "strategy": { "kind": "existing_profile" }
+                }))
+                .await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                assert!(!pending.is_finished(), "prepare must wait for a CDP reply");
+                if f.state
+                    .lock()
+                    .unwrap()
+                    .calls
+                    .iter()
+                    .any(|(_, method, _)| method == "Target.getTargets")
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the loopback server must observe the pending probe");
+        pending.abort();
+        assert!(pending.await.unwrap_err().is_cancelled());
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while f.engine.pool.shared_socket_holders(&url).await != with_peer.then_some(1) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("cancelling a pending probe must release its holder");
+        if let Some(peer) = peer {
+            let retained = f.engine.pool.get_existing(&url, u64::MAX).await.unwrap();
+            assert!(Arc::ptr_eq(&peer, &retained));
+            assert!(!retained.is_closed());
+            f.state.lock().unwrap().silent_get_targets = false;
+            retained
+                .call(None, "Target.getTargets", json!({}))
+                .await
+                .unwrap();
+            f.engine
+                .pool
+                .release_existing(&url, u64::MAX, super::cdp_ws::SharedSocketRelease::Close)
+                .await;
+        }
+        crate::session::fire_session_end("prepare-cancelled-probe");
+    }
+}
+
+#[tokio::test]
+async fn accepted_consent_retry_also_requires_a_successful_prepare_probe() {
+    let ready = Arc::new(tokio::sync::Notify::new());
+    let focus = Arc::new(FixtureFocus {
+        accept_consent: true,
+        consent_response_ready: Some(ready.clone()),
+        ..Default::default()
+    });
+    let (f, _) = protected_existing_profile_fixture_with_consent(focus.clone(), false).await;
+    {
+        let mut state = f.state.lock().unwrap();
+        state.fail_get_targets = true;
+        // Each probe can reply only after its consent action is observed.
+        // Both WebSocket handshakes themselves succeed.
+        state.probe_reply_ready = Some(ready);
+    }
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1, "window_id": 7, "session": "prepare-probe-retry",
+            "_transport_session_id": "prepare-probe-retry",
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let result = structured(&result);
+    assert_eq!(result["status"], "refused", "{result}");
+    assert_eq!(result["refusal"]["code"], "browser_reconnect_exhausted");
+    assert_eq!(result["refusal"]["detail"]["retried_after_consent"], true);
+    assert_eq!(result["refusal"]["detail"]["fresh_claim_failed"], true);
+    assert_eq!(
+        result["refusal"]["detail"]["displayed_consent_prompt"],
+        true
+    );
+    assert_eq!(*focus.consent_attempts.lock().unwrap(), vec![1, 2]);
+    assert_eq!(f._server.accepted_connections(), 2);
+    assert_eq!(
+        f.engine
+            .pool
+            .shared_socket_holders(&f._server.ws_url())
+            .await,
+        None
+    );
+    assert!(f
+        .engine
+        .existing_profile_grant("prepare-probe-retry", Some("prepare-probe-retry"), 1)
+        .await
+        .unwrap()
+        .is_none());
 }
 
 #[tokio::test]
@@ -3405,6 +3760,317 @@ async fn synthetic_scroll_awaits_page_readback_without_changing_routes() {
     assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
 }
 
+fn mouse_points(f: &Fixture) -> Vec<(f64, f64)> {
+    recorded_calls(f, "Input.dispatchMouseEvent")
+        .into_iter()
+        .map(|(_, params)| (params["x"].as_f64().unwrap(), params["y"].as_f64().unwrap()))
+        .collect()
+}
+
+fn assert_trusted_refusal_sent_nothing(f: &Fixture, result: &ToolResult, hit_test: &str) {
+    let s = structured(result);
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(
+        s["refusal"]["code"], "browser_input_trust_unavailable",
+        "{s}"
+    );
+    assert_eq!(s["refusal"]["detail"]["hit_test"], hit_test, "{s}");
+    assert_eq!(
+        s["refusal"]["detail"]["alternative_route"], "dom_event",
+        "{s}"
+    );
+    assert_eq!(
+        s["refusal"]["detail"]["trusted_delivery_attempted"], false,
+        "{s}"
+    );
+    assert!(recorded_calls(f, "Input.dispatchMouseEvent").is_empty());
+    assert!(recorded_calls(f, "Emulation.setFocusEmulationEnabled").is_empty());
+}
+
+// #2882 finding 2: the trusted route clicked a ref's box center while another
+// element was rendered there, so the click silently missed the ref.
+#[tokio::test]
+async fn trusted_ref_click_refuses_when_another_element_is_at_the_point() {
+    let f = fixture_with(|state| state.covering_node = Some(999)).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref, "session": SESSION
+        }))
+        .await;
+
+    assert_trusted_refusal_sent_nothing(&f, &result, "covered");
+    assert!(!recorded_calls(&f, "DOM.scrollIntoViewIfNeeded").is_empty());
+}
+
+#[tokio::test]
+async fn trusted_ref_click_refuses_a_point_outside_the_viewport() {
+    // main-btn's box spans y 100..110; a 100px-tall viewport cuts it off.
+    let f = fixture_with(|state| state.viewport_css_height = 100.0).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref, "session": SESSION
+        }))
+        .await;
+
+    assert_trusted_refusal_sent_nothing(&f, &result, "outside_viewport");
+    assert!(recorded_calls(&f, "DOM.getNodeForLocation").is_empty());
+}
+
+#[tokio::test]
+async fn trusted_ref_click_hit_tests_a_scrolled_page_in_document_coordinates() {
+    let f = fixture_with(|state| state.layout_scroll_y = 500.0).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref, "session": SESSION
+        }))
+        .await;
+
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    let hit = recorded_calls(&f, "DOM.getNodeForLocation");
+    // Once at resolution and once more right before dispatch.
+    assert_eq!(hit.len(), 2);
+    for (_, params) in &hit {
+        assert_eq!(
+            (params["x"].clone(), params["y"].clone()),
+            (json!(110), json!(605))
+        );
+    }
+    // The event goes to the hit-tested viewport point.
+    assert_eq!(mouse_points(&f), vec![(110.0, 105.0), (110.0, 105.0)]);
+    assert_eq!(
+        (s["x"].clone(), s["y"].clone()),
+        (json!(110.0), json!(105.0))
+    );
+}
+
+#[tokio::test]
+async fn trusted_ref_click_accepts_a_hit_on_a_descendant_of_the_ref() {
+    let f = fixture_with(|state| {
+        state.covering_node = Some(999);
+        state.covering_node_is_descendant = true;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref, "session": SESSION
+        }))
+        .await;
+
+    assert_eq!(
+        structured(&result)["status"],
+        "ok",
+        "{}",
+        structured(&result)
+    );
+    let ancestry = recorded_calls(&f, "Runtime.callFunctionOn")
+        .into_iter()
+        .find(|(_, params)| {
+            params["functionDeclaration"]
+                .as_str()
+                .is_some_and(|function| function.contains("cua_trusted_ref_hit"))
+        })
+        .expect("a non-identical hit is checked for ancestry");
+    assert_eq!(ancestry.1["objectId"], "obj-10");
+    assert_eq!(ancestry.1["arguments"][0]["objectId"], "obj-999");
+    assert_eq!(mouse_points(&f).len(), 2);
+}
+
+#[tokio::test]
+async fn trusted_ref_pointer_refuses_when_another_element_is_at_the_point() {
+    let f = fixture_with(|state| state.covering_node = Some(999)).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserPointerTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref,
+            "action": "double_click", "session": SESSION
+        }))
+        .await;
+
+    assert_trusted_refusal_sent_nothing(&f, &result, "covered");
+}
+
+fn assert_refused_after_focus_cover(f: &Fixture, result: &ToolResult) {
+    let s = structured(result);
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(s["refusal"]["detail"]["hit_test"], "covered", "{s}");
+    assert_eq!(
+        s["refusal"]["detail"]["trusted_delivery_attempted"], false,
+        "{s}"
+    );
+    assert!(recorded_calls(f, "Input.dispatchMouseEvent").is_empty());
+    // Focus emulation was entered, then restored after the refusal.
+    let focus: Vec<Value> = recorded_calls(f, "Emulation.setFocusEmulationEnabled")
+        .into_iter()
+        .map(|(_, params)| params["enabled"].clone())
+        .collect();
+    assert_eq!(focus, vec![json!(true), json!(false)]);
+}
+
+// A page focus handler that draws an overlay when focus emulation starts
+// would take a trusted event that was hit-tested before it.
+#[tokio::test]
+async fn trusted_ref_click_refuses_an_overlay_drawn_on_focus() {
+    let f = fixture_with(|state| state.focus_emulation_covers = Some(999)).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref, "session": SESSION
+        }))
+        .await;
+
+    assert_refused_after_focus_cover(&f, &result);
+}
+
+#[tokio::test]
+async fn trusted_ref_click_refusal_on_focus_reports_a_failed_focus_restore() {
+    let f = fixture_with(|state| {
+        state.focus_emulation_covers = Some(999);
+        state.focus_emulation_restore_fails = true;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref, "session": SESSION
+        }))
+        .await;
+
+    assert_refused_after_focus_cover(&f, &result);
+    let s = structured(&result);
+    assert_eq!(
+        s["refusal"]["detail"]["focus_emulation_restored"], false,
+        "{s}"
+    );
+    assert!(
+        s["refusal"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("could not be restored")),
+        "{s}"
+    );
+}
+
+#[tokio::test]
+async fn trusted_ref_pointer_refuses_an_overlay_drawn_on_focus() {
+    let f = fixture_with(|state| state.focus_emulation_covers = Some(999)).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserPointerTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref,
+            "action": "double_click", "session": SESSION
+        }))
+        .await;
+
+    assert_refused_after_focus_cover(&f, &result);
+}
+
+fn exact_label_ref(snapshot: &Value, label: &str) -> String {
+    snapshot["refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["frame"] == "main" && r["label"] == label)
+        .and_then(|r| r["ref"].as_str())
+        .unwrap_or_else(|| panic!("no main ref labelled {label:?}: {snapshot}"))
+        .to_owned()
+}
+
+#[tokio::test]
+async fn trusted_ref_drag_presses_where_the_origin_is_after_the_destination_scrolls() {
+    // Scrolling the destination (backend 21) into view moves the origin
+    // (main-btn, backend 10, box y 100..110) up by 50px.
+    let f = fixture_with(|state| state.scroll_into_view_shifts = Some((21, -50.0))).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let origin = ref_of(&snap, "main", "main-btn");
+    let destination = exact_label_ref(&snap, "type=text");
+
+    let result = BrowserPointerTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": origin,
+            "destination_ref": destination, "action": "drag", "session": SESSION
+        }))
+        .await;
+
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    let points = mouse_points(&f);
+    // mouseMoved then mousePressed at the origin's current center, not y=105.
+    assert_eq!(points[0], (110.0, 55.0), "{points:?}");
+    assert_eq!(points[1], (110.0, 55.0), "{points:?}");
+    assert_eq!(*points.last().unwrap(), (220.0, 165.0), "{points:?}");
+}
+
+#[tokio::test]
+async fn trusted_coordinate_click_is_not_hit_tested() {
+    let f = fixture_with(|state| state.covering_node = Some(999)).await;
+    let (target, tab) = bind(&f).await;
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "x": 40, "y": 50, "session": SESSION
+        }))
+        .await;
+
+    assert_eq!(
+        structured(&result)["status"],
+        "ok",
+        "{}",
+        structured(&result)
+    );
+    assert!(recorded_calls(&f, "DOM.getNodeForLocation").is_empty());
+    assert_eq!(mouse_points(&f), vec![(40.0, 50.0), (40.0, 50.0)]);
+}
+
+#[tokio::test]
+async fn dom_event_click_is_not_hit_tested() {
+    let f = fixture_with(|state| state.covering_node = Some(999)).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref,
+            "input_route": "dom_event", "session": SESSION
+        }))
+        .await;
+
+    assert!(result.content.iter().any(|content| matches!(
+        content,
+        Content::Text { text, .. } if text.starts_with("dispatched synthetic DOM click")
+    )));
+    assert!(recorded_calls(&f, "DOM.getNodeForLocation").is_empty());
+}
+
 #[tokio::test]
 async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable() {
     let f = fixture_with_platform(|_| {}, true).await;
@@ -4649,4 +5315,159 @@ async fn trusted_ref_click_whose_node_does_not_resolve_is_unverifiable_without_e
     assert_eq!(public["effect"], "unverifiable", "{public}");
     assert!(public["evidence"].is_null(), "{public}");
     assert_eq!(recorded_calls(&f, "Input.dispatchMouseEvent").len(), 2);
+}
+
+fn enter_event(params: &Value, phase: &str) {
+    assert_eq!(params["type"], phase, "{params}");
+    assert_eq!(params["key"], "Enter", "{params}");
+    assert_eq!(params["code"], "Enter", "{params}");
+    assert_eq!(params["windowsVirtualKeyCode"], 13, "{params}");
+    assert_eq!(params["nativeVirtualKeyCode"], 13, "{params}");
+}
+
+#[tokio::test]
+async fn insert_text_trailing_newline_presses_enter_on_a_single_line_field() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "text": "Buy milk\n", "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["enter_pressed"], true, "{s}");
+    assert_eq!(s["requested_chars"], 8, "{s}");
+    assert_eq!(s["delivered_chars"], 8, "{s}");
+    assert!(
+        result
+            .content
+            .iter()
+            .any(|c| matches!(c, Content::Text { text, .. } if text.contains("pressed Enter"))),
+        "the summary must say Enter was pressed: {result:?}"
+    );
+
+    let inserts = recorded_calls(&f, "Input.insertText");
+    assert_eq!(inserts.len(), 1);
+    assert_eq!(
+        inserts[0].1["text"], "Buy milk",
+        "the newline must not go through insertText"
+    );
+
+    let events = recorded_calls(&f, "Input.dispatchKeyEvent");
+    assert_eq!(events.len(), 3, "{events:?}");
+    enter_event(&events[0].1, "keyDown");
+    enter_event(&events[1].1, "char");
+    assert_eq!(events[1].1["text"], "\r");
+    assert_eq!(events[1].1["unmodifiedText"], "\r");
+    enter_event(&events[2].1, "keyUp");
+    assert!(events
+        .iter()
+        .all(|(sess, _)| sess.as_deref().unwrap().starts_with("tab-sess-")));
+}
+
+#[tokio::test]
+async fn insert_text_keeps_a_trailing_newline_in_a_multiline_field() {
+    let f = fixture_with(|state| state.multiline_field = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "text": "line\n", "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["enter_pressed"], false, "{s}");
+    assert_eq!(s["requested_chars"], 5, "{s}");
+
+    let inserts = recorded_calls(&f, "Input.insertText");
+    assert_eq!(inserts.len(), 1);
+    assert_eq!(inserts[0].1["text"], "line\n");
+    assert!(recorded_calls(&f, "Input.dispatchKeyEvent").is_empty());
+}
+
+#[tokio::test]
+async fn keystrokes_trailing_newline_presses_a_real_enter() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "text": "a\n", "mode": "keystrokes", "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["enter_pressed"], true, "{s}");
+    assert_eq!(s["requested_chars"], 1, "{s}");
+    assert_eq!(s["delivered_chars"], 1, "{s}");
+
+    let events = recorded_calls(&f, "Input.dispatchKeyEvent");
+    assert_eq!(events.len(), 6, "{events:?}");
+    assert_eq!(events[1].1["text"], "a");
+    enter_event(&events[3].1, "keyDown");
+    enter_event(&events[4].1, "char");
+    assert_eq!(events[4].1["text"], "\r");
+    enter_event(&events[5].1, "keyUp");
+}
+
+#[tokio::test]
+async fn keystrokes_newline_in_a_multiline_field_carries_the_enter_key_code() {
+    let f = fixture_with(|state| state.multiline_field = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "text": "a\nb", "mode": "keystrokes", "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["enter_pressed"], false, "{s}");
+    assert_eq!(s["requested_chars"], 3, "{s}");
+    assert_eq!(s["delivered_chars"], 3, "{s}");
+
+    let events = recorded_calls(&f, "Input.dispatchKeyEvent");
+    assert_eq!(events.len(), 9, "{events:?}");
+    enter_event(&events[3].1, "keyDown");
+    enter_event(&events[4].1, "char");
+    enter_event(&events[5].1, "keyUp");
+    assert_eq!(events[7].1["text"], "b");
+}
+
+#[tokio::test]
+async fn a_failed_enter_after_insert_text_is_reported_not_counted() {
+    let f = fixture_with(|state| state.fail_key_down_after = Some(0)).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "text": "hi\n", "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "refused", "{s}");
+    let refusal = &s["refusal"];
+    assert_eq!(refusal["code"], "browser_input_incomplete", "{refusal}");
+    assert_eq!(refusal["detail"]["requested_chars"], 2);
+    assert_eq!(refusal["detail"]["delivered_chars"], 2);
+    assert_eq!(refusal["detail"]["enter_pressed"], false);
+    assert_eq!(recorded_calls(&f, "Input.insertText").len(), 1);
 }

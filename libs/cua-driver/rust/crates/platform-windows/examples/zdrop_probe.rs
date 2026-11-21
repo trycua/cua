@@ -46,7 +46,8 @@ mod probe {
     use std::thread;
     use std::time::{Duration, Instant};
 
-    use windows::Win32::Foundation::{BOOL, HANDLE, HWND, LPARAM, POINT, RECT, TRUE};
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, POINT, RECT, TRUE};
     use windows::Win32::UI::HiDpi::{
         SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
     };

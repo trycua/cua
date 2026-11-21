@@ -23,7 +23,7 @@ cua-spacesd-server = { path = "../cua-spacesd-server" }
 cua-spacesd-client = { path = "../../../cua/crates/cua-spacesd-client" }
 cua-media-codec = { path = "../../../cua/crates/cua-media-codec", default-features = false }
 cua-proto = { path = "../../../cua/crates/cua-proto" }
-cua-relay = { path = "../cua-relay" }
+cua-relay = { path = "../cua-relay", default-features = false }
 clap.workspace = true
 tracing-subscriber.workspace = true
 axum.workspace = true

@@ -1142,6 +1142,7 @@ mod tests {
                 .starts_with("typed 0 of 4 characters: the text needs 2 spare keycodes"),
             "{error:#}"
         );
+        assert!(error.is::<crate::input::focus_guard::RefusedBeforeInput>());
         assert_eq!(restored.get(), 1);
     }
 

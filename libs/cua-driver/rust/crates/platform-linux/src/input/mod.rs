@@ -3965,10 +3965,10 @@ fn type_text_with_preflight<G>(
                                 .filter(|keysym| !keymap.keysyms.contains(keysym))
                                 .collect::<std::collections::HashSet<_>>()
                                 .len();
-                            anyhow::anyhow!(
+                            anyhow::Error::new(focus_guard::RefusedBeforeInput(format!(
                                 "typed 0 of {} characters: the text needs {needed} spare keycodes: {error:#}",
                                 text.chars().count()
-                            )
+                            )))
                         })?;
                         guards.extend(guard);
                         (keycode, false)

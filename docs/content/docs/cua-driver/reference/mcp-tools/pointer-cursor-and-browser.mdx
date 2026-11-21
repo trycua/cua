@@ -484,7 +484,7 @@ Read-only legacy browser compatibility tool: read a page's text or query its DOM
 
 Actions:
 - get_text: Extract visible text from the page. On macOS, structuredContent.source identifies javascript, cdp, or ax_fallback; a successful AX fallback preserves the triggering error and truncation state in structuredContent.
-- query_dom: Find elements matching a CSS selector, with the same macOS fallback metadata contract as get_text.
+- query_dom: Find elements matching a CSS selector, with the same macOS fallback metadata contract as get_text. The macOS AX fallback applies only bare tag selectors and refuses any other selector instead of returning every element.
 
 Effect: mutating. Platforms: macOS, Linux, Windows.
 

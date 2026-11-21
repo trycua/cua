@@ -185,6 +185,38 @@ function Stop-ProcessesUnder([string]$Dir) {
     return $procs.Count
 }
 
+# Stops Cua Spaces Local: the app, then its daemon the supported way (`cua-local daemon stop`: the daemon
+# can run where Stop-Process is refused), then whatever still runs from the folder, until nothing does
+# (the app starts its helpers again while it is going). Only the folder's own processes.
+function Stop-LocalInstall([string]$Dir) {
+    $total = Stop-ProcessesUnder $Dir
+    $cli = Join-Path $Dir 'bin\cua-local.exe'
+    if (Test-Path -LiteralPath $cli) {
+        $previous = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { & $cli daemon stop *> $null } catch { } finally { $ErrorActionPreference = $previous }
+    }
+    for ($i = 0; $i -lt 5; $i++) {
+        $n = Stop-ProcessesUnder $Dir
+        $total += $n
+        if ($n -eq 0) { break }
+    }
+    return $total
+}
+
+# Renames a folder in one step: it fails, and leaves both folders as they were, when a file in it is still
+# in use (Move-Item would carry on file by file and leave the folder split in two). Stops the Local app
+# between tries when `StopDir` is given.
+function Move-Folder([string]$From, [string]$To, [string]$StopDir) {
+    for ($try = 1; ; $try++) {
+        try { [System.IO.Directory]::Move($From, $To); return } catch {
+            if ($try -ge 4) { throw }
+            if ($StopDir) { [void](Stop-LocalInstall $StopDir) }
+            Start-Sleep -Milliseconds 800
+        }
+    }
+}
+
 # --- Windows integration ---------------------------------------------------------
 
 $script:ShortcutSource = @'

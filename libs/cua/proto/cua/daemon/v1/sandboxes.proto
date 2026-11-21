@@ -105,7 +105,7 @@ enum SandboxProvider {
   SANDBOX_PROVIDER_DIRECT = 3;
   // A contrib provider (third-party platform).
   SANDBOX_PROVIDER_CONTRIB = 4;
-  // Removed with Cua Cloud (Fleets), which ended on 18 Oct 2026.
+  // Removed with Cua Cloud, which ended on 18 Oct 2026.
   reserved 1;
   reserved "SANDBOX_PROVIDER_FLEET";
 }
@@ -260,7 +260,7 @@ message ListSandboxesRequest {
   // Only sandboxes in this location: "local" or "direct". Empty lists
   // every location. Wins over `provider`.
   string location = 3;
-  // Removed with Cua Cloud (Fleets), which ended on 18 Oct 2026: also listing
+  // Removed with Cua Cloud, which ended on 18 Oct 2026: also listing
   // the account's live claims.
   reserved 2;
   reserved "include_cloud";
@@ -368,7 +368,7 @@ message CreateSandboxRequest {
   // A local pool (`PoolService`): the sandbox takes its image and shape.
   // (4, the Cua Cloud pool, is reserved.)
   string local_pool = 42;
-  // Removed with Cua Cloud (Fleets), which ended on 18 Oct 2026: the cloud
+  // Removed with Cua Cloud, which ended on 18 Oct 2026: the cloud
   // runtime, the pool replicas, claim TTL, warm and size options, and
   // apply. Their numbers and names are never reused.
   reserved 4, 16, 17, 18, 19, 20, 26;

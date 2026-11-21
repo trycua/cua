@@ -77,8 +77,8 @@ and bump type. Cua Sandbox's draft is published by hand, which starts its PyPI
 workflow; the others publish themselves.
 
 Not on Release Please: the Docker images (`docker-*-v*`, still on
-**Legacy packages: Bump Version**, with no GitHub release pages), `cua-fleet`
-(Fleets is shut down), the OS images (`linux-image-v*`,
+**Legacy packages: Bump Version**, with no GitHub release pages), the Cua Cloud package
+(shut down), the OS images (`linux-image-v*`,
 `omarchy-image-v*` and the image pipelines' own date versions), and the
 `cua-install-latest`/`cua-spaces-latest` rolling feeds.
 
@@ -135,7 +135,7 @@ external reviewed secret as base64-encoded PKCS#8 PEM and refuse keys whose
 derived public key differs from the active trust root.
 
 Candidate evidence is artifact-scoped. A passing metadata check is not a claim
-that a future hosted or Fleet distribution satisfies a source-offer obligation.
+that a future hosted or cloud distribution satisfies a source-offer obligation.
 Those distribution paths need their own review of the exact archive, durable
 corresponding-source location, notices, and delivery behavior before any
 compliance claim is made.

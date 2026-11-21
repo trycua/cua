@@ -12,7 +12,7 @@
 # --claim-secrets DIR shares DIR over 9p with the same tag and installs a
 # drop-in switching Type= to 9p (see common/boot-qemu.sh).
 [Unit]
-Description=Fleet claim secrets (virtiofs cua-claim-secrets -> /run/cua)
+Description=Claim secrets (virtiofs cua-claim-secrets -> /run/cua)
 Documentation=file:///opt/cua/bin/env-token-mode.sh
 ConditionVirtualization=vm
 DefaultDependencies=no

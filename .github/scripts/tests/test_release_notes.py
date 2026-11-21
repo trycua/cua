@@ -61,7 +61,7 @@ def test_nested_release_please_packages_are_excluded_from_their_parent():
         "cua-spaces-v0.8.0-beta.6",  # betas keep the notes their CD workflow writes
         "docker-cuabot-v1.0.7",  # Docker images stay on the legacy bump
         "nightly-lume-v0.6.2-nightly.20261009.1",
-        "fleet-v0.1.18",
+        "legacy-cloud-v0.1.18",
         "cua-spaces-latest",
     ],
 )

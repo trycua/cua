@@ -41,9 +41,8 @@ are exempt because their generator's check owns them. The lanes:
 | --- | --- | --- |
 | `cli-shape` | every `cua`, `cua-driver` and `lume` command parses against the CLI's generated definition | every PR (`docs:check-blocks`) |
 | `config` | JSON, YAML and TOML parse, and match `schema="<name>"` | every PR (`docs:check-blocks`, needs `uv`) |
-| `docs` | Python and TypeScript blocks, hermetically; `prelude="fakefleet"` runs cloud code against a fake Fleet | PR (`tests/e2e/cua-sdk`) |
+| `docs` | Python and TypeScript blocks, hermetically | PR (`tests/e2e/cua-sdk`) |
 | `container` | blocks that start local sandboxes (Docker, gVisor) | PR (`tests/e2e/cua-sdk`) |
-| `fleet` | whole scripts against live Fleet | nightly |
 | `windows`, `lume` | shell blocks on a disposable Windows or macOS machine | nightly |
 | `terraform` | `terraform init` and `validate` | PR |
 | `swift`, `kotlin` | the block compiles against `libs/cua/swift` or `libs/cua/kotlin` (statements wrapped in a function; nothing runs) | PR (`docs-compile-lanes.yml`) |

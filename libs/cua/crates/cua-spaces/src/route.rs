@@ -26,7 +26,7 @@ pub enum ChannelRoute {
         /// The machine's node key.
         peer: PublicKey,
     },
-    /// The Fleet gateway.
+    /// The cloud gateway.
     Cloud,
     /// Another process's connection (the `cua daemon`'s env passthrough),
     /// with the route that process reported.
@@ -54,7 +54,7 @@ pub enum Transport {
     /// The relay's HTTPS path: TLS ends at the relay, which can read the
     /// session in transit.
     RelayHttps,
-    /// The Fleet gateway.
+    /// The cloud gateway.
     Cloud,
     /// Not known (another process's connection that did not say).
     Unknown,

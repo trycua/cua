@@ -154,7 +154,7 @@ deterministic mock chooser in Actions; live TypeSafe validation runs only
 out-of-band, directly on a disposable Tahoe Lume guest whose guest-local
 Keychain supplies the credential to the bounded chooser process. That guest
 procedure is maintained privately, records only hashes and outcomes, and never
-publishes the key value or fleet details. The direct Lume matrix is the macOS
+publishes the key value or machine details. The direct Lume matrix is the macOS
 platform acceptance gate.
 
 ## Derived reels

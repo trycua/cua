@@ -119,7 +119,7 @@
     },
     "ImageFileReference": {
       "additionalProperties": false,
-      "description": "A file uploaded to Fleet (`uploads/<namespace>/<id>`).",
+      "description": "A file uploaded to the cloud (`uploads/<namespace>/<id>`).",
       "properties": {
         "digest": {
           "description": "SHA-256 digest of the file.",

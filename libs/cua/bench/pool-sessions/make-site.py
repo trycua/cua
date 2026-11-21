@@ -6,7 +6,7 @@ import os, re, sys, urllib.request, hashlib
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~/fb/site")
 os.makedirs(os.path.join(OUT, "a"), exist_ok=True)
-UA = {"User-Agent": "cua-fleet-bench/1.0 (one-time test fixture download)"}
+UA = {"User-Agent": "cua-pool-bench/1.0 (one-time test fixture download)"}
 ARTICLES = ["Web_scraping", "Headless_browser", "Chromium_(web_browser)", "Virtual_machine",
             "Hypervisor", "Kubernetes", "Docker_(software)", "Startup_company",
             "Venture_capital", "E-commerce"]

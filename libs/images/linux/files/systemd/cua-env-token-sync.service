@@ -1,5 +1,5 @@
 [Unit]
-Description=cua env token sync (Fleet claim token -> driver-readable copy)
+Description=cua env token sync (claim token -> driver-readable copy)
 # Runs only when the claim secrets are mounted (run-cua.mount on KubeVirt).
 After=run-cua.mount
 Before=cua-spacesd.service

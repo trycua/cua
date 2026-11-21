@@ -13,7 +13,7 @@ parent_rfc: 2512-mcp-envelope-carrier.md
 Implement the typed MCP client once in the Cua Driver Rust SDK and expose it
 through UniFFI to Python and TypeScript. Preserve Python Sandbox's
 `sb.driver.connect(service="mcp", transport="mcp")`. TypeScript applications
-compose Fleet and Driver directly; this work does not create a TypeScript
+compose cloud and Driver directly; this work does not create a TypeScript
 Sandbox SDK.
 
 The maintainer selected this narrow follow-up for implementation and draft PR
@@ -25,14 +25,14 @@ this acceptance does not authorize merge, release, image changes, or rollout.
 
 | Layer                                    | Owns                                                                                                                                                     |
 | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Fleet                                    | Credentials, authenticated named-service routing, pools, and claims                                                                                      |
+| Cloud                                    | Credentials, authenticated named-service routing, pools, and claims                                                                                      |
 | Driver Rust SDK                          | MCP initialization, typed-extension negotiation, envelope exchange, strict response parsing, session state, cancellation, and bounded connection cleanup |
 | Generated Python and TypeScript bindings | The canonical Driver object and shared connection API                                                                                                    |
-| Thin environment adapters                | Forward bounded service requests through an existing Fleet client; bind the connection lifetime to the caller's live claim                               |
-| Python Sandbox                           | Existing convenience accessor and cleanup before its Fleet transport closes                                                                              |
+| Thin environment adapters                | Forward bounded service requests through an existing cloud client; bind the connection lifetime to the caller's live claim                               |
+| Python Sandbox                           | Existing convenience accessor and cleanup before its cloud transport closes                                                                              |
 
-The adapter is not a second MCP implementation. Driver does not acquire Fleet
-credentials, construct a second Fleet lifecycle client, change permissions, or
+The adapter is not a second MCP implementation. Driver does not acquire cloud
+credentials, construct a second cloud lifecycle client, change permissions, or
 assume separately packaged UniFFI objects can share native pointers.
 
 ## Contract and compatibility
@@ -57,7 +57,7 @@ rebind the trusted session. Cancellation does not undo desktop actions.
 
 Python event-loop ownership and Node callback cancellation must be tested
 through the real generated bindings. Native TypeScript bindings remain
-Node-only; this does not add browser-native Driver support. Fleet's browser
+Node-only; this does not add browser-native Driver support. Cloud's browser
 entry point must remain independent of native Driver dependencies.
 
 ## Phases and proof
@@ -65,10 +65,10 @@ entry point must remain independent of native Driver dependencies.
 1. **Shared Rust connector.** Implement the transport boundary and MCP state
    machine alongside the existing remote Driver backend. Port deterministic
    parser, negotiation, failure, cancellation, late-open, and cleanup tests.
-2. **Bindings and Fleet adapters.** Generate Python/TypeScript bindings from
-   the Rust source. Add thin optional Fleet entry points and real-binding
+2. **Bindings and cloud adapters.** Generate Python/TypeScript bindings from
+   the Rust source. Add thin optional cloud entry points and real-binding
    fixtures proving both return the canonical typed interface. Verify callback
-   ownership, disposal, error sanitization, and no native import in Fleet browser.
+   ownership, disposal, error sanitization, and no native import in cloud browser.
 3. **Python Sandbox migration.** Delegate the explicit MCP path to the shared
    connector, preserve the public accessor and direct-envelope path, and remove
    the duplicate Python MCP protocol implementation. Run Sandbox regressions.
@@ -92,8 +92,8 @@ production enablement is included here.
 ## Alternatives and rollback
 
 Do not duplicate the Python MCP state machine in TypeScript, add desktop
-methods to generated Fleet resource records, or build on the legacy Computer
-SDK. A native dependency from Driver to Fleet is not needed when the host
+methods to generated cloud resource records, or build on the legacy Computer
+SDK. A native dependency from Driver to cloud is not needed when the host
 already provides authenticated service access.
 
 Rollback reverts this additive connector and Sandbox delegation together,

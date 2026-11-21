@@ -320,19 +320,19 @@ mod tests {
     }
 
     #[test]
-    fn fleet_images_are_plain_oci() {
+    fn registry_images_are_plain_oci() {
         assert_eq!(
-            detect_format(&fixture("fleet-containerdisk-arm64.json")),
+            detect_format(&fixture("registry-containerdisk-arm64.json")),
             ImageFormat::Oci
         );
         assert_eq!(
-            detect_format(&fixture("fleet-rootfs-arm64.json")),
+            detect_format(&fixture("registry-rootfs-arm64.json")),
             ImageFormat::Oci
         );
         let cfg: serde_json::Value = serde_json::from_slice(
             &std::fs::read(
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("tests/fixtures/fleet-containerdisk-arm64-config.json"),
+                    .join("tests/fixtures/registry-containerdisk-arm64-config.json"),
             )
             .unwrap(),
         )

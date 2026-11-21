@@ -1,7 +1,7 @@
 // Resizing a sandbox (cua.daemon.v1): the messages of
 // `SandboxService.ResizeSandbox`. A local VM stops and boots again from its
 // own disk with the new shape, so its memory and running processes do not
-// survive; its files do. Containers, Fleet claims and other providers'
+// survive; its files do. Containers, cloud claims and other providers'
 // sandboxes are refused as unsupported.
 syntax = "proto3";
 

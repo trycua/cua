@@ -100,7 +100,9 @@ impl ManagedChild {
     }
 
     /// [`Child::wait`], with the group handling of [`try_wait`](Self::try_wait).
+    /// Like `Child::wait`, closes the child's stdin first.
     pub fn wait(&mut self) -> io::Result<ExitStatus> {
+        drop(self.child.stdin.take());
         #[cfg(unix)]
         if self.owner.is_some() {
             match leader_exited(self.child.id(), true) {
@@ -702,6 +704,37 @@ mod tests {
         assert!(
             wait_gone(grandchild),
             "grandchild {grandchild} outlived the leader"
+        );
+    }
+
+    #[test]
+    fn wait_closes_piped_stdin_like_child_wait() {
+        let mut command = Command::new("/bin/cat");
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = ManagedChild::builder()
+            .kill_with_owner()
+            .reap_on_drop()
+            .spawn(&mut command)
+            .expect("spawn cat");
+        let pid = child.id() as i32;
+        let (done, waited) = std::sync::mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            let status = child.wait();
+            let _ = done.send(status.map(|status| status.success()).ok());
+        });
+        let result = waited.recv_timeout(Duration::from_secs(5));
+        if result.is_err() {
+            // SAFETY: the test started this cat and still owns it.
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+        }
+        waiter.join().unwrap();
+        assert_eq!(
+            result,
+            Ok(Some(true)),
+            "wait must close stdin so cat sees EOF"
         );
     }
 

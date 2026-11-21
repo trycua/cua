@@ -637,16 +637,18 @@ pub fn screenshot_window(hwnd: u64) -> Result<(String, u32, u32)> {
 /// from the duplicated frame the same way it is for desktop captures.
 ///
 /// Returns `None` unless, both before and after the capture, the window is
-/// shown and not layered at the same bounds, covers a whole monitor and no
-/// other window overlaps its frame, and duplication succeeds, so the caller
-/// keeps the PrintWindow / WGC / BitBlt ladder as the fallback for every other
-/// case.
+/// shown and opaque at the same bounds, its frame lies on the one monitor it
+/// covers, and no other window overlaps that frame; and unless duplication
+/// succeeds with the overlay excluded. The caller then keeps the PrintWindow /
+/// WGC / BitBlt ladder as the fallback for every other case.
 unsafe fn screenshot_via_dxgi_duplication(
     hwnd: HWND,
 ) -> Option<(Vec<u8>, i32, i32, FrameGeometry)> {
-    use cursor_overlay::capture_exclusion::{capture_excluding_overlays, ResidualCheck};
+    use cursor_overlay::capture_exclusion::{
+        capture_excluding_overlays, AgentOverlayCaptureStatus, ResidualCheck,
+    };
 
-    if !window_shown(hwnd) || layered(hwnd) {
+    if !window_shown_opaque(hwnd) {
         return None;
     }
     let geometry = window_geometry(hwnd).ok()?;
@@ -658,12 +660,21 @@ unsafe fn screenshot_via_dxgi_duplication(
         window.top + window.height,
     ));
     let frame = window.cropped(dwm);
+    let frame_rect = bounds_rect((
+        frame.left,
+        frame.top,
+        frame.left + frame.width,
+        frame.top + frame.height,
+    ));
     // Check coverage before excluding the overlay: that costs two DWM frames,
-    // and most windows do not cover a monitor.
-    let covers_monitor = monitor_bounds()
-        .into_iter()
-        .any(|monitor| crate::dxgi_duplication::rect_covers(window_rect, bounds_rect(monitor)));
-    if !covers_monitor || window_above_overlaps(hwnd, frame) {
+    // and most windows do not cover a monitor. The frame must also fit on that
+    // monitor, or the crop below cannot succeed.
+    let fits_monitor = monitor_bounds().into_iter().any(|monitor| {
+        let monitor = bounds_rect(monitor);
+        crate::dxgi_duplication::rect_covers(window_rect, monitor)
+            && crate::dxgi_duplication::rect_covers(monitor, frame_rect)
+    });
+    if !fits_monitor || window_above_overlaps(hwnd, frame) {
         return None;
     }
     let captured = capture_excluding_overlays(&crate::overlay::CaptureExcluder, |_| {
@@ -671,7 +682,18 @@ unsafe fn screenshot_via_dxgi_duplication(
             .map(|captured| (captured, ResidualCheck::Clean))
     });
     let captured = match captured {
-        Ok((captured, _)) => captured,
+        Ok((captured, overlay)) if overlay.status != AgentOverlayCaptureStatus::NotExcluded => {
+            captured
+        }
+        Ok((_, overlay)) => {
+            tracing::debug!(
+                target: "cua-driver",
+                "screenshot: DXGI Desktop Duplication fast path skipped: agent cursor \
+                 overlay not excluded: {:?}",
+                overlay.reason
+            );
+            return None;
+        }
         Err(error) => {
             tracing::debug!(
                 target: "cua-driver",
@@ -691,8 +713,7 @@ unsafe fn screenshot_via_dxgi_duplication(
     }
     // Duplication waits for a present: in that time the target may have hidden,
     // moved, or been covered, and the frame would show something else.
-    if !window_shown(hwnd)
-        || layered(hwnd)
+    if !window_shown_opaque(hwnd)
         || window_geometry(hwnd).ok() != Some(geometry)
         || window_above_overlaps(hwnd, frame)
     {
@@ -715,7 +736,9 @@ unsafe fn screenshot_via_dxgi_duplication(
 /// five-point `target_is_obscured` probe misses a small window between its
 /// samples, so walk the whole z-order above the target instead. Windows of
 /// this process (the agent cursor overlay, excluded from the capture) do not
-/// count; a window whose cloak state cannot be read counts as visible.
+/// count; a window whose cloak state cannot be read counts as visible. The
+/// z-order can change during the walk, so a window seen twice ends it as
+/// overlapping.
 unsafe fn window_above_overlaps(target: HWND, frame: FrameGeometry) -> bool {
     use windows::Win32::Foundation::RECT;
     use windows::Win32::System::Threading::GetCurrentProcessId;
@@ -725,10 +748,14 @@ unsafe fn window_above_overlaps(target: HWND, frame: FrameGeometry) -> bool {
     };
 
     let own_pid = GetCurrentProcessId();
+    let mut seen = std::collections::HashSet::new();
     let mut above = GetWindow(GetAncestor(target, GA_ROOT), GW_HWNDPREV);
     while let Ok(window) = above {
         if window.0.is_null() {
             break;
+        }
+        if !seen.insert(window.0 as isize) {
+            return true;
         }
         above = GetWindow(window, GW_HWNDPREV);
         if !IsWindowVisible(window).as_bool() || IsIconic(window).as_bool() {
@@ -752,23 +779,27 @@ unsafe fn window_above_overlaps(target: HWND, frame: FrameGeometry) -> bool {
     false
 }
 
-/// Whether `window` is visible, not minimized, and known to be uncloaked. A
-/// hidden or cloaked window keeps its bounds while the monitor shows
-/// something else there.
-unsafe fn window_shown(window: HWND) -> bool {
-    use windows::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindowVisible};
+/// Whether the monitor shows `window`'s own pixels across its whole frame.
+///
+/// A hidden or cloaked window keeps its bounds while the monitor shows
+/// something else there. A layered window, a window with a custom region, or
+/// one without a redirection bitmap (a DirectComposition surface) can be
+/// partly transparent, so the monitor shows what lies behind it.
+unsafe fn window_shown_opaque(window: HWND) -> bool {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::Graphics::Gdi::{GetWindowRgnBox, RGN_ERROR};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, IsIconic, IsWindowVisible, GWL_EXSTYLE, WS_EX_LAYERED,
+        WS_EX_NOREDIRECTIONBITMAP,
+    };
 
+    let see_through = (WS_EX_LAYERED.0 | WS_EX_NOREDIRECTIONBITMAP.0) as isize;
+    let mut region = RECT::default();
     IsWindowVisible(window).as_bool()
         && !IsIconic(window).as_bool()
         && cloaked(window) == Some(false)
-}
-
-/// Whether `window` is layered. A layered window can be partly transparent, so
-/// the monitor shows whatever lies behind it in those pixels.
-unsafe fn layered(window: HWND) -> bool {
-    use windows::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, GWL_EXSTYLE, WS_EX_LAYERED};
-
-    (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_LAYERED.0 as isize) != 0
+        && (GetWindowLongPtrW(window, GWL_EXSTYLE) & see_through) == 0
+        && GetWindowRgnBox(window, &mut region) == RGN_ERROR
 }
 
 /// DWM's cloak state for `window`, or `None` when it cannot be read.

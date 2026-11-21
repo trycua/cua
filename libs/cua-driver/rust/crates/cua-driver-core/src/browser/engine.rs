@@ -1116,17 +1116,24 @@ impl BrowserEngine {
     /// finds a prompt by its window, not by its dial, so this runs only while
     /// no other dial is in progress: once the abandoned dial released the
     /// pool's dial gate, another caller may have started one whose prompt
-    /// is now on screen. If that dial is still running when the bound ends,
-    /// the prompt is left alone.
+    /// is now on screen. The dismissal runs as its own task that keeps the
+    /// gate until the platform's native work has exited, even after the
+    /// caller stops waiting, and it does not start once the bound has passed.
     async fn dismiss_abandoned_consent(&self, pid: i64, window_id: u64) {
-        let _ = tokio::time::timeout(
-            ABANDONED_CONSENT_DISMISS_TIMEOUT,
-            self.pool.while_no_dial_runs(
-                self.platform
-                    .dismiss_abandoned_existing_profile_consent(pid, window_id),
-            ),
-        )
-        .await;
+        let deadline = tokio::time::Instant::now() + ABANDONED_CONSENT_DISMISS_TIMEOUT;
+        let pool = self.pool.clone();
+        let platform = self.platform.clone();
+        let dismissal = tokio::spawn(async move {
+            pool.while_no_dial_runs(async {
+                if tokio::time::Instant::now() < deadline {
+                    let _ = platform
+                        .dismiss_abandoned_existing_profile_consent(pid, window_id)
+                        .await;
+                }
+            })
+            .await
+        });
+        let _ = tokio::time::timeout_at(deadline, dismissal).await;
     }
 
     /// The reconnect leader's attempt loop. The caller bounds the whole loop

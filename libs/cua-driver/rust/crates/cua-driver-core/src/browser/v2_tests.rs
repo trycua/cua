@@ -1081,6 +1081,7 @@ struct FixtureStalls {
     dismissals: AtomicUsize,
     /// Turning remote debugging back off blocks its thread while this holds.
     hold_cleanup: AtomicBool,
+    fingerprint_calls: AtomicUsize,
     /// Cleanup calls that fail before the next ones succeed.
     cleanup_failures: AtomicUsize,
     cleanup_calls: AtomicUsize,
@@ -1094,6 +1095,7 @@ impl Default for FixtureStalls {
             fingerprints: AtomicUsize::new(usize::MAX),
             dismissals: AtomicUsize::new(usize::MAX),
             hold_cleanup: AtomicBool::new(false),
+            fingerprint_calls: AtomicUsize::new(0),
             cleanup_failures: AtomicUsize::new(0),
             cleanup_calls: AtomicUsize::new(0),
             cleanup_finished: AtomicBool::new(false),
@@ -1379,6 +1381,7 @@ impl BrowserPlatform for FixturePlatform {
     }
 
     async fn process_fingerprint(&self, pid: i64) -> Result<ProcessFingerprint, BrowserRefusal> {
+        self.stalls.fingerprint_calls.fetch_add(1, Ordering::SeqCst);
         answer_or_stall(&self.stalls.fingerprints).await;
         Ok(ProcessFingerprint {
             pid,
@@ -1827,13 +1830,17 @@ async fn existing_profile_reconnect_stalls_in_a_process_check(case: ReconnectSta
             SharedSocketRelease::Close,
         )
         .await;
-    if case == ReconnectStall::BeforeAnyDial {
-        stalls.fingerprints.store(1, Ordering::SeqCst);
+    let answered = if case == ReconnectStall::BeforeAnyDial {
+        1
     } else {
+        2
+    };
+    stalls.fingerprints.store(answered, Ordering::SeqCst);
+    if case != ReconnectStall::BeforeAnyDial {
         // The first dial fails, so the next attempt's process check stalls
         // after this reconnect dialed and may have raised a prompt.
         drop(f._server);
-        stalls.fingerprints.store(2, Ordering::SeqCst);
+        refused(&grant.endpoint_ws_url).await;
     }
     // A dismissal this reconnect may make stalls, so its bound is tested.
     let may_dismiss = case == ReconnectStall::AfterADial;
@@ -1850,13 +1857,28 @@ async fn existing_profile_reconnect_stalls_in_a_process_check(case: ReconnectSta
     );
     let mut other_dial = None;
     stalls.hold_cleanup.store(true, Ordering::SeqCst);
-    // The clock is advanced by hand: tokio stops auto-advancing a paused
-    // clock while a blocking task runs, and the held cleanup is one.
-    tokio::time::pause();
+    let calls_before = stalls.fingerprint_calls.load(Ordering::SeqCst);
     let bind = tokio::spawn({
         let engine = f.engine.clone();
         async move { bind_existing_profile(&engine, TRANSPORT).await }
     });
+    // Any dial runs on the real clock; it needs real socket I/O. Once the
+    // reconnect sits in its stalled process check, the clock is paused and
+    // advanced by hand: tokio stops auto-advancing a paused clock while a
+    // blocking task runs, and the held cleanup is one.
+    let stalled_check = calls_before + answered + 1;
+    for _ in 0..500 {
+        if stalls.fingerprint_calls.load(Ordering::SeqCst) >= stalled_check {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        stalls.fingerprint_calls.load(Ordering::SeqCst),
+        stalled_check,
+        "the reconnect must reach its stalled process check"
+    );
+    tokio::time::pause();
     for second in 0..120 {
         if bind.is_finished() {
             break;
@@ -1894,7 +1916,21 @@ async fn existing_profile_reconnect_stalls_in_a_process_check(case: ReconnectSta
             .is_none(),
         "a reconnect that ran out of time ends the grant"
     );
-    if !may_dismiss {
+    if may_dismiss {
+        // The stalled dismissal still runs, so no other dial may start yet.
+        let gate_probe = tokio::spawn({
+            let pool = f.engine.pool.clone();
+            async move { pool.while_no_dial_runs(async {}).await }
+        });
+        for _ in 0..3 {
+            tokio::time::advance(std::time::Duration::from_secs(1)).await;
+        }
+        assert!(
+            !gate_probe.is_finished(),
+            "the dial gate stays held until the dismissal's native work exits"
+        );
+        gate_probe.abort();
+    } else {
         assert_eq!(
             stalls.dismissals.load(Ordering::SeqCst),
             1,
@@ -1974,6 +2010,24 @@ async fn a_reconnect_waiting_for_another_dial_leaves_its_prompt_alone() {
     let state = bind.await.unwrap();
     assert!(state["refusal"].is_null(), "{state}");
     assert!(focus.consent_attempts.lock().unwrap().is_empty());
+}
+
+/// Waits until a dropped mock browser's port refuses connections, so a
+/// dial to it fails at once instead of waiting on a listener still closing.
+async fn refused(ws_url: &str) {
+    let addr = ws_url
+        .trim_start_matches("ws://")
+        .split('/')
+        .next()
+        .unwrap()
+        .to_owned();
+    for _ in 0..500 {
+        if tokio::net::TcpStream::connect(&addr).await.is_err() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("the dropped mock browser at {addr} still accepts connections");
 }
 
 fn queued_cleanups(engine: &BrowserEngine, session: &str) -> usize {

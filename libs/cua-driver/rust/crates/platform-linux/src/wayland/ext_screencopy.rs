@@ -295,7 +295,7 @@ fn capture_source_png(
     let _mapping = Mapping { ptr, size, fd };
     use std::os::fd::AsFd as _;
     let pool_fd = unsafe { super::borrowed_fd(fd) };
-    let pool: WlShmPool = shm.create_pool(pool_fd.as_fd(), size as i32, &qh, ());
+    let pool: WlShmPool = shm.create_pool(pool_fd.as_fd(), size as i32, qh, ());
     let fmt: wl_shm::Format = wl_shm::Format::try_from(state.fmt.unwrap()).map_err(|_| {
         anyhow::anyhow!(
             "compositor advertised unsupported wl_shm format {:#x}",
@@ -308,12 +308,12 @@ fn capture_source_png(
         state.height as i32,
         stride as i32,
         fmt,
-        &qh,
+        qh,
         (),
     );
 
     // Create + run the frame.
-    let frame: ExtImageCopyCaptureFrameV1 = session.create_frame(&qh, ());
+    let frame: ExtImageCopyCaptureFrameV1 = session.create_frame(qh, ());
     frame.attach_buffer(&buffer);
     frame.capture();
     sync(conn, bounded, state, queue)?;

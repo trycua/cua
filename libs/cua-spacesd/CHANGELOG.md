@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.4](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.3...cua-spacesd-v0.17.4) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** enable the windows KeyboardAndMouse feature the desktop crate uses ([#8483](https://github.com/trycua/cua/issues/8483)) ([85064e1](https://github.com/trycua/cua/commit/85064e1f98d35bc5ec75d301d2b920ab36e21df7))
+
 ## [0.17.3](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.2...cua-spacesd-v0.17.3) (2026-11-21)
 
 

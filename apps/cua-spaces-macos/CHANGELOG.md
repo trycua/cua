@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.41.0](https://github.com/trycua/cua/compare/cua-spaces-v0.40.2...cua-spaces-v0.41.0) (2026-11-21)
+
+
+### Features
+
+* **cua-vmm:** Linux runtime in a Hyper-V VM on Windows without WSL 2 ([#8417](https://github.com/trycua/cua/issues/8417)) ([e1209b5](https://github.com/trycua/cua/commit/e1209b5ac48ac6ed9890871965b49150544e9b88))
+
 ## [0.40.2](https://github.com/trycua/cua/compare/cua-spaces-v0.40.1...cua-spaces-v0.40.2) (2026-11-21)
 
 

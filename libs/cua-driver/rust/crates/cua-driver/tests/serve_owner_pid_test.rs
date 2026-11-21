@@ -5,7 +5,7 @@
 
 #![cfg(any(unix, target_os = "windows"))]
 
-use cua_driver_testkit::spawn_in_job;
+use cua_driver_testkit::{spawn_in_job, IsolatedStateRoot};
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
@@ -24,7 +24,7 @@ impl Drop for Reaped {
 }
 
 struct Daemon {
-    home: tempfile::TempDir,
+    state: IsolatedStateRoot,
     #[cfg(unix)]
     _endpoint_dir: tempfile::TempDir,
     socket: String,
@@ -33,7 +33,7 @@ struct Daemon {
 
 impl Daemon {
     fn new(name: &str) -> Self {
-        let home = tempfile::tempdir().unwrap();
+        let state = IsolatedStateRoot::new().unwrap();
         #[cfg(unix)]
         let endpoint_dir = cua_driver_testkit::socket_tempdir().unwrap();
         #[cfg(unix)]
@@ -44,9 +44,9 @@ impl Daemon {
             .to_string();
         #[cfg(target_os = "windows")]
         let socket = format!(r"\\.\pipe\cua-owner-pid-{name}-{}", std::process::id());
-        let pid_file = home.path().join("daemon.pid");
+        let pid_file = state.path().join("daemon.pid");
         Self {
-            home,
+            state,
             #[cfg(unix)]
             _endpoint_dir: endpoint_dir,
             socket,
@@ -55,7 +55,6 @@ impl Daemon {
     }
 
     fn serve(&self, owner_pid: u32) -> Command {
-        let home = self.home.path();
         let mut command = Command::new(env!("CARGO_BIN_EXE_cua-driver"));
         command
             .args(["serve", "--socket", &self.socket, "--pid-file"])
@@ -64,14 +63,9 @@ impl Daemon {
             .args(["--no-overlay", "--no-permissions-gate"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
+            .envs(self.state.env())
             .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
-            .env("HOME", home)
-            .env("USERPROFILE", home)
-            .env("LOCALAPPDATA", home)
-            .env("XDG_STATE_HOME", home)
-            .env("CUA_DRIVER_HOME", home)
-            .env("CUA_DRIVER_LOCAL_HOME", home)
-            .env("CUA_DRIVER_RS_HOME", home);
+            .env("CUA_DRIVER_RS_UPDATE_CHECK", "false");
         command
     }
 
@@ -194,6 +188,8 @@ fn serve_refuses_an_owner_pid_whose_process_is_gone() {
     let mut owner = spawn_owner(0);
     let pid = owner.id();
     owner.wait().expect("reap the owner");
+    // Closes the Windows process handle, so the process object is gone too.
+    drop(owner);
 
     let (status, stderr) = daemon.refused(pid);
     assert_eq!(status.code(), Some(1), "{stderr}");

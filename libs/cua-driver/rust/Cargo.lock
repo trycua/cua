@@ -1218,6 +1218,7 @@ dependencies = [
 name = "cua-driver"
 version = "0.56.4"
 dependencies = [
+ "aes",
  "anyhow",
  "async-trait",
  "base64",
@@ -1230,6 +1231,7 @@ dependencies = [
  "cua-driver-testkit",
  "cua-telemetry",
  "cursor-overlay",
+ "des",
  "embed-resource",
  "flate2",
  "fs2",
@@ -1237,6 +1239,8 @@ dependencies = [
  "image",
  "jsonschema",
  "libc",
+ "md-5",
+ "num-bigint",
  "platform-linux",
  "platform-macos",
  "platform-windows",
@@ -1493,6 +1497,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
 dependencies = [
  "powerfmt",
+]
+
+[[package]]
+name = "des"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffdd80ce8ce993de27e9f063a444a4d53ce8e8db4c1f00cc03af5ad5a9867a1e"
+dependencies = [
+ "cipher 0.4.4",
 ]
 
 [[package]]

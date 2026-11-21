@@ -49,6 +49,8 @@ mod stop;
 mod telemetry;
 mod updater;
 mod version_check;
+mod vnc;
+mod vnc_cli;
 
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
@@ -852,6 +854,9 @@ fn main() {
         cli::Command::Permissions { subcommand, json } => {
             cli::run_permissions_cmd(&subcommand, json);
         }
+        cli::Command::PermissionsVnc { args } => {
+            vnc_cli::run(&args);
+        }
         cli::Command::Autostart { subcommand } => {
             autostart::run_autostart_cmd(&subcommand);
         }
@@ -1171,6 +1176,10 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::Permissions { subcommand, json } => {
             cli::run_permissions_cmd(&subcommand, json);
+            Ok(())
+        }
+        cli::Command::PermissionsVnc { args } => {
+            vnc_cli::run(&args);
             Ok(())
         }
         cli::Command::Autostart { subcommand } => {

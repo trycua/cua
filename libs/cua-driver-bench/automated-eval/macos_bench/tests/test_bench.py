@@ -896,6 +896,23 @@ class ArmsAndHostTest(unittest.TestCase):
         self.assertEqual(ca.system_prompt_for("cc-cua-driver-main"), ca.SYSTEM_PROMPT)
         self.assertIn("cc-cua-driver-script", arms.CLAUDE_ARMS)
 
+    def test_script_only_arm_lists_run_script_alone_on_its_own_daemon(self) -> None:
+        build = ca.CUA_BUILDS["cc-cua-driver-script-only"]
+        script = ca.CUA_BUILDS["cc-cua-driver-script"]
+        self.assertEqual(build.bin, script.bin)
+        self.assertNotEqual(build.socket, script.socket)
+        self.assertNotEqual(build.state, script.state)
+        with tempfile.TemporaryDirectory() as tmp:
+            path, server = ca.mcp_config_for("cc-cua-driver-script-only", Path(tmp))
+            env = json.loads(path.read_text())["mcpServers"][server]["env"]
+        self.assertEqual(env["CUA_DRIVER_SCRIPT_ONLY"], "1")
+        self.assertNotIn("CUA_DRIVER_DISABLE_RUN_SCRIPT", env)
+        prompt = ca.system_prompt_for("cc-cua-driver-script-only")
+        self.assertTrue(prompt.startswith(ca.SYSTEM_PROMPT))
+        self.assertIn("only tool", prompt)
+        self.assertNotIn("run_steps", prompt)
+        self.assertIn("pi-cua-driver-script-only", arms.PI_ARMS)
+
     def test_three_arms_rotate_the_first_arm(self) -> None:
         arms3 = ["cc-cua-driver-main", "cc-cua-driver", "cc-codex-cu"]
         firsts = {core.arm_order(0, r, arms3)[0] for r in range(3)}

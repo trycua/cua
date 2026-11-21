@@ -3150,16 +3150,26 @@ fn apply_wsl_gpu(body: &mut ContainerCreateBody) {
 }
 
 /// The engine's device requests for [`StartSpec::gpu`]: every NVIDIA GPU
-/// (`--gpus all`) for [`crate::gpu::NVIDIA`].
+/// (`--gpus all`) for [`crate::gpu::NVIDIA`], or the GPUs named by
+/// `nvidia:<id>[,<id>...]` (`--gpus device=<id>`).
 fn gpu_requests(spec: &StartSpec) -> Option<Vec<bollard::models::DeviceRequest>> {
-    (spec.gpu.as_deref() == Some(crate::gpu::NVIDIA)).then(|| {
-        vec![bollard::models::DeviceRequest {
+    let devices = crate::gpu::nvidia_devices(spec.gpu.as_deref()?)?;
+    Some(vec![if devices.is_empty() {
+        bollard::models::DeviceRequest {
             driver: Some("nvidia".into()),
             count: Some(-1),
             capabilities: Some(vec![vec!["gpu".into()]]),
             ..Default::default()
-        }]
-    })
+        }
+    } else {
+        // The named GPUs only (`--gpus device=<id>[,<id>]`).
+        bollard::models::DeviceRequest {
+            driver: Some("nvidia".into()),
+            device_ids: Some(devices),
+            capabilities: Some(vec![vec!["gpu".into()]]),
+            ..Default::default()
+        }
+    }])
 }
 
 /// `/dev/shm` of a sandbox container: half its memory limit, at most
@@ -3762,6 +3772,25 @@ mod tests {
         assert_eq!(req[0].driver.as_deref(), Some("nvidia"));
         assert_eq!(req[0].count, Some(-1), "all of them");
         assert_eq!(req[0].capabilities, Some(vec![vec!["gpu".to_string()]]));
+    }
+
+    #[test]
+    fn named_nvidia_gpus_become_device_ids() {
+        let mut spec = StartSpec::new("sb", ImageSource::Existing);
+        spec.gpu = Some("nvidia:GPU-aaaa,GPU-bbbb".into());
+        let body = create_body("sb", "img:1", &spec, HashMap::new(), "runc".into());
+        let req = body.host_config.unwrap().device_requests.unwrap();
+        assert_eq!(req.len(), 1);
+        assert_eq!(req[0].driver.as_deref(), Some("nvidia"));
+        assert_eq!(req[0].count, None, "the named GPUs, not all of them");
+        assert_eq!(
+            req[0].device_ids,
+            Some(vec!["GPU-aaaa".to_string(), "GPU-bbbb".to_string()])
+        );
+        assert_eq!(req[0].capabilities, Some(vec![vec!["gpu".to_string()]]));
+        spec.gpu = Some("virgl".into());
+        let none = create_body("sb", "img:1", &spec, HashMap::new(), "runc".into());
+        assert_eq!(none.host_config.unwrap().device_requests, None);
     }
 
     #[tokio::test]

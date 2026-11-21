@@ -11,6 +11,8 @@ use cua_driver_core::{
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+use crate::routes::LinuxPointer as _;
+
 use super::impl_::{
     foreground_budget, input_error_result, isolated_hyprland_background, named_session_cursor_key,
     resolve_cursor_key, reveal_pointer_action_for, screenshot_scale, spawn_blocking_bounded,
@@ -70,18 +72,16 @@ impl Tool for MoveCursorTool {
             } else {
                 "xtest_desktop"
             };
-            let result = if wayland {
-                spawn_blocking_bounded("move_cursor", foreground_budget(0), move || {
-                    let space = crate::wayland::DesktopInputSpace::current()?;
-                    crate::wayland::move_cursor_desktop(&space, xi, yi)
-                })
-                .await
-            } else {
-                spawn_blocking_bounded("move_cursor", foreground_budget(0), move || {
-                    crate::input::send_move_xtest_desktop(xi, yi)
-                })
-                .await
-            };
+            let result = spawn_blocking_bounded("move_cursor", foreground_budget(0), move || {
+                // Only the Wayland routes read the input space.
+                let space = if wayland {
+                    crate::wayland::DesktopInputSpace::current()?
+                } else {
+                    crate::wayland::DesktopInputSpace::default()
+                };
+                crate::routes::routes().move_cursor_desktop(&space, (xi, yi))
+            })
+            .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Moved the real desktop pointer to ({xi}, {yi})."

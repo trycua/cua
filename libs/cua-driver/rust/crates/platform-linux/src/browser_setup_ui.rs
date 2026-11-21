@@ -16,6 +16,7 @@ use cua_driver_core::browser::{
 
 use crate::atspi::AtspiNode;
 use crate::interaction::{session_policy, with_target_foreground};
+use crate::routes::LinuxPointer as _;
 
 fn field_equals(node: &AtspiNode, expected: &str) -> bool {
     [
@@ -670,15 +671,24 @@ fn set_remote_debugging(
                             let center_y = y
                                 .checked_add(i32::try_from(height / 2)?)
                                 .ok_or_else(|| anyhow::anyhow!("checkbox center y overflowed"))?;
-                            if crate::desktop::desktop() != crate::desktop::Desktop::X11 {
-                                // AT-SPI screen bounds are layout coordinates, as in
-                                // browser_consent_ui's click_focused path, not
-                                // desktop-frame points, so no frame conversion applies.
-                                let space = crate::wayland::DesktopInputSpace::default();
-                                crate::wayland::click_desktop(&space, center_x, center_y, 1, 1)?;
-                            } else {
-                                crate::input::send_click_xtest_desktop(center_x, center_y, 1, 1)?;
-                            }
+                            // AT-SPI screen bounds are layout coordinates, as in
+                            // browser_consent_ui's click_focused path, not
+                            // desktop-frame points, so no frame conversion applies.
+                            // As there, any Wayland session, XWayland included,
+                            // takes the native Wayland routes.
+                            let desktop = match crate::desktop::desktop() {
+                                crate::desktop::Desktop::XWayland(compositor) => {
+                                    crate::desktop::Desktop::Wayland(compositor)
+                                }
+                                desktop => desktop,
+                            };
+                            crate::routes::LinuxRoutes::new(desktop).click_desktop(
+                                &crate::wayland::DesktopInputSpace::default(),
+                                (center_x, center_y),
+                                1,
+                                1,
+                                &[],
+                            )?;
                             Ok(true)
                         },
                     );

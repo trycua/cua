@@ -18,7 +18,6 @@
 //!    Application.Id.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc, OnceLock};
 use std::thread;
 use std::time::Duration;
@@ -280,7 +279,7 @@ where
     let Some(permit) = gate.try_acquire() else {
         return Err(UwpScanDeadlineError::Busy);
     };
-    let timed_out = permit.timeout_flag();
+    let deadline = permit.deadline();
 
     let (tx, rx) = mpsc::channel();
     let spawn = thread::Builder::new()
@@ -311,13 +310,10 @@ where
     match rx.recv_timeout(timeout) {
         Ok(result) => Ok(result),
         Err(mpsc::RecvTimeoutError::Timeout) => {
-            timed_out.store(true, Ordering::Release);
-            // Arm the cooldown here as well as when the permit drops. The
-            // worker can return in the narrow interval between `recv_timeout`
-            // expiring and observing `timed_out`; recording it on the caller
-            // side ensures that race cannot immediately launch another package
-            // query.
-            gate.arm_cooldown();
+            // Starts the cooldown even when the worker returned in the
+            // narrow interval after `recv_timeout` expired, so that race
+            // cannot immediately launch another package query.
+            deadline.expire();
             tracing::warn!(
                 target: "installed_apps",
                 "scan_uwp_packages: current-user WinRT query exceeded {}ms; returning Start Menu apps without UWP results. No additional package worker will start until this query returns",
@@ -625,7 +621,7 @@ fn read_install_mtime(pkg: &windows::ApplicationModel::Package) -> Option<String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Instant;
 
     #[test]

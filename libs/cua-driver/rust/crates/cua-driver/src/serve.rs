@@ -29,12 +29,11 @@ use std::sync::{Mutex, OnceLock};
 
 #[cfg(target_os = "windows")]
 use cua_driver_core::daemon::named_pipe_exists;
+pub use cua_driver_core::daemon::{
+    is_daemon_listening, send_request, DaemonRequest, DaemonResponse, ToolObservationOrigin,
+};
 use cua_driver_core::daemon::{probe_presence, DaemonPresence, ToolGate};
 use cua_driver_core::paths::AppPaths;
-pub use cua_driver_core::daemon::{
-    is_daemon_listening, send_request, DaemonRequest, DaemonResponse,
-    ToolObservationOrigin,
-};
 
 static ACTIVE_PROXY_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
@@ -2390,8 +2389,8 @@ mod named_pipe_authentication_tests {
 #[cfg(all(test, target_os = "windows"))]
 mod pipe_release_tests {
     use super::{
-        claim_daemon_lock, is_released, probe_presence, serve_claimed_socket,
-        serving_daemon, stop_daemon, AppPaths, DaemonPresence, StopOutcome,
+        claim_daemon_lock, is_released, probe_presence, serve_claimed_socket, serving_daemon,
+        stop_daemon, AppPaths, DaemonPresence, StopOutcome,
     };
     use std::time::Duration;
     use tokio::net::windows::named_pipe::ServerOptions;
@@ -2431,7 +2430,8 @@ mod pipe_release_tests {
             StopOutcome::StillStarting
         );
 
-        let lock = claim_daemon_lock(&AppPaths::pipe_lock_for(&pipe), &pipe, Duration::ZERO).unwrap();
+        let lock =
+            claim_daemon_lock(&AppPaths::pipe_lock_for(&pipe), &pipe, Duration::ZERO).unwrap();
         let probe = pipe.clone();
         assert_eq!(
             blocking(move || probe_presence(&probe)).await,
@@ -2473,7 +2473,8 @@ mod pipe_release_tests {
         );
         // The launch found nothing and claimed its lock; a lockless embedded
         // daemon then takes the name before the launch binds.
-        let lock = claim_daemon_lock(&AppPaths::pipe_lock_for(&pipe), &pipe, Duration::ZERO).unwrap();
+        let lock =
+            claim_daemon_lock(&AppPaths::pipe_lock_for(&pipe), &pipe, Duration::ZERO).unwrap();
         let _embedded = ServerOptions::new()
             .first_pipe_instance(true)
             .create(&pipe)
@@ -3179,9 +3180,9 @@ mod socket_tests {
 #[cfg(all(test, unix))]
 mod presence_tests {
     use super::{
-        claim_daemon_lock, claim_socket, is_released, probe_presence,
-        remove_stale_socket, run_serve, send_request, serve_claimed_socket, serving_daemon,
-        stop_daemon, AppPaths, DaemonPresence, DaemonRequest, StopOutcome, ToolGate,
+        claim_daemon_lock, claim_socket, is_released, probe_presence, remove_stale_socket,
+        run_serve, send_request, serve_claimed_socket, serving_daemon, stop_daemon, AppPaths,
+        DaemonPresence, DaemonRequest, StopOutcome, ToolGate,
     };
     use std::time::Duration;
 

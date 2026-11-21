@@ -2219,16 +2219,11 @@ fn post_to_posthog_with_timeout(payload: &Value, timeout: Duration) -> Result<u1
 }
 
 fn telemetry_home_dir() -> Option<PathBuf> {
-    if let Some(path) = crate::env_vars::var_os(ENV_TELEMETRY_HOME) {
-        return Some(PathBuf::from(path));
-    }
-    home_root().map(|home| home.join(crate::bundle::user_home_subdirectory()))
+    crate::bundle::app_paths().telemetry_dir
 }
 
 fn home_root() -> Option<PathBuf> {
-    crate::env_vars::var_os("HOME")
-        .or_else(|| crate::env_vars::var_os("USERPROFILE"))
-        .map(PathBuf::from)
+    crate::bundle::app_paths().user_home
 }
 
 fn config_path() -> Option<PathBuf> {

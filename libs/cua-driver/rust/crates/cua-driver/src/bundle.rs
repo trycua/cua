@@ -65,14 +65,6 @@ pub fn app_paths() -> AppPaths {
     AppPaths::from_env(state_namespace(), &crate::env_vars::var_os)
 }
 
-pub fn user_home_subdirectory() -> &'static str {
-    if is_local_installation() {
-        ".cua-driver-local"
-    } else {
-        ".cua-driver"
-    }
-}
-
 #[cfg(target_os = "windows")]
 pub fn autostart_task_name() -> &'static str {
     if is_local_installation() {

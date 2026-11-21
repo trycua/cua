@@ -566,11 +566,7 @@ fn is_enabled() -> bool {
 /// the `cua-driver config set` subcommand writes to. Returns `None` when
 /// the file is missing, unreadable, or doesn't have the key.
 fn read_config_flag() -> Option<bool> {
-    let home =
-        crate::env_vars::var_os("HOME").or_else(|| crate::env_vars::var_os("USERPROFILE"))?;
-    let path = PathBuf::from(home)
-        .join(crate::bundle::user_home_subdirectory())
-        .join("config.json");
+    let path = crate::bundle::app_paths().config_file?;
     let raw = std::fs::read_to_string(&path).ok()?;
     let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
     json.get("update_check_enabled").and_then(|v| v.as_bool())
@@ -684,17 +680,11 @@ fn write_cache(cache: &VersionCache) -> std::io::Result<()> {
 }
 
 fn home_root() -> Option<PathBuf> {
-    let home =
-        crate::env_vars::var_os("HOME").or_else(|| crate::env_vars::var_os("USERPROFILE"))?;
-    Some(PathBuf::from(home))
+    crate::bundle::app_paths().user_home
 }
 
 fn cache_path() -> Option<PathBuf> {
-    Some(
-        home_root()?
-            .join(crate::bundle::user_home_subdirectory())
-            .join(CACHE_FILE_NAME),
-    )
+    Some(crate::bundle::app_paths().home?.join(CACHE_FILE_NAME))
 }
 
 /// Pre-rename cache location. `None` for the source-build product, which
@@ -899,7 +889,7 @@ mod tests {
             })
             .unwrap();
             std::fs::write(
-                home.join(crate::bundle::user_home_subdirectory())
+                home.join(format!(".{}", crate::bundle::state_namespace()))
                     .join("release-channel"),
                 "invalid-channel\n",
             )
@@ -1058,7 +1048,7 @@ mod tests {
         with_isolated_home(|home| {
             write_cache(&VersionCache::default()).expect("write_cache");
             assert!(home
-                .join(crate::bundle::user_home_subdirectory())
+                .join(format!(".{}", crate::bundle::state_namespace()))
                 .join(CACHE_FILE_NAME)
                 .is_file());
             // The pre-rename home must not be re-created behind the
@@ -1082,7 +1072,7 @@ mod tests {
             assert_eq!(migrated.latest_version.as_deref(), Some("0.1.4"));
             assert_eq!(migrated.dismissed_versions, vec!["0.1.4".to_owned()]);
             assert!(home
-                .join(crate::bundle::user_home_subdirectory())
+                .join(format!(".{}", crate::bundle::state_namespace()))
                 .join(CACHE_FILE_NAME)
                 .is_file());
             assert!(!legacy_home.exists());
@@ -1118,7 +1108,7 @@ mod tests {
             // A regular file at the canonical home prevents parent-directory
             // creation, making migration fail deterministically on every platform.
             std::fs::write(
-                home.join(crate::bundle::user_home_subdirectory()),
+                home.join(format!(".{}", crate::bundle::state_namespace())),
                 "not a directory",
             )
             .unwrap();

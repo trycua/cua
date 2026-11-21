@@ -540,8 +540,8 @@ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Resul
 #[cfg(test)]
 mod tests {
     use super::{
-        current_daemon_metadata, DaemonClientKind, DaemonRequest,
-        DaemonResponse, ToolObservationOrigin, DAEMON_OVERHEAD_ALLOWANCE, REPLY_DEADLINE,
+        current_daemon_metadata, DaemonClientKind, DaemonRequest, DaemonResponse,
+        ToolObservationOrigin, DAEMON_OVERHEAD_ALLOWANCE, REPLY_DEADLINE,
     };
     use std::time::Duration;
 

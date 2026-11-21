@@ -254,6 +254,14 @@
      "type": "Path"
     },
     {
+     "default_value": null,
+     "help": "Shut down, as `stop` does, once the process with this PID exits.",
+     "is_optional": true,
+     "name": "owner-pid",
+     "short_name": null,
+     "type": "Number"
+    },
+    {
      "default_value": "standard",
      "help": "Immutable agent authorization mode: standard, bounded, or unrestricted.",
      "is_optional": true,

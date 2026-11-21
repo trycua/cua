@@ -173,6 +173,7 @@ fn assert_tools_list_schema_shape(mut d: RawDriver) {
         "get_browser_state",
         "browser_prepare",
         "browser_navigate",
+        "browser_new_tab",
         "browser_click",
         "browser_type",
     ] {
@@ -202,6 +203,7 @@ fn assert_tools_list_schema_shape(mut d: RawDriver) {
     for (name, required) in [
         ("browser_prepare", &[][..]),
         ("browser_navigate", &["target_id", "tab_id", "url"][..]),
+        ("browser_new_tab", &["target_id", "tab_id", "url"][..]),
         ("browser_click", &["target_id", "tab_id"][..]),
         ("browser_type", &["target_id", "tab_id", "ref", "text"][..]),
     ] {

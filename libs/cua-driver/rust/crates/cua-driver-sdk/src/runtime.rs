@@ -766,6 +766,7 @@ mod tests {
             "get_browser_state",
             "browser_prepare",
             "browser_navigate",
+            "browser_new_tab",
             "browser_click",
             "browser_type",
             "browser_dialog",

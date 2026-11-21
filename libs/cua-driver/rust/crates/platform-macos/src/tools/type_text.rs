@@ -1328,15 +1328,18 @@ fn cgevent_type_verified(
     // put the text into the field that did hold focus (Chrome's address bar),
     // and the target's unchanged read-back then asked for a retype or a
     // foreground retry that typed it there a second time.
-    crate::input::ax_actions::with_confirmed_key_focus(
-        element_ptr_and_idx.map(|(ptr, _)| ptr),
-        |ptr| {
-            let _ = crate::input::ax_actions::focus_element(ptr);
-            Ok(())
-        },
-        |ptr| crate::input::ax_actions::element_has_keyboard_focus(pid, ptr),
-        || Ok(()),
-    )?;
+    let confirm_key_focus = || {
+        crate::input::ax_actions::with_confirmed_key_focus(
+            element_ptr_and_idx.map(|(ptr, _)| ptr),
+            |ptr| {
+                let _ = crate::input::ax_actions::focus_element(ptr);
+                Ok(())
+            },
+            |ptr| crate::input::ax_actions::element_has_keyboard_focus(pid, ptr),
+            || Ok(()),
+        )
+    };
+    confirm_key_focus()?;
     // First-keystroke settle (foreground rung only — caller passes `settle_ms > 0`).
     // Even once the window is front and the element focused, the surface isn't
     // ready to accept input for a few tens of ms, so the FIRST synthesized
@@ -1345,6 +1348,8 @@ fn cgevent_type_verified(
     // sites pass 0 — they have no front transition and must not pay this latency.
     if settle_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
+        // AppKit can install another first responder during the settle.
+        confirm_key_focus()?;
     }
     crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)?;
     let batched = delay_ms == 0;

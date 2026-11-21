@@ -1190,7 +1190,7 @@ dependencies = [
 
 [[package]]
 name = "cua-agent-setup"
-version = "0.30.1"
+version = "0.31.0"
 dependencies = [
  "base64",
  "chrono",
@@ -1412,7 +1412,7 @@ dependencies = [
 
 [[package]]
 name = "cua-home"
-version = "0.30.1"
+version = "0.31.0"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -1435,7 +1435,7 @@ dependencies = [
 
 [[package]]
 name = "cua-telemetry"
-version = "0.30.1"
+version = "0.31.0"
 dependencies = [
  "hex",
  "rand 0.9.5",

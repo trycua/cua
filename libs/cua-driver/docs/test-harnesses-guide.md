@@ -73,8 +73,9 @@ and backend provenance; an X11 run does not establish native Hyprland coverage.
 Environment failures and failed cells remain failures, not permission to skip
 tests or change expected results. In the same desktop, also run
 `cargo test -p cua-driver-e2e --test hyprland_foreground_test -- --ignored --test-threads=1`
-and the same command for `hyprland_native_observation_test`. No automated lane
-runs these foreground-safety and exact-identity rows, so
+and the same command for `hyprland_native_observation_test` and
+`hyprland_element_reveal_test`. No automated lane runs these foreground-safety,
+exact-identity and cursor-reveal rows, so
 `tests/manual-e2e-allowlist.txt` records them as a manual native-Hyprland gate.
 
 Before launching the native Hyprland harness, apply this map-time rule in the

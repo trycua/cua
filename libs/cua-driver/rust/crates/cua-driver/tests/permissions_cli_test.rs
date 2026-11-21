@@ -22,5 +22,8 @@ fn permissions_unknown_subcommand_is_a_usage_error() {
         stderr.contains("unknown permissions subcommand 'bogus'"),
         "stderr={stderr}"
     );
-    assert!(stderr.contains("Valid: status, grant, vnc."), "stderr={stderr}");
+    assert!(
+        stderr.contains("Valid: status, grant, vnc."),
+        "stderr={stderr}"
+    );
 }

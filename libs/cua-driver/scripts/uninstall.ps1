@@ -497,7 +497,13 @@ foreach ($skillLink in $OwnedSkillJunctions) {
         continue
     }
     if (-not (Test-IsReparsePoint $skillLink)) {
-        Write-Step "$skillLink is a real directory (not a reparse point) - skipping"
+        $marker = Join-Path $skillLink ".cua-driver-managed"
+        if (Test-Path -LiteralPath $marker) {
+            Remove-Item -LiteralPath $skillLink -Force -Recurse -ErrorAction SilentlyContinue
+            Write-Step "removed managed skill copy $skillLink"
+            continue
+        }
+        Write-Step "$skillLink is a real directory (not a reparse point or managed copy) - skipping"
         continue
     }
     $targetProperty = (Get-Item -LiteralPath $skillLink -Force).PSObject.Properties['Target']

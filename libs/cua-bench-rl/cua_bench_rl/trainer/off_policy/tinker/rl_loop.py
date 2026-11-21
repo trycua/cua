@@ -67,7 +67,7 @@ class TrainingConfig:
     # setup, agent and evaluation; None leaves cb's default.
     variant_timeout: Optional[float] = None
     # Bound on the whole `cb run` subprocess (SIGTERM, then SIGKILL after
-    # 60 s); the run directory is still returned so finished variants are
+    # 360 s); the run directory is still returned so finished variants are
     # kept. None waits on cb indefinitely.
     run_timeout: Optional[float] = None
 

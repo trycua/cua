@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -170,8 +171,16 @@ async def open_sandbox(
     target: Target,
     *,
     on_progress: Optional[ProgressFn] = None,
+    release_timeout_s: Optional[float] = None,
 ) -> AsyncIterator[Any]:
     """Yield a connected sandbox for ``spec``; release it on exit."""
+    if release_timeout_s is None:
+        release_limit = float(TIME_TO_RELEASE_S)
+    else:
+        release_limit = float(release_timeout_s)
+        if not math.isfinite(release_limit) or release_limit < 0:
+            raise ValueError("release_timeout_s must be a finite number, 0 or more")
+
     image_cls, sandbox_cls = _sdk()
 
     if target.on == "cloud":
@@ -181,35 +190,43 @@ async def open_sandbox(
         raise CloudEnded()
     image = build_image(spec, image_cls)
     kwargs = ephemeral_kwargs(spec, target)
+    if release_limit <= 0:
+        async with sandbox_cls.ephemeral(image, **kwargs) as sb:
+            yield sb
+        if on_progress is not None:
+            on_progress(Progress(stage="release", message="sandbox released"))
+        return
+
     ephemeral = sandbox_cls.ephemeral(image, **kwargs)
     sb = await ephemeral.__aenter__()
     try:
         yield sb
     except BaseException as exc:
-        await _release(ephemeral, type(exc), exc, exc.__traceback__)
-        raise
+        _, suppressed = await _release(ephemeral, release_limit, type(exc), exc, exc.__traceback__)
+        if not suppressed:
+            raise
     else:
-        released = await _release(ephemeral, None, None, None)
+        released, _ = await _release(ephemeral, release_limit, None, None, None)
         if released and on_progress is not None:
             on_progress(Progress(stage="release", message="sandbox released"))
 
 
-async def _release(ephemeral: Any, *exc_info: Any) -> bool:
-    """Exit ``ephemeral`` under the release bound. A wedged release logs a
-    warning and returns False so the batch proceeds (the sandbox may leak);
-    any other failure propagates."""
+async def _release(ephemeral: Any, timeout_s: float, *exc_info: Any) -> tuple[bool, bool]:
+    """Exit ``ephemeral`` under ``timeout_s``. A wedged release logs a
+    warning and returns ``(False, False)`` so the batch proceeds (the
+    sandbox may leak); any other failure propagates."""
     try:
-        async with asyncio.timeout(TIME_TO_RELEASE_S) as deadline:
-            await ephemeral.__aexit__(*exc_info)
+        async with asyncio.timeout(timeout_s) as deadline:
+            suppressed = bool(await ephemeral.__aexit__(*exc_info))
     except TimeoutError:
         if not deadline.expired():
             raise
         logger.warning(
             "sandbox release did not finish within %ss; the sandbox may leak",
-            TIME_TO_RELEASE_S,
+            timeout_s,
         )
-        return False
-    return True
+        return False, False
+    return True, suppressed
 
 
 # ── Errors worth explaining ────────────────────────────────────────────────

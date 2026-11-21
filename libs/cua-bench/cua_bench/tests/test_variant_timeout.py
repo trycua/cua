@@ -323,3 +323,148 @@ async def test_aexit_gets_the_real_in_flight_exception(monkeypatch, tmp_path):
         async with sandboxes.open_sandbox(spec, Target(on="local")):
             raise ValueError("body")
     assert seen[-1][0] is ValueError
+
+
+async def test_open_sandbox_zero_release_timeout_waits_for_slow_release(monkeypatch, caplog):
+    """``release_timeout_s=0`` restores the unbounded ``async with`` cleanup path."""
+    released = False
+
+    class SlowRelease:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *exc_info):
+            nonlocal released
+            await asyncio.sleep(0.15)
+            released = True
+            return None
+
+    class Sandbox:
+        @classmethod
+        def ephemeral(cls, image=None, **kwargs):
+            return SlowRelease()
+
+    monkeypatch.setattr(sandboxes, "_sdk", lambda: (fakes.FakeImage, Sandbox))
+    monkeypatch.setattr(sandboxes, "TIME_TO_RELEASE_S", 0.05)
+    progress = []
+    spec = EnvSpec(provider="native", os_type="linux", kind="container", image=IMG)
+
+    with caplog.at_level(logging.WARNING, sandboxes.logger.name):
+        async with sandboxes.open_sandbox(
+            spec, Target(on="local"), on_progress=progress.append, release_timeout_s=0
+        ):
+            pass
+
+    assert released is True
+    assert "may leak" not in caplog.text
+    assert any("released" in getattr(p, "message", "") for p in progress)
+
+
+@pytest.mark.parametrize("bad", [-1, float("nan"), float("inf")])
+async def test_open_sandbox_rejects_negative_or_nonfinite_release_timeout(bad):
+    spec = EnvSpec(provider="native", os_type="linux", kind="container", image=IMG)
+    with pytest.raises(ValueError, match="release_timeout_s"):
+        async with sandboxes.open_sandbox(spec, Target(on="local"), release_timeout_s=bad):
+            pass
+
+
+async def test_zero_variant_timeout_restores_unbounded_sandbox_cleanup(
+    monkeypatch, task_dir, tmp_path, caplog
+):
+    """``variant_timeout_s=0`` disables the release bound too, not just the episode deadline."""
+    released = False
+    base = FakeSDK()
+
+    class SlowReleaseEphemeral:
+        def __init__(self, inner):
+            self._inner = inner
+
+        async def __aenter__(self):
+            return await self._inner.__aenter__()
+
+        async def __aexit__(self, *exc_info):
+            nonlocal released
+            await asyncio.sleep(0.15)
+            released = True
+            return await self._inner.__aexit__(*exc_info)
+
+    class SlowSandbox:
+        @classmethod
+        def ephemeral(cls, image=None, **kwargs):
+            return SlowReleaseEphemeral(base.Sandbox.ephemeral(image, **kwargs))
+
+    monkeypatch.setattr(sandboxes, "_sdk", lambda: (fakes.FakeImage, SlowSandbox))
+    monkeypatch.setattr(sandboxes, "TIME_TO_RELEASE_S", 0.05)
+
+    runner = BatchRunner(
+        Target(on="local", concurrency=1), AgentOptions(oracle=True), variant_timeout_s=0
+    )
+    with caplog.at_level(logging.WARNING, sandboxes.logger.name):
+        results = await asyncio.wait_for(
+            runner.run(_jobs(task_dir, tmp_path / "out", n=1)), timeout=30
+        )
+
+    assert results[0].status == "completed"
+    assert released is True
+    assert base.live == 0 and base.released == 1
+    assert "may leak" not in caplog.text
+
+
+async def test_zero_variant_timeout_cancels_with_unbounded_sandbox_cleanup(
+    monkeypatch, task_dir, tmp_path, caplog
+):
+    """Cancelling a ``variant_timeout_s=0`` run still waits for slow sandbox cleanup."""
+    released = False
+    in_shell = asyncio.Event()
+    base = FakeSDK()
+    original_run = fakes.FakeShell.run
+
+    async def run(self, command, timeout=None, background=False):
+        if "sleep 100000" in command:
+            in_shell.set()
+            await asyncio.Event().wait()
+        return await original_run(self, command, timeout=timeout, background=background)
+
+    class SlowReleaseEphemeral:
+        def __init__(self, inner):
+            self._inner = inner
+
+        async def __aenter__(self):
+            return await self._inner.__aenter__()
+
+        async def __aexit__(self, *exc_info):
+            nonlocal released
+            await asyncio.sleep(0.15)
+            released = True
+            return await self._inner.__aexit__(*exc_info)
+
+    class SlowSandbox:
+        @classmethod
+        def ephemeral(cls, image=None, **kwargs):
+            return SlowReleaseEphemeral(base.Sandbox.ephemeral(image, **kwargs))
+
+    monkeypatch.setattr(fakes.FakeShell, "run", run)
+    monkeypatch.setattr(sandboxes, "_sdk", lambda: (fakes.FakeImage, SlowSandbox))
+    monkeypatch.setattr(sandboxes, "TIME_TO_RELEASE_S", 0.05)
+
+    spec = EnvSpec(provider="native", os_type="linux", kind="container", image=IMG)
+    job = Job(
+        task_path=task_dir,
+        variant=1,
+        spec=spec,
+        session_id="s1",
+        output_dir=tmp_path / "out" / "hang_env_v1",
+    )
+    runner = BatchRunner(
+        Target(on="local", concurrency=1), AgentOptions(oracle=True), variant_timeout_s=0
+    )
+    with caplog.at_level(logging.WARNING, sandboxes.logger.name):
+        task = asyncio.create_task(runner.run([job]))
+        await asyncio.wait_for(in_shell.wait(), timeout=10)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=10)
+
+    assert released is True
+    assert base.live == 0 and base.released == 1
+    assert "may leak" not in caplog.text

@@ -48,8 +48,9 @@ class Job:
 RESULT_SCHEMA_VERSION = 2
 
 #: Default bound on one variant's setup, agent and evaluation (``0`` runs
-#: unbounded). 10 800 s covers the worst adapter phase envelope
-#: (setup 1800 + oracle 3600 + evaluate 1800 = 7200, plus slack); a larger
+#: unbounded). 10 800 s sits above the worst adapter phase envelope
+#: (desktop wait 60 + server health 300 + setup 1800 + oracle 3600 +
+#: evaluate 1800 + pause/screenshots 42 = 7602 s, plus slack); a larger
 #: ``CUA_BENCH_HARNESS_TIMEOUT`` (the harness agent's turn budget, default
 #: 1800) raises the default to budget + 5400 so the deadline never cuts off
 #: a healthy run.
@@ -304,10 +305,10 @@ class BatchRunner:
         self._status(job, "starting")
 
         #: Bound on setup, agent and evaluation (not sandbox start, which
-        #: ``--retries`` covers). Created unarmed so ``expired()`` is always
-        #: safe to call below; armed on entry, so sandbox start and
-        #: ``_env_factory`` never count against it. ``0`` stays unarmed.
-        deadline = asyncio.timeout(None)
+        #: ``--retries`` covers). Armed on entry so sandbox start and
+        #: ``_env_factory`` never count against it. ``0`` skips both the
+        #: episode deadline and the sandbox release bound.
+        deadline = asyncio.timeout(None) if self.variant_timeout_s > 0 else None
 
         opener, attach = self._opener, self._attach
         if not spec.needs_sandbox:
@@ -317,13 +318,17 @@ class BatchRunner:
             print(f"[sandbox] {event.stage}: {event.message}")
             self.reporter.progress(job, event)
 
+        opener_kwargs: dict[str, Any] = {"on_progress": on_progress}
+        if self.variant_timeout_s == 0 and opener is open_sandbox:
+            opener_kwargs["release_timeout_s"] = 0
+
         with task_log(job.output_dir / "run.log"):
             print(f"== {job.name} on {target.on} ({result.backend}) ==")
             print(f"Image: {spec.image_label}")
             try:
                 env = self._env_factory(str(job.task_path))
                 result._setup_started = _now_utc()  # type: ignore[attr-defined]
-                async with opener(spec, target, on_progress=on_progress) as sandbox:
+                async with opener(spec, target, **opener_kwargs) as sandbox:
                     result.sandbox = _sandbox_ref(sandbox)
                     facts = image_facts(sandbox, spec)
                     for key, value in facts.items():
@@ -338,11 +343,15 @@ class BatchRunner:
                     )
                     session = attach(sandbox, spec)
                     try:
-                        async with deadline:
-                            if self.variant_timeout_s > 0:
+                        if deadline is not None:
+                            async with deadline:
                                 deadline.reschedule(
                                     asyncio.get_running_loop().time() + self.variant_timeout_s
                                 )
+                                episode = await run_episode(
+                                    env, job.variant, self.opts, job.output_dir, session=session
+                                )
+                        else:
                             episode = await run_episode(
                                 env, job.variant, self.opts, job.output_dir, session=session
                             )
@@ -364,7 +373,7 @@ class BatchRunner:
                 self._finish(job, result, started)
                 raise
             except Exception as error:  # noqa: BLE001 - one variant never stops the batch
-                if isinstance(error, TimeoutError) and deadline.expired():
+                if deadline is not None and isinstance(error, TimeoutError) and deadline.expired():
                     result.error = f"variant timed out after {self.variant_timeout_s:g} s"
                     # A hung variant is not an infrastructure failure: no retry.
                     result._retryable = False  # type: ignore[attr-defined]

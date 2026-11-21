@@ -25,6 +25,11 @@ pub struct DaemonMetadata {
     pub embedded: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub host_bundle_id: Option<String>,
+    /// The daemon answers, but refuses every tool call with
+    /// `permissions_pending` until the macOS grants arrive. Older daemons
+    /// omit it.
+    #[serde(default)]
+    pub permissions_pending: bool,
 }
 
 pub fn current_daemon_metadata() -> DaemonMetadata {
@@ -39,6 +44,7 @@ pub fn current_daemon_metadata() -> DaemonMetadata {
         host_bundle_id: std::env::var(crate::HOST_BUNDLE_ID_ENV)
             .ok()
             .filter(|value| !value.is_empty()),
+        permissions_pending: false,
     }
 }
 
@@ -174,19 +180,7 @@ pub fn socket_path_for_namespace(namespace: &str) -> String {
 pub fn is_daemon_listening(socket_path: &str) -> bool {
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::ffi::OsStrExt;
-
-        #[link(name = "kernel32")]
-        extern "system" {
-            fn WaitNamedPipeW(lp_named_pipe_name: *const u16, timeout_ms: u32) -> i32;
-        }
-
-        let wide: Vec<u16> = std::ffi::OsStr::new(socket_path)
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-        // NMPWAIT_NOWAIT == 1.
-        unsafe { WaitNamedPipeW(wide.as_ptr(), 1) != 0 }
+        wait_named_pipe(socket_path).is_ok()
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -202,6 +196,258 @@ pub fn is_daemon_listening(socket_path: &str) -> bool {
             .ok()
             .is_some_and(|response| response.ok)
     }
+}
+
+/// Whether any instance of the named pipe `socket_path` exists, free or busy.
+/// A named pipe vanishes with its last server instance, so this stays true
+/// while a daemon still holds its pipe, even when every instance is taken.
+#[cfg(target_os = "windows")]
+pub fn named_pipe_exists(socket_path: &str) -> bool {
+    const ERROR_FILE_NOT_FOUND: i32 = 2;
+    match wait_named_pipe(socket_path) {
+        Ok(()) => true,
+        Err(error) => error.raw_os_error() != Some(ERROR_FILE_NOT_FOUND),
+    }
+}
+
+/// `WaitNamedPipeW` without waiting: `Ok` when an instance is free to
+/// connect, without consuming it.
+#[cfg(target_os = "windows")]
+fn wait_named_pipe(socket_path: &str) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn WaitNamedPipeW(lp_named_pipe_name: *const u16, timeout_ms: u32) -> i32;
+    }
+
+    let wide: Vec<u16> = std::ffi::OsStr::new(socket_path)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    // NMPWAIT_NOWAIT == 1.
+    if unsafe { WaitNamedPipeW(wide.as_ptr(), 1) } != 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+/// One connection attempt to the Unix socket at `socket_path` that never
+/// waits. A listener whose accept queue is full answers `WouldBlock` rather
+/// than holding the caller, as a blocking connect does on Linux. The stream it
+/// returns is blocking.
+#[cfg(unix)]
+pub fn try_connect_unix(socket_path: &str) -> std::io::Result<std::os::unix::net::UnixStream> {
+    use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
+
+    let path = socket_path.as_bytes();
+    // SAFETY: an all-zero sockaddr_un is a valid empty address.
+    let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    if path.len() >= address.sun_path.len() {
+        return Err(std::io::Error::from_raw_os_error(libc::ENAMETOOLONG));
+    }
+    address.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    for (slot, byte) in address.sun_path.iter_mut().zip(path) {
+        *slot = libc::c_char::from_ne_bytes([*byte]);
+    }
+    // SAFETY: plain socket creation; the descriptor is owned right away.
+    let raw = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0) };
+    if raw < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `raw` is a fresh descriptor nothing else owns.
+    let socket = unsafe { OwnedFd::from_raw_fd(raw) };
+    // SAFETY: fcntl on a descriptor this function owns.
+    let ready = unsafe {
+        libc::fcntl(raw, libc::F_SETFD, libc::FD_CLOEXEC) == 0
+            && libc::fcntl(raw, libc::F_SETFL, libc::O_NONBLOCK) == 0
+    };
+    if !ready {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `address` is a valid, NUL-terminated sockaddr_un of the length
+    // passed.
+    let connected = unsafe {
+        libc::connect(
+            socket.as_raw_fd(),
+            (&address as *const libc::sockaddr_un).cast(),
+            std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t,
+        )
+    };
+    if connected != 0 {
+        let error = std::io::Error::last_os_error();
+        return Err(match error.raw_os_error() {
+            Some(libc::EAGAIN | libc::EINPROGRESS) => std::io::ErrorKind::WouldBlock.into(),
+            _ => error,
+        });
+    }
+    let stream = std::os::unix::net::UnixStream::from(socket);
+    stream.set_nonblocking(false)?;
+    Ok(stream)
+}
+
+/// Connect to the Unix socket at `socket_path`, waiting at most `deadline`
+/// for room in a full accept queue.
+#[cfg(unix)]
+pub fn connect_unix_within(
+    socket_path: &str,
+    deadline: Duration,
+) -> std::io::Result<std::os::unix::net::UnixStream> {
+    let started = std::time::Instant::now();
+    loop {
+        match try_connect_unix(socket_path) {
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock
+                    && started.elapsed() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            result => return result,
+        }
+    }
+}
+
+/// Whether a serving daemon runs tool calls yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolGate {
+    Open,
+    /// Every tool call returns `permissions_pending` (macOS, before the
+    /// Accessibility and Screen Recording grants arrive).
+    PermissionsPending,
+}
+
+/// Who holds a daemon socket path, read by [`probe_presence`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DaemonPresence {
+    /// Nothing answers, nothing holds the lock, and no socket file is left.
+    Absent,
+    /// Nothing answers or holds the lock, but a dead daemon left its socket
+    /// file. The next launch clears it. A path that is not a socket is never
+    /// stale.
+    Stale { socket_file: std::path::PathBuf },
+    /// A process holds the daemon lock without answering: a launch that has
+    /// not started serving yet, or a daemon finishing its shutdown.
+    Starting { lock_held: std::path::PathBuf },
+    /// A daemon answers on the socket.
+    Serving { pid: u32, gate: ToolGate },
+}
+
+/// How long [`probe_presence`] waits for an answer. A daemon that has bound
+/// its socket but not yet started accepting reads as `Starting`.
+const PRESENCE_REPLY_DEADLINE: Duration = Duration::from_secs(2);
+
+/// The lock a standalone daemon holds on `socket_path` from launch until it
+/// exits. The kernel drops it when the daemon dies.
+pub fn daemon_lock_path(socket_path: &str) -> std::path::PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        // `%LOCALAPPDATA%` stays the same across a user's sessions where
+        // `%TEMP%` may not. The file name is a fixed-length digest of the
+        // uppercased name, because Windows compares pipe names
+        // case-insensitively and a name can outgrow a path component.
+        use sha2::Digest as _;
+        let base = std::env::var_os("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        let digest = sha2::Sha256::digest(socket_path.to_uppercase().as_bytes());
+        base.join("cua-driver-pipe-locks")
+            .join(format!("{digest:x}.lock"))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::path::PathBuf::from(format!("{socket_path}.lock"))
+    }
+}
+
+/// Read the daemon's presence on `socket_path` from its answer, its lock and
+/// its socket file together. The lock is tried and released at once, never
+/// held, so a launch waiting on it is delayed by an instant at most.
+pub fn probe_presence(socket_path: &str) -> DaemonPresence {
+    if let Some(metadata) = probe_metadata(socket_path) {
+        return DaemonPresence::Serving {
+            pid: metadata.pid,
+            gate: if metadata.permissions_pending {
+                ToolGate::PermissionsPending
+            } else {
+                ToolGate::Open
+            },
+        };
+    }
+    let lock_path = daemon_lock_path(socket_path);
+    if lock_is_held(&lock_path) {
+        return DaemonPresence::Starting {
+            lock_held: lock_path,
+        };
+    }
+    // A named pipe vanishes with its last server, so only Unix leaves a file.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt as _;
+        if std::fs::symlink_metadata(socket_path)
+            .is_ok_and(|metadata| metadata.file_type().is_socket())
+        {
+            return DaemonPresence::Stale {
+                socket_file: socket_path.into(),
+            };
+        }
+    }
+    DaemonPresence::Absent
+}
+
+fn probe_metadata(socket_path: &str) -> Option<DaemonMetadata> {
+    let request = DaemonRequest {
+        method: "metadata".into(),
+        name: None,
+        args: None,
+        session_id: None,
+        observation_origin: None,
+        client_kind: None,
+    };
+    #[cfg(unix)]
+    let response = exchange(
+        socket_path,
+        &request,
+        PRESENCE_REPLY_DEADLINE,
+        Some(PRESENCE_REPLY_DEADLINE),
+    )
+    .ok()?;
+    #[cfg(not(unix))]
+    let response = {
+        // Opening a pipe that has no instance retries for seconds, so check
+        // for one first without consuming it.
+        if !is_daemon_listening(socket_path) {
+            return None;
+        }
+        // The pipe client has no read timeout, so wait for it on a thread
+        // that is left behind if the daemon never answers.
+        let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+        let socket_path = socket_path.to_owned();
+        std::thread::spawn(move || {
+            let _ = reply_tx.send(send_request(&socket_path, &request));
+        });
+        reply_rx.recv_timeout(PRESENCE_REPLY_DEADLINE).ok()?.ok()?
+    };
+    if !response.ok {
+        return None;
+    }
+    serde_json::from_value(response.result?).ok()
+}
+
+/// Only a regular file counts as a lock. On Unix the file opens without
+/// blocking, so a FIFO left at the lock path cannot hang the probe.
+fn lock_is_held(lock_path: &std::path::Path) -> bool {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK);
+    let Ok(lock) = options.open(lock_path) else {
+        return false;
+    };
+    if !lock.metadata().is_ok_and(|metadata| metadata.is_file()) {
+        return false;
+    }
+    matches!(lock.try_lock(), Err(std::fs::TryLockError::WouldBlock))
 }
 
 /// Room left for the daemon to accept the connection, parse the request, run
@@ -221,14 +467,30 @@ pub const REPLY_DEADLINE: Duration = Duration::from_millis(crate::tool_schema::T
 /// slow accessibility walks and large screenshots are supported.
 #[cfg(unix)]
 pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
+    exchange(socket_path, request, REPLY_DEADLINE, None)
+}
+
+/// One request and its reply. With `connect_within`, the connection itself is
+/// bounded too: a listener whose accept queue is full would otherwise hold a
+/// blocking connect on Linux indefinitely.
+#[cfg(unix)]
+fn exchange(
+    socket_path: &str,
+    request: &DaemonRequest,
+    reply_deadline: Duration,
+    connect_within: Option<Duration>,
+) -> anyhow::Result<DaemonResponse> {
     use std::io::Read;
     use std::os::unix::net::UnixStream;
     use std::time::Instant;
 
     const READ_POLL: Duration = Duration::from_secs(10);
 
-    let mut stream = UnixStream::connect(socket_path)
-        .map_err(|error| anyhow::anyhow!("connect to {socket_path}: {error}"))?;
+    let mut stream = match connect_within {
+        Some(deadline) => connect_unix_within(socket_path, deadline),
+        None => UnixStream::connect(socket_path),
+    }
+    .map_err(|error| anyhow::anyhow!("connect to {socket_path}: {error}"))?;
     // macOS rejects setsockopt with EINVAL once the peer has closed its end,
     // even when the peer's reply is still buffered for us to read. Treat that
     // as "peer already gone": the read below still drains buffered data and
@@ -237,20 +499,20 @@ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Resul
 
     let mut writer = stream.try_clone()?;
     let line = serde_json::to_string(request)? + "\n";
-    let write_deadline = Instant::now() + REPLY_DEADLINE;
+    let write_deadline = Instant::now() + reply_deadline;
     crate::socket_io::write_all_with_retry(&mut writer, line.as_bytes(), write_deadline)?;
 
-    let reply_deadline = Instant::now() + REPLY_DEADLINE;
+    let reply_by = Instant::now() + reply_deadline;
     let mut buffer = Vec::with_capacity(64 * 1024);
     let mut chunk = [0_u8; 64 * 1024];
     let response_line = loop {
         if let Some(newline) = buffer.iter().position(|&byte| byte == b'\n') {
             break String::from_utf8_lossy(&buffer[..newline]).into_owned();
         }
-        let remaining = reply_deadline.saturating_duration_since(Instant::now());
+        let remaining = reply_by.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             anyhow::bail!(
-                "timed out after {REPLY_DEADLINE:?} waiting for daemon response (received {} bytes so far); \
+                "timed out after {reply_deadline:?} waiting for daemon response (received {} bytes so far); \
                  the daemon may still be running the request",
                 buffer.len()
             );
@@ -411,5 +673,13 @@ mod tests {
             metadata.mcp_protocol_version,
             cua_driver_contract::MCP_PROTOCOL_VERSION
         );
+    }
+
+    #[test]
+    fn metadata_from_a_daemon_without_a_gate_reads_as_open() {
+        let mut older = serde_json::to_value(current_daemon_metadata()).unwrap();
+        older.as_object_mut().unwrap().remove("permissions_pending");
+        let metadata: super::DaemonMetadata = serde_json::from_value(older).unwrap();
+        assert!(!metadata.permissions_pending);
     }
 }

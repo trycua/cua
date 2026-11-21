@@ -4,8 +4,8 @@
 //! Generic staging `ext-foreign-toplevel-list-v1` window enumeration.
 //!
 //! Each window_id stands for one toplevel `identifier`, which the protocol
-//! keeps unique and stable across clients. [`identifier_for`] maps it back,
-//! so [`super::ext_screencopy::screenshot_toplevel`] can copy that exact
+//! keeps unique and stable across clients. [`capture_identifier`] maps it
+//! back, so [`super::ext_screencopy::screenshot_toplevel`] can copy that exact
 //! toplevel on a connection of its own.
 
 use std::collections::{HashMap, HashSet};
@@ -207,9 +207,29 @@ fn stable_id(identifier: &str, reserved: &HashSet<u64>) -> anyhow::Result<u64> {
         .id_for(identifier, reserved)
 }
 
-/// The ext toplevel `identifier` a window_id from this module stands for.
-pub fn identifier_for(id: u64) -> Option<String> {
-    id_registry().lock().ok()?.identifier(id)
+/// The ext toplevel `identifier` a capture of window `id` copies, or `None`
+/// when this module did not issue `id`. An AT-SPI window whose pid appeared
+/// after the id was issued can hold the same number, and listing fallbacks
+/// may return that window, so the capture is refused rather than hand it
+/// the toplevel's pixels.
+pub fn capture_identifier(id: u64) -> Option<anyhow::Result<String>> {
+    let identifier = id_registry().lock().ok()?.identifier(id)?;
+    Some(unshared_identifier(
+        id,
+        identifier,
+        &crate::atspi::list_windows(None),
+    ))
+}
+
+fn unshared_identifier(
+    id: u64,
+    identifier: String,
+    atspi: &[WindowInfo],
+) -> anyhow::Result<String> {
+    if atspi.iter().any(|window| window.xid == id) {
+        anyhow::bail!("an AT-SPI window holds the same window_id as ext toplevel {identifier:?}");
+    }
+    Ok(identifier)
 }
 
 /// Enumerate ext toplevels and enrich them with AT-SPI pid and geometry data.
@@ -602,6 +622,30 @@ mod tests {
                 .id_for("opaque-a", &HashSet::from([atspi_id]))
                 .unwrap(),
             atspi_id + 1
+        );
+    }
+
+    #[test]
+    fn capture_refuses_an_id_an_atspi_window_also_holds() {
+        let id = crate::atspi::native::accessibility_window_id(0xF000, 0);
+        let error = unshared_identifier(
+            id,
+            "opaque-a".to_owned(),
+            &[atspi(id, 0xF000, "Unrelated", "org.unrelated", 10)],
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "an AT-SPI window holds the same window_id as ext toplevel \"opaque-a\""
+        );
+        assert_eq!(
+            unshared_identifier(
+                id,
+                "opaque-a".to_owned(),
+                &[atspi(12, 202, "Other", "org.other", 10)],
+            )
+            .unwrap(),
+            "opaque-a"
         );
     }
 

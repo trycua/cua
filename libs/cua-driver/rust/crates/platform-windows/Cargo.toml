@@ -27,7 +27,7 @@ tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 clipboard-rs = "0.3.5"
 cua-driver-core = { path = "../cua-driver-core", features = ["keyring"] }
 image = { workspace = true }
-windows = { version = "0.58", features = [
+windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_UI_Accessibility",
     "Win32_UI_WindowsAndMessaging",
@@ -58,6 +58,9 @@ windows = { version = "0.58", features = [
     # token an elevated Driver uses to run isolated browsers.
     "Win32_Security_AppLocker",
     "Win32_System_Com",
+    # VARIANT and the UIA/MSAA methods that take or return it.
+    "Win32_System_Ole",
+    "Win32_System_Variant",
     "Win32_Storage_Xps",
     "Win32_Storage_FileSystem",
     "Win32_UI_Shell",

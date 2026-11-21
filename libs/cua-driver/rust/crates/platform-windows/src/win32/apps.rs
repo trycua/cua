@@ -76,14 +76,14 @@ pub fn process_package_identity(pid: u32) -> PackageIdentity {
         let mut family = [0_u16; 128];
         let mut family_len = family.len() as u32;
         let family_name =
-            (GetPackageFamilyName(process, &mut family_len, PWSTR(family.as_mut_ptr()))
+            (GetPackageFamilyName(process, &mut family_len, Some(PWSTR(family.as_mut_ptr())))
                 == ERROR_SUCCESS)
                 .then(|| decode_wstr(&family))
                 .filter(|value| !value.is_empty());
         let mut aumid = [0_u16; 256];
         let mut aumid_len = aumid.len() as u32;
         let app_user_model_id =
-            (GetApplicationUserModelId(process, &mut aumid_len, PWSTR(aumid.as_mut_ptr()))
+            (GetApplicationUserModelId(process, &mut aumid_len, Some(PWSTR(aumid.as_mut_ptr())))
                 == ERROR_SUCCESS)
                 .then(|| decode_wstr(&aumid))
                 .filter(|value| !value.is_empty());

@@ -674,6 +674,24 @@ fn an_unpressed_browser_key_reads_the_page_before_pressing_again() {
 }
 
 #[test]
+fn an_unacknowledged_browser_key_is_checked_before_pressing_again() {
+    let hint = hint_for(
+        "browser_press_key",
+        &seed(json!({"target_id": "t", "tab_id": "x"})),
+        false,
+        json!({"status": "refused", "refusal": {
+            "code": "browser_input_incomplete",
+            "message": "m",
+            "detail": {"pressed": "unknown", "delivery": "unknown"},
+        }}),
+    );
+    assert_eq!(
+        hint.hint,
+        "The key may have reached the page. Read the page with get_browser_state to see whether it took effect before pressing it again."
+    );
+}
+
+#[test]
 fn unverifiable_actions_read_what_changed() {
     let seed = window_seed();
     let read_changes = json!({

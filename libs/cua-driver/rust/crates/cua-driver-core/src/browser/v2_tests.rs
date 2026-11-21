@@ -65,7 +65,11 @@ pub(super) struct FixtureState {
     completed_key_pairs: usize,
     /// Fail the `Input.dispatchKeyEvent` call at this zero-based index.
     fail_key_event_at: Option<usize>,
+    /// The `Input.dispatchKeyEvent` call at this index opens a confirm()
+    /// dialog and is never answered.
+    key_event_opens_dialog_at: Option<usize>,
     key_events: usize,
+    focus_emulation_enable_fails: bool,
     /// A synthetic `this.click()` opens a confirm() dialog: the mock emits
     /// `Page.javascriptDialogOpening` and never answers the call.
     click_opens_dialog: bool,
@@ -182,7 +186,9 @@ impl Default for FixtureState {
             fail_key_down_after: None,
             completed_key_pairs: 0,
             fail_key_event_at: None,
+            key_event_opens_dialog_at: None,
             key_events: 0,
+            focus_emulation_enable_fails: false,
             click_opens_dialog: false,
             dialog_vanished: false,
             trusted_click_opens_dialog: None,
@@ -880,6 +886,22 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 let event_type = call.params["type"].as_str().unwrap_or_default();
                 let index = st.key_events;
                 st.key_events += 1;
+                if st.renderer_blocked {
+                    return MockReply::hang();
+                }
+                if st.key_event_opens_dialog_at == Some(index) {
+                    st.renderer_blocked = true;
+                    let events = st
+                        .page_sessions
+                        .iter()
+                        .map(|page_session| MockEvent {
+                            method: "Page.javascriptDialogOpening".into(),
+                            session_id: Some(page_session.clone()),
+                            params: json!({ "type": "confirm", "message": "Leave?", "url": st.main_url }),
+                        })
+                        .collect();
+                    return MockReply::hang().with_events(events);
+                }
                 if st.fail_key_event_at == Some(index)
                     || (event_type == "keyDown"
                         && st.fail_key_down_after == Some(st.completed_key_pairs))
@@ -919,6 +941,11 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     st.dom_click_generation += 1;
                 }
                 MockReply::ok(json!({}))
+            }
+            "Emulation.setFocusEmulationEnabled"
+                if call.params["enabled"] == true && st.focus_emulation_enable_fails =>
+            {
+                MockReply::err(-32000, "fixture focus emulation failure")
             }
             "Emulation.setFocusEmulationEnabled"
                 if call.params["enabled"] == false && st.focus_emulation_restore_fails =>
@@ -4843,23 +4870,53 @@ async fn press_key_with_a_ref_focuses_it_on_its_own_frame_session() {
 
 #[tokio::test]
 async fn press_key_that_fails_before_the_key_goes_down_releases_held_modifiers() {
-    // Index 1 is the key's own down, after ctrl went down at index 0.
+    // Index 1 is shift's down, after ctrl went down at index 0.
     let f = fixture_with(|state| state.fail_key_event_at = Some(1)).await;
-    let result = press_key_with(&f, json!({ "key": "z", "modifiers": ["ctrl"] })).await;
+    let result = press_key_with(&f, json!({ "key": "z", "modifiers": ["ctrl", "shift"] })).await;
     let s = structured(&result);
     assert_eq!(s["status"], "refused", "{s}");
     assert_eq!(s["refusal"]["code"], "browser_input_incomplete");
     assert_eq!(s["refusal"]["detail"]["pressed"], false);
-    let events = key_event_summary(&f);
-    assert_eq!(events.len(), 3, "{events:?}");
-    assert_eq!(events[2].0, "keyUp");
-    assert_eq!(events[2].1, "Control");
+    assert_eq!(
+        key_event_summary(&f)
+            .into_iter()
+            .map(|(t, k, _)| (t, k))
+            .collect::<Vec<_>>(),
+        [
+            ("rawKeyDown".to_owned(), "Control".to_owned()),
+            ("rawKeyDown".to_owned(), "Shift".to_owned()),
+            ("keyUp".to_owned(), "Control".to_owned()),
+        ]
+    );
     let focus_emulation = recorded_calls(&f, "Emulation.setFocusEmulationEnabled");
     assert_eq!(focus_emulation.last().unwrap().1["enabled"], false);
 }
 
 #[tokio::test]
-async fn press_key_reports_a_lost_release_after_a_delivered_press() {
+async fn press_key_whose_key_down_is_unacknowledged_reports_unknown_delivery() {
+    // Index 1 is the key's own down: it may have reached the page.
+    let f = fixture_with(|state| state.fail_key_event_at = Some(1)).await;
+    let result = press_key_with(&f, json!({ "key": "z", "modifiers": ["ctrl"] })).await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(s["refusal"]["code"], "browser_input_incomplete");
+    assert_eq!(s["refusal"]["detail"]["delivery"], "unknown");
+    assert_eq!(s["refusal"]["detail"]["refs_invalidated"], true);
+    assert_eq!(s["refusal"]["detail"]["retryable"], false);
+    // The key and the modifier are still released.
+    assert_eq!(
+        key_event_summary(&f),
+        summary(&[
+            ("rawKeyDown", "Control", 2),
+            ("rawKeyDown", "z", 2),
+            ("keyUp", "z", 2),
+            ("keyUp", "Control", 0),
+        ])
+    );
+}
+
+#[tokio::test]
+async fn press_key_reports_a_lost_release_and_still_sends_the_rest() {
     // ctrl+w can close the tab before its key up is answered.
     let f = fixture_with(|state| state.fail_key_event_at = Some(2)).await;
     let result = press_key_with(&f, json!({ "key": "w", "modifiers": ["ctrl"] })).await;
@@ -4867,6 +4924,74 @@ async fn press_key_reports_a_lost_release_after_a_delivered_press() {
     assert_eq!(s["status"], "ok", "{s}");
     assert_eq!(s["pressed"], true);
     assert_eq!(s["released"], false);
+    let events = key_event_summary(&f);
+    assert_eq!(events.len(), 4, "{events:?}");
+    assert_eq!(
+        events[3],
+        ("keyUp".to_owned(), "Control".to_owned(), 0),
+        "ctrl must still be released"
+    );
+}
+
+#[tokio::test]
+async fn press_key_restores_focus_emulation_when_enabling_it_fails() {
+    let f = fixture_with(|state| state.focus_emulation_enable_fails = true).await;
+    let result = press_key_with(&f, json!({ "key": "f5" })).await;
+    let s = structured(&result);
+    assert_eq!(
+        s["refusal"]["code"], "browser_input_trust_unavailable",
+        "{s}"
+    );
+    assert_eq!(s["refusal"]["detail"]["pressed"], false);
+    let focus_emulation = recorded_calls(&f, "Emulation.setFocusEmulationEnabled");
+    assert_eq!(focus_emulation.len(), 2);
+    assert_eq!(focus_emulation[1].1["enabled"], false);
+    assert!(recorded_calls(&f, "Input.dispatchKeyEvent").is_empty());
+}
+
+#[tokio::test]
+async fn press_key_returns_when_its_handler_opens_a_dialog() {
+    let f = fixture_with(|state| state.key_event_opens_dialog_at = Some(0)).await;
+    let (target, tab) = bind(&f).await;
+    let started = std::time::Instant::now();
+    let result = BrowserPressKeyTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "session": SESSION, "key": "return"
+        }))
+        .await;
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "the press must not wait out the CDP call timeout: {:?}",
+        started.elapsed()
+    );
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["pressed"], true);
+    assert_eq!(s["effect"], "unverifiable");
+    assert_eq!(s["dialog"]["present"], true, "{s}");
+    assert_eq!(s["dialog"]["kind"], "confirm");
+    let events = key_event_summary(&f);
+    assert_eq!(
+        events.len(),
+        2,
+        "the key must still be released: {events:?}"
+    );
+    assert_eq!(events[1].0, "keyUp");
+    let focus_emulation = recorded_calls(&f, "Emulation.setFocusEmulationEnabled");
+    assert_eq!(focus_emulation.last().unwrap().1["enabled"], false);
+
+    // While the dialog blocks the page, the next press is refused up front.
+    let again = BrowserPressKeyTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "session": SESSION, "key": "a"
+        }))
+        .await;
+    let again = structured(&again);
+    assert_eq!(
+        again["refusal"]["code"], "browser_action_unavailable",
+        "{again}"
+    );
+    assert_eq!(key_event_summary(&f).len(), 2);
 }
 
 #[tokio::test]

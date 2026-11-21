@@ -1902,7 +1902,7 @@ impl Tool for BrowserClickTool {
 
 /// Await `call` unless a page-owned dialog opens on the tab first. The dialog
 /// blocks the renderer, so the call's reply would not come until it closes.
-async fn call_until_dialog(
+pub(super) async fn call_until_dialog(
     conn: &super::cdp_ws::CdpConnection,
     cdp_target_id: &str,
     call: impl std::future::Future<Output = anyhow::Result<Value>>,
@@ -1922,11 +1922,11 @@ async fn call_until_dialog(
 
 /// The public id for one dialog generation, shared by `browser_click` and
 /// `browser_dialog` so a caller can hand the click's id straight back.
-fn dialog_capability_id(generation: u64) -> String {
+pub(super) fn dialog_capability_id(generation: u64) -> String {
     format!("dialog-{generation}")
 }
 
-fn dialog_block(dialog: &super::cdp_ws::CdpDialogState) -> Value {
+pub(super) fn dialog_block(dialog: &super::cdp_ws::CdpDialogState) -> Value {
     json!({
         "present": true,
         "kind": dialog.kind,

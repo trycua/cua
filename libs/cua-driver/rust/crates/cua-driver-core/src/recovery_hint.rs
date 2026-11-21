@@ -810,9 +810,17 @@ static RULES: &[Rule] = &[
         codes: &["browser_input_incomplete"],
         build: |c| {
             if c.tool == "browser_press_key" {
-                return RecoveryHint::new(
-                    "The key was not pressed. Read the page with get_browser_state, then press it again.",
-                )
+                let unpressed = c
+                    .refusal_detail()
+                    .and_then(|detail| detail.get("pressed"))
+                    .and_then(Value::as_bool)
+                    == Some(false);
+                return RecoveryHint::new(if unpressed {
+                    "The key was not pressed. Read the page with get_browser_state, then press it again."
+                } else {
+                    "The key may have reached the page. Read the page with get_browser_state to see \
+                     whether it took effect before pressing it again."
+                })
                 .call(c.read_page());
             }
             let counts = c.refusal_detail().and_then(|detail| {

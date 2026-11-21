@@ -11,6 +11,7 @@
 //! shortcuts without touching the OS foreground.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -26,8 +27,8 @@ use super::platform::BrowserVisualActionKind;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::session_schema as schema_session;
 use super::tools::{
-    browser_protected_resource_scope, browser_resource_ownership, require_explicit_session,
-    schema_ref, schema_tab_id, schema_target_id,
+    browser_protected_resource_scope, browser_resource_ownership, call_until_dialog, dialog_block,
+    dialog_capability_id, require_explicit_session, schema_ref, schema_tab_id, schema_target_id,
 };
 
 /// CDP `Input.dispatchKeyEvent` modifier bits.
@@ -329,14 +330,33 @@ impl KeyPress {
     }
 }
 
-async fn disable_focus_emulation(conn: &CdpConnection, cdp: &str) -> bool {
-    conn.call(
+/// The reply to a focus-emulation restore can be lost (a blocked renderer, a
+/// timed-out call), so it is bounded and only reports whether it was confirmed.
+async fn disable_focus_emulation(conn: &CdpConnection, cdp: &str, timeout: Duration) -> bool {
+    conn.call_with_timeout(
         Some(cdp),
         "Emulation.setFocusEmulationEnabled",
         json!({ "enabled": false }),
+        timeout,
     )
     .await
     .is_ok()
+}
+
+const FOCUS_RESTORE_TIMEOUT: Duration = Duration::from_secs(2);
+/// A page-owned dialog blocks the renderer, which applies the restore once the
+/// dialog closes; do not wait for that reply.
+const BLOCKED_FOCUS_RESTORE_TIMEOUT: Duration = Duration::from_millis(50);
+
+/// What happened to the key itself.
+enum KeyDelivery {
+    /// Every event up to and including the key down was acknowledged.
+    Pressed,
+    /// The key down was sent but not acknowledged: it may have reached the
+    /// page.
+    Unknown(anyhow::Error),
+    /// Dispatch failed before the key down was sent.
+    NotPressed(anyhow::Error),
 }
 
 pub struct BrowserPressKeyTool {
@@ -503,6 +523,23 @@ impl Tool for BrowserPressKeyTool {
         };
         let cdp = cdp_session.as_str();
 
+        let cdp_target_id = validated.tab.cdp_target_id.as_str();
+
+        // An open page dialog blocks the renderer: no key would be handled
+        // until it closes. Refuse before touching the page.
+        if let Some(open) = conn.dialog_state(cdp_target_id) {
+            return BrowserRefusal::new(
+                BrowserRefusalCode::BrowserActionUnavailable,
+                format!(
+                    "a {} dialog is open on the exact tab; resolve it with browser_dialog before \
+                     pressing keys",
+                    open.kind
+                ),
+            )
+            .with_detail(json!({ "dialog": dialog_block(&open) }))
+            .to_tool_result();
+        }
+
         // Focus emulation lets a tab whose window is in the background, or
         // that is not the active tab, process the keys as a focused page.
         if let Err(error) = conn
@@ -513,10 +550,13 @@ impl Tool for BrowserPressKeyTool {
             )
             .await
         {
+            // The command may have applied even though its reply was lost.
+            let restored = disable_focus_emulation(conn, cdp, FOCUS_RESTORE_TIMEOUT).await;
             return BrowserRefusal::new(
                 BrowserRefusalCode::BrowserInputTrustUnavailable,
                 format!("the tab could not enter CDP focus emulation for key input: {error}"),
             )
+            .with_detail(json!({ "pressed": false, "focus_emulation_restored": restored }))
             .to_tool_result();
         }
         if let Some(backend_node_id) = focus_node {
@@ -529,11 +569,12 @@ impl Tool for BrowserPressKeyTool {
                 .await
                 .is_err()
             {
-                disable_focus_emulation(conn, cdp).await;
+                let restored = disable_focus_emulation(conn, cdp, FOCUS_RESTORE_TIMEOUT).await;
                 return BrowserRefusal::new(
                     BrowserRefusalCode::BrowserRefStale,
                     "the ref's node can no longer be focused — re-snapshot the tab",
                 )
+                .with_detail(json!({ "pressed": false, "focus_emulation_restored": restored }))
                 .to_tool_result();
             }
             if let Ok((x, y)) = ref_point(conn, cdp, backend_node_id).await {
@@ -550,17 +591,22 @@ impl Tool for BrowserPressKeyTool {
             }
         }
 
-        // The key down is the press. A chord can close or navigate the tab it
-        // was sent to, so the releases after it may find no page to answer;
-        // report that instead of calling a delivered press a failure.
+        // Every event goes out even after one fails or a key handler opens a
+        // dialog, so the page is never left with a key or modifier held: a
+        // blocked renderer applies the releases once its dialog closes. Before
+        // the key down only the modifiers already down are released.
         let events = press.events();
         let key_down_index = press.modifiers.len();
+        let mut delivery = KeyDelivery::Pressed;
         let mut released = true;
+        let mut opened = None;
         for (index, event) in events.into_iter().enumerate() {
-            if let Err(error) = conn.call(Some(cdp), "Input.dispatchKeyEvent", event).await {
-                if index <= key_down_index {
-                    // Release whatever is already held so the page is not left
-                    // with a stuck modifier.
+            let call = conn.call(Some(cdp), "Input.dispatchKeyEvent", event);
+            match call_until_dialog(conn, cdp_target_id, call).await {
+                Ok(Ok(_)) => {}
+                Err(open) => opened = Some(open),
+                Ok(Err(error)) if index < key_down_index => {
+                    delivery = KeyDelivery::NotPressed(error);
                     for modifier in press.modifiers[..index].iter().rev() {
                         let (key, code, virtual_key) = modifier.identity();
                         let _ = conn
@@ -577,23 +623,61 @@ impl Tool for BrowserPressKeyTool {
                             )
                             .await;
                     }
-                    disable_focus_emulation(conn, cdp).await;
-                    return BrowserRefusal::new(
-                        BrowserRefusalCode::BrowserInputIncomplete,
-                        format!("the key was not pressed: {error}"),
-                    )
-                    .with_detail(json!({ "pressed": false, "retryable": false }))
-                    .to_tool_result();
+                    break;
                 }
-                released = false;
-                break;
+                Ok(Err(error)) if index == key_down_index => {
+                    delivery = KeyDelivery::Unknown(error);
+                }
+                Ok(Err(_)) => released = false,
             }
         }
-        let focus_emulation_restored = disable_focus_emulation(conn, cdp).await;
+        let opened = opened.or_else(|| conn.dialog_state(cdp_target_id));
+        let restore_timeout = if opened.is_some() {
+            BLOCKED_FOCUS_RESTORE_TIMEOUT
+        } else {
+            FOCUS_RESTORE_TIMEOUT
+        };
+        let focus_emulation_restored =
+            disable_focus_emulation(conn, cdp, restore_timeout).await || opened.is_some();
+
+        let error = match delivery {
+            KeyDelivery::NotPressed(error) => {
+                return BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserInputIncomplete,
+                    format!("the key was not pressed: {error}"),
+                )
+                .with_detail(json!({
+                    "pressed": false,
+                    "focus_emulation_restored": focus_emulation_restored,
+                    "retryable": false,
+                }))
+                .to_tool_result();
+            }
+            KeyDelivery::Unknown(error) => Some(error),
+            KeyDelivery::Pressed => None,
+        };
         // The press may have reloaded, navigated, or edited the page.
         self.engine
             .store
             .invalidate_tab_snapshots(&session, &target_id, &tab_id);
+        if let Some(error) = error {
+            return BrowserRefusal::new(
+                BrowserRefusalCode::BrowserInputIncomplete,
+                format!(
+                    "the key down was sent but not acknowledged ({error}); it may have reached \
+                     the page, so read the page before pressing it again"
+                ),
+            )
+            .with_detail(json!({
+                "pressed": "unknown",
+                "delivery": "unknown",
+                "released": released,
+                "refs_invalidated": true,
+                "focus_emulation_restored": focus_emulation_restored,
+                "retryable": false,
+            }))
+            .to_tool_result();
+        }
 
         let modifiers: Vec<&str> = press.modifiers.iter().map(|m| m.name()).collect();
         let chord = modifiers
@@ -618,7 +702,25 @@ impl Tool for BrowserPressKeyTool {
         if !focus_emulation_restored {
             structured["focus_emulation_restored"] = json!(false);
         }
-        ToolResult::text(format!("pressed {chord} in {tab_id}")).with_structured(structured)
+        let Some(open) = opened else {
+            return ToolResult::text(format!("pressed {chord} in {tab_id}"))
+                .with_structured(structured);
+        };
+        // The dialog blocks the renderer, so nothing can confirm the effect.
+        structured["effect"] = json!("unverifiable");
+        structured["dialog"] = dialog_block(&open);
+        structured["escalation"] = json!({
+            "recommended": "page",
+            "reason": "the key opened a page-owned JavaScript dialog; resolve it with browser_dialog, then refresh page state",
+        });
+        ToolResult::text(format!(
+            "pressed {chord} in {tab_id}; its handler opened a {} dialog that is blocking the \
+             page. Inspect and resolve it with browser_dialog (dialog_id {}) before any other \
+             action on this tab",
+            open.kind,
+            dialog_capability_id(open.generation)
+        ))
+        .with_structured(structured)
     }
 }
 

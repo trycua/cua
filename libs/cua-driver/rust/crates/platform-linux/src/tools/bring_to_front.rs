@@ -22,7 +22,8 @@ impl Tool for BringToFrontTool {
         BTF_DEF.get_or_init(|| ToolDef {
             name: "bring_to_front".into(),
             description:
-                "Persistently activate a window so subsequent input lands on it. \
+                "Persistently activate a window. Activation does not bind subsequent input \
+                 to that window: focus may change before an independent input call. \
                  This deliberately breaks the no-foreground contract and is not part \
                  of the normal input ladder. For an ordinary `background_unavailable` \
                  response, retry only the refused action with \
@@ -126,5 +127,17 @@ impl Tool for BringToFrontTool {
             Ok(Err(e)) => ToolResult::error(format!("bring_to_front failed: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn description_warns_activation_does_not_bind_later_input() {
+        let description = &BringToFrontTool.def().description;
+        assert!(description.contains("does not bind subsequent input"));
+        assert!(!description.contains("so subsequent input lands on it"));
     }
 }

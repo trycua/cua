@@ -136,7 +136,7 @@ fn wayland_overlay_quiesces_and_recovers_after_capture_and_cursor_activity() {
     // Exercise the reported trigger class: native compositor capture followed
     // by daemon-owned cursor motion. Call the Linux capture backend directly:
     // the driver registers no standalone `screenshot` tool.
-    let capture = platform_linux::wayland::screenshot_display_dispatch()
+    let capture = platform_linux::capture::screenshot_display_bytes()
         .expect("capture native Wayland display before overlay activity");
     assert!(!capture.is_empty(), "native Wayland capture was empty");
     call(

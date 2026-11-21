@@ -69,7 +69,7 @@ struct CapState {
 /// Capture the first `wl_output` via ext-image-copy-capture-v1, return raw
 /// PNG bytes. Falls back to the caller's next tier when the compositor
 /// doesn't expose the protocol — surface a typed anyhow::Error so the
-/// cascade in `screenshot_display_dispatch` can branch.
+/// `DisplayRoute::ExtImageCopy` can pass on to the portal.
 pub fn screenshot_via_ext_copy() -> anyhow::Result<Vec<u8>> {
     let conn = Connection::connect_to_env()?;
     let mut queue = conn.new_event_queue::<CapState>();

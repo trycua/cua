@@ -8,26 +8,26 @@
     "https://files.pythonhosted.org/packages/py2.py3/s/supervisor/supervisor-4.3.0-py2.py3-none-any.whl#sha256:0bcb763fddafba410f35cbde226aa7f8514b9fb82eb05a0c85f6588d1c13f8db",
     "https://archive.ubuntu.com/ubuntu/pool/main/x/xserver-xorg-video-dummy/xserver-xorg-video-dummy_0.3.8-2build1_amd64.deb#sha256:2ef60bd404142f7bb3d77a2886ac89d8a0dabc101d87ce7496ebe45f19ae8fc3"
   ],
-  "stamp": "20261003-fe6d89d",
+  "stamp": "20261120-3aefd3b",
   "dry_run": false,
   "promoted": true,
   "index": {
-    "ref": "ghcr.io/trycua/bench-osworld:verified-20261003-fe6d89d",
-    "digest": "sha256:e55cf3a314793f89be7efbffdc043aab29bf85990c6213a9ebbb204825504439",
+    "ref": "ghcr.io/trycua/bench-osworld:verified-20261120-3aefd3b",
+    "digest": "sha256:c788d8f6b43f03701cac46065c59a81a073d0b97c561db49db2b4ad3dd80f271",
     "floating": "ghcr.io/trycua/bench-osworld:verified"
   },
   "disk_index": {
-    "ref": "ghcr.io/trycua/bench-osworld:verified-disk-20261003-fe6d89d",
-    "digest": "sha256:e33e8801cd2eeedd9bf458b66b3ecd8beab26adbb0aa2a938d53b81ef05106d9",
+    "ref": "ghcr.io/trycua/bench-osworld:verified-disk-20261120-3aefd3b",
+    "digest": "sha256:3b8891bb5f810a79e1aa2bed8a8d6855a65d38dc4994ccdc467d081be5547aca",
     "floating": "ghcr.io/trycua/bench-osworld:verified-disk"
   },
   "children": [
     {
       "arch": "amd64",
-      "rootfs": "sha256:5191d649e582bbfec382cfd2a06983a53df4c326e234da4cacbae535bf4bbbc2",
-      "containerdisk": "sha256:21c392b099a01cbd1c7ec5590e92ff97b1a9661ee068a2db3bacf0e5b157a5e7"
+      "rootfs": "sha256:d1d3fcb7e8cdbd14da32a679aa40ee7baf5e955574a1df8bc24e68b2858e0003",
+      "containerdisk": "sha256:c3d3393d9630c84ea1be0eb3671a0a6a391dfcc5ab2b6526207a59e91a9a7ec3"
     }
   ],
-  "pinned": "ghcr.io/trycua/bench-osworld@sha256:e55cf3a314793f89be7efbffdc043aab29bf85990c6213a9ebbb204825504439",
-  "written": "2026-10-03T22:26:41Z"
+  "pinned": "ghcr.io/trycua/bench-osworld@sha256:c788d8f6b43f03701cac46065c59a81a073d0b97c561db49db2b4ad3dd80f271",
+  "written": "2026-11-20T06:52:25Z"
 }

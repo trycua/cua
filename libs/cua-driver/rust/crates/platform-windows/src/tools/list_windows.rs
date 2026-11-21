@@ -72,7 +72,7 @@ impl Tool for ListWindowsTool {
         if let Some(filter) = args.opt_str("app") {
             windows.retain(|w| {
                 let app_name = pid_to_name.get(&w.pid).map(String::as_str).unwrap_or("");
-                cua_driver_core::tool_args::app_filter_matches(&filter, app_name, None)
+                cua_driver_core::tool_args::app_filter_matches(&filter, &[app_name], None)
             });
         }
 

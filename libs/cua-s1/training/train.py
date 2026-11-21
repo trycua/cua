@@ -130,7 +130,11 @@ def evaluate(
     for host_batch in loader:
         batch = move(host_batch, device)
         logits = model(batch, shuffle_context=shuffle_context)
-        nll_total += float(F.cross_entropy(logits, batch["labels"], reduction="sum"))
+        # Per-row losses summed in float64 and in row order: a float32 reduction
+        # over the batch can differ by an ulp between runs on a threaded CPU,
+        # which made two otherwise identical replays disagree in their metadata.
+        row_nll = F.cross_entropy(logits, batch["labels"], reduction="none")
+        nll_total += float(row_nll.double().sum())
         probabilities = logits.softmax(-1)
         confidence, prediction = probabilities.max(-1)
         correct = prediction.eq(batch["labels"])

@@ -90,7 +90,10 @@ pre-push hook. `CUA_LOCAL_CI_ARGS="--quick"` changes what the hook runs.
 
 After a green run on a clean tree, `bin/ci --signoff` sets the `local-ci` commit status on `HEAD` through
 `gh api`. If the commit is not on GitHub yet, push and run it again: it reuses the green run. It refuses to
-sign off a run that failed or skipped a check. Sign off again after every new commit.
+sign off a run that failed, or that skipped a check because this machine could not run it (a missing tool, low disk).
+`bin/ci --quick --signoff` is the normal sign-off: `--quick` leaves the build tier (cargo builds, generated bindings)
+to GitHub CI on purpose, so those checks do not block it; the status description says how many were left to CI.
+`--full` has no such allowance: every check must run. Sign off again after every new commit.
 
 `ci-gate` requires a sign-off on the head commit of **every pull request**, whoever opens it. The author,
 labels and commit trailers are not read.

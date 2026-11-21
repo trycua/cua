@@ -4,6 +4,8 @@
 //! Application-state snapshots used by trajectory recording on Linux.
 
 #[cfg(target_os = "linux")]
+use crate::routes::LinuxCapture as _;
+#[cfg(target_os = "linux")]
 use cua_driver_core::video::{VideoBackend, VideoBackendFactory};
 
 #[cfg(target_os = "linux")]
@@ -125,17 +127,17 @@ pub fn screenshot_for_recording(
         // Wayland surface ids are connection-scoped, so a later recording hook
         // cannot safely re-attest the action call's per-window crop. Preserve
         // ownership by recording the compositor's complete rendered output.
-        return capture(crate::wayland::screenshot_display_dispatch().ok());
+        return capture(crate::capture::screenshot_display_bytes().ok());
     }
     if let Some(window_id) = window_id {
-        capture(crate::wayland::screenshot_dispatch(window_id).ok())
+        capture(crate::routes::routes().capture_window(window_id, None).ok())
     } else if target_pid.is_some() {
         let windows = crate::wayland::list_windows_dispatch(target_pid);
-        capture(
-            windows
-                .first()
-                .and_then(|window| crate::wayland::screenshot_dispatch(window.xid).ok()),
-        )
+        capture(windows.first().and_then(|window| {
+            crate::routes::routes()
+                .capture_window(window.xid, None)
+                .ok()
+        }))
     } else {
         capture(crate::capture::screenshot_display_bytes().ok())
     }

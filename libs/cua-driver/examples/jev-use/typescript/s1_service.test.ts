@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import test from 'node:test';
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
 
 import { parseArgs } from './run_native.js';
 import { chooseS1Service, S1ServiceError, s1ServiceUrl, validateDecision } from './s1_service.js';
@@ -117,6 +119,33 @@ test('chooseS1Service rejects HTTP errors, invalid JSON, and an unreachable serv
   const { server, url } = await serve(200, '{}', []);
   await new Promise<void>((resolve) => server.close(() => resolve()));
   await assert.rejects(chooseS1Service(REQUEST, url, 2_000), S1ServiceError);
+});
+
+test('chooseS1Service bounds a body that stalls past the timeout', async () => {
+  const server: Server = createServer((_request, response) => {
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.write('{"schema":');
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  try {
+    // Collect garbage while the body stalls: the timeout must not depend on
+    // an unreferenced signal surviving GC.
+    setFlagsFromString('--expose-gc');
+    const gc = runInNewContext('gc') as () => void;
+    const collector = setInterval(gc, 10);
+    try {
+      await assert.rejects(
+        chooseS1Service(REQUEST, `http://127.0.0.1:${port}/decide`, 200),
+        (error: unknown) => error instanceof S1ServiceError && error.message === 'S1 service timed out',
+      );
+    } finally {
+      clearInterval(collector);
+    }
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });
 
 test('the native runner accepts the s1 provider', () => {

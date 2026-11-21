@@ -2393,6 +2393,53 @@ mod named_pipe_authentication_tests {
     }
 }
 
+#[cfg(all(test, target_os = "windows"))]
+mod pipe_release_tests {
+    use super::{claim_daemon_lock, daemon_lock_path, is_released, probe_presence, DaemonPresence};
+    use std::time::Duration;
+    use tokio::net::windows::named_pipe::ServerOptions;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_daemon_whose_pipe_listens_without_answering_has_not_released() {
+        let pipe = format!(
+            r"\\.\pipe\cua-driver-release-{}",
+            uuid::Uuid::new_v4().simple()
+        );
+        let lock = claim_daemon_lock(&daemon_lock_path(&pipe), &pipe, Duration::ZERO).unwrap();
+        // Each probe below holds one instance open waiting for a reply, so
+        // keep one more free, as a serving daemon does.
+        let instances = (0..3)
+            .map(|index| {
+                ServerOptions::new()
+                    .first_pipe_instance(index == 0)
+                    .create(&pipe)
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        let probe = pipe.clone();
+        let (presence, released) =
+            tokio::task::spawn_blocking(move || (probe_presence(&probe), is_released(&probe)))
+                .await
+                .unwrap();
+        assert_eq!(
+            presence,
+            DaemonPresence::Starting {
+                lock_held: daemon_lock_path(&pipe)
+            }
+        );
+        assert!(!released);
+
+        // An exiting daemon closes its pipe a moment before it drops its lock.
+        drop(instances);
+        let probe = pipe.clone();
+        assert!(tokio::task::spawn_blocking(move || is_released(&probe))
+            .await
+            .unwrap());
+        drop(lock);
+    }
+}
+
 #[cfg(not(any(unix, target_os = "windows")))]
 async fn serve_claimed_socket(
     _sdk: std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
@@ -2596,13 +2643,16 @@ pub fn run_stop_cmd(socket_path: &str) {
 
 /// Whether the daemon has let go of `socket_path`: it no longer answers and
 /// no longer has its socket bound. An exiting daemon keeps its lock a moment
-/// after it removes its socket, so a held lock alone does not count.
+/// after it removes its socket, so a held lock alone does not count. A
+/// daemon whose pipe still listens has not let go, even when its reply to
+/// the probe is late.
 fn is_released(socket_path: &str) -> bool {
     match probe_presence(socket_path) {
         DaemonPresence::Absent | DaemonPresence::Stale { .. } => true,
-        DaemonPresence::Starting { .. } => {
-            !cfg!(unix) || std::fs::symlink_metadata(socket_path).is_err()
-        }
+        #[cfg(unix)]
+        DaemonPresence::Starting { .. } => std::fs::symlink_metadata(socket_path).is_err(),
+        #[cfg(not(unix))]
+        DaemonPresence::Starting { .. } => !is_daemon_listening(socket_path),
         DaemonPresence::Serving { .. } => false,
     }
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.30.1](https://github.com/trycua/cua/compare/cua-sdk-v0.30.0...cua-sdk-v0.30.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-vmm:** pin runtime-gvisor 0.1.0-rc2 (the amd64 disk boots on Hyper-V) ([#8414](https://github.com/trycua/cua/issues/8414)) ([37123d2](https://github.com/trycua/cua/commit/37123d250f351fb03ea03c6adfb53ec7492f0237))
+
 ## [0.30.0](https://github.com/trycua/cua/compare/cua-sdk-v0.29.4...cua-sdk-v0.30.0) (2026-11-20)
 
 

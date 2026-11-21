@@ -301,30 +301,6 @@ mod tests {
         }
     }
 
-    /// Removed once every caller reads `AppPaths`: the old resolvers and
-    /// `AppPaths` agree under this test process's environment.
-    #[test]
-    fn app_paths_agree_with_the_old_resolvers() {
-        let paths = app_paths();
-        assert_eq!(paths.socket, crate::serve::default_socket_path());
-        assert_eq!(paths.pid_file, crate::serve::default_pid_file_path());
-        assert_eq!(
-            paths.pipe_lock,
-            cua_driver_core::daemon::daemon_lock_path(&paths.socket)
-        );
-        assert_eq!(paths.history_root, crate::history_runtime::history_root());
-        assert_eq!(
-            AppPaths::for_namespace(RELEASE_NAMESPACE).config_file,
-            cua_driver_core::config_file::default_config_path()
-        );
-        assert_eq!(
-            paths.home,
-            paths
-                .user_home
-                .map(|home| home.join(user_home_subdirectory()))
-        );
-    }
-
     #[cfg(target_os = "windows")]
     #[test]
     fn env_truthiness_is_strict() {

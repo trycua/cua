@@ -5,17 +5,10 @@
 //! per-platform `set_config` / `get_config` tools read and write.
 
 /// Canonical `~/.cua-driver/config.json` path matching what the per-platform
-/// `set_config` tools write to. Resolves `$HOME` first (Unix/macOS) and falls
-/// back to `%USERPROFILE%` (Windows, where `HOME` is usually unset). Returns
-/// `None` when neither is set (sandboxed CI).
+/// `set_config` tools write to. Returns `None` when neither `HOME` nor
+/// `USERPROFILE` is set (sandboxed CI).
 pub fn default_config_path() -> Option<std::path::PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(|h| {
-            std::path::PathBuf::from(h)
-                .join(".cua-driver")
-                .join("config.json")
-        })
+    crate::paths::AppPaths::for_namespace(crate::paths::RELEASE_NAMESPACE).config_file
 }
 
 /// Read a single key from `~/.cua-driver/config.json` as a raw JSON value,

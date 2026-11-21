@@ -29,9 +29,10 @@ use std::sync::{Mutex, OnceLock};
 
 #[cfg(target_os = "windows")]
 use cua_driver_core::daemon::named_pipe_exists;
-use cua_driver_core::daemon::{daemon_lock_path, probe_presence, DaemonPresence, ToolGate};
+use cua_driver_core::daemon::{probe_presence, DaemonPresence, ToolGate};
+use cua_driver_core::paths::AppPaths;
 pub use cua_driver_core::daemon::{
-    is_daemon_listening, send_request, socket_path_for_namespace, DaemonRequest, DaemonResponse,
+    is_daemon_listening, send_request, DaemonRequest, DaemonResponse,
     ToolObservationOrigin,
 };
 
@@ -344,31 +345,12 @@ fn history_relaunch_state_response(
 
 /// Returns the platform default socket/pipe path.
 pub fn default_socket_path() -> String {
-    socket_path_for_namespace(crate::bundle::state_namespace())
+    crate::bundle::app_paths().socket
 }
 
 /// Returns the platform default PID file path.
 pub fn default_pid_file_path() -> String {
-    let namespace = crate::bundle::state_namespace();
-    #[cfg(target_os = "macos")]
-    {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        format!("{home}/Library/Caches/{namespace}/{namespace}.pid")
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        format!("{home}/.cache/{namespace}/{namespace}.pid")
-    }
-    #[cfg(target_os = "windows")]
-    {
-        let local = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| "C:/Temp".into());
-        format!("{local}/{namespace}/{namespace}.pid")
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    {
-        "/tmp/cua-driver.pid".to_owned()
-    }
+    crate::bundle::app_paths().pid_file
 }
 
 // ── Protocol types ────────────────────────────────────────────────────────────
@@ -662,7 +644,7 @@ fn claim_standalone_socket(
     socket_path: &str,
     wait: std::time::Duration,
 ) -> anyhow::Result<std::fs::File> {
-    claim_daemon_lock(&daemon_lock_path(socket_path), socket_path, wait)
+    claim_daemon_lock(&AppPaths::pipe_lock_for(socket_path), socket_path, wait)
 }
 
 /// Remove the socket a dead daemon left at `socket_path`. Only the lock holder
@@ -715,7 +697,7 @@ fn claim_socket(socket_path: &str) -> anyhow::Result<Option<std::fs::File>> {
             return Ok(None);
         }
         claim_daemon_lock(
-            &daemon_lock_path(socket_path),
+            &AppPaths::pipe_lock_for(socket_path),
             socket_path,
             DAEMON_LOCK_WAIT,
         )
@@ -2408,8 +2390,8 @@ mod named_pipe_authentication_tests {
 #[cfg(all(test, target_os = "windows"))]
 mod pipe_release_tests {
     use super::{
-        claim_daemon_lock, daemon_lock_path, is_released, probe_presence, serve_claimed_socket,
-        serving_daemon, stop_daemon, DaemonPresence, StopOutcome,
+        claim_daemon_lock, is_released, probe_presence, serve_claimed_socket,
+        serving_daemon, stop_daemon, AppPaths, DaemonPresence, StopOutcome,
     };
     use std::time::Duration;
     use tokio::net::windows::named_pipe::ServerOptions;
@@ -2449,12 +2431,12 @@ mod pipe_release_tests {
             StopOutcome::StillStarting
         );
 
-        let lock = claim_daemon_lock(&daemon_lock_path(&pipe), &pipe, Duration::ZERO).unwrap();
+        let lock = claim_daemon_lock(&AppPaths::pipe_lock_for(&pipe), &pipe, Duration::ZERO).unwrap();
         let probe = pipe.clone();
         assert_eq!(
             blocking(move || probe_presence(&probe)).await,
             DaemonPresence::Starting {
-                lock_held: daemon_lock_path(&pipe)
+                lock_held: AppPaths::pipe_lock_for(&pipe)
             }
         );
         let probe = pipe.clone();
@@ -2491,7 +2473,7 @@ mod pipe_release_tests {
         );
         // The launch found nothing and claimed its lock; a lockless embedded
         // daemon then takes the name before the launch binds.
-        let lock = claim_daemon_lock(&daemon_lock_path(&pipe), &pipe, Duration::ZERO).unwrap();
+        let lock = claim_daemon_lock(&AppPaths::pipe_lock_for(&pipe), &pipe, Duration::ZERO).unwrap();
         let _embedded = ServerOptions::new()
             .first_pipe_instance(true)
             .create(&pipe)
@@ -2541,7 +2523,7 @@ fn adopt_inherited_socket_lock(socket_path: &str) -> Option<std::fs::File> {
     if fd < 0 {
         return None;
     }
-    let expected = std::fs::metadata(daemon_lock_path(socket_path)).ok()?;
+    let expected = std::fs::metadata(AppPaths::pipe_lock_for(socket_path)).ok()?;
     let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
     if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } != 0 {
         return None;
@@ -3197,9 +3179,9 @@ mod socket_tests {
 #[cfg(all(test, unix))]
 mod presence_tests {
     use super::{
-        claim_daemon_lock, claim_socket, daemon_lock_path, is_released, probe_presence,
+        claim_daemon_lock, claim_socket, is_released, probe_presence,
         remove_stale_socket, run_serve, send_request, serve_claimed_socket, serving_daemon,
-        stop_daemon, DaemonPresence, DaemonRequest, StopOutcome, ToolGate,
+        stop_daemon, AppPaths, DaemonPresence, DaemonRequest, StopOutcome, ToolGate,
     };
     use std::time::Duration;
 
@@ -3250,11 +3232,11 @@ mod presence_tests {
         );
         assert!(is_released(path));
         // The probe released the lock it tried, so a launch can take it.
-        let lock = claim_daemon_lock(&daemon_lock_path(path), path, Duration::ZERO).unwrap();
+        let lock = claim_daemon_lock(&AppPaths::pipe_lock_for(path), path, Duration::ZERO).unwrap();
         assert_eq!(
             probe_presence(path),
             DaemonPresence::Starting {
-                lock_held: daemon_lock_path(path)
+                lock_held: AppPaths::pipe_lock_for(path)
             }
         );
         assert!(!is_released(path));
@@ -3309,7 +3291,7 @@ mod presence_tests {
         let socket = directory.path().join("driver.sock");
         let path = socket.to_str().unwrap().to_owned();
         let fifo = std::ffi::CString::new(
-            daemon_lock_path(&path)
+            AppPaths::pipe_lock_for(&path)
                 .into_os_string()
                 .into_encoded_bytes(),
         )
@@ -3401,7 +3383,7 @@ mod presence_tests {
         let directory = cua_driver_testkit::socket_tempdir().unwrap();
         let socket = directory.path().join("driver.sock");
         let path = socket.to_str().unwrap();
-        let held = claim_daemon_lock(&daemon_lock_path(path), path, Duration::ZERO).unwrap();
+        let held = claim_daemon_lock(&AppPaths::pipe_lock_for(path), path, Duration::ZERO).unwrap();
         let mut env = crate::env_vars::Overrides::new();
 
         // The same open file, as a relaunch inherits it.
@@ -3410,7 +3392,7 @@ mod presence_tests {
         assert!(adopt_inherited_socket_lock(path).is_some());
 
         // Another open of the lock file, whose lock someone else holds.
-        let foreign = std::fs::File::open(daemon_lock_path(path)).unwrap();
+        let foreign = std::fs::File::open(AppPaths::pipe_lock_for(path)).unwrap();
         let foreign_fd = unsafe { libc::dup(foreign.as_raw_fd()) };
         env.set(INHERITED_SOCKET_LOCK_FD_ENV, foreign_fd.to_string());
         assert!(adopt_inherited_socket_lock(path).is_none());
@@ -3453,7 +3435,7 @@ mod presence_tests {
             .unwrap()
             .unwrap();
         assert_eq!(presence(&socket).await, DaemonPresence::Absent);
-        let _ = std::fs::remove_file(daemon_lock_path(&socket));
+        let _ = std::fs::remove_file(AppPaths::pipe_lock_for(&socket));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -3507,7 +3489,7 @@ mod presence_tests {
             .unwrap()
             .unwrap();
         server.await.unwrap().unwrap();
-        let _ = std::fs::remove_file(daemon_lock_path(&socket));
+        let _ = std::fs::remove_file(AppPaths::pipe_lock_for(&socket));
     }
 }
 

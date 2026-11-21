@@ -85,13 +85,7 @@ pub fn enabled() -> bool {
 
 /// The setting that turned the tool off, if any.
 pub fn disabled_by() -> Option<String> {
-    let config = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(|home| {
-            std::path::PathBuf::from(home)
-                .join(".cua-driver")
-                .join("config.json")
-        });
+    let config = crate::config_file::default_config_path();
     disabled_from(
         std::env::var(DISABLE_ENV).ok().as_deref(),
         std::env::var(LEGACY_ENV).ok().as_deref(),

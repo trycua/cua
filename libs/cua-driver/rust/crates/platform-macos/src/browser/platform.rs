@@ -406,11 +406,21 @@ pub(crate) fn is_chromium(name: &str, bundle_id: &str) -> bool {
     let value = format!("{name} {bundle_id}").to_ascii_lowercase();
     let products = [
         "chrome", "chromium", "electron", "brave", "edge", "vivaldi", "opera", "arc", "thorium",
-        "iridium", "yandex", "helium",
+        "iridium", "yandex",
     ];
-    value
-        .split(|ch: char| !ch.is_ascii_alphanumeric())
-        .any(|token| products.contains(&token))
+    is_imput_helium(bundle_id)
+        || value
+            .split(|ch: char| !ch.is_ascii_alphanumeric())
+            .any(|token| products.contains(&token))
+}
+
+/// Imput's Chromium-based Helium, by bundle id only: another macOS app,
+/// a WebKit floating browser (`com.JadenGeller.Helium`), shares the name.
+fn is_imput_helium(bundle_id: &str) -> bool {
+    let bundle_id = bundle_id.to_ascii_lowercase();
+    bundle_id
+        .strip_prefix("net.imput.helium")
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
 }
 
 fn browser_product(name: &str, bundle_id: &str) -> BrowserProduct {
@@ -430,10 +440,7 @@ fn browser_product(name: &str, bundle_id: &str) -> BrowserProduct {
         BrowserProduct::Opera
     } else if bundle_id.starts_with("company.thebrowser.browser") || name == "arc" {
         BrowserProduct::Arc
-    } else if bundle_id == "net.imput.helium"
-        || bundle_id.starts_with("net.imput.helium.helper")
-        || name == "helium"
-    {
+    } else if is_imput_helium(&bundle_id) {
         BrowserProduct::Helium
     } else if bundle_id == "com.apple.safari" || name == "safari" {
         BrowserProduct::Safari
@@ -2344,6 +2351,12 @@ mod tests {
             browser_product("Helium", "com.google.Chrome"),
             BrowserProduct::GoogleChrome
         );
+        assert!(!is_chromium("Helium", "com.JadenGeller.Helium"));
+        assert_eq!(
+            browser_product("Helium", "com.JadenGeller.Helium"),
+            BrowserProduct::Other
+        );
+        assert!(!is_chromium("Helium", "net.imput.heliumnotes"));
         let home = PathBuf::from(std::env::var_os("HOME").expect("HOME"));
         assert_eq!(
             default_user_data_dir(BrowserProduct::Helium),

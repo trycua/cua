@@ -17,7 +17,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use futures_util::stream::{SplitSink, SplitStream};
@@ -492,37 +492,22 @@ impl CdpConnection {
     }
 }
 
-/// How long a consented existing-profile socket may stay open with no session
-/// holding it. Matches the existing-profile grant idle bound.
-pub const SHARED_SOCKET_IDLE_TTL: Duration = Duration::from_secs(30 * 60);
 /// Absolute bound measured from the browser consent that opened the socket.
 /// Matches the existing-profile grant absolute bound.
 pub const SHARED_SOCKET_ABSOLUTE_TTL: Duration = Duration::from_secs(8 * 60 * 60);
 
-/// How a grant gives up its hold on a shared existing-profile socket.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SharedSocketRelease {
-    /// Normal session end: when this was the last holder, keep the
-    /// already-consented socket open (parked) for the idle bound so the next
-    /// approved session does not trigger another browser consent prompt.
-    Park,
-    /// Security-relevant end (identity change, remote debugging being turned
-    /// back off, expiry): close the socket once no other session holds it.
-    Close,
-}
-
-/// Grant-owned state of one browser-level existing-profile socket. Chrome
-/// asks the person to approve every new browser-level WebSocket, but not
-/// target attaches over an existing one, so every approved session for the
-/// same browser instance multiplexes over this one socket through flattened
-/// target sessions.
+/// One browser-level existing-profile socket and the grant generations that
+/// hold it. Chrome asks the person to approve every new browser-level
+/// WebSocket, but not target attaches over an existing one, so every approved
+/// session for the same browser instance multiplexes over this one socket
+/// through flattened target sessions. Whether a holder is attached or parked
+/// after its session ended is the grant's state, not the pool's.
 #[derive(Clone)]
 struct SharedSocket {
-    /// Live grant generations bound to this socket. Generations are unique
-    /// per engine, so one holder can never release another holder's claim.
+    /// Grant generations bound to this socket. Generations are unique per
+    /// engine, so one holder can never release another holder's claim.
     holders: HashSet<u64>,
     opened_at: Instant,
-    last_used_at: Instant,
 }
 
 impl SharedSocket {
@@ -530,13 +515,11 @@ impl SharedSocket {
         Self {
             holders: HashSet::from([generation]),
             opened_at: now,
-            last_used_at: now,
         }
     }
 
-    fn expired(&self, now: Instant, ttl: &SharedSocketTtl) -> bool {
-        now.duration_since(self.opened_at) > ttl.absolute
-            || (self.holders.is_empty() && now.duration_since(self.last_used_at) > ttl.idle)
+    fn expired(&self, now: Instant, absolute_ttl: Duration) -> bool {
+        now.duration_since(self.opened_at) > absolute_ttl
     }
 }
 
@@ -547,20 +530,9 @@ struct PoolEntry {
     shared: Option<SharedSocket>,
 }
 
-#[derive(Clone, Copy)]
-struct SharedSocketTtl {
-    idle: Duration,
-    absolute: Duration,
-}
-
 fn claimed_ports() -> &'static StdMutex<HashMap<u16, usize>> {
     static CLAIMED: OnceLock<StdMutex<HashMap<u16, usize>>> = OnceLock::new();
     CLAIMED.get_or_init(|| StdMutex::new(HashMap::new()))
-}
-
-fn live_pools() -> &'static StdMutex<Vec<Weak<PoolInner>>> {
-    static POOLS: OnceLock<StdMutex<Vec<Weak<PoolInner>>>> = OnceLock::new();
-    POOLS.get_or_init(|| StdMutex::new(Vec::new()))
 }
 
 fn loopback_port(url: &str) -> Option<u16> {
@@ -578,22 +550,6 @@ pub fn endpoint_port_is_grant_owned(url: &str) -> bool {
     loopback_port(url).is_some_and(|port| claimed_ports().lock().unwrap().contains_key(&port))
 }
 
-/// Close every parked (unheld) existing-profile socket in this process. Used
-/// when the person revokes all driver sessions: revocation must not leave an
-/// already-consented browser socket waiting for the next session.
-pub async fn close_parked_browser_sockets() -> usize {
-    let pools: Vec<Arc<PoolInner>> = {
-        let mut pools = live_pools().lock().unwrap();
-        pools.retain(|pool| pool.strong_count() > 0);
-        pools.iter().filter_map(Weak::upgrade).collect()
-    };
-    let mut closed = 0;
-    for pool in pools {
-        closed += pool.close_parked().await;
-    }
-    closed
-}
-
 /// Per-pool record of which endpoint URLs are grant-owned, so the global
 /// per-port marker is held exactly while at least one grant-owned entry for
 /// that port exists in this pool.
@@ -603,29 +559,25 @@ struct Markers {
     ports: HashMap<u16, usize>,
 }
 
+/// Which holders of a shared socket still keep it in use. The grant registry
+/// answers this: a grant parked past its idle bound holds the socket only
+/// until its reaper runs, and no grant may join the socket through it.
+pub(crate) trait SharedSocketHolders: Send + Sync {
+    /// Whether any of `holders` keeps the socket usable at `now`.
+    fn keep_in_use(&self, holders: &HashSet<u64>, now: Instant) -> bool;
+}
+
 struct PoolInner {
     conns: Mutex<HashMap<String, PoolEntry>>,
     /// Serializes every browser-level dial for grant-owned sockets so two
     /// sessions can never open two sockets (and two consent prompts) at once.
     dial_gate: Mutex<()>,
     markers: StdMutex<Markers>,
-    ttl: SharedSocketTtl,
+    absolute_ttl: Duration,
+    holders: Option<Arc<dyn SharedSocketHolders>>,
 }
 
 impl PoolInner {
-    async fn close_parked(&self) -> usize {
-        let mut conns = self.conns.lock().await;
-        let parked: Vec<String> = conns
-            .iter()
-            .filter(|(_, entry)| entry.shared.as_ref().is_some_and(|s| s.holders.is_empty()))
-            .map(|(url, _)| url.clone())
-            .collect();
-        for url in &parked {
-            self.remove_entry(&mut conns, url);
-        }
-        parked.len()
-    }
-
     fn mark_shared(&self, url: &str) {
         let Some(port) = loopback_port(url) else {
             return;
@@ -673,7 +625,8 @@ impl PoolInner {
     }
 
     /// Return the live shared socket for `url`, dropping it first when it is
-    /// closed or past its bounds.
+    /// closed, past its absolute bound, or held only by grants parked past
+    /// their idle bound. Runs under the entry lock, right before a holder joins.
     fn live_shared<'a>(
         &self,
         conns: &'a mut HashMap<String, PoolEntry>,
@@ -681,10 +634,14 @@ impl PoolInner {
         now: Instant,
     ) -> Option<&'a mut PoolEntry> {
         let stale = conns.get(url).is_some_and(|entry| {
-            entry
-                .shared
-                .as_ref()
-                .is_some_and(|shared| entry.conn.is_closed() || shared.expired(now, &self.ttl))
+            entry.shared.as_ref().is_some_and(|shared| {
+                entry.conn.is_closed()
+                    || shared.expired(now, self.absolute_ttl)
+                    || self
+                        .holders
+                        .as_ref()
+                        .is_some_and(|holders| !holders.keep_in_use(&shared.holders, now))
+            })
         });
         if stale {
             self.remove_entry(conns, url);
@@ -704,8 +661,9 @@ impl Drop for PoolInner {
 
 /// One pooled browser-level connection per endpoint URL. Existing-profile
 /// entries are shared by every grant for that browser instance: each grant
-/// generation is a refcounted holder, and the socket outlives individual
-/// sessions only within the bounded parking window.
+/// generation is a refcounted holder. A grant parked after its session ended
+/// stays a holder, so the socket outlives sessions only while the grant
+/// registry keeps one parked.
 pub struct CdpPool {
     inner: Arc<PoolInner>,
 }
@@ -719,18 +677,30 @@ impl CdpPool {
     }
 
     pub fn new() -> Self {
-        Self::with_shared_socket_ttls(SHARED_SOCKET_IDLE_TTL, SHARED_SOCKET_ABSOLUTE_TTL)
+        Self::build(SHARED_SOCKET_ABSOLUTE_TTL, None)
     }
 
-    pub(crate) fn with_shared_socket_ttls(idle: Duration, absolute: Duration) -> Self {
-        let inner = Arc::new(PoolInner {
-            conns: Mutex::new(HashMap::new()),
-            dial_gate: Mutex::new(()),
-            markers: StdMutex::new(Markers::default()),
-            ttl: SharedSocketTtl { idle, absolute },
-        });
-        live_pools().lock().unwrap().push(Arc::downgrade(&inner));
-        Self { inner }
+    /// A pool whose shared sockets are reused only while `holders` says a
+    /// holder keeps them in use.
+    pub(crate) fn with_shared_socket_holders(holders: Arc<dyn SharedSocketHolders>) -> Self {
+        Self::build(SHARED_SOCKET_ABSOLUTE_TTL, Some(holders))
+    }
+
+    #[cfg(test)]
+    fn with_shared_socket_absolute_ttl(absolute_ttl: Duration) -> Self {
+        Self::build(absolute_ttl, None)
+    }
+
+    fn build(absolute_ttl: Duration, holders: Option<Arc<dyn SharedSocketHolders>>) -> Self {
+        Self {
+            inner: Arc::new(PoolInner {
+                conns: Mutex::new(HashMap::new()),
+                dial_gate: Mutex::new(()),
+                markers: StdMutex::new(Markers::default()),
+                absolute_ttl,
+                holders,
+            }),
+        }
     }
 
     /// Get the pooled connection for `ws_url`, dialing if needed.
@@ -775,15 +745,14 @@ impl CdpPool {
             .ok_or_else(|| anyhow::anyhow!("existing-profile endpoint has no loopback port"))?;
         let _dial = self.inner.dial_gate.lock().await;
         {
-            let now = Instant::now();
             let mut conns = self.inner.conns.lock().await;
+            let now = Instant::now();
             if let Some(entry) = self.inner.live_shared(&mut conns, ws_url, now) {
                 let shared = entry
                     .shared
                     .as_mut()
                     .expect("live_shared returns shared entries");
                 shared.holders.insert(generation);
-                shared.last_used_at = now;
                 return Ok(entry.conn.clone());
             }
             match conns.get(ws_url) {
@@ -852,10 +821,9 @@ impl CdpPool {
         if entry.conn.is_closed() {
             anyhow::bail!("the grant-owned browser socket is closed");
         }
-        if now.duration_since(shared.opened_at) > self.inner.ttl.absolute {
+        if shared.expired(now, self.inner.absolute_ttl) {
             anyhow::bail!("the grant-owned browser socket reached its absolute lifetime");
         }
-        shared.last_used_at = now;
         Ok(entry.conn.clone())
     }
 
@@ -871,8 +839,8 @@ impl CdpPool {
     ) -> anyhow::Result<Arc<CdpConnection>> {
         let _dial = self.inner.dial_gate.lock().await;
         {
-            let now = Instant::now();
             let mut conns = self.inner.conns.lock().await;
+            let now = Instant::now();
             if let Some(entry) = self.inner.live_shared(&mut conns, ws_url, now) {
                 let shared = entry
                     .shared
@@ -880,7 +848,6 @@ impl CdpPool {
                     .expect("live_shared returns shared entries");
                 shared.holders.remove(&old_generation);
                 shared.holders.insert(new_generation);
-                shared.last_used_at = now;
                 return Ok(entry.conn.clone());
             }
         }
@@ -915,31 +882,34 @@ impl CdpPool {
         }
     }
 
-    /// Release grant `generation`'s hold on the socket for `ws_url`. Only a
-    /// current holder can affect the socket, and the socket is never closed
-    /// while another session still holds it.
-    pub async fn release_existing(&self, ws_url: &str, generation: u64, mode: SharedSocketRelease) {
-        let now = Instant::now();
+    /// Release grant `generation`'s hold on the socket for `ws_url`, closing
+    /// it when no holder remains. Only a current holder can affect the
+    /// socket, and the socket is never closed while another grant, attached or
+    /// parked, still holds it.
+    pub async fn release_existing(&self, ws_url: &str, generation: u64) {
         let mut conns = self.inner.conns.lock().await;
-        let Some(entry) = conns.get_mut(ws_url) else {
+        let Some(shared) = conns
+            .get_mut(ws_url)
+            .and_then(|entry| entry.shared.as_mut())
+        else {
             return;
         };
-        let Some(shared) = entry.shared.as_mut() else {
-            return;
-        };
-        if !shared.holders.remove(&generation) || !shared.holders.is_empty() {
-            return;
-        }
-        if mode == SharedSocketRelease::Park
-            && !entry.conn.is_closed()
-            && !shared.expired(now, &self.inner.ttl)
-        {
-            shared.last_used_at = now;
-            drop(conns);
-            self.schedule_parked_reaper(ws_url);
-        } else {
+        if shared.holders.remove(&generation) && shared.holders.is_empty() {
             self.inner.remove_entry(&mut conns, ws_url);
         }
+    }
+
+    /// Whether a grant-owned socket for `ws_url` is open and within its
+    /// absolute bound.
+    pub async fn existing_socket_is_live(&self, ws_url: &str) -> bool {
+        let conns = self.inner.conns.lock().await;
+        conns.get(ws_url).is_some_and(|entry| {
+            !entry.conn.is_closed()
+                && entry
+                    .shared
+                    .as_ref()
+                    .is_some_and(|shared| !shared.expired(Instant::now(), self.inner.absolute_ttl))
+        })
     }
 
     /// Number of sessions holding the shared socket for `ws_url`, or `None`
@@ -950,43 +920,6 @@ impl CdpPool {
             .get(ws_url)
             .and_then(|entry| entry.shared.as_ref())
             .map(|shared| shared.holders.len())
-    }
-
-    fn schedule_parked_reaper(&self, ws_url: &str) {
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            return;
-        };
-        let weak = Arc::downgrade(&self.inner);
-        let url = ws_url.to_owned();
-        let mut wait = self.inner.ttl.idle;
-        runtime.spawn(async move {
-            loop {
-                tokio::time::sleep(wait + Duration::from_millis(10)).await;
-                let Some(inner) = weak.upgrade() else {
-                    return;
-                };
-                let now = Instant::now();
-                let mut conns = inner.conns.lock().await;
-                let Some(entry) = conns.get(&url) else {
-                    return;
-                };
-                let Some(shared) = entry.shared.as_ref() else {
-                    return;
-                };
-                if !shared.holders.is_empty() {
-                    // Held again; a later release schedules a fresh reaper.
-                    return;
-                }
-                if entry.conn.is_closed() || shared.expired(now, &inner.ttl) {
-                    inner.remove_entry(&mut conns, &url);
-                    return;
-                }
-                wait = inner
-                    .ttl
-                    .idle
-                    .saturating_sub(now.duration_since(shared.last_used_at));
-            }
-        });
     }
 }
 
@@ -1072,8 +1005,7 @@ mod tests {
         assert!(pool.get_existing(&url, 2).await.is_err());
         let reused = pool.get_existing(&url, 1).await.unwrap();
         assert!(Arc::ptr_eq(&claimed, &reused));
-        pool.release_existing(&url, 1, SharedSocketRelease::Close)
-            .await;
+        pool.release_existing(&url, 1).await;
         assert!(
             pool.get(&url).await.is_ok(),
             "closing the last holder releases ownership"
@@ -1128,8 +1060,7 @@ mod tests {
         assert_eq!(pool.shared_socket_holders(&url).await, Some(2));
 
         // A security close by one session leaves the other session's socket alone.
-        pool.release_existing(&url, 10, SharedSocketRelease::Close)
-            .await;
+        pool.release_existing(&url, 10).await;
         assert!(!b.is_closed());
         let still = pool.get_existing(&url, 11).await.unwrap();
         assert!(Arc::ptr_eq(&b, &still));
@@ -1139,66 +1070,15 @@ mod tests {
         );
 
         // Releasing a generation that never held the socket is a no-op.
-        pool.release_existing(&url, 99, SharedSocketRelease::Close)
-            .await;
+        pool.release_existing(&url, 99).await;
         assert_eq!(pool.shared_socket_holders(&url).await, Some(1));
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn parked_socket_serves_the_next_session_without_a_new_dial() {
-        let (url, dials, server) = counting_browser().await;
-        let pool = CdpPool::new();
-        let first = pool.claim_existing(&url, 1).await.unwrap();
-        pool.release_existing(&url, 1, SharedSocketRelease::Park)
-            .await;
-        assert_eq!(pool.shared_socket_holders(&url).await, Some(0), "parked");
-        assert!(
-            endpoint_port_is_grant_owned(&url),
-            "a parked personal-profile socket stays off the legacy route"
-        );
-        assert!(pool.get(&url).await.is_err());
-
-        let next = pool.claim_existing(&url, 2).await.unwrap();
-        assert!(Arc::ptr_eq(&first, &next));
-        assert_eq!(dials.load(Ordering::SeqCst), 1);
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn parked_socket_closes_after_the_idle_bound() {
-        let (url, dials, server) = counting_browser().await;
-        let pool = CdpPool::with_shared_socket_ttls(
-            std::time::Duration::from_millis(50),
-            std::time::Duration::from_secs(3600),
-        );
-        pool.claim_existing(&url, 1).await.unwrap();
-        pool.release_existing(&url, 1, SharedSocketRelease::Park)
-            .await;
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        assert_eq!(
-            pool.shared_socket_holders(&url).await,
-            None,
-            "the reaper closes an idle parked socket"
-        );
-        assert!(!endpoint_port_is_grant_owned(&url));
-
-        pool.claim_existing(&url, 2).await.unwrap();
-        assert_eq!(
-            dials.load(Ordering::SeqCst),
-            2,
-            "a later session dials again"
-        );
         server.abort();
     }
 
     #[tokio::test]
     async fn socket_past_its_absolute_bound_is_not_joined() {
         let (url, dials, server) = counting_browser().await;
-        let pool = CdpPool::with_shared_socket_ttls(
-            std::time::Duration::from_secs(3600),
-            std::time::Duration::from_millis(50),
-        );
+        let pool = CdpPool::with_shared_socket_absolute_ttl(std::time::Duration::from_millis(50));
         let old = pool.claim_existing(&url, 1).await.unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         assert!(pool.get_existing(&url, 1).await.is_err());
@@ -1209,12 +1089,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn security_close_of_the_last_holder_does_not_park() {
+    async fn a_socket_no_holder_keeps_in_use_is_not_joined() {
+        struct Retired(u64);
+        impl SharedSocketHolders for Retired {
+            fn keep_in_use(&self, holders: &HashSet<u64>, _now: Instant) -> bool {
+                holders.iter().any(|generation| *generation != self.0)
+            }
+        }
+        let (url, dials, server) = counting_browser().await;
+        let pool = CdpPool::with_shared_socket_holders(Arc::new(Retired(1)));
+        let retired = pool.claim_existing(&url, 1).await.unwrap();
+        let fresh = pool.claim_existing(&url, 2).await.unwrap();
+        assert!(!Arc::ptr_eq(&retired, &fresh));
+        assert_eq!(dials.load(Ordering::SeqCst), 2);
+        let joined = pool.claim_existing(&url, 3).await.unwrap();
+        assert!(Arc::ptr_eq(&fresh, &joined), "a holder in use is joined");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_socket_past_its_absolute_bound_is_not_live() {
+        let (url, _dials, server) = counting_browser().await;
+        let pool = CdpPool::with_shared_socket_absolute_ttl(std::time::Duration::from_millis(50));
+        assert!(!pool.existing_socket_is_live(&url).await, "no socket yet");
+        pool.claim_existing(&url, 1).await.unwrap();
+        assert!(pool.existing_socket_is_live(&url).await);
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(!pool.existing_socket_is_live(&url).await);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn releasing_the_last_holder_closes_the_socket() {
         let (url, _dials, server) = counting_browser().await;
         let pool = CdpPool::new();
         pool.claim_existing(&url, 1).await.unwrap();
-        pool.release_existing(&url, 1, SharedSocketRelease::Close)
-            .await;
+        pool.release_existing(&url, 1).await;
         assert_eq!(pool.shared_socket_holders(&url).await, None);
         assert!(!endpoint_port_is_grant_owned(&url));
         server.abort();
@@ -1238,23 +1148,6 @@ mod tests {
         );
         assert_eq!(pool.shared_socket_holders(&url).await, Some(2));
         server.abort();
-    }
-
-    #[tokio::test]
-    async fn revoking_all_sessions_closes_parked_sockets_only() {
-        let (parked_url, _d1, s1) = counting_browser().await;
-        let (held_url, _d2, s2) = counting_browser().await;
-        let pool = CdpPool::new();
-        pool.claim_existing(&parked_url, 1).await.unwrap();
-        pool.release_existing(&parked_url, 1, SharedSocketRelease::Park)
-            .await;
-        pool.claim_existing(&held_url, 2).await.unwrap();
-
-        assert_eq!(pool.inner.close_parked().await, 1);
-        assert_eq!(pool.shared_socket_holders(&parked_url).await, None);
-        assert_eq!(pool.shared_socket_holders(&held_url).await, Some(1));
-        s1.abort();
-        s2.abort();
     }
 
     #[tokio::test]
@@ -1345,7 +1238,7 @@ mod tests {
         }
         tokio::time::timeout(
             std::time::Duration::from_millis(500),
-            pool.release_existing(&url, 1, SharedSocketRelease::Close),
+            pool.release_existing(&url, 1),
         )
         .await
         .expect("grant release must not wait for the reconnect handshake");
@@ -1676,15 +1569,13 @@ mod tests {
             "each session gets its own flattened CDP session"
         );
 
-        pool.release_existing(&url, 1, SharedSocketRelease::Close)
-            .await;
+        pool.release_existing(&url, 1).await;
         log("session A: ended");
         let b = pool.get_existing(&url, 2).await.unwrap();
         attach_and_eval(b, target.clone()).await;
         log("session B: still working after A ended");
 
-        pool.release_existing(&url, 2, SharedSocketRelease::Park)
-            .await;
+        // Session B ends: its parked grant keeps holding generation 2.
         log("session B: ended (socket parked)");
         let t = std::time::Instant::now();
         let c = pool.claim_existing(&url, 3).await.unwrap();
@@ -1698,8 +1589,8 @@ mod tests {
         );
         attach_and_eval(c, target).await;
         log("session C: working on the parked socket without a prompt");
-        pool.release_existing(&url, 3, SharedSocketRelease::Close)
-            .await;
+        pool.release_existing(&url, 2).await;
+        pool.release_existing(&url, 3).await;
         log("session C: ended; socket closed");
     }
 }

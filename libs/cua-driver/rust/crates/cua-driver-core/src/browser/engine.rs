@@ -41,12 +41,12 @@ use super::binding::{
     cardinality_exact_candidate, correlate, selected_tab_target_id, BindingOutcome,
     CdpWindowCandidate,
 };
-use super::cdp_ws::{CdpConnection, CdpPool, SharedSocketRelease};
-use super::grant::{ExistingProfileGrant, ExistingProfileGrants, GrantLookup};
+use super::cdp_ws::{CdpConnection, CdpPool};
+use super::grant::{Attachment, ExistingProfileGrant, ExistingProfileGrants, GrantLookup};
 use super::mutation::{MutationGates, MutationKey};
 use super::platform::{
     BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
-    BrowserVisualActionKind, ExistingProfileSetupRequest,
+    BrowserVisualActionKind,
 };
 use super::prepare::{IsolatedLaunchBreaker, ManagedBrowsers};
 use super::reconnect::{ReconnectGates, ReconnectKey};
@@ -87,13 +87,34 @@ pub struct BrowserEngine {
     pub(crate) pool: CdpPool,
     pub(crate) managed_browsers: ManagedBrowsers,
     pub(crate) isolated_launch_breaker: IsolatedLaunchBreaker,
-    pub(crate) existing_profile_grants: ExistingProfileGrants,
+    pub(crate) existing_profile_grants: Arc<ExistingProfileGrants>,
     pub(crate) approval_broker: Arc<crate::consent::ApprovalBroker>,
     pub(crate) protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
     mutation_gates: MutationGates,
     reconnect_gates: ReconnectGates,
-    pending_existing_profile_cleanups: Mutex<HashMap<String, Vec<ExistingProfileSetupRequest>>>,
     session_end_hook: Mutex<Option<crate::session::SessionEndHookRegistration>>,
+    weak_self: Weak<Self>,
+}
+
+fn live_engines() -> &'static Mutex<Vec<Weak<BrowserEngine>>> {
+    static ENGINES: std::sync::OnceLock<Mutex<Vec<Weak<BrowserEngine>>>> =
+        std::sync::OnceLock::new();
+    ENGINES.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// End every parked existing-profile grant in this process and close the
+/// sockets they kept open. Used when the person revokes all driver sessions:
+/// revocation must not leave an already-consented browser socket waiting for
+/// the next session.
+pub async fn close_parked_browser_sockets() {
+    let engines: Vec<Arc<BrowserEngine>> = {
+        let mut engines = live_engines().lock().unwrap();
+        engines.retain(|engine| engine.strong_count() > 0);
+        engines.iter().filter_map(Weak::upgrade).collect()
+    };
+    for engine in engines {
+        engine.close_parked_sockets().await;
+    }
 }
 
 fn refuse(code: BrowserRefusalCode, msg: impl Into<String>) -> BrowserRefusal {
@@ -196,7 +217,7 @@ const CONSUMER_PROFILE_NOT_ATTACHED: &str = "Cua is not attached to this browser
 
 /// Add the exact `browser_prepare` call to a not-yet-attached refusal.
 fn with_existing_profile_next_call(
-    mut refusal: BrowserRefusal,
+    refusal: BrowserRefusal,
     session: &str,
     pid: i64,
     window_id: u64,
@@ -204,6 +225,46 @@ fn with_existing_profile_next_call(
     if refusal.code != BrowserRefusalCode::BrowserConsentRequired {
         return refusal;
     }
+    existing_profile_next_call(refusal, session, pid, window_id)
+}
+
+/// What a grant in `NeedsSetup` reports on every call until `browser_prepare`
+/// attaches it again: the reconnect refusal, the grant state, and the call.
+fn needs_setup_refusal(
+    mut refusal: BrowserRefusal,
+    session: &str,
+    pid: i64,
+    window_id: u64,
+) -> BrowserRefusal {
+    refusal.message = format!(
+        "{}; the approval is kept but nothing is attached, so call browser_prepare in \
+         detail.next_call to attach this browser again",
+        refusal.message
+    );
+    let mut detail = match refusal.detail.take() {
+        Some(Value::Object(detail)) => detail,
+        _ => serde_json::Map::new(),
+    };
+    detail.insert("attachment".to_owned(), json!("needs_setup"));
+    refusal.detail = Some(Value::Object(detail));
+    existing_profile_next_call(refusal, session, pid, window_id)
+}
+
+/// Whether an endpoint proof failed because the approved endpoint is gone or
+/// owned by another process, which leaves a grant needing `browser_prepare`.
+fn endpoint_lost(refusal: &BrowserRefusal) -> bool {
+    matches!(
+        refusal.code,
+        BrowserRefusalCode::BrowserRequiresSetup | BrowserRefusalCode::BrowserEndpointOwnerMismatch
+    )
+}
+
+fn existing_profile_next_call(
+    mut refusal: BrowserRefusal,
+    session: &str,
+    pid: i64,
+    window_id: u64,
+) -> BrowserRefusal {
     let mut detail = match refusal.detail.take() {
         Some(Value::Object(detail)) => detail,
         _ => serde_json::Map::new(),
@@ -704,20 +765,22 @@ impl BrowserEngine {
         approval_broker: Arc<crate::consent::ApprovalBroker>,
         protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
     ) -> Arc<Self> {
-        let engine = Arc::new(Self {
+        let existing_profile_grants = Arc::new(ExistingProfileGrants::new());
+        let engine = Arc::new_cyclic(|weak_self| Self {
             platform,
             store: BrowserStore::new(),
-            pool: CdpPool::new(),
+            pool: CdpPool::with_shared_socket_holders(existing_profile_grants.clone()),
             managed_browsers: Default::default(),
             isolated_launch_breaker: Default::default(),
-            existing_profile_grants: ExistingProfileGrants::new(),
+            existing_profile_grants,
             approval_broker,
             protected_resource_ownership,
             mutation_gates: MutationGates::new(),
             reconnect_gates: ReconnectGates::new(),
-            pending_existing_profile_cleanups: Mutex::new(HashMap::new()),
             session_end_hook: Mutex::new(None),
+            weak_self: weak_self.clone(),
         });
+        live_engines().lock().unwrap().push(Arc::downgrade(&engine));
         let weak: Weak<Self> = Arc::downgrade(&engine);
         let registration =
             register_scoped_fallible_session_end_hook("browser_state", move |session_id| {
@@ -725,63 +788,53 @@ impl BrowserEngine {
                 if let Some(engine) = weak.upgrade() {
                     engine.store.remove_session(session_id);
                     engine.cleanup_prepared_session(session_id);
-                    let pending = {
-                        let mut pending = engine.pending_existing_profile_cleanups.lock().unwrap();
-                        let mut requests = pending.remove(session_id).unwrap_or_default();
-                        for grant in engine.existing_profile_grants.remove_session(session_id) {
-                            if grant.cleanup_remote_debugging {
-                                requests.push(ExistingProfileSetupRequest {
-                                    pid: grant.pid,
-                                    window_id: grant.window_id,
-                                    browser: grant.browser_product,
-                                });
-                            }
-                            if let Some(protected) = grant.protected_consent.as_ref() {
-                                protected.revoke();
-                            }
-                            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-                                let engine = engine.clone();
-                                runtime.spawn(async move {
-                                    // A normal session end parks the already-consented
-                                    // socket for the next approved session, unless the
-                                    // driver is turning remote debugging back off.
-                                    let mode = if grant.cleanup_remote_debugging {
-                                        SharedSocketRelease::Close
-                                    } else {
-                                        SharedSocketRelease::Park
-                                    };
-                                    engine
-                                        .pool
-                                        .release_existing(
-                                            &grant.endpoint_ws_url,
-                                            grant.generation,
-                                            mode,
-                                        )
-                                        .await;
-                                    if let Some(protected) = grant.protected_consent.as_ref() {
-                                        engine.approval_broker.revoke(protected).await;
-                                    }
-                                });
-                            }
-                        }
-                        requests
-                    };
-
-                    let mut failed = Vec::new();
-                    for request in pending {
-                        if let Err(error) = engine
-                            .platform
-                            .cleanup_existing_profile_setup(request.clone())
+                    let ended = engine.existing_profile_grants.end_session(session_id);
+                    // A normal session end parks the already-consented socket
+                    // for the next approved session. A grant that turned remote
+                    // debugging on closes it while turning it back off.
+                    for grant in ended.owed_cleanups.iter().chain(&ended.released) {
+                        let Some(request) = grant.setup_cleanup() else {
+                            continue;
+                        };
+                        if let Err(error) = engine.platform.cleanup_existing_profile_setup(request)
                         {
                             cleanup_errors.push(error.message);
-                            failed.push(request);
+                            engine.existing_profile_grants.owe_cleanup(grant.clone());
                         }
                     }
-                    let mut pending = engine.pending_existing_profile_cleanups.lock().unwrap();
-                    if failed.is_empty() {
-                        pending.remove(session_id);
-                    } else {
-                        pending.insert(session_id.to_owned(), failed);
+                    if !ended.parked.is_empty() {
+                        engine.schedule_parked_reaper();
+                    }
+                    let parked_urls: Vec<_> = ended
+                        .parked
+                        .iter()
+                        .map(|grant| grant.endpoint_ws_url.clone())
+                        .collect();
+                    let revoked: Vec<_> = ended.parked.into_iter().chain(ended.released).collect();
+                    for grant in &revoked {
+                        if let Some(protected) = grant.protected_consent.as_ref() {
+                            protected.revoke();
+                        }
+                    }
+                    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                        let engine = engine.clone();
+                        runtime.spawn(async move {
+                            // A socket already closed or past its absolute bound
+                            // is not worth keeping for the next session.
+                            for url in parked_urls {
+                                if !engine.pool.existing_socket_is_live(&url).await {
+                                    engine.end_parked_on(&url).await;
+                                }
+                            }
+                            for grant in revoked {
+                                if grant.cleanup_remote_debugging {
+                                    engine.close_existing_profile_socket(&grant).await;
+                                }
+                                if let Some(protected) = grant.protected_consent.as_ref() {
+                                    engine.approval_broker.revoke(protected).await;
+                                }
+                            }
+                        });
                     }
                 }
                 if cleanup_errors.is_empty() {
@@ -809,41 +862,68 @@ impl BrowserEngine {
             GrantLookup::Missing => Ok(None),
             GrantLookup::Live(grant) => Ok(Some(grant)),
             GrantLookup::Expired(grant) => {
-                if grant.cleanup_remote_debugging {
-                    let request = ExistingProfileSetupRequest {
-                        pid: grant.pid,
-                        window_id: grant.window_id,
-                        browser: grant.browser_product,
-                    };
-                    if self
-                        .platform
-                        .cleanup_existing_profile_setup(request.clone())
-                        .is_err()
-                    {
-                        self.pending_existing_profile_cleanups
-                            .lock()
-                            .unwrap()
-                            .entry(session.to_owned())
-                            .or_default()
-                            .push(request);
-                    }
-                }
-                self.pool
-                    .release_existing(
-                        &grant.endpoint_ws_url,
-                        grant.generation,
-                        SharedSocketRelease::Close,
-                    )
-                    .await;
-                if let Some(protected) = grant.protected_consent.as_ref() {
-                    self.approval_broker.revoke(protected).await;
-                }
+                self.release_ended_grant(grant).await;
                 Err(refuse(
                     BrowserRefusalCode::BrowserConsentRequired,
                     "the existing-profile grant expired; approve this attachment again",
                 ))
             }
         }
+    }
+
+    /// The live grant for this browser, or, for a grant in `NeedsSetup`, the
+    /// refusal that names `browser_prepare`. A grant whose browser process
+    /// changed meanwhile is revoked instead.
+    async fn attached_existing_profile_grant(
+        &self,
+        session: &str,
+        transport_session: Option<&str>,
+        pid: i64,
+    ) -> Result<Option<ExistingProfileGrant>, BrowserRefusal> {
+        let Some(grant) = self
+            .existing_profile_grant(session, transport_session, pid)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let Attachment::NeedsSetup { refusal } = &grant.attachment else {
+            return Ok(Some(grant));
+        };
+        let fingerprint = self.platform.process_fingerprint(pid).await?;
+        if !grant.fingerprint.matches(&fingerprint) {
+            self.revoke_existing_profile_grant(session, transport_session, pid)
+                .await;
+            return Err(refuse(
+                BrowserRefusalCode::BrowserConsentRequired,
+                "the browser process changed; existing-profile attachment needs fresh approval",
+            ));
+        }
+        Err(refusal.clone())
+    }
+
+    /// Move an attached grant to `NeedsSetup` after its endpoint could not be
+    /// proven, and give up its socket. Returns the refusal every call reports
+    /// until `browser_prepare` attaches the browser again.
+    async fn enter_needs_setup(
+        &self,
+        session: &str,
+        transport_session: Option<&str>,
+        grant: &ExistingProfileGrant,
+        refusal: BrowserRefusal,
+    ) -> BrowserRefusal {
+        let refusal = needs_setup_refusal(refusal, session, grant.pid, grant.window_id);
+        if let Some(attached) = self.existing_profile_grants.needs_setup(
+            session,
+            transport_session,
+            grant.pid,
+            grant.generation,
+            refusal.clone(),
+        ) {
+            self.pool
+                .release_existing(&attached.endpoint_ws_url, attached.generation)
+                .await;
+        }
+        refusal
     }
 
     pub(crate) async fn revoke_existing_profile_grant(
@@ -856,36 +936,89 @@ impl BrowserEngine {
             .existing_profile_grants
             .revoke(session, transport_session, pid)
         {
-            if grant.cleanup_remote_debugging {
-                let request = ExistingProfileSetupRequest {
-                    pid: grant.pid,
-                    window_id: grant.window_id,
-                    browser: grant.browser_product,
-                };
-                if self
-                    .platform
-                    .cleanup_existing_profile_setup(request.clone())
-                    .is_err()
-                {
-                    self.pending_existing_profile_cleanups
-                        .lock()
-                        .unwrap()
-                        .entry(session.to_owned())
-                        .or_default()
-                        .push(request);
-                }
-            }
-            self.pool
-                .release_existing(
-                    &grant.endpoint_ws_url,
-                    grant.generation,
-                    SharedSocketRelease::Close,
-                )
-                .await;
-            if let Some(protected) = grant.protected_consent.as_ref() {
-                self.approval_broker.revoke(protected).await;
+            self.release_ended_grant(grant).await;
+        }
+    }
+
+    /// Release what a grant held once it left the registry: turn remote
+    /// debugging back off if the driver turned it on, close its socket, and
+    /// revoke its consent. A failed cleanup stays on the grant, as `Expired`,
+    /// for its session end to retry.
+    async fn release_ended_grant(&self, grant: ExistingProfileGrant) {
+        if let Some(request) = grant.setup_cleanup() {
+            if self
+                .platform
+                .cleanup_existing_profile_setup(request)
+                .is_err()
+            {
+                self.existing_profile_grants.owe_cleanup(grant.clone());
             }
         }
+        self.close_existing_profile_socket(&grant).await;
+        if let Some(protected) = grant.protected_consent.as_ref() {
+            self.approval_broker.revoke(protected).await;
+        }
+    }
+
+    /// Release `grant`'s hold on its socket and end the grants parked on it,
+    /// so the socket closes unless another attached grant still holds it.
+    async fn close_existing_profile_socket(&self, grant: &ExistingProfileGrant) {
+        if grant.holds_socket() {
+            self.pool
+                .release_existing(&grant.endpoint_ws_url, grant.generation)
+                .await;
+        }
+        self.end_parked_on(&grant.endpoint_ws_url).await;
+    }
+
+    /// End the grants parked on the socket for `endpoint_ws_url`.
+    async fn end_parked_on(&self, endpoint_ws_url: &str) {
+        self.end_parked(self.existing_profile_grants.parked_on(endpoint_ws_url))
+            .await;
+    }
+
+    /// End the parked grants past their idle bound.
+    async fn end_idle_parked(&self) {
+        self.end_parked(
+            self.existing_profile_grants
+                .idle_parked(std::time::Instant::now()),
+        )
+        .await;
+    }
+
+    /// End every parked grant and release the sockets they kept open.
+    pub(crate) async fn close_parked_sockets(&self) {
+        self.end_parked(self.existing_profile_grants.all_parked())
+            .await;
+    }
+
+    /// Release parked grants' socket holds, then forget the grants. Until
+    /// they are forgotten, the pool still sees an idle one as a holder that
+    /// no grant may join through.
+    async fn end_parked(&self, parked: Vec<ExistingProfileGrant>) {
+        for grant in &parked {
+            self.pool
+                .release_existing(&grant.endpoint_ws_url, grant.generation)
+                .await;
+        }
+        let generations: Vec<u64> = parked.iter().map(|grant| grant.generation).collect();
+        self.existing_profile_grants.forget_parked(&generations);
+    }
+
+    /// End the parked grants whose idle bound has passed, once it can have.
+    pub(crate) fn schedule_parked_reaper(&self) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let weak = self.weak_self.clone();
+        let wait =
+            self.existing_profile_grants.parked_idle_ttl() + std::time::Duration::from_millis(10);
+        runtime.spawn(async move {
+            tokio::time::sleep(wait).await;
+            if let Some(engine) = weak.upgrade() {
+                engine.end_idle_parked().await;
+            }
+        });
     }
 
     pub(crate) async fn connect(&self, ws_url: &str) -> Result<Arc<CdpConnection>, BrowserRefusal> {
@@ -910,7 +1043,7 @@ impl BrowserEngine {
         pid: i64,
     ) -> Result<(Arc<CdpConnection>, ExistingProfileGrant), BrowserRefusal> {
         let grant = self
-            .existing_profile_grant(session, transport_session, pid)
+            .attached_existing_profile_grant(session, transport_session, pid)
             .await?
             .ok_or_else(|| {
                 refuse(
@@ -937,7 +1070,7 @@ impl BrowserEngine {
             ))
             .await;
         let mut grant = self
-            .existing_profile_grant(session, transport_session, pid)
+            .attached_existing_profile_grant(session, transport_session, pid)
             .await?
             .ok_or_else(|| {
                 refuse(
@@ -984,22 +1117,31 @@ impl BrowserEngine {
                     "the browser process changed; existing-profile attachment needs fresh approval",
                 ));
             }
-            let endpoint = self
+            let reproved = match self
                 .platform
                 .reprove_existing_profile_endpoint(pid, &grant.endpoint_ws_url)
-                .await?
-                .ok_or_else(|| {
-                    refuse(
-                        BrowserRefusalCode::BrowserRequiresSetup,
-                        "the approved browser endpoint disappeared during reconnect",
-                    )
-                })?;
-            if endpoint.ownership.owner_pid != pid {
-                return Err(refuse(
+                .await
+            {
+                Ok(Some(endpoint)) if endpoint.ownership.owner_pid == pid => Ok(endpoint),
+                Ok(Some(_)) => Err(refuse(
                     BrowserRefusalCode::BrowserEndpointOwnerMismatch,
                     "the reconnect endpoint is not owned by the approved browser process",
-                ));
-            }
+                )),
+                Ok(None) => Err(refuse(
+                    BrowserRefusalCode::BrowserRequiresSetup,
+                    "the approved browser endpoint disappeared during reconnect",
+                )),
+                Err(refusal) => Err(refusal),
+            };
+            let endpoint = match reproved {
+                Ok(endpoint) => endpoint,
+                Err(refusal) if endpoint_lost(&refusal) => {
+                    return Err(self
+                        .enter_needs_setup(session, transport_session, &grant, refusal)
+                        .await);
+                }
+                Err(refusal) => return Err(refusal),
+            };
             if endpoint.ws_url != grant.endpoint_ws_url {
                 self.revoke_existing_profile_grant(session, transport_session, pid)
                     .await;
@@ -1010,9 +1152,12 @@ impl BrowserEngine {
             }
 
             let old_generation = grant.generation;
-            let new_generation =
-                self.existing_profile_grants
-                    .bump_generation(session, transport_session, pid)?;
+            let new_generation = self.existing_profile_grants.bump_generation(
+                session,
+                transport_session,
+                pid,
+                old_generation,
+            )?;
             self.store
                 .invalidate_endpoint_generation(pid, old_generation);
             let attempt = super::grant::MAX_RECONNECT_ATTEMPTS
@@ -1055,20 +1200,46 @@ impl BrowserEngine {
                     }
                 }
             };
-            match reconnected {
-                Ok(conn) => {
-                    grant = self
-                        .existing_profile_grant(session, transport_session, pid)
-                        .await?
-                        .expect("grant exists after successful generation bump");
-                    return Ok((conn, grant));
+            let current = self
+                .existing_profile_grant(session, transport_session, pid)
+                .await;
+            let current = match current {
+                Ok(Some(current))
+                    if matches!(current.attachment, Attachment::Attached)
+                        && current.generation == new_generation =>
+                {
+                    current
                 }
+                // The grant moved on while the socket was dialing: the new
+                // hold is not its to keep.
+                moved_on => {
+                    if reconnected.is_ok() {
+                        self.pool
+                            .release_existing(&endpoint.ws_url, new_generation)
+                            .await;
+                    }
+                    return Err(match moved_on {
+                        Ok(Some(ExistingProfileGrant {
+                            attachment: Attachment::NeedsSetup { refusal },
+                            ..
+                        })) => refusal,
+                        Ok(Some(_)) => refuse(
+                            BrowserRefusalCode::BrowserBindingStale,
+                            "the browser attachment changed while reconnecting; re-run get_browser_state",
+                        ),
+                        Ok(None) => refuse(
+                            BrowserRefusalCode::BrowserConsentRequired,
+                            "the existing-profile grant ended while reconnecting",
+                        ),
+                        Err(refusal) => refusal,
+                    });
+                }
+            };
+            match reconnected {
+                Ok(conn) => return Ok((conn, current)),
                 Err(error) => {
                     last_error = Some(error.to_string());
-                    grant = self
-                        .existing_profile_grant(session, transport_session, pid)
-                        .await?
-                        .expect("grant exists while reconnect budget remains");
+                    grant = current;
                 }
             }
         }
@@ -1160,6 +1331,25 @@ impl BrowserEngine {
             ));
         }
         Ok(endpoint)
+    }
+
+    /// Re-prove a live grant's endpoint. An endpoint that is gone or owned by
+    /// another process moves the grant to `NeedsSetup`.
+    async fn approved_existing_profile_endpoint(
+        &self,
+        session: &str,
+        transport_session: Option<&str>,
+        grant: &ExistingProfileGrant,
+    ) -> Result<OwnedEndpoint, BrowserRefusal> {
+        match self
+            .existing_profile_endpoint(grant.pid, &grant.endpoint_ws_url)
+            .await
+        {
+            Err(refusal) if endpoint_lost(&refusal) => Err(self
+                .enter_needs_setup(session, transport_session, grant, refusal)
+                .await),
+            result => result,
+        }
     }
 
     /// List page-type CDP targets with their window geometry.
@@ -1389,7 +1579,7 @@ impl BrowserEngine {
         }
 
         let mut grant = self
-            .existing_profile_grant(session, transport_session, pid)
+            .attached_existing_profile_grant(session, transport_session, pid)
             .await?;
         let driver_owned = self.is_driver_owned_pid_for_session(session, pid).await
             || match transport_session {
@@ -1402,7 +1592,7 @@ impl BrowserEngine {
         let native = self.native_window_checked(pid, window_id).await?;
         let fingerprint = self.platform.process_fingerprint(pid).await?;
         let endpoint = if let Some(live_grant) = &grant {
-            self.existing_profile_endpoint(pid, &live_grant.endpoint_ws_url)
+            self.approved_existing_profile_endpoint(session, transport_session, live_grant)
                 .await?
         } else {
             self.owned_endpoint(pid).await.map_err(|refusal| {
@@ -1592,9 +1782,13 @@ impl BrowserEngine {
                 "the tab capability belongs to an older browser connection generation",
             ));
         }
-        if record.generation > 0 {
+        let grant = if record.generation > 0 {
             let grant = self
-                .existing_profile_grant(session, record.transport_session.as_deref(), record.pid)
+                .attached_existing_profile_grant(
+                    session,
+                    record.transport_session.as_deref(),
+                    record.pid,
+                )
                 .await?
                 .ok_or_else(|| {
                     refuse(
@@ -1608,7 +1802,10 @@ impl BrowserEngine {
                     "the browser connection generation changed; re-run get_browser_state",
                 ));
             }
-        }
+            Some(grant)
+        } else {
+            None
+        };
 
         match record.endpoint_access_class {
             EndpointAccessClass::DriverOwned => {
@@ -1673,9 +1870,13 @@ impl BrowserEngine {
             .await?;
 
         // 3. Endpoint still owned and unchanged.
-        let endpoint = if record.generation > 0 {
-            self.existing_profile_endpoint(record.pid, &record.ws_url)
-                .await?
+        let endpoint = if let Some(grant) = &grant {
+            self.approved_existing_profile_endpoint(
+                session,
+                record.transport_session.as_deref(),
+                grant,
+            )
+            .await?
         } else {
             self.owned_endpoint(record.pid).await?
         };

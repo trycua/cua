@@ -41,13 +41,7 @@ struct PendingSocketProbe {
 impl PendingSocketProbe {
     async fn release(&mut self) {
         if let Some(generation) = self.generation {
-            self.pool
-                .release_existing(
-                    &self.ws_url,
-                    generation,
-                    super::cdp_ws::SharedSocketRelease::Close,
-                )
-                .await;
+            self.pool.release_existing(&self.ws_url, generation).await;
             self.generation = None;
         }
     }
@@ -62,12 +56,7 @@ impl Drop for PendingSocketProbe {
         let ws_url = self.ws_url.clone();
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             runtime.spawn(async move {
-                pool.release_existing(
-                    &ws_url,
-                    generation,
-                    super::cdp_ws::SharedSocketRelease::Close,
-                )
-                .await;
+                pool.release_existing(&ws_url, generation).await;
             });
         }
     }
@@ -1819,14 +1808,14 @@ impl BrowserEngine {
             cleanup_remote_debugging,
             protected_consent,
         );
+        // Minting parked an attached previous grant on its socket, so the new
+        // generation joins it below without another browser prompt.
+        if previous_grant.as_ref().is_some_and(|previous| {
+            matches!(previous.attachment, super::grant::Attachment::Attached)
+        }) {
+            self.schedule_parked_reaper();
+        }
         if let Some(previous) = previous_grant {
-            self.pool
-                .release_existing(
-                    &previous.endpoint_ws_url,
-                    previous.generation,
-                    super::cdp_ws::SharedSocketRelease::Park,
-                )
-                .await;
             if let Some(protected) = previous.protected_consent.as_ref() {
                 self.approval_broker.revoke(protected).await;
             }

@@ -1069,6 +1069,12 @@ struct FixtureFocus {
     /// can guard a background attach.
     browser_off_space: bool,
     guards: StdMutex<Vec<(i64, u64)>>,
+    /// Re-proofs of the approved endpoint that still find it. After them it
+    /// is gone, owned by `reproof_owner` when set, or refused by the platform
+    /// as owner-mismatched when `reproof_refuses`. `None` always finds it.
+    reproofs_left: StdMutex<Option<usize>>,
+    reproof_owner: Option<i64>,
+    reproof_refuses: bool,
 }
 
 #[async_trait]
@@ -1203,13 +1209,29 @@ impl BrowserPlatform for FixturePlatform {
         if expected_ws_url != self.ws_url {
             return Ok(None);
         }
+        let mut owner_pid = pid;
+        if let Some(left) = self.focus.reproofs_left.lock().unwrap().as_mut() {
+            if *left > 0 {
+                *left -= 1;
+            } else if self.focus.reproof_refuses {
+                return Err(BrowserRefusal::new(
+                    super::refusal::BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                    "the fixture DevTools endpoint changed",
+                ));
+            } else {
+                match self.focus.reproof_owner {
+                    Some(owner) => owner_pid = owner,
+                    None => return Ok(None),
+                }
+            }
+        }
         Ok(Some(OwnedEndpoint {
             ws_url: self.ws_url.clone(),
             http_port: None,
             transport: EndpointTransport::LegacyJsonVersion,
             ownership: EndpointOwnershipProof {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
-                owner_pid: pid,
+                owner_pid,
                 listener_pid: None,
                 detail: Some("fixture exact approved endpoint".to_owned()),
             },
@@ -1788,10 +1810,7 @@ async fn cancelled_prepare_probe_releases_only_its_socket_hold() {
                 .call(None, "Target.getTargets", json!({}))
                 .await
                 .unwrap();
-            f.engine
-                .pool
-                .release_existing(&url, u64::MAX, super::cdp_ws::SharedSocketRelease::Close)
-                .await;
+            f.engine.pool.release_existing(&url, u64::MAX).await;
         }
         crate::session::fire_session_end("prepare-cancelled-probe");
     }
@@ -5470,4 +5489,268 @@ async fn a_failed_enter_after_insert_text_is_reported_not_counted() {
     assert_eq!(refusal["detail"]["delivered_chars"], 2);
     assert_eq!(refusal["detail"]["enter_pressed"], false);
     assert_eq!(recorded_calls(&f, "Input.insertText").len(), 1);
+}
+
+fn needs_setup_focus(reproofs_left: usize, reproof_owner: Option<i64>) -> Arc<FixtureFocus> {
+    Arc::new(FixtureFocus {
+        reproofs_left: StdMutex::new(Some(reproofs_left)),
+        reproof_owner,
+        ..Default::default()
+    })
+}
+
+async fn attach_existing_profile(f: &Fixture, session: &str, transport: &str) -> Value {
+    let prepared = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": session,
+            "_transport_session_id": transport,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    structured(&prepared).clone()
+}
+
+async fn existing_profile_state(f: &Fixture, session: &str, transport: &str) -> Value {
+    let state = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": session,
+            "_transport_session_id": transport
+        }))
+        .await;
+    structured(&state).clone()
+}
+
+fn assert_needs_setup(state: &Value, code: &str, session: &str) {
+    assert_eq!(state["status"], "refused", "{state}");
+    let refusal = &state["refusal"];
+    assert_eq!(refusal["code"], code, "{refusal}");
+    assert_eq!(refusal["detail"]["attachment"], "needs_setup", "{refusal}");
+    assert_eq!(
+        refusal["detail"]["next_call"],
+        json!({
+            "tool": "browser_prepare",
+            "arguments": {
+                "pid": 1,
+                "window_id": 7,
+                "session": session,
+                "strategy": { "kind": "existing_profile" },
+            },
+        }),
+        "{refusal}"
+    );
+}
+
+#[tokio::test]
+async fn get_browser_state_reports_a_lost_endpoint_as_needs_setup_until_prepare() {
+    for (owner, code, transport) in [
+        (None, "browser_requires_setup", "needs-setup-gone"),
+        (
+            Some(99),
+            "browser_endpoint_owner_mismatch",
+            "needs-setup-owner",
+        ),
+    ] {
+        let focus = needs_setup_focus(usize::MAX, owner);
+        let (f, _) = protected_existing_profile_fixture_with_consent(focus.clone(), false).await;
+        let prepared = attach_existing_profile(&f, transport, transport).await;
+        assert_eq!(prepared["status"], "ok", "{prepared}");
+        let state = existing_profile_state(&f, transport, transport).await;
+        assert_eq!(state["status"], "ok", "{state}");
+
+        // The endpoint is gone, or another process owns it.
+        *focus.reproofs_left.lock().unwrap() = Some(0);
+        let state = existing_profile_state(&f, transport, transport).await;
+        assert_needs_setup(&state, code, transport);
+        let grant = f
+            .engine
+            .existing_profile_grant(transport, Some(transport), 1)
+            .await
+            .unwrap()
+            .expect("the approval is kept");
+        assert!(matches!(
+            grant.attachment,
+            super::grant::Attachment::NeedsSetup { .. }
+        ));
+        assert_eq!(
+            f.engine
+                .pool
+                .shared_socket_holders(&f._server.ws_url())
+                .await,
+            None,
+            "a grant that needs setup holds no socket"
+        );
+
+        // Even once the endpoint is back, only browser_prepare attaches again.
+        *focus.reproofs_left.lock().unwrap() = None;
+        let state = existing_profile_state(&f, transport, transport).await;
+        assert_needs_setup(&state, code, transport);
+
+        let prepared = attach_existing_profile(&f, transport, transport).await;
+        assert_eq!(prepared["status"], "ok", "{prepared}");
+        let state = existing_profile_state(&f, transport, transport).await;
+        assert_eq!(state["status"], "ok", "{state}");
+        crate::session::fire_session_end(transport);
+    }
+}
+
+#[tokio::test]
+async fn a_reconnect_that_cannot_prove_the_endpoint_needs_setup() {
+    const TRANSPORT: &str = "needs-setup-reconnect";
+    // The bind proves the endpoint once; the reconnect's proof finds it gone.
+    let focus = needs_setup_focus(usize::MAX, None);
+    let (f, _) = protected_existing_profile_fixture_with_consent(focus.clone(), false).await;
+    let prepared = attach_existing_profile(&f, TRANSPORT, TRANSPORT).await;
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    let grant = f
+        .engine
+        .existing_profile_grant(TRANSPORT, Some(TRANSPORT), 1)
+        .await
+        .unwrap()
+        .unwrap();
+    // The socket is lost, so the next call has to reconnect.
+    f.engine
+        .pool
+        .release_existing(&grant.endpoint_ws_url, grant.generation)
+        .await;
+    *focus.reproofs_left.lock().unwrap() = Some(1);
+
+    let state = existing_profile_state(&f, TRANSPORT, TRANSPORT).await;
+    assert_needs_setup(&state, "browser_requires_setup", TRANSPORT);
+    let grant = f
+        .engine
+        .existing_profile_grant(TRANSPORT, Some(TRANSPORT), 1)
+        .await
+        .unwrap()
+        .expect("the approval is kept");
+    assert!(matches!(
+        grant.attachment,
+        super::grant::Attachment::NeedsSetup { .. }
+    ));
+    assert_eq!(
+        grant.reconnect_attempts_remaining,
+        super::grant::MAX_RECONNECT_ATTEMPTS
+    );
+    crate::session::fire_session_end(TRANSPORT);
+}
+
+#[tokio::test]
+async fn an_ended_session_parks_its_socket_until_every_session_is_revoked() {
+    const TRANSPORT: &str = "parked-revoke-all";
+    let (f, _) = protected_existing_profile_fixture().await;
+    let prepared = attach_existing_profile(&f, TRANSPORT, TRANSPORT).await;
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    let url = f._server.ws_url();
+
+    crate::session::fire_session_end(TRANSPORT);
+    assert_eq!(
+        f.engine.pool.shared_socket_holders(&url).await,
+        Some(1),
+        "the parked grant keeps the consented socket open"
+    );
+    assert!(f
+        .engine
+        .existing_profile_grant(TRANSPORT, Some(TRANSPORT), 1)
+        .await
+        .unwrap()
+        .is_none());
+
+    f.engine.close_parked_sockets().await;
+    assert_eq!(f.engine.pool.shared_socket_holders(&url).await, None);
+}
+
+#[tokio::test]
+async fn revoking_a_grant_also_closes_the_socket_an_ended_session_parked() {
+    let (f, _) = protected_existing_profile_fixture().await;
+    let parked =
+        attach_existing_profile(&f, "parked-then-revoked-a", "parked-then-revoked-a").await;
+    assert_eq!(parked["status"], "ok", "{parked}");
+    crate::session::fire_session_end("parked-then-revoked-a");
+    let joined =
+        attach_existing_profile(&f, "parked-then-revoked-b", "parked-then-revoked-b").await;
+    assert_eq!(joined["status"], "ok", "{joined}");
+    assert_eq!(joined["side_effects"]["displayed_consent_prompt"], false);
+    let url = f._server.ws_url();
+    assert_eq!(f.engine.pool.shared_socket_holders(&url).await, Some(2));
+
+    // A security end of the only attached grant closes the socket, as it
+    // did when a parked socket had no holder at all.
+    f.engine
+        .revoke_existing_profile_grant("parked-then-revoked-b", Some("parked-then-revoked-b"), 1)
+        .await;
+    assert_eq!(f.engine.pool.shared_socket_holders(&url).await, None);
+    crate::session::fire_session_end("parked-then-revoked-b");
+}
+
+#[tokio::test]
+async fn a_reconnect_whose_platform_proof_refuses_the_owner_needs_setup() {
+    const TRANSPORT: &str = "needs-setup-reconnect-refused";
+    let focus = Arc::new(FixtureFocus {
+        reproof_refuses: true,
+        ..Default::default()
+    });
+    let (f, _) = protected_existing_profile_fixture_with_consent(focus.clone(), false).await;
+    let prepared = attach_existing_profile(&f, TRANSPORT, TRANSPORT).await;
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    let grant = f
+        .engine
+        .existing_profile_grant(TRANSPORT, Some(TRANSPORT), 1)
+        .await
+        .unwrap()
+        .unwrap();
+    f.engine
+        .pool
+        .release_existing(&grant.endpoint_ws_url, grant.generation)
+        .await;
+    // The bind's proof passes; the reconnect's proof is refused.
+    *focus.reproofs_left.lock().unwrap() = Some(1);
+
+    let state = existing_profile_state(&f, TRANSPORT, TRANSPORT).await;
+    assert_needs_setup(&state, "browser_endpoint_owner_mismatch", TRANSPORT);
+    crate::session::fire_session_end(TRANSPORT);
+}
+
+#[tokio::test]
+async fn a_session_end_ends_every_parked_hold_on_a_socket_that_is_already_gone() {
+    let (f, _) = protected_existing_profile_fixture().await;
+    let generation = |session: &'static str| {
+        let engine = f.engine.clone();
+        async move {
+            engine
+                .existing_profile_grant(session, Some(session), 1)
+                .await
+                .unwrap()
+                .unwrap()
+                .generation
+        }
+    };
+    let a = attach_existing_profile(&f, "park-dead-socket-a", "park-dead-socket-a").await;
+    assert_eq!(a["status"], "ok", "{a}");
+    let a_generation = generation("park-dead-socket-a").await;
+    let b = attach_existing_profile(&f, "park-dead-socket-b", "park-dead-socket-b").await;
+    assert_eq!(b["status"], "ok", "{b}");
+    let b_generation = generation("park-dead-socket-b").await;
+    crate::session::fire_session_end("park-dead-socket-a");
+    assert!(f
+        .engine
+        .existing_profile_grants
+        .all_parked()
+        .iter()
+        .any(|parked| parked.generation == a_generation));
+
+    // The socket goes away while B still uses it; then B's session ends.
+    let url = f._server.ws_url();
+    f.engine.pool.release_existing(&url, a_generation).await;
+    f.engine.pool.release_existing(&url, b_generation).await;
+    crate::session::fire_session_end("park-dead-socket-b");
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !f.engine.existing_profile_grants.all_parked().is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("no grant stays parked on a socket that is gone");
 }

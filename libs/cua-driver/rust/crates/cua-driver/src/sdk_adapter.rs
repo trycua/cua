@@ -311,7 +311,7 @@ impl SdkAdapter {
         self.mark_all_sessions_ended();
         // Revoking everything must not leave an already-approved browser
         // socket parked for a later session.
-        cua_driver_core::browser::cdp_ws::close_parked_browser_sockets().await;
+        cua_driver_core::browser::engine::close_parked_browser_sockets().await;
         count
     }
 

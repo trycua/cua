@@ -2290,6 +2290,49 @@ const FfiConverterTypeDragInput = (() => {
     return new FFIConverter();
 })();
 
+export type ElementCustomAction = {
+    name: string,
+    raw: string
+}
+
+/**
+ * Generated factory for {@link ElementCustomAction} record objects.
+ */
+export const ElementCustomAction = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ElementCustomAction, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ElementCustomAction>,
+    });
+})();
+
+const FfiConverterTypeElementCustomAction = (() => {
+    type TypeName = ElementCustomAction;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                name: FfiConverterString.read(from),
+                raw: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.name, into);
+            FfiConverterString.write(value.raw, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.name) +
+             FfiConverterString.allocationSize(value.raw);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type ElementFrame = {
     x: number,
     y: number,
@@ -6205,8 +6248,18 @@ export type WindowElement = {
     valueDescription?: string,
     enabled?: boolean,
     selected?: boolean,
+    /**
+     * Whether the element is a password field. Windows reports it from UIA
+     * `IsPassword`: `false` only on `Edit` controls, absent when unknown.
+     */
+    isPassword?: boolean,
     inWebContent?: boolean,
     actions?: Array<string>,
+    /**
+     * macOS only: application-defined actions, with a readable name and the
+     * exact action envelope accepted by `click`. Windows and Linux omit this.
+     */
+    customActions?: Array<ElementCustomAction>,
     parentIndex?: bigint,
     frame?: ElementFrame,
     min?: number,
@@ -6243,8 +6296,10 @@ const FfiConverterTypeWindowElement = (() => {
                 valueDescription: FfiConverterOptionalString.read(from),
                 enabled: FfiConverterOptionalBoolean.read(from),
                 selected: FfiConverterOptionalBoolean.read(from),
+                isPassword: FfiConverterOptionalBoolean.read(from),
                 inWebContent: FfiConverterOptionalBoolean.read(from),
                 actions: FfiConverterOptionalSequenceString.read(from),
+                customActions: FfiConverterOptionalSequenceTypeElementCustomAction.read(from),
                 parentIndex: FfiConverterOptionalUInt64.read(from),
                 frame: FfiConverterOptionalTypeElementFrame.read(from),
                 min: FfiConverterOptionalFloat64.read(from),
@@ -6261,8 +6316,10 @@ const FfiConverterTypeWindowElement = (() => {
             FfiConverterOptionalString.write(value.valueDescription, into);
             FfiConverterOptionalBoolean.write(value.enabled, into);
             FfiConverterOptionalBoolean.write(value.selected, into);
+            FfiConverterOptionalBoolean.write(value.isPassword, into);
             FfiConverterOptionalBoolean.write(value.inWebContent, into);
             FfiConverterOptionalSequenceString.write(value.actions, into);
+            FfiConverterOptionalSequenceTypeElementCustomAction.write(value.customActions, into);
             FfiConverterOptionalUInt64.write(value.parentIndex, into);
             FfiConverterOptionalTypeElementFrame.write(value.frame, into);
             FfiConverterOptionalFloat64.write(value.min, into);
@@ -6278,8 +6335,10 @@ const FfiConverterTypeWindowElement = (() => {
              FfiConverterOptionalString.allocationSize(value.valueDescription) +
              FfiConverterOptionalBoolean.allocationSize(value.enabled) +
              FfiConverterOptionalBoolean.allocationSize(value.selected) +
+             FfiConverterOptionalBoolean.allocationSize(value.isPassword) +
              FfiConverterOptionalBoolean.allocationSize(value.inWebContent) +
              FfiConverterOptionalSequenceString.allocationSize(value.actions) +
+             FfiConverterOptionalSequenceTypeElementCustomAction.allocationSize(value.customActions) +
              FfiConverterOptionalUInt64.allocationSize(value.parentIndex) +
              FfiConverterOptionalTypeElementFrame.allocationSize(value.frame) +
              FfiConverterOptionalFloat64.allocationSize(value.min) +
@@ -6710,6 +6769,12 @@ const FfiConverterSequenceTypeStatePredicate = new FfiConverterArray(FfiConverte
 // FfiConverter for Array<PredicateOutcome>
 const FfiConverterSequenceTypePredicateOutcome = new FfiConverterArray(FfiConverterTypePredicateOutcome);
 
+// FfiConverter for Array<ElementCustomAction>
+const FfiConverterSequenceTypeElementCustomAction = new FfiConverterArray(FfiConverterTypeElementCustomAction);
+
+// FfiConverter for Array<ElementCustomAction> | undefined
+const FfiConverterOptionalSequenceTypeElementCustomAction = new FfiConverterOptional(FfiConverterSequenceTypeElementCustomAction);
+
 // FfiConverter for ElementFrame | undefined
 const FfiConverterOptionalTypeElementFrame = new FfiConverterOptional(FfiConverterTypeElementFrame);
 
@@ -6795,6 +6860,7 @@ export default Object.freeze({
     FfiConverterTypeDesktopScope,
     FfiConverterTypeDragInput,
     FfiConverterTypeEffectiveScope,
+    FfiConverterTypeElementCustomAction,
     FfiConverterTypeElementFrame,
     FfiConverterTypeElementPredicate,
     FfiConverterTypeElementSelector,

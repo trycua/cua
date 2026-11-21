@@ -667,12 +667,13 @@ mod tests {
 
 /// Description of the `app` filter that `list_windows` accepts on every
 /// platform.
-pub const LIST_WINDOWS_APP_FILTER_DESCRIPTION: &str = "Only windows of apps whose name contains this text (case-insensitive), or whose bundle id equals it. Prefer this or `pid` over an unfiltered call, which returns every window on the host.";
+pub const LIST_WINDOWS_APP_FILTER_DESCRIPTION: &str = "Only windows of apps with a name that contains this text (case-insensitive), or whose bundle id equals it. On macOS an app answers to its shown, possibly localized name and to its bundle's own name, so `Calculator` matches on every system language. Prefer this or `pid` over an unfiltered call, which returns every window on the host.";
 
-/// Whether a window owned by `app_name` (and, where known, `bundle_id`)
-/// passes `list_windows`' `app` filter: a case-insensitive substring of the
-/// app name, or the exact bundle id. An empty filter matches everything.
-pub fn app_filter_matches(filter: &str, app_name: &str, bundle_id: Option<&str>) -> bool {
+/// Whether a window owned by an app with `names` (and, where known,
+/// `bundle_id`) passes `list_windows`' `app` filter: a case-insensitive
+/// substring of any of the names, or the exact bundle id. An empty filter
+/// matches everything.
+pub fn app_filter_matches(filter: &str, names: &[&str], bundle_id: Option<&str>) -> bool {
     let filter = filter.trim();
     if filter.is_empty() {
         return true;
@@ -680,7 +681,10 @@ pub fn app_filter_matches(filter: &str, app_name: &str, bundle_id: Option<&str>)
     if bundle_id.is_some_and(|id| id.eq_ignore_ascii_case(filter)) {
         return true;
     }
-    app_name.to_lowercase().contains(&filter.to_lowercase())
+    let filter = filter.to_lowercase();
+    names
+        .iter()
+        .any(|name| name.to_lowercase().contains(&filter))
 }
 
 #[cfg(test)]
@@ -689,24 +693,35 @@ mod app_filter_tests {
 
     #[test]
     fn matches_name_substrings_and_exact_bundle_ids() {
-        assert!(app_filter_matches("libreoffice", "LibreOffice", None));
-        assert!(app_filter_matches("Office", "LibreOffice", None));
+        assert!(app_filter_matches("libreoffice", &["LibreOffice"], None));
+        assert!(app_filter_matches("Office", &["LibreOffice"], None));
         assert!(app_filter_matches(
             "com.google.Chrome",
-            "Google Chrome",
+            &["Google Chrome"],
             Some("com.google.Chrome")
         ));
         assert!(app_filter_matches(
             "COM.GOOGLE.CHROME",
-            "Google Chrome",
+            &["Google Chrome"],
             Some("com.google.Chrome")
         ));
-        assert!(app_filter_matches("  ", "Anything", None));
+        assert!(app_filter_matches("  ", &["Anything"], None));
         assert!(!app_filter_matches(
             "Safari",
-            "Google Chrome",
+            &["Google Chrome"],
             Some("com.google.Chrome")
         ));
-        assert!(!app_filter_matches("com.google", "Finder", None));
+        assert!(!app_filter_matches("com.google", &["Finder"], None));
+    }
+
+    #[test]
+    fn any_of_an_apps_names_matches() {
+        let calculator = ["计算器", "Calculator"];
+        let bundle_id = Some("com.apple.calculator");
+        assert!(app_filter_matches("Calculator", &calculator, bundle_id));
+        assert!(app_filter_matches("计算器", &calculator, bundle_id));
+        assert!(app_filter_matches("calc", &calculator, bundle_id));
+        assert!(!app_filter_matches("TextEdit", &calculator, bundle_id));
+        assert!(!app_filter_matches("Calculator", &[], None));
     }
 }

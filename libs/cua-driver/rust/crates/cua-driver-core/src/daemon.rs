@@ -180,7 +180,7 @@ pub fn socket_path_for_namespace(namespace: &str) -> String {
 pub fn is_daemon_listening(socket_path: &str) -> bool {
     #[cfg(target_os = "windows")]
     {
-        wait_named_pipe(socket_path).is_ok()
+        crate::ipc::wait_named_pipe(socket_path).is_ok()
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -204,32 +204,9 @@ pub fn is_daemon_listening(socket_path: &str) -> bool {
 #[cfg(target_os = "windows")]
 pub fn named_pipe_exists(socket_path: &str) -> bool {
     const ERROR_FILE_NOT_FOUND: i32 = 2;
-    match wait_named_pipe(socket_path) {
+    match crate::ipc::wait_named_pipe(socket_path) {
         Ok(()) => true,
         Err(error) => error.raw_os_error() != Some(ERROR_FILE_NOT_FOUND),
-    }
-}
-
-/// `WaitNamedPipeW` without waiting: `Ok` when an instance is free to
-/// connect, without consuming it.
-#[cfg(target_os = "windows")]
-fn wait_named_pipe(socket_path: &str) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn WaitNamedPipeW(lp_named_pipe_name: *const u16, timeout_ms: u32) -> i32;
-    }
-
-    let wide: Vec<u16> = std::ffi::OsStr::new(socket_path)
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
-    // NMPWAIT_NOWAIT == 1.
-    if unsafe { WaitNamedPipeW(wide.as_ptr(), 1) } != 0 {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error())
     }
 }
 
@@ -404,7 +381,13 @@ fn probe_metadata(socket_path: &str) -> Option<DaemonMetadata> {
         observation_origin: None,
         client_kind: None,
     };
-    #[cfg(unix)]
+    // Opening a pipe that has no instance retries for seconds, so check for
+    // one first without consuming it.
+    #[cfg(windows)]
+    if !is_daemon_listening(socket_path) {
+        return None;
+    }
+    #[cfg(any(unix, windows))]
     let response = exchange(
         socket_path,
         &request,
@@ -412,22 +395,8 @@ fn probe_metadata(socket_path: &str) -> Option<DaemonMetadata> {
         Some(PRESENCE_REPLY_DEADLINE),
     )
     .ok()?;
-    #[cfg(not(unix))]
-    let response = {
-        // Opening a pipe that has no instance retries for seconds, so check
-        // for one first without consuming it.
-        if !is_daemon_listening(socket_path) {
-            return None;
-        }
-        // The pipe client has no read timeout, so wait for it on a thread
-        // that is left behind if the daemon never answers.
-        let (reply_tx, reply_rx) = std::sync::mpsc::channel();
-        let socket_path = socket_path.to_owned();
-        std::thread::spawn(move || {
-            let _ = reply_tx.send(send_request(&socket_path, &request));
-        });
-        reply_rx.recv_timeout(PRESENCE_REPLY_DEADLINE).ok()?.ok()?
-    };
+    #[cfg(not(any(unix, windows)))]
+    let response = send_request(socket_path, &request).ok()?;
     if !response.ok {
         return None;
     }
@@ -463,9 +432,9 @@ pub const REPLY_DEADLINE: Duration = Duration::from_millis(crate::tool_schema::T
 
 /// Send one newline-delimited request and read one response.
 ///
-/// Unix reads and writes retry transient timeouts until [`REPLY_DEADLINE`] so
-/// slow accessibility walks and large screenshots are supported.
-#[cfg(unix)]
+/// Reads and writes retry transient timeouts until [`REPLY_DEADLINE`] so slow
+/// accessibility walks and large screenshots are supported.
+#[cfg(any(unix, windows))]
 pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
     exchange(socket_path, request, REPLY_DEADLINE, None)
 }
@@ -473,115 +442,49 @@ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Resul
 /// One request and its reply. With `connect_within`, the connection itself is
 /// bounded too: a listener whose accept queue is full would otherwise hold a
 /// blocking connect on Linux indefinitely.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn exchange(
     socket_path: &str,
     request: &DaemonRequest,
     reply_deadline: Duration,
     connect_within: Option<Duration>,
 ) -> anyhow::Result<DaemonResponse> {
-    use std::io::Read;
-    use std::os::unix::net::UnixStream;
-    use std::time::Instant;
+    use crate::ipc::{ConnectPolicy, ExchangeError, LocalIpcClient};
 
-    const READ_POLL: Duration = Duration::from_secs(10);
-
-    let mut stream = match connect_within {
-        Some(deadline) => connect_unix_within(socket_path, deadline),
-        None => UnixStream::connect(socket_path),
-    }
-    .map_err(|error| anyhow::anyhow!("connect to {socket_path}: {error}"))?;
-    // macOS rejects setsockopt with EINVAL once the peer has closed its end,
-    // even when the peer's reply is still buffered for us to read. Treat that
-    // as "peer already gone": the read below still drains buffered data and
-    // reports a real close, instead of failing with a bare "Invalid argument".
-    set_timeout_unless_peer_closed(stream.set_write_timeout(Some(Duration::from_secs(5))))?;
-
-    let mut writer = stream.try_clone()?;
-    let line = serde_json::to_string(request)? + "\n";
-    let write_deadline = Instant::now() + reply_deadline;
-    crate::socket_io::write_all_with_retry(&mut writer, line.as_bytes(), write_deadline)?;
-
-    let reply_by = Instant::now() + reply_deadline;
-    let mut buffer = Vec::with_capacity(64 * 1024);
-    let mut chunk = [0_u8; 64 * 1024];
-    let response_line = loop {
-        if let Some(newline) = buffer.iter().position(|&byte| byte == b'\n') {
-            break String::from_utf8_lossy(&buffer[..newline]).into_owned();
+    // One deadline covers connecting, writing and reading, so a short
+    // `reply_deadline` such as the presence probe's bounds the whole exchange.
+    let reply_by = std::time::Instant::now() + reply_deadline;
+    let policy = ConnectPolicy::REQUEST.within(reply_deadline);
+    #[cfg(unix)]
+    let connected = match connect_within {
+        Some(deadline) => {
+            connect_unix_within(socket_path, deadline).and_then(LocalIpcClient::from_unix_stream)
         }
-        let remaining = reply_by.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            anyhow::bail!(
-                "timed out after {reply_deadline:?} waiting for daemon response (received {} bytes so far); \
-                 the daemon may still be running the request",
-                buffer.len()
-            );
-        }
-        set_timeout_unless_peer_closed(stream.set_read_timeout(Some(remaining.min(READ_POLL))))?;
-        match stream.read(&mut chunk) {
-            Ok(0) if buffer.is_empty() => {
-                anyhow::bail!("daemon closed connection without response");
-            }
-            Ok(0) => break String::from_utf8_lossy(&buffer).into_owned(),
-            Ok(read) => buffer.extend_from_slice(&chunk[..read]),
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::Interrupted
-                        | std::io::ErrorKind::WouldBlock
-                        | std::io::ErrorKind::TimedOut
-                ) => {}
-            Err(error) => return Err(error.into()),
-        }
+        None => LocalIpcClient::connect(socket_path, policy),
     };
-
+    #[cfg(windows)]
+    let connected = {
+        let _ = connect_within;
+        LocalIpcClient::connect(socket_path, policy)
+    };
+    let mut client =
+        connected.map_err(|error| anyhow::anyhow!("connect to {socket_path}: {error}"))?;
+    let response_line = client
+        .exchange_line(serde_json::to_string(request)?.as_bytes(), reply_by)
+        .map_err(|error| match error {
+            ExchangeError::Write(error) | ExchangeError::Read(error) => anyhow::Error::from(error),
+            ExchangeError::TimedOut { received } => anyhow::anyhow!(
+                "timed out after {reply_deadline:?} waiting for daemon response (received {received} bytes so far); \
+                 the daemon may still be running the request"
+            ),
+            ExchangeError::Closed => anyhow::anyhow!("daemon closed connection without response"),
+        })?;
     Ok(serde_json::from_str(&response_line)?)
 }
 
-#[cfg(unix)]
-fn set_timeout_unless_peer_closed(result: std::io::Result<()>) -> std::io::Result<()> {
-    match result {
-        Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => Ok(()),
-        other => other,
-    }
-}
-
-#[cfg(not(unix))]
-pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
-    #[cfg(target_os = "windows")]
-    {
-        use std::io::{BufRead, BufReader, Write};
-        use std::time::Duration;
-
-        let deadline = std::time::Instant::now() + Duration::from_secs(3);
-        let pipe = loop {
-            match std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(socket_path)
-            {
-                Ok(pipe) => break pipe,
-                Err(_) if std::time::Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(50));
-                }
-                Err(error) => anyhow::bail!("connect to named pipe {socket_path}: {error}"),
-            }
-        };
-
-        let mut writer = pipe.try_clone()?;
-        writer.write_all((serde_json::to_string(request)? + "\n").as_bytes())?;
-        writer.flush()?;
-
-        let response_line = BufReader::new(pipe)
-            .lines()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("daemon closed connection without response"))??;
-        Ok(serde_json::from_str(&response_line)?)
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        anyhow::bail!("daemon client not supported on this platform (socket path: {socket_path})");
-    }
+#[cfg(not(any(unix, windows)))]
+pub fn send_request(socket_path: &str, _request: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
+    anyhow::bail!("daemon client not supported on this platform (socket path: {socket_path})");
 }
 
 #[cfg(test)]
@@ -681,5 +584,97 @@ mod tests {
         older.as_object_mut().unwrap().remove("permissions_pending");
         let metadata: super::DaemonMetadata = serde_json::from_value(older).unwrap();
         assert!(!metadata.permissions_pending);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_stalled_socket_daemon_times_out_at_the_reply_deadline() {
+        use std::io::{BufRead as _, BufReader, Write as _};
+
+        let directory = tempfile::Builder::new()
+            .prefix("cua-daemon-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let path = directory.path().join("stalled.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let served = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut request)
+                .unwrap();
+            assert!(request.starts_with("{\"method\":\"metadata\""), "{request}");
+            (&stream).write_all(b"{\"ok\":").unwrap();
+            let _ = released.recv();
+        });
+
+        let request = DaemonRequest {
+            method: "metadata".into(),
+            name: None,
+            args: None,
+            session_id: None,
+            observation_origin: None,
+            client_kind: None,
+        };
+        let error = super::exchange(
+            path.to_str().unwrap(),
+            &request,
+            Duration::from_millis(300),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "timed out after 300ms waiting for daemon response (received 6 bytes so far); \
+             the daemon may still be running the request"
+        );
+        release.send(()).unwrap();
+        served.join().unwrap();
+    }
+
+    #[cfg(windows)]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_stalled_pipe_daemon_times_out_at_the_reply_deadline() {
+        use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
+        use tokio::net::windows::named_pipe::ServerOptions;
+
+        let name = format!(r"\\.\pipe\cua-driver-stalled-reply-{}", std::process::id());
+        let server = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&name)
+            .unwrap();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+        let served = tokio::spawn(async move {
+            server.connect().await.unwrap();
+            let mut server = BufReader::new(server);
+            let mut request = String::new();
+            server.read_line(&mut request).await.unwrap();
+            assert!(request.starts_with("{\"method\":\"metadata\""), "{request}");
+            server.get_mut().write_all(b"{\"ok\":").await.unwrap();
+            release_rx.await.unwrap();
+        });
+
+        let reply_deadline = Duration::from_millis(300);
+        let error = tokio::task::spawn_blocking(move || {
+            let request = DaemonRequest {
+                method: "metadata".into(),
+                name: None,
+                args: None,
+                session_id: None,
+                observation_origin: None,
+                client_kind: None,
+            };
+            super::exchange(&name, &request, reply_deadline).unwrap_err()
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            error.to_string(),
+            "timed out after 300ms waiting for daemon response (received 6 bytes so far); \
+             the daemon may still be running the request"
+        );
+        release_tx.send(()).unwrap();
+        served.await.unwrap();
     }
 }

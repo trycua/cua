@@ -80,6 +80,7 @@ BIN
   test)
     # Stop at preflight so no desktop session is needed.
     test -x "${CUA_TEST_DRIVER_BIN:-}"
+    echo "PREFLIGHT_DRIVER_OK"
     exit 42
     ;;
   run)
@@ -197,59 +198,63 @@ class LinuxRustE2ETargetDirTest(unittest.TestCase):
             "#!/usr/bin/env bash\nexit 0\n",
         )
 
-    def test_unset_cargo_target_dir_preserves_default_layout(self) -> None:
-        result = self._run_runner(cargo_target_dir=None)
+    def _assert_reached_preflight(
+        self,
+        result: subprocess.CompletedProcess[str],
+        expected_subcmds: list[str],
+        expected_env: str | None,
+        expected_bin: Path,
+    ) -> None:
         output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1, output)
         self.assertIn("[PREFLIGHT]", output)
-        self.assertNotIn("driver binary not found", output)
+        self.assertIn("PREFLIGHT_DRIVER_OK", output)
+        self.assertIn("Linux E2E environment preflight failed", output)
 
-        expected_bin = str(self.rust_root / "target/release/cua-driver")
         calls = self._cargo_calls()
-        self.assertEqual([c["subcmd"] for c in calls], ["build", "test", "run"])
+        self.assertEqual([c["subcmd"] for c in calls], expected_subcmds)
         for call in calls:
             self.assertEqual(call["cwd"], str(self.rust_root))
-            self.assertIsNone(call["cargo_target_dir"])
-            self.assertEqual(call["cua_test_driver_bin"], expected_bin)
+            self.assertEqual(call["cargo_target_dir"], expected_env)
+            self.assertEqual(call["cua_test_driver_bin"], str(expected_bin))
+
+    def test_unset_cargo_target_dir_preserves_default_layout(self) -> None:
+        result = self._run_runner(cargo_target_dir=None)
+        self._assert_reached_preflight(
+            result,
+            ["build", "test", "run"],
+            None,
+            self.rust_root / "target/release/cua-driver",
+        )
         self.assertEqual(self.fixture_log.read_text(encoding="utf-8").strip(), "unset")
 
     def test_absolute_cargo_target_dir_is_honored(self) -> None:
         custom_target = self.tmp / "external volume/cargo target"
         result = self._run_runner(cargo_target_dir=f"{custom_target}/")
-        output = result.stdout + result.stderr
-        self.assertIn("[PREFLIGHT]", output)
-        self.assertNotIn("driver binary not found", output)
-
-        expected_target = str(custom_target)
-        expected_bin = str(custom_target / "release/cua-driver")
         self.assertFalse((self.rust_root / "target/release/cua-driver").exists())
-        calls = self._cargo_calls()
-        self.assertEqual([c["subcmd"] for c in calls], ["build", "test", "run"])
-        for call in calls:
-            self.assertEqual(call["cwd"], str(self.rust_root))
-            self.assertEqual(call["cargo_target_dir"], expected_target)
-            self.assertEqual(call["cua_test_driver_bin"], expected_bin)
+        self._assert_reached_preflight(
+            result,
+            ["build", "test", "run"],
+            str(custom_target),
+            custom_target / "release/cua-driver",
+        )
         self.assertEqual(
             self.fixture_log.read_text(encoding="utf-8").strip(),
-            f"set:{expected_target}",
+            f"set:{custom_target}",
         )
 
     def test_relative_cargo_target_dir_resolves_against_rust_workspace(self) -> None:
         rel_target = "custom target/nested"
+        expected_target = self.rust_root / rel_target
         result = self._run_runner(cargo_target_dir=f"{rel_target}/")
-        output = result.stdout + result.stderr
-        self.assertIn("[PREFLIGHT]", output)
-        self.assertNotIn("driver binary not found", output)
-
-        expected_target = str(self.rust_root / rel_target)
-        expected_bin = str(self.rust_root / rel_target / "release/cua-driver")
         self.assertFalse((self.rust_root / "target/release/cua-driver").exists())
         self.assertFalse((self.caller_cwd / rel_target).exists())
-        calls = self._cargo_calls()
-        self.assertEqual([c["subcmd"] for c in calls], ["build", "test", "run"])
-        for call in calls:
-            self.assertEqual(call["cwd"], str(self.rust_root))
-            self.assertEqual(call["cargo_target_dir"], expected_target)
-            self.assertEqual(call["cua_test_driver_bin"], expected_bin)
+        self._assert_reached_preflight(
+            result,
+            ["build", "test", "run"],
+            str(expected_target),
+            expected_target / "release/cua-driver",
+        )
         self.assertEqual(
             self.fixture_log.read_text(encoding="utf-8").strip(),
             f"set:{expected_target}",
@@ -276,16 +281,13 @@ class LinuxRustE2ETargetDirTest(unittest.TestCase):
                     default_bin.unlink()
                 _write_executable(expected_bin, "#!/usr/bin/env bash\nexit 0\n")
                 result = self._run_runner("--no-build", cargo_target_dir=configured)
-                output = result.stdout + result.stderr
-                self.assertIn("[PREFLIGHT]", output)
-                self.assertNotIn("driver binary not found", output)
                 self.assertFalse(self.fixture_log.exists())
-                calls = self._cargo_calls()
-                self.assertEqual([c["subcmd"] for c in calls], ["test", "run"])
-                for call in calls:
-                    self.assertEqual(call["cwd"], str(self.rust_root))
-                    self.assertEqual(call["cargo_target_dir"], expected_env)
-                    self.assertEqual(call["cua_test_driver_bin"], str(expected_bin))
+                self._assert_reached_preflight(
+                    result,
+                    ["test", "run"],
+                    expected_env,
+                    expected_bin,
+                )
 
     def test_empty_cargo_target_dir_fails_before_build(self) -> None:
         result = self._run_runner(cargo_target_dir="")

@@ -52,10 +52,12 @@ case "$SUITE" in
   *) echo "unsupported internal lane: $SUITE" >&2; exit 2 ;;
 esac
 
-# Resolve Cargo's target directory once against the Rust workspace so the
-# driver build, binary lookup, fixture builders, and later Cargo invocations
-# agree on one path. Leave CARGO_TARGET_DIR unset when not configured so nested
-# Cargo projects keep their default target directories.
+# Resolve CARGO_TARGET_DIR once against the Rust workspace so the driver build,
+# binary lookup, fixture builders, and later Cargo invocations agree on one
+# path (matching libs/cua-driver/scripts/_install-local-rust.sh). Leave
+# CARGO_TARGET_DIR unset when not configured so nested Cargo projects keep
+# their default target directories. Config-file build.target-dir overrides are
+# not read here.
 if [[ -n "${CARGO_TARGET_DIR+x}" && -z "${CARGO_TARGET_DIR}" ]]; then
   echo "CARGO_TARGET_DIR must not be empty" >&2
   exit 2
@@ -94,7 +96,7 @@ export CUA_E2E_RECORDINGS_ROOT="${RECORDING_ROOT}"
 # presentation latency rows) write them under this directory.
 export CUA_E2E_ARTIFACT_DIR="${ARTIFACT_DIR}"
 export CUA_TEST_WORKSPACE_ROOT="${RUST_ROOT}"
-export CUA_TEST_DRIVER_BIN="${BUILD_TARGET_DIR%/}/release/cua-driver"
+export CUA_TEST_DRIVER_BIN="${BUILD_TARGET_DIR}/release/cua-driver"
 export CUA_TEST_APPS_ROOT="${RUST_ROOT}/test-apps"
 export CUA_TEST_REQUIRE_FIXTURES=1
 export CUA_TEST_DRIVER_STDERR=1
@@ -157,8 +159,7 @@ command -v jq >/dev/null || { echo "jq is required for E2E ownership validation"
 
 if [[ "${BUILD_FIXTURES}" == 1 ]]; then
   (cd "${RUST_ROOT}" && cargo build --release -p cua-driver \
-    "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
-    --manifest-path "${RUST_ROOT}/Cargo.toml")
+    "${CARGO_DRIVER_FEATURE_ARGS[@]}")
   case "${SUITE}" in
     shared) FIXTURE_TARGETS="${CUA_E2E_HARNESS_FILTER:-electron,tauri}" ;;
     native)

@@ -1926,9 +1926,12 @@ async fn serve_claimed_socket(
             }
         }
 
-        // All daemons use the current-user descriptor. Embedded daemons also
-        // reserve the pipe name with their first instance.
-        let first_pipe_instance = embedded && first_pipe;
+        // All daemons use the current-user descriptor and reserve the pipe
+        // name with their first instance. A standalone launch checks for a
+        // daemon before it builds its runtime, and a lockless embedded daemon
+        // can take the name in between; only the first-instance flag catches
+        // that.
+        let first_pipe_instance = first_pipe;
         let created = if sec_attrs_ptr.is_null() {
             ServerOptions::new()
                 .first_pipe_instance(first_pipe_instance)
@@ -1942,6 +1945,11 @@ async fn serve_claimed_socket(
         };
         let server = match created {
             Ok(server) => server,
+            Err(error) if first_pipe && error.kind() == std::io::ErrorKind::PermissionDenied => {
+                anyhow::bail!(
+                    "named pipe {socket_path} is already held by another process; run `cua-driver stop` first ({error})"
+                );
+            }
             Err(error) if first_pipe => {
                 anyhow::bail!("create named pipe {socket_path}: {error}");
             }
@@ -2400,8 +2408,8 @@ mod named_pipe_authentication_tests {
 #[cfg(all(test, target_os = "windows"))]
 mod pipe_release_tests {
     use super::{
-        claim_daemon_lock, daemon_lock_path, is_released, probe_presence, serving_daemon,
-        stop_daemon, DaemonPresence, StopOutcome,
+        claim_daemon_lock, daemon_lock_path, is_released, probe_presence, serve_claimed_socket,
+        serving_daemon, stop_daemon, DaemonPresence, StopOutcome,
     };
     use std::time::Duration;
     use tokio::net::windows::named_pipe::ServerOptions;
@@ -2471,6 +2479,36 @@ mod pipe_release_tests {
         let probe = pipe.clone();
         assert_eq!(blocking(move || serving_daemon(&probe)).await, None);
         drop(lock);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_launch_never_serves_beside_a_pipe_taken_after_its_check() {
+        let _guard = crate::test_runtime_lock().lock().await;
+        let (_driver, sdk, _calls) = crate::probe_sdk().await;
+        let pipe = format!(
+            r"\\.\pipe\cua-driver-late-{}",
+            uuid::Uuid::new_v4().simple()
+        );
+        // The launch found nothing and claimed its lock; a lockless embedded
+        // daemon then takes the name before the launch binds.
+        let lock = claim_daemon_lock(&daemon_lock_path(&pipe), &pipe, Duration::ZERO).unwrap();
+        let _embedded = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&pipe)
+            .unwrap();
+        let error = tokio::time::timeout(
+            Duration::from_secs(10),
+            serve_claimed_socket(sdk, &pipe, None, Some(lock)),
+        )
+        .await
+        .expect("the launch gives up at once")
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("is already held by another process"),
+            "{error}"
+        );
     }
 }
 

@@ -1631,18 +1631,25 @@ impl MediaSession {
             return;
         }
         self.capture_generation.fetch_add(1, Ordering::AcqRel);
-        if let Some(lease) = self
+        // Stop each lease after its lock is released: a native stop waits for
+        // in-flight callbacks, and a callback can take that lock (#5376).
+        let capture = self
             .capture
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
-        {
+            .take();
+        if let Some(lease) = capture {
             lease.stop();
         }
-        for track in self.audio_tracks.lock().unwrap().iter() {
-            if let Some(lease) = track.lease.lock().unwrap().take() {
-                lease.stop();
-            }
+        let audio = self
+            .audio_tracks
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|track| track.lease.lock().unwrap().take())
+            .collect::<Vec<_>>();
+        for lease in audio {
+            lease.stop();
         }
         if let Some(uplink) = self.uplink.lock().unwrap().take() {
             uplink.sink.close();

@@ -249,7 +249,7 @@ impl Tool for DragTool {
         // the structured error so the caller retries with delivery_mode:foreground
         // (a WinUI3 Slider can also be set with the set_value tool, which uses
         // UIA RangeValuePattern and holds the contract).
-        if delivery == DeliveryMode::Background {
+        if delivery.is_background() {
             if let Some(r) = winui3_background_gesture(&None, pid, hwnd, None, 1, &button).await {
                 return r;
             }
@@ -261,7 +261,7 @@ impl Tool for DragTool {
         // synthetic-pen drag injection instead of refusing. No foreground swap,
         // no cursor move; the target is held non-activatable + cloaked for the
         // stroke (mirrors the click pen path).
-        if delivery == DeliveryMode::Background
+        if delivery.is_background()
             && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseMove)
         {
             let target = hwnd;

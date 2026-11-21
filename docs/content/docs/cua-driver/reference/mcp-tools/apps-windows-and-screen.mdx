@@ -91,7 +91,7 @@ List Windows apps, both currently running and installed-but-not-running, with pe
 * uwp: `shell:appsFolder\{PackageFamilyName}!{AppId}` where `{AppId}` falls back to `App` when the package manifest does not expose a specific Application.Id.
 - last_used: RFC3339 mtime of the launcher (`.lnk` for desktop, package install location for UWP), when readable.
 
-Running apps are derived from visible top-level windows + the foreground pid (mirrors NSApplicationActivationPolicyRegular's intent: background services and console processes are excluded). Installed apps are merged from Start-Menu `.lnk` enumeration and the WinRT PackageManager: running processes whose executable matches a Start-Menu target are folded into a single entry with `running: true`.
+Running apps are derived from visible top-level windows + the foreground pid (mirrors NSApplicationActivationPolicyRegular's intent: background services and console processes are excluded). Installed apps are merged from Start-Menu `.lnk` enumeration and the WinRT PackageManager: running processes whose executable matches a Start-Menu target, and running packaged apps whose package identity matches a `uwp` entry, are folded into a single entry with `running: true`.
 
 Use this for "is X installed?" as well as "is X running?". For per-window state, on-screen, minimized, window titles, call list_windows instead. For just opening an app, running or not, call launch_app(&#123;path: ...&#125;) directly; list_apps is not a prerequisite.
 
@@ -159,7 +159,7 @@ Inputs: pid (optional pid filter), app (app-name filter), on_screen_only (bool, 
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="list_windows--app"></span>`app` | `string` |  | Only windows of apps whose name contains this text (case-insensitive), or whose bundle id equals it. Prefer this or `pid` over an unfiltered call, which returns every window on the host. |
+| <span id="list_windows--app"></span>`app` | `string` |  | Only windows of apps with a name that contains this text (case-insensitive), or whose bundle id equals it. On macOS an app answers to its shown, possibly localized name and to its bundle's own name, so `Calculator` matches on every system language. Prefer this or `pid` over an unfiltered call, which returns every window on the host. |
 | <span id="list_windows--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 
 ### `launch_app`
@@ -290,7 +290,7 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Persistently activate an app and leave it in the foreground. Most input does not need this; use it only for a focus-proxy surface that must remain foreground across interactions. With window_id, success means the exact ordinary macOS window was independently verified as the frontmost process's focused window and the front window of that process on the display it sits on. `exact_window_effect.frontmost_ordinary` additionally reports whether it is first in the global WindowServer layer-0 order; another application (an always-raised utility window, another display's front window) can hold that spot without the requested window losing keyboard focus, so it is reported and not required. Request acceptance alone is reported as a partial result, never as activation. This DOES steal foreground and does NOT restore the previously frontmost application.
+Persistently activate an app and leave it in the foreground. Most input does not need this; use it only for a focus-proxy surface that must remain foreground across interactions. With window_id, success means the exact ordinary macOS window was independently verified as the frontmost process's focused window and the front window of that process on the display it sits on. `exact_window_effect.frontmost_ordinary` additionally reports whether it is first in the global WindowServer layer-0 order; another application (an always-raised utility window, another display's front window) can hold that spot without the requested window losing keyboard focus, so it is reported and not required. `exact_window_effect.unobstructed` is false when another ordinary (layer-0) window lies over part of the target, and `observed.occluding_window` names the frontmost one. It may intercept desktop pointer input at a covered point, even after a verified activation. Request acceptance alone is reported as a partial result, never as activation. This DOES steal foreground and does NOT restore the previously frontmost application.
 
 **macOS parameters**
 
@@ -478,7 +478,7 @@ POPUP MENUS: a context menu / popover / combo list is an override-redirect windo
 </Tab>
 <Tab value="Windows">
 
-Walk a running app's UIA tree and return it ONCE, as compact Markdown by default (`tree_format:"markdown"`). Every actionable element is tagged `[N]` (an element_index); its element_token is `<snapshot_id>:N`, where `snapshot_id` is printed in the response header and returned in structuredContent. Pass `tree_format:"elements"` for the structured `elements` array instead (explicit `element_token`, `frame`, `parent_index`, `value`, `actions` per row), or `"both"` for both (about twice the size).
+Walk a running app's UIA tree and return it ONCE, as compact Markdown by default (`tree_format:"markdown"`). Every actionable element is tagged `[N]` (an element_index); its element_token is `<snapshot_id>:N`, where `snapshot_id` is printed in the response header and returned in structuredContent. Pass `tree_format:"elements"` for the structured `elements` array instead (explicit `element_token`, `frame`, `parent_index`, `value`, `actions` per row), or `"both"` for both (about twice the size). `Edit` elements carry `is_password` (`true` for a password field), and the Markdown row marks a password field with `password`.
 
 Size: a read is bounded by default (`max_elements` 250). When the walk stops at that budget the response says `Tree truncated at max_elements=…` and `truncated: true`; pass a larger `max_elements`, or `query` / `max_depth`, to reach the rest. `_note` is omitted unless `verbose:true`. `full_output:true` restores the previous full response: both representations, all metadata, and the platform's walk limits (≤5 000 elements, depth ≤25).
 

@@ -29,7 +29,7 @@ fn retain_listed(
     }
     if let Some(filter) = app {
         windows.retain(|window| {
-            cua_driver_core::tool_args::app_filter_matches(filter, &window.app_name, None)
+            cua_driver_core::tool_args::app_filter_matches(filter, &[&window.app_name], None)
         });
     }
     let mut stacked: Vec<usize> = windows.iter().filter_map(|w| w.z_index).collect();

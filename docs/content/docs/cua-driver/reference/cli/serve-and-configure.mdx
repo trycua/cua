@@ -91,7 +91,6 @@ cua-driver mcp [OPTIONS]
 | <span id="cua-driver-mcp--cursor-reduced-motion"></span>`--cursor-reduced-motion` | string | `auto` | Follow the OS setting, force still frames, or allow animation: auto, on, or off. |
 | <span id="cua-driver-mcp--grant"></span>`--grant` | string |  | Pre-authorize a residual standard-mode boundary for a newly launched runtime. Repeatable; supported value: existing-profile. |
 | <span id="cua-driver-mcp--direct"></span>`--direct` | boolean | `false` | Own the runtime in this MCP process; mutually exclusive with --socket. |
-| <span id="cua-driver-mcp--claude-code-computer-use-compat"></span>`--claude-code-computer-use-compat` | boolean | `false` | Accepted for older Claude Code setup snippets; there is no standalone screenshot tool; use get_window_state for window screenshots. |
 | <span id="cua-driver-mcp--embedded"></span>`--embedded` | boolean | `false` | Declare embedding-host mode. Without --direct, require the host's private service through --socket instead of auto-launching the standalone app. |
 
 **Examples**
@@ -298,17 +297,14 @@ cua-driver serve [OPTIONS]
 | <span id="cua-driver-serve--permission-mode"></span>`--permission-mode` | string | `standard` | Immutable agent authorization mode: standard, bounded, or unrestricted. |
 | <span id="cua-driver-serve--grant"></span>`--grant` | string |  | Pre-authorize a residual standard-mode boundary. Repeatable; supported value: existing-profile. |
 | <span id="cua-driver-serve--capability-manifest"></span>`--capability-manifest` | path |  | Optional narrow-only tool/resource ceiling; required in bounded mode. |
-| <span id="cua-driver-serve--session-policy"></span>`--session-policy` | path |  | Deprecated alias for capability-manifest. |
 | <span id="cua-driver-serve--host-bundle-id"></span>`--host-bundle-id` | string |  | Advisory host bundle id label echoed in check_permissions output (embedded mode). |
 | <span id="cua-driver-serve--cursor-theme"></span>`--cursor-theme` | string | `cua.default` | Installed cursor theme id for the agent cursor overlay. |
 | <span id="cua-driver-serve--cursor-reduced-motion"></span>`--cursor-reduced-motion` | string | `auto` | Agent cursor motion: auto follows the OS setting, on forces still frames, off allows animation. |
 | <span id="cua-driver-serve--glide-ms"></span>`--glide-ms` | number |  | Override the agent cursor glide duration, in milliseconds. |
 | <span id="cua-driver-serve--dwell-ms"></span>`--dwell-ms` | number |  | Override how long the agent cursor dwells after a click, in milliseconds. |
 | <span id="cua-driver-serve--idle-hide-ms"></span>`--idle-hide-ms` | number |  | Override how long an idle agent cursor stays visible, in milliseconds. |
-| <span id="cua-driver-serve--claude-code-computer-use-compat"></span>`--claude-code-computer-use-compat` | boolean | `false` | Legacy compatibility flag forwarded by `mcp` when it launches the daemon; no current tool-surface effect. |
 | <span id="cua-driver-serve--dangerously-bypass-approvals"></span>`--dangerously-bypass-approvals` | boolean | `false` | Select unrestricted mode and acknowledge its risk. |
 | <span id="cua-driver-serve--approve-capability-manifest"></span>`--approve-capability-manifest` | boolean | `false` | Trusted-launcher confirmation that the exact capability manifest was reviewed. |
-| <span id="cua-driver-serve--approve-session-policy"></span>`--approve-session-policy` | boolean | `false` | Deprecated alias for approve-capability-manifest. |
 | <span id="cua-driver-serve--no-permissions-gate"></span>`--no-permissions-gate` | boolean | `false` | Skip the macOS first-launch permissions gate. |
 | <span id="cua-driver-serve--no-automation-prompts"></span>`--no-automation-prompts` | boolean | `false` | Refuse scripting actions without granted macOS Automation consent. |
 | <span id="cua-driver-serve--embedded"></span>`--embedded` | boolean | `false` | Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1. |
@@ -515,6 +511,7 @@ cua-driver autostart kick
 `cua-driver permissions` exists on macOS only; Windows and Linux have no TCC equivalent.
 
 - `permissions status` is read-only and never prompts. It does not run the ScreenCaptureKit probe (macOS Tahoe can show a separate dialog for it), so it reports `screen_recording_capturable: null` and `direct_capture_status: "not_checked"`, plus the last successful `permissions grant` verification when one is recorded for the running driver identity.
+- `permissions status` reports the running daemon's own answer, which is what its tool calls get. `source.attribution` says whose grants those are: `driver-daemon` when macOS holds the daemon responsible for itself (started through LaunchServices), `caller` when another app is responsible because the daemon was started inside its process tree (then `source.responsible_bundle_id` / `source.responsible_executable` name that app), and `host` for an embedded driver.
 - `permissions grant` launches the installed `CuaDriver.app` through LaunchServices so the prompts attribute to the app, then requires a successful live capture probe. It never sends a prompt-capable request over the daemon socket.
 - Embedded hosts, in-process `CuaDriver.create()` runtimes and `cua-driver mcp --direct` own their own prompts: there, `check_permissions` stays read-only even with `{"prompt": true}`.
 - After a grant changes, quit and relaunch the responsible app (`CuaDriver.app`, or the host of a direct runtime).

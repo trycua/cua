@@ -2483,32 +2483,34 @@ mod pipe_shutdown_tests {
         );
         let directory = tempfile::tempdir().unwrap();
         let pid_file = directory.path().join("driver.pid");
-        let server = tokio::spawn({
-            let pipe = pipe.clone();
-            let pid_file = pid_file.to_str().unwrap().to_owned();
-            async move { serve_claimed_socket(sdk, &pipe, Some(&pid_file), None).await }
-        });
-
         let session = format!("drain-{}", uuid::Uuid::new_v4().simple());
-        let mut control = connect(&pipe).await;
-        request(
-            &mut control,
-            serde_json::json!({"method": "session_begin", "session_id": session}),
-        )
-        .await;
-        assert!(active_proxy_sessions().lock().unwrap().contains(&session));
-        assert_eq!(
-            std::fs::read_to_string(&pid_file).unwrap(),
-            std::process::id().to_string()
-        );
 
-        let mut stopper = connect(&pipe).await;
-        request(&mut stopper, serde_json::json!({"method": "shutdown"})).await;
-        tokio::time::timeout(Duration::from_secs(10), server)
-            .await
-            .expect("the daemon exits after shutdown")
-            .unwrap()
-            .unwrap();
+        // The Windows serve future is not `Send`, so drive it beside the
+        // clients on this task instead of spawning it.
+        let serve = serve_claimed_socket(sdk, &pipe, pid_file.to_str(), None);
+        let clients = async {
+            let mut control = connect(&pipe).await;
+            request(
+                &mut control,
+                serde_json::json!({"method": "session_begin", "session_id": session}),
+            )
+            .await;
+            assert!(active_proxy_sessions().lock().unwrap().contains(&session));
+            assert_eq!(
+                std::fs::read_to_string(&pid_file).unwrap(),
+                std::process::id().to_string()
+            );
+
+            let mut stopper = connect(&pipe).await;
+            request(&mut stopper, serde_json::json!({"method": "shutdown"})).await;
+            control
+        };
+        let (served, mut control) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(serve, clients)
+        })
+        .await
+        .expect("the daemon exits after shutdown");
+        served.unwrap();
 
         // The control connection was still open; shutdown must have closed it.
         let mut rest = String::new();

@@ -100,6 +100,7 @@ pub mod key_pacing;
 pub mod launch_guard;
 pub mod mcp_result;
 pub mod page;
+pub mod paths;
 pub mod perception_client;
 pub mod perception_tools;
 pub mod pointer_shape;

@@ -19,9 +19,10 @@ use cua_driver_contract::{
     ToolOutput, TypeTextInput, VerifyStateInput, VerifyStateOutput, WindowStateOutput,
 };
 use cua_driver_core::daemon::{
-    is_daemon_listening, request_daemon_metadata, send_request, socket_path_for_namespace,
-    DaemonClientKind, DaemonMetadata, DaemonRequest, ToolObservationOrigin,
+    is_daemon_listening, request_daemon_metadata, send_request, DaemonClientKind, DaemonMetadata,
+    DaemonRequest, ToolObservationOrigin,
 };
+use cua_driver_core::paths::{AppPaths, RELEASE_NAMESPACE};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::{Arc, OnceLock};
@@ -1102,7 +1103,8 @@ fn connect_for_client(
     socket_path: Option<String>,
     client_kind: DaemonClientKind,
 ) -> Result<Arc<CuaDriver>, DriverError> {
-    let socket_path = socket_path.unwrap_or_else(|| socket_path_for_namespace("cua-driver"));
+    let socket_path =
+        socket_path.unwrap_or_else(|| AppPaths::for_namespace(RELEASE_NAMESPACE).socket);
     if socket_path.trim().is_empty() {
         return Err(DriverError::Configuration {
             reason: "socket_path must not be empty".into(),

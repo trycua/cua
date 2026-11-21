@@ -226,6 +226,11 @@ Supported: Chrome and Edge on macOS, Windows, and Linux X11; Chrome on GNOME
 Wayland; Chrome, Edge, and Chromium on Sway. On Linux, start the browser
 with `--force-renderer-accessibility`. On macOS, setup recognizes English UI labels only. On Windows, setup does not depend on the UI language. On Linux, setup accepts a localized browser, but the browser's internal setup page must show its English heading and checkbox.
 
+Helium on Linux and macOS attaches only when its profile already has a
+`DevToolsActivePort` endpoint owned by the approved process. The driver does
+not turn on Helium's remote-debugging setting itself; without that endpoint it
+refuses. Helium on Windows is not recognized.
+
 On macOS 27 and later, reading the Chrome and Edge profile folders needs Full
 Disk Access or a per-app grant, so attachment through the daemon refuses with
 `browser_route_unavailable` until CuaDriver.app has that access. Grant it Full

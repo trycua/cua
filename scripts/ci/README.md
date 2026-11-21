@@ -66,6 +66,11 @@ CUA_E2E_BROWSER_PRODUCTS=chrome,chromium,edge \
   scripts/ci/run-rust-standalone-browser-e2e.sh
 ```
 
+Helium attachment coverage on Linux and macOS can be selected with
+`CUA_E2E_BROWSER_PRODUCTS=helium`. The suite uses disposable profiles, including
+paths containing spaces, and checks attachment and the explicit refusal of
+automatic setup when no endpoint exists. Windows Helium is not supported.
+
 Every named product is mandatory. An unknown name, duplicate name, or missing
 executable fails before a behavioral row runs, so the matrix cannot silently
 shrink. Use `CUA_E2E_BROWSER_BIN` with `CUA_E2E_BROWSER_NAME` only for a

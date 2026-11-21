@@ -240,6 +240,9 @@ impl MacOsBrowserPlatform {
         {
             return Ok(Some(endpoint));
         }
+        if existing_profile && classification.product_kind == BrowserProduct::Helium {
+            return Ok(None);
+        }
         let mut discovered = None;
         for port in loopback_ports_for_pid(pid).await? {
             let Some(ws_url) = browser_websocket_url(port).await else {
@@ -403,7 +406,7 @@ pub(crate) fn is_chromium(name: &str, bundle_id: &str) -> bool {
     let value = format!("{name} {bundle_id}").to_ascii_lowercase();
     let products = [
         "chrome", "chromium", "electron", "brave", "edge", "vivaldi", "opera", "arc", "thorium",
-        "iridium", "yandex",
+        "iridium", "yandex", "helium",
     ];
     value
         .split(|ch: char| !ch.is_ascii_alphanumeric())
@@ -413,7 +416,12 @@ pub(crate) fn is_chromium(name: &str, bundle_id: &str) -> bool {
 fn browser_product(name: &str, bundle_id: &str) -> BrowserProduct {
     let name = name.to_ascii_lowercase();
     let bundle_id = bundle_id.to_ascii_lowercase();
-    if bundle_id.starts_with("com.google.chrome") || name == "google chrome" {
+    if bundle_id == "net.imput.helium"
+        || bundle_id.starts_with("net.imput.helium.helper")
+        || name == "helium"
+    {
+        BrowserProduct::Helium
+    } else if bundle_id.starts_with("com.google.chrome") || name == "google chrome" {
         BrowserProduct::GoogleChrome
     } else if bundle_id.starts_with("com.microsoft.edgemac") || name == "microsoft edge" {
         BrowserProduct::MicrosoftEdge
@@ -531,6 +539,7 @@ fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
         BrowserProduct::GoogleChrome => "Library/Application Support/Google/Chrome",
         BrowserProduct::MicrosoftEdge => "Library/Application Support/Microsoft Edge",
         BrowserProduct::Chromium => "Library/Application Support/Chromium",
+        BrowserProduct::Helium => "Library/Application Support/net.imput.helium",
         BrowserProduct::Brave => "Library/Application Support/BraveSoftware/Brave-Browser",
         _ => return None,
     };
@@ -1042,6 +1051,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                 | BrowserProduct::Vivaldi
                 | BrowserProduct::Opera
                 | BrowserProduct::Arc
+                | BrowserProduct::Helium
         ) {
             BrowserProcessRole::StandaloneConsumer
         } else {
@@ -1181,6 +1191,9 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                 ));
             }
             return Ok(Some(endpoint));
+        }
+        if classification.product_kind == BrowserProduct::Helium {
+            return Ok(None);
         }
         Ok(Some(OwnedEndpoint {
             ws_url: expected_ws_url.to_owned(),
@@ -2309,6 +2322,29 @@ mod tests {
         for case in ["multiple", "one_valid", "no_valid"] {
             assert_owned_discovery_profile_case(case).await;
         }
+    }
+
+    #[test]
+    fn helium_identity_and_default_profile_are_product_specific() {
+        assert!(is_chromium("Helium", "net.imput.helium"));
+        assert_eq!(
+            browser_product("Helium", "net.imput.helium"),
+            BrowserProduct::Helium
+        );
+        assert_eq!(
+            browser_product("Helium Helper", "net.imput.helium.helper"),
+            BrowserProduct::Helium
+        );
+        assert_eq!(
+            browser_product("HeliumNotes", "net.example.heliumnotes"),
+            BrowserProduct::Other
+        );
+        assert!(!is_chromium("HeliumNotes", "net.example.heliumnotes"));
+        let home = PathBuf::from(std::env::var_os("HOME").expect("HOME"));
+        assert_eq!(
+            default_user_data_dir(BrowserProduct::Helium),
+            Some(home.join("Library/Application Support/net.imput.helium"))
+        );
     }
 
     #[test]

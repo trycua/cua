@@ -272,15 +272,15 @@ jobs:
     # That broke Debian 12 (glibc 2.36), Ubuntu 22.04 (2.35), and RHEL/Rocky
     # 9 (2.34). Debian 11's glibc is 2.31, so linking against it lowers the
     # floor to GLIBC_2.31 — covering Debian 11+, Ubuntu 20.04+, and RHEL/
-    # Rocky 8+. A container (rather than the retired ubuntu-20.04 runner
+    # Rocky 9+. A container (rather than the retired ubuntu-20.04 runner
     # label) keeps the floor deterministic regardless of GitHub's host image
     # churn. The debian:11 image is multi-arch, so the arm64 runner pulls the
     # aarch64 variant automatically and the glibc floor holds on both arches.
     # The C deps below all exist in bullseye, including libwayland-dev for the
     # native Wayland backend (#1910).
-    # libpipewire is not part of that floor. These binaries omit portal-capture,
-    # and builds that enable it load libpipewire-0.3 at runtime, so hosts
-    # without it (Ubuntu 20.04 ships none) still run every other tool.
+    # libpipewire is not part of that floor. portal-capture loads
+    # libpipewire-0.3 at runtime, only when a portal recording starts, so hosts
+    # without it still run every other tool.
     container:
       image: debian:11
     steps:
@@ -304,11 +304,16 @@ jobs:
           Acquire::http::Timeout "30";
           Acquire::https::Timeout "30";
           EOF
-          # PipeWire ScreenCast capture remains Nix/modern-build only because
-          # bullseye's 0.3.19 headers are too old for libspa-sys 0.10. Portal
-          # RemoteDesktop/libei input is pure Rust plus libxkbcommon and ships
-          # in these portable release binaries.
-          PACKAGES="git ca-certificates curl python3 build-essential pkg-config libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev libxkbcommon-dev"
+          # Portal RemoteDesktop/libei input is pure Rust plus libxkbcommon.
+          # libclang-11-dev is bindgen's parser for the PipeWire bindings.
+          PACKAGES="git ca-certificates curl python3 build-essential pkg-config libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev libxkbcommon-dev libclang-11-dev"
+          # PipeWire ScreenCast capture (portal-capture) needs the SPA
+          # type-info headers that libspa-sys's C shims reference; bullseye's
+          # stock 0.3.19 headers predate them, so the headers come from the
+          # bullseye-backports 0.3.65 build. libspa is header-only and
+          # libpipewire-0.3 is loaded at runtime, so these headers add no
+          # runtime dependency.
+          BACKPORTS_PACKAGES="libpipewire-0.3-dev libspa-0.2-dev"
           apt_retry() {
             n=0
             until "$@"; do
@@ -321,13 +326,15 @@ jobs:
           apt_bootstrap() {
             # Ignore any additional image-provided sources for this bootstrap.
             apt_retry apt-get -o Dir::Etc::sourceparts=- "$@" update &&
-              apt_retry apt-get -o Dir::Etc::sourceparts=- "$@" install -y --no-install-recommends $PACKAGES
+              apt_retry apt-get -o Dir::Etc::sourceparts=- "$@" install -y --no-install-recommends $PACKAGES &&
+              apt_retry apt-get -o Dir::Etc::sourceparts=- "$@" install -y --no-install-recommends -t bullseye-backports $BACKPORTS_PACKAGES
           }
           rm -f /etc/apt/sources.list.d/debian.sources
           cat > /etc/apt/sources.list <<'EOF'
           deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian/20260901T000000Z/ bullseye main
           deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian/20260901T000000Z/ bullseye-updates main
           deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian-security/20260901T000000Z/ bullseye-security main
+          deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian-archive/20260901T000000Z/debian/ bullseye-backports main
           EOF
           if apt_bootstrap; then
             echo "apt mirror used: snapshot.debian.org 20260901T000000Z"
@@ -338,6 +345,7 @@ jobs:
           deb [check-valid-until=no] http://archive.debian.org/debian bullseye main
           deb [check-valid-until=no] http://archive.debian.org/debian bullseye-updates main
           deb [check-valid-until=no] http://archive.debian.org/debian-security bullseye-security main
+          deb [check-valid-until=no] http://archive.debian.org/debian bullseye-backports main
           EOF
             apt_bootstrap
             echo "apt mirror used: archive.debian.org (snapshot fallback)"
@@ -379,7 +387,7 @@ jobs:
             rust-cua-driver-rs-linux-${{ matrix.arch }}-
       - name: Build (release)
         working-directory: libs/cua-driver/rust
-        run: cargo build --locked -p cua-driver -p cursor-theme-cli -p cua-driver-sdk --release --features cua-driver/portal-input --target ${{ matrix.target }}
+        run: cargo build --locked -p cua-driver -p cursor-theme-cli -p cua-driver-sdk --release --features cua-driver/portal-input,cua-driver/portal-capture --target ${{ matrix.target }}
       - name: Build Electron-compatible Node runtime
         working-directory: libs/cua-driver
         run: |

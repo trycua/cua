@@ -37,11 +37,25 @@ routes where the app has a real X11 window.
 | X11/Xorg | Supported | Discovery, capture, AT-SPI, foreground input, semantic background actions, desktop scope | Raw background delivery depends on the toolkit. |
 | Sway (wlroots) | Supported with limits | The full Electron, Tauri, GTK, and capture catalog | Focus-bound raw background input refuses. Other wlroots compositors unproven. |
 | niri | Supported with limits | The full Electron, Tauri, GTK, and capture catalog on floating windows in a nested niri session | Needs niri 25.08 or later. No background input. niri has no per-toplevel capture protocol, so floating windows are cropped from the output. Tiled windows get no window capture or window-coordinate input; use `get_desktop_state` and desktop-scope actions. Overlapping floating windows refuse. Keep animations under 1 s. Client-side-decorated apps need `prefer-no-csd` for element frames. |
-| GNOME/Mutter | Supported with limits | AT-SPI, GTK controls, compositor geometry and capture, foreground activation, portal/libei input | Needs the bundled [WinRects Shell helper](/cua-driver/quickstart) and one Shell restart. Portal video recording incomplete. |
-| KDE/KWin | Experimental | Plasma 6 startup, GTK AT-SPI discovery, portal availability | The KWin helper is read-only; raw target-addressed input refuses. Desktop video through the portal ScreenCast needs a `portal-capture` build and a one-time portal monitor grant. |
+| GNOME/Mutter | Supported with limits | AT-SPI, GTK controls, compositor geometry and capture, foreground activation, portal/libei input | Geometry and activation need the bundled [WinRects Shell helper](/cua-driver/quickstart) and one Shell restart. Video uses trusted helper frames with ffmpeg and no consent dialog; without those frames it attempts portal ScreenCast recording, which remains unverified on GNOME. |
+| KDE/KWin | Experimental | Plasma 6 startup, GTK AT-SPI discovery, portal availability | The KWin helper is read-only; raw target-addressed input refuses. Desktop video uses portal ScreenCast, needs ffmpeg and the system PipeWire client library, and asks the user to grant a monitor in the consent dialog. |
 | Hyprland / Omarchy | Experimental | [Qualified isolated input](#hyprland-and-omarchy) since 0.24.0 | Does not inherit Sway coverage. |
 | `cua-compositor` (nested) | Experimental | Native GTK behavior, capture, per-surface raw input | Owns its own compositor; says nothing about stock Wayland. |
 | XWayland | Supported with limits | X11 routes for real X11 windows; AT-SPI fallback | Depends on whether the app actually uses X11. |
+
+Released Linux binaries include portal ScreenCast recording. With native Wayland
+enabled, video uses trusted GNOME helper frames first, then `wf-recorder` on
+compositors that advertise wlr-screencopy. When neither is available, including
+GNOME without the helper, KDE/KWin, and other portal-only compositors, it attempts
+the portal route instead of returning the missing-feature error. If the Wayland
+registry cannot be probed, `wf-recorder` reports its own startup diagnostics.
+
+The portal route checks for ffmpeg and loads `libpipewire-0.3` only when recording
+starts. With those prerequisites present, it opens a monitor-consent dialog
+unless the portal accepts a saved grant. `start_recording` can wait more than a
+minute for the answer and the first encoded frame. Refusal, missing
+prerequisites, or timeout appears in `last_error`; inspect `video_active` rather
+than treating a successful `start_recording` response as proof of video.
 
 X11 window capture supports packed 16-, 24-, and 32-bit TrueColor and
 DirectColor images. DirectColor capture reads the window's current colormap for

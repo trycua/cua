@@ -877,17 +877,28 @@ impl FocusSnapshot {
     }
 }
 
+/// A delivery refused before it sent any input. Nothing it did can open a
+/// popup, so [`guarded`] restores without waiting out the settle watch.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct RefusedBeforeInput(pub String);
+
+fn refused_before_input(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| cause.is::<RefusedBeforeInput>())
+}
+
 /// Run `body` (a background delivery) between a snapshot and a restore.
 /// The restore runs whether or not the body succeeded: a delivery that fails
 /// after it opened a popup or let the app take the focus must still give the
-/// focus back. The body's error still propagates; the guard only adds its
-/// report on success.
+/// focus back. A body refused with [`RefusedBeforeInput`] gets one check
+/// instead of the settle watch. The body's error still propagates; the guard
+/// only adds its report on success.
 pub fn guarded<T>(
     target_pid: Option<u32>,
     body: impl FnOnce() -> Result<T>,
 ) -> Result<(T, Option<FocusGuardReport>)> {
-    restore_after(FocusSnapshot::capture(), body, |s| {
-        s.restore_if_changed(target_pid)
+    restore_after(FocusSnapshot::capture(), body, |s, settle_watch| {
+        s.restore_if_changed_opts(target_pid, settle_watch)
     })
 }
 
@@ -898,20 +909,22 @@ pub fn guarded_settled<T>(
     target_pid: Option<u32>,
     body: impl FnOnce() -> Result<T>,
 ) -> Result<(T, Option<FocusGuardReport>)> {
-    restore_after(FocusSnapshot::capture(), body, |s| {
+    restore_after(FocusSnapshot::capture(), body, |s, _| {
         s.restore_if_changed_opts(target_pid, false)
     })
 }
 
 /// Run `body`, then `restore` the snapshot on every exit path, and only then
-/// propagate the body's error.
+/// propagate the body's error. `restore` is told whether to run the settle
+/// watch: not after a [`RefusedBeforeInput`].
 fn restore_after<S, T, R>(
     snapshot: Option<S>,
     body: impl FnOnce() -> Result<T>,
-    restore: impl FnOnce(S) -> R,
+    restore: impl FnOnce(S, bool) -> R,
 ) -> Result<(T, Option<R>)> {
     let outcome = body();
-    let report = snapshot.map(restore);
+    let settle_watch = !outcome.as_ref().is_err_and(refused_before_input);
+    let report = snapshot.map(|s| restore(s, settle_watch));
     Ok((outcome?, report))
 }
 
@@ -1024,16 +1037,41 @@ mod tests {
 
     #[test]
     fn a_failed_delivery_still_restores_the_focus_and_returns_its_error() {
-        let restored = std::cell::Cell::new(false);
+        let restored = std::cell::Cell::new(None);
         let result: Result<((), Option<()>)> = restore_after(
             Some("snapshot"),
             || anyhow::bail!("the combo box popup listed no options"),
-            |_| restored.set(true),
+            |_, settle_watch| restored.set(Some(settle_watch)),
         );
-        assert!(restored.get(), "the focus was not restored after an error");
+        assert_eq!(
+            restored.get(),
+            Some(true),
+            "the focus was not restored with the settle watch after an error"
+        );
         assert_eq!(
             result.unwrap_err().to_string(),
             "the combo box popup listed no options"
+        );
+    }
+
+    #[test]
+    fn a_delivery_refused_before_input_restores_without_the_settle_watch() {
+        let restored = std::cell::Cell::new(None);
+        let result: Result<((), Option<()>)> = restore_after(
+            Some("snapshot"),
+            || {
+                Err(anyhow::Error::new(RefusedBeforeInput(
+                    "typed 0 of 40 characters: the text needs 40 spare keycodes".into(),
+                ))
+                .context("virtual master keyboard delivery failed"))
+            },
+            |_, settle_watch| restored.set(Some(settle_watch)),
+        );
+        assert_eq!(restored.get(), Some(false));
+        assert_eq!(
+            format!("{:#}", result.unwrap_err()),
+            "virtual master keyboard delivery failed: \
+             typed 0 of 40 characters: the text needs 40 spare keycodes"
         );
     }
 
@@ -1043,7 +1081,8 @@ mod tests {
         let (value, report) = restore_after(
             Some("snapshot"),
             || Ok(7),
-            |s| {
+            |s, settle_watch| {
+                assert!(settle_watch);
                 restores.set(restores.get() + 1);
                 s
             },

@@ -90,7 +90,9 @@ use wayland_protocols_wlr::virtual_pointer::v1::client::{
 /// Linux evdev BTN_LEFT — the button code the virtual-pointer protocol expects.
 const BTN_LEFT: u32 = 0x110;
 
-use crate::routes::{DisplayRoute, LinuxCapture as _, Outcome, WindowRoute};
+use crate::routes::{
+    DesktopDrag, DesktopPointerRoute, DisplayRoute, LinuxCapture as _, Outcome, WindowRoute,
+};
 use crate::x11::WindowInfo;
 
 thread_local! {
@@ -1588,25 +1590,29 @@ fn with_libei_fallback<T>(
 fn libei_recovery<T>(
     on_niri: bool,
     f: impl FnOnce() -> anyhow::Result<T>,
-    #[allow(unused_variables)] fallback: impl FnOnce() -> anyhow::Result<T>,
+    fallback: impl FnOnce() -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
-    match f() {
-        Ok(v) => Ok(v),
-        Err(e) if on_niri && is_no_vptr(&e) => Err(niri_refuses_libei(e.to_string())),
+    match virtual_pointer_outcome(on_niri, f()) {
+        Outcome::Done(value) => Ok(value),
+        Outcome::Refused(error) => Err(error),
+        Outcome::NotApplicable => fallback(),
+    }
+}
+
+/// A virtual-pointer result as a route outcome: a compositor without the
+/// virtual pointer passes on to libei in a `portal-input` build, and is
+/// refused under niri or without the feature.
+fn virtual_pointer_outcome<T>(on_niri: bool, result: anyhow::Result<T>) -> Outcome<T> {
+    match result {
+        Err(e) if on_niri && is_no_vptr(&e) => Outcome::Refused(niri_refuses_libei(e.to_string())),
+        #[cfg(feature = "portal-input")]
         Err(e) if is_no_vptr(&e) => {
-            #[cfg(feature = "portal-input")]
-            {
-                tracing::info!(
-                    "wlroots virtual-pointer unavailable ({e}); falling back to libei/portal"
-                );
-                fallback()
-            }
-            #[cfg(not(feature = "portal-input"))]
-            {
-                Err(e)
-            }
+            tracing::info!(
+                "wlroots virtual-pointer unavailable ({e}); falling back to libei/portal"
+            );
+            Outcome::NotApplicable
         }
-        Err(e) => Err(e),
+        result => result.into(),
     }
 }
 
@@ -2213,27 +2219,6 @@ pub fn click_focused(at: AimedPoint, count: u32, button: u8) -> anyhow::Result<(
     click_vptr(None, at, count, button, None)
 }
 
-/// Click a desktop-absolute point without selecting or activating a toplevel.
-/// This is the Wayland peer of an XTest root-window click and is used only by
-/// the explicit desktop capture scope.
-pub fn click_desktop(
-    space: &DesktopInputSpace,
-    x: i32,
-    y: i32,
-    count: u32,
-    button: u8,
-) -> anyhow::Result<()> {
-    if is_inject_mode() {
-        let btn = evdev_button(button as u32);
-        return inject_send(&[format!("d {x} {y} {} {btn}", count.max(1))]);
-    }
-    let (x, y) = space.input_layout(x, y)?;
-    with_libei_fallback(
-        || click_vptr(None, (x, y).into(), count, button, Some(space)),
-        || libei_click_point(x, y, count, button),
-    )
-}
-
 /// The niri pointer space now, read on an attested connection, or `None`
 /// off niri.
 fn niri_pointer_space_now() -> anyhow::Result<Option<(i32, i32, u32, u32)>> {
@@ -2542,29 +2527,6 @@ pub fn scroll_at(
     )
 }
 
-/// Scroll at a desktop-absolute point without activating a named toplevel.
-pub fn scroll_desktop(
-    space: &DesktopInputSpace,
-    x: i32,
-    y: i32,
-    direction: &str,
-    amount: u32,
-) -> anyhow::Result<()> {
-    if is_inject_mode() {
-        return inject_scroll_desktop(x, y, direction, amount);
-    }
-    let (x, y) = space.input_layout(x, y)?;
-    let direction = direction.to_string();
-    with_libei_fallback(
-        || scroll_vptr(None, Some((x, y).into()), &direction, amount, Some(space)),
-        || {
-            libei_wait_scroll_ready()?;
-            libei_move_absolute(x, y)?;
-            libei_scroll(&direction, amount)
-        },
-    )
-}
-
 /// wlroots virtual-pointer implementation of [`scroll`].
 fn scroll_vptr(
     window_id: Option<u64>,
@@ -2666,15 +2628,6 @@ pub fn move_cursor_absolute(window_id: Option<u64>, x: i32, y: i32) -> anyhow::R
     )
 }
 
-/// Warp the cursor to a desktop-frame point (the `get_desktop_state` frame).
-pub fn move_cursor_desktop(space: &DesktopInputSpace, x: i32, y: i32) -> anyhow::Result<()> {
-    let (x, y) = space.input_layout(x, y)?;
-    with_libei_fallback(
-        || move_cursor_absolute_vptr(None, x, y, Some(space)),
-        || libei_move_absolute(x, y),
-    )
-}
-
 /// wlroots virtual-pointer implementation of [`move_cursor_absolute`].
 fn move_cursor_absolute_vptr(
     window_id: Option<u64>,
@@ -2710,38 +2663,6 @@ pub fn drag(
         || {
             libei_wait_pointer_ready()?;
             activate_window_for_input(window_id)?;
-            libei_drag(from_x, from_y, to_x, to_y, steps, duration_ms, button)
-        },
-    )
-}
-
-/// Drag through desktop-absolute points without activating a named toplevel.
-#[allow(clippy::too_many_arguments)]
-pub fn drag_desktop(
-    space: &DesktopInputSpace,
-    from_x: i32,
-    from_y: i32,
-    to_x: i32,
-    to_y: i32,
-    steps: u32,
-    duration_ms: u64,
-    button: u8,
-) -> anyhow::Result<()> {
-    let (from_x, from_y) = space.input_layout(from_x, from_y)?;
-    let (to_x, to_y) = space.input_layout(to_x, to_y)?;
-    with_libei_fallback(
-        || {
-            drag_vptr(
-                None,
-                (from_x, from_y).into(),
-                (to_x, to_y).into(),
-                steps,
-                button,
-                Some(space),
-            )
-        },
-        || {
-            libei_wait_pointer_ready()?;
             libei_drag(from_x, from_y, to_x, to_y, steps, duration_ms, button)
         },
     )
@@ -2814,6 +2735,174 @@ fn drag_vptr(
     record_synth_cursor(origin_x + tx as i32, origin_y + ty as i32);
     sess.release(btn)?;
     sess.finish()
+}
+
+impl DesktopPointerRoute {
+    /// Click a desktop-frame point without selecting or activating a
+    /// toplevel: the Wayland peer of an XTest root-window click.
+    pub(crate) fn click(
+        self,
+        space: &DesktopInputSpace,
+        (x, y): (i32, i32),
+        count: usize,
+        button: u8,
+        modifiers: &[&str],
+    ) -> Outcome<()> {
+        match self {
+            DesktopPointerRoute::Injected => {
+                if !is_inject_mode() {
+                    return Outcome::NotApplicable;
+                }
+                let btn = evdev_button(button as u32);
+                inject_send(&[format!("d {x} {y} {} {btn}", (count as u32).max(1))]).into()
+            }
+            DesktopPointerRoute::VirtualPointer => {
+                let (x, y) = match space.input_layout(x, y) {
+                    Ok(point) => point,
+                    Err(error) => return Outcome::Refused(error),
+                };
+                let on_niri = niri::is_session();
+                virtual_pointer_outcome(
+                    on_niri,
+                    click_vptr(None, (x, y).into(), count as u32, button, Some(space)),
+                )
+            }
+            DesktopPointerRoute::Libei => space
+                .input_layout(x, y)
+                .and_then(|(x, y)| libei_click_point(x, y, count as u32, button))
+                .into(),
+            DesktopPointerRoute::X11 => crate::input::send_click_xtest_desktop_with_modifiers(
+                x, y, button, count, modifiers,
+            )
+            .into(),
+        }
+    }
+
+    /// Scroll at a desktop-frame point without activating a named toplevel.
+    pub(crate) fn scroll(
+        self,
+        space: &DesktopInputSpace,
+        (x, y): (i32, i32),
+        direction: &str,
+        ticks: u32,
+        amount: usize,
+    ) -> Outcome<()> {
+        match self {
+            DesktopPointerRoute::Injected => {
+                if !is_inject_mode() {
+                    return Outcome::NotApplicable;
+                }
+                inject_scroll_desktop(x, y, direction, ticks).into()
+            }
+            DesktopPointerRoute::VirtualPointer => {
+                let (x, y) = match space.input_layout(x, y) {
+                    Ok(point) => point,
+                    Err(error) => return Outcome::Refused(error),
+                };
+                let on_niri = niri::is_session();
+                virtual_pointer_outcome(
+                    on_niri,
+                    scroll_vptr(None, Some((x, y).into()), direction, ticks, Some(space)),
+                )
+            }
+            DesktopPointerRoute::Libei => space
+                .input_layout(x, y)
+                .and_then(|(x, y)| {
+                    libei_wait_scroll_ready()?;
+                    libei_move_absolute(x, y)?;
+                    libei_scroll(direction, ticks)
+                })
+                .into(),
+            DesktopPointerRoute::X11 => {
+                crate::input::send_scroll_xtest_desktop(x, y, direction, amount).into()
+            }
+        }
+    }
+
+    /// Drag through desktop-frame points without activating a named toplevel.
+    pub(crate) fn drag(self, space: &DesktopInputSpace, drag: DesktopDrag<'_>) -> Outcome<()> {
+        let DesktopDrag {
+            from,
+            to,
+            steps,
+            duration_ms,
+            button,
+            modifiers,
+        } = drag;
+        let layout = || -> anyhow::Result<_> {
+            Ok((
+                space.input_layout(from.0, from.1)?,
+                space.input_layout(to.0, to.1)?,
+            ))
+        };
+        match self {
+            DesktopPointerRoute::Injected => Outcome::NotApplicable,
+            DesktopPointerRoute::VirtualPointer => {
+                let (from, to) = match layout() {
+                    Ok(points) => points,
+                    Err(error) => return Outcome::Refused(error),
+                };
+                let on_niri = niri::is_session();
+                virtual_pointer_outcome(
+                    on_niri,
+                    drag_vptr(
+                        None,
+                        from.into(),
+                        to.into(),
+                        steps as u32,
+                        button,
+                        Some(space),
+                    ),
+                )
+            }
+            DesktopPointerRoute::Libei => layout()
+                .and_then(|((from_x, from_y), (to_x, to_y))| {
+                    libei_wait_pointer_ready()?;
+                    libei_drag(
+                        from_x,
+                        from_y,
+                        to_x,
+                        to_y,
+                        steps as u32,
+                        duration_ms,
+                        button,
+                    )
+                })
+                .into(),
+            DesktopPointerRoute::X11 => crate::input::send_drag_xtest_desktop_with_modifiers(
+                from.0,
+                from.1,
+                to.0,
+                to.1,
+                button,
+                duration_ms,
+                steps,
+                modifiers,
+            )
+            .into(),
+        }
+    }
+
+    /// Warp the cursor to a desktop-frame point (the `get_desktop_state`
+    /// frame).
+    pub(crate) fn move_cursor(self, space: &DesktopInputSpace, (x, y): (i32, i32)) -> Outcome<()> {
+        match self {
+            DesktopPointerRoute::Injected => Outcome::NotApplicable,
+            DesktopPointerRoute::VirtualPointer => {
+                let (x, y) = match space.input_layout(x, y) {
+                    Ok(point) => point,
+                    Err(error) => return Outcome::Refused(error),
+                };
+                let on_niri = niri::is_session();
+                virtual_pointer_outcome(on_niri, move_cursor_absolute_vptr(None, x, y, Some(space)))
+            }
+            DesktopPointerRoute::Libei => space
+                .input_layout(x, y)
+                .and_then(|(x, y)| libei_move_absolute(x, y))
+                .into(),
+            DesktopPointerRoute::X11 => crate::input::send_move_xtest_desktop(x, y).into(),
+        }
+    }
 }
 
 /// Type Unicode text into the focused Wayland surface via `wtype` (the

@@ -24,12 +24,6 @@
     },
     {
      "default_value": false,
-     "help": "Accepted for older Claude Code setup snippets; there is no standalone screenshot tool; use get_window_state for window screenshots.",
-     "name": "claude-code-computer-use-compat",
-     "short_name": null
-    },
-    {
-     "default_value": false,
      "help": "Declare embedding-host mode. Without --direct, require the host's private service through --socket instead of auto-launching the standalone app.",
      "name": "embedded",
      "short_name": null
@@ -200,12 +194,6 @@
    "flags": [
     {
      "default_value": false,
-     "help": "Legacy compatibility flag forwarded by `mcp` when it launches the daemon; no current tool-surface effect.",
-     "name": "claude-code-computer-use-compat",
-     "short_name": null
-    },
-    {
-     "default_value": false,
      "help": "Select unrestricted mode and acknowledge its risk.",
      "name": "dangerously-bypass-approvals",
      "short_name": null
@@ -214,12 +202,6 @@
      "default_value": false,
      "help": "Trusted-launcher confirmation that the exact capability manifest was reviewed.",
      "name": "approve-capability-manifest",
-     "short_name": null
-    },
-    {
-     "default_value": false,
-     "help": "Deprecated alias for approve-capability-manifest.",
-     "name": "approve-session-policy",
      "short_name": null
     },
     {
@@ -293,14 +275,6 @@
      "help": "Optional narrow-only tool/resource ceiling; required in bounded mode.",
      "is_optional": true,
      "name": "capability-manifest",
-     "short_name": null,
-     "type": "Path"
-    },
-    {
-     "default_value": null,
-     "help": "Deprecated alias for capability-manifest.",
-     "is_optional": true,
-     "name": "session-policy",
      "short_name": null,
      "type": "Path"
     },

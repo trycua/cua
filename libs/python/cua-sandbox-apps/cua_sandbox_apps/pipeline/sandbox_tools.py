@@ -7,7 +7,9 @@ inside ephemeral cua_sandbox VMs — nothing runs on the host.
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
+import shlex
 import uuid
 from pathlib import Path
 from typing import Any
@@ -16,6 +18,53 @@ logger = logging.getLogger(__name__)
 
 # Global registry for cleanup_all_sandboxes() only
 _all_sandboxes: dict[str, Any] = {}
+
+
+def _is_windows(sb: Any) -> bool:
+    info = getattr(sb, "_runtime_info", None)
+    return (getattr(info, "environment", None) or "").lower() == "windows"
+
+
+def _powershell(script: str) -> str:
+    """Wrap a PowerShell script so cmd.exe quoting cannot touch it."""
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    return f"powershell -NoProfile -NonInteractive -EncodedCommand {encoded}"
+
+
+def _ps_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _truncate_lines(text: str, max_lines: int) -> str:
+    if max_lines < 0:
+        max_lines = 0
+    return "".join(text.splitlines(keepends=True)[:max_lines])
+
+
+def _shell_write_command(path: str, content: str, windows: bool) -> str:
+    """Shell fallback for images without the file API. Content travels as base64."""
+    payload = base64.b64encode(content.encode("utf-8")).decode("ascii")
+    if windows:
+        return _powershell(
+            f"[IO.File]::WriteAllBytes({_ps_literal(path)}, "
+            f"[Convert]::FromBase64String({_ps_literal(payload)}))"
+        )
+    return f"printf %s {shlex.quote(payload)} | base64 -d > {shlex.quote(path)}"
+
+
+def _shell_read_command(path: str, max_lines: int, windows: bool) -> str:
+    max_lines = max(1, int(max_lines))  # head rejects 0; Python trims exactly
+    if windows:
+        return _powershell(f"Get-Content -LiteralPath {_ps_literal(path)} -TotalCount {max_lines}")
+    return f"head -n {max_lines} -- {shlex.quote(path)}"
+
+
+def _err(message: str) -> dict[str, Any]:
+    return {"content": [{"type": "text", "text": f"ERROR: {message}"}]}
+
+
+def _chmod_command(path: str) -> str:
+    return f"chmod -- +x {shlex.quote(path)}"
 
 
 def make_sandbox_tools(
@@ -168,17 +217,27 @@ def make_sandbox_tools(
             return {"content": [{"type": "text", "text": f"ERROR: sandbox '{name}' not found."}]}
 
         logger.info("[%s] write %s (%d bytes, exec=%s)", name, path, len(content), executable)
+        windows = _is_windows(sb)
         try:
-            # Write via shell — works on all OS types
-            escaped = content.replace("\\", "\\\\").replace("'", "'\\''")
-            await sb.shell.run(f"cat > {path} << 'SANDBOX_EOF'\n{content}\nSANDBOX_EOF")
-            if executable:
-                await sb.shell.run(f"chmod +x {path}")
+            try:
+                await sb.files.write_text(path, content)
+            except Exception as api_err:
+                # Image without the file API: fall back to a quoted shell command.
+                logger.info("[%s] file API write failed (%s); using shell", name, api_err)
+                result = await sb.shell.run(_shell_write_command(path, content, windows))
+                if result.returncode != 0:
+                    err = (result.stderr or result.stdout or "").strip()[:2000]
+                    return _err(f"write to {path} failed: {err or api_err}")
+            if executable and not windows:
+                result = await sb.shell.run(_chmod_command(path))
+                if result.returncode != 0:
+                    err = (result.stderr or result.stdout or "").strip()[:2000]
+                    return _err(f"wrote {path} but chmod +x failed: {err}")
             return {
                 "content": [{"type": "text", "text": f"OK: wrote {len(content)} bytes to {path}"}]
             }
         except Exception as e:
-            return {"content": [{"type": "text", "text": f"ERROR: {e}"}]}
+            return _err(str(e))
 
     @tool(
         "sandbox_read",
@@ -207,12 +266,20 @@ def make_sandbox_tools(
             return {"content": [{"type": "text", "text": f"ERROR: sandbox '{name}' not found."}]}
 
         try:
-            result = await sb.shell.run(f"head -n {max_lines} {path}")
-            if result.returncode != 0:
-                return {"content": [{"type": "text", "text": f"ERROR: {result.stderr[:2000]}"}]}
-            return {"content": [{"type": "text", "text": result.stdout[:20000]}]}
+            try:
+                text = await sb.files.read_text(path)
+            except Exception as api_err:
+                # Image without the file API: fall back to a quoted shell command.
+                logger.info("[%s] file API read failed (%s); using shell", name, api_err)
+                result = await sb.shell.run(_shell_read_command(path, max_lines, _is_windows(sb)))
+                if result.returncode != 0:
+                    return _err((result.stderr or str(api_err))[:2000])
+                text = result.stdout
+            return {
+                "content": [{"type": "text", "text": _truncate_lines(text, int(max_lines))[:20000]}]
+            }
         except Exception as e:
-            return {"content": [{"type": "text", "text": f"ERROR: {e}"}]}
+            return _err(str(e))
 
     @tool(
         "sandbox_screenshot",

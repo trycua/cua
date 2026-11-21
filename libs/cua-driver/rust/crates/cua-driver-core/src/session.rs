@@ -2155,6 +2155,7 @@ mod tests {
             "browser_motion_policy",
             "browser_click",
             "browser_type",
+            "browser_press_key",
             "browser_set_input_files",
             "browser_download",
             "browser_pointer",

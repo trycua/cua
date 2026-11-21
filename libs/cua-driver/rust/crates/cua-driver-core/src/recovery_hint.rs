@@ -809,6 +809,30 @@ static RULES: &[Rule] = &[
     Rule {
         codes: &["browser_input_incomplete"],
         build: |c| {
+            if c.tool == "browser_press_key" {
+                let detail = c.refusal_detail();
+                let unpressed = detail
+                    .and_then(|detail| detail.get("pressed"))
+                    .and_then(Value::as_bool)
+                    == Some(false);
+                let dialog = detail
+                    .and_then(|detail| detail.get("dialog"))
+                    .is_some_and(|dialog| !dialog.is_null());
+                return RecoveryHint::new(if dialog && unpressed {
+                    "The key was not pressed and a page dialog is open. Resolve it with \
+                     browser_dialog, then read the page with get_browser_state."
+                } else if dialog {
+                    "A page dialog is open and the key may have reached the page. Resolve the \
+                     dialog with browser_dialog, then read the page with get_browser_state to see \
+                     whether the key took effect before pressing it again."
+                } else if unpressed {
+                    "The key was not pressed. Read the page with get_browser_state, then press it again."
+                } else {
+                    "The key may have reached the page. Read the page with get_browser_state to see \
+                     whether it took effect before pressing it again."
+                })
+                .call(c.read_page());
+            }
             let counts = c.refusal_detail().and_then(|detail| {
                 Some(format!(
                     "Typing stopped after {} of {} characters. ",

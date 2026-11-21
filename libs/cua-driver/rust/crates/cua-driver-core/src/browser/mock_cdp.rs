@@ -36,6 +36,8 @@ pub(crate) struct MockEvent {
 /// The scripted reaction to one command.
 pub(crate) struct MockReply {
     pub events: Vec<MockEvent>,
+    /// Events emitted after the reply frame.
+    pub events_after: Vec<MockEvent>,
     pub suppress_response: bool,
     /// Hold the reply this long before sending it (a slow but live page).
     pub delay: Option<std::time::Duration>,
@@ -47,6 +49,7 @@ impl MockReply {
     pub fn ok(result: Value) -> Self {
         Self {
             events: Vec::new(),
+            events_after: Vec::new(),
             result: Ok(result),
             suppress_response: false,
             delay: None,
@@ -58,6 +61,7 @@ impl MockReply {
     pub fn hang() -> Self {
         Self {
             events: Vec::new(),
+            events_after: Vec::new(),
             result: Ok(json!({})),
             suppress_response: true,
             delay: None,
@@ -68,6 +72,7 @@ impl MockReply {
     pub fn err(code: i64, message: &str) -> Self {
         Self {
             events: Vec::new(),
+            events_after: Vec::new(),
             result: Err((code, message.to_owned())),
             suppress_response: false,
             delay: None,
@@ -87,6 +92,11 @@ impl MockReply {
 
     pub fn with_events(mut self, events: Vec<MockEvent>) -> Self {
         self.events = events;
+        self
+    }
+
+    pub fn with_events_after(mut self, events: Vec<MockEvent>) -> Self {
+        self.events_after = events;
         self
     }
 }
@@ -173,6 +183,16 @@ impl MockCdpServer {
                         }
                         if ws.send(Message::Text(response.to_string())).await.is_err() {
                             return;
+                        }
+                        for event in reply.events_after {
+                            let mut frame =
+                                json!({ "method": event.method, "params": event.params });
+                            if let Some(sid) = event.session_id {
+                                frame["sessionId"] = json!(sid);
+                            }
+                            if ws.send(Message::Text(frame.to_string())).await.is_err() {
+                                return;
+                            }
                         }
                     }
                 });

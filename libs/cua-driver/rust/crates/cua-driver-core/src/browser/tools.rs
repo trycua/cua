@@ -33,6 +33,7 @@ use super::platform::{
     PrepareStrategy,
 };
 use super::pointer::BrowserPointerTool;
+use super::press_key::BrowserPressKeyTool;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::session_schema as schema_session;
 use super::store::BrowserActionKind;
@@ -48,6 +49,7 @@ pub fn register_browser_tools(engine: &Arc<BrowserEngine>, registry: &mut ToolRe
     registry.register(Box::new(BrowserMotionPolicyTool::new(engine.clone())));
     registry.register(Box::new(BrowserClickTool::new(engine.clone())));
     registry.register(Box::new(BrowserTypeTool::new(engine.clone())));
+    registry.register(Box::new(BrowserPressKeyTool::new(engine.clone())));
     registry.register(Box::new(BrowserSelectTool::new(engine.clone())));
     registry.register(Box::new(BrowserDialogTool::new(engine.clone())));
     registry.register(Box::new(BrowserSetInputFilesTool::new(engine.clone())));
@@ -211,7 +213,7 @@ fn session_of(args: &Value) -> String {
 
 /// Target/ref minting requires an explicit (non-default) session so the
 /// capability namespace has a real owner whose end event cleans it up.
-fn require_explicit_session(args: &Value) -> Result<String, ToolResult> {
+pub(super) fn require_explicit_session(args: &Value) -> Result<String, ToolResult> {
     let sid = session_of(args);
     if sid.is_empty() || sid == "default" {
         return Err(ToolResult::error(
@@ -246,7 +248,7 @@ fn schema_delivery_mode() -> Value {
     })
 }
 
-fn schema_target_id() -> Value {
+pub(super) fn schema_target_id() -> Value {
     json!({
         "type": "string",
         "description": "Opaque browser target id minted by get_browser_state \
@@ -254,14 +256,14 @@ fn schema_target_id() -> Value {
     })
 }
 
-fn schema_tab_id() -> Value {
+pub(super) fn schema_tab_id() -> Value {
     json!({
         "type": "string",
         "description": "Opaque tab id from get_browser_state (session-scoped)."
     })
 }
 
-fn schema_ref() -> Value {
+pub(super) fn schema_ref() -> Value {
     json!({
         "type": "string",
         "description": "Page element ref in the p<snapshot>:<index> namespace from \
@@ -351,6 +353,7 @@ pub(crate) async fn browser_protected_resource_scope(
         "get_browser_state" => "page_observation",
         "browser_navigate" => "navigation",
         "browser_dialog" => "page_dialog_resolution",
+        "browser_press_key" => "key_input",
         _ => "page_input",
     };
     let mut resource = json!({
@@ -1899,7 +1902,7 @@ impl Tool for BrowserClickTool {
 
 /// Await `call` unless a page-owned dialog opens on the tab first. The dialog
 /// blocks the renderer, so the call's reply would not come until it closes.
-async fn call_until_dialog(
+pub(super) async fn call_until_dialog(
     conn: &super::cdp_ws::CdpConnection,
     cdp_target_id: &str,
     call: impl std::future::Future<Output = anyhow::Result<Value>>,
@@ -1919,11 +1922,11 @@ async fn call_until_dialog(
 
 /// The public id for one dialog generation, shared by `browser_click` and
 /// `browser_dialog` so a caller can hand the click's id straight back.
-fn dialog_capability_id(generation: u64) -> String {
+pub(super) fn dialog_capability_id(generation: u64) -> String {
     format!("dialog-{generation}")
 }
 
-fn dialog_block(dialog: &super::cdp_ws::CdpDialogState) -> Value {
+pub(super) fn dialog_block(dialog: &super::cdp_ws::CdpDialogState) -> Value {
     json!({
         "present": true,
         "kind": dialog.kind,
@@ -3843,6 +3846,10 @@ mod tests {
                 "browser_type",
             ),
             (
+                BrowserPressKeyTool::new(e.clone()).def().clone(),
+                "browser_press_key",
+            ),
+            (
                 BrowserSelectTool::new(e.clone()).def().clone(),
                 "browser_select",
             ),
@@ -3875,6 +3882,7 @@ mod tests {
             BrowserMotionPolicyTool::new(e.clone()).def().clone(),
             BrowserClickTool::new(e.clone()).def().clone(),
             BrowserTypeTool::new(e.clone()).def().clone(),
+            BrowserPressKeyTool::new(e.clone()).def().clone(),
             BrowserSelectTool::new(e.clone()).def().clone(),
             BrowserDialogTool::new(e.clone()).def().clone(),
             BrowserSetInputFilesTool::new(e.clone()).def().clone(),
@@ -3884,6 +3892,7 @@ mod tests {
             assert!(def.open_world, "{} can affect open-world state", def.name);
         }
         assert!(BrowserDownloadTool::new(e.clone()).def().destructive);
+        assert!(BrowserPressKeyTool::new(e.clone()).def().destructive);
     }
 
     #[test]
@@ -3901,6 +3910,7 @@ mod tests {
                 "browser_motion_policy",
                 "browser_click",
                 "browser_type",
+                "browser_press_key",
                 "browser_select",
                 "browser_dialog",
                 "browser_set_input_files",
@@ -4529,9 +4539,15 @@ mod tests {
                     "_session_id": "run-1"
                 }))
                 .await,
-            BrowserTypeTool::new(e)
+            BrowserTypeTool::new(e.clone())
                 .invoke(json!({
                     "target_id": "bt999", "tab_id": "tab1", "text": "hi",
+                    "_session_id": "run-1"
+                }))
+                .await,
+            BrowserPressKeyTool::new(e)
+                .invoke(json!({
+                    "target_id": "bt999", "tab_id": "tab1", "key": "f5",
                     "_session_id": "run-1"
                 }))
                 .await,
@@ -4613,17 +4629,26 @@ mod tests {
             },
         );
 
-        let result = BrowserTypeTool::new(e)
-            .invoke(json!({
-                "target_id": target_id, "tab_id": tab_id, "text": "hi",
-                "_session_id": "run-1"
-            }))
-            .await;
-        assert_eq!(
-            structured(&result)["refusal"]["code"],
-            "browser_wrong_target_refused",
-            "heuristic bindings are read-only"
-        );
+        for result in [
+            BrowserTypeTool::new(e.clone())
+                .invoke(json!({
+                    "target_id": target_id, "tab_id": tab_id, "text": "hi",
+                    "_session_id": "run-1"
+                }))
+                .await,
+            BrowserPressKeyTool::new(e)
+                .invoke(json!({
+                    "target_id": target_id, "tab_id": tab_id, "key": "f5",
+                    "_session_id": "run-1"
+                }))
+                .await,
+        ] {
+            assert_eq!(
+                structured(&result)["refusal"]["code"],
+                "browser_wrong_target_refused",
+                "heuristic bindings are read-only"
+            );
+        }
     }
 
     #[tokio::test]

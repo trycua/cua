@@ -2388,6 +2388,51 @@
    "read_only": false
   },
   {
+   "description": "Press one key or chord in an exactly-bound tab through CDP Input.dispatchKeyEvent, without activating the tab or raising the browser window. Use it where native press_key or hotkey cannot reach a background browser (Chromium ignores posted modifier state). key and modifiers take the press_key vocabulary: key names (return, tab, escape, arrows, f1-f12), a letter, digit, or punctuation key; modifiers ctrl, shift, alt, meta (cmd/win). Pass a ref to focus that element first; without one the key goes to the page's current focus. A chord reaches browser shortcuts too (ctrl+w closes the tab, f5 reloads), so refs are invalidated after every press. Heuristic bindings are refused.",
+   "destructive": true,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "key": {
+      "description": "Key to press: return, tab, escape, space, backspace, delete, insert, home, end, pageup, pagedown, left, up, right, down, f1-f12, a letter, a digit, or a punctuation key.",
+      "type": "string"
+     },
+     "modifiers": {
+      "description": "Modifiers held while the key is pressed: ctrl, shift, alt, meta (cmd/win).",
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "ref": {
+      "description": "Page element ref in the p<snapshot>:<index> namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab.",
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "type": "string"
+     },
+     "tab_id": {
+      "description": "Opaque tab id from get_browser_state (session-scoped).",
+      "type": "string"
+     },
+     "target_id": {
+      "description": "Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).",
+      "type": "string"
+     }
+    },
+    "required": [
+     "target_id",
+     "tab_id",
+     "key"
+    ],
+    "type": "object"
+   },
+   "name": "browser_press_key",
+   "read_only": false
+  },
+  {
    "description": "Select one option of a native HTML <select> ref on an exactly-bound tab without opening its popup. Pass exactly one of label or value; exactly one option must equal it. Refuses non-native, multiple-selection, and disabled selects, disabled options, and zero or ambiguous matches before changing anything. A change dispatches bubbling input and change events; they are synthetic, so verify the page accepted the selection. Selecting the option that is already selected dispatches no events.",
    "destructive": false,
    "idempotent": false,

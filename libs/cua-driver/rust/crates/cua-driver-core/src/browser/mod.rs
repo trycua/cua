@@ -54,6 +54,7 @@ mod mutation;
 pub mod platform;
 pub mod pointer;
 mod prepare;
+pub mod press_key;
 mod reconnect;
 pub mod refusal;
 mod semantic;

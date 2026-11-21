@@ -73,6 +73,8 @@ pub(super) struct FixtureState {
     key_event_acks_then_opens_dialog_at: Option<usize>,
     key_events: usize,
     focus_emulation_enable_fails: bool,
+    /// `DOM.focus` runs a focus handler that opens a confirm() dialog.
+    focus_opens_dialog: bool,
     /// A synthetic `this.click()` opens a confirm() dialog: the mock emits
     /// `Page.javascriptDialogOpening` and never answers the call.
     click_opens_dialog: bool,
@@ -193,6 +195,7 @@ impl Default for FixtureState {
             key_event_acks_then_opens_dialog_at: None,
             key_events: 0,
             focus_emulation_enable_fails: false,
+            focus_opens_dialog: false,
             click_opens_dialog: false,
             dialog_vanished: false,
             trusted_click_opens_dialog: None,
@@ -967,6 +970,19 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             {
                 st.covering_node = st.focus_emulation_covers;
                 MockReply::ok(json!({}))
+            }
+            "DOM.focus" if st.focus_opens_dialog => {
+                st.renderer_blocked = true;
+                let events = st
+                    .page_sessions
+                    .iter()
+                    .map(|page_session| MockEvent {
+                        method: "Page.javascriptDialogOpening".into(),
+                        session_id: Some(page_session.clone()),
+                        params: json!({ "type": "confirm", "message": "Sure?", "url": st.main_url }),
+                    })
+                    .collect();
+                MockReply::hang().with_events(events)
             }
             "DOM.focus" | "Emulation.setFocusEmulationEnabled" | "Input.insertText" => {
                 MockReply::ok(json!({}))
@@ -5036,6 +5052,7 @@ async fn press_key_stops_when_an_acknowledged_modifier_then_opens_a_dialog() {
     let result = press_key_with(&f, json!({ "key": "a", "modifiers": ["ctrl"] })).await;
     let s = structured(&result);
     assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(s["refusal"]["code"], "browser_input_incomplete");
     assert_eq!(s["refusal"]["detail"]["pressed"], false);
     assert_eq!(s["refusal"]["detail"]["dialog"]["present"], true, "{s}");
     assert_eq!(
@@ -5061,9 +5078,38 @@ async fn press_key_reports_a_dialog_opened_by_a_cleanup_release() {
     let result = press_key_with(&f, json!({ "key": "a", "modifiers": ["ctrl"] })).await;
     let s = structured(&result);
     assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(s["refusal"]["code"], "browser_input_incomplete");
     assert_eq!(s["refusal"]["detail"]["pressed"], false);
     assert_eq!(s["refusal"]["detail"]["released"], false);
     assert_eq!(s["refusal"]["detail"]["dialog"]["present"], true, "{s}");
+}
+
+#[tokio::test]
+async fn press_key_whose_ref_focus_opens_a_dialog_sends_no_key() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let field = ref_of(&snap, "main", "Shadow Input");
+    f.state.lock().unwrap().focus_opens_dialog = true;
+
+    let started = std::time::Instant::now();
+    let result = BrowserPressKeyTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "session": SESSION,
+            "key": "a", "ref": field
+        }))
+        .await;
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "the focus must not wait out the CDP call timeout: {:?}",
+        started.elapsed()
+    );
+    let s = structured(&result);
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(s["refusal"]["code"], "browser_input_incomplete");
+    assert_eq!(s["refusal"]["detail"]["pressed"], false);
+    assert_eq!(s["refusal"]["detail"]["dialog"]["present"], true, "{s}");
+    assert!(recorded_calls(&f, "Input.dispatchKeyEvent").is_empty());
 }
 
 #[tokio::test]

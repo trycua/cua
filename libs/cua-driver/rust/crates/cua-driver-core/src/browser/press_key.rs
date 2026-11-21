@@ -436,6 +436,38 @@ impl BrowserPressKeyTool {
     }
 }
 
+impl BrowserPressKeyTool {
+    /// A focus handler opened a page dialog before any key was sent.
+    async fn dialog_before_keys(
+        &self,
+        conn: &CdpConnection,
+        cdp: &str,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+        open: &super::cdp_ws::CdpDialogState,
+    ) -> ToolResult {
+        let restored = disable_focus_emulation(conn, cdp, BLOCKED_FOCUS_RESTORE_TIMEOUT).await;
+        self.engine
+            .store
+            .invalidate_tab_snapshots(session, target_id, tab_id);
+        BrowserRefusal::new(
+            BrowserRefusalCode::BrowserInputIncomplete,
+            "focusing the page opened a page dialog before any key was sent, so the key was not \
+             pressed; resolve the dialog with browser_dialog first",
+        )
+        .with_detail(json!({
+            "pressed": false,
+            "released": true,
+            "refs_invalidated": true,
+            "focus_emulation_restored": restored,
+            "retryable": false,
+            "dialog": dialog_block(open),
+        }))
+        .to_tool_result()
+    }
+}
+
 #[async_trait]
 impl Tool for BrowserPressKeyTool {
     fn def(&self) -> &ToolDef {
@@ -567,40 +599,53 @@ impl Tool for BrowserPressKeyTool {
 
         // Focus emulation lets a tab whose window is in the background, or
         // that is not the active tab, process the keys as a focused page.
-        if let Err(error) = conn
-            .call(
-                Some(cdp),
-                "Emulation.setFocusEmulationEnabled",
-                json!({ "enabled": true }),
-            )
-            .await
-        {
-            // The command may have applied even though its reply was lost.
-            let restored = disable_focus_emulation(conn, cdp, FOCUS_RESTORE_TIMEOUT).await;
-            return BrowserRefusal::new(
-                BrowserRefusalCode::BrowserInputTrustUnavailable,
-                format!("the tab could not enter CDP focus emulation for key input: {error}"),
-            )
-            .with_detail(json!({ "pressed": false, "focus_emulation_restored": restored }))
-            .to_tool_result();
-        }
-        if let Some(backend_node_id) = focus_node {
-            if conn
-                .call(
-                    Some(cdp),
-                    "DOM.focus",
-                    json!({ "backendNodeId": backend_node_id }),
-                )
-                .await
-                .is_err()
-            {
+        // Gaining focus runs the page's focus handlers, which can open a
+        // dialog that blocks the reply, so both steps watch for one.
+        let enable = conn.call(
+            Some(cdp),
+            "Emulation.setFocusEmulationEnabled",
+            json!({ "enabled": true }),
+        );
+        match call_until_dialog(conn, cdp_target_id, enable).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                // The command may have applied even though its reply was lost.
                 let restored = disable_focus_emulation(conn, cdp, FOCUS_RESTORE_TIMEOUT).await;
                 return BrowserRefusal::new(
-                    BrowserRefusalCode::BrowserRefStale,
-                    "the ref's node can no longer be focused — re-snapshot the tab",
+                    BrowserRefusalCode::BrowserInputTrustUnavailable,
+                    format!("the tab could not enter CDP focus emulation for key input: {error}"),
                 )
                 .with_detail(json!({ "pressed": false, "focus_emulation_restored": restored }))
                 .to_tool_result();
+            }
+            Err(open) => {
+                return self
+                    .dialog_before_keys(conn, cdp, &session, &target_id, &tab_id, &open)
+                    .await
+            }
+        }
+        if let Some(backend_node_id) = focus_node {
+            let focus = conn.call(
+                Some(cdp),
+                "DOM.focus",
+                json!({ "backendNodeId": backend_node_id }),
+            );
+            match call_until_dialog(conn, cdp_target_id, focus).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(_)) => {
+                    let restored = disable_focus_emulation(conn, cdp, FOCUS_RESTORE_TIMEOUT).await;
+                    return BrowserRefusal::new(
+                        BrowserRefusalCode::BrowserRefStale,
+                        "the ref's node can no longer be focused — re-snapshot the tab",
+                    )
+                    .with_detail(json!({ "pressed": false, "focus_emulation_restored": restored }))
+                    .to_tool_result();
+                }
+                Err(open) => {
+                    return self
+                        .dialog_before_keys(conn, cdp, &session, &target_id, &tab_id, &open)
+                        .await
+                }
             }
             if let Ok((x, y)) = ref_point(conn, cdp, backend_node_id).await {
                 self.engine

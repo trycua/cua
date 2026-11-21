@@ -295,7 +295,7 @@ fn rect_has_area(rect: RECT) -> bool {
 }
 
 /// True when `outer` fully contains `inner` (and `inner` has area).
-fn rect_covers(outer: RECT, inner: RECT) -> bool {
+pub(crate) fn rect_covers(outer: RECT, inner: RECT) -> bool {
     rect_has_area(inner)
         && outer.left <= inner.left
         && outer.top <= inner.top

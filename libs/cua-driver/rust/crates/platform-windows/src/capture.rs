@@ -631,24 +631,40 @@ pub fn screenshot_window(hwnd: u64) -> Result<(String, u32, u32)> {
 /// a stale frame while the display keeps updating. Desktop Duplication reads
 /// the real display image.
 ///
+/// The monitor image is cropped to the same DWM-inset frame PrintWindow
+/// returns, so `bitmap_to_screen` maps pixels on this screenshot exactly as it
+/// does for the other capture paths. The agent cursor overlay is excluded
+/// from the duplicated frame the same way it is for desktop captures.
+///
 /// Returns `None` unless the window is unoccluded, covers a whole monitor, and
 /// duplication succeeds, so the caller keeps the PrintWindow / WGC / BitBlt
 /// ladder as the fallback for every other case.
 unsafe fn screenshot_via_dxgi_duplication(
     hwnd: HWND,
 ) -> Option<(Vec<u8>, i32, i32, FrameGeometry)> {
-    use windows::Win32::Foundation::RECT;
-    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+    use cursor_overlay::capture_exclusion::{capture_excluding_overlays, ResidualCheck};
 
-    if target_is_obscured(hwnd) {
+    let (window, dwm) = window_geometry(hwnd).ok()?;
+    let window_rect = bounds_rect((
+        window.left,
+        window.top,
+        window.left + window.width,
+        window.top + window.height,
+    ));
+    // Check coverage before excluding the overlay: that costs two DWM frames,
+    // and most windows do not cover a monitor.
+    let covers_monitor = monitor_bounds()
+        .into_iter()
+        .any(|monitor| crate::dxgi_duplication::rect_covers(window_rect, bounds_rect(monitor)));
+    if !covers_monitor || target_is_obscured(hwnd) {
         return None;
     }
-    let mut win_rect = RECT::default();
-    if GetWindowRect(hwnd, &mut win_rect).is_err() {
-        return None;
-    }
-    let captured = match crate::dxgi_duplication::capture_output_covered_by(win_rect) {
-        Ok(captured) => captured,
+    let captured = capture_excluding_overlays(&crate::overlay::CaptureExcluder, |_| {
+        crate::dxgi_duplication::capture_output_covered_by(window_rect)
+            .map(|captured| (captured, ResidualCheck::Clean))
+    });
+    let captured = match captured {
+        Ok((captured, _)) => captured,
         Err(error) => {
             tracing::debug!(
                 target: "cua-driver",
@@ -657,24 +673,54 @@ unsafe fn screenshot_via_dxgi_duplication(
             return None;
         }
     };
-    let geometry = FrameGeometry::from_bounds((
+    let output = FrameGeometry::from_bounds((
         captured.desktop_rect.left,
         captured.desktop_rect.top,
         captured.desktop_rect.right,
         captured.desktop_rect.bottom,
     ))?;
+    if output.width as u32 != captured.width || output.height as u32 != captured.height {
+        return None;
+    }
+    let frame = window.cropped(dwm);
+    let pixels = crop_bgra(&captured.bgra, output, frame)?;
     tracing::debug!(
         target: "cua-driver",
         "screenshot: captured window via DXGI Desktop Duplication ({}x{})",
-        captured.width,
-        captured.height
+        frame.width,
+        frame.height
     );
-    Some((
-        captured.bgra,
-        captured.width as i32,
-        captured.height as i32,
-        geometry,
-    ))
+    Some((pixels, frame.width, frame.height, frame))
+}
+
+fn bounds_rect((left, top, right, bottom): Bounds) -> windows::Win32::Foundation::RECT {
+    windows::Win32::Foundation::RECT {
+        left,
+        top,
+        right,
+        bottom,
+    }
+}
+
+/// Copy the `frame` region out of tightly packed BGRA `pixels` that cover
+/// `source`. `None` when `frame` is not inside `source` or the buffer does not
+/// match `source`'s size.
+fn crop_bgra(pixels: &[u8], source: FrameGeometry, frame: FrameGeometry) -> Option<Vec<u8>> {
+    let x = usize::try_from(i64::from(frame.left) - i64::from(source.left)).ok()?;
+    let y = usize::try_from(i64::from(frame.top) - i64::from(source.top)).ok()?;
+    let (source_w, source_h) = (source.width as usize, source.height as usize);
+    let (frame_w, frame_h) = (frame.width as usize, frame.height as usize);
+    if x + frame_w > source_w || y + frame_h > source_h || pixels.len() != source_w * source_h * 4 {
+        return None;
+    }
+    let stride = source_w * 4;
+    let crop_stride = frame_w * 4;
+    let mut cropped = Vec::with_capacity(crop_stride * frame_h);
+    for row in y..y + frame_h {
+        let start = row * stride + x * 4;
+        cropped.extend_from_slice(&pixels[start..start + crop_stride]);
+    }
+    Some(cropped)
 }
 
 unsafe fn screenshot_window_bytes_with_occlusion_unsafe(
@@ -992,13 +1038,7 @@ pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
         // passing through DWM's redirection surface, so the GDI BitBlt below
         // can return a stale desktop image. Prefer the real display image via
         // DXGI Desktop Duplication and keep BitBlt as the fallback.
-        use windows::Win32::Foundation::RECT;
-        let primary_rect = RECT {
-            left: 0,
-            top: 0,
-            right: w,
-            bottom: h,
-        };
+        let primary_rect = bounds_rect((0, 0, w, h));
         if let Ok(captured) = crate::dxgi_duplication::capture_output_covered_by(primary_rect) {
             if captured.width as i32 == w && captured.height as i32 == h {
                 return cua_driver_core::image_utils::encode_bgra_to_png(
@@ -1125,7 +1165,36 @@ pub fn png_dimensions_pub(data: &[u8]) -> Result<(u32, u32)> {
 
 #[cfg(test)]
 mod wgc_validation_tests {
-    use super::{monitors_cover, normalize_wgc_frame, validate_wgc_frame, FrameGeometry};
+    use super::{
+        crop_bgra, monitors_cover, normalize_wgc_frame, validate_wgc_frame, FrameGeometry,
+    };
+
+    #[test]
+    fn duplicated_monitor_crops_to_the_window_capture_frame() {
+        // A borderless fullscreen window on a 4x3 secondary monitor: the
+        // capture frame is the DWM bounds inset by one pixel, so the crop
+        // starts one pixel into the monitor image.
+        let output = FrameGeometry::from_bounds((-4, 0, 0, 3)).unwrap();
+        let pixels: Vec<u8> = (0..12u8).flat_map(|i| [i, i, i, 255]).collect();
+        let frame = output.cropped(Some((-4, 0, 0, 3)));
+        assert_eq!(frame, FrameGeometry::from_bounds((-3, 1, -1, 2)).unwrap());
+        assert_eq!(
+            crop_bgra(&pixels, output, frame),
+            Some(vec![5, 5, 5, 255, 6, 6, 6, 255])
+        );
+        assert_eq!(crop_bgra(&pixels, output, output), Some(pixels.clone()));
+    }
+
+    #[test]
+    fn crop_outside_the_duplicated_monitor_is_refused() {
+        let output = FrameGeometry::from_bounds((0, 0, 4, 3)).unwrap();
+        let pixels = vec![0u8; 4 * 3 * 4];
+        for frame in [(-1, 0, 3, 3), (0, 0, 5, 3), (1, 1, 4, 4)] {
+            let frame = FrameGeometry::from_bounds(frame).unwrap();
+            assert_eq!(crop_bgra(&pixels, output, frame), None);
+        }
+        assert_eq!(crop_bgra(&pixels[4..], output, output), None);
+    }
 
     #[test]
     fn screen_region_must_lie_on_real_monitors() {

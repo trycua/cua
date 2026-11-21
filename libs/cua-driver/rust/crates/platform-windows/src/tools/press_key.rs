@@ -189,7 +189,7 @@ impl Tool for PressKeyTool {
         } else {
             EventKind::KeyCombo
         };
-        if delivery == DeliveryMode::Background
+        if delivery.is_background()
             && crate::input::delivery::would_be_silently_dropped(hwnd, event_kind)
         {
             return crate::input::delivery::background_unavailable_error(hwnd, event_kind);
@@ -211,9 +211,9 @@ impl Tool for PressKeyTool {
         // focus with a posted click, so reuse that route at the AX element's
         // cached center.
         let background_webview_focus = elem_idx.is_some()
-            && delivery == DeliveryMode::Background
+            && delivery.is_background()
             && crate::input::has_chromium_descendant(hwnd);
-        let mut noact = if elem_idx.is_some() && delivery == DeliveryMode::Background {
+        let mut noact = if elem_idx.is_some() && delivery.is_background() {
             Some(crate::input::NoActivateGuard::arm(
                 windows::Win32::Foundation::HWND(hwnd as *mut _),
             ))
@@ -275,7 +275,7 @@ impl Tool for PressKeyTool {
             .await;
             match focused {
                 Ok(Ok(())) => {
-                    if delivery == DeliveryMode::Background {
+                    if delivery.is_background() {
                         let _ = crate::input::wait_for_focused_descendant(
                             hwnd,
                             std::time::Duration::from_millis(500),

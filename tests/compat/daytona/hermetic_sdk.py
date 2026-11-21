@@ -19,12 +19,35 @@ import traceback
 import urllib.request
 
 os.environ.update(json.loads(open(sys.argv[1]).read()))
+# SDK 2.x ignores DAYTONA_API_URL and reads the v0 API endpoint (test
+# environments only) from DAYTONA_V0_API_URL; 0.x ignores the new name.
+if os.environ.get("DAYTONA_API_URL"):
+    os.environ.setdefault("DAYTONA_V0_API_URL", os.environ["DAYTONA_API_URL"])
 
-from daytona import (  # noqa: E402
-    CreateSandboxFromSnapshotParams,
-    Daytona,
-    DaytonaConfig,
-)
+from daytona import Daytona, DaytonaConfig  # noqa: E402
+
+# SDK 2.0 keeps only the clients and `DaytonaConfig` at the package root (any
+# other name raises ImportError there); the API this suite was written against
+# lives in the `daytona.v0` namespace (the "v0-sdk" extra), and its client is
+# `Daytona(...).v0`.
+try:
+    import daytona as _api  # noqa: E402
+
+    _api.CreateSandboxFromSnapshotParams  # noqa: B018
+
+    def new_client():
+        return Daytona(DaytonaConfig())
+
+except ImportError:
+    from daytona import v0 as _api  # noqa: E402
+
+    def new_client():
+        return Daytona(DaytonaConfig()).v0
+
+
+CreateSandboxFromSnapshotParams = _api.CreateSandboxFromSnapshotParams
+FileUpload = _api.FileUpload
+ListSandboxesQuery = _api.ListSandboxesQuery
 
 failures: list[str] = []
 passed = 0
@@ -53,7 +76,7 @@ def fetch(url, headers=None):
 
 
 def main():
-    daytona = Daytona(DaytonaConfig())
+    daytona = new_client()
     sb = daytona.create(
         CreateSandboxFromSnapshotParams(labels={"suite": "hermetic"}, auto_stop_interval=0)
     )
@@ -68,14 +91,12 @@ def main():
     sys.exit(1 if failures else 0)
 
 
-def run(daytona: Daytona, sb):
+def run(daytona, sb):
     def created():
         assert str(sb.state).lower().endswith("started"), sb.state
         assert sb.labels.get("suite") == "hermetic", sb.labels
         got = daytona.get(sb.id)
         assert got.id == sb.id
-        from daytona import ListSandboxesQuery
-
         listed = [s.id for s in daytona.list(ListSandboxesQuery(labels={"suite": "hermetic"}))]
         assert sb.id in listed, listed
 
@@ -119,8 +140,6 @@ def run(daytona: Daytona, sb):
     check("files", files)
 
     def many_files():
-        from daytona import FileUpload
-
         sb.fs.upload_files(
             [
                 FileUpload(source=b"1", destination="/tmp/m/1"),

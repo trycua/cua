@@ -76,6 +76,8 @@ let kActiveOnlyFieldAID = "txt-active-only"
 let kActiveOnlyStateAID = "lbl-active-only"
 let kActivationsAID = "lbl-activations"
 let kSelectionStateAID = "lbl-selection-state"
+let kRowHelpGroupAID = "grp-row-help"
+let kRowHelpGroupStateAID = "lbl-group-state"
 let kContextButtonAID = "btn-context"
 let kMenuActionAID = "lbl-menu-action"
 let kPopupAID = "pop-team"
@@ -142,6 +144,51 @@ func taskDensityFromEnvironment() -> Int? {
     return density
 }
 
+final class HelpfulGroupView: NSView {
+    var onPress: () -> Void = {}
+    var onCustomAction: () -> Void = {}
+
+    private lazy var pinAction = NSAccessibilityCustomAction(name: "Pin Row", handler: { [weak self] in
+        self?.onCustomAction()
+        return true
+    })
+
+    override func accessibilityCustomActions() -> [NSAccessibilityCustomAction]? {
+        [pinAction]
+    }
+
+    override func isAccessibilityElement() -> Bool { true }
+
+    override func accessibilityRole() -> NSAccessibility.Role? { .group }
+
+    override func accessibilityLabel() -> String? { "row detail" }
+
+    override func accessibilityHelp() -> String? {
+        "To mark the row as done, press Control-Option-Space."
+    }
+
+    override func accessibilityActionNames() -> [NSAccessibility.Action] { [.press] }
+
+    override func accessibilityPerformPress() -> Bool {
+        onPress()
+        return true
+    }
+}
+
+/// A group kept only for its help: no name, no value and no action, so the
+/// snapshot shows it as an unindexed row that carries the help.
+final class HelpOnlyGroupView: NSView {
+    override func isAccessibilityElement() -> Bool { true }
+
+    override func accessibilityRole() -> NSAccessibility.Role? { .group }
+
+    override func accessibilityHelp() -> String? {
+        "Rows sync when the window closes."
+    }
+
+    override func accessibilityActionNames() -> [NSAccessibility.Action] { [] }
+}
+
 // MARK: - Controller
 
 final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate, NSMenuItemValidation {
@@ -170,6 +217,11 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     let selectionItems = ["alpha", "beta", "gamma"]
     let selectionTable = NSTableView()
     let selectionStateLabel = NSTextField(labelWithString: "selection=none")
+    let rowHelpGroup = HelpfulGroupView()
+    let rowHelpGroupStateLabel = NSTextField(labelWithString: "group_pressed=0")
+    let helpOnlyGroup = HelpOnlyGroupView()
+    var rowHelpGroupPresses = 0
+    var rowCustomActions = 0
     let menuActionLabel = NSTextField(labelWithString: "menu_action=none")
     let saveSheetLabel = NSTextField(labelWithString: "save_sheet=none")
     let popupValueLabel = NSTextField(labelWithString: "popup_value=Choose a team")
@@ -361,6 +413,32 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
             selectionScroll.heightAnchor.constraint(equalToConstant: 68),
         ])
         content.addArrangedSubview(checkRow)
+
+        content.addArrangedSubview(sectionLabel("group_with_help"))
+        rowHelpGroup.setAccessibilityIdentifier(kRowHelpGroupAID)
+        rowHelpGroup.translatesAutoresizingMaskIntoConstraints = false
+        rowHelpGroup.onPress = { [weak self] in self?.onRowHelpGroupPress() }
+        rowHelpGroup.onCustomAction = { [weak self] in
+            guard let self else { return }
+            self.rowCustomActions += 1
+            self.rowHelpGroupStateLabel.stringValue = "group_custom=\(self.rowCustomActions)"
+        }
+        rowHelpGroupStateLabel.setAccessibilityIdentifier(kRowHelpGroupStateAID)
+        rowHelpGroupStateLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        let groupRow = NSStackView()
+        groupRow.orientation = .horizontal
+        groupRow.spacing = 12
+        groupRow.addArrangedSubview(rowHelpGroup)
+        groupRow.addArrangedSubview(rowHelpGroupStateLabel)
+        helpOnlyGroup.translatesAutoresizingMaskIntoConstraints = false
+        groupRow.addArrangedSubview(helpOnlyGroup)
+        NSLayoutConstraint.activate([
+            rowHelpGroup.widthAnchor.constraint(equalToConstant: 60),
+            rowHelpGroup.heightAnchor.constraint(equalToConstant: 28),
+            helpOnlyGroup.widthAnchor.constraint(equalToConstant: 28),
+            helpOnlyGroup.heightAnchor.constraint(equalToConstant: 28),
+        ])
+        content.addArrangedSubview(groupRow)
 
         // context_menu — NSButton with an attached NSMenu. Right-click opens the
         // native contextual menu; selecting an item updates menu_action=.
@@ -790,6 +868,11 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         writeTaskState()
     }
 
+    private func onRowHelpGroupPress() {
+        rowHelpGroupPresses += 1
+        rowHelpGroupStateLabel.stringValue = "group_pressed=\(rowHelpGroupPresses)"
+    }
+
     @objc private func onExit() {
         NSApp.terminate(nil)
     }
@@ -1010,6 +1093,17 @@ final class BringToFrontMatrixWindows {
             if let field {
                 candidate.makeFirstResponder(field)
             }
+        } else if mode == "open-panel" {
+            // A native Open panel attached as a sheet, browsing a folder with
+            // enough files that its file browser alone outgrows a default
+            // read (issue #3351).
+            let panel = NSOpenPanel()
+            panel.canChooseDirectories = true
+            if let directory = ProcessInfo.processInfo.environment["CUA_HARNESS_OPEN_PANEL_DIR"] {
+                panel.directoryURL = URL(fileURLWithPath: directory)
+            }
+            sheet = panel
+            panel.beginSheetModal(for: parent) { _ in }
         } else if mode == "floating" {
             let candidate = NSPanel(
                 contentRect: NSRect(x: 180, y: 180, width: 320, height: 140),

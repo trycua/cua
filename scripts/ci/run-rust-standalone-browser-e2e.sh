@@ -139,15 +139,19 @@ else
     standalone_browser_stale_ref
     standalone_browser_trust_gated_dom_click
     standalone_browser_trusted_click
+    standalone_browser_trusted_click_covered_ref
     standalone_browser_upload
     standalone_browser_window_collision
   )
   if [[ "${HOST_OS}" == Darwin ]]; then
-    # macOS-only native-chrome keyboard regressions, and the background
-    # web-press no-op report (#4243).
+    # macOS-only native-chrome keyboard regressions, the background
+    # web-press no-op report (#4243), and the first-read page content rows
+    # (#4126).
     tests+=(
       standalone_browser_native_omnibox_select_all
       standalone_browser_background_web_click_noop
+      standalone_browser_generic_type_text_completion
+      standalone_browser_web_type_text_verification
     )
   fi
 fi

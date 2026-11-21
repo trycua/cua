@@ -223,11 +223,27 @@ fn status_reports_the_daemon_serving_each_socket() {
         .tempdir_in("/tmp")
         .unwrap();
     let custom_socket = home.path().join("custom.sock").display().to_string();
+    #[cfg(target_os = "macos")]
+    let state_dir = home.path().join("Library/Caches/cua-driver");
+    #[cfg(not(target_os = "macos"))]
+    let state_dir = home.path().join(".cache/cua-driver");
+    // Name the default socket through a symlinked directory: the daemon must
+    // recognise the endpoint it binds, not the spelling of its path.
+    std::fs::create_dir_all(&state_dir).unwrap();
+    let state_link = home.path().join("state-link");
+    std::os::unix::fs::symlink(&state_dir, &state_link).unwrap();
+    let default_socket = state_link.join("cua-driver.sock").display().to_string();
     let mut reaper = ChildReaper::new();
 
     let mut default_daemon = spawn_daemon(
         home.path(),
-        &["serve", "--no-overlay", "--no-permissions-gate"],
+        &[
+            "serve",
+            "--socket",
+            &default_socket,
+            "--no-overlay",
+            "--no-permissions-gate",
+        ],
     );
     let ready = wait_until_serving(&mut default_daemon, home.path(), &["status"]);
     let default_pid = default_daemon.id().to_string();
@@ -258,12 +274,10 @@ fn status_reports_the_daemon_serving_each_socket() {
         status_pid(home.path(), &["status", "--socket", &custom_socket]),
         custom_pid,
     );
-    #[cfg(target_os = "macos")]
-    let default_pid_file = home.path().join("Library/Caches/cua-driver/cua-driver.pid");
-    #[cfg(not(target_os = "macos"))]
-    let default_pid_file = home.path().join(".cache/cua-driver/cua-driver.pid");
     assert_eq!(
-        std::fs::read_to_string(default_pid_file).unwrap().trim(),
+        std::fs::read_to_string(state_dir.join("cua-driver.pid"))
+            .unwrap()
+            .trim(),
         default_pid,
     );
 }

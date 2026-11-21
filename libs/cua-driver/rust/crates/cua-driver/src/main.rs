@@ -686,7 +686,7 @@ fn main() {
             serve::set_permission_gate_pending(&driver, !gate_opts.opt_out);
             let gate_driver = driver.clone();
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = serve::pid_file_path_for(&sp, pid_file);
+            let pid_file = serve::PidFile::from_arg(pid_file);
 
             // Bind the Unix socket FIRST, on a background thread, BEFORE
             // running the (blocking) permissions gate (#1761).
@@ -710,7 +710,7 @@ fn main() {
             let serve_handle = std::thread::Builder::new()
                 .name("cua-serve".into())
                 .spawn(move || {
-                    serve::run_serve_cmd(driver, &sp, pid_path.as_deref(), socket_lock);
+                    serve::run_serve_cmd(driver, &sp, pid_file, socket_lock);
                     std::process::exit(0);
                 })
                 .expect("spawn serve thread");
@@ -1084,10 +1084,10 @@ fn main() -> anyhow::Result<()> {
             let cursor_cfg = cursor_overlay::CursorConfig::from_args();
             let driver = build_driver(cursor_cfg, cua_driver_core::embedded_mode())?;
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = serve::pid_file_path_for(&sp, pid_file);
+            let pid_file = serve::PidFile::from_arg(pid_file);
             // run_serve_cmd builds its own runtime; must run on a fresh thread.
             std::thread::spawn(move || {
-                serve::run_serve_cmd(driver, &sp, pid_path.as_deref(), socket_lock);
+                serve::run_serve_cmd(driver, &sp, pid_file, socket_lock);
             })
             .join()
             .ok();

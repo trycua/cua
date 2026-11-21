@@ -89,6 +89,30 @@ _KEY_MAP: Dict[str, str] = {
     "`": "grave_accent",
 }
 
+_SHIFTED_KEY_MAP: Dict[str, str] = {
+    "!": "1",
+    "@": "2",
+    "#": "3",
+    "$": "4",
+    "%": "5",
+    "^": "6",
+    "&": "7",
+    "*": "8",
+    "(": "9",
+    ")": "0",
+    "_": "-",
+    "+": "=",
+    "{": "[",
+    "}": "]",
+    "|": "\\",
+    ":": ";",
+    '"': "'",
+    "<": ",",
+    ">": ".",
+    "?": "/",
+    "~": "`",
+}
+
 # Mouse button mapping
 _BTN_MAP: Dict[str, int] = {"left": 0, "middle": 1, "right": 2}
 
@@ -314,12 +338,13 @@ class QMPTransport(Transport):
     async def _type_text(self, text: str, **_: Any) -> None:
         """Type text character by character via send-key."""
         for ch in text:
-            qcode = _KEY_MAP.get(ch.lower())
+            key = _SHIFTED_KEY_MAP.get(ch, ch.lower())
+            qcode = _KEY_MAP.get(key)
             if qcode is None:
                 logger.warning(f"QMP: unmapped character {ch!r}, skipping")
                 continue
             keys: List[Dict] = []
-            if ch.isupper() or ch in '~!@#$%^&*()_+{}|:"<>?':
+            if ch.isupper() or ch in _SHIFTED_KEY_MAP:
                 keys.append({"type": "qcode", "data": "shift"})
             keys.append({"type": "qcode", "data": qcode})
             await self._execute("send-key", {"keys": keys, "hold-time": 50})

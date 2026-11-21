@@ -196,9 +196,6 @@ impl Tool for GetDesktopStateTool {
             let composite = hyprland_composite
                 || niri_frame
                     .as_ref()
-                    .is_some_and(|frame| frame.outputs.len() > 1)
-                || kwin_frame
-                    .as_ref()
                     .is_some_and(|frame| frame.outputs.len() > 1);
             Ok((
                 b64,

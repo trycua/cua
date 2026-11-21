@@ -291,6 +291,8 @@ fn capture_source_png(
 
     // Allocate the wl_shm buffer.
     let (fd, ptr) = super::anon_shm(size)?;
+    // Unmapped and closed on every return, including a timed-out round trip.
+    let _mapping = Mapping { ptr, size, fd };
     use std::os::fd::AsFd as _;
     let pool_fd = unsafe { super::borrowed_fd(fd) };
     let pool: WlShmPool = shm.create_pool(pool_fd.as_fd(), size as i32, &qh, ());
@@ -321,14 +323,12 @@ fn capture_source_png(
         sync(conn, bounded, state, queue)?;
     }
     if state.failed {
-        super::cleanup_mmap(ptr, size, fd);
         anyhow::bail!(
             "ext-image-copy-capture frame failed (reason={:?})",
             state.fail_reason
         );
     }
     if !state.ready {
-        super::cleanup_mmap(ptr, size, fd);
         anyhow::bail!("ext-image-copy-capture frame timed out without ready event");
     }
 
@@ -340,9 +340,21 @@ fn capture_source_png(
     session.destroy();
     pool.destroy();
     sync(conn, bounded, state, queue).ok();
-    super::cleanup_mmap(ptr, size, fd);
 
     Ok(png)
+}
+
+/// The capture buffer's shared memory, released when dropped.
+struct Mapping {
+    ptr: *mut libc::c_void,
+    size: usize,
+    fd: i32,
+}
+
+impl Drop for Mapping {
+    fn drop(&mut self) {
+        super::cleanup_mmap(self.ptr, self.size, self.fd);
+    }
 }
 
 fn encode_buffer_to_png(

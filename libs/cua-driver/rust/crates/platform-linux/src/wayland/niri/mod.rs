@@ -160,8 +160,8 @@ fn screen_frame_in(scene: &Scene) -> Result<super::hyprland::DesktopFrame> {
 /// not move, and writes to a file in a directory only this process can
 /// read; the file and directory are removed afterwards. niri also puts the
 /// screenshot on the clipboard, with no opt-out, so the previous clipboard
-/// text is put back, and a clipboard holding non-text content refuses
-/// before the action runs.
+/// text is put back, and a clipboard offering anything besides plain text
+/// refuses before the action runs.
 pub fn screenshot_window(window: &Window) -> Result<Vec<u8>> {
     if !window.on_screen {
         bail!("niri screenshot fallback: the window is not on screen");
@@ -198,36 +198,90 @@ fn writes_screenshot_to_path(version: &str) -> bool {
 }
 
 /// Run `screenshot`, which replaces the clipboard with an image, then put the
-/// previous clipboard text back. Only text can be put back, so a clipboard
-/// that holds anything else refuses before `screenshot` runs.
+/// previous clipboard text back.
 fn with_clipboard_restored(
     clipboard: &dyn cua_driver_core::clipboard::ClipboardBackend,
     screenshot: impl FnOnce() -> Result<Vec<u8>>,
 ) -> Result<Vec<u8>> {
-    let previous = clipboard.read_text().map_err(|error| {
-        anyhow!("niri screenshot fallback: the clipboard could not be read: {error}")
-    })?;
-    if previous.is_none() && !clipboard.available_formats().unwrap_or_default().is_empty() {
+    let previous = restorable_clipboard(
+        clipboard,
+        "niri screenshot fallback: niri's window screenshot replaces the clipboard",
+    )?;
+    let shot = screenshot();
+    if shot.is_ok() {
+        // niri sets its selection from its main loop while a worker writes
+        // the file, so the selection can land after the file. Wait for it
+        // first, or it would replace the text put back.
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while Instant::now() < deadline
+            && !clipboard
+                .available_formats()
+                .unwrap_or_default()
+                .iter()
+                .any(|format| format == "image/png")
+        {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+    restore_clipboard(clipboard, previous, "niri screenshot fallback")?;
+    shot
+}
+
+/// The clipboard text to put back after the driver replaces the clipboard.
+/// Only plain text can be put back, so a clipboard offering any other
+/// format (an image, HTML next to its text, files), or one whose formats
+/// cannot be read, refuses before anything is written. `why` says what
+/// would replace it.
+pub(super) fn restorable_clipboard(
+    clipboard: &dyn cua_driver_core::clipboard::ClipboardBackend,
+    why: &str,
+) -> Result<String> {
+    let formats = match clipboard.available_formats() {
+        Ok(formats) => formats,
+        // wl-clipboard reports an empty clipboard as an error.
+        Err(error) if error.contains("is empty") => Vec::new(),
+        Err(error) => bail!("{why}, whose formats could not be read: {error}"),
+    };
+    if let Some(other) = formats.iter().find(|format| !is_plain_text_format(format)) {
         bail!(
-            "niri screenshot fallback: niri's window screenshot replaces the clipboard, \
-             which holds non-text content that cannot be put back; nothing was captured"
+            "{why}, which offers {other:?}, and only plain text can be put back; nothing was sent"
         );
     }
-    let shot = screenshot();
-    // niri sets its selection from its main loop while a worker writes the
-    // file, so the selection can land after the file. Wait for it first.
-    let deadline = Instant::now() + Duration::from_secs(1);
-    while Instant::now() < deadline
-        && !clipboard
-            .available_formats()
-            .unwrap_or_default()
-            .iter()
-            .any(|format| format == "image/png")
-    {
-        std::thread::sleep(Duration::from_millis(25));
+    if formats.is_empty() {
+        return Ok(String::new());
     }
-    let _ = clipboard.write_text(previous.unwrap_or_default());
-    shot
+    clipboard
+        .read_text()
+        .map_err(|error| anyhow!("{why}, which could not be read: {error}"))
+        .map(Option::unwrap_or_default)
+}
+
+/// Put `previous` back on the clipboard, saying so when that fails.
+pub(super) fn restore_clipboard(
+    clipboard: &dyn cua_driver_core::clipboard::ClipboardBackend,
+    previous: String,
+    what: &str,
+) -> Result<()> {
+    clipboard.write_text(previous).map_err(|error| {
+        anyhow!("{what} ran, but the previous clipboard text could not be put back: {error}")
+    })
+}
+
+/// A clipboard format that holds plain text (Wayland MIME types, X11 atoms),
+/// or one of the X11 selection bookkeeping targets.
+fn is_plain_text_format(format: &str) -> bool {
+    format.to_ascii_lowercase().starts_with("text/plain")
+        || matches!(
+            format,
+            "UTF8_STRING"
+                | "STRING"
+                | "TEXT"
+                | "COMPOUND_TEXT"
+                | "TARGETS"
+                | "TIMESTAMP"
+                | "MULTIPLE"
+                | "SAVE_TARGETS"
+        )
 }
 
 /// Screenshot a window by id into a fresh directory only this process can
@@ -552,7 +606,7 @@ mod tests {
     fn window_screenshot_puts_the_clipboard_text_back() {
         let clipboard = FakeClipboard {
             text: Some("KEEP-ME".into()),
-            formats: vec!["image/png".into()],
+            formats: vec!["text/plain".into()],
             writes: Default::default(),
         };
         assert_eq!(
@@ -566,6 +620,29 @@ mod tests {
     }
 
     #[test]
+    fn a_clipboard_with_more_than_plain_text_is_not_restorable() {
+        let html = FakeClipboard {
+            text: Some("KEEP-ME".into()),
+            formats: vec!["text/plain;charset=utf-8".into(), "text/html".into()],
+            writes: Default::default(),
+        };
+        let error = restorable_clipboard(&html, "test").unwrap_err().to_string();
+        assert!(error.contains("\"text/html\""), "{error}");
+        let text = FakeClipboard {
+            text: Some("KEEP-ME".into()),
+            formats: vec!["UTF8_STRING".into(), "text/plain;charset=utf-8".into()],
+            writes: Default::default(),
+        };
+        assert_eq!(restorable_clipboard(&text, "test").unwrap(), "KEEP-ME");
+        let empty = FakeClipboard {
+            text: None,
+            formats: vec![],
+            writes: Default::default(),
+        };
+        assert_eq!(restorable_clipboard(&empty, "test").unwrap(), "");
+    }
+
+    #[test]
     fn window_screenshot_refuses_a_clipboard_it_cannot_put_back() {
         let clipboard = FakeClipboard {
             text: None,
@@ -575,7 +652,7 @@ mod tests {
         let error = with_clipboard_restored(&clipboard, || panic!("must not screenshot"))
             .unwrap_err()
             .to_string();
-        assert!(error.contains("non-text content"), "{error}");
+        assert!(error.contains("only plain text can be put back"), "{error}");
         assert!(clipboard.writes.lock().unwrap().is_empty());
     }
 

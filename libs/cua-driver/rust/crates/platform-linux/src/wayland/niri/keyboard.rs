@@ -25,8 +25,8 @@
 //! Text outside the Basic Multilingual Plane, such as most emoji, is pasted
 //! through the clipboard: Chromium and Electron cut a Unicode keysym to 16
 //! bits, so typing it gives a wrong character. The previous clipboard text is
-//! restored after the paste; a clipboard holding non-text content is refused
-//! rather than clobbered.
+//! restored after the paste; a clipboard offering anything besides plain
+//! text is refused rather than clobbered.
 
 use std::fs::File;
 use std::io::{Seek, SeekFrom, Write};
@@ -380,7 +380,7 @@ pub(in crate::wayland) fn type_text(expected: Option<u64>, text: &str) -> Result
 /// Characters outside the BMP are a 32-bit keysym, and Chromium/Electron cut
 /// it to 16 bits, so typing them corrupts the text. Paste through the
 /// clipboard instead, then put the previous clipboard text back. A clipboard
-/// that holds non-text content is refused rather than clobbered.
+/// that offers anything besides plain text is refused rather than clobbered.
 fn paste_non_bmp(expected: Option<u64>, text: &str) -> Result<()> {
     let clipboard = crate::clipboard::LinuxClipboard::new();
     paste_with(&clipboard, text, || {
@@ -393,14 +393,10 @@ fn paste_with(
     text: &str,
     paste: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
-    let previous = clipboard.read_text().map_err(|error| {
-        anyhow!("text outside the BMP needs a clipboard paste, but the clipboard could not be read: {error}")
-    })?;
-    // None means empty or non-text. Only an empty clipboard is safe to
-    // replace: restoring a non-text selection is not possible through this API.
-    if previous.is_none() && !clipboard.available_formats().unwrap_or_default().is_empty() {
-        bail!("text outside the BMP needs a clipboard paste, but the clipboard holds non-text content; clear it and retry, or use set_value");
-    }
+    let previous = super::restorable_clipboard(
+        clipboard,
+        "text outside the BMP needs a clipboard paste, which replaces the clipboard",
+    )?;
     clipboard.write_text(text.to_owned()).map_err(|error| {
         anyhow!("text outside the BMP needs a clipboard paste, but the clipboard could not be written: {error}")
     })?;
@@ -408,8 +404,9 @@ fn paste_with(
     // The target reads the clipboard on the paste; keep it long enough for a
     // slow app to consume it, then restore the user's text unconditionally.
     std::thread::sleep(Duration::from_millis(250));
-    let _ = clipboard.write_text(previous.unwrap_or_default());
-    pasted
+    let restored = super::restore_clipboard(clipboard, previous, "the clipboard paste");
+    pasted?;
+    restored
 }
 
 fn has_non_bmp(text: &str) -> bool {
@@ -900,7 +897,7 @@ mod tests {
             writes: std::sync::Mutex::new(Vec::new()),
         };
         let error = paste_with(&fake, "Hello 😀", || panic!("must not paste")).unwrap_err();
-        assert!(error.to_string().contains("non-text"), "{error}");
+        assert!(error.to_string().contains("only plain text"), "{error}");
         assert!(fake.writes.lock().unwrap().is_empty());
     }
 

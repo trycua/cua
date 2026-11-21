@@ -2399,7 +2399,7 @@ mod named_pipe_authentication_tests {
 mod pipe_release_tests {
     use super::{
         claim_daemon_lock, daemon_lock_path, is_released, probe_presence, serving_daemon,
-        DaemonPresence,
+        stop_daemon, DaemonPresence, StopOutcome,
     };
     use std::time::Duration;
     use tokio::net::windows::named_pipe::ServerOptions;
@@ -2431,6 +2431,13 @@ mod pipe_release_tests {
         assert!(!blocking(move || is_released(&probe)).await);
         let probe = pipe.clone();
         assert_eq!(blocking(move || serving_daemon(&probe)).await, Some(None));
+        let probe = pipe.clone();
+        assert_eq!(
+            blocking(move || stop_daemon(&probe, Duration::from_millis(300), Duration::ZERO))
+                .await
+                .unwrap(),
+            StopOutcome::StillStarting
+        );
 
         let lock = claim_daemon_lock(&daemon_lock_path(&pipe), &pipe, Duration::ZERO).unwrap();
         let probe = pipe.clone();
@@ -2637,10 +2644,15 @@ fn stop_daemon(
     let started = std::time::Instant::now();
     loop {
         let waited = started.elapsed();
-        match probe_presence(socket_path) {
+        let presence = probe_presence(socket_path);
+        // A daemon that does not answer yet holds the lock, or on Windows
+        // still has its pipe; an embedded daemon takes no lock.
+        let not_answering = matches!(presence, DaemonPresence::Starting { .. })
+            || pipe_still_held(socket_path, &presence);
+        match presence {
             DaemonPresence::Serving { .. } => break,
-            DaemonPresence::Starting { .. } if waited < starting_wait => {}
-            DaemonPresence::Starting { .. } => return Ok(StopOutcome::StillStarting),
+            _ if not_answering && waited < starting_wait => {}
+            _ if not_answering => return Ok(StopOutcome::StillStarting),
             DaemonPresence::Absent | DaemonPresence::Stale { .. } if waited < absent_settle => {}
             presence => return Ok(StopOutcome::NotRunning(presence)),
         }
@@ -2657,6 +2669,20 @@ fn stop_daemon(
     };
     send_request(socket_path, &req)?;
     Ok(StopOutcome::Stopped)
+}
+
+/// Whether a probe that found no daemon answering still sees its Windows
+/// pipe, free or busy. Unix has no such endpoint without an answer.
+fn pipe_still_held(socket_path: &str, presence: &DaemonPresence) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        matches!(presence, DaemonPresence::Absent) && named_pipe_exists(socket_path)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (socket_path, presence);
+        false
+    }
 }
 
 /// `cua-driver stop` implementation.
@@ -2828,7 +2854,7 @@ pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
 
 /// Explain why nothing answers on `socket_path`.
 fn report_not_serving(socket_path: &str, presence: DaemonPresence) {
-    match presence {
+    match &presence {
         DaemonPresence::Starting { lock_held } => {
             eprintln!("Cua Driver daemon is starting");
             eprintln!("  socket: {socket_path}");
@@ -2842,6 +2868,11 @@ fn report_not_serving(socket_path: &str, presence: DaemonPresence) {
             );
         }
         DaemonPresence::Absent | DaemonPresence::Serving { .. } => {
+            if pipe_still_held(socket_path, &presence) {
+                eprintln!("Cua Driver daemon endpoint exists but is not answering");
+                eprintln!("  socket: {socket_path}");
+                return;
+            }
             eprintln!("Cua Driver daemon is not running");
             #[cfg(unix)]
             if std::fs::symlink_metadata(socket_path).is_ok_and(|metadata| {

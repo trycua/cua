@@ -51,7 +51,7 @@
 CUA_DRIVER_VALUE_FLAGS=" --cursor-theme --cursor-reduced-motion --glide-ms --dwell-ms \
 --idle-hide-ms --screenshot-out-file --client --socket \
 --permission-mode --grant --session-policy --capability-manifest \
---pid-file --expected-pid --type --host-bundle-id --pid --strategy \
+--pid-file --owner-pid --expected-pid --type --host-bundle-id --pid --strategy \
 --window-id --session --profile-mode --profile-name --archive \
 --image --capture --experimental-pip-geometry --style --timing \
 --effects "

@@ -527,8 +527,12 @@ impl Tool for BringToFrontTool {
         // poll all block; keep them off the async worker. The worker keeps the
         // desktop lease, so a cancelled call cannot hand the lane on early.
         let lease = DesktopLease::current();
+        let operation = cua_driver_core::native_operation::NativeOperation::current();
         tokio::task::spawn_blocking(move || {
             let _lease = lease;
+            if !operation.begin() {
+                return ToolResult::error("bring_to_front: cancelled before native activation");
+            }
             Self::activate_blocking(pid, window_id)
         })
         .await

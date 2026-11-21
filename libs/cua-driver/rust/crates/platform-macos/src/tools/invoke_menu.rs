@@ -1046,7 +1046,11 @@ impl Tool for InvokeMenuTool {
             return run_in_background(pid, window_id, path, MenuRequest::Path).await;
         }
 
+        let operation = cua_driver_core::native_operation::NativeOperation::current();
         let outcome = tokio::task::spawn_blocking(move || {
+            if !operation.begin() {
+                return Err("invoke_menu: cancelled before native work".into());
+            }
             let prior_frontmost = live_frontmost_app().or_else(crate::apps::frontmost_pid);
             let prior_frontmost_window = prior_frontmost.and_then(|prior| {
                 crate::ax::bindings::focused_window_id_of_pid(prior).map(|window| window.own)

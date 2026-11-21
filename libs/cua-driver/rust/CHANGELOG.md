@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.56.9](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.8...cua-driver-rs-v0.56.9) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-driver:** attribute macOS permissions to the responsible process, not the parent pid ([#7880](https://github.com/trycua/cua/issues/7880)) ([0adc9a8](https://github.com/trycua/cua/commit/0adc9a8d19fd94681c1ad4f7aa1b57b96c79c37f))
+
 ## [0.56.8](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.7...cua-driver-rs-v0.56.8) (2026-11-21)
 
 

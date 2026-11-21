@@ -11,7 +11,7 @@ name: "E2E: Cua Driver release gate"
 #            - a manual dispatch,
 #            - and the stable tag run in cd-rust-cua-driver.yml, which reruns
 #              every lane on the exact release commit and blocks publishing.
-#   quick  The PR lane. The core paths on each OS, on the Electron harness:
+#   quick  The PR lane. The core paths on each OS, on the Electron harness (hosted macOS adds WKWebView):
 #          the shared Windows lane, the shared Linux lane and the hosted macOS
 #          shared lane (click, type, scroll, drag, focus and background input)
 #          plus its native lane (launch_app, focus, installed apps),

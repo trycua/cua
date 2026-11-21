@@ -274,10 +274,6 @@ fn resolve_direct_capture_verification(
     }
 }
 
-unsafe extern "C" {
-    fn responsibility_get_pid_responsible_for_pid(pid: libc::pid_t) -> libc::pid_t;
-}
-
 /// The process macOS charges this process's TCC requests to, or `None` when
 /// the kernel does not say.
 fn responsible_pid() -> Option<libc::pid_t> {

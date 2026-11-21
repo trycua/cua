@@ -264,6 +264,35 @@ function scrubDeep(value: unknown, home: string | undefined, depth = 0): unknown
   return out;
 }
 
+/** The codes of a closed stdout or stderr: a stream whose far end is gone. */
+const STDIO_CODE = /\b(EPIPE|EBADF|EIO|EAGAIN|ENOTCONN|ERR_STREAM_DESTROYED|ERR_STREAM_WRITE_AFTER_END)\b/;
+
+function frameText(frame: Record<string, unknown>): string {
+  return ["function", "filename", "abs_path", "module"].map((k) => (typeof frame[k] === "string" ? (frame[k] as string) : "")).join(" ");
+}
+
+/**
+ * Whether the event is a write to a closed stdout or stderr (CUA-SPACES-DESKTOP-N/P/Q/T/V/W/X):
+ * the stack runs from a `console.*` call through Node's stream write into the
+ * socket or file write, or it names an EPIPE-class code with the stream frames.
+ * Exactly that class: an error that merely logged, or merely mentions a code,
+ * is a real error and is kept.
+ */
+export function isStdioWriteEvent(event: ScrubbableEvent): boolean {
+  for (const v of event.exception?.values ?? []) {
+    const frames = (v.stacktrace?.frames ?? []).map(frameText);
+    const inConsole = frames.some((f) => /(^|\s)console\.(log|info|warn|error|debug|trace)\b|internal\/console\/|\[kWriteToConsole\]/.test(f));
+    const inStreamWrite = frames.some((f) =>
+      /Writable\.write|Socket\._write|SyncWriteStream\._write|internal\/streams\/writable|internal\/net|stream_base_commons|internal\/fs\/sync_write_stream/.test(
+        f,
+      ),
+    );
+    if (!inStreamWrite) continue;
+    if (inConsole || STDIO_CODE.test(`${v.type ?? ""} ${v.value ?? ""}`)) return true;
+  }
+  return false;
+}
+
 /** The parts of a Sentry event the scrub touches (the SDK's own types are wider). */
 export interface ScrubbableEvent {
   message?: string;

@@ -33,6 +33,8 @@ import * as path from "node:path";
 import { electronUpdater } from "./electron-updater";
 import type { UpdaterDriving } from "./model/updates";
 import { describeUpdateError } from "./update-error";
+import { reportUpdateFailure } from "./update-report";
+import { safeLogger } from "./stdio-guard";
 import { readSettings, writeSettings } from "./settings";
 import { autoCheckPref, autoInstallPref, channelPref, type UpdateChannel } from "./update-prefs";
 import { initialUpdateState, reduceUpdate, UPDATE_POLL_MS, UPDATE_STARTUP_DELAY_MS, type UpdateEvent, type UpdateStateValue } from "./update-state";
@@ -212,6 +214,8 @@ export class ElectronUpdater implements UpdaterDriving {
       } catch {
         // No baked feed: the default repository's.
       }
+      // Never the bare console: a closed stdout must not fail an update check (stdio-guard.ts).
+      autoUpdater.logger = safeLogger;
       autoUpdater.setFeedURL({ provider: "generic", url: feedUrlFor(channel, bakedFeedUrl(baked)), channel: feedChannel(channel) });
       autoUpdater.channel = feedChannel(channel);
       autoUpdater.allowPrerelease = channel === "nightly";
@@ -286,7 +290,8 @@ export class ElectronUpdater implements UpdaterDriving {
     const user = this.userCheck || install;
     this.userCheck = false;
     const reason = describeUpdateError(error);
-    console.warn(`[cua-spaces] update: ${reason}`);
+    safeLogger.warn(`[cua-spaces] update: ${reason}`);
+    reportUpdateFailure(error, reason);
     this.report({ type: "error", message: reason });
     if (!user) return;
     void message({ type: "warning", message: "Update Error!", detail: `An error occurred while updating: ${reason}`, buttons: ["OK"] });

@@ -615,7 +615,7 @@ fn is_wayland_session() -> bool {
 
 #[cfg(target_os = "linux")]
 fn wayland_opt_in_enabled() -> bool {
-    crate::wayland::wayland_enabled()
+    crate::desktop::wayland_opted_in()
 }
 
 #[cfg(not(target_os = "linux"))]

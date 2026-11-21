@@ -360,12 +360,13 @@ def test_installer_swap_step_skips_blanket_pkill_on_linux(machine: Machine) -> N
 def test_cua_driver_is_serve_process_ignores_mcp_with_serve_in_arguments(machine: Machine) -> None:
     test_sh = """
 tmp="$(mktemp -d)"
-mkdir -p "$tmp/proc/100" "$tmp/proc/101" "$tmp/proc/102" "$tmp/proc/103" "$tmp/proc/104"
+mkdir -p "$tmp/proc/100" "$tmp/proc/101" "$tmp/proc/102" "$tmp/proc/103" "$tmp/proc/104" "$tmp/proc/105"
 printf "cua-driver\\0serve\\0--socket\\0/tmp/d.sock\\0" > "$tmp/proc/100/cmdline"
 printf "cua-driver\\0mcp\\0--socket\\0/tmp/cua-driver-serve.sock\\0" > "$tmp/proc/101/cmdline"
 printf "cua-driver\\0update\\0--apply\\0" > "$tmp/proc/102/cmdline"
 printf "cua-driver\\0--host-bundle-id\\0serve\\0mcp\\0" > "$tmp/proc/103/cmdline"
 printf "cua-driver\\0--cursor-theme\\0cua.default\\0serve\\0" > "$tmp/proc/104/cmdline"
+printf "cua-driver\\0--session-policy\\0policy.yaml\\0serve\\0--approve-session-policy\\0" > "$tmp/proc/105/cmdline"
 
 eval "$(declare -f cua_driver_is_serve_process | sed "s|/proc/|$tmp/proc/|g")"
 
@@ -374,6 +375,7 @@ if cua_driver_is_serve_process 101; then exit 2; fi
 if cua_driver_is_serve_process 102; then exit 3; fi
 if cua_driver_is_serve_process 103; then exit 4; fi
 cua_driver_is_serve_process 104 || exit 5
+cua_driver_is_serve_process 105 || exit 6
 rm -rf "$tmp"
 """
     result = machine.common_shell(test_sh)

@@ -383,6 +383,31 @@ fn disabled_refusal(
     cua_driver_core::protocol::ToolResult::error(text).with_structured(structured)
 }
 
+/// Chromium and Electron renderers often discard a background PID-routed key
+/// event without any sign. No oracle tells that drop apart from a key that
+/// landed, so an unverifiable background key result for such an app names the
+/// foreground rung instead of leaving the caller to find the miss on screen.
+pub(super) const CHROMIUM_BACKGROUND_KEY_NOTE: &str =
+    "Chromium and Electron apps often drop background key events, so this one may not \
+     have arrived. If the window shows no change, retry with delivery_mode:\"foreground\" \
+     and window_id.";
+
+/// The `escalation` for an unverifiable key result: present only for a
+/// background post to a Chromium or Electron app, in the same shape as the
+/// Screen Sharing refusals.
+pub(super) fn chromium_background_key_escalation(
+    foreground: bool,
+    chromium_embedder: bool,
+) -> Option<serde_json::Value> {
+    (!foreground && chromium_embedder).then(|| {
+        serde_json::json!({
+            "recommended": "foreground",
+            "reason": CHROMIUM_BACKGROUND_KEY_NOTE,
+            "requires": ["window_id"]
+        })
+    })
+}
+
 /// Re-read `AXEnabled` on a token target and refuse a disabled one before any
 /// cursor or input work. The snapshot's `enabled` can be stale. A foreground
 /// call into an app that is not frontmost skips the read: activation can
@@ -1151,6 +1176,8 @@ pub struct ToolState {
     pub snapshots: Arc<Snapshots>,
     pub cursor_registry: Arc<CursorRegistry>,
     pub(crate) capture_bindings: Arc<capture_binding::MacCaptureBindings>,
+    /// The runtime registry's fast-path guard store.
+    pub(crate) guard_store: Arc<cua_driver_core::fast_path::store::GuardStore>,
     /// Global, disk-persisted config — the base layer and the only one the
     /// anonymous session / CLI writes.
     pub config: Arc<std::sync::RwLock<DriverConfig>>,
@@ -1185,16 +1212,18 @@ impl ToolState {
         host_owns_permission_ux: bool,
         host_bundle_id: Option<String>,
     ) -> Self {
-        Self::new_with_capture_service(
+        Self::new_with_runtime_services(
             Arc::new(cua_driver_core::capture_runtime::CaptureService::default()),
+            Arc::new(cua_driver_core::fast_path::store::GuardStore::new()),
             cursor_overlay_available,
             host_owns_permission_ux,
             host_bundle_id,
         )
     }
 
-    fn new_with_capture_service(
+    fn new_with_runtime_services(
         capture_service: Arc<cua_driver_core::capture_runtime::CaptureService>,
+        guard_store: Arc<cua_driver_core::fast_path::store::GuardStore>,
         cursor_overlay_available: bool,
         host_owns_permission_ux: bool,
         host_bundle_id: Option<String>,
@@ -1203,6 +1232,7 @@ impl ToolState {
             snapshots: Arc::new(Snapshots::new()),
             cursor_registry: Arc::new(CursorRegistry::new()),
             capture_bindings: Arc::new(capture_binding::MacCaptureBindings::new(capture_service)),
+            guard_store,
             // Load persisted config from ~/.cua-driver/config.json so that
             // `cua-driver config set` changes carry over into MCP sessions.
             config: Arc::new(std::sync::RwLock::new(load_driver_config())),
@@ -1300,8 +1330,9 @@ pub fn register_all(
     host_owns_permission_ux: bool,
     host_bundle_id: Option<String>,
 ) {
-    let state = Arc::new(ToolState::new_with_capture_service(
+    let state = Arc::new(ToolState::new_with_runtime_services(
         registry.capture_service(),
+        registry.guard_store(),
         cursor_overlay_available,
         host_owns_permission_ux,
         host_bundle_id,

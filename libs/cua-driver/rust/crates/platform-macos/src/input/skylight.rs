@@ -1522,6 +1522,22 @@ fn focus_failure_hint_from(
     }
 }
 
+/// Deliver a HID event to a window that is already the focused front window,
+/// then re-order the agent cursor overlay above it.
+///
+/// No activation happens here, so no application-activation event follows. But
+/// a real HID click makes WindowServer raise the clicked window, over the
+/// normal-level overlay, and nothing else would put the overlay back: the agent
+/// cursor stays hidden until the next cursor command (hosted macOS E2E videos
+/// show it vanish at the click). The re-order is requested once the event has
+/// been processed, after the same settle the activation path waits.
+fn deliver_then_repin_overlay(action: impl FnOnce() -> anyhow::Result<()>) -> anyhow::Result<()> {
+    let result = action();
+    std::thread::sleep(std::time::Duration::from_millis(40));
+    crate::cursor::overlay::request_repin();
+    result
+}
+
 /// Activate an exact target window for a global HID keyboard action.
 ///
 /// This helper must not run `action` when the private foreground SPI is
@@ -1561,7 +1577,7 @@ pub fn with_foreground_hid_activation(
         // renderer focus even though WindowServer keeps the app frontmost.
         // The AX window proof lets us deliver directly without weakening the
         // exact-window guard or disturbing the current key target.
-        return action();
+        return deliver_then_repin_overlay(action);
     }
 
     let activated = unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
@@ -1929,5 +1945,25 @@ mod key_prime_tests {
             let r = prime_exact_window_key(7, || focused, || true, || true);
             assert!(r.unwrap_err().contains("no keys were sent"));
         }
+    }
+}
+
+#[cfg(test)]
+mod repin_tests {
+    use super::*;
+
+    #[test]
+    fn delivering_to_an_already_front_window_re_pins_the_overlay_after_the_event() {
+        let _serial = crate::cursor::overlay::REPIN_TEST_LOCK.lock().unwrap();
+        crate::cursor::overlay::take_repin_request();
+        let mut delivered = false;
+        let result = deliver_then_repin_overlay(|| {
+            delivered = true;
+            // Not requested before the event has been delivered.
+            assert!(!crate::cursor::overlay::take_repin_request());
+            Ok(())
+        });
+        assert!(result.is_ok() && delivered);
+        assert!(crate::cursor::overlay::take_repin_request());
     }
 }

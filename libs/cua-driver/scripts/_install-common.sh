@@ -50,11 +50,16 @@
 # found the way the CLI finds it. A test keeps the two lists equal.
 CUA_DRIVER_VALUE_FLAGS=" --cursor-theme --cursor-reduced-motion --glide-ms --dwell-ms \
 --idle-hide-ms --screenshot-out-file --client --socket \
---permission-mode --grant --session-policy --capability-manifest \
+--permission-mode --grant --capability-manifest \
 --pid-file --expected-pid --type --host-bundle-id --pid --strategy \
 --window-id --session --profile-mode --profile-name --archive \
 --image --capture --experimental-pip-geometry --style --timing \
 --effects "
+
+# Value flags the CLI has since removed. A daemon an older release started
+# can still be running with one on its command line, and it must still be
+# found so upgrade and uninstall stop it.
+CUA_DRIVER_REMOVED_VALUE_FLAGS=" --session-policy "
 
 # Linux: true when pid runs `cua-driver serve`, judged by its first
 # positional argument so an `mcp` client whose socket path contains
@@ -73,7 +78,7 @@ cua_driver_is_serve_process() {
             skip_next=0
             continue
         fi
-        case "$CUA_DRIVER_VALUE_FLAGS" in
+        case "$CUA_DRIVER_VALUE_FLAGS$CUA_DRIVER_REMOVED_VALUE_FLAGS" in
             *" $arg "*)
                 skip_next=1
                 continue

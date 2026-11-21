@@ -3085,6 +3085,7 @@ pub async fn run_host_to(
                     let code =
                         setup_unchanged(&host, state, &want, pair.is_some(), json, out).await?;
                     warn_setup_runner(&host, requested_runner, detected, json, out, err)?;
+                    warn_setup_logon(&host, json, out, err)?;
                     return Ok(code);
                 }
             }
@@ -3113,6 +3114,7 @@ pub async fn run_host_to(
                 })?;
             emit(&s, json, out)?;
             warn_setup_runner(&host, requested_runner, detected, json, out, err)?;
+            warn_setup_logon(&host, json, out, err)?;
             if s.provide_spaces && !json {
                 line(
                     out,
@@ -3433,6 +3435,28 @@ fn warn_setup_runner(
         return Ok(());
     };
     if let Some(text) = cua_host::service::auto_fallback_warning(requested, &config.runner) {
+        hint_line(if json { err } else { out }, text);
+    }
+    Ok(())
+}
+
+/// Warns after `cua host setup` on Windows when the host starts from a logon
+/// task and the computer does not sign in by itself (a headless VM: the host
+/// would not come back after a restart). To `out`, or `err` with `--json`.
+fn warn_setup_logon(
+    host: &Host,
+    json: bool,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<(), CuaError> {
+    if !cfg!(windows) {
+        return Ok(());
+    }
+    let Some(config) = host.config().map_err(host_err)? else {
+        return Ok(());
+    };
+    let auto = cua_host::service::windows_auto_logon();
+    if let Some(text) = cua_host::service::windows_logon_warning(&config.runner, auto) {
         hint_line(if json { err } else { out }, text);
     }
     Ok(())

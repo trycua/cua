@@ -882,7 +882,7 @@ pub(crate) async fn restore_foreground_polling_best_effort(
                     // Foreground changed but to something we didn't
                     // spawn (e.g. user Alt-Tabbed). Don't touch it.
                     None
-                } else if !unsafe { IsWindow(prior) }.as_bool() {
+                } else if !unsafe { IsWindow(Some(prior)) }.as_bool() {
                     tracing::trace!(
                         target: "launch_app.focus_restore",
                         "prior foreground HWND no longer valid — skipping restore (spawned pid {} owns fg)",

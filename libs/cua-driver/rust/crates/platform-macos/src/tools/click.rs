@@ -255,6 +255,17 @@ fn is_toggle_press(ax_action: &str, role: &str, advertised: &[String]) -> bool {
         && advertised.iter().any(|action| action == "AXPress")
 }
 
+/// Whether the background pixel hit-test acts on the element under the point
+/// itself instead of falling through to the routed pixel click. An element
+/// that does not advertise AXPress can still accept it as a no-op: an Excel
+/// toolbar group, a Finder list cell or a LibreOffice Calc cell returns
+/// success and nothing changes, which used to come back as a pressed click
+/// (#7086, #4864). The routed pixel click reaches what is drawn there, or
+/// refuses on a toolkit that cannot take it.
+fn hit_test_acts_on(focus_only: bool, advertised: &[String]) -> bool {
+    focus_only || advertised.iter().any(|action| action == "AXPress")
+}
+
 /// AX errors that AppKit apps return from a press they performed (#3835).
 /// Errors that mean the request never reached the app (illegal argument,
 /// invalid element, cannot complete, API disabled) are not among them.
@@ -845,6 +856,7 @@ impl ClickTool {
 
             // Fast path: check the cached element against what the agent saw.
             match crate::fast_path_guard::guard_element(
+                &self.state.guard_store,
                 "click",
                 pid,
                 wid,
@@ -1429,6 +1441,8 @@ impl ClickTool {
             // point, before the cursor moves (so hover cannot change the crop).
             let (screen_x, screen_y, win_local_x, win_local_y) = if let Some(wid) = window_id {
                 match crate::fast_path_guard::guard_pixel(
+                    self.state.guard_store.clone(),
+                    args.opt_str("_session_id"),
                     "click",
                     pid,
                     wid,
@@ -1527,23 +1541,10 @@ impl ClickTool {
                         CFRelease(element as _);
                         return Ok(None);
                     }
-                    // An element that does not advertise AXPress can still
-                    // accept it as a no-op. On a toolkit that drops routed
-                    // mouse events (LibreOffice's Calc cells) or only takes
-                    // them while active (GTK 3) that no-op used to come back
-                    // as a pressed click; fall through to the pixel route.
-                    if !focus_only
-                        && !crate::ax::bindings::copy_action_names(element)
-                            .iter()
-                            .any(|action| action == "AXPress")
-                        && matches!(
-                            crate::input::pointer_toolkit::detect(pid),
-                            Some(
-                                crate::input::pointer_toolkit::PointerReadingToolkit::Vcl
-                                    | crate::input::pointer_toolkit::PointerReadingToolkit::GdkQuartz
-                            )
-                        )
-                    {
+                    if !hit_test_acts_on(
+                        focus_only,
+                        &crate::ax::bindings::copy_action_names(element),
+                    ) {
                         CFRelease(element as _);
                         return Ok(None);
                     }
@@ -2835,6 +2836,23 @@ mod tests {
             !is_toggle_press("AXPress", "AXRadioButton", &[]),
             "AXPress not advertised"
         );
+    }
+
+    /// #7086: a background pixel click on an element that does not advertise
+    /// AXPress (an Excel toolbar group, a Finder list cell) reported "pressed
+    /// the background element via AX" while nothing changed. Whatever the
+    /// toolkit, only an advertised press or a focus is taken by the hit-test.
+    #[test]
+    fn hit_test_acts_only_on_an_advertised_press_or_a_focus() {
+        let press = vec!["AXPress".to_owned()];
+        let no_press = vec!["AXShowMenu".to_owned()];
+        assert!(hit_test_acts_on(false, &press));
+        assert!(hit_test_acts_on(true, &no_press));
+        assert!(
+            !hit_test_acts_on(false, &no_press),
+            "a press the element does not advertise"
+        );
+        assert!(!hit_test_acts_on(false, &[]));
     }
 
     /// Only errors an app returns after acting qualify; errors that mean the

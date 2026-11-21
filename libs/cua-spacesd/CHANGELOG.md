@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.17.4](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.3...cua-spacesd-v0.17.4) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** enable the windows KeyboardAndMouse feature the desktop crate uses ([#8483](https://github.com/trycua/cua/issues/8483)) ([85064e1](https://github.com/trycua/cua/commit/85064e1f98d35bc5ec75d301d2b920ab36e21df7))
+
+## [0.17.3](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.2...cua-spacesd-v0.17.3) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-driver:** build every Windows crate against windows 0.61 ([#8444](https://github.com/trycua/cua/issues/8444)) ([d0e4f4d](https://github.com/trycua/cua/commit/d0e4f4dc4e734affa6a1aca1464deddf55a71763))
+
+## [0.17.2](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.1...cua-spacesd-v0.17.2) (2026-11-20)
+
+
+### Bug Fixes
+
+* **spacesd:** keep jemalloc out of the cua-spacesd build ([#8349](https://github.com/trycua/cua/issues/8349)) ([2b73a16](https://github.com/trycua/cua/commit/2b73a16dfe703e78ec823e71d9120f1785d4c835))
+
 ## [0.17.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.17.0...cua-spacesd-v0.17.1) (2026-11-20)
 
 

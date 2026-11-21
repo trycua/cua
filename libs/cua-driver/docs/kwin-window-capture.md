@@ -123,7 +123,10 @@ rather than being stretched to the new frame. Native pixel formats are decoded
 with row-stride and premultiplied-alpha handling. Unsupported formats, invalid
 layouts, mismatched owners/UUIDs, closed windows and timeouts return
 `surface_identity_unproven`, the same refusal as any window the driver can't
-capture exactly. The driver log at debug level names the cause.
+capture exactly. The driver log at debug level names the cause. Hermetic decoder
+coverage includes distinct pixels across padded rows in both premultiplied
+formats, including low-alpha rounding; it does not prove live KWin capture
+permission or delivery.
 
 ## Desktop capture
 

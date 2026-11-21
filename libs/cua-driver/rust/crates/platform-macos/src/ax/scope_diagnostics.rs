@@ -15,12 +15,15 @@
 
 use super::bindings::*;
 use core_foundation::array::CFArray;
-use core_foundation::base::{CFEqual, CFGetTypeID, CFRelease, CFTypeRef, TCFType};
+use core_foundation::base::{
+    CFEqual, CFGetTypeID, CFHash, CFHashCode, CFRelease, CFTypeRef, TCFType,
+};
 use core_foundation::boolean::CFBoolean;
 use core_foundation::number::CFNumber;
 use core_foundation::string::{CFString, CFStringRef};
 use serde::Serialize;
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 /// Top-level items whose attributes are read; the rest are only counted.
@@ -105,8 +108,9 @@ impl ItemReport {
     }
 }
 
-/// Counts over the union. `union` counts every distinct item; the other two
-/// count only the inspected (capped) items.
+/// Counts over the union. `union` counts every distinct item, or the items
+/// seen before the deadline when `partial`; the other two count only the
+/// inspected (capped) items.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct Counts {
     pub union: usize,
@@ -248,21 +252,28 @@ pub fn probe(pid: i32, window_id: u32) -> ScopeDiagnostics {
             report.ax_windows = Some(windows_read);
             windows
         } else {
-            Vec::new()
+            None
         };
 
+        // The arrays own their elements until they drop at the end of this
+        // scope, so the union borrows them without retaining each one.
         let mut union: Vec<(AXUIElementRef, Vec<&'static str>)> = Vec::new();
-        for (source, list) in [("ax_children", children), ("ax_windows", windows)] {
-            for element in list {
-                match union
-                    .iter_mut()
-                    .find(|(e, _)| CFEqual(*e as CFTypeRef, element as CFTypeRef) != 0)
+        let mut by_hash: HashMap<CFHashCode, Vec<usize>> = HashMap::new();
+        'lists: for (source, list) in [("ax_children", &children), ("ax_windows", &windows)] {
+            for element in list.iter().flat_map(ax_elements) {
+                if !budget.allows() {
+                    break 'lists;
+                }
+                let bucket = by_hash.entry(CFHash(element as CFTypeRef)).or_default();
+                match bucket
+                    .iter()
+                    .find(|&&i| CFEqual(union[i].0 as CFTypeRef, element as CFTypeRef) != 0)
                 {
-                    Some((_, sources)) => {
-                        sources.push(source);
-                        CFRelease(element as CFTypeRef);
+                    Some(&i) => union[i].1.push(source),
+                    None => {
+                        bucket.push(union.len());
+                        union.push((element, vec![source]));
                     }
-                    None => union.push((element, vec![source])),
                 }
             }
         }
@@ -276,9 +287,6 @@ pub fn probe(pid: i32, window_id: u32) -> ScopeDiagnostics {
                 .push(read_item(&budget, app, *element, sources.clone()));
         }
         report.counts = count(&report.items, union.len(), window_id);
-        for (element, _) in union {
-            CFRelease(element as CFTypeRef);
-        }
 
         if budget.allows() {
             report.focused_window = Some(read_focus(&budget, app, window_id));
@@ -320,12 +328,22 @@ fn type_name(value: CFTypeRef) -> String {
     }
 }
 
-/// Copy an array-valued attribute, keeping its native outcome. Returns the
-/// retained AX elements the caller must release.
-unsafe fn copy_list(element: AXUIElementRef, attr: &str) -> (AttrRead, Vec<AXUIElementRef>) {
+/// The entries of `array` that are AX elements, borrowed from it.
+fn ax_elements(array: &CFArray<CFTypeRef>) -> impl Iterator<Item = AXUIElementRef> + '_ {
+    let ax_type = unsafe { AXUIElementGetTypeID() };
+    array
+        .iter()
+        .map(|item| *item)
+        .filter(move |item| unsafe { CFGetTypeID(*item) } == ax_type)
+        .map(|item| item as AXUIElementRef)
+}
+
+/// Copy an array-valued attribute, keeping its native outcome and, when the
+/// value is an array, the array itself.
+unsafe fn copy_list(element: AXUIElementRef, attr: &str) -> (AttrRead, Option<CFArray<CFTypeRef>>) {
     let (err, value) = copy_value(element, attr);
     if err != kAXErrorSuccess {
-        return (AttrRead::failed(err), Vec::new());
+        return (AttrRead::failed(err), None);
     }
     let mut read = AttrRead {
         ax_error: None,
@@ -334,26 +352,16 @@ unsafe fn copy_list(element: AXUIElementRef, attr: &str) -> (AttrRead, Vec<AXUIE
         element_count: None,
     };
     if value.is_null() {
-        return (read, Vec::new());
+        return (read, None);
     }
     if CFGetTypeID(value) != CFArray::<CFTypeRef>::type_id() {
         CFRelease(value);
-        return (read, Vec::new());
+        return (read, None);
     }
     let array = CFArray::<CFTypeRef>::wrap_under_create_rule(value as _);
-    let ax_type = AXUIElementGetTypeID();
-    let elements: Vec<AXUIElementRef> = (0..array.len())
-        .filter_map(|i| {
-            let item = *array.get(i)?;
-            (CFGetTypeID(item) == ax_type).then(|| {
-                core_foundation::base::CFRetain(item);
-                item as AXUIElementRef
-            })
-        })
-        .collect();
     read.raw_count = Some(array.len() as usize);
-    read.element_count = Some(elements.len());
-    (read, elements)
+    read.element_count = Some(ax_elements(&array).count());
+    (read, Some(array))
 }
 
 unsafe fn read_string(
@@ -394,7 +402,11 @@ unsafe fn read_item(
     AXUIElementSetMessagingTimeout(element, READ_TIMEOUT_SECONDS);
     let mut pid = 0;
     let pid_err = AXUIElementGetPid(element, &mut pid);
-    let (role, role_error) = read_string(element, "AXRole");
+    let (role, role_error) = if budget.allows() {
+        read_string(element, "AXRole")
+    } else {
+        (None, None)
+    };
     let (subrole, _) = if budget.allows() {
         read_string(element, "AXSubrole")
     } else {

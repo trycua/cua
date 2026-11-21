@@ -12,10 +12,11 @@ use crate::{
     ConfiguredDriverOptions, DriverError, DriverMetadata, EmbeddedEnvironmentVariable,
     TrustedSessionOptions,
 };
+use cua_driver_core::process::ManagedChild;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use std::time::{Duration, Instant};
@@ -114,7 +115,7 @@ pub(crate) struct ValidatedWorkerOptions {
 }
 
 struct WorkerProcess {
-    child: Arc<Mutex<Child>>,
+    child: Arc<Mutex<ManagedChild>>,
     stdin: Option<ChildStdin>,
     stdout: Option<BufReader<ChildStdout>>,
     next_request_id: u64,
@@ -170,7 +171,7 @@ pub(crate) struct PrivateWorkerClient {
     process: Mutex<WorkerProcess>,
     // Keep the exact owned Child accessible even while a request holds the pipe
     // lock in a blocking write/read. No PID lookup or process-group signalling.
-    child: Arc<Mutex<Child>>,
+    child: Arc<Mutex<ManagedChild>>,
     shutdown_started: AtomicBool,
     cleanup_started: AtomicBool,
     shutdown_timeout: Duration,
@@ -198,9 +199,12 @@ impl PrivateWorkerClient {
             command.env(variable.name, variable.value);
         }
 
-        let mut child = command.spawn().map_err(|error| DriverError::Worker {
-            reason: format!("spawn private worker {}: {error}", options.binary_path),
-        })?;
+        let mut child = ManagedChild::builder()
+            .reap_on_drop()
+            .spawn(&mut command)
+            .map_err(|error| DriverError::Worker {
+                reason: format!("spawn private worker {}: {error}", options.binary_path),
+            })?;
         let stdin = child.stdin.take().ok_or_else(|| DriverError::Worker {
             reason: "private worker stdin was not piped".into(),
         })?;

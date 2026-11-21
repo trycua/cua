@@ -110,7 +110,7 @@ try {
         throw "Windows autostart path tests failed with exit $LASTEXITCODE"
     }
 
-    & cargo build -p cua-driver --bin cua-driver --locked
+    & cargo build -p cua-driver --bin cua-driver --bin cua-driver-autostart --locked
     if ($LASTEXITCODE -ne 0) {
         throw "Windows autostart task probe build failed with exit $LASTEXITCODE"
     }
@@ -137,6 +137,10 @@ try {
     New-Item -ItemType Directory -Force -Path $taskReleaseV1, $taskReleaseV2 | Out-Null
     Copy-Item -LiteralPath (Join-Path $rustWorkspace "target\debug\cua-driver.exe") `
         -Destination (Join-Path $taskReleaseV1 "cua-driver.exe")
+    # The task action runs the windowless launcher beside the visible driver.
+    foreach ($release in $taskReleaseV1, $taskReleaseV2) {
+        Copy-Item -LiteralPath (Join-Path $rustWorkspace "target\debug\cua-driver-autostart.exe") -Destination $release
+    }
 
     $markerLiteral = $taskMarker.Replace('\', '\\').Replace('"', '\"')
     $probeSourcePath = Join-Path $taskProbeRoot "probe-v2.rs"
@@ -161,6 +165,8 @@ fn main() {
     $beforeAction = (Get-ScheduledTask -TaskName $taskName -ErrorAction Stop).Actions | Select-Object -First 1
     Assert-True ($beforeAction.Arguments -like "*$taskVisibleExe*") `
         "Scheduled Task action did not retain the visible junction path: $($beforeAction.Arguments)"
+    Assert-True ($beforeAction.Execute -eq (Join-Path $taskVisible "cua-driver-autostart.exe")) `
+        "Scheduled Task action does not run the windowless launcher: $($beforeAction.Execute)"
 
     [System.IO.Directory]::Delete($taskCurrent, $false)
     New-Item -ItemType Junction -Path $taskCurrent -Target $taskReleaseV2 | Out-Null

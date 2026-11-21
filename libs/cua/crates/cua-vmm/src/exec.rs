@@ -356,7 +356,10 @@ impl GuestExec for SshExec {
 /// An `SSH_ASKPASS` helper that answers `ssh`'s password prompt, so a
 /// password login needs no terminal: a script in a fresh private (`0700`)
 /// temporary directory, with the password inside it rather than in an
-/// environment variable or argument. Dropping it deletes the directory.
+/// environment variable or argument. The script deletes itself when `ssh`
+/// runs it (a password login asks once: `NumberOfPasswordPrompts=1`), so the
+/// password stays on disk only until it is read, even if this process is
+/// then killed; dropping the helper deletes the directory.
 struct Askpass {
     dir: tempfile::TempDir,
 }
@@ -374,7 +377,11 @@ impl Askpass {
             builder.permissions(std::fs::Permissions::from_mode(0o700));
         }
         let dir = builder.tempdir()?;
-        let script = format!("#!/bin/sh\nprintf '%s\\n' {}\n", shell_quote(password));
+        // `/bin/rm` by path: `ssh` may run the helper with a bare PATH.
+        let script = format!(
+            "#!/bin/sh\n/bin/rm -f -- \"$0\"\nprintf '%s\\n' {}\n",
+            shell_quote(password)
+        );
         let mut open = std::fs::OpenOptions::new();
         open.write(true).create_new(true);
         #[cfg(unix)]
@@ -676,13 +683,18 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(dir_mode & 0o077, 0, "helper dir is readable by others");
+        let dir = script.parent().unwrap().to_path_buf();
         let out = std::process::Command::new(&script)
             .env_clear()
             .output()
             .unwrap();
         assert_eq!(String::from_utf8(out.stdout).unwrap(), format!("{pw}\n"));
+        // Read once, then gone: the password is not left on disk while the
+        // login runs, nor if this process dies before the drop below.
+        assert!(!script.exists(), "the helper outlived its one read");
+        assert!(dir.exists());
         drop(askpass);
-        assert!(!script.exists());
+        assert!(!dir.exists());
     }
 
     #[tokio::test]

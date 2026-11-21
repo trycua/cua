@@ -6,6 +6,7 @@ pub mod browser_js;
 pub mod cdp_client;
 mod consent_ui;
 pub mod electron_js;
+mod listeners;
 mod managed_policy;
 pub mod platform;
 mod setup_ui;

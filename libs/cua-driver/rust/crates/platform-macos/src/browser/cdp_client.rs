@@ -576,42 +576,13 @@ fn parse_cdp_result(obj: &serde_json::Value) -> anyhow::Result<String> {
     Ok("undefined".to_owned())
 }
 
-/// Return TCP listening ports for a process via `lsof`.
+/// Return the TCP listening ports of a process, on any address.
 pub(super) async fn listening_ports(pid: i32) -> Vec<u16> {
-    let out = tokio::process::Command::new("lsof")
-        .args([
-            // `-a` ANDs the selection criteria together — without it, lsof
-            // ORs `-p` with `-iTCP -sTCP:LISTEN`, returning every listening
-            // port on the whole system in addition to this pid's fds.
-            "-a",
-            "-p",
-            &pid.to_string(),
-            "-iTCP",
-            "-sTCP:LISTEN",
-            "-Fn",
-            "-P",
-        ])
-        .output()
-        .await;
-
-    let Ok(out) = out else { return vec![] };
-    let text = String::from_utf8_lossy(&out.stdout);
-
-    let mut ports = Vec::new();
-    for line in text.lines() {
-        // Lines starting with 'n' contain the address e.g. n*:9222 or n127.0.0.1:9222
-        let trimmed = line.trim();
-        if !trimmed.starts_with('n') {
-            continue;
-        }
-        if let Some(colon_pos) = trimmed.rfind(':') {
-            let port_str = &trimmed[colon_pos + 1..];
-            if let Ok(p) = port_str.parse::<u16>() {
-                ports.push(p);
-            }
-        }
-    }
-    ports
+    super::listeners::tcp_listeners(i64::from(pid))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|address| address.port())
+        .collect()
 }
 
 async fn http_get_json(port: u16) -> anyhow::Result<String> {

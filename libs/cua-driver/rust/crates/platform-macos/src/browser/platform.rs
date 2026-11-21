@@ -259,7 +259,7 @@ impl MacOsBrowserPlatform {
                     method: EndpointOwnershipMethod::ListeningSocketPid,
                     owner_pid: pid,
                     listener_pid: None,
-                    detail: Some("lsof loopback listener owner plus /json/version".to_owned()),
+                    detail: Some("loopback listener owner plus /json/version".to_owned()),
                 },
             };
             if !existing_profile {
@@ -722,51 +722,24 @@ async fn process_details(pid: i64) -> Result<(String, String), BrowserRefusal> {
     Ok((started.trim().to_owned(), executable.trim().to_owned()))
 }
 
-fn parse_loopback_lsof_ports(text: &str) -> Vec<u16> {
-    let mut ports = text
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix('n'))
-        .filter_map(|address| {
-            let (host, port) = address.rsplit_once(':')?;
-            let host = host.trim_matches(['[', ']']);
-            matches!(host, "127.0.0.1" | "::1" | "localhost")
-                .then(|| port.parse::<u16>().ok())
-                .flatten()
+async fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
+    let listeners = super::listeners::tcp_listeners(pid).map_err(|error| {
+        BrowserRefusal::new(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("could not inspect browser listeners: {error}"),
+        )
+    })?;
+    let mut ports = listeners
+        .into_iter()
+        .filter(|address| {
+            address.ip() == std::net::Ipv4Addr::LOCALHOST
+                || address.ip() == std::net::Ipv6Addr::LOCALHOST
         })
+        .map(|address| address.port())
         .collect::<Vec<_>>();
     ports.sort_unstable();
     ports.dedup();
-    ports
-}
-
-async fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
-    let output = tokio::process::Command::new("lsof")
-        .args([
-            "-a",
-            // Numeric addresses: never block on DNS while enumerating listeners.
-            "-n",
-            "-p",
-            &pid.to_string(),
-            "-iTCP",
-            "-sTCP:LISTEN",
-            "-Fn",
-            "-P",
-        ])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .await
-        .map_err(|error| {
-            cua_driver_core::browser::refusal::inspection_spawn_refusal(
-                "could not inspect browser listeners",
-                "lsof",
-                Some(pid),
-                &error,
-            )
-        })?;
-    Ok(parse_loopback_lsof_ports(&String::from_utf8_lossy(
-        &output.stdout,
-    )))
+    Ok(ports)
 }
 
 /// macOS 27 and later answer EPERM when an app without Full Disk Access or a
@@ -833,7 +806,7 @@ async fn active_port_endpoint_with_relative_fallback(
             owner_pid: pid,
             listener_pid: None,
             detail: Some(
-                "exact default-profile DevToolsActivePort path plus lsof loopback listener owner"
+                "exact default-profile DevToolsActivePort path plus loopback listener owner"
                     .to_owned(),
             ),
         },
@@ -1190,7 +1163,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
                 owner_pid: pid,
                 listener_pid: None,
-                detail: Some("lsof owner of exact approved endpoint".to_owned()),
+                detail: Some("listener owner of exact approved endpoint".to_owned()),
             },
         }))
     }
@@ -1269,7 +1242,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             let mut endpoints = Vec::new();
             for port in &ports {
                 if let Some(ws_url) = browser_websocket_url(*port).await {
-                    endpoints.push((*port, ws_url, "lsof owner plus /json/version"));
+                    endpoints.push((*port, ws_url, "listener owner plus /json/version"));
                 }
             }
             if endpoints.is_empty() {
@@ -1937,12 +1910,6 @@ mod tests {
         assert!(mode_bits.detail.is_none());
     }
 
-    #[test]
-    fn lsof_parser_accepts_only_loopback_listeners() {
-        let input = "n127.0.0.1:9222\nn*:9333\nn[::1]:9444\nn0.0.0.0:9555\n";
-        assert_eq!(parse_loopback_lsof_ports(input), vec![9222, 9444]);
-    }
-
     async fn assert_owned_discovery_profile_case(case: &str) {
         use std::ffi::CString;
         use std::os::fd::AsRawFd;
@@ -2175,7 +2142,7 @@ mod tests {
                 if case != "absolute" {
                     assert_eq!(
                         endpoint.ownership.detail.as_deref(),
-                        Some("lsof loopback listener owner plus /json/version")
+                        Some("loopback listener owner plus /json/version")
                     );
                 }
             }

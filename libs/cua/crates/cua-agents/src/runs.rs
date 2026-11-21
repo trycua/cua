@@ -138,6 +138,11 @@ pub struct RunOptions {
     /// (names the provider and model, no secrets): Hermes starts from it, not
     /// from the guest's own setup. Ignored for other harnesses and with an
     /// endpoint.
+    /// For persistent Hermes, supplied settings update the saved config;
+    /// unrelated settings and an existing `model.context_length` remain.
+    /// Routing and fallbacks still come from the connection. Unchanged YAML
+    /// nodes retain their scalar spelling and comments; edited sections may
+    /// be reformatted when inherited settings need to be made explicit.
     pub hermes_config: Option<String>,
     /// Continue this session of the harness's own (Claude Code, Codex or
     /// Hermes keep it on the computer the run is on) instead of opening a
@@ -1216,13 +1221,22 @@ impl Agents {
         if opts.durable.as_ref().is_some_and(|d| d.guard) {
             launch.env.extend(crate::durable::guard_env(h));
         }
+        let preserve_hermes_config = h.id == "hermes" && home_dir.is_some();
         futures_util::future::try_join_all(launch.files.iter().map(|f| {
             let path = if f.rel.starts_with('/') {
                 f.rel.clone()
             } else {
                 format!("{rdir}/{}", f.rel)
             };
-            async move { self.write(&path, f.body.clone(), 0o600).await }
+            async move {
+                let body = if preserve_hermes_config && path.ends_with("/hermes/config.yaml") {
+                    let existing = self.read(&path, 0, 0).await?.unwrap_or_default();
+                    harness::merge_hermes_config(&path, &existing, &f.body)?
+                } else {
+                    f.body.clone()
+                };
+                self.write(&path, body, 0o600).await
+            }
         }))
         .await?;
         // Secrets: the caller's env, plus MCP header values.

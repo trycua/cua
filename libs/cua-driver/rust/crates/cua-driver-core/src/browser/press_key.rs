@@ -370,8 +370,8 @@ const BLOCKED_FOCUS_RESTORE_TIMEOUT: Duration = Duration::from_millis(50);
 
 /// What happened to the key itself.
 enum KeyDelivery {
-    /// The key down was acknowledged, or a dialog its handler opened is
-    /// blocking the reply.
+    /// The key down was acknowledged, or a page dialog opened while it was
+    /// in flight and is blocking the reply.
     Pressed,
     /// The key down was sent but neither acknowledged nor followed by a
     /// dialog: it may have reached the page.
@@ -774,12 +774,12 @@ impl Tool for BrowserPressKeyTool {
         structured["dialog"] = dialog_block(&open);
         structured["escalation"] = json!({
             "recommended": "page",
-            "reason": "the key opened a page-owned JavaScript dialog; resolve it with browser_dialog, then refresh page state",
+            "reason": "a page-owned JavaScript dialog opened during the key press; resolve it with browser_dialog, then refresh page state",
         });
         ToolResult::text(format!(
-            "pressed {chord} in {tab_id}; its handler opened a {} dialog that is blocking the \
-             page. Inspect and resolve it with browser_dialog (dialog_id {}) before any other \
-             action on this tab",
+            "pressed {chord} in {tab_id}; a {} dialog opened during the press and is blocking \
+             the page. Inspect and resolve it with browser_dialog (dialog_id {}) before any \
+             other action on this tab",
             open.kind,
             dialog_capability_id(open.generation)
         ))

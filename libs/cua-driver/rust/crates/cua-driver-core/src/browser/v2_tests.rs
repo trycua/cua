@@ -5122,7 +5122,22 @@ async fn press_key_whose_ref_focus_reply_follows_its_dialog_sends_no_key() {
 /// Chromium as here. Either way the result is honest: the key was not sent
 /// and the press is refused, or it was sent and is reported pressed with the
 /// dialog and an unverifiable effect. The press never stalls.
-fn assert_honest_dialog_outcome(f: &Fixture, s: &Value, key: &str) {
+fn assert_honest_dialog_outcome(f: &Fixture, result: &ToolResult, key: &str) {
+    let s = structured(result);
+    // The driver cannot tell which handler opened the dialog, so its wording
+    // never names one.
+    let text = match result.content.first() {
+        Some(Content::Text { text, .. }) => text.clone(),
+        _ => String::new(),
+    };
+    for said in [
+        text.as_str(),
+        s["escalation"]["reason"].as_str().unwrap_or_default(),
+        s["refusal"]["message"].as_str().unwrap_or_default(),
+    ] {
+        assert!(!said.contains("handler opened"), "{said}");
+        assert!(!said.contains("the key opened"), "{said}");
+    }
     let key_sent = key_event_summary(f)
         .iter()
         .any(|(event, name, _)| event != "keyUp" && name == key);
@@ -5145,7 +5160,7 @@ async fn press_key_whose_modifier_opens_a_dialog_after_its_reply_reports_honestl
     let started = std::time::Instant::now();
     let result = press_key_with(&f, json!({ "key": "a", "modifiers": ["ctrl"] })).await;
     assert!(started.elapsed() < std::time::Duration::from_secs(5));
-    assert_honest_dialog_outcome(&f, structured(&result), "a");
+    assert_honest_dialog_outcome(&f, &result, "a");
 }
 
 #[tokio::test]
@@ -5163,7 +5178,7 @@ async fn press_key_whose_ref_focus_opens_a_dialog_after_its_reply_reports_honest
         }))
         .await;
     assert!(started.elapsed() < std::time::Duration::from_secs(5));
-    assert_honest_dialog_outcome(&f, structured(&result), "a");
+    assert_honest_dialog_outcome(&f, &result, "a");
     assert_no_dom_calls_after_focus(&f);
 }
 

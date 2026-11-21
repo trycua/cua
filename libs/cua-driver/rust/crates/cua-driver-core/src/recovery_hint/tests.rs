@@ -705,7 +705,7 @@ fn a_browser_key_blocked_by_a_dialog_resolves_it_first() {
     );
     assert_eq!(
         hint.hint,
-        "A key handler opened a page dialog before the key was pressed. Resolve it with browser_dialog, then read the page with get_browser_state."
+        "A page dialog opened before the key was pressed. Resolve it with browser_dialog, then read the page with get_browser_state."
     );
 }
 

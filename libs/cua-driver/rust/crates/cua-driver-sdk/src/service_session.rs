@@ -11,7 +11,7 @@ use crate::{DriverError, TrustedSessionOptions};
 use cua_driver_core::daemon::REPLY_DEADLINE;
 use cua_driver_core::daemon::{DaemonClientKind, DaemonRequest, DaemonResponse};
 use serde_json::Value;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 #[cfg(any(unix, windows))]
@@ -289,14 +289,13 @@ impl Drop for ServiceSessionClient {
 }
 
 #[cfg(any(unix, windows))]
-fn write_request(writer: &mut impl Write, request: &DaemonRequest) -> std::io::Result<()> {
+fn write_request(writer: &mut ServiceStream, request: &DaemonRequest) -> std::io::Result<()> {
     let mut frame = serde_json::to_vec(request).map_err(std::io::Error::other)?;
     frame.push(b'\n');
-    cua_driver_core::socket_io::write_all_with_retry(
-        writer,
-        &frame,
-        Instant::now() + REPLY_DEADLINE,
-    )
+    let deadline = Instant::now() + REPLY_DEADLINE;
+    #[cfg(windows)]
+    writer.set_deadline(Some(deadline));
+    cua_driver_core::socket_io::write_all_with_retry(writer, &frame, deadline)
 }
 
 #[cfg(any(unix, windows))]
@@ -310,6 +309,10 @@ fn read_response_line_within(
     reply_deadline: Duration,
 ) -> std::io::Result<Option<String>> {
     let deadline = Instant::now() + reply_deadline;
+    // A Unix read can overrun by one poll slice; a pipe read stops at the
+    // deadline itself.
+    #[cfg(windows)]
+    reader.get_mut().set_deadline(Some(deadline));
     let timed_out = || {
         std::io::Error::new(
             std::io::ErrorKind::TimedOut,
@@ -403,6 +406,7 @@ fn connect(socket_path: &str) -> Result<ServiceStream, DriverError> {
 mod tests {
     use super::*;
     use crate::{SessionPermissionMode, TrustedSessionOptions};
+    use std::io::Write;
     use std::os::unix::net::UnixListener;
 
     fn serve_compatible_metadata(listener: &UnixListener) {

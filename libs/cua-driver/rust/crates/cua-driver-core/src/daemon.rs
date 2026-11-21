@@ -372,6 +372,8 @@ fn exchange(
         reply_deadline.min(crate::pipe_stream::OPEN_RETRY),
     )
     .map_err(|error| anyhow::anyhow!("connect to named pipe {socket_path}: {error}"))?;
+    #[cfg(windows)]
+    stream.set_deadline(Some(reply_by));
     // macOS rejects setsockopt with EINVAL once the peer has closed its end,
     // even when the peer's reply is still buffered for us to read. Treat that
     // as "peer already gone": the read below still drains buffered data and

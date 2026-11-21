@@ -79,6 +79,7 @@ pub struct PipeStream {
     file: File,
     read_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
+    deadline: Option<Instant>,
 }
 
 impl PipeStream {
@@ -104,16 +105,24 @@ impl PipeStream {
             file,
             read_timeout: None,
             write_timeout: None,
+            deadline: None,
         })
     }
 
-    /// A second handle to the same pipe, with the same timeouts.
+    /// A second handle to the same pipe, with the same timeouts and deadline.
     pub fn try_clone(&self) -> std::io::Result<Self> {
         Ok(Self {
             file: self.file.try_clone()?,
             read_timeout: self.read_timeout,
             write_timeout: self.write_timeout,
+            deadline: self.deadline,
         })
+    }
+
+    /// No read or write on this handle waits past `deadline`, whatever its
+    /// timeout; once it has passed they fail with `TimedOut` at once.
+    pub fn set_deadline(&mut self, deadline: Option<Instant>) {
+        self.deadline = deadline;
     }
 
     /// Longest one read waits; `None` waits until data or EOF arrives.
@@ -135,6 +144,19 @@ impl PipeStream {
         timeout: Option<Duration>,
         start: impl FnOnce(RawHandle, *mut Overlapped) -> i32,
     ) -> std::io::Result<usize> {
+        let timeout = match self.deadline {
+            None => timeout,
+            Some(deadline) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "named pipe deadline has passed",
+                    ));
+                }
+                Some(timeout.map_or(remaining, |timeout| timeout.min(remaining)))
+            }
+        };
         let file = self.file.as_raw_handle();
         // SAFETY: a manual-reset, unnamed event with default security.
         let event = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
@@ -304,6 +326,42 @@ mod tests {
             drop(client);
         });
         client.await.unwrap();
+        served.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_deadline_caps_a_longer_timeout() {
+        let name = pipe_name("deadline");
+        let server = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&name)
+            .unwrap();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+        let served = tokio::spawn(async move {
+            server.connect().await.unwrap();
+            release_rx.await.unwrap();
+        });
+
+        tokio::task::spawn_blocking(move || {
+            let mut client = PipeStream::connect(&name, Duration::from_secs(3)).unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_secs(30)))
+                .unwrap();
+            client.set_deadline(Some(Instant::now() + Duration::from_millis(200)));
+            let mut buffer = [0_u8; 16];
+            let started = Instant::now();
+            let error = client.read(&mut buffer).unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+            assert!(started.elapsed() < Duration::from_secs(5));
+
+            let started = Instant::now();
+            let error = client.read(&mut buffer).unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+            assert!(started.elapsed() < Duration::from_millis(100));
+        })
+        .await
+        .unwrap();
+        release_tx.send(()).unwrap();
         served.await.unwrap();
     }
 

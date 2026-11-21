@@ -161,8 +161,9 @@ pub struct CreateArgs {
     #[arg(long)]
     memory: Option<String>,
     /// Guest network: `default` (outbound network, like a Docker container)
-    /// or `none` (no egress; published ports still work). `none` needs a
-    /// local QEMU VM; containers and Lume reject it.
+    /// or `none` (no egress; published ports still work). `none` runs on a
+    /// local QEMU VM, and on a container under the default Secure network
+    /// mode; containers reject it in legacy mode, and Lume rejects it.
     #[arg(long, value_parser = ["default", "none"])]
     network: Option<String>,
     /// Disk size (accepted; the image decides today).

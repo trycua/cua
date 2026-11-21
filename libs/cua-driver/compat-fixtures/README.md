@@ -46,3 +46,9 @@ RFC 2549 independently accepts one additive CLI change: `cua-driver mcp
 Linux, signed app service on macOS), while `--socket` continues to select an
 explicit service. The semantic compatibility test permits that additive flag
 without rewriting the frozen `cli.json` baseline.
+
+The deprecated CLI aliases `--session-policy` and `--approve-session-policy`
+and the no-op `--claude-code-computer-use-compat` flag have been removed, and
+`cli.json` no longer lists them. `cua-driver` refuses each one with an error
+that names its replacement: `--capability-manifest`,
+`--approve-capability-manifest`, or plain `cua-driver mcp`.

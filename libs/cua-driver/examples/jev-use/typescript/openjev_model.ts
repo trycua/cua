@@ -102,10 +102,10 @@ export function openJevSystemOneUrl(baseUrl: string): string {
   return root.endsWith('/v1') ? root + '/systemone' : root + '/v1/systemone';
 }
 
-function transportError(error: unknown): OpenJevError {
+function transportError(error: unknown, timedOut: boolean): OpenJevError {
   if (error instanceof OpenJevError) return error;
   const name = error instanceof Error ? error.name : '';
-  if (name === 'TimeoutError' || name === 'AbortError') {
+  if (timedOut || name === 'TimeoutError' || name === 'AbortError') {
     return new OpenJevError('timeout', 'OpenJev request timed out');
   }
   return new OpenJevError(
@@ -123,17 +123,24 @@ async function defaultTransport(
   timeoutMs: number
 ): Promise<unknown> {
   let text: string;
+  // A timer we hold, not AbortSignal.timeout, and a body read that cancels
+  // itself on abort: once fetch resolves, GC can drop both the timeout signal
+  // and undici's abort hook on the body, so a stalled body would never end.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, {
       method: 'POST',
       headers: { ...headers },
       body: JSON.stringify(payload),
       redirect: 'error',
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: controller.signal,
     });
-    text = await readBoundedBody(response);
+    text = await readBoundedBody(response, controller.signal);
   } catch (error) {
-    throw transportError(error);
+    throw transportError(error, controller.signal.aborted);
+  } finally {
+    clearTimeout(timer);
   }
   try {
     return JSON.parse(text);
@@ -142,7 +149,7 @@ async function defaultTransport(
   }
 }
 
-async function readBoundedBody(response: Response): Promise<string> {
+async function readBoundedBody(response: Response, signal: AbortSignal): Promise<string> {
   if (!response.ok) {
     throw new OpenJevError(
       'http_error',
@@ -156,15 +163,22 @@ async function readBoundedBody(response: Response): Promise<string> {
   const decoder = new TextDecoder();
   const chunks: string[] = [];
   let bytes = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    bytes += value.byteLength;
-    if (bytes > MAX_OPENJEV_RESPONSE_BYTES) {
-      await reader.cancel();
-      throw new OpenJevError('response_too_large', 'OpenJev response is too large');
+  const cancel = () => void reader.cancel(signal.reason).catch(() => {});
+  signal.addEventListener('abort', cancel, { once: true });
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      signal.throwIfAborted();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > MAX_OPENJEV_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw new OpenJevError('response_too_large', 'OpenJev response is too large');
+      }
+      chunks.push(decoder.decode(value, { stream: true }));
     }
-    chunks.push(decoder.decode(value, { stream: true }));
+  } finally {
+    signal.removeEventListener('abort', cancel);
   }
   chunks.push(decoder.decode());
   return chunks.join('');

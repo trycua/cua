@@ -9,7 +9,6 @@ description: "The Spaces registry: create, add, resolve, delete and remove Space
   Source: cua-bindgen docs (UniFFI metadata of libcua_sdk)
 */}
 
-import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 `cua.spaces()` returns the `Spaces` registry. Create a Space where `on` says (local or cloud), or add an existing machine by URL, then open a [`Space`](/cua-sdk/reference/spaces/space). See [resize](/cua-sdk/reference/spaces/resize) to change a local VM's shape.
@@ -80,6 +79,7 @@ Returned by [`Cua.spaces`](/cua-sdk/reference/cua#cua).
 | [`network`](/cua-sdk/reference/spaces/network#spacesnetwork) | A Space's network: its settings, what they open, where they are enforced (or why its network is cut), and what is always blocked. |
 | [`notifications`](/cua-sdk/reference/spaces/persistent-agents#spacesnotifications) | The notifications feed, newest first. |
 | [`notifications_ack`](/cua-sdk/reference/spaces/persistent-agents#spacesnotifications_ack) | Marks notifications read (every one when `ids` is empty). |
+| [`notifications_delete`](/cua-sdk/reference/spaces/persistent-agents#spacesnotifications_delete) | Deletes notifications: these ids, or every one when `all` (an empty `ids` without `all` deletes nothing). |
 | [`notify_user`](/cua-sdk/reference/spaces/persistent-agents#spacesnotify_user) | Posts a notification to the Cua app. |
 | [`orphans`](/cua-sdk/reference/spaces/children#spacesorphans) | Child Spaces whose parent is gone or out of reach. |
 | [`persistent_agent_create`](/cua-sdk/reference/spaces/persistent-agents#spacespersistent_agent_create) | Creates a persistent agent: `harness` working in `space`, its home at `agents/<name>/` in the Cua Volume. |
@@ -400,7 +400,7 @@ pub async fn cancel_create(&self, space: String) -> Result<SpaceCancelOutcome, C
 | --- | --- | --- |
 | `space` | `String` | required |
 
-**Returns** [`SpaceCancelOutcome`](#spacecanceloutcome-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors) ([`Cancelled`](/cua-sdk/reference/errors#cancelled))
+**Returns** [`SpaceCancelOutcome`](/cua-sdk/reference/spaces/lifetime#spacecanceloutcome-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors) ([`Cancelled`](/cua-sdk/reference/errors#cancelled))
 
 ### `Spaces.create`
 
@@ -449,9 +449,9 @@ pub async fn create(&self, options: SpaceCreateOptions) -> Result<SpaceCreateRes
 
 | Parameter | Type | Default |
 | --- | --- | --- |
-| `options` | [`SpaceCreateOptions`](#spacecreateoptions-record) | required |
+| `options` | [`SpaceCreateOptions`](/cua-sdk/reference/spaces/lifetime#spacecreateoptions-record) | required |
 
-**Returns** [`SpaceCreateResult`](#spacecreateresult-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+**Returns** [`SpaceCreateResult`](/cua-sdk/reference/spaces/lifetime#spacecreateresult-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
 ### `Spaces.create_with_progress`
 
@@ -501,10 +501,10 @@ pub async fn create_with_progress(&self, options: SpaceCreateOptions, listener: 
 
 | Parameter | Type | Default |
 | --- | --- | --- |
-| `options` | [`SpaceCreateOptions`](#spacecreateoptions-record) | required |
-| `listener` | [`SpaceCreateListener`](#spacecreatelistener) | required |
+| `options` | [`SpaceCreateOptions`](/cua-sdk/reference/spaces/lifetime#spacecreateoptions-record) | required |
+| `listener` | [`SpaceCreateListener`](/cua-sdk/reference/spaces/lifetime#spacecreatelistener) | required |
 
-**Returns** [`SpaceCreateResult`](#spacecreateresult-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+**Returns** [`SpaceCreateResult`](/cua-sdk/reference/spaces/lifetime#spacecreateresult-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
 ### `Spaces.delete`
 
@@ -607,7 +607,7 @@ pub async fn gpu_support(&self, on: Option<String>) -> Result<Vec<GpuSupport>, C
 | --- | --- | --- |
 | `on` | `Option<String>` | required |
 
-**Returns** [`Vec<GpuSupport>`](#gpusupport-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+**Returns** [`Vec<GpuSupport>`](/cua-sdk/reference/spaces/lifetime#gpusupport-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
 ### `Spaces.hosts`
 
@@ -1315,198 +1315,3 @@ pub async fn suspend(&self, space: String) -> Result<SpacePowerReport, CuaError>
 | `space` | `String` | required |
 
 **Returns** [`SpacePowerReport`](/cua-sdk/reference/spaces/resize#spacepowerreport-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
-
-## Create options
-
-`Spaces.create` takes `SpaceCreateOptions` (with an `EgressPolicy` for the destinations a Linux Space may reach) and returns a `SpaceCreateResult`. A `SpaceCreateListener` receives `SpaceCreateProgress` while it runs; `Spaces.cancel_create` stops it. `GpuSupport` says whether a location offers GPU acceleration.
-
-## `SpaceCreateOptions` record
-
-Options for `Spaces.create`: the same location / kind / runtime model
-as sandboxes.
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `image` | `Option<String>` | `None` | Image (default: the canonical Linux image). `checkpoint:<name>` starts a fork of that checkpoint, on whichever of your machines holds it (`CheckpointSummary.host`): its disk, memory and processes, so no command, environment, services, GPU or disk size. |
-| `on` | `Option<String>` | `None` | Where: `local` (free), a connected cloud account (`aws`, `gcp`, `modal`) or `host:<name>`. `None`: the user default (`default.on`, `CUA_DEFAULT_ON`, else `local`); for a `checkpoint:` image, where the checkpoint is. A checkpoint also starts on `host:<machine>` or `auto`, copied there first when that machine lacks it. |
-| `kind` | `Option<String>` | `None` | `auto` (default), `container`, `vm` or `microvm`. |
-| `runtime` | `Option<String>` | `None` | `auto` (default) or an engine the location offers for the kind. |
-| `name` | `Option<String>` | `None` | Name (default `space-<hex>`). |
-| `cpus` | `Option<u32>` | `None` | vCPUs. Local default 2. |
-| `memory_mb` / `memoryMb` | `Option<u64>` | `None` | Memory in MiB. Local default 4096. |
-| `disk_gb` / `diskGb` | `Option<u32>` | `None` | Grow the VM's disk to this many GiB (local VMs; default: the image's size, never smaller). Lume grows the macOS APFS container before the first boot; Linux images grow their root partition at boot. Containers and cloud Spaces refuse it. |
-| `timeout_ms` / `timeoutMs` | `Option<u64>` | `None` | Readiness budget (local; default 600 s). |
-| `wait` | `Option<bool>` | `None` | Wait until ready (default true). |
-| `reuse` | `bool` | `false` | Return a reachable registered Space in the same location with the requested services instead of creating one. |
-| `command` | `Option<Vec<String>>` | `None` | Entrypoint override. |
-| `env` | `HashMap<String, String>` | `[:]` | Guest environment. |
-| `services` | `HashMap<String, u16>` | `[:]` | Named services (name → guest port), for example `{"mcp": 8765}`. |
-| `spacesd` | `Option<bool>` | `None` | Whether the image runs cua-spacesd (default: yes for the canonical images; any other image gets a static one injected on a local container or microVM, so it is a full Space; `false` runs the image as it is). |
-| `gpu` | `Option<String>` | `None` | A GPU option of the runtime the Space runs on (`Spaces.gpu_support`): `paravirtual` for a macOS VM on Lume (GPU acceleration, experimental), `virgl` (QEMU on Linux), `nvidia` (a runc container on Linux); `auto` picks the runtime's own. `None` (the default): no GPU. Kept with the Space. |
-| `create_id` / `createId` | `Option<String>` | `None` | Your own key for this create (an app's pending row), for `Spaces.cancel_create` before the Space's id is known. |
-| `durable` | `bool` | `false` | Keep the Space on your machines (`on` "auto"): when its machine goes away it is created again on another one, with the same name (its disk starts fresh). Needs the cua daemon of Cua Spaces and an account with machines that provide Spaces. |
-| `profile` | `Option<String>` | `None` | A size profile: defaults for what is left unset. `"rollout"`: 1 vCPU, 1024 MiB and `headless` (a local VM gets no display hardware, so many more fit on one machine), for RL rollouts and agent episodes that mostly wait. `None` or `"default"`: 2 vCPUs, 4096 MiB. |
-| `headless` | `Option<bool>` | `None` | A Space without a desktop: only cua-spacesd runs (exec, files, processes, MCP), with no display, window manager or audio. For shell and RL workloads it starts several times faster and fits many more per machine. `None`: what `profile` says (a desktop by default). |
-| `forkable` | `Option<bool>` | `None` | A fork source (a "bake" Space): a local QEMU VM's guest RAM is a shared file, so its checkpoints (`Space.checkpoint`) take milliseconds and forks of them (`Space.fork`, `Spaces.fork`) share its pages. Other kinds ignore it. `None` (the default): not one. |
-| `build` | [`Option<BuildOptions>`](/cua-sdk/reference/spaces/build#buildoptions-record) | `None` | Build an image first (cached when unchanged), then fork the result. `image` must be unset. |
-| `volumes` | [`Vec<VolumeMount>`](/cua-sdk/reference/spaces/volume#volumemount-record) | `[]` | Named volumes of Cua Volume to mount in the Space (`Spaces.create_volume`): each appears at its `path`, read-write or read-only; the Space sees no other volume. Needs the Cua Volume (Cua Spaces) and a guest that can mount it; the create fails otherwise, naming what is missing. A fork mounts the same volumes. |
-| `network` | `Option<String>` | `None` | Guest network: `default` (unset) gives outbound network; `none` gives none (QEMU VMs, here or on one of your machines; published ports and cua-spacesd still reach the guest). Not with `durable` or `reuse`. A daemon or machine whose cua is too old to enforce `none` is refused (`CapabilityMissing`) and the Space it made is deleted. |
-| `labels` | `HashMap<String, String>` | `[:]` | Labels kept with the Space and returned in `SpaceInfo.labels`: at most 64; keys and values are not empty (UTF-8); keys up to 63 bytes, values up to 256. Not with `durable` or `reuse`. The device that creates the Space keeps them (also for `host:` and `auto`). |
-| `egress` | [`Option<EgressPolicy>`](#egresspolicy-record) | `None` | Egress policy (see `EgressPolicy`), enforced by the host the Space runs on from the guest's first instruction. A kind or location with no host-side point refuses it (`Unsupported`) before anything is created. Not with `durable`, `reuse` or `wait = false`; a daemon too old to enforce it makes the create fail. |
-| `network_settings` / `networkSettings` | [`Option<NetworkSettings>`](/cua-sdk/reference/spaces/network#networksettings-record) | `None` | Network settings (see `NetworkSettings`). `None`: what `network` and `egress` say (`internet` when neither says anything). A daemon too old to keep them makes the create fail. |
-| `parent` | `Option<String>` | `None` | Create it as a child of this Space (id or name): its network is no more open than its parent's, and it joins the parent's tree. |
-| `widen` | `Option<bool>` | `None` | With `parent`: let its network be more open than its parent's (recorded on the Space). |
-| `instance_type` / `instanceType` | `Option<String>` | `None` | With `on` a linked cloud (`aws`, `hetzner`, ...): the machine type its host must be (`c7g.xlarge`, `cax41`), a pin of the elastic pool's solve. `None`: the pool picks the cheapest that fits. |
-| `region` | `Option<String>` | `None` | With `on` a linked cloud: the region its host must be in. |
-| `children` | `Option<bool>` | `None` | Lets the Space make child Spaces of its own (`Spaces.set_children`). `None`: off. Only a Space the machine of the runtime runs itself. |
-
-## `EgressPolicy` record
-
-Which destinations a Space may open connections to. Everything is
-allowed unless a rule says otherwise: every `deny` entry blocks that
-destination, every `allow` entry is an exception that wins over `deny`
-(`deny: ["all"]` with `allow: ["1.1.1.1"]` leaves only 1.1.1.1
-reachable), and an `allow` list with no `deny` blocks nothing. Entries
-are IPv4/IPv6 addresses or CIDRs (`all` is `0.0.0.0/0` and `::/0`);
-a hostname is refused (rules are by IP/CIDR). DNS works only while the
-resolver the guest uses is not blocked (or is allowed): there is no
-special case. Loopback, replies to connections made to the guest and
-IPv6 neighbor discovery are never filtered.
-
-The host the Space runs on enforces it, outside the guest, from the
-guest's first instruction (`SpaceInfo.egress_enforced`): containers
-(runc and gVisor) on the container engine's host, Firecracker and QEMU
-VMs on Linux in a network namespace around the VM. Nothing in the
-guest, root included, can change it. macOS VMs, Apple Containerization,
-QEMU on macOS or Windows, Cua Cloud and your own cloud accounts refuse
-a policy (`Unsupported`, saying why).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `allow` | `Vec<String>` | `[]` | Destinations that stay reachable where `deny` blocks them. |
-| `deny` | `Vec<String>` | `[]` | Destinations that are blocked. |
-
-## `SpaceCreateResult` record
-
-Result of `Spaces.create`.
-
-Returned by [`Spaces.create`](#spacescreate), [`Spaces.create_with_progress`](#spacescreate_with_progress).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `space` | [`Option<SpaceInfo>`](/cua-sdk/reference/spaces/info#spaceinfo-record) |  | The Space, once ready. |
-| `pending_id` / `pendingId` | `Option<String>` |  | With `wait = false`: the id the Space will have. |
-| `reused` | `bool` |  | `reuse` returned an existing Space. |
-
-## `SpaceCreateProgress` record
-
-What a Space create is doing (see `Spaces.create_with_progress`).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `phase` | `String` |  | `preparing`, `pulling`, `creating`, `booting`, `waiting_for_services`, `connecting` or `ready`, in that order. |
-| `fraction` | `Option<f64>` |  | How far through the phase, 0.0 to 1.0, when its size is known (an image pull). |
-| `detail` | `String` |  | One short line, for example the image being pulled. |
-| `bytes_done` / `bytesDone` | `Option<u64>` | `None` | Bytes downloaded so far, when the step counts them (an image pull). |
-| `bytes_total` / `bytesTotal` | `Option<u64>` | `None` | Bytes the download has in all. |
-| `bytes_per_second` / `bytesPerSecond` | `Option<f64>` | `None` | Smoothed download rate, bytes per second (time left: the bytes to go over it). |
-| `space` | `String` | `""` | The id the Space will have (`local:<name>`), for `Spaces.cancel_create`. |
-
-## `SpaceCreateListener`
-
-Receives `SpaceCreateProgress` while `Spaces.create_with_progress`
-runs, in order, ending with `ready`. Called on an SDK worker thread;
-return quickly.
-
-<Callout>
-You implement `SpaceCreateListener` and pass it to the SDK (a callback interface): subclass it in Python, implement the interface in TypeScript, the `SpaceCreateListener` protocol in Swift, the interface in Kotlin and the trait in Rust.
-</Callout>
-
-| Method | Description |
-| --- | --- |
-| [`on_progress`](#spacecreatelisteneron_progress) | The create moved on. |
-
-### `SpaceCreateListener.on_progress`
-
-The create moved on.
-
-<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Python">
-
-```python
-def on_progress(self, progress: SpaceCreateProgress) -> None
-```
-
-</Tab>
-<Tab value="TypeScript">
-
-```ts
-onProgress(progress: SpaceCreateProgress): void
-```
-
-</Tab>
-<Tab value="Swift">
-
-```swift
-func onProgress(progress: SpaceCreateProgress)
-```
-
-</Tab>
-<Tab value="Kotlin">
-
-```kotlin
-fun onProgress(progress: SpaceCreateProgress)
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub fn on_progress(&self, progress: SpaceCreateProgress)
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `progress` | [`SpaceCreateProgress`](#spacecreateprogress-record) | required |
-
-## `SpaceCancelOutcome` record
-
-What `Spaces.cancel_create` did.
-
-Returned by [`Spaces.cancel_create`](#spacescancel_create).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `id` | `String` |  | The Space id the create had (`local:<name>`), when known. |
-| `state` | `String` |  | `cancelled`, `not_creating` (nothing by that key is running) or `already_created` (it finished: delete it instead). |
-| `message` | `String` |  | What was removed and what stays, for people. |
-
-## `GpuSupport` record
-
-The GPU options of one runtime: empty, with the reason, when it has
-none.
-
-Returned by [`Spaces.gpu_support`](#spacesgpu_support).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `runtime` | `String` |  | `lume`, `qemu`, `container`, `gvisor`, a provider's name. |
-| `options` | [`Vec<GpuOption>`](#gpuoption-record) |  | Its options. |
-| `reason` | `String` |  | Why it has none. |
-
-## `GpuOption` record
-
-One GPU option of a runtime (see `Spaces.gpu_support`).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `id` | `String` |  | What to pass as `gpu`. |
-| `label` | `String` |  | How a person names it ("GPU acceleration"). |
-| `experimental` | `bool` |  | Experimental. |
-| `supported` | `bool` |  | Works on this host now. |
-| `reason` | `String` |  | Why not, one short line (empty when supported). |
-| `learn_more` / `learnMore` | `Option<String>` |  | A page that explains it. |
-| `usd_per_hour` / `usdPerHour` | `Option<f64>` |  | Estimated cost per hour while it runs (cloud GPU types). |

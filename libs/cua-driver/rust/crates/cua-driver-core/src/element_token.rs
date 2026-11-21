@@ -66,6 +66,13 @@ impl<T> ResolvedElement<T> {
 pub const STALE_TOKEN_WITHOUT_PID: &str =
     "element_token is stale or unknown; call get_window_state again to refresh";
 
+/// Why a process can have no current snapshot for the caller: snapshots are
+/// kept per session, and an unnamed one-shot CLI call's session ends with it.
+pub const SESSION_SCOPED_SNAPSHOTS: &str =
+    "Snapshots belong to the session that read them, and an unnamed one-shot CLI call's \
+     session ends with that call, so pass the same \"session\" label to get_window_state \
+     and to this call.";
+
 /// A snapshot a refusal names as current, so the caller can tell whether it
 /// already holds a newer one instead of re-reading blind.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -135,8 +142,9 @@ pub fn stale_token_without_pid(owner: TokenOwner) -> ToolResult {
             current_snapshots_phrase(pid, &owner.current)
         ),
         (Some(pid), true) => format!(
-            "{STALE_TOKEN_WITHOUT_PID}; pid {pid} has no current snapshot. Call get_window_state \
-             for the window you mean, then use the element_token it prints."
+            "{STALE_TOKEN_WITHOUT_PID}; pid {pid} has no current snapshot in this session. Call \
+             get_window_state for the window you mean, then use the element_token it prints. \
+             {SESSION_SCOPED_SNAPSHOTS}"
         ),
         (None, _) => format!(
             "{STALE_TOKEN_WITHOUT_PID}. This token cannot be attributed to a pid: this runtime \

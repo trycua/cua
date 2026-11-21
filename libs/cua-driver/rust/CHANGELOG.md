@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.56.6](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.5...cua-driver-rs-v0.56.6) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-driver:** build every Windows crate against windows 0.61 ([#8444](https://github.com/trycua/cua/issues/8444)) ([d0e4f4d](https://github.com/trycua/cua/commit/d0e4f4dc4e734affa6a1aca1464deddf55a71763))
+* **cua-driver:** build move_cursor action records in its producers ([#8080](https://github.com/trycua/cua/issues/8080)) ([c50d638](https://github.com/trycua/cua/commit/c50d638310f4d56c69789707f2d4b79cbee3dadb))
+* **cua-driver:** match list_windows app filter against unlocalized bundle names ([#8358](https://github.com/trycua/cua/issues/8358)) ([20ddc59](https://github.com/trycua/cua/commit/20ddc5942fc2100825eb719acc03bf74a07de03b)), closes [#6687](https://github.com/trycua/cua/issues/6687)
+* **cua-driver:** report the window covering a verified bring_to_front target ([#8093](https://github.com/trycua/cua/issues/8093)) ([45f5a41](https://github.com/trycua/cua/commit/45f5a417d5b6d68d62af12e0f0a0e247179f63f9))
+* **cua-driver:** send a background pixel click past an element without AXPress ([#8159](https://github.com/trycua/cua/issues/8159)) ([5118278](https://github.com/trycua/cua/commit/5118278c546c1e3e4f19844d144b56228cd30808))
+
 ## [0.56.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.4...cua-driver-rs-v0.56.5) (2026-11-21)
 
 

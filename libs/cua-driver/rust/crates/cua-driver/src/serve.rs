@@ -2688,11 +2688,31 @@ fn endpoint_still_held(socket_path: &str, presence: &DaemonPresence) -> bool {
     }
 }
 
-/// Whether something still listens on the Unix socket at `socket_path`. A
-/// dead daemon's socket refuses connections.
+/// How often [`socket_accepts`] tries before it takes refusals as a dead
+/// listener, and how long it waits between tries.
+#[cfg(unix)]
+const SOCKET_PROBE_ATTEMPTS: u32 = 5;
+#[cfg(unix)]
+const SOCKET_PROBE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Whether something still listens on the Unix socket at `socket_path`. Only
+/// refusal on every try, or a missing path, counts as no listener: macOS also
+/// refuses while a live listener's accept queue is full, and any other error
+/// is no proof the listener is gone.
 #[cfg(unix)]
 fn socket_accepts(socket_path: &str) -> bool {
-    std::os::unix::net::UnixStream::connect(socket_path).is_ok()
+    for attempt in 0..SOCKET_PROBE_ATTEMPTS {
+        match std::os::unix::net::UnixStream::connect(socket_path) {
+            Ok(_) => return true,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return false,
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
+            Err(_) => return true,
+        }
+        if attempt + 1 < SOCKET_PROBE_ATTEMPTS {
+            std::thread::sleep(SOCKET_PROBE_INTERVAL);
+        }
+    }
+    false
 }
 
 /// `cua-driver stop` implementation.

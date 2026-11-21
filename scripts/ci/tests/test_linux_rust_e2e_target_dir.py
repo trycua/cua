@@ -119,7 +119,7 @@ def _write_executable(path: Path, content: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
-@unittest.skipIf(sys.platform == "win32", "Linux E2E runner requires POSIX bash")
+@unittest.skipUnless(sys.platform.startswith("linux"), "Linux E2E runner requires Linux bash")
 class LinuxRustE2ETargetDirTest(unittest.TestCase):
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()

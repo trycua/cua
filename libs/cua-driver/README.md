@@ -223,11 +223,12 @@ Register the standard MCP server:
 claude mcp add --transport stdio cua-driver -- cua-driver mcp
 ```
 
-The legacy `--claude-code-computer-use-compat` flag is still accepted so old
-configurations keep starting, but it currently has no tool-surface effect and
-does not register a standalone `screenshot` tool. Use `get_window_state` for a
-window tree plus screenshot, `get_desktop_state` for a full-display screenshot,
-and `zoom` for a cropped region.
+The old `--claude-code-computer-use-compat` flag has been removed, and
+`cua-driver` now exits with an error that names it. It had no effect on the
+tool surface, so delete it from older registrations and use the command above.
+There is no standalone `screenshot` tool. Use `get_window_state` for a window
+tree plus screenshot, `get_desktop_state` for a full-display screenshot, and
+`zoom` for a cropped region.
 
 ## macOS process identity and permissions
 

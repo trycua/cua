@@ -287,20 +287,29 @@ impl ContainerRuntime {
             _ => {}
         }
         let docker = connect_uri(&endpoint.uri).await?;
-        docker.ping().await.map_err(|e| match check {
-            // Something accepts on the socket but does not speak the
-            // Docker API as expected: an engine error, not a stopped one.
-            Some(engine::SocketCheck::Accepting) => {
-                VmmError::Engine(format!("{at} did not answer ping: {e}"))
-            }
-            _ => VmmError::NotRunning {
-                what: at,
-                hint: format!(
-                    "it did not answer ({e}); {}",
-                    engine::start_hint(&endpoint.kind)
-                ),
-            },
-        })?;
+        // An engine that is still starting (Colima's VM, Docker Desktop)
+        // accepts on its socket before it answers the API: give it a few
+        // seconds instead of failing the create at once.
+        let patience = match check {
+            Some(engine::SocketCheck::Accepting) => PING_ATTEMPTS,
+            _ => 1,
+        };
+        ping_patiently(|| docker.ping(), patience, PING_PAUSE)
+            .await
+            .map_err(|e| match check {
+                // Something accepts on the socket but does not speak the
+                // Docker API as expected: an engine error, not a stopped one.
+                Some(engine::SocketCheck::Accepting) => {
+                    VmmError::Engine(format!("{at} did not answer ping: {e}"))
+                }
+                _ => VmmError::NotRunning {
+                    what: at,
+                    hint: format!(
+                        "it did not answer ({e}); {}",
+                        engine::start_hint(&endpoint.kind)
+                    ),
+                },
+            })?;
         Ok(Self {
             docker,
             endpoint,
@@ -2260,6 +2269,10 @@ impl ContainerRuntime {
     fn forwards_ports_by_number(&self) -> bool {
         matches!(self.endpoint.kind, EngineKind::Colima { .. })
             || (cfg!(target_os = "macos") && crate::managed::is_endpoint(&self.endpoint.uri))
+            // The Hyper-V runtime's own forwarder ([`crate::managed::hyperv`]).
+            || (cfg!(windows)
+                && crate::managed::hyperv::provisioned()
+                && crate::managed::is_endpoint(&self.endpoint.uri))
     }
 
     /// Writes a container's Spaces token to [`TOKEN_FILE`] in its rootfs on
@@ -2916,6 +2929,33 @@ impl GuestExec for DockerExec {
 /// Gives every binding of `bindings` without a host port one this machine
 /// has free on loopback now (see
 /// [`ContainerRuntime::forwards_ports_by_number`]).
+/// Pings of an engine whose socket accepts but does not answer yet.
+const PING_ATTEMPTS: u32 = 5;
+/// The pause between those pings (about 8 s in all).
+const PING_PAUSE: Duration = Duration::from_secs(2);
+
+/// Runs `ping` up to `attempts` times, pausing `pause` between tries, and
+/// returns the first success or the last error.
+async fn ping_patiently<T, E, F, Fut>(
+    mut ping: F,
+    attempts: u32,
+    pause: Duration,
+) -> std::result::Result<T, E>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = std::result::Result<T, E>>,
+{
+    let mut tries = 0;
+    loop {
+        tries += 1;
+        match ping().await {
+            Ok(v) => return Ok(v),
+            Err(e) if tries >= attempts.max(1) => return Err(e),
+            Err(_) => tokio::time::sleep(pause).await,
+        }
+    }
+}
+
 /// Starts of one container that may meet a taken host port
 /// ([`is_port_conflict`]).
 const PORT_CONFLICT_ATTEMPTS: u32 = 3;
@@ -3726,6 +3766,50 @@ mod tests {
         assert_eq!(req[0].driver.as_deref(), Some("nvidia"));
         assert_eq!(req[0].count, Some(-1), "all of them");
         assert_eq!(req[0].capabilities, Some(vec![vec!["gpu".to_string()]]));
+    }
+
+    #[tokio::test]
+    async fn a_slow_engine_gets_more_pings_before_the_create_fails() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let calls = AtomicU32::new(0);
+        // Answers on the third ping, like an engine still starting.
+        let r: std::result::Result<&str, &str> = ping_patiently(
+            || {
+                let n = calls.fetch_add(1, Ordering::SeqCst) + 1;
+                async move { if n < 3 { Err("starting") } else { Ok("OK") } }
+            },
+            5,
+            Duration::from_millis(1),
+        )
+        .await;
+        assert_eq!(r, Ok("OK"));
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+
+        // One that never answers stops at the limit and keeps the last error.
+        let calls = AtomicU32::new(0);
+        let r: std::result::Result<(), u32> = ping_patiently(
+            || {
+                let n = calls.fetch_add(1, Ordering::SeqCst) + 1;
+                async move { Err(n) }
+            },
+            4,
+            Duration::from_millis(1),
+        )
+        .await;
+        assert_eq!(r, Err(4));
+
+        // One attempt (a socket that is not even accepting) does not wait.
+        let calls = AtomicU32::new(0);
+        let _: std::result::Result<(), ()> = ping_patiently(
+            || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                async { Err(()) }
+            },
+            1,
+            Duration::from_secs(60),
+        )
+        .await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]

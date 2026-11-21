@@ -1142,7 +1142,7 @@ fi
             package["dependencies"],
             {
                 "@anthropic-ai/claude-code": "2.1.322",
-                "@modelcontextprotocol/sdk": "1.30.0",
+                "@modelcontextprotocol/sdk": "1.32.2",
                 "@openai/codex": "0.146.1",
             },
         )

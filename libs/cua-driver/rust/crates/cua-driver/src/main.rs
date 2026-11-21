@@ -263,14 +263,13 @@ fn register_host_tools(registry: &mut cua_driver_core::tool::ToolRegistry) {
 /// The private socket and MCP layers consume this object downstream.
 fn build_driver(
     cursor: cursor_overlay::CursorConfig,
-    compatibility_mode: bool,
     host_owns_permission_ux: bool,
 ) -> Result<Arc<cua_driver_sdk::CuaDriver>, cua_driver_sdk::DriverError> {
     cua_driver_sdk::CuaDriver::try_create_service_for_host(cua_driver_sdk::DriverHostOptions {
         cursor,
         host_owns_permission_ux,
         host_bundle_id: std::env::var(cua_driver_core::HOST_BUNDLE_ID_ENV).ok(),
-        claude_code_compatibility: compatibility_mode,
+        claude_code_compatibility: false,
         prepare_desktop_environment: true,
         register_host_tools: Some(register_host_tools),
         authorization_host: None,
@@ -285,7 +284,6 @@ fn build_driver_without_cursor() -> Arc<cua_driver_sdk::CuaDriver> {
             enabled: false,
             ..cursor_overlay::CursorConfig::default()
         },
-        false,
         false,
     )
     .expect("test host requires an available desktop runtime")
@@ -373,7 +371,7 @@ fn test_runtime_lock() -> &'static tokio::sync::Mutex<()> {
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
-fn run_mcp_direct(compatibility_mode: bool) -> anyhow::Result<()> {
+fn run_mcp_direct() -> anyhow::Result<()> {
     // Validate immutable process policy before platform initialization. The
     // adapter repeats this check before reading stdin as defense in depth.
     cua_driver_core::authorization::validate_startup_authorization()?;
@@ -390,7 +388,7 @@ fn run_mcp_direct(compatibility_mode: bool) -> anyhow::Result<()> {
         cursor.enabled = false;
         cursor
     };
-    let driver = build_driver(cursor, compatibility_mode, true)?;
+    let driver = build_driver(cursor, true)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -608,10 +606,15 @@ fn main() {
             approve_capability_manifest,
             no_permissions_gate,
             no_automation_prompts,
-            claude_code_compat,
             grants,
             experimental_history,
         } => {
+            // Claim the socket before building the desktop runtime, so from
+            // here on `stop` and `status` see this launch as starting. A
+            // disclaimed relaunch inherits the claim.
+            let socket_lock = serve::claim_socket_for_launch(
+                &socket.clone().unwrap_or_else(serve::default_socket_path),
+            );
             if let Err(error) = configure_startup_permission_mode(
                 permission_mode.as_deref(),
                 dangerously_bypass_approvals,
@@ -622,7 +625,7 @@ fn main() {
                 eprintln!("cua-driver: authorization startup error: {error}");
                 std::process::exit(64);
             }
-            responsibility::reexec_disclaimed_if_needed();
+            responsibility::reexec_disclaimed_if_needed(socket_lock.as_ref());
             responsibility::warn_if_unbundled();
             if let Err(error) = history_runtime::configure_admission(history_admission_requested(
                 experimental_history,
@@ -638,7 +641,6 @@ fn main() {
                 approve_capability_manifest,
                 no_permissions_gate,
                 no_automation_prompts,
-                claude_code_compat,
                 &grants,
             );
             platform_macos::apple_events::refuse_ungranted_automation(no_automation_prompts);
@@ -670,16 +672,7 @@ fn main() {
             // the serve thread so `run_on_main_thread()` always finds it ready.
             let cursor_cfg = cursor_overlay::CursorConfig::from_args();
 
-            // Honour the compat flag forwarded by the MCP proxy
-            // (launch_daemon_and_wait passes `serve
-            // --claude-code-computer-use-compat`). The Serve arm is the daemon
-            // the proxy talks to. The flag is currently surface-neutral but
-            // remains forwarded for compatibility with existing launch configs.
-            let driver = match build_driver(
-                cursor_cfg.clone(),
-                claude_code_compat,
-                cua_driver_core::embedded_mode(),
-            ) {
+            let driver = match build_driver(cursor_cfg.clone(), cua_driver_core::embedded_mode()) {
                 Ok(driver) => driver,
                 Err(error) => {
                     eprintln!("cua-driver: cannot create desktop runtime: {error}");
@@ -693,7 +686,7 @@ fn main() {
             serve::set_permission_gate_pending(&driver, !gate_opts.opt_out);
             let gate_driver = driver.clone();
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
+            let pid_file = serve::PidFile::from_arg(pid_file);
 
             // Bind the Unix socket FIRST, on a background thread, BEFORE
             // running the (blocking) permissions gate (#1761).
@@ -717,7 +710,7 @@ fn main() {
             let serve_handle = std::thread::Builder::new()
                 .name("cua-serve".into())
                 .spawn(move || {
-                    serve::run_serve_cmd(driver, &sp, Some(&pid_path));
+                    serve::run_serve_cmd(driver, &sp, pid_file, socket_lock);
                     std::process::exit(0);
                 })
                 .expect("spawn serve thread");
@@ -806,8 +799,7 @@ fn main() {
         }
         cli::Command::Status { socket, pid_file } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
-            serve::run_status_cmd(&sp, &pid_path);
+            serve::run_status_cmd(&sp, pid_file.as_deref());
         }
         cli::Command::Sessions { json, socket } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
@@ -902,7 +894,6 @@ fn main() {
         cli::Command::Mcp {
             socket,
             direct,
-            claude_code_compat,
             grants,
         } => {
             let startup_started = std::time::Instant::now();
@@ -922,23 +913,18 @@ fn main() {
                             true,
                             startup_started.elapsed(),
                         );
-                        run_mcp_direct(claude_code_compat)
+                        run_mcp_direct()
                     }
                 }
                 Err(error) => Err(error),
-                Ok(false) => cli::run_mcp_via_daemon_proxy(
-                    socket,
-                    claude_code_compat,
-                    &grants,
-                    |daemon, success| {
-                        telemetry::capture_mcp_startup_completed(
-                            "daemon_proxy",
-                            daemon.telemetry_value(),
-                            success,
-                            startup_started.elapsed(),
-                        )
-                    },
-                ),
+                Ok(false) => cli::run_mcp_via_daemon_proxy(socket, &grants, |daemon, success| {
+                    telemetry::capture_mcp_startup_completed(
+                        "daemon_proxy",
+                        daemon.telemetry_value(),
+                        success,
+                        startup_started.elapsed(),
+                    )
+                }),
             };
             if let Err(e) = result {
                 eprintln!("cua-driver-rs: {e}");
@@ -1052,10 +1038,15 @@ fn main() -> anyhow::Result<()> {
             approve_capability_manifest,
             no_permissions_gate,
             no_automation_prompts,
-            claude_code_compat,
             grants,
             experimental_history,
         } => {
+            // Claim the socket before building the desktop runtime, so from
+            // here on `stop` and `status` see this launch as starting. A
+            // disclaimed relaunch inherits the claim.
+            let socket_lock = serve::claim_socket_for_launch(
+                &socket.clone().unwrap_or_else(serve::default_socket_path),
+            );
             configure_startup_permission_mode(
                 permission_mode.as_deref(),
                 dangerously_bypass_approvals,
@@ -1063,7 +1054,7 @@ fn main() -> anyhow::Result<()> {
                 approve_capability_manifest,
                 &grants,
             )?;
-            responsibility::reexec_disclaimed_if_needed();
+            responsibility::reexec_disclaimed_if_needed(socket_lock.as_ref());
             responsibility::warn_if_unbundled();
             history_runtime::configure_admission(history_admission_requested(
                 experimental_history,
@@ -1076,7 +1067,6 @@ fn main() -> anyhow::Result<()> {
                 approve_capability_manifest,
                 no_permissions_gate,
                 no_automation_prompts,
-                claude_code_compat,
                 &grants,
             );
             telemetry::capture_start(
@@ -1088,21 +1078,16 @@ fn main() -> anyhow::Result<()> {
             version_check::maybe_announce_update();
             // The Rust permissions gate is macOS-only (TCC concept).
             // On Windows / Linux the flag is accepted for CLI uniformity and
-            // ignored. The legacy Claude Code compatibility flag is accepted on
-            // every platform and has no current tool-surface effect.
+            // ignored.
             let _ = (no_permissions_gate, no_automation_prompts);
             // Serve mode needs the cursor overlay just like MCP mode.
             let cursor_cfg = cursor_overlay::CursorConfig::from_args();
-            let driver = build_driver(
-                cursor_cfg,
-                claude_code_compat,
-                cua_driver_core::embedded_mode(),
-            )?;
+            let driver = build_driver(cursor_cfg, cua_driver_core::embedded_mode())?;
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
+            let pid_file = serve::PidFile::from_arg(pid_file);
             // run_serve_cmd builds its own runtime; must run on a fresh thread.
             std::thread::spawn(move || {
-                serve::run_serve_cmd(driver, &sp, Some(&pid_path));
+                serve::run_serve_cmd(driver, &sp, pid_file, socket_lock);
             })
             .join()
             .ok();
@@ -1130,8 +1115,7 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::Status { socket, pid_file } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
-            serve::run_status_cmd(&sp, &pid_path);
+            serve::run_status_cmd(&sp, pid_file.as_deref());
             Ok(())
         }
         cli::Command::Sessions { json, socket } => {
@@ -1242,7 +1226,6 @@ fn main() -> anyhow::Result<()> {
         cli::Command::Mcp {
             socket,
             direct,
-            claude_code_compat,
             grants,
         } => {
             let startup_started = std::time::Instant::now();
@@ -1258,22 +1241,17 @@ fn main() -> anyhow::Result<()> {
                         true,
                         startup_started.elapsed(),
                     );
-                    run_mcp_direct(claude_code_compat)
+                    run_mcp_direct()
                 }
                 Err(error) => Err(error),
-                Ok(false) => cli::run_mcp_via_daemon_proxy(
-                    socket,
-                    claude_code_compat,
-                    &grants,
-                    |daemon, success| {
-                        telemetry::capture_mcp_startup_completed(
-                            "daemon_proxy",
-                            daemon.telemetry_value(),
-                            success,
-                            startup_started.elapsed(),
-                        )
-                    },
-                ),
+                Ok(false) => cli::run_mcp_via_daemon_proxy(socket, &grants, |daemon, success| {
+                    telemetry::capture_mcp_startup_completed(
+                        "daemon_proxy",
+                        daemon.telemetry_value(),
+                        success,
+                        startup_started.elapsed(),
+                    )
+                }),
             };
             if let Err(e) = result {
                 eprintln!("cua-driver-rs: {e}");

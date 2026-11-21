@@ -3810,6 +3810,7 @@ fn run_permissions_status(json: bool) {
 /// Trust the booleans only when they belong to the Cua Driver app itself
 /// (`driver-daemon`): otherwise they are the launching app's grants. A
 /// missing `source` (non-macOS, no per-app permissions) is trusted as-is.
+#[cfg(any(target_os = "macos", test))]
 fn answers_for_cua_driver(structured: &serde_json::Value) -> bool {
     structured
         .get("source")

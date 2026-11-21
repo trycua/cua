@@ -416,12 +416,7 @@ pub(crate) fn is_chromium(name: &str, bundle_id: &str) -> bool {
 fn browser_product(name: &str, bundle_id: &str) -> BrowserProduct {
     let name = name.to_ascii_lowercase();
     let bundle_id = bundle_id.to_ascii_lowercase();
-    if bundle_id == "net.imput.helium"
-        || bundle_id.starts_with("net.imput.helium.helper")
-        || name == "helium"
-    {
-        BrowserProduct::Helium
-    } else if bundle_id.starts_with("com.google.chrome") || name == "google chrome" {
+    if bundle_id.starts_with("com.google.chrome") || name == "google chrome" {
         BrowserProduct::GoogleChrome
     } else if bundle_id.starts_with("com.microsoft.edgemac") || name == "microsoft edge" {
         BrowserProduct::MicrosoftEdge
@@ -435,6 +430,11 @@ fn browser_product(name: &str, bundle_id: &str) -> BrowserProduct {
         BrowserProduct::Opera
     } else if bundle_id.starts_with("company.thebrowser.browser") || name == "arc" {
         BrowserProduct::Arc
+    } else if bundle_id == "net.imput.helium"
+        || bundle_id.starts_with("net.imput.helium.helper")
+        || name == "helium"
+    {
+        BrowserProduct::Helium
     } else if bundle_id == "com.apple.safari" || name == "safari" {
         BrowserProduct::Safari
     } else if bundle_id.contains("firefox") || name == "firefox" {
@@ -2340,6 +2340,10 @@ mod tests {
             BrowserProduct::Other
         );
         assert!(!is_chromium("HeliumNotes", "net.example.heliumnotes"));
+        assert_eq!(
+            browser_product("Helium", "com.google.Chrome"),
+            BrowserProduct::GoogleChrome
+        );
         let home = PathBuf::from(std::env::var_os("HOME").expect("HOME"));
         assert_eq!(
             default_user_data_dir(BrowserProduct::Helium),

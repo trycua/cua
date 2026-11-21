@@ -25,6 +25,11 @@ pub struct DaemonMetadata {
     pub embedded: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub host_bundle_id: Option<String>,
+    /// The daemon answers, but refuses every tool call with
+    /// `permissions_pending` until the macOS grants arrive. Older daemons
+    /// omit it.
+    #[serde(default)]
+    pub permissions_pending: bool,
 }
 
 pub fn current_daemon_metadata() -> DaemonMetadata {
@@ -39,6 +44,7 @@ pub fn current_daemon_metadata() -> DaemonMetadata {
         host_bundle_id: std::env::var(crate::HOST_BUNDLE_ID_ENV)
             .ok()
             .filter(|value| !value.is_empty()),
+        permissions_pending: false,
     }
 }
 
@@ -204,6 +210,133 @@ pub fn is_daemon_listening(socket_path: &str) -> bool {
     }
 }
 
+/// Whether a serving daemon runs tool calls yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolGate {
+    Open,
+    /// Every tool call returns `permissions_pending` (macOS, before the
+    /// Accessibility and Screen Recording grants arrive).
+    PermissionsPending,
+}
+
+/// Who holds a daemon socket path, read by [`probe_presence`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DaemonPresence {
+    /// Nothing answers, nothing holds the lock, and no socket file is left.
+    Absent,
+    /// Nothing answers or holds the lock, but a dead daemon left its socket
+    /// file. The next launch clears it. A path that is not a socket is never
+    /// stale.
+    Stale { socket_file: std::path::PathBuf },
+    /// A process holds the daemon lock without answering: a launch that has
+    /// not started serving yet, or a daemon finishing its shutdown.
+    Starting { lock_held: std::path::PathBuf },
+    /// A daemon answers on the socket.
+    Serving { pid: u32, gate: ToolGate },
+}
+
+/// How long [`probe_presence`] waits for an answer. A daemon that has bound
+/// its socket but not yet started accepting reads as `Starting`.
+const PRESENCE_REPLY_DEADLINE: Duration = Duration::from_secs(2);
+
+/// The lock a standalone daemon holds on `socket_path` from launch until it
+/// exits. The kernel drops it when the daemon dies.
+pub fn daemon_lock_path(socket_path: &str) -> std::path::PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        // `%LOCALAPPDATA%` stays the same across a user's sessions where
+        // `%TEMP%` may not. The file name is a fixed-length digest of the
+        // uppercased name, because Windows compares pipe names
+        // case-insensitively and a name can outgrow a path component.
+        use sha2::Digest as _;
+        let base = std::env::var_os("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        let digest = sha2::Sha256::digest(socket_path.to_uppercase().as_bytes());
+        base.join("cua-driver-pipe-locks")
+            .join(format!("{digest:x}.lock"))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::path::PathBuf::from(format!("{socket_path}.lock"))
+    }
+}
+
+/// Read the daemon's presence on `socket_path` from its answer, its lock and
+/// its socket file together. The lock is tried and released at once, never
+/// held, so a launch waiting on it is delayed by an instant at most.
+pub fn probe_presence(socket_path: &str) -> DaemonPresence {
+    if let Some(metadata) = probe_metadata(socket_path) {
+        return DaemonPresence::Serving {
+            pid: metadata.pid,
+            gate: if metadata.permissions_pending {
+                ToolGate::PermissionsPending
+            } else {
+                ToolGate::Open
+            },
+        };
+    }
+    let lock_path = daemon_lock_path(socket_path);
+    if lock_is_held(&lock_path) {
+        return DaemonPresence::Starting {
+            lock_held: lock_path,
+        };
+    }
+    // A named pipe vanishes with its last server, so only Unix leaves a file.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt as _;
+        if std::fs::symlink_metadata(socket_path)
+            .is_ok_and(|metadata| metadata.file_type().is_socket())
+        {
+            return DaemonPresence::Stale {
+                socket_file: socket_path.into(),
+            };
+        }
+    }
+    DaemonPresence::Absent
+}
+
+fn probe_metadata(socket_path: &str) -> Option<DaemonMetadata> {
+    let request = DaemonRequest {
+        method: "metadata".into(),
+        name: None,
+        args: None,
+        session_id: None,
+        observation_origin: None,
+        client_kind: None,
+    };
+    #[cfg(unix)]
+    let response = exchange(socket_path, &request, PRESENCE_REPLY_DEADLINE).ok()?;
+    #[cfg(not(unix))]
+    let response = {
+        // Opening a pipe that has no instance retries for seconds, so check
+        // for one first without consuming it.
+        if !is_daemon_listening(socket_path) {
+            return None;
+        }
+        // The pipe client has no read timeout, so wait for it on a thread
+        // that is left behind if the daemon never answers.
+        let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+        let socket_path = socket_path.to_owned();
+        std::thread::spawn(move || {
+            let _ = reply_tx.send(send_request(&socket_path, &request));
+        });
+        reply_rx.recv_timeout(PRESENCE_REPLY_DEADLINE).ok()?.ok()?
+    };
+    if !response.ok {
+        return None;
+    }
+    serde_json::from_value(response.result?).ok()
+}
+
+fn lock_is_held(lock_path: &std::path::Path) -> bool {
+    let Ok(lock) = std::fs::File::open(lock_path) else {
+        return false;
+    };
+    matches!(lock.try_lock(), Err(std::fs::TryLockError::WouldBlock))
+}
+
 /// Room left for the daemon to accept the connection, parse the request, run
 /// a tool for its full budget and serialize the reply.
 const DAEMON_OVERHEAD_ALLOWANCE: Duration = Duration::from_secs(30);
@@ -221,6 +354,15 @@ pub const REPLY_DEADLINE: Duration = Duration::from_millis(crate::tool_schema::T
 /// slow accessibility walks and large screenshots are supported.
 #[cfg(unix)]
 pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
+    exchange(socket_path, request, REPLY_DEADLINE)
+}
+
+#[cfg(unix)]
+fn exchange(
+    socket_path: &str,
+    request: &DaemonRequest,
+    reply_deadline: Duration,
+) -> anyhow::Result<DaemonResponse> {
     use std::io::Read;
     use std::os::unix::net::UnixStream;
     use std::time::Instant;
@@ -237,20 +379,20 @@ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Resul
 
     let mut writer = stream.try_clone()?;
     let line = serde_json::to_string(request)? + "\n";
-    let write_deadline = Instant::now() + REPLY_DEADLINE;
+    let write_deadline = Instant::now() + reply_deadline;
     crate::socket_io::write_all_with_retry(&mut writer, line.as_bytes(), write_deadline)?;
 
-    let reply_deadline = Instant::now() + REPLY_DEADLINE;
+    let reply_by = Instant::now() + reply_deadline;
     let mut buffer = Vec::with_capacity(64 * 1024);
     let mut chunk = [0_u8; 64 * 1024];
     let response_line = loop {
         if let Some(newline) = buffer.iter().position(|&byte| byte == b'\n') {
             break String::from_utf8_lossy(&buffer[..newline]).into_owned();
         }
-        let remaining = reply_deadline.saturating_duration_since(Instant::now());
+        let remaining = reply_by.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             anyhow::bail!(
-                "timed out after {REPLY_DEADLINE:?} waiting for daemon response (received {} bytes so far); \
+                "timed out after {reply_deadline:?} waiting for daemon response (received {} bytes so far); \
                  the daemon may still be running the request",
                 buffer.len()
             );
@@ -411,5 +553,13 @@ mod tests {
             metadata.mcp_protocol_version,
             cua_driver_contract::MCP_PROTOCOL_VERSION
         );
+    }
+
+    #[test]
+    fn metadata_from_a_daemon_without_a_gate_reads_as_open() {
+        let mut older = serde_json::to_value(current_daemon_metadata()).unwrap();
+        older.as_object_mut().unwrap().remove("permissions_pending");
+        let metadata: super::DaemonMetadata = serde_json::from_value(older).unwrap();
+        assert!(!metadata.permissions_pending);
     }
 }

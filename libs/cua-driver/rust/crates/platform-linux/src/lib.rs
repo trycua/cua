@@ -86,6 +86,8 @@ pub mod wayland;
 
 pub mod desktop;
 
+mod routes;
+
 // Pure AT-SPI role / X cursor name tables for presence cursor shapes; tested
 // on every host.
 pub mod pointer_shape_map;

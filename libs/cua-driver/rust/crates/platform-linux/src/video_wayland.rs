@@ -247,7 +247,7 @@ struct WfRecorderVideoBackend {
 
 impl WfRecorderVideoBackend {
     fn start(output_path: &Path) -> anyhow::Result<Self> {
-        if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        if crate::desktop::desktop() == crate::desktop::Desktop::X11 {
             anyhow::bail!("wf-recorder requires WAYLAND_DISPLAY");
         }
         let available = Command::new("wf-recorder")

@@ -11,6 +11,8 @@ use cua_driver_core::{
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+use crate::routes::LinuxPointer as _;
+
 use super::impl_::{
     coordinate_frame_schema, desktop_frame_requested, desktop_frame_unmapped, desktop_input_space,
     desktop_to_window_local, drag_steps, foreground_budget, foreground_hyprland_refusal,
@@ -253,31 +255,18 @@ impl Tool for DragTool {
                 "desktop drag",
                 foreground_budget(steps) + std::time::Duration::from_millis(duration_ms),
                 move || {
-                    if wayland {
-                        crate::wayland::drag_desktop(
-                            &space,
-                            from_x.round() as i32,
-                            from_y.round() as i32,
-                            to_x.round() as i32,
-                            to_y.round() as i32,
-                            steps as u32,
-                            duration_ms,
-                            button,
-                        )
-                    } else {
-                        let modifier_refs: Vec<&str> =
-                            modifiers.iter().map(String::as_str).collect();
-                        crate::input::send_drag_xtest_desktop_with_modifiers(
-                            from_x.round() as i32,
-                            from_y.round() as i32,
-                            to_x.round() as i32,
-                            to_y.round() as i32,
-                            button,
-                            duration_ms,
+                    let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                    crate::routes::routes().drag_desktop(
+                        &space,
+                        crate::routes::DesktopDrag {
+                            from: (from_x.round() as i32, from_y.round() as i32),
+                            to: (to_x.round() as i32, to_y.round() as i32),
                             steps,
-                            &modifier_refs,
-                        )
-                    }
+                            duration_ms,
+                            button,
+                            modifiers: &modifier_refs,
+                        },
+                    )
                 },
             );
             let visual_drag = track_overlay_drag_for(

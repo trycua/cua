@@ -11,6 +11,8 @@ use cua_driver_core::{
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+use crate::routes::LinuxPointer as _;
+
 use super::impl_::{
     apply_foreground_report, atspi_click_outcome_unknown, atspi_outcome_unknown,
     attach_focus_guard, capture_admission_error, checked_element_local_coords,
@@ -1105,24 +1107,14 @@ impl Tool for ClickTool {
                 return ToolResult::error(error.to_string());
             }
             let r = spawn_blocking_bounded("desktop click", foreground_budget(0), move || {
-                if crate::wayland::is_wayland() {
-                    if !modifiers.is_empty() {
-                        anyhow::bail!(
-                            "modified desktop clicks are unavailable on native Wayland: \
-                             the virtual-pointer route cannot carry keyboard modifier state"
-                        );
-                    }
-                    crate::wayland::click_desktop(&space, sx, sy, n as u32, button)
-                } else {
-                    let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                    crate::input::send_click_xtest_desktop_with_modifiers(
-                        sx,
-                        sy,
-                        button,
-                        n,
-                        &modifier_refs,
-                    )
+                if crate::wayland::is_wayland() && !modifiers.is_empty() {
+                    anyhow::bail!(
+                        "modified desktop clicks are unavailable on native Wayland: \
+                         the virtual-pointer route cannot carry keyboard modifier state"
+                    );
                 }
+                let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                crate::routes::routes().click_desktop(&space, (sx, sy), n, button, &modifier_refs)
             })
             .await;
             if matches!(&r, Ok(Ok(()))) {

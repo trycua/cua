@@ -59,6 +59,7 @@ const X11_EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 #[cfg(target_os = "linux")]
 const X11_COMPOSITOR_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
+use crate::routes::{LinuxOverlay as _, Outcome, OverlayRoute};
 #[cfg(target_os = "linux")]
 use cursor_overlay::ZOrderEnforcer;
 use cursor_overlay::{
@@ -434,27 +435,38 @@ fn try_send_command_for(key: CursorKey, cmd: OverlayCommand) -> bool {
     if !draws_cursor(&key) {
         return false;
     }
-    let msg = OverlayMsg::Cmd(KeyedOverlayCommand {
-        key: key.clone(),
-        cmd: cmd.clone(),
-    });
-    #[cfg(target_os = "linux")]
-    let native_wayland = crate::wayland::is_wayland();
-    let x11_overlay_allowed =
-        should_start_x11_overlay(crate::desktop::desktop() != crate::desktop::Desktop::X11);
-    let x11_queued = x11_overlay_allowed && try_send_x11_message(CMD_TX.get(), msg.clone());
-    if x11_overlay_allowed && !x11_queued {
-        tracing::warn!(
-            key = %key,
-            sender_missing = CMD_TX.get().is_none(),
-            "overlay: X11 channel rejected command (no sender or queue full)"
-        );
+    let msg = OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd });
+    crate::routes::routes().dispatch(&msg)
+}
+
+impl OverlayRoute {
+    /// Hand `msg` to this route's renderer. `Done` says whether a renderer
+    /// that fires `ARRIVAL_TX` accepted it.
+    pub(crate) fn run(self, msg: &OverlayMsg) -> Outcome<bool> {
+        match self {
+            OverlayRoute::X11Owner => {
+                let x11_queued = try_send_x11_message(CMD_TX.get(), msg.clone());
+                if !x11_queued {
+                    let key = match msg {
+                        OverlayMsg::Cmd(command) => command.key.as_str(),
+                        OverlayMsg::Remove(key) | OverlayMsg::Revive(key) => key.as_str(),
+                        OverlayMsg::Wake => "",
+                    };
+                    tracing::warn!(
+                        key = %key,
+                        sender_missing = CMD_TX.get().is_none(),
+                        "overlay: X11 channel rejected command (no sender or queue full)"
+                    );
+                }
+                Outcome::Done(x11_queued)
+            }
+            #[cfg(target_os = "linux")]
+            OverlayRoute::Wayland(backend) if wayland_overlay_backend() == backend => {
+                Outcome::Done(dispatch_wayland_overlay_message(backend, msg))
+            }
+            OverlayRoute::Wayland(_) => Outcome::NotApplicable,
+        }
     }
-    #[cfg(target_os = "linux")]
-    let layer_shell_queued = native_wayland && dispatch_wayland_overlay_message(&msg);
-    #[cfg(not(target_os = "linux"))]
-    let layer_shell_queued = false;
-    x11_queued || layer_shell_queued
 }
 
 /// How long a pointer action waits for the native Wayland glide to arrive
@@ -638,12 +650,11 @@ fn schedule_shell_helper_arrival(key: CursorKey, wait: Duration, seq: u64) -> bo
         .is_ok()
 }
 
-/// Dispatch one message to the Wayland backend. Returns whether a renderer
+/// Dispatch one message to the Wayland `backend`. Returns whether a renderer
 /// will fire this command's arrival: the native layer-shell overlay, or the
 /// pose-playing shell helper for a move.
 #[cfg(target_os = "linux")]
-fn dispatch_wayland_overlay_message(msg: &OverlayMsg) -> bool {
-    let backend = wayland_overlay_backend();
+fn dispatch_wayland_overlay_message(backend: WaylandOverlayBackend, msg: &OverlayMsg) -> bool {
     match backend {
         WaylandOverlayBackend::SemanticShellHelper | WaylandOverlayBackend::LegacyShellHelper => {
             let semantic = backend == WaylandOverlayBackend::SemanticShellHelper;
@@ -900,7 +911,7 @@ pub fn remove_cursor(key: CursorKey) {
     if crate::wayland::is_wayland() {
         // The Wayland renderer drops the cursor without an arrival.
         arrival_cancel(&key);
-        dispatch_wayland_overlay_message(&msg);
+        crate::routes::routes().dispatch(&msg);
     }
 }
 
@@ -913,7 +924,7 @@ pub fn revive_cursor(key: CursorKey) {
     let _ = try_send_x11_message(CMD_TX.get(), msg.clone());
     #[cfg(target_os = "linux")]
     if crate::wayland::is_wayland() {
-        dispatch_wayland_overlay_message(&msg);
+        crate::routes::routes().dispatch(&msg);
     }
 }
 

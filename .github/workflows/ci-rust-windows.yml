@@ -227,6 +227,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "SDK driver state root tests failed with exit $LASTEXITCODE" }
           cargo test -p cua-driver --bin cua-driver named_pipe_authentication_tests:: --locked
           if ($LASTEXITCODE -ne 0) { throw "named-pipe authentication tests failed with exit $LASTEXITCODE" }
+      - name: Run daemon serve tests
+        if: matrix.shard == 3
+        # Every test module in serve.rs, so a new named-pipe serve or shutdown
+        # test cannot be left out by a module filter.
+        working-directory: libs/cua-driver/rust
+        shell: pwsh
+        run: |
+          cargo test -p cua-driver --bin cua-driver serve:: --locked | Tee-Object -Variable serveLog
+          if ($LASTEXITCODE -ne 0) { throw "daemon serve tests failed with exit $LASTEXITCODE" }
+          if (-not ($serveLog -match 'pipe_shutdown_tests::shutdown_drains_open_connections_and_releases_proxy_sessions \.\.\. ok')) { throw "daemon serve filter did not run the pipe shutdown drain test" }
           # The production binary embeds uiAccess=true and Windows correctly
           # refuses to launch it unelevated. Run the same pure security policy
           # from the manifest-free library test target.

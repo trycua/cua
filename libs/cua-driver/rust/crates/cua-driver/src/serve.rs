@@ -85,7 +85,7 @@ async fn resume_trusted_connection(
     bind_trusted_connection(sdk, record.options, record.transport_session)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, target_os = "windows"))]
 fn reap_finished_connections(connection_tasks: &mut tokio::task::JoinSet<()>) {
     while let Some(result) = connection_tasks.try_join_next() {
         if let Err(error) = result {
@@ -157,7 +157,7 @@ fn active_proxy_sessions() -> &'static Mutex<HashSet<String>> {
     ACTIVE_PROXY_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, target_os = "windows"))]
 fn release_active_proxy_sessions() {
     if let Some(sessions) = ACTIVE_PROXY_SESSIONS.get() {
         let mut sessions = sessions.lock().unwrap();
@@ -1865,17 +1865,11 @@ async fn serve_claimed_socket(
         None => std::ptr::null_mut(),
     };
 
-    if let Some(pid_path) = pid_file_path {
-        if let Some(dir) = std::path::Path::new(pid_path).parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(pid_path, std::process::id().to_string());
-    }
-
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let shutdown_tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx)));
     let trusted_resume_registry: TrustedResumeRegistry =
         std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+    let mut connection_tasks = tokio::task::JoinSet::new();
     let parent_liveness = async {
         if cua_driver_core::parent_liveness_stdin_enabled() {
             wait_for_parent_stdin_eof().await;
@@ -1955,9 +1949,15 @@ async fn serve_claimed_socket(
         };
         if first_pipe {
             first_pipe = false;
-            // Announce only after the name is bound, so the banner never
-            // claims a pipe that failed to open.
+            // Announce only after the name is bound, so neither the banner
+            // nor the PID file claims a pipe that failed to open.
             eprintln!("Cua Driver daemon listening on {socket_path}");
+            if let Some(pid_path) = pid_file_path {
+                if let Some(dir) = std::path::Path::new(pid_path).parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                let _ = std::fs::write(pid_path, std::process::id().to_string());
+            }
         }
 
         tokio::select! {
@@ -1970,6 +1970,7 @@ async fn serve_claimed_socket(
                     continue;
                 }
                 consecutive_failures = 0;
+                reap_finished_connections(&mut connection_tasks);
                 let expected_sid = unsafe { current_user_sid_string() };
                 let client_process_id =
                     unsafe { named_pipe_client_process_id(server.as_raw_handle().cast()) };
@@ -2001,7 +2002,7 @@ async fn serve_claimed_socket(
                 let shutdown_tx2 = shutdown_tx.clone();
                 let trusted_resume_registry = trusted_resume_registry.clone();
 
-                tokio::spawn(async move {
+                connection_tasks.spawn(async move {
                     let (reader, mut writer) = tokio::io::split(server);
                     let mut lines = BufReader::new(reader).lines();
 
@@ -2345,6 +2346,11 @@ async fn serve_claimed_socket(
         }
     }
 
+    // Accepted connections may still own SDK/session state after the listener
+    // stops. Abort and join them before tearing down the SDK runtime.
+    connection_tasks.shutdown().await;
+    release_active_proxy_sessions();
+
     if let Some(pid_path) = pid_file_path {
         remove_owned_pid_file(pid_path);
     }
@@ -2471,6 +2477,104 @@ mod pipe_release_tests {
         let probe = pipe.clone();
         assert_eq!(blocking(move || serving_daemon(&probe)).await, None);
         drop(lock);
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod pipe_shutdown_tests {
+    use super::{active_proxy_sessions, serve_claimed_socket};
+    use std::time::Duration;
+    use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
+    use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
+
+    async fn connect(pipe: &str) -> BufReader<NamedPipeClient> {
+        for _ in 0..250 {
+            if let Ok(client) = ClientOptions::new().open(pipe) {
+                return BufReader::new(client);
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("daemon never opened {pipe}");
+    }
+
+    async fn request(client: &mut BufReader<NamedPipeClient>, line: serde_json::Value) {
+        let mut line = line.to_string();
+        line.push('\n');
+        client.get_mut().write_all(line.as_bytes()).await.unwrap();
+        let mut reply = String::new();
+        client.read_line(&mut reply).await.unwrap();
+        let reply: serde_json::Value = serde_json::from_str(&reply).unwrap();
+        assert_eq!(reply["ok"], true, "{reply}");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_drains_open_connections_and_releases_proxy_sessions() {
+        let _guard = crate::test_runtime_lock().lock().await;
+        let (_driver, sdk, _calls) = crate::probe_sdk().await;
+        let pipe = format!(
+            r"\\.\pipe\cua-driver-drain-{}",
+            uuid::Uuid::new_v4().simple()
+        );
+        let directory = tempfile::tempdir().unwrap();
+        let pid_file = directory.path().join("driver.pid");
+        let session = format!("drain-{}", uuid::Uuid::new_v4().simple());
+
+        // The Windows serve future is not `Send`, so drive it beside the
+        // clients on this task instead of spawning it.
+        let serve = serve_claimed_socket(sdk, &pipe, pid_file.to_str(), None);
+        let clients = async {
+            let mut control = connect(&pipe).await;
+            request(
+                &mut control,
+                serde_json::json!({"method": "session_begin", "session_id": session}),
+            )
+            .await;
+            assert!(active_proxy_sessions().lock().unwrap().contains(&session));
+            assert_eq!(
+                std::fs::read_to_string(&pid_file).unwrap(),
+                std::process::id().to_string()
+            );
+
+            let mut stopper = connect(&pipe).await;
+            request(&mut stopper, serde_json::json!({"method": "shutdown"})).await;
+            control
+        };
+        let (served, mut control) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(serve, clients)
+        })
+        .await
+        .expect("the daemon exits after shutdown");
+        served.unwrap();
+
+        // The control connection was still open; shutdown must have closed it.
+        let mut rest = String::new();
+        let read = tokio::time::timeout(Duration::from_secs(5), control.read_line(&mut rest))
+            .await
+            .expect("shutdown closes connections it accepted");
+        assert!(matches!(read, Ok(0) | Err(_)), "{read:?} {rest:?}");
+        assert!(!active_proxy_sessions().lock().unwrap().contains(&session));
+        assert!(!pid_file.exists());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_pipe_that_fails_to_open_writes_no_pid_file() {
+        let _guard = crate::test_runtime_lock().lock().await;
+        let (_driver, sdk, _calls) = crate::probe_sdk().await;
+        let directory = tempfile::tempdir().unwrap();
+        let pid_file = directory.path().join("driver.pid");
+        let not_a_pipe = directory.path().join("not-a-pipe");
+
+        let error = serve_claimed_socket(
+            sdk.clone(),
+            not_a_pipe.to_str().unwrap(),
+            Some(pid_file.to_str().unwrap()),
+            None,
+        )
+        .await
+        .expect_err("a name outside the pipe namespace cannot be created");
+        assert!(error.to_string().contains("create named pipe"), "{error}");
+        assert!(!pid_file.exists());
+        sdk.shutdown().await.unwrap();
     }
 }
 
@@ -4551,7 +4655,7 @@ mod trusted_resume_tests {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, any(unix, target_os = "windows")))]
 mod connection_reaping_tests {
     use super::reap_finished_connections;
 
@@ -4618,6 +4722,8 @@ mod session_boundary_tests {
 
     #[test]
     fn browser_download_approval_requires_a_live_proxy_session() {
+        // Daemon shutdown tests clear the shared proxy-session set.
+        let _guard = crate::test_runtime_lock().blocking_lock();
         let session = "approval-boundary-test";
         let mut raw_download = json!({"destination_root": "/private/path"});
         inject_browser_approvals("browser_download", &mut raw_download, Some(session));

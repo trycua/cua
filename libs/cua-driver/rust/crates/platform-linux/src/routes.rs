@@ -67,6 +67,33 @@ pub(crate) trait LinuxKeyboard {
     fn hotkey(&self, window: Option<u64>, keys: &[String]) -> anyhow::Result<()>;
 }
 
+/// The agent-cursor overlay.
+pub(crate) trait LinuxOverlay {
+    /// Hand `msg` to this desktop's overlay renderer. Returns whether a
+    /// renderer that reports arrivals accepted it.
+    fn dispatch(&self, msg: &cursor_overlay::OverlayMsg) -> bool;
+}
+
+/// Reading the real pointer position.
+pub(crate) trait LinuxCursorReadout {
+    /// The pointer position in the desktop frame, or the Wayland stand-in.
+    /// An error is the whole message for the caller.
+    fn cursor_position(&self) -> anyhow::Result<CursorReadout>;
+}
+
+/// What a cursor readout found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CursorReadout {
+    /// The compositor reported the real pointer.
+    Compositor(i32, i32),
+    /// The X server reported the real pointer.
+    X11(i32, i32),
+    /// Native Wayland lets no client read the real pointer. This is the last
+    /// position this process synthesized, in the desktop frame, or `None`
+    /// before its first move.
+    Unsupported { last_synthetic: Option<(i32, i32)> },
+}
+
 /// A display capture route. The bodies are in `wayland/mod.rs`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DisplayRoute {
@@ -128,6 +155,28 @@ pub(crate) enum KeyboardRoute {
     VirtualKeyboard,
     /// `wtype`, then libei on a portal-input build. Terminal.
     Wtype,
+}
+
+/// An overlay route. The bodies are in `overlay.rs`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OverlayRoute {
+    /// The X11 owner thread's full-root override-redirect window. Terminal.
+    X11Owner,
+    /// One native Wayland backend. Applies only when it is the backend the
+    /// session probed once; then terminal.
+    Wayland(crate::overlay::WaylandOverlayBackend),
+}
+
+/// A cursor readout route. The bodies are in `wayland/mod.rs`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CursorReadoutRoute {
+    /// Hyprland's pointer over IPC, in the desktop frame. Terminal.
+    Hyprland,
+    /// [`CursorReadout::Unsupported`]: the last synthesized position.
+    /// Terminal.
+    LastSynthetic,
+    /// XQueryPointer on the root window.
+    X11,
 }
 
 /// The display capture routes for `desktop`, in the order they are tried.
@@ -259,6 +308,31 @@ pub(crate) fn keyboard_routes(desktop: Desktop) -> Vec<KeyboardRoute> {
     }
 }
 
+/// The overlay routes for `desktop`, in the order they are tried. XWayland
+/// has none: the full-root X11 window would cover the Wayland desktop in
+/// black, and the native backends need the Wayland opt-in.
+pub(crate) fn overlay_routes(desktop: Desktop) -> Vec<OverlayRoute> {
+    use crate::overlay::WaylandOverlayBackend::*;
+    match desktop {
+        Desktop::X11 => vec![OverlayRoute::X11Owner],
+        Desktop::XWayland(_) => Vec::new(),
+        Desktop::Wayland(_) => [SemanticShellHelper, LayerShell, LegacyShellHelper]
+            .map(OverlayRoute::Wayland)
+            .to_vec(),
+    }
+}
+
+/// The cursor readout routes for `desktop`, in the order they are tried.
+/// XWayland reads the pointer through X11.
+pub(crate) fn cursor_readout_routes(desktop: Desktop) -> Vec<CursorReadoutRoute> {
+    use CursorReadoutRoute::*;
+    match desktop {
+        Desktop::X11 | Desktop::XWayland(_) => vec![X11],
+        Desktop::Wayland(Compositor::Hyprland) => vec![Hyprland],
+        Desktop::Wayland(_) => vec![LastSynthetic],
+    }
+}
+
 /// Every capability's routes for one desktop.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct LinuxRoutes {
@@ -266,6 +340,8 @@ pub(crate) struct LinuxRoutes {
     window_capture: Vec<WindowRoute>,
     desktop_pointer: Vec<DesktopPointerRoute>,
     keyboard: Vec<KeyboardRoute>,
+    overlay: Vec<OverlayRoute>,
+    cursor_readout: Vec<CursorReadoutRoute>,
 }
 
 impl LinuxRoutes {
@@ -275,6 +351,8 @@ impl LinuxRoutes {
             window_capture: window_routes(desktop),
             desktop_pointer: desktop_pointer_routes(desktop),
             keyboard: keyboard_routes(desktop),
+            overlay: overlay_routes(desktop),
+            cursor_readout: cursor_readout_routes(desktop),
         }
     }
 }
@@ -359,6 +437,23 @@ impl LinuxKeyboard for LinuxRoutes {
         first_route("keyboard", &self.keyboard, |route| {
             route.hotkey(window, keys)
         })
+    }
+}
+
+impl LinuxOverlay for LinuxRoutes {
+    fn dispatch(&self, msg: &cursor_overlay::OverlayMsg) -> bool {
+        first_route("overlay", &self.overlay, |route| route.run(msg)).unwrap_or(false)
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl LinuxCursorReadout for LinuxRoutes {
+    fn cursor_position(&self) -> anyhow::Result<CursorReadout> {
+        first_route(
+            "cursor readout",
+            &self.cursor_readout,
+            CursorReadoutRoute::read,
+        )
     }
 }
 
@@ -522,6 +617,45 @@ mod tests {
         ];
         for (desktop, routes) in table {
             assert_eq!(keyboard_routes(desktop), routes, "{desktop:?}");
+        }
+    }
+
+    #[test]
+    fn only_x11_and_native_wayland_draw_an_overlay() {
+        use crate::overlay::WaylandOverlayBackend::*;
+        assert_eq!(overlay_routes(Desktop::X11), [OverlayRoute::X11Owner]);
+        for compositor in COMPOSITORS {
+            assert_eq!(
+                overlay_routes(Desktop::XWayland(compositor)),
+                [],
+                "{compositor:?}"
+            );
+            assert_eq!(
+                overlay_routes(Desktop::Wayland(compositor)),
+                [SemanticShellHelper, LayerShell, LegacyShellHelper].map(OverlayRoute::Wayland),
+                "{compositor:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_hyprland_reads_the_real_wayland_pointer() {
+        use CursorReadoutRoute::*;
+        let mut x11 = vec![Desktop::X11];
+        x11.extend(COMPOSITORS.map(Desktop::XWayland));
+        for desktop in x11 {
+            assert_eq!(cursor_readout_routes(desktop), [X11], "{desktop:?}");
+        }
+        assert_eq!(
+            cursor_readout_routes(Desktop::Wayland(Compositor::Hyprland)),
+            [Hyprland]
+        );
+        for compositor in [Compositor::Injected, Compositor::Niri, Compositor::Other] {
+            assert_eq!(
+                cursor_readout_routes(Desktop::Wayland(compositor)),
+                [LastSynthetic],
+                "{compositor:?}"
+            );
         }
     }
 

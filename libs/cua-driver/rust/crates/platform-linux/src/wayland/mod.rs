@@ -91,8 +91,8 @@ use wayland_protocols_wlr::virtual_pointer::v1::client::{
 const BTN_LEFT: u32 = 0x110;
 
 use crate::routes::{
-    DesktopDrag, DesktopPointerRoute, DisplayRoute, KeyboardRoute, LinuxCapture as _,
-    LinuxKeyboard as _, Outcome, WindowRoute,
+    CursorReadout, CursorReadoutRoute, DesktopDrag, DesktopPointerRoute, DisplayRoute,
+    KeyboardRoute, LinuxCapture as _, LinuxKeyboard as _, Outcome, WindowRoute,
 };
 use crate::x11::WindowInfo;
 
@@ -2615,6 +2615,64 @@ pub fn last_synth_cursor_pos() -> Option<(i32, i32)> {
         .lock()
         .ok()
         .and_then(|g| *g)
+}
+
+impl CursorReadoutRoute {
+    /// Read the pointer on this route. An error carries the whole message.
+    pub(crate) fn read(self) -> Outcome<CursorReadout> {
+        match self {
+            // Hyprland reports the real pointer over IPC; return it in the
+            // desktop-frame coordinates that get_desktop_state and desktop
+            // actions use. The synthetic registry holds layout coordinates,
+            // not the desktop frame, so a failed compositor query is an error.
+            CursorReadoutRoute::Hyprland => {
+                let position = hyprland::cursor_position().and_then(|(x, y)| {
+                    Ok(hyprland::desktop_frame()?.from_layout(x.round() as i32, y.round() as i32))
+                });
+                match position {
+                    Ok((x, y)) => Outcome::Done(CursorReadout::Compositor(x, y)),
+                    Err(e) => Outcome::Refused(anyhow::anyhow!(
+                        "Could not read the Hyprland pointer position: {e:#}"
+                    )),
+                }
+            }
+            // Native Wayland has no protocol for clients to query the real
+            // global cursor position, so report the synthetic registry that
+            // records every `motion_absolute` this process emits.
+            CursorReadoutRoute::LastSynthetic => {
+                // The registry holds layout coordinates; a KWin or Mutter
+                // desktop frame can start elsewhere, and agents read this in
+                // that frame.
+                let frame = match logical_desktop_layout() {
+                    Ok(layout) => layout.map(|layout| layout.frame),
+                    Err(e) => {
+                        return Outcome::Refused(anyhow::anyhow!(
+                            "Could not read the desktop layout: {e:#}"
+                        ))
+                    }
+                };
+                let in_frame =
+                    |(x, y): (i32, i32)| frame.as_ref().map_or((x, y), |f| f.from_layout(x, y));
+                Outcome::Done(CursorReadout::Unsupported {
+                    last_synthetic: last_synth_cursor_pos().map(in_frame),
+                })
+            }
+            CursorReadoutRoute::X11 => x11_pointer_position()
+                .map(|(x, y)| CursorReadout::X11(x, y))
+                .into(),
+        }
+    }
+}
+
+/// The real pointer position on the X11 root window.
+fn x11_pointer_position() -> anyhow::Result<(i32, i32)> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::ConnectionExt as _;
+    use x11rb::rust_connection::RustConnection;
+    let (conn, screen_num) = RustConnection::connect(None)?;
+    let root = conn.setup().roots[screen_num].root;
+    let reply = conn.query_pointer(root)?.reply()?;
+    Ok((reply.root_x as i32, reply.root_y as i32))
 }
 
 /// Warp the cursor to absolute output coordinates `(x, y)` using

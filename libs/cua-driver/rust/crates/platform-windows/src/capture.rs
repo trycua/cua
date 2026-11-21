@@ -636,22 +636,20 @@ pub fn screenshot_window(hwnd: u64) -> Result<(String, u32, u32)> {
 /// does for the other capture paths. The agent cursor overlay is excluded
 /// from the duplicated frame the same way it is for desktop captures.
 ///
-/// Returns `None` unless the window is shown, covers a whole monitor, no other
-/// window overlaps its frame before or after the capture, and duplication
-/// succeeds, so the caller keeps the PrintWindow / WGC / BitBlt ladder as the
-/// fallback for every other case.
+/// Returns `None` unless, both before and after the capture, the window is
+/// shown at the same bounds, covers a whole monitor and no other window
+/// overlaps its frame, and duplication succeeds, so the caller keeps the
+/// PrintWindow / WGC / BitBlt ladder as the fallback for every other case.
 unsafe fn screenshot_via_dxgi_duplication(
     hwnd: HWND,
 ) -> Option<(Vec<u8>, i32, i32, FrameGeometry)> {
     use cursor_overlay::capture_exclusion::{capture_excluding_overlays, ResidualCheck};
-    use windows::Win32::UI::WindowsAndMessaging::IsWindowVisible;
 
-    // A hidden or cloaked window keeps its bounds, and the monitor would then
-    // show something else entirely.
-    if !IsWindowVisible(hwnd).as_bool() || cloaked(hwnd) != Some(false) {
+    if !window_shown(hwnd) {
         return None;
     }
-    let (window, dwm) = window_geometry(hwnd).ok()?;
+    let geometry = window_geometry(hwnd).ok()?;
+    let (window, dwm) = geometry;
     let window_rect = bounds_rect((
         window.left,
         window.top,
@@ -690,8 +688,12 @@ unsafe fn screenshot_via_dxgi_duplication(
     if output.width as u32 != captured.width || output.height as u32 != captured.height {
         return None;
     }
-    // A window that appeared while duplication waited for a frame may be in it.
-    if window_above_overlaps(hwnd, frame) {
+    // Duplication waits for a present: in that time the target may have hidden,
+    // moved, or been covered, and the frame would show something else.
+    if !window_shown(hwnd)
+        || window_geometry(hwnd).ok() != Some(geometry)
+        || window_above_overlaps(hwnd, frame)
+    {
         return None;
     }
     let pixels = crop_bgra(&captured.bgra, output, frame)?;
@@ -746,6 +748,17 @@ unsafe fn window_above_overlaps(target: HWND, frame: FrameGeometry) -> bool {
         }
     }
     false
+}
+
+/// Whether `window` is visible, not minimized, and known to be uncloaked. A
+/// hidden or cloaked window keeps its bounds while the monitor shows
+/// something else there.
+unsafe fn window_shown(window: HWND) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindowVisible};
+
+    IsWindowVisible(window).as_bool()
+        && !IsIconic(window).as_bool()
+        && cloaked(window) == Some(false)
 }
 
 /// DWM's cloak state for `window`, or `None` when it cannot be read.

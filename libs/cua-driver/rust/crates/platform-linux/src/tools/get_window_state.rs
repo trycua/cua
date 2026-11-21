@@ -17,6 +17,7 @@ use super::impl_::{
     framed_elements_first, non_ax_escalation, popup_menu_elements, rects_intersect, ToolState,
     WindowOverlays,
 };
+use crate::routes::LinuxCapture as _;
 
 // ── get_window_state ─────────────────────────────────────────────────────────
 
@@ -682,10 +683,12 @@ impl Tool for GetWindowStateTool {
                         .and_then(|(x, y, w, h)| {
                             crate::capture::screenshot_root_region_png(x, y, w, h)
                         })
-                        .or_else(|_| crate::wayland::screenshot_dispatch_with_pid(xid, pid))
+                        .or_else(|_| crate::routes::routes().capture_window(xid, Some(pid)))
                         .map(|png| (png, None))
                 } else {
-                    crate::wayland::screenshot_dispatch_with_pid(xid, pid).map(|png| (png, None))
+                    crate::routes::routes()
+                        .capture_window(xid, Some(pid))
+                        .map(|png| (png, None))
                 };
                 match captured {
                     Ok((raw, original_size)) => {

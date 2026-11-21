@@ -161,6 +161,7 @@ fn admit_with_live_dimensions(
 
 #[cfg(target_os = "linux")]
 fn live_action_dimensions(target: &CaptureTarget) -> anyhow::Result<NativeActionDimensions> {
+    use crate::routes::LinuxCapture as _;
     let dimensions = match target {
         CaptureTarget::Window { pid, window_id } => {
             let identity_matches = if crate::wayland::is_wayland() {
@@ -172,7 +173,7 @@ fn live_action_dimensions(target: &CaptureTarget) -> anyhow::Result<NativeAction
                 identity_matches,
                 "native window identity changed after capture"
             );
-            let png = crate::wayland::screenshot_dispatch_with_pid(*window_id, *pid)?;
+            let png = crate::routes::routes().capture_window(*window_id, Some(*pid))?;
             crate::capture::png_dimensions_pub(&png)?
         }
         CaptureTarget::PrimaryDesktop => {

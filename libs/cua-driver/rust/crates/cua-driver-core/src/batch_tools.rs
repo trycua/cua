@@ -1278,6 +1278,9 @@ async fn observe_after_settle(
             args["since"] = since;
         }
         tokio::time::sleep(OBSERVE_SETTLE_POLL).await;
+        if Instant::now() >= deadline {
+            return result;
+        }
         // Let a started read finish: it replaces the window's snapshot, so an
         // earlier result would hand back retired tokens.
         result = registry.invoke(OBSERVE_TOOL, args.clone()).await;

@@ -2756,9 +2756,15 @@ fn daemon_start_hint(socket_path: &str) -> String {
         return if default_socket {
             format!("Start it with: {cli_name} permissions grant")
         } else {
+            // LaunchServices starts the app in `/`, so a relative path would
+            // name a different socket than the one this command used.
+            let absolute = std::path::absolute(socket_path)
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| socket_path.to_owned());
             format!(
-                "Start it with: open -n -g {} --args serve --socket {socket}",
-                shell_argument(&crate::bundle::app_bundle_path())
+                "Start it with: open -n -g {} --args serve --socket {}",
+                shell_argument(&crate::bundle::app_bundle_path()),
+                shell_argument(&absolute)
             )
         };
     }
@@ -6986,6 +6992,15 @@ mod tests {
                     "Start it with: open -n -g {} --args serve --socket /tmp/cua-test.sock",
                     crate::bundle::app_bundle_path()
                 )
+            );
+            let relative_hint = daemon_start_hint("rel/cua-test.sock");
+            let expected = std::env::current_dir().unwrap().join("rel/cua-test.sock");
+            assert!(
+                relative_hint.ends_with(&format!(
+                    "--socket {}",
+                    shell_argument(&expected.to_string_lossy())
+                )),
+                "{relative_hint}"
             );
         }
         #[cfg(not(target_os = "macos"))]

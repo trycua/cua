@@ -92,6 +92,7 @@ pub(super) struct FixtureState {
     multiline_field: bool,
     semantic_large_page: bool,
     semantic_html_style: String,
+    semantic_scoped_rows: bool,
     semantic_full_dom_fails: bool,
     semantic_full_dom_times_out: bool,
     semantic_truncated_dom: bool,
@@ -189,6 +190,7 @@ impl Default for FixtureState {
             multiline_field: false,
             semantic_large_page: false,
             semantic_html_style: String::new(),
+            semantic_scoped_rows: false,
             semantic_full_dom_fails: false,
             semantic_full_dom_times_out: false,
             semantic_truncated_dom: false,
@@ -391,6 +393,68 @@ fn large_semantic_document(html_style: &str) -> Value {
     })
 }
 
+/// Two release rows with repeated action names. The first row deliberately
+/// exceeds the semantic page budget so ancestor-scoped continuation can be
+/// proven without ever admitting the matching action from the second row.
+fn scoped_rows_semantic_document(frame_id: &str) -> Value {
+    let mut first_row_children = vec![json!({
+        "nodeType": 1,
+        "nodeName": "A",
+        "backendNodeId": 4_100,
+        "attributes": ["aria-label", "0.19.89", "href", "/release/0.19.89"],
+    })];
+    for id in 0..305_i64 {
+        first_row_children.push(json!({
+            "nodeType": 1,
+            "nodeName": "BUTTON",
+            "backendNodeId": 4_200 + id,
+            "attributes": ["aria-label", "View release options"],
+        }));
+    }
+    json!({
+        "root": {
+            "nodeType": 9,
+            "nodeName": "#document",
+            "documentURL": "https://fixture.test/releases",
+            "frameId": frame_id,
+            "children": [{
+                "nodeType": 1,
+                "nodeName": "HTML",
+                "backendNodeId": 3_999,
+                "children": [
+                    {
+                        "nodeType": 1,
+                        "nodeName": "DIV",
+                        "backendNodeId": 4_000,
+                        "attributes": ["role", "row", "aria-label", "Release 0.19.89"],
+                        "children": first_row_children,
+                    },
+                    {
+                        "nodeType": 1,
+                        "nodeName": "DIV",
+                        "backendNodeId": 5_000,
+                        "attributes": ["role", "row", "aria-label", "Release 0.19.88"],
+                        "children": [
+                            {
+                                "nodeType": 1,
+                                "nodeName": "A",
+                                "backendNodeId": 5_100,
+                                "attributes": ["aria-label", "0.19.88", "href", "/release/0.19.88"],
+                            },
+                            {
+                                "nodeType": 1,
+                                "nodeName": "BUTTON",
+                                "backendNodeId": 5_200,
+                                "attributes": ["aria-label", "View release options"],
+                            }
+                        ]
+                    }
+                ]
+            }]
+        }
+    })
+}
+
 fn truncated_semantic_document() -> Value {
     json!({
         "root": {
@@ -492,6 +556,107 @@ fn large_semantic_ax_tree(frame_id: &str) -> Value {
         }));
     }
     json!({"nodes": nodes})
+}
+
+fn scoped_rows_semantic_ax_tree(frame_id: &str) -> Value {
+    if !matches!(frame_id, "F_MAIN" | "F_OOPIF") {
+        return json!({"nodes": [{
+            "nodeId": format!("root-{frame_id}"),
+            "ignored": false,
+            "role": {"value": "RootWebArea"},
+            "childIds": []
+        }]});
+    }
+    let mut first_row_children = vec!["version-89".to_owned()];
+    first_row_children.extend((0..305).map(|id| format!("options-89-{id}")));
+    let mut nodes = vec![
+        json!({
+            "nodeId": "root-main",
+            "ignored": false,
+            "role": {"value": "RootWebArea"},
+            "name": {"value": "Releases"},
+            "childIds": ["row-89", "row-88"]
+        }),
+        json!({
+            "nodeId": "row-89",
+            "parentId": "root-main",
+            "ignored": false,
+            "backendDOMNodeId": 4_000,
+            "role": {"value": "row"},
+            "name": {"value": "Release 0.19.89"},
+            "childIds": first_row_children
+        }),
+        json!({
+            "nodeId": "version-89",
+            "parentId": "row-89",
+            "ignored": false,
+            "backendDOMNodeId": 4_100,
+            "role": {"value": "link"},
+            "name": {"value": "0.19.89"},
+            "childIds": []
+        }),
+    ];
+    for id in 0..305_i64 {
+        nodes.push(json!({
+            "nodeId": format!("options-89-{id}"),
+            "parentId": "row-89",
+            "ignored": false,
+            "backendDOMNodeId": 4_200 + id,
+            "role": {"value": "button"},
+            "name": {"value": "View release options"},
+            "childIds": []
+        }));
+    }
+    nodes.extend([
+        json!({
+            "nodeId": "row-88",
+            "parentId": "root-main",
+            "ignored": false,
+            "backendDOMNodeId": 5_000,
+            "role": {"value": "row"},
+            "name": {"value": "Release 0.19.88"},
+            "childIds": ["version-88", "options-88"]
+        }),
+        json!({
+            "nodeId": "version-88",
+            "parentId": "row-88",
+            "ignored": false,
+            "backendDOMNodeId": 5_100,
+            "role": {"value": "link"},
+            "name": {"value": "0.19.88"},
+            "childIds": []
+        }),
+        json!({
+            "nodeId": "options-88",
+            "parentId": "row-88",
+            "ignored": false,
+            "backendDOMNodeId": 5_200,
+            "role": {"value": "button"},
+            "name": {"value": "View release options"},
+            "childIds": []
+        }),
+    ]);
+    json!({"nodes": nodes})
+}
+
+fn scoped_rows_layout_snapshot() -> Value {
+    let mut backends = vec![3_999, 4_000, 4_100];
+    let mut bounds = vec![
+        [0.0, 0.0, 800.0, 13_000.0],
+        [0.0, 0.0, 800.0, 12_500.0],
+        [10.0, 10.0, 100.0, 30.0],
+    ];
+    for id in 0..305_i64 {
+        backends.push(4_200 + id);
+        bounds.push([120.0, 10.0 + id as f64 * 40.0, 180.0, 30.0]);
+    }
+    backends.extend([5_000, 5_100, 5_200]);
+    bounds.extend([
+        [0.0, 13_000.0, 800.0, 100.0],
+        [10.0, 13_010.0, 100.0, 30.0],
+        [120.0, 13_010.0, 180.0, 30.0],
+    ]);
+    semantic_layout_snapshot(&backends, &bounds)
 }
 
 fn semantic_layout_snapshot(backends: &[i64], bounds: &[[f64; 4]]) -> Value {
@@ -673,7 +838,9 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 } else if st.semantic_truncated_dom && depth == 8 {
                     MockReply::ok(truncated_semantic_document())
                 } else {
-                    MockReply::ok(if st.semantic_large_page {
+                    MockReply::ok(if st.semantic_scoped_rows {
+                        scoped_rows_semantic_document("F_MAIN")
+                    } else if st.semantic_large_page {
                         large_semantic_document(&st.semantic_html_style)
                     } else {
                         main_document()
@@ -685,26 +852,40 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     "node": large_semantic_document(&st.semantic_html_style)["root"]["children"][0].clone()
                 }))
             }
-            "DOM.getDocument" if is_oopif => MockReply::ok(oopif_document()),
+            "DOM.getDocument" if is_oopif => MockReply::ok(if st.semantic_scoped_rows {
+                scoped_rows_semantic_document("F_OOPIF")
+            } else {
+                oopif_document()
+            }),
             "Accessibility.getFullAXTree" if is_tab => {
                 let frame_id = call.params["frameId"].as_str().unwrap_or("F_MAIN");
-                if st.semantic_large_page {
+                if st.semantic_scoped_rows {
+                    MockReply::ok(scoped_rows_semantic_ax_tree(frame_id))
+                } else if st.semantic_large_page {
                     MockReply::ok(large_semantic_ax_tree(frame_id))
                 } else {
                     MockReply::ok(json!({"nodes": []}))
                 }
             }
-            "Accessibility.getFullAXTree" if is_oopif => MockReply::ok(json!({"nodes": [
-                {"nodeId": "oopif-root", "ignored": false,
-                 "role": {"value": "RootWebArea"}, "childIds": ["oopif-input"]},
-                {"nodeId": "oopif-input", "parentId": "oopif-root", "ignored": false,
-                 "backendDOMNodeId": 100, "role": {"value": "textbox"},
-                 "name": {"value": "Embedded input"},
-                 "properties": [{"name": "editable", "value": {"value": "plaintext"}}],
-                 "childIds": []}
-            ]})),
+            "Accessibility.getFullAXTree" if is_oopif => {
+                if st.semantic_scoped_rows {
+                    MockReply::ok(scoped_rows_semantic_ax_tree("F_OOPIF"))
+                } else {
+                    MockReply::ok(json!({"nodes": [
+                        {"nodeId": "oopif-root", "ignored": false,
+                         "role": {"value": "RootWebArea"}, "childIds": ["oopif-input"]},
+                        {"nodeId": "oopif-input", "parentId": "oopif-root", "ignored": false,
+                         "backendDOMNodeId": 100, "role": {"value": "textbox"},
+                         "name": {"value": "Embedded input"},
+                         "properties": [{"name": "editable", "value": {"value": "plaintext"}}],
+                         "childIds": []}
+                    ]}))
+                }
+            }
             "DOMSnapshot.captureSnapshot" if is_tab => {
-                if st.semantic_large_page {
+                if st.semantic_scoped_rows {
+                    MockReply::ok(scoped_rows_layout_snapshot())
+                } else if st.semantic_large_page {
                     let mut backends = vec![999, 2000, 2003, 2010, 2011];
                     let mut bounds = vec![
                         [0.0, 0.0, 800.0, 600.0],
@@ -722,10 +903,16 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     MockReply::ok(semantic_layout_snapshot(&[], &[]))
                 }
             }
-            "DOMSnapshot.captureSnapshot" if is_oopif => MockReply::ok(semantic_layout_snapshot(
-                &[90, 100],
-                &[[0.0, 0.0, 300.0, 100.0], [10.0, 10.0, 120.0, 30.0]],
-            )),
+            "DOMSnapshot.captureSnapshot" if is_oopif => {
+                if st.semantic_scoped_rows {
+                    MockReply::ok(scoped_rows_layout_snapshot())
+                } else {
+                    MockReply::ok(semantic_layout_snapshot(
+                        &[90, 100],
+                        &[[0.0, 0.0, 300.0, 100.0], [10.0, 10.0, 120.0, 30.0]],
+                    ))
+                }
+            }
             // The OOPIF child's box models sit near (1000, 1000), so its own
             // viewport is large enough to contain them.
             "Page.getLayoutMetrics" if is_oopif => MockReply::ok(json!({
@@ -2862,6 +3049,312 @@ async fn main_frame_navigation_invalidates_semantic_continuations() {
     let stale = semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})).await;
     assert_eq!(stale["status"], "refused", "{stale}");
     assert_eq!(stale["refusal"]["code"], "browser_ref_stale");
+}
+
+#[tokio::test]
+async fn semantic_ancestor_scope_is_row_precise_and_continuation_preserves_anchor() {
+    let f = fixture_with(|state| {
+        state.semantic_scoped_rows = true;
+        state.oopif_present = false;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let seeded = semantic_snapshot_with(&f, &target, &tab, json!({"query": "0.19.89"})).await;
+    let source_ref = seeded["refs"]
+        .as_array()
+        .and_then(|refs| refs.iter().find(|entry| entry["role"] == "link"))
+        .and_then(|entry| entry["ref"].as_str())
+        .expect("version link ref")
+        .to_owned();
+
+    let unavailable = semantic_snapshot_with(
+        &f,
+        &target,
+        &tab,
+        json!({
+            "scope_ref": source_ref,
+            "scope_ancestor_role": "treegrid",
+            "query": "View release options"
+        }),
+    )
+    .await;
+    assert_eq!(unavailable["status"], "refused", "{unavailable}");
+    assert_eq!(unavailable["refusal"]["code"], "browser_scope_unavailable");
+    assert_eq!(
+        unavailable["refusal"]["detail"]["reason"],
+        "ancestor_missing"
+    );
+
+    let first = semantic_snapshot_with(
+        &f,
+        &target,
+        &tab,
+        json!({
+            "scope_ref": source_ref,
+            "scope_ancestor_role": "RoW",
+            "query": "View release options"
+        }),
+    )
+    .await;
+    assert_eq!(first["status"], "ok", "{first}");
+    assert_eq!(first["snapshot"]["scope"], "ancestor_subtree", "{first}");
+    assert_eq!(first["snapshot"]["complete"], false, "{first}");
+    assert_eq!(first["snapshot"]["selected_nodes"], 300, "{first}");
+    assert_eq!(first["snapshot"]["total_nodes"], 305, "{first}");
+    assert_eq!(
+        first["snapshot"]["scope_anchor"]["requested_ref"],
+        source_ref
+    );
+    assert_eq!(first["snapshot"]["scope_anchor"]["role"], "row");
+    assert_eq!(first["snapshot"]["scope_anchor"]["name"], "Release 0.19.89");
+    assert_eq!(first["snapshot"]["scope_anchor"]["frame"], "main");
+    assert_eq!(first["snapshot"]["scope_anchor"]["distance"], 1);
+    assert!(first["refs"].as_array().is_some_and(|refs| {
+        refs.len() == 300
+            && refs
+                .iter()
+                .all(|entry| entry["name"] == "View release options" && entry["frame"] == "main")
+    }));
+
+    let token = first["snapshot"]["continuation"]
+        .as_str()
+        .expect("scoped continuation")
+        .to_owned();
+    let incompatible = semantic_snapshot_with(
+        &f,
+        &target,
+        &tab,
+        json!({
+            "continuation": token,
+            "scope_ref": source_ref,
+            "scope_ancestor_role": "row",
+            "query": "View release options"
+        }),
+    )
+    .await;
+    assert_eq!(incompatible["status"], "refused", "{incompatible}");
+    assert_eq!(incompatible["refusal"]["code"], "browser_ref_stale");
+    let role_only = semantic_snapshot_with(
+        &f,
+        &target,
+        &tab,
+        json!({"continuation": token, "scope_ancestor_role": "row"}),
+    )
+    .await;
+    assert_eq!(role_only["status"], "refused", "{role_only}");
+    assert_eq!(role_only["refusal"]["code"], "browser_ref_stale");
+
+    let continued = semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})).await;
+    assert_eq!(continued["status"], "ok", "{continued}");
+    assert_eq!(continued["snapshot"]["scope"], "continuation");
+    assert_eq!(continued["snapshot"]["complete"], true, "{continued}");
+    assert_eq!(continued["snapshot"]["selected_nodes"], 5, "{continued}");
+    assert_eq!(continued["snapshot"]["total_nodes"], 305, "{continued}");
+    assert_eq!(
+        continued["snapshot"]["scope_anchor"],
+        first["snapshot"]["scope_anchor"]
+    );
+    assert!(continued["refs"].as_array().is_some_and(|refs| {
+        refs.len() == 5
+            && refs
+                .iter()
+                .all(|entry| entry["name"] == "View release options")
+    }));
+}
+
+#[tokio::test]
+async fn semantic_ancestor_scope_schema_and_combinations_fail_closed() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let tool = GetBrowserStateTool::new(f.engine.clone());
+    assert_eq!(
+        tool.def().input_schema["properties"]["scope_ancestor_role"]["maxLength"],
+        128
+    );
+
+    let missing_ref = tool
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "snapshot_format": "semantic_v2",
+            "scope_ancestor_role": "row",
+            "query": "Options"
+        }))
+        .await;
+    assert_eq!(missing_ref.is_error, Some(true));
+    assert!(missing_ref.content.iter().any(|content| matches!(
+        content,
+        Content::Text { text, .. } if text.contains("requires both scope_ref and query")
+    )));
+
+    let legacy = tool
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "snapshot_format": "dom_refs_v1",
+            "scope_ref": "p1:0",
+            "scope_ancestor_role": "row",
+            "query": "Options"
+        }))
+        .await;
+    assert_eq!(legacy.is_error, Some(true));
+    assert!(legacy.content.iter().any(|content| matches!(
+        content,
+        Content::Text { text, .. } if text.contains("require snapshot_format=\"semantic_v2\"")
+    )));
+
+    for invalid in [Value::Null, json!(42)] {
+        let result = tool
+            .invoke(json!({
+                "target_id": target,
+                "tab_id": tab,
+                "session": SESSION,
+                "snapshot_format": "dom_refs_v1",
+                "scope_ancestor_role": invalid
+            }))
+            .await;
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    let bind_mode = tool
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "scope_ancestor_role": "row"
+        }))
+        .await;
+    assert_eq!(bind_mode.is_error, Some(true));
+    assert!(bind_mode.content.iter().any(|content| matches!(
+        content,
+        Content::Text { text, .. } if text.contains("only in snapshot mode")
+    )));
+
+    let whitespace = tool
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "snapshot_format": "semantic_v2",
+            "scope_ref": "p1:0",
+            "scope_ancestor_role": " row",
+            "query": "Options"
+        }))
+        .await;
+    assert_eq!(whitespace.is_error, Some(true));
+}
+
+#[tokio::test]
+async fn semantic_continuation_token_serves_only_one_concurrent_page() {
+    let f = fixture_with(|state| {
+        state.semantic_scoped_rows = true;
+        state.oopif_present = false;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let seeded = semantic_snapshot_with(&f, &target, &tab, json!({"query": "0.19.89"})).await;
+    let source_ref = seeded["refs"]
+        .as_array()
+        .and_then(|refs| refs.iter().find(|entry| entry["role"] == "link"))
+        .and_then(|entry| entry["ref"].as_str())
+        .expect("version link ref")
+        .to_owned();
+    let first = semantic_snapshot_with(
+        &f,
+        &target,
+        &tab,
+        json!({
+            "scope_ref": source_ref,
+            "scope_ancestor_role": "row",
+            "query": "View release options"
+        }),
+    )
+    .await;
+    let token = first["snapshot"]["continuation"]
+        .as_str()
+        .unwrap_or_else(|| panic!("scoped continuation: {first}"))
+        .to_owned();
+
+    let (left, right) = tokio::join!(
+        semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})),
+        semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})),
+    );
+    let mut statuses = [left["status"].clone(), right["status"].clone()];
+    statuses.sort_by_key(|status| status.to_string());
+    assert_eq!(statuses, [json!("ok"), json!("refused")], "{left} {right}");
+    let refused = if left["status"] == "refused" {
+        &left
+    } else {
+        &right
+    };
+    assert_eq!(refused["refusal"]["code"], "browser_ref_stale");
+}
+
+#[tokio::test]
+async fn semantic_ancestor_continuation_revalidates_the_oopif_loader() {
+    let f = fixture_with(|state| state.semantic_scoped_rows = true).await;
+    let (target, tab) = bind(&f).await;
+    let seeded = semantic_snapshot_with(&f, &target, &tab, json!({"query": "0.19.89"})).await;
+    let source_ref = seeded["refs"]
+        .as_array()
+        .and_then(|refs| {
+            refs.iter()
+                .find(|entry| entry["role"] == "link" && entry["frame"] == "oopif")
+        })
+        .and_then(|entry| entry["ref"].as_str())
+        .expect("OOPIF version link ref")
+        .to_owned();
+    let first = semantic_snapshot_with(
+        &f,
+        &target,
+        &tab,
+        json!({
+            "scope_ref": source_ref,
+            "scope_ancestor_role": "row",
+            "query": "View release options"
+        }),
+    )
+    .await;
+    assert_eq!(first["status"], "ok", "seeded={seeded}; first={first}");
+    let token = first["snapshot"]["continuation"]
+        .as_str()
+        .unwrap_or_else(|| panic!("OOPIF scoped continuation: {first}"))
+        .to_owned();
+    f.state.lock().unwrap().oopif_loader = "L_OOPIF_2".into();
+
+    let stale = semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})).await;
+    assert_eq!(stale["status"], "refused", "{stale}");
+    assert_eq!(stale["refusal"]["code"], "browser_ref_stale");
+    assert_eq!(stale["refusal"]["detail"]["reason"], "scope_frame_changed");
+}
+
+#[tokio::test]
+async fn legacy_direct_scope_missing_from_fresh_semantics_stays_empty_and_ok() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let seeded = semantic_snapshot_with(&f, &target, &tab, json!({"query": "main-btn"})).await;
+    let source_ref = seeded["refs"]
+        .as_array()
+        .and_then(|refs| refs.first())
+        .and_then(|entry| entry["ref"].as_str())
+        .expect("main action ref")
+        .to_owned();
+    f.state.lock().unwrap().semantic_large_page = true;
+
+    let scoped = semantic_snapshot_with(
+        &f,
+        &target,
+        &tab,
+        json!({"scope_ref": source_ref, "query": "main-btn"}),
+    )
+    .await;
+    assert_eq!(scoped["status"], "ok", "{scoped}");
+    assert_eq!(scoped["snapshot"]["scope"], "subtree");
+    assert_eq!(scoped["snapshot"]["total_nodes"], 0);
+    assert!(scoped["snapshot"]["scope_anchor"].is_null());
+    assert_eq!(scoped["refs"], json!([]));
 }
 
 #[tokio::test]

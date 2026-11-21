@@ -364,6 +364,23 @@ get_browser_state
     "query":"Account settings"}'
 ```
 
+When repeated containers expose identical actions, start from a current
+semantic ref inside the intended container and request its nearest strict
+same-frame ancestor role:
+
+```bash
+cua-driver get_browser_state \
+  '{"target_id":"<target>","tab_id":"<tab>",
+    "session":"browser-run-1","snapshot_format":"semantic_v2",
+    "scope_ref":"p1:7","scope_ancestor_role":"row",
+    "query":"View release options"}'
+```
+
+Require `snapshot.scope == "ancestor_subtree"` and inspect
+`snapshot.scope_anchor` (`requested_ref`, `role`, `frame`, and `distance`).
+`browser_scope_unavailable` is a closed refusal to refresh page state, not
+permission to retry the query without its scope.
+
 Refs remain scoped to the session, target, tab, document, frame, and latest
 snapshot. Navigation and newer snapshots invalidate old refs. A stale-ref
 refusal means snapshot again; it is not permission to fall back to a CSS
@@ -601,6 +618,8 @@ return arbitrary DOM attributes.
 - `browser_binding_ambiguous` or heuristic binding: resolve the native-window
   ambiguity and bind again; do not mutate.
 - `browser_ref_stale`: snapshot again and use a new ref.
+- `browser_scope_unavailable`: refresh page state and obtain a new semantic
+  ref; never widen the request to a page-wide query.
 - `browser_action_unavailable`: choose a ref that declares the requested
   action; never treat a readable `content_ref` as clickable or editable.
 - `browser_input_trust_unavailable`: either request `dom_event` when its

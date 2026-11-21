@@ -484,6 +484,7 @@ pub fn is_computer_action(tool_name: &str, operation: ToolOperation) -> bool {
                         | "browser.motion.policy"
                         | "browser.input.click"
                         | "browser.input.type"
+                        | "browser.input.key"
                 )
         })
 }
@@ -694,6 +695,7 @@ fn structured_refusal_code(tool_name: &str, result: Option<&serde_json::Value>) 
             | "browser_motion_policy"
             | "browser_click"
             | "browser_type"
+            | "browser_press_key"
             | "browser_dialog"
             | "browser_set_input_files"
             | "browser_download"

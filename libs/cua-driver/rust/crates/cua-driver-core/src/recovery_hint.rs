@@ -809,6 +809,12 @@ static RULES: &[Rule] = &[
     Rule {
         codes: &["browser_input_incomplete"],
         build: |c| {
+            if c.tool == "browser_press_key" {
+                return RecoveryHint::new(
+                    "The key was not pressed. Read the page with get_browser_state, then press it again.",
+                )
+                .call(c.read_page());
+            }
             let counts = c.refusal_detail().and_then(|detail| {
                 Some(format!(
                     "Typing stopped after {} of {} characters. ",

@@ -29,6 +29,7 @@ use super::platform::{
     ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use super::pointer::BrowserPointerTool;
+use super::press_key::BrowserPressKeyTool;
 use super::refusal::BrowserRefusal;
 use super::tools::{
     browser_protected_resource_scope, BrowserClickTool, BrowserDialogTool, BrowserMotionPolicyTool,
@@ -62,6 +63,9 @@ pub(super) struct FixtureState {
     oopif_sessions: u64,
     fail_key_down_after: Option<usize>,
     completed_key_pairs: usize,
+    /// Fail the `Input.dispatchKeyEvent` call at this zero-based index.
+    fail_key_event_at: Option<usize>,
+    key_events: usize,
     /// A synthetic `this.click()` opens a confirm() dialog: the mock emits
     /// `Page.javascriptDialogOpening` and never answers the call.
     click_opens_dialog: bool,
@@ -177,6 +181,8 @@ impl Default for FixtureState {
             oopif_sessions: 0,
             fail_key_down_after: None,
             completed_key_pairs: 0,
+            fail_key_event_at: None,
+            key_events: 0,
             click_opens_dialog: false,
             dialog_vanished: false,
             trusted_click_opens_dialog: None,
@@ -872,7 +878,11 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             }
             "Input.dispatchKeyEvent" => {
                 let event_type = call.params["type"].as_str().unwrap_or_default();
-                if event_type == "keyDown" && st.fail_key_down_after == Some(st.completed_key_pairs)
+                let index = st.key_events;
+                st.key_events += 1;
+                if st.fail_key_event_at == Some(index)
+                    || (event_type == "keyDown"
+                        && st.fail_key_down_after == Some(st.completed_key_pairs))
                 {
                     MockReply::err(-32000, "fixture key delivery failure")
                 } else {
@@ -4710,6 +4720,169 @@ async fn select_in_an_oopif_routes_to_the_child_session() {
     let scripts = select_scripts(&f);
     assert_eq!(scripts.len(), 1);
     assert!(scripts[0].0.as_deref().unwrap().starts_with("oopif-sess-"));
+}
+
+async fn press_key_with(f: &Fixture, extra: Value) -> ToolResult {
+    let (target, tab) = bind(f).await;
+    let mut args = json!({ "target_id": target, "tab_id": tab, "session": SESSION });
+    args.as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    BrowserPressKeyTool::new(f.engine.clone())
+        .invoke(args)
+        .await
+}
+
+fn key_event_summary(f: &Fixture) -> Vec<(String, String, i64)> {
+    recorded_calls(f, "Input.dispatchKeyEvent")
+        .into_iter()
+        .map(|(_, params)| {
+            (
+                params["type"].as_str().unwrap_or_default().to_owned(),
+                params["key"].as_str().unwrap_or_default().to_owned(),
+                params["modifiers"].as_i64().unwrap_or(-1),
+            )
+        })
+        .collect()
+}
+
+fn summary(events: &[(&str, &str, i64)]) -> Vec<(String, String, i64)> {
+    events
+        .iter()
+        .map(|(t, k, m)| (t.to_string(), k.to_string(), *m))
+        .collect()
+}
+
+#[tokio::test]
+async fn press_key_sends_a_chord_on_the_tab_session_without_activating_it() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let old_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserPressKeyTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "key": "a",
+            "modifiers": ["ctrl"]
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["modifiers"], json!(["ctrl"]));
+    assert_eq!(s["pressed"], true);
+    assert_eq!(s["released"], true);
+    assert_eq!(s["refs_invalidated"], true);
+
+    assert_eq!(
+        key_event_summary(&f),
+        summary(&[
+            ("rawKeyDown", "Control", 2),
+            ("rawKeyDown", "a", 2),
+            ("keyUp", "a", 2),
+            ("keyUp", "Control", 0),
+        ])
+    );
+    assert!(recorded_calls(&f, "Input.dispatchKeyEvent")
+        .iter()
+        .all(|(session, _)| session.as_deref().unwrap().starts_with("tab-sess-")));
+    let focus_emulation = recorded_calls(&f, "Emulation.setFocusEmulationEnabled");
+    assert_eq!(focus_emulation.len(), 2);
+    assert_eq!(focus_emulation[0].1["enabled"], true);
+    assert_eq!(focus_emulation[1].1["enabled"], false);
+    assert!(recorded_calls(&f, "DOM.focus").is_empty());
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+
+    // The press may have reloaded or edited the page, so its refs are gone.
+    let stale = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": old_ref,
+            "text": "x",
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&stale)["refusal"]["code"], "browser_ref_stale");
+}
+
+#[tokio::test]
+async fn press_key_with_a_ref_focuses_it_on_its_own_frame_session() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let oopif_ref = ref_of(&snap, "oopif", "ad-input");
+
+    let result = BrowserPressKeyTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "key": "return",
+            "ref": oopif_ref
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["ref"], oopif_ref);
+    let focuses = recorded_calls(&f, "DOM.focus");
+    assert_eq!(focuses.len(), 1);
+    assert!(focuses[0].0.as_deref().unwrap().starts_with("oopif-sess-"));
+    let events = recorded_calls(&f, "Input.dispatchKeyEvent");
+    assert_eq!(events.len(), 2);
+    assert!(events
+        .iter()
+        .all(|(session, _)| session.as_deref().unwrap().starts_with("oopif-sess-")));
+    assert_eq!(events[0].1["type"], "keyDown");
+    assert_eq!(events[0].1["windowsVirtualKeyCode"], 13);
+    assert_eq!(events[0].1["text"], "\r");
+}
+
+#[tokio::test]
+async fn press_key_that_fails_before_the_key_goes_down_releases_held_modifiers() {
+    // Index 1 is the key's own down, after ctrl went down at index 0.
+    let f = fixture_with(|state| state.fail_key_event_at = Some(1)).await;
+    let result = press_key_with(&f, json!({ "key": "z", "modifiers": ["ctrl"] })).await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(s["refusal"]["code"], "browser_input_incomplete");
+    assert_eq!(s["refusal"]["detail"]["pressed"], false);
+    let events = key_event_summary(&f);
+    assert_eq!(events.len(), 3, "{events:?}");
+    assert_eq!(events[2].0, "keyUp");
+    assert_eq!(events[2].1, "Control");
+    let focus_emulation = recorded_calls(&f, "Emulation.setFocusEmulationEnabled");
+    assert_eq!(focus_emulation.last().unwrap().1["enabled"], false);
+}
+
+#[tokio::test]
+async fn press_key_reports_a_lost_release_after_a_delivered_press() {
+    // ctrl+w can close the tab before its key up is answered.
+    let f = fixture_with(|state| state.fail_key_event_at = Some(2)).await;
+    let result = press_key_with(&f, json!({ "key": "w", "modifiers": ["ctrl"] })).await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["pressed"], true);
+    assert_eq!(s["released"], false);
+}
+
+#[tokio::test]
+async fn press_key_refuses_unknown_keys_and_modifiers_before_any_cdp_input() {
+    for extra in [
+        json!({ "key": "f13" }),
+        json!({ "key": "a", "modifiers": ["hyper"] }),
+        json!({ "key": "a", "modifiers": "ctrl" }),
+        json!({ "key": "shift" }),
+    ] {
+        let f = fixture().await;
+        let result = press_key_with(&f, extra.clone()).await;
+        assert_eq!(result.is_error, Some(true), "{extra}");
+        assert!(recorded_calls(&f, "Input.dispatchKeyEvent").is_empty());
+        assert!(recorded_calls(&f, "Emulation.setFocusEmulationEnabled").is_empty());
+    }
 }
 
 // ---- window-less page targets (trycua/cua#3540) ------------------------------------------

@@ -355,6 +355,7 @@ const BROWSER_BOUND_INPUT_OPERATIONS: &[&str] = &[
     "browser_motion_policy",
     "browser_click",
     "browser_type",
+    "browser_press_key",
     "browser_select",
     "browser_pointer",
 ];
@@ -968,6 +969,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "browser_motion_policy"
         | "browser_click"
         | "browser_type"
+        | "browser_press_key"
         | "browser_select"
         | "browser_pointer"
         | "history_status"
@@ -2083,6 +2085,10 @@ mod tests {
         );
         assert_eq!(
             ids("browser_select", serde_json::json!({})),
+            vec!["browser_bound_input"]
+        );
+        assert_eq!(
+            ids("browser_press_key", serde_json::json!({})),
             vec!["browser_bound_input"]
         );
         assert_eq!(

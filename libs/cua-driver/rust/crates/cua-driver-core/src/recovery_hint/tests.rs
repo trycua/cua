@@ -656,6 +656,24 @@ fn incomplete_browser_typing_reports_the_counts() {
 }
 
 #[test]
+fn an_unpressed_browser_key_reads_the_page_before_pressing_again() {
+    let hint = hint_for(
+        "browser_press_key",
+        &seed(json!({"target_id": "t", "tab_id": "x"})),
+        false,
+        json!({"status": "refused", "refusal": {
+            "code": "browser_input_incomplete",
+            "message": "m",
+            "detail": {"pressed": false},
+        }}),
+    );
+    assert_eq!(
+        hint.hint,
+        "The key was not pressed. Read the page with get_browser_state, then press it again."
+    );
+}
+
+#[test]
 fn unverifiable_actions_read_what_changed() {
     let seed = window_seed();
     let read_changes = json!({

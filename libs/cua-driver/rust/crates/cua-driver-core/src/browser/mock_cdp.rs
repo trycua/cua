@@ -41,6 +41,9 @@ pub(crate) struct MockReply {
     pub delay: Option<std::time::Duration>,
     pub result: Result<Value, (i64, String)>,
     pub response_ready: Option<Arc<tokio::sync::Notify>>,
+    /// Sent verbatim as the reply's `result`, for payloads a `Value` cannot
+    /// model or that the decoder must reject.
+    pub raw_result: Option<String>,
 }
 
 impl MockReply {
@@ -51,6 +54,7 @@ impl MockReply {
             suppress_response: false,
             delay: None,
             response_ready: None,
+            raw_result: None,
         }
     }
 
@@ -62,6 +66,7 @@ impl MockReply {
             suppress_response: true,
             delay: None,
             response_ready: None,
+            raw_result: None,
         }
     }
 
@@ -72,6 +77,7 @@ impl MockReply {
             suppress_response: false,
             delay: None,
             response_ready: None,
+            raw_result: None,
         }
     }
 
@@ -83,6 +89,13 @@ impl MockReply {
     /// The exact shape Chromium uses for an unimplemented method.
     pub fn method_not_found(method: &str) -> Self {
         Self::err(-32601, &format!("'{method}' wasn't found"))
+    }
+
+    pub fn raw(result: String) -> Self {
+        Self {
+            raw_result: Some(result),
+            ..Self::ok(Value::Null)
+        }
     }
 
     pub fn with_events(mut self, events: Vec<MockEvent>) -> Self {
@@ -171,7 +184,11 @@ impl MockCdpServer {
                         if let Some(sid) = &call.session_id {
                             response["sessionId"] = json!(sid);
                         }
-                        if ws.send(Message::Text(response.to_string())).await.is_err() {
+                        let response = match reply.raw_result {
+                            Some(raw) => format!("{{\"id\":{id},\"result\":{raw}}}"),
+                            None => response.to_string(),
+                        };
+                        if ws.send(Message::Text(response)).await.is_err() {
                             return;
                         }
                     }

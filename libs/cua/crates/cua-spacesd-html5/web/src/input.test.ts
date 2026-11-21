@@ -3,7 +3,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import { chord, mapBeforeInput, mapKey, shortcutKey, type KeyLike } from "./input";
+import type { InteractiveInputEvent } from "./core/mediaWire";
+import { chord, InputController, mapBeforeInput, mapKey, shortcutKey, type KeyLike } from "./input";
 
 const key = (over: Partial<KeyLike>): KeyLike => ({
   key: "a",
@@ -42,6 +43,85 @@ describe("keyboard mapping", () => {
     const mac = { metaAsControl: true };
     expect(mapKey(key({ key: "v", code: "KeyV", metaKey: true }), "down", mac)).toMatchObject({ key: "v", modifiers: ["control"] });
     expect(mapKey(key({ key: "Meta", code: "MetaLeft", metaKey: true }), "down", mac)).toMatchObject({ key: "control" });
+  });
+
+  it("sends the right Cmd held alone as Super, the left as Ctrl", () => {
+    const surface = document.createElement("div");
+    const sent: InteractiveInputEvent[] = [];
+    const input = new InputController({ surface, screen: () => surface, emit: (e) => sent.push(e), keyOptions: () => ({ metaAsControl: true }) });
+    const press = (type: string, init: KeyboardEventInit) => input.textarea.dispatchEvent(new KeyboardEvent(type, { cancelable: true, ...init }));
+    press("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
+    press("keydown", { key: "q", code: "KeyQ", metaKey: true });
+    press("keyup", { key: "q", code: "KeyQ", metaKey: true });
+    press("keyup", { key: "Meta", code: "MetaRight" });
+    press("keydown", { key: "Meta", code: "MetaLeft", metaKey: true });
+    press("keydown", { key: "w", code: "KeyW", metaKey: true });
+    press("keyup", { key: "w", code: "KeyW", metaKey: true });
+    press("keyup", { key: "Meta", code: "MetaLeft" });
+    input.dispose();
+    expect(sent.map((e) => (e.kind === "key" ? `${[...e.modifiers, e.key].join("+")}:${e.state}` : e.kind))).toEqual([
+      "meta:down",
+      "command+q:down",
+      "command+q:up",
+      "meta:up",
+      "control:down",
+      "control+w:down",
+      "control+w:up",
+      "control:up",
+    ]);
+  });
+
+  it("forgets the held Cmd keys when the viewer loses focus", () => {
+    const surface = document.createElement("div");
+    const sent: InteractiveInputEvent[] = [];
+    const input = new InputController({ surface, screen: () => surface, emit: (e) => sent.push(e), keyOptions: () => ({ metaAsControl: true }) });
+    const press = (type: string, init: KeyboardEventInit) => input.textarea.dispatchEvent(new KeyboardEvent(type, { cancelable: true, ...init }));
+    press("keydown", { key: "Meta", code: "MetaLeft", metaKey: true });
+    input.textarea.dispatchEvent(new FocusEvent("blur"));
+    sent.length = 0;
+    press("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
+    press("keydown", { key: "Enter", code: "Enter", metaKey: true });
+    expect(sent.map((e) => (e.kind === "key" ? `${[...e.modifiers, e.key].join("+")}:${e.state}` : e.kind))).toEqual([
+      "meta:down",
+      "command+enter:down",
+    ]);
+    input.dispose();
+  });
+
+  it("sends the right Cmd+V to the guest as Super+V, not as a paste", () => {
+    const surface = document.createElement("div");
+    const sent: InteractiveInputEvent[] = [];
+    const pasted: ClipboardEvent[] = [];
+    const input = new InputController({
+      surface,
+      screen: () => surface,
+      emit: (e) => sent.push(e),
+      keyOptions: () => ({ metaAsControl: true }),
+      onPaste: (e) => void pasted.push(e),
+    });
+    const press = (type: string, init: KeyboardEventInit) => input.textarea.dispatchEvent(new KeyboardEvent(type, { cancelable: true, ...init }));
+    press("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
+    expect(press("keydown", { key: "v", code: "KeyV", metaKey: true })).toBe(false);
+    expect(sent.at(-1)).toMatchObject({ key: "v", state: "down", modifiers: ["command"] });
+    input.dispose();
+    expect(pasted).toEqual([]);
+  });
+
+  it("pastes with the right Cmd+V on a guest that keeps Cmd", () => {
+    const surface = document.createElement("div");
+    const sent: InteractiveInputEvent[] = [];
+    const input = new InputController({
+      surface,
+      screen: () => surface,
+      emit: (e) => sent.push(e),
+      keyOptions: () => ({ metaAsControl: false }),
+      onPaste: () => {},
+    });
+    const press = (type: string, init: KeyboardEventInit) => input.textarea.dispatchEvent(new KeyboardEvent(type, { cancelable: true, ...init }));
+    press("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
+    expect(press("keydown", { key: "v", code: "KeyV", metaKey: true })).toBe(true);
+    expect(sent.map((e) => (e.kind === "key" ? e.key : e.kind))).toEqual(["meta"]);
+    input.dispose();
   });
 
   it("treats AltGr and IME composition as text", () => {

@@ -1887,29 +1887,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         Command::Spaces(cmd @ host::SpacesCmd::Add { host: true, .. }) => {
             return host::run_add_host(cmd, &util::cua_home(), json, out).await;
         }
-        Command::Spaces(
-            cmd @ (host::SpacesCmd::Add { .. }
-            | host::SpacesCmd::Rm { .. }
-            | host::SpacesCmd::Create { .. }
-            | host::SpacesCmd::Cancel { .. }
-            | host::SpacesCmd::Gpus { .. }
-            | host::SpacesCmd::Delete { .. }
-            | host::SpacesCmd::Stop { .. }
-            | host::SpacesCmd::Suspend { .. }
-            | host::SpacesCmd::Resize { .. }
-            | host::SpacesCmd::Start { .. }
-            | host::SpacesCmd::Egress { .. }
-            | host::SpacesCmd::Children { .. }
-            | host::SpacesCmd::Budget { .. }
-            | host::SpacesCmd::Orphans
-            | host::SpacesCmd::Service(..)
-            | host::SpacesCmd::Prewarm { .. }
-            | host::SpacesCmd::Share { .. }
-            | host::SpacesCmd::Unshare { .. }
-            | host::SpacesCmd::Shares { .. }
-            | host::SpacesCmd::RelayRegister { .. }
-            | host::SpacesCmd::RelayUnregister { .. }),
-        ) => {
+        Command::Spaces(cmd) if cmd.runs_through_sdk() => {
             // The SDK handle (the daemon when one runs): the same registry
             // the daemon's Spaces runtime and `cua mcp` use.
             let sharing = matches!(

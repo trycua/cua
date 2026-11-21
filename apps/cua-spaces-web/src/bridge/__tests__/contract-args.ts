@@ -191,7 +191,7 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "presence.join": { spaceId: SPACE },
   "presence.publish": { handle: "p1", x: 0.5, y: 0.5, visible: true },
   "presence.leave": { handle: "p1" },
-  "spaces.fixRuntime": { action: "start-docker" },
+  "spaces.fixRuntime": { action: "setup-wsl" },
   "about.get": {},
   "about.set": { channel: "nightly" },
   "about.checkNow": {},

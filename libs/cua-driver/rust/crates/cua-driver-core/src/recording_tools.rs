@@ -86,6 +86,11 @@ impl Tool for StartRecordingTool {
                 replaced with `[redacted]`, and such turns are not replayed.\n\n\
                 Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn \
                 numbering restarts at 1 each time recording is (re-)started.\n\n\
+                `<output_dir>/session.json` describes the whole recording: \
+                `schema_version`, `started_at_unix_ms` (the wall-clock start in \
+                Unix epoch milliseconds, unchanged when recording stops), `video` \
+                and `cursor`. `started_at_monotonic_ms` holds the same value for \
+                older readers; it is not a monotonic clock reading.\n\n\
                 **Video is off by default.** Pass `record_video: true` to also \
                 capture the main display to `<output_dir>/recording.mp4` (H.264 / \
                 30 fps) for the lifetime of the session. The recording is torn \

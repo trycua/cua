@@ -2868,6 +2868,12 @@
      "target_id": {
       "description": "Opaque exact browser target id from get_browser_state.",
       "type": "string"
+     },
+     "timeout_ms": {
+      "description": "How long to wait for the approved download to finish, in milliseconds. Defaults to 30000; raise it for downloads that legitimately take longer than 30 seconds.",
+      "maximum": 600000,
+      "minimum": 1,
+      "type": "integer"
      }
     },
     "required": [

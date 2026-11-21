@@ -511,7 +511,8 @@ approval and saves the result under an existing canonical absolute
 serializes Chromium's browser-wide download setting, restores that setting on
 every outcome, and returns only an opaque download id and byte count. It never
 returns the source URL, filename, or destination path. Direct raw calls without
-the host approval proof are refused.
+the host approval proof are refused. It waits 30 seconds for the download to
+finish; pass `timeout_ms` (up to 600000) for a larger file.
 
 ## Browser chrome and native fallbacks
 

@@ -733,6 +733,7 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 | <span id="browser_download--session"></span>`session` | `string` | required | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. This tool requires the label that owns its browser target, tab, and refs. |
 | <span id="browser_download--tab_id"></span>`tab_id` | `string` | required | Opaque exact tab id from get_browser_state. |
 | <span id="browser_download--target_id"></span>`target_id` | `string` | required | Opaque exact browser target id from get_browser_state. |
+| <span id="browser_download--timeout_ms"></span>`timeout_ms` | `integer` |  | How long to wait for the approved download to finish, in milliseconds. Defaults to 30000; raise it for downloads that legitimately take longer than 30 seconds. Range: 1 to 600000. |
 
 **Example arguments**
 

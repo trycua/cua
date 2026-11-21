@@ -474,113 +474,51 @@ async fn run_control_connection(
         }
     };
 
-    #[cfg(unix)]
+    // Retry the connect briefly: the daemon may still be starting, or be
+    // creating its next pipe instance.
+    let mut stream = match cua_driver_core::ipc::LocalIpcStream::connect(
+        &socket_path,
+        cua_driver_core::ipc::ConnectPolicy::STARTUP,
+    )
+    .await
     {
-        use tokio::net::UnixStream;
-        // Retry the connect briefly — the daemon may still be spinning up
-        // (mirrors the windows pipe-open retry below). The is_daemon_listening
-        // precheck makes the window tiny, but keep both paths symmetric.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        let mut stream = loop {
-            match UnixStream::connect(&socket_path).await {
-                Ok(s) => break s,
-                Err(_) if std::time::Instant::now() < deadline => {
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                }
-                Err(e) => {
-                    debug!(session_id = %session_id, "control connect failed (daemon starting?): {e}");
-                    return;
-                }
-            }
-        };
-        if let Err(e) = stream.write_all(line.as_bytes()).await {
-            debug!("control connection: write session_begin failed: {e}");
+        Ok(stream) => stream,
+        Err(e) => {
+            debug!(session_id = %session_id, "control connect failed (daemon starting?): {e}");
             return;
         }
-        let _ = stream.flush().await;
-        debug!(session_id = %session_id, "control connection established (session_begin sent)");
+    };
+    if let Err(e) = stream.write_all(line.as_bytes()).await {
+        debug!("control connection: write session_begin failed: {e}");
+        return;
+    }
+    let _ = stream.flush().await;
+    debug!(session_id = %session_id, "control connection established (session_begin sent)");
 
-        // Park: read until the daemon closes (it ACKs session_begin then keeps
-        // the conn open; we drain anything and only return on EOF/error). The
-        // proxy never writes here again — the connection lives until process
-        // death, when the kernel closes it and the daemon reaps the session.
-        let mut reader = BufReader::new(stream);
-        let mut buf = String::new();
+    // Park: read until the daemon closes (it ACKs session_begin then keeps
+    // the conn open; we drain anything and only return on EOF/error). The
+    // proxy never writes here again — the connection lives until process
+    // death, when the kernel closes it and the daemon reaps the session.
+    let mut reader = BufReader::new(stream);
+    let mut buf = String::new();
+    match reader.read_line(&mut buf).await {
+        Ok(0) | Err(_) => return,
+        Ok(_) => {
+            if let Err(error) = validate_session_begin_ack(&buf) {
+                warn!("control connection: {error}");
+                return;
+            }
+            let _ = control_ready.send(());
+        }
+    }
+    loop {
+        buf.clear();
         match reader.read_line(&mut buf).await {
-            Ok(0) | Err(_) => return,
-            Ok(_) => {
-                if let Err(error) = validate_session_begin_ack(&buf) {
-                    warn!("control connection: {error}");
-                    return;
-                }
-                let _ = control_ready.send(());
-            }
+            Ok(0) | Err(_) => break, // daemon closed or error — task done.
+            Ok(_) => continue,       // ACK / stray line — ignore, keep parked.
         }
-        loop {
-            buf.clear();
-            match reader.read_line(&mut buf).await {
-                Ok(0) | Err(_) => break, // daemon closed or error — task done.
-                Ok(_) => continue,       // ACK / stray line — ignore, keep parked.
-            }
-        }
-        debug!(session_id = %session_id, "control connection closed");
     }
-
-    #[cfg(all(not(unix), target_os = "windows"))]
-    {
-        use tokio::net::windows::named_pipe::ClientOptions;
-        // Retry the pipe open briefly — the daemon may still be spinning up its
-        // next instance (mirrors send_request's open-retry).
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        let client = loop {
-            match ClientOptions::new().open(&socket_path) {
-                Ok(c) => break Some(c),
-                Err(_) if std::time::Instant::now() < deadline => {
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                }
-                Err(e) => {
-                    debug!(session_id = %session_id, "control pipe open failed (daemon starting?): {e}");
-                    break None;
-                }
-            }
-        };
-        let mut client = match client {
-            Some(c) => c,
-            None => return,
-        };
-        if let Err(e) = client.write_all(line.as_bytes()).await {
-            debug!("control connection: write session_begin failed: {e}");
-            return;
-        }
-        let _ = client.flush().await;
-        debug!(session_id = %session_id, "control connection established (session_begin sent)");
-
-        let mut reader = BufReader::new(client);
-        let mut buf = String::new();
-        match reader.read_line(&mut buf).await {
-            Ok(0) | Err(_) => return,
-            Ok(_) => {
-                if let Err(error) = validate_session_begin_ack(&buf) {
-                    warn!("control connection: {error}");
-                    return;
-                }
-                let _ = control_ready.send(());
-            }
-        }
-        loop {
-            buf.clear();
-            match reader.read_line(&mut buf).await {
-                Ok(0) | Err(_) => break,
-                Ok(_) => continue,
-            }
-        }
-        debug!(session_id = %session_id, "control connection closed");
-    }
-
-    #[cfg(all(not(unix), not(target_os = "windows")))]
-    {
-        let _ = (line, session_id, socket_path, control_ready);
-    }
+    debug!(session_id = %session_id, "control connection closed");
 }
 
 fn validate_session_begin_ack(line: &str) -> Result<(), String> {

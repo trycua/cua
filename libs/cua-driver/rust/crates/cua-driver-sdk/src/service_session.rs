@@ -7,27 +7,17 @@
 //! is never returned as a bearer value and cannot move to another connection.
 
 use crate::{DriverError, TrustedSessionOptions};
-#[cfg(any(unix, windows))]
-use cua_driver_core::daemon::REPLY_DEADLINE;
-use cua_driver_core::daemon::{DaemonClientKind, DaemonRequest, DaemonResponse};
+use cua_driver_core::daemon::{DaemonClientKind, DaemonRequest, DaemonResponse, REPLY_DEADLINE};
+use cua_driver_core::ipc::{ConnectPolicy, ExchangeError, LocalIpcClient};
 use serde_json::Value;
-use std::io::{BufRead, BufReader};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
-#[cfg(any(unix, windows))]
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 const RESUME_REGISTRATION_RETRIES: usize = 20;
 const RESUME_REGISTRATION_DELAY: Duration = Duration::from_millis(10);
 
-#[cfg(unix)]
-type ServiceStream = std::os::unix::net::UnixStream;
-#[cfg(windows)]
-type ServiceStream = cua_driver_core::pipe_stream::PipeStream;
-
 struct ServiceConnection {
-    reader: BufReader<ServiceStream>,
-    writer: ServiceStream,
+    client: LocalIpcClient,
     closed: bool,
     resume_credential: String,
 }
@@ -51,16 +41,11 @@ impl ServiceSessionClient {
                 }
             })?;
         crate::validate_daemon_metadata(&metadata)?;
-        let stream = connect(&socket_path)?;
-        let writer = stream.try_clone().map_err(|error| DriverError::Transport {
-            socket_path: socket_path.clone(),
-            reason: format!("clone trusted service connection: {error}"),
-        })?;
+        let client = connect(&socket_path)?;
         let client = Arc::new(Self {
             socket_path,
             connection: Mutex::new(ServiceConnection {
-                reader: BufReader::new(stream),
-                writer,
+                client,
                 closed: false,
                 resume_credential: String::new(),
             }),
@@ -123,8 +108,7 @@ impl ServiceSessionClient {
             observation_origin: None,
             client_kind: None,
         };
-        let _ = write_request(&mut connection.writer, &request);
-        let _ = read_response_line(&mut connection.reader);
+        let _ = exchange(&mut connection.client, &request, REPLY_DEADLINE);
         connection.closed = true;
     }
 
@@ -140,26 +124,13 @@ impl ServiceSessionClient {
             self.resume_connection(&mut connection)?;
         }
         let action_call = request.method == "trusted_session_call";
-        write_request(&mut connection.writer, &request).map_err(|error| {
+        let line = exchange(&mut connection.client, &request, REPLY_DEADLINE).map_err(|error| {
             connection.closed = true;
             self.connection_failure(
                 action_call,
-                format!("write trusted service request: {error}"),
+                describe(error, "trusted service request", REPLY_DEADLINE),
             )
         })?;
-        let line = read_response_line(&mut connection.reader).map_err(|error| {
-            connection.closed = true;
-            self.connection_failure(
-                action_call,
-                format!("read trusted service response: {error}"),
-            )
-        })?;
-        let Some(line) = line else {
-            connection.closed = true;
-            return Err(
-                self.connection_failure(action_call, "trusted service connection closed".into())
-            );
-        };
         let response: DaemonResponse = serde_json::from_str(&line).map_err(|error| {
             connection.closed = true;
             if action_call {
@@ -194,17 +165,10 @@ impl ServiceSessionClient {
         }
         let credential = connection.resume_credential.clone();
         for attempt in 0..=RESUME_REGISTRATION_RETRIES {
-            let stream = connect(&self.socket_path)?;
-            let writer = stream.try_clone().map_err(|error| DriverError::Transport {
-                socket_path: self.socket_path.clone(),
-                reason: format!("clone resumed trusted service connection: {error}"),
-            })?;
-
-            // Replace both handles before presenting the credential. Dropping
-            // the old client handles makes the daemon observe EOF and publish
+            // Replace the connection before presenting the credential.
+            // Dropping the old one makes the daemon observe EOF and publish
             // the detachable lease on Unix sockets and Windows named pipes.
-            connection.reader = BufReader::new(stream);
-            connection.writer = writer;
+            connection.client = connect(&self.socket_path)?;
             let request = DaemonRequest {
                 method: "trusted_session_resume".into(),
                 name: None,
@@ -215,20 +179,12 @@ impl ServiceSessionClient {
                 observation_origin: None,
                 client_kind: None,
             };
-            write_request(&mut connection.writer, &request).map_err(|error| {
-                DriverError::Transport {
-                    socket_path: self.socket_path.clone(),
-                    reason: format!("write trusted session resume: {error}"),
-                }
-            })?;
-            let line = read_response_line(&mut connection.reader)
-                .map_err(|error| DriverError::Transport {
-                    socket_path: self.socket_path.clone(),
-                    reason: format!("read trusted session resume: {error}"),
-                })?
-                .ok_or_else(|| DriverError::Transport {
-                    socket_path: self.socket_path.clone(),
-                    reason: "trusted service closed during resume".into(),
+            let line =
+                exchange(&mut connection.client, &request, REPLY_DEADLINE).map_err(|error| {
+                    DriverError::Transport {
+                        socket_path: self.socket_path.clone(),
+                        reason: describe(error, "trusted session resume", REPLY_DEADLINE),
+                    }
                 })?;
             let response: DaemonResponse =
                 serde_json::from_str(&line).map_err(|error| DriverError::Protocol {
@@ -288,117 +244,35 @@ impl Drop for ServiceSessionClient {
     }
 }
 
-#[cfg(any(unix, windows))]
-fn write_request(writer: &mut ServiceStream, request: &DaemonRequest) -> std::io::Result<()> {
-    let mut frame = serde_json::to_vec(request).map_err(std::io::Error::other)?;
-    frame.push(b'\n');
-    let deadline = Instant::now() + REPLY_DEADLINE;
-    #[cfg(windows)]
-    writer.set_deadline(Some(deadline));
-    cua_driver_core::socket_io::write_all_with_retry(writer, &frame, deadline)
-}
-
-#[cfg(any(unix, windows))]
-fn read_response_line(reader: &mut BufReader<ServiceStream>) -> std::io::Result<Option<String>> {
-    read_response_line_within(reader, REPLY_DEADLINE)
-}
-
-#[cfg(any(unix, windows))]
-fn read_response_line_within(
-    reader: &mut BufReader<ServiceStream>,
+/// Send one request and read its reply line within `reply_deadline`.
+fn exchange(
+    client: &mut LocalIpcClient,
+    request: &DaemonRequest,
     reply_deadline: Duration,
-) -> std::io::Result<Option<String>> {
-    let deadline = Instant::now() + reply_deadline;
-    // A Unix read can overrun by one poll slice; a pipe read stops at the
-    // deadline itself.
-    #[cfg(windows)]
-    reader.get_mut().set_deadline(Some(deadline));
-    let timed_out = || {
-        std::io::Error::new(
-            std::io::ErrorKind::TimedOut,
-            format!("timed out after {reply_deadline:?} waiting for trusted service response"),
-        )
-    };
-    let mut bytes = Vec::new();
-    loop {
-        // Read one buffer at a time rather than with `read_until`, so a peer
-        // that keeps sending bytes without a newline still meets the deadline.
-        let available = match reader.fill_buf() {
-            Ok(available) => available,
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) =>
-            {
-                if Instant::now() >= deadline {
-                    return Err(timed_out());
-                }
-                continue;
-            }
-            Err(error) => return Err(error),
-        };
-        if available.is_empty() && bytes.is_empty() {
-            return Ok(None);
+) -> Result<String, ExchangeError> {
+    let frame = serde_json::to_vec(request)
+        .map_err(|error| ExchangeError::Write(std::io::Error::other(error)))?;
+    client.exchange_line(&frame, Instant::now() + reply_deadline)
+}
+
+/// Why `exchange` for `what` got no reply.
+fn describe(error: ExchangeError, what: &str, reply_deadline: Duration) -> String {
+    match error {
+        ExchangeError::Write(error) => format!("write {what}: {error}"),
+        ExchangeError::Read(error) => format!("read reply to {what}: {error}"),
+        ExchangeError::TimedOut { .. } => {
+            format!("timed out after {reply_deadline:?} waiting for the reply to {what}")
         }
-        let line_end = available.iter().position(|&byte| byte == b'\n');
-        let used = line_end.map_or(available.len(), |newline| newline + 1);
-        bytes.extend_from_slice(&available[..used]);
-        reader.consume(used);
-        if line_end.is_some() || used == 0 {
-            return String::from_utf8(bytes)
-                .map(Some)
-                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error));
-        }
-        if Instant::now() >= deadline {
-            return Err(timed_out());
-        }
+        ExchangeError::Closed => format!("trusted service closed the connection during {what}"),
     }
 }
 
-#[cfg(unix)]
-fn connect(socket_path: &str) -> Result<ServiceStream, DriverError> {
-    let stream = std::os::unix::net::UnixStream::connect(socket_path).map_err(|error| {
+fn connect(socket_path: &str) -> Result<LocalIpcClient, DriverError> {
+    LocalIpcClient::connect(socket_path, ConnectPolicy::REQUEST).map_err(|error| {
         DriverError::Transport {
             socket_path: socket_path.to_owned(),
             reason: format!("connect trusted service session: {error}"),
         }
-    })?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .and_then(|()| stream.set_write_timeout(Some(Duration::from_secs(5))))
-        .map_err(|error| DriverError::Transport {
-            socket_path: socket_path.to_owned(),
-            reason: format!("configure trusted service session timeout: {error}"),
-        })?;
-    Ok(stream)
-}
-
-#[cfg(windows)]
-fn connect(socket_path: &str) -> Result<ServiceStream, DriverError> {
-    let transport = |reason: String| DriverError::Transport {
-        socket_path: socket_path.to_owned(),
-        reason,
-    };
-    let mut stream = ServiceStream::connect(socket_path, cua_driver_core::pipe_stream::OPEN_RETRY)
-        .map_err(|error| transport(format!("connect trusted service named pipe: {error}")))?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .and_then(|()| stream.set_write_timeout(Some(Duration::from_secs(5))))
-        .map_err(|error| {
-            transport(format!(
-                "configure trusted service session timeout: {error}"
-            ))
-        })?;
-    Ok(stream)
-}
-
-#[cfg(not(any(unix, windows)))]
-fn connect(socket_path: &str) -> Result<ServiceStream, DriverError> {
-    Err(DriverError::Transport {
-        socket_path: socket_path.to_owned(),
-        reason: "trusted service sessions are unsupported on this platform".into(),
     })
 }
 
@@ -406,7 +280,7 @@ fn connect(socket_path: &str) -> Result<ServiceStream, DriverError> {
 mod tests {
     use super::*;
     use crate::{SessionPermissionMode, TrustedSessionOptions};
-    use std::io::Write;
+    use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixListener;
 
     fn serve_compatible_metadata(listener: &UnixListener) {
@@ -429,46 +303,37 @@ mod tests {
     }
 
     #[test]
-    fn response_reader_preserves_partial_utf8_across_poll_timeouts() {
-        let (reader, mut writer) = std::os::unix::net::UnixStream::pair().unwrap();
-        reader
-            .set_read_timeout(Some(Duration::from_millis(20)))
-            .unwrap();
+    fn a_stalled_service_reply_times_out_at_the_reply_deadline() {
+        let directory = crate::socket_tempdir();
+        let socket = directory.path().join("stalled-service.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let (release, released) = std::sync::mpsc::channel::<()>();
         let server = std::thread::spawn(move || {
-            writer.write_all(&[0xe2]).unwrap();
-            std::thread::sleep(Duration::from_millis(80));
-            writer.write_all(&[0x82, 0xac, b'\n']).unwrap();
+            let (stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            (&stream).write_all(b"{\"ok\":").unwrap();
+            let _ = released.recv();
         });
 
-        let mut reader = BufReader::new(reader);
+        let mut client = connect(socket.to_str().unwrap()).unwrap();
+        let request = DaemonRequest {
+            method: "trusted_session_call".into(),
+            name: Some("health_report".into()),
+            args: None,
+            session_id: None,
+            observation_origin: None,
+            client_kind: None,
+        };
+        let deadline = Duration::from_millis(300);
+        let error = exchange(&mut client, &request, deadline).unwrap_err();
         assert_eq!(
-            read_response_line(&mut reader).unwrap().as_deref(),
-            Some("€\n")
+            describe(error, "trusted service request", deadline),
+            "timed out after 300ms waiting for the reply to trusted service request"
         );
-        server.join().unwrap();
-    }
-
-    #[test]
-    fn a_reply_that_trickles_without_a_newline_meets_the_deadline() {
-        let (reader, mut writer) = std::os::unix::net::UnixStream::pair().unwrap();
-        reader
-            .set_read_timeout(Some(Duration::from_millis(50)))
-            .unwrap();
-        let server = std::thread::spawn(move || {
-            let started = Instant::now();
-            while started.elapsed() < Duration::from_secs(5) && writer.write_all(b"x").is_ok() {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-        });
-
-        let error =
-            read_response_line_within(&mut BufReader::new(reader), Duration::from_millis(300))
-                .unwrap_err();
-        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
-        assert_eq!(
-            error.to_string(),
-            "timed out after 300ms waiting for trusted service response"
-        );
+        release.send(()).unwrap();
         server.join().unwrap();
     }
 
@@ -586,173 +451,5 @@ mod tests {
             .unwrap();
         assert_eq!(resumed["resumed"], true);
         server.join().unwrap();
-    }
-
-    #[tokio::test]
-    async fn transient_read_timeouts_are_poll_intervals_not_action_deadlines() {
-        let directory = crate::socket_tempdir();
-        let socket = directory.path().join("delayed-service.sock");
-        let listener = UnixListener::bind(&socket).unwrap();
-        let server = std::thread::spawn(move || {
-            serve_compatible_metadata(&listener);
-            let (stream, _) = listener.accept().unwrap();
-            let mut reader = BufReader::new(stream.try_clone().unwrap());
-            let mut writer = stream;
-
-            let mut line = String::new();
-            reader.read_line(&mut line).unwrap();
-            writeln!(
-                writer,
-                "{}",
-                serde_json::to_string(&DaemonResponse::ok(serde_json::json!({
-                    "resume_credential": "resume-test-2"
-                })))
-                .unwrap()
-            )
-            .unwrap();
-
-            line.clear();
-            reader.read_line(&mut line).unwrap();
-            let call: DaemonRequest = serde_json::from_str(&line).unwrap();
-            assert_eq!(call.method, "trusted_session_call");
-            std::thread::sleep(Duration::from_millis(80));
-            writeln!(
-                writer,
-                "{}",
-                serde_json::to_string(&DaemonResponse::ok(serde_json::json!({
-                    "content": [{"type": "text", "text": "completed"}],
-                    "isError": false,
-                })))
-                .unwrap()
-            )
-            .unwrap();
-        });
-
-        let client = ServiceSessionClient::connect_and_bind(
-            socket.to_string_lossy().into_owned(),
-            TrustedSessionOptions {
-                public_session: "delayed-response".into(),
-                mode: SessionPermissionMode::Standard,
-                ttl_seconds: 60,
-                idle_ttl_seconds: 30,
-                capability_manifest_path: None,
-                bounded_manifest_path: None,
-            },
-            DaemonClientKind::Unknown,
-        )
-        .unwrap();
-        client
-            .connection
-            .lock()
-            .unwrap()
-            .reader
-            .get_ref()
-            .set_read_timeout(Some(Duration::from_millis(20)))
-            .unwrap();
-
-        let result = client
-            .invoke("health_report", serde_json::json!({}))
-            .await
-            .unwrap();
-        assert_eq!(result["content"][0]["text"], "completed");
-        server.join().unwrap();
-    }
-}
-
-#[cfg(all(test, windows))]
-mod windows_tests {
-    use super::*;
-    use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
-    use tokio::net::windows::named_pipe::ServerOptions;
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_stalled_service_reply_times_out_at_the_reply_deadline() {
-        let name = format!(
-            r"\\.\pipe\cua-driver-stalled-service-{}",
-            std::process::id()
-        );
-        let server = ServerOptions::new()
-            .first_pipe_instance(true)
-            .create(&name)
-            .unwrap();
-        let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
-        let served = tokio::spawn(async move {
-            server.connect().await.unwrap();
-            let mut server = tokio::io::BufReader::new(server);
-            let mut request = String::new();
-            server.read_line(&mut request).await.unwrap();
-            let request: DaemonRequest = serde_json::from_str(&request).unwrap();
-            assert_eq!(request.method, "trusted_session_call");
-            server.get_mut().write_all(b"{\"ok\":").await.unwrap();
-            release_rx.await.unwrap();
-        });
-
-        let error = tokio::task::spawn_blocking(move || {
-            let mut stream = connect(&name).unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_millis(50)))
-                .unwrap();
-            let mut writer = stream.try_clone().unwrap();
-            write_request(
-                &mut writer,
-                &DaemonRequest {
-                    method: "trusted_session_call".into(),
-                    name: Some("health_report".into()),
-                    args: None,
-                    session_id: None,
-                    observation_origin: None,
-                    client_kind: None,
-                },
-            )
-            .unwrap();
-            read_response_line_within(&mut BufReader::new(stream), Duration::from_millis(300))
-                .unwrap_err()
-        })
-        .await
-        .unwrap();
-        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
-        assert_eq!(
-            error.to_string(),
-            "timed out after 300ms waiting for trusted service response"
-        );
-        release_tx.send(()).unwrap();
-        served.await.unwrap();
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_service_reply_that_trickles_without_a_newline_meets_the_deadline() {
-        let name = format!(
-            r"\\.\pipe\cua-driver-trickling-service-{}",
-            std::process::id()
-        );
-        let mut server = ServerOptions::new()
-            .first_pipe_instance(true)
-            .create(&name)
-            .unwrap();
-        let served = tokio::spawn(async move {
-            server.connect().await.unwrap();
-            let started = std::time::Instant::now();
-            while started.elapsed() < Duration::from_secs(5) && server.write_all(b"x").await.is_ok()
-            {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        });
-
-        let error = tokio::task::spawn_blocking(move || {
-            let mut stream = connect(&name).unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_millis(50)))
-                .unwrap();
-            read_response_line_within(&mut BufReader::new(stream), Duration::from_millis(300))
-                .unwrap_err()
-        })
-        .await
-        .unwrap();
-        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
-        assert_eq!(
-            error.to_string(),
-            "timed out after 300ms waiting for trusted service response"
-        );
-        served.await.unwrap();
     }
 }

@@ -96,14 +96,14 @@ pub mod history_keyring;
 pub mod image_utils;
 pub mod input_pacing;
 pub mod interactive_input;
+#[cfg(any(unix, windows))]
+pub mod ipc;
 pub mod key_pacing;
 pub mod launch_guard;
 pub mod mcp_result;
 pub mod page;
 pub mod perception_client;
 pub mod perception_tools;
-#[cfg(windows)]
-pub mod pipe_stream;
 pub mod pointer_shape;
 pub mod policy;
 pub mod post_action_wait;
@@ -126,7 +126,6 @@ pub mod single_flight;
 pub mod snapshot_store;
 #[cfg(test)]
 pub(crate) mod snapshot_test_support;
-pub mod socket_io;
 pub mod step_pacing;
 pub mod text_sanitize;
 pub mod timestamp;

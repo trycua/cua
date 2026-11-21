@@ -19,9 +19,10 @@
 //! reported here (rotated output, protected/exclusive content, no single
 //! monitor fully covered by the window, duplication unavailable, ...).
 //!
-//! The cursor is not part of the duplicated frame unless a process draws it,
-//! matching the GDI screen-capture path. Only identity-rotation outputs are
-//! handled; rotated displays fall back to the existing capture ladder.
+//! The hardware pointer is not part of the duplicated frame, but a pointer
+//! drawn in software into the desktop image is, and is returned unchanged.
+//! Only identity-rotation outputs are handled; rotated displays fall back to
+//! the existing capture ladder.
 //!
 //! The first frame handed out after `DuplicateOutput` is an unpopulated
 //! placeholder (no present time, all-zero pixels), so `acquire_frame` skips

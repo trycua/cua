@@ -22,8 +22,6 @@ use crate::tool_args::ArgsExt;
 
 use super::cdp_ws::CdpConnection;
 use super::engine::BrowserEngine;
-use super::input::ref_point;
-use super::platform::BrowserVisualActionKind;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::session_schema as schema_session;
 use super::tools::{
@@ -647,18 +645,6 @@ impl Tool for BrowserPressKeyTool {
                         .await
                 }
             }
-            if let Ok((x, y)) = ref_point(conn, cdp, backend_node_id).await {
-                self.engine
-                    .visualize_browser_action(
-                        &session,
-                        &validated,
-                        cdp,
-                        x,
-                        y,
-                        BrowserVisualActionKind::Type,
-                    )
-                    .await;
-            }
         }
 
         // Key downs stop at the first failure or dialog. Every modifier that
@@ -729,8 +715,8 @@ impl Tool for BrowserPressKeyTool {
                 json!({ "pressed": false }),
             )),
             KeyDelivery::DialogBeforeKey => Some((
-                "a modifier's key handler opened a page dialog before the key was sent, so the \
-                 key was not pressed; resolve the dialog with browser_dialog first"
+                "a page dialog opened before the key was sent, so the key was not pressed; \
+                 resolve the dialog with browser_dialog first"
                     .to_owned(),
                 json!({ "pressed": false }),
             )),

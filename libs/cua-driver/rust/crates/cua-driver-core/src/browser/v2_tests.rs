@@ -75,6 +75,8 @@ pub(super) struct FixtureState {
     focus_emulation_enable_fails: bool,
     /// `DOM.focus` runs a focus handler that opens a confirm() dialog.
     focus_opens_dialog: bool,
+    /// ...after `DOM.focus` has been answered (a deferred handler).
+    focus_acks_then_opens_dialog: bool,
     /// A synthetic `this.click()` opens a confirm() dialog: the mock emits
     /// `Page.javascriptDialogOpening` and never answers the call.
     click_opens_dialog: bool,
@@ -196,6 +198,7 @@ impl Default for FixtureState {
             key_events: 0,
             focus_emulation_enable_fails: false,
             focus_opens_dialog: false,
+            focus_acks_then_opens_dialog: false,
             click_opens_dialog: false,
             dialog_vanished: false,
             trusted_click_opens_dialog: None,
@@ -971,7 +974,7 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 st.covering_node = st.focus_emulation_covers;
                 MockReply::ok(json!({}))
             }
-            "DOM.focus" if st.focus_opens_dialog => {
+            "DOM.focus" if st.focus_opens_dialog || st.focus_acks_then_opens_dialog => {
                 st.renderer_blocked = true;
                 let events = st
                     .page_sessions
@@ -982,7 +985,12 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                         params: json!({ "type": "confirm", "message": "Sure?", "url": st.main_url }),
                     })
                     .collect();
-                MockReply::hang().with_events(events)
+                let reply = if st.focus_acks_then_opens_dialog {
+                    MockReply::ok(json!({}))
+                } else {
+                    MockReply::hang()
+                };
+                reply.with_events(events)
             }
             "DOM.focus" | "Emulation.setFocusEmulationEnabled" | "Input.insertText" => {
                 MockReply::ok(json!({}))
@@ -5086,11 +5094,21 @@ async fn press_key_reports_a_dialog_opened_by_a_cleanup_release() {
 
 #[tokio::test]
 async fn press_key_whose_ref_focus_opens_a_dialog_sends_no_key() {
+    press_key_whose_ref_focus_opens_a_dialog(|state| state.focus_opens_dialog = true).await;
+}
+
+#[tokio::test]
+async fn press_key_whose_ref_focus_opens_a_dialog_after_its_reply_sends_no_key() {
+    press_key_whose_ref_focus_opens_a_dialog(|state| state.focus_acks_then_opens_dialog = true)
+        .await;
+}
+
+async fn press_key_whose_ref_focus_opens_a_dialog(configure: impl FnOnce(&mut FixtureState)) {
     let f = fixture().await;
     let (target, tab) = bind(&f).await;
     let snap = snapshot(&f, &target, &tab).await;
     let field = ref_of(&snap, "main", "Shadow Input");
-    f.state.lock().unwrap().focus_opens_dialog = true;
+    configure(&mut f.state.lock().unwrap());
 
     let started = std::time::Instant::now();
     let result = BrowserPressKeyTool::new(f.engine.clone())

@@ -68,15 +68,20 @@ pub(super) struct FixtureState {
     /// The `Input.dispatchKeyEvent` call at this index opens a confirm()
     /// dialog and is never answered.
     key_event_opens_dialog_at: Option<usize>,
-    /// The `Input.dispatchKeyEvent` call at this index is answered, then a
-    /// confirm() dialog opens.
-    key_event_acks_then_opens_dialog_at: Option<usize>,
+    /// The `Input.dispatchKeyEvent` call at this index opens a confirm()
+    /// dialog whose event frame comes just before the call's reply.
+    key_event_opens_dialog_before_reply_at: Option<usize>,
+    /// ...whose event frame comes just after the call's reply.
+    key_event_opens_dialog_after_reply_at: Option<usize>,
     key_events: usize,
     focus_emulation_enable_fails: bool,
     /// `DOM.focus` runs a focus handler that opens a confirm() dialog.
     focus_opens_dialog: bool,
-    /// ...after `DOM.focus` has been answered (a deferred handler).
-    focus_acks_then_opens_dialog: bool,
+    /// ...whose event frame comes just before `DOM.focus`'s reply.
+    focus_opens_dialog_before_reply: bool,
+    /// ...whose event frame comes just after `DOM.focus`'s reply (a
+    /// deferred handler).
+    focus_opens_dialog_after_reply: bool,
     /// A synthetic `this.click()` opens a confirm() dialog: the mock emits
     /// `Page.javascriptDialogOpening` and never answers the call.
     click_opens_dialog: bool,
@@ -194,11 +199,13 @@ impl Default for FixtureState {
             completed_key_pairs: 0,
             fail_key_event_at: None,
             key_event_opens_dialog_at: None,
-            key_event_acks_then_opens_dialog_at: None,
+            key_event_opens_dialog_before_reply_at: None,
+            key_event_opens_dialog_after_reply_at: None,
             key_events: 0,
             focus_emulation_enable_fails: false,
             focus_opens_dialog: false,
-            focus_acks_then_opens_dialog: false,
+            focus_opens_dialog_before_reply: false,
+            focus_opens_dialog_after_reply: false,
             click_opens_dialog: false,
             dialog_vanished: false,
             trusted_click_opens_dialog: None,
@@ -899,8 +906,9 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 if st.renderer_blocked {
                     return MockReply::hang();
                 }
-                let acks_then_opens = st.key_event_acks_then_opens_dialog_at == Some(index);
-                if acks_then_opens || st.key_event_opens_dialog_at == Some(index) {
+                let before_reply = st.key_event_opens_dialog_before_reply_at == Some(index);
+                let after_reply = st.key_event_opens_dialog_after_reply_at == Some(index);
+                if before_reply || after_reply || st.key_event_opens_dialog_at == Some(index) {
                     st.renderer_blocked = true;
                     let events = st
                         .page_sessions
@@ -911,12 +919,13 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                             params: json!({ "type": "confirm", "message": "Leave?", "url": st.main_url }),
                         })
                         .collect();
-                    let reply = if acks_then_opens {
-                        MockReply::ok(json!({}))
+                    return if before_reply {
+                        MockReply::ok(json!({})).with_events(events)
+                    } else if after_reply {
+                        MockReply::ok(json!({})).with_events_after(events)
                     } else {
-                        MockReply::hang()
+                        MockReply::hang().with_events(events)
                     };
-                    return reply.with_events(events);
                 }
                 if st.fail_key_event_at == Some(index)
                     || (event_type == "keyDown"
@@ -974,7 +983,11 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 st.covering_node = st.focus_emulation_covers;
                 MockReply::ok(json!({}))
             }
-            "DOM.focus" if st.focus_opens_dialog || st.focus_acks_then_opens_dialog => {
+            "DOM.focus"
+                if st.focus_opens_dialog
+                    || st.focus_opens_dialog_before_reply
+                    || st.focus_opens_dialog_after_reply =>
+            {
                 st.renderer_blocked = true;
                 let events = st
                     .page_sessions
@@ -985,12 +998,13 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                         params: json!({ "type": "confirm", "message": "Sure?", "url": st.main_url }),
                     })
                     .collect();
-                let reply = if st.focus_acks_then_opens_dialog {
-                    MockReply::ok(json!({}))
+                if st.focus_opens_dialog_before_reply {
+                    MockReply::ok(json!({})).with_events(events)
+                } else if st.focus_opens_dialog_after_reply {
+                    MockReply::ok(json!({})).with_events_after(events)
                 } else {
-                    MockReply::hang()
-                };
-                reply.with_events(events)
+                    MockReply::hang().with_events(events)
+                }
             }
             "DOM.focus" | "Emulation.setFocusEmulationEnabled" | "Input.insertText" => {
                 MockReply::ok(json!({}))
@@ -4900,6 +4914,7 @@ async fn press_key_with_a_ref_focuses_it_on_its_own_frame_session() {
     assert_eq!(events[0].1["type"], "keyDown");
     assert_eq!(events[0].1["windowsVirtualKeyCode"], 13);
     assert_eq!(events[0].1["text"], "\r");
+    assert_no_dom_calls_after_focus(&f);
 }
 
 #[tokio::test]
@@ -5055,8 +5070,8 @@ async fn press_key_whose_modifier_opens_a_dialog_never_sends_the_key() {
 }
 
 #[tokio::test]
-async fn press_key_stops_when_an_acknowledged_modifier_then_opens_a_dialog() {
-    let f = fixture_with(|state| state.key_event_acks_then_opens_dialog_at = Some(0)).await;
+async fn press_key_stops_when_a_modifier_reply_follows_its_dialog() {
+    let f = fixture_with(|state| state.key_event_opens_dialog_before_reply_at = Some(0)).await;
     let result = press_key_with(&f, json!({ "key": "a", "modifiers": ["ctrl"] })).await;
     let s = structured(&result);
     assert_eq!(s["status"], "refused", "{s}");
@@ -5098,9 +5113,73 @@ async fn press_key_whose_ref_focus_opens_a_dialog_sends_no_key() {
 }
 
 #[tokio::test]
-async fn press_key_whose_ref_focus_opens_a_dialog_after_its_reply_sends_no_key() {
-    press_key_whose_ref_focus_opens_a_dialog(|state| state.focus_acks_then_opens_dialog = true)
+async fn press_key_whose_ref_focus_reply_follows_its_dialog_sends_no_key() {
+    press_key_whose_ref_focus_opens_a_dialog(|state| state.focus_opens_dialog_before_reply = true)
         .await;
+}
+
+/// A dialog that opens after a reply races the driver's next check, in
+/// Chromium as here. Either way the result is honest: the key was not sent
+/// and the press is refused, or it was sent and is reported pressed with the
+/// dialog and an unverifiable effect. The press never stalls.
+fn assert_honest_dialog_outcome(f: &Fixture, s: &Value, key: &str) {
+    let key_sent = key_event_summary(f)
+        .iter()
+        .any(|(event, name, _)| event != "keyUp" && name == key);
+    if s["status"] == "ok" {
+        assert!(key_sent, "{s}");
+        assert_eq!(s["pressed"], true, "{s}");
+        assert_eq!(s["effect"], "unverifiable", "{s}");
+        assert_eq!(s["dialog"]["present"], true, "{s}");
+    } else {
+        assert!(!key_sent, "{s}");
+        assert_eq!(s["refusal"]["code"], "browser_input_incomplete", "{s}");
+        assert_eq!(s["refusal"]["detail"]["pressed"], false, "{s}");
+        assert_eq!(s["refusal"]["detail"]["dialog"]["present"], true, "{s}");
+    }
+}
+
+#[tokio::test]
+async fn press_key_whose_modifier_opens_a_dialog_after_its_reply_reports_honestly() {
+    let f = fixture_with(|state| state.key_event_opens_dialog_after_reply_at = Some(0)).await;
+    let started = std::time::Instant::now();
+    let result = press_key_with(&f, json!({ "key": "a", "modifiers": ["ctrl"] })).await;
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    assert_honest_dialog_outcome(&f, structured(&result), "a");
+}
+
+#[tokio::test]
+async fn press_key_whose_ref_focus_opens_a_dialog_after_its_reply_reports_honestly() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let field = ref_of(&snap, "main", "Shadow Input");
+    f.state.lock().unwrap().focus_opens_dialog_after_reply = true;
+    let started = std::time::Instant::now();
+    let result = BrowserPressKeyTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "session": SESSION,
+            "key": "a", "ref": field
+        }))
+        .await;
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    assert_honest_dialog_outcome(&f, structured(&result), "a");
+    assert_no_dom_calls_after_focus(&f);
+}
+
+fn assert_no_dom_calls_after_focus(f: &Fixture) {
+    let state = f.state.lock().unwrap();
+    let focus = state
+        .calls
+        .iter()
+        .position(|(_, method, _)| method == "DOM.focus")
+        .expect("the ref was focused");
+    let after: Vec<&str> = state.calls[focus + 1..]
+        .iter()
+        .map(|(_, method, _)| method.as_str())
+        .filter(|method| method.starts_with("DOM."))
+        .collect();
+    assert!(after.is_empty(), "DOM calls after the focus: {after:?}");
 }
 
 async fn press_key_whose_ref_focus_opens_a_dialog(configure: impl FnOnce(&mut FixtureState)) {
@@ -5130,18 +5209,7 @@ async fn press_key_whose_ref_focus_opens_a_dialog(configure: impl FnOnce(&mut Fi
     assert!(recorded_calls(&f, "Input.dispatchKeyEvent").is_empty());
     // Nothing may queue behind the focus handler's dialog: no geometry or
     // visual lookup runs between the focus and the key loop.
-    let state = f.state.lock().unwrap();
-    let focus = state
-        .calls
-        .iter()
-        .position(|(_, method, _)| method == "DOM.focus")
-        .expect("the ref was focused");
-    let after: Vec<&str> = state.calls[focus + 1..]
-        .iter()
-        .map(|(_, method, _)| method.as_str())
-        .filter(|method| method.starts_with("DOM."))
-        .collect();
-    assert!(after.is_empty(), "DOM calls after the focus: {after:?}");
+    assert_no_dom_calls_after_focus(&f);
 }
 
 #[tokio::test]

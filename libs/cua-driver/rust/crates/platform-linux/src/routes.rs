@@ -56,6 +56,17 @@ pub(crate) trait LinuxCapture {
     fn capture_window(&self, xid: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>>;
 }
 
+/// Keyboard input into the focused surface. The caller has already
+/// activated `window`, when there is one; without one the keys go to the
+/// surface that has focus.
+pub(crate) trait LinuxKeyboard {
+    /// `text`, already checked to be typable.
+    fn type_text(&self, window: Option<u64>, text: &str) -> anyhow::Result<()>;
+    fn press_key(&self, window: Option<u64>, key: &str) -> anyhow::Result<()>;
+    /// A chord of modifiers and one final key.
+    fn hotkey(&self, window: Option<u64>, keys: &[String]) -> anyhow::Result<()>;
+}
+
 /// A display capture route. The bodies are in `wayland/mod.rs`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DisplayRoute {
@@ -102,6 +113,21 @@ pub(crate) enum WindowRoute {
     OutputCrop,
     /// The X11 per-window cascade: MIT-SHM, XGetImage, then `import`.
     X11,
+}
+
+/// A keyboard route. The bodies are in `wayland/mod.rs`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum KeyboardRoute {
+    /// The nested cua-compositor's control socket, for keys and chords sent
+    /// to its verified foreground target. Applies only without a window and
+    /// while `CUA_INJECT_SOCKET` is set; then terminal.
+    Injected,
+    /// niri's own keymap. Applies once niri is attested; then terminal.
+    Niri,
+    /// In-process zwp_virtual_keyboard_v1, chords only. A failure passes on.
+    VirtualKeyboard,
+    /// `wtype`, then libei on a portal-input build. Terminal.
+    Wtype,
 }
 
 /// The display capture routes for `desktop`, in the order they are tried.
@@ -218,12 +244,28 @@ pub(crate) fn desktop_pointer_routes(desktop: Desktop) -> Vec<DesktopPointerRout
     }
 }
 
+/// The keyboard routes for `desktop`, in the order they are tried.
+pub(crate) fn keyboard_routes(desktop: Desktop) -> Vec<KeyboardRoute> {
+    use KeyboardRoute::*;
+    match desktop {
+        // `CUA_INJECT_SOCKET` classifies as `Injected` only beside a
+        // `WAYLAND_DISPLAY`, so X11 keeps the route, which reads the variable
+        // itself.
+        Desktop::X11
+        | Desktop::XWayland(Compositor::Injected)
+        | Desktop::Wayland(Compositor::Injected) => vec![Injected, VirtualKeyboard, Wtype],
+        Desktop::XWayland(_) => vec![VirtualKeyboard, Wtype],
+        Desktop::Wayland(_) => vec![Niri, VirtualKeyboard, Wtype],
+    }
+}
+
 /// Every capability's routes for one desktop.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct LinuxRoutes {
     display_capture: Vec<DisplayRoute>,
     window_capture: Vec<WindowRoute>,
     desktop_pointer: Vec<DesktopPointerRoute>,
+    keyboard: Vec<KeyboardRoute>,
 }
 
 impl LinuxRoutes {
@@ -232,6 +274,7 @@ impl LinuxRoutes {
             display_capture: display_routes(desktop),
             window_capture: window_routes(desktop),
             desktop_pointer: desktop_pointer_routes(desktop),
+            keyboard: keyboard_routes(desktop),
         }
     }
 }
@@ -294,6 +337,27 @@ impl LinuxPointer for LinuxRoutes {
     ) -> anyhow::Result<()> {
         first_route("desktop pointer", &self.desktop_pointer, |route| {
             route.move_cursor(space, at)
+        })
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl LinuxKeyboard for LinuxRoutes {
+    fn type_text(&self, window: Option<u64>, text: &str) -> anyhow::Result<()> {
+        first_route("keyboard", &self.keyboard, |route| {
+            route.type_text(window, text)
+        })
+    }
+
+    fn press_key(&self, window: Option<u64>, key: &str) -> anyhow::Result<()> {
+        first_route("keyboard", &self.keyboard, |route| {
+            route.press_key(window, key)
+        })
+    }
+
+    fn hotkey(&self, window: Option<u64>, keys: &[String]) -> anyhow::Result<()> {
+        first_route("keyboard", &self.keyboard, |route| {
+            route.hotkey(window, keys)
         })
     }
 }
@@ -415,6 +479,49 @@ mod tests {
                 expected,
                 "{compositor:?}"
             );
+        }
+    }
+
+    #[test]
+    fn keyboard_routes_end_in_wtype_on_every_desktop() {
+        use KeyboardRoute::*;
+        let table: [(Desktop, &[KeyboardRoute]); 9] = [
+            (Desktop::X11, &[Injected, VirtualKeyboard, Wtype]),
+            (
+                Desktop::XWayland(Compositor::Injected),
+                &[Injected, VirtualKeyboard, Wtype],
+            ),
+            (
+                Desktop::XWayland(Compositor::Hyprland),
+                &[VirtualKeyboard, Wtype],
+            ),
+            (
+                Desktop::XWayland(Compositor::Niri),
+                &[VirtualKeyboard, Wtype],
+            ),
+            (
+                Desktop::XWayland(Compositor::Other),
+                &[VirtualKeyboard, Wtype],
+            ),
+            (
+                Desktop::Wayland(Compositor::Injected),
+                &[Injected, VirtualKeyboard, Wtype],
+            ),
+            (
+                Desktop::Wayland(Compositor::Hyprland),
+                &[Niri, VirtualKeyboard, Wtype],
+            ),
+            (
+                Desktop::Wayland(Compositor::Niri),
+                &[Niri, VirtualKeyboard, Wtype],
+            ),
+            (
+                Desktop::Wayland(Compositor::Other),
+                &[Niri, VirtualKeyboard, Wtype],
+            ),
+        ];
+        for (desktop, routes) in table {
+            assert_eq!(keyboard_routes(desktop), routes, "{desktop:?}");
         }
     }
 

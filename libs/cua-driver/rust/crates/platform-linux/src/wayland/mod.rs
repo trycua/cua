@@ -91,7 +91,8 @@ use wayland_protocols_wlr::virtual_pointer::v1::client::{
 const BTN_LEFT: u32 = 0x110;
 
 use crate::routes::{
-    DesktopDrag, DesktopPointerRoute, DisplayRoute, LinuxCapture as _, Outcome, WindowRoute,
+    DesktopDrag, DesktopPointerRoute, DisplayRoute, KeyboardRoute, LinuxCapture as _,
+    LinuxKeyboard as _, Outcome, WindowRoute,
 };
 use crate::x11::WindowInfo;
 
@@ -2959,30 +2960,7 @@ fn type_into(window: Option<u64>, text: &str) -> anyhow::Result<()> {
     }
     let text = &*text_keys::typable_text(text)?;
     window.map_or(Ok(()), activate_window_for_input)?;
-    if niri::is_session() {
-        return niri::keyboard::type_text(window.or_else(niri_expected_window), text);
-    }
-    // Lead with a no-op Shift_L tap: on a freshly-focused window under a headless
-    // seat (notably sway), the compositor needs the first virtual-keyboard event
-    // to wire up keyboard routing, and that first key is dropped. Sacrificing a
-    // modifier tap (no character) absorbs the drop so the real text lands intact;
-    // it's harmless where routing is already live (labwc).
-    let result = wtype_output(&["-k", "Shift_L", "--", text]);
-    match result {
-        Ok(out) if out.status.success() => Ok(()),
-        // `wtype` relies on `zwp_virtual_keyboard_v1`, which KWin/Plasma and
-        // Mutter/GNOME don't implement (and the binary may be missing wtype
-        // entirely). On a portal-input build, route typing through libei's
-        // `ei_text` interface instead. See #1982.
-        other => with_wtype_libei_fallback(
-            || {
-                libei_wait_keyboard_ready()?;
-                window.map_or(Ok(()), activate_window_for_input)?;
-                libei_type_text(text)
-            },
-            other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned()),
-        ),
-    }
+    crate::routes::routes().type_text(window, text)
 }
 
 /// Type text and press one key while an outer exact-container focus guard is
@@ -3027,35 +3005,13 @@ pub fn press_key(window_id: u64, key: &str) -> anyhow::Result<()> {
 
 /// Press one key while an outer exact-container focus guard is active.
 pub fn press_key_focused(key: &str) -> anyhow::Result<()> {
-    if is_inject_mode() {
-        let (pid, window_id) = inject_focused_target()?;
-        return inject_press_key(pid, window_id, key);
-    }
     press_into(None, key)
 }
 
 /// [`press_key`] into `window`, activated first, or [`press_key_focused`].
 fn press_into(window: Option<u64>, key: &str) -> anyhow::Result<()> {
     window.map_or(Ok(()), activate_window_for_input)?;
-    let keysym = key_to_keysym(key);
-    if niri::is_session() {
-        return niri::keyboard::press(window.or_else(niri_expected_window), &[], &keysym);
-    }
-    // Keep the sacrificial modifier and requested key in one virtual-keyboard
-    // lifetime. Starting a second wtype process creates a fresh protocol object,
-    // causing headless seats to drop the requested key as their first event.
-    let result = wtype_output(&["-k", "Shift_L", "-k", keysym.as_str()]);
-    match result {
-        Ok(out) if out.status.success() => Ok(()),
-        other => with_wtype_libei_fallback(
-            || {
-                libei_wait_keyboard_ready()?;
-                window.map_or(Ok(()), activate_window_for_input)?;
-                libei_press_key(key)
-            },
-            other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned()),
-        ),
-    }
+    crate::routes::routes().press_key(window, key)
 }
 
 /// Press a key combination (modifiers + final key) via `wtype`. Each modifier
@@ -3069,49 +3025,158 @@ pub fn hotkey(window_id: u64, keys: &[String]) -> anyhow::Result<()> {
 
 /// Send a chord while an outer exact-container focus guard is active.
 pub fn hotkey_focused(keys: &[String]) -> anyhow::Result<()> {
-    if is_inject_mode() {
-        let (pid, window_id) = inject_focused_target()?;
-        return inject_hotkey(pid, window_id, keys);
-    }
     chord_into(None, keys)
 }
 
 /// [`hotkey`] into `window`, activated first, or [`hotkey_focused`].
 fn chord_into(window: Option<u64>, keys: &[String]) -> anyhow::Result<()> {
     window.map_or(Ok(()), activate_window_for_input)?;
-    let (mods, final_key) = partition_modifiers(keys)?;
-    if niri::is_session() {
-        let expected = window.or_else(niri_expected_window);
-        return niri::keyboard::press(expected, &mods, &chord_keysym(&final_key));
-    }
-    if let Ok(()) = virtual_keyboard::hotkey(&mods, &final_key) {
-        return Ok(());
-    }
-    let keysym = key_to_keysym(&final_key);
-    let args = wtype_hotkey_args(&mods, &keysym);
-    let result = wtype_output(&args);
-    match result {
-        Ok(out) if out.status.success() => Ok(()),
-        other => {
-            let stderr = other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned());
-            #[cfg(feature = "portal-input")]
-            {
-                with_wtype_libei_fallback(
-                    || {
-                        libei::wait_keyboard_ready()?;
-                        window.map_or(Ok(()), activate_window_for_input)?;
-                        libei_hotkey(&mods, &final_key)
-                    },
-                    stderr,
-                )
+    crate::routes::routes().hotkey(window, keys)
+}
+
+impl KeyboardRoute {
+    /// Type `text` on this route.
+    pub(crate) fn type_text(self, window: Option<u64>, text: &str) -> Outcome<()> {
+        match self {
+            KeyboardRoute::Injected | KeyboardRoute::VirtualKeyboard => Outcome::NotApplicable,
+            KeyboardRoute::Niri => {
+                if !niri::is_session() {
+                    return Outcome::NotApplicable;
+                }
+                niri::keyboard::type_text(window.or_else(niri_expected_window), text).into()
             }
-            #[cfg(not(feature = "portal-input"))]
-            {
-                anyhow::bail!(
-                    "wtype {} failed: {}",
-                    args.join(" "),
-                    stderr.unwrap_or_else(|_| "wtype unavailable".into())
-                );
+            KeyboardRoute::Wtype => {
+                // Lead with a no-op Shift_L tap: on a freshly-focused window under a headless
+                // seat (notably sway), the compositor needs the first virtual-keyboard event
+                // to wire up keyboard routing, and that first key is dropped. Sacrificing a
+                // modifier tap (no character) absorbs the drop so the real text lands intact;
+                // it's harmless where routing is already live (labwc).
+                let result = wtype_output(&["-k", "Shift_L", "--", text]);
+                match result {
+                    Ok(out) if out.status.success() => Outcome::Done(()),
+                    // `wtype` relies on `zwp_virtual_keyboard_v1`, which KWin/Plasma and
+                    // Mutter/GNOME don't implement (and the binary may be missing wtype
+                    // entirely). On a portal-input build, route typing through libei's
+                    // `ei_text` interface instead. See #1982.
+                    other => with_wtype_libei_fallback(
+                        || {
+                            libei_wait_keyboard_ready()?;
+                            window.map_or(Ok(()), activate_window_for_input)?;
+                            libei_type_text(text)
+                        },
+                        other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned()),
+                    )
+                    .into(),
+                }
+            }
+        }
+    }
+
+    /// Press one key on this route.
+    pub(crate) fn press_key(self, window: Option<u64>, key: &str) -> Outcome<()> {
+        match self {
+            KeyboardRoute::Injected => {
+                if window.is_some() || !is_inject_mode() {
+                    return Outcome::NotApplicable;
+                }
+                inject_focused_target()
+                    .and_then(|(pid, window_id)| inject_press_key(pid, window_id, key))
+                    .into()
+            }
+            KeyboardRoute::Niri => {
+                if !niri::is_session() {
+                    return Outcome::NotApplicable;
+                }
+                let keysym = key_to_keysym(key);
+                niri::keyboard::press(window.or_else(niri_expected_window), &[], &keysym).into()
+            }
+            KeyboardRoute::VirtualKeyboard => Outcome::NotApplicable,
+            KeyboardRoute::Wtype => {
+                let keysym = key_to_keysym(key);
+                // Keep the sacrificial modifier and requested key in one virtual-keyboard
+                // lifetime. Starting a second wtype process creates a fresh protocol object,
+                // causing headless seats to drop the requested key as their first event.
+                let result = wtype_output(&["-k", "Shift_L", "-k", keysym.as_str()]);
+                match result {
+                    Ok(out) if out.status.success() => Outcome::Done(()),
+                    other => with_wtype_libei_fallback(
+                        || {
+                            libei_wait_keyboard_ready()?;
+                            window.map_or(Ok(()), activate_window_for_input)?;
+                            libei_press_key(key)
+                        },
+                        other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned()),
+                    )
+                    .into(),
+                }
+            }
+        }
+    }
+
+    /// Press the chord `keys` on this route. A chord with no final key is
+    /// refused by the first route past the injected one.
+    pub(crate) fn hotkey(self, window: Option<u64>, keys: &[String]) -> Outcome<()> {
+        match self {
+            KeyboardRoute::Injected => {
+                if window.is_some() || !is_inject_mode() {
+                    return Outcome::NotApplicable;
+                }
+                inject_focused_target()
+                    .and_then(|(pid, window_id)| inject_hotkey(pid, window_id, keys))
+                    .into()
+            }
+            route => match partition_modifiers(keys) {
+                Ok((mods, final_key)) => route.chord(window, &mods, &final_key),
+                Err(error) => Outcome::Refused(error),
+            },
+        }
+    }
+
+    /// Press `mods` with `final_key` on this route.
+    fn chord(self, window: Option<u64>, mods: &[String], final_key: &str) -> Outcome<()> {
+        match self {
+            KeyboardRoute::Injected => Outcome::NotApplicable,
+            KeyboardRoute::Niri => {
+                if !niri::is_session() {
+                    return Outcome::NotApplicable;
+                }
+                let expected = window.or_else(niri_expected_window);
+                niri::keyboard::press(expected, mods, &chord_keysym(final_key)).into()
+            }
+            KeyboardRoute::VirtualKeyboard => match virtual_keyboard::hotkey(mods, final_key) {
+                Ok(()) => Outcome::Done(()),
+                Err(_) => Outcome::NotApplicable,
+            },
+            KeyboardRoute::Wtype => {
+                let keysym = key_to_keysym(final_key);
+                let args = wtype_hotkey_args(mods, &keysym);
+                let result = wtype_output(&args);
+                match result {
+                    Ok(out) if out.status.success() => Outcome::Done(()),
+                    other => {
+                        let stderr = other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned());
+                        #[cfg(feature = "portal-input")]
+                        {
+                            with_wtype_libei_fallback(
+                                || {
+                                    libei::wait_keyboard_ready()?;
+                                    window.map_or(Ok(()), activate_window_for_input)?;
+                                    libei_hotkey(mods, final_key)
+                                },
+                                stderr,
+                            )
+                            .into()
+                        }
+                        #[cfg(not(feature = "portal-input"))]
+                        {
+                            Outcome::Refused(anyhow::anyhow!(
+                                "wtype {} failed: {}",
+                                args.join(" "),
+                                stderr.unwrap_or_else(|_| "wtype unavailable".into())
+                            ))
+                        }
+                    }
+                }
             }
         }
     }

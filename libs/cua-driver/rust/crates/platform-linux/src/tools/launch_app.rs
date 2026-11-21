@@ -519,6 +519,32 @@ fn process_exited(pid: u32) -> bool {
     }
 }
 
+/// Whether `pid` descends from `ancestor`, as `soffice.bin` does from the
+/// `oosplash` launcher that stays alive while it draws the window.
+fn descends_from(pid: u32, ancestor: u32) -> bool {
+    let mut current = pid;
+    for _ in 0..32 {
+        let Some(parent) = std::fs::read_to_string(format!("/proc/{current}/stat"))
+            .ok()
+            .and_then(|stat| {
+                stat.rsplit_once(')')
+                    .and_then(|(_, rest)| rest.split_whitespace().nth(1))
+                    .and_then(|ppid| ppid.parse::<u32>().ok())
+            })
+        else {
+            return false;
+        };
+        if parent == ancestor {
+            return true;
+        }
+        if parent <= 1 {
+            return false;
+        }
+        current = parent;
+    }
+    false
+}
+
 /// Case-insensitive identity match between a launch query
 /// (`nautilus`, `org.gnome.Nautilus`, `gnome-control-center`, a display
 /// name) and a window's WM_CLASS / app id.
@@ -535,22 +561,15 @@ fn window_matches_launch_key(window: &crate::x11::WindowInfo, query: &str) -> bo
         return false;
     }
     let query = query.to_ascii_lowercase();
-    let stem = query
+    let program = query.split_whitespace().next().unwrap_or_default();
+    let stem = program
         .rsplit('/')
         .next()
-        .unwrap_or(&query)
-        .trim_end_matches(".desktop")
-        .to_owned();
-    let last = stem.rsplit('.').next().unwrap_or(&stem).to_owned();
-    let class_last = class.rsplit('.').next().unwrap_or(&class).to_owned();
-    class == stem
-        || class_last == last
-        || class.contains(&last)
-        || last.contains(&class_last)
-        || stem
-            .split_whitespace()
-            .next()
-            .is_some_and(|word| class.contains(word))
+        .unwrap_or(program)
+        .trim_end_matches(".desktop");
+    let last = stem.rsplit('.').next().unwrap_or(stem);
+    let class_last = class.rsplit('.').next().unwrap_or(&class);
+    class == stem || class_last == last || class.contains(last) || last.contains(class_last)
 }
 
 /// How long a launch may take to show a window while the launcher process is
@@ -560,8 +579,8 @@ fn window_matches_launch_key(window: &crate::x11::WindowInfo, query: &str) -> bo
 const LAUNCH_STARTING_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
 const LAUNCH_HANDOFF_BUDGET: std::time::Duration = std::time::Duration::from_secs(8);
 
-/// Resolve the window(s) of a launch. Prefers the launcher's own window;
-/// otherwise adopts a newly mapped top-level whose WM_CLASS matches the
+/// Resolve the window(s) of a launch. Prefers the launcher's own window,
+/// then one of a process it forked; otherwise adopts a newly mapped top-level whose WM_CLASS matches the
 /// launch, whoever owns it: a wrapper script that exec'd the real binary
 /// (`libreoffice` → `soffice.bin`), or the running D-Bus service GNOME apps
 /// hand their request to.
@@ -573,9 +592,14 @@ fn resolve_launched_windows(
     let started = std::time::Instant::now();
     loop {
         let all = crate::wayland::list_windows_dispatch(None);
-        if let Some(launched) = settle_launch(&all, launcher_pid, query, before, |w| {
-            crate::x11::window_is_splash(w.xid)
-        }) {
+        if let Some(launched) = settle_launch(
+            &all,
+            launcher_pid,
+            query,
+            before,
+            |w| crate::x11::window_is_splash(w.xid),
+            |pid| descends_from(pid, launcher_pid),
+        ) {
             return launched;
         }
         let launcher_exited = process_exited(launcher_pid);
@@ -601,6 +625,7 @@ fn settle_launch(
     query: &str,
     before: &std::collections::HashSet<u64>,
     is_splash: impl Fn(&crate::x11::WindowInfo) -> bool,
+    descends: impl Fn(u32) -> bool,
 ) -> Option<LaunchedWindows> {
     let own: Vec<_> = all
         .iter()
@@ -614,10 +639,27 @@ fn settle_launch(
             handed_off: false,
         });
     }
+    let new = |w: &&crate::x11::WindowInfo| !before.contains(&w.xid) && !is_splash(w);
+    if let Some(pid) = all
+        .iter()
+        .filter(new)
+        .find_map(|w| w.pid.filter(|&pid| descends(pid)))
+    {
+        return Some(LaunchedWindows {
+            pid: Some(pid),
+            windows: all
+                .iter()
+                .filter(new)
+                .filter(|w| w.pid == Some(pid))
+                .cloned()
+                .collect(),
+            handed_off: true,
+        });
+    }
     let fresh: Vec<_> = all
         .iter()
-        .filter(|w| !before.contains(&w.xid) && w.pid.is_some())
-        .filter(|w| window_matches_launch(w, query) && !is_splash(w))
+        .filter(new)
+        .filter(|w| w.pid.is_some() && window_matches_launch(w, query))
         .cloned()
         .collect();
     let pid = fresh.first()?.pid?;
@@ -677,7 +719,23 @@ mod launch_resolution_tests {
             &window("Gnome-control-center"),
             "Settings\u{0}Settings\u{0}gnome-control-center"
         ));
+        assert!(window_matches_launch(
+            &window("libreoffice-calc"),
+            "libreoffice --calc /tmp/x.ods"
+        ));
+        assert!(window_matches_launch(
+            &window("Evince"),
+            "evince /tmp/a.pdf"
+        ));
+        assert!(window_matches_launch(
+            &window("Gedit"),
+            "/usr/bin/gedit --new-window"
+        ));
         assert!(!window_matches_launch(&window("Gedit"), "nautilus"));
+        assert!(!window_matches_launch(
+            &window("Gedit"),
+            "evince /tmp/gedit"
+        ));
         assert!(!window_matches_launch(&window(""), "nautilus"));
     }
 
@@ -697,10 +755,19 @@ mod launch_resolution_tests {
         let is_splash = |w: &crate::x11::WindowInfo| w.xid == 10;
 
         let splash_only = std::slice::from_ref(&splash);
-        assert!(settle_launch(splash_only, 377, "libreoffice", &none, is_splash).is_none());
+        assert!(
+            settle_launch(splash_only, 377, "libreoffice", &none, is_splash, |_| false).is_none()
+        );
 
-        let launched =
-            settle_launch(&[splash, calc], 377, "libreoffice", &none, is_splash).unwrap();
+        let launched = settle_launch(
+            &[splash, calc],
+            377,
+            "libreoffice",
+            &none,
+            is_splash,
+            |_| false,
+        )
+        .unwrap();
         assert_eq!(launched.pid, Some(398));
         assert_eq!(
             launched.windows.iter().map(|w| w.xid).collect::<Vec<_>>(),
@@ -708,8 +775,45 @@ mod launch_resolution_tests {
         );
 
         let gimp = owned(30, 377, "gimp");
-        let launched = settle_launch(&[gimp], 377, "gimp", &none, is_splash).unwrap();
+        let launched = settle_launch(&[gimp], 377, "gimp", &none, is_splash, |_| false).unwrap();
         assert_eq!((launched.pid, launched.handed_off), (Some(377), false));
+    }
+
+    #[test]
+    fn a_window_of_a_process_the_launcher_forked_is_the_launch() {
+        let splash = owned(10, 377, "libreoffice");
+        let calc = owned(20, 398, "libreoffice-calc");
+        let other = owned(30, 512, "localc");
+        let none = std::collections::HashSet::new();
+        let is_splash = |w: &crate::x11::WindowInfo| w.xid == 10;
+        let all = [other, splash, calc];
+
+        assert_eq!(
+            settle_launch(&all, 377, "localc", &none, is_splash, |_| false)
+                .unwrap()
+                .pid,
+            Some(512)
+        );
+        let launched =
+            settle_launch(&all, 377, "localc", &none, is_splash, |pid| pid == 398).unwrap();
+        assert_eq!((launched.pid, launched.handed_off), (Some(398), true));
+        assert_eq!(
+            launched.windows.iter().map(|w| w.xid).collect::<Vec<_>>(),
+            [20]
+        );
+    }
+
+    #[test]
+    fn a_child_process_descends_from_this_one_and_not_the_reverse() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        assert!(descends_from(child.id(), std::process::id()));
+        assert!(!descends_from(std::process::id(), child.id()));
+        assert!(!descends_from(u32::MAX - 1, std::process::id()));
+        child.kill().unwrap();
+        child.wait().unwrap();
     }
 
     #[test]

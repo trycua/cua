@@ -448,6 +448,12 @@ The command reads credentials only from these variables. Never echo, log,
 paste or commit them, and never put the password in a command line, a PR, a
 comment or a report.
 
+VNC encrypts only the account credentials, not the session: screenshots and
+typed text cross the network in the clear. For a Mac that is not this one,
+connect through an SSH tunnel (`ssh -L 5901:127.0.0.1:5900 <host>`, then
+`CUA_VNC_SERVER=127.0.0.1:5901`) or over a network you trust, and never use
+`type-env` over an untrusted network.
+
 On macOS 15 and later, Local Network privacy can block a connection to
 another computer on the local network: it fails with "No route to host" until
 the app you run the command from is allowed under Privacy & Security, Local
@@ -486,7 +492,8 @@ a Terminal in the VM display over SSH for this first run.
    which types it and presses Return without printing or logging it.
 
 Every click and typed variable is appended to `$CUA_VNC_LOG`, by default
-`~/.cache/cua-driver/vnc-approvals.log`, with the time and the server.
+`~/.cache/cua-driver/vnc-approvals.log`, with the time and the server, before
+it is sent. If the log cannot be written, the command sends nothing.
 
 **5. Verify and report.** Run `cua-driver permissions status --json`. Expect
 `accessibility: true` and `screen_recording: true`. From then on Cua Driver

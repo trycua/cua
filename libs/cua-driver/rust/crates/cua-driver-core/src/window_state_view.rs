@@ -273,7 +273,7 @@ pub struct ViewContext<'a> {
 pub fn apply(
     opts: &ViewOptions,
     ctx: &ViewContext<'_>,
-    content: &mut [Content],
+    content: &mut Vec<Content>,
     structured: &mut Value,
 ) {
     // Publish identity even for full_output and empty trees. It comes from the
@@ -282,23 +282,24 @@ pub fn apply(
     if let Some(sid) = structured.get("snapshot_id").and_then(Value::as_str) {
         identity_extra.push_str(&format!(" snapshot_id={sid}"));
     }
-    if let Some(cid) = structured
+    let capture_id = structured
         .get("capture_id")
         .and_then(Value::as_str)
-        .filter(|id| !id.is_empty())
-    {
+        .filter(|id| !id.is_empty());
+    if let Some(cid) = capture_id {
         identity_extra.push_str(&format!(" capture_id={cid}"));
     }
-    if !identity_extra.is_empty() {
-        for part in content.iter_mut() {
-            if let Content::Text { text, .. } = part {
-                if text.starts_with("window_id=") {
-                    let end = text.find('\n').unwrap_or(text.len());
-                    text.insert_str(end, &identity_extra);
-                    break;
-                }
-            }
-        }
+    let header = content.iter_mut().find_map(|part| match part {
+        Content::Text { text, .. } if text.starts_with("window_id=") => Some(text),
+        _ => None,
+    });
+    if let Some(text) = header {
+        let end = text.find('\n').unwrap_or(text.len());
+        text.insert_str(end, &identity_extra);
+    } else if let Some(cid) = capture_id {
+        // A capture-only read with an inline image has no text header, and a
+        // text-only host would otherwise never see the id it must pass on.
+        content.push(Content::text(format!("capture_id={cid}")));
     }
     let no_match = structured
         .get("tree_markdown")
@@ -1441,6 +1442,19 @@ mod tests {
             "window_id=7 pid=9 size=10x10 capture_id=cap_00000001"
         );
         assert_eq!(structured["capture_id"], "cap_00000001");
+    }
+
+    #[test]
+    fn image_only_capture_read_gets_a_capture_id_text_part() {
+        let mut content = vec![Content::image_png("AAAA".into())];
+        let mut structured = json!({
+            "window_id": 7,
+            "pid": 9,
+            "capture_id": "cap_00000001"
+        });
+        apply(&opts(json!({})), &ctx(7305), &mut content, &mut structured);
+        assert_eq!(content.len(), 2);
+        assert_eq!(text_of(&content), "capture_id=cap_00000001");
     }
 
     #[test]

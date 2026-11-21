@@ -568,7 +568,7 @@ fn format_visual_regions_text(output: &ParseVisualRegionsOutput) -> String {
 fn format_region_line(region: &VisualRegion) -> String {
     let bounds = region.bounds;
     let mut line = format!(
-        "- id={} kind={} bounds={},{} {}x{} confidence={}",
+        "- id={:?} kind={} bounds={},{} {}x{} confidence={}",
         region.id,
         region_kind_name(region.kind),
         bounds.x,
@@ -990,7 +990,7 @@ else:
             "{text}"
         );
         assert!(
-            text.contains("id=one kind=icon bounds=0,0 1x1 confidence=0.9 label=\"icon-class-4\""),
+            text.contains("id=\"one\" kind=icon bounds=0,0 1x1 confidence=0.9 label=\"icon-class-4\""),
             "{text}"
         );
         let output: ParseVisualRegionsOutput =
@@ -1302,8 +1302,8 @@ else:
         assert_eq!(
             text,
             "Parsed 2 visual regions capture_id=cap_00000001\n\
-             - id=vr_0 kind=text bounds=16,14 118x28 confidence=0.94 text=\"Calculator\" label=\"title\"\n\
-             - id=vr_1 kind=icon bounds=1,2 3x4 confidence=1.0 text=\"say \\\"hi\\\"\\nnext\" label=\"Ok\""
+             - id=\"vr_0\" kind=text bounds=16,14 118x28 confidence=0.94 text=\"Calculator\" label=\"title\"\n\
+             - id=\"vr_1\" kind=icon bounds=1,2 3x4 confidence=1.0 text=\"say \\\"hi\\\"\\nnext\" label=\"Ok\""
         );
         let structured = serde_json::to_value(&output).unwrap();
         assert_eq!(structured["capture"]["capture_id"], "cap_00000001");

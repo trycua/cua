@@ -28,6 +28,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 | [`get_browser_state`](#get_browser_state) | Read-only browser inspection. | macOS, Linux, Windows |
 | [`browser_prepare`](#browser_prepare) | Attach the browser tools to a browser. | macOS, Linux, Windows |
 | [`browser_navigate`](#browser_navigate) | Navigate one tab of an exactly-bound browser target to a new URL (http/https/about only). | macOS, Linux, Windows |
+| [`browser_new_tab`](#browser_new_tab) | Open a new tab in the window of an exactly-bound browser target and navigate it to a URL (http/https/about only), without activating the tab or raising the browser window. | macOS, Linux, Windows |
 | [`browser_motion_policy`](#browser_motion_policy) | Apply or clear the standard prefers-reduced-motion media emulation for one exactly-bound driver-owned browser tab. | macOS, Linux, Windows |
 | [`browser_click`](#browser_click) | Click a page element (by ref) or viewport coordinates in an exactly-bound tab. | macOS, Linux, Windows |
 | [`browser_type`](#browser_type) | Type text into an exactly-bound tab via the Input domain. | macOS, Linux, Windows |
@@ -553,6 +554,25 @@ Effect: mutating. Platforms: macOS, Linux, Windows.
 | <span id="browser_navigate--tab_id"></span>`tab_id` | `string` | required | Opaque tab id from get_browser_state (session-scoped). |
 | <span id="browser_navigate--target_id"></span>`target_id` | `string` | required | Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id). |
 | <span id="browser_navigate--url"></span>`url` | `string` | required | Destination URL (http:, https:, or about:). |
+
+**Example arguments**
+
+```json
+{"target_id":"<target_id>","tab_id":"<tab_id>","url":"<url>"}
+```
+
+### `browser_new_tab`
+
+Open a new tab in the window of an exactly-bound browser target and navigate it to a URL (http/https/about only), without activating the tab or raising the browser window. tab_id names an existing bound tab of that window. Returns the new tab's tab_id on the same target_id. Refused for heuristic bindings, and when the browser opens the tab in another window.
+
+Effect: mutating. Platforms: macOS, Linux, Windows.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="browser_new_tab--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
+| <span id="browser_new_tab--tab_id"></span>`tab_id` | `string` | required | Opaque tab id from get_browser_state (session-scoped) of a tab in the window that gets the new tab. |
+| <span id="browser_new_tab--target_id"></span>`target_id` | `string` | required | Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id). |
+| <span id="browser_new_tab--url"></span>`url` | `string` | required | URL for the new tab (http:, https:, or about:). |
 
 **Example arguments**
 

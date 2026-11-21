@@ -71,6 +71,7 @@ end_session({"session": "research-1"})
 | `browser_set_input_files` | Absolute paths to regular files (max 32), on a ref with `upload`. |
 | `browser_download` | Into an existing absolute `destination_root` that your policy admits. Returns only a byte count and id. |
 | `browser_navigate` | Invalidates every ref on the tab. |
+| `browser_new_tab` | Opens `url` in a new tab of the window that holds `tab_id`, without selecting the tab or raising the browser, and returns the new `tab_id`. Refuses with `browser_wrong_target_refused` when the browser puts the tab in another window. |
 
 Verify the result with a fresh snapshot. The driver never falls back from
 trusted input to a DOM event, or foregrounds the browser, to make a call look

@@ -74,6 +74,7 @@ const EXISTING_PROFILE_METHODS: &[&str] = &[
     "Runtime.evaluate",
     "Target.activateTarget",
     "Target.attachToTarget",
+    "Target.createTarget",
     "Target.detachFromTarget",
     "Target.getTargetInfo",
     "Target.getTargets",

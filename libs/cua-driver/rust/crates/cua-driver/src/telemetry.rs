@@ -590,6 +590,7 @@ impl AgentSessionState {
             "get_browser_state"
                 | "browser_prepare"
                 | "browser_navigate"
+                | "browser_new_tab"
                 | "browser_motion_policy"
                 | "browser_click"
                 | "browser_type"

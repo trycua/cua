@@ -1797,6 +1797,7 @@ mod tests {
             pid: 42,
             embedded: true,
             host_bundle_id: Some("com.example.host".into()),
+            permissions_pending: false,
         };
         assert!(validate_metadata(&metadata, 42, "com.example.host").is_ok());
         assert!(validate_metadata(&metadata, 43, "com.example.host").is_err());

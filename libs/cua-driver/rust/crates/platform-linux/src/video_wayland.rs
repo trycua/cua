@@ -101,7 +101,7 @@ fn owned_encoder() -> cua_driver_core::process::ManagedChildBuilder {
 
 /// Collect the tail of a child's stderr without letting the pipe fill up.
 fn drain_stderr_tail(child: &mut ManagedChild) -> Option<std::thread::JoinHandle<Vec<u8>>> {
-    child.stderr.take().map(|mut stderr| {
+    child.take_stderr().map(|mut stderr| {
         std::thread::spawn(move || {
             let mut output = Vec::new();
             let _ = stderr.read_to_end(&mut output);
@@ -198,8 +198,7 @@ fn run_gnome_shell_encoder(
         )
         .map_err(|error| anyhow::anyhow!("failed to start GNOME FFmpeg encoder: {error}"))?;
     let mut stdin = child
-        .stdin
-        .take()
+        .take_stdin()
         .ok_or_else(|| anyhow::anyhow!("GNOME FFmpeg encoder exposed no stdin"))?;
     stdin.write_all(&first_frame)?;
     stdin.flush()?;
@@ -629,7 +628,7 @@ mod portal_video {
                         .stderr(Stdio::piped()),
                 )
                 .map_err(|error| anyhow::anyhow!("failed to start FFmpeg encoder: {error}"))?;
-            let stdin = child.stdin.take();
+            let stdin = child.take_stdin();
             if let Some(stdin) = &stdin {
                 if let Err(error) = set_nonblocking(stdin) {
                     let _ = child.kill();

@@ -205,10 +205,10 @@ impl PrivateWorkerClient {
             .map_err(|error| DriverError::Worker {
                 reason: format!("spawn private worker {}: {error}", options.binary_path),
             })?;
-        let stdin = child.stdin.take().ok_or_else(|| DriverError::Worker {
+        let stdin = child.take_stdin().ok_or_else(|| DriverError::Worker {
             reason: "private worker stdin was not piped".into(),
         })?;
-        let stdout = child.stdout.take().ok_or_else(|| DriverError::Worker {
+        let stdout = child.take_stdout().ok_or_else(|| DriverError::Worker {
             reason: "private worker stdout was not piped".into(),
         })?;
         let child = Arc::new(Mutex::new(child));

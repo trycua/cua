@@ -1719,15 +1719,9 @@ fn launch_daemon_with_state_and_wait(
         && restart_managed_daemon_if_present(&executable);
     if !managed {
         let arguments = daemon_process_arguments(socket_path, state, experimental_history);
-        let mut command = std::process::Command::new(&executable);
-        command
-            .args(&arguments)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
         cua_driver_core::process::ManagedChild::builder()
             .detached()
-            .spawn(&mut command)
+            .spawn(&executable, &arguments)
             .map_err(|error| LaunchDaemonError {
                 kind: LaunchDaemonErrorKind::Failed,
                 message: format!("failed to launch {} serve: {error}", executable.display()),

@@ -106,7 +106,7 @@ impl FfmpegVideoBackend {
             .spawn(&mut cmd)
             .map_err(|e| anyhow::anyhow!("Failed to spawn ffmpeg ({}): {e}", ffmpeg.display()))?;
 
-        let stderr_thread = child.stderr.take().map(|mut stderr| {
+        let stderr_thread = child.take_stderr().map(|mut stderr| {
             std::thread::spawn(move || -> Vec<u8> {
                 use std::io::Read;
                 let mut buf = Vec::with_capacity(4096);
@@ -155,7 +155,7 @@ impl FfmpegVideoBackend {
 impl VideoBackend for FfmpegVideoBackend {
     fn stop(mut self: Box<Self>) -> anyhow::Result<VideoMetadata> {
         let elapsed = self.started_at.elapsed();
-        if let Some(mut stdin) = self.child.stdin.take() {
+        if let Some(mut stdin) = self.child.take_stdin() {
             let _ = stdin.write_all(b"q\n");
             let _ = stdin.flush();
         }

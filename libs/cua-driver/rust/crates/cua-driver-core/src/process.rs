@@ -16,17 +16,17 @@
 //!   child suspended, assigns it to a `KILL_ON_JOB_CLOSE` job and then resumes
 //!   it, so nothing escapes the job; the job also dies with the owner process.
 //!   Unix puts the child in its own process group and kills that group when
-//!   the `ManagedChild` is dropped or killed; an owner that dies without
-//!   unwinding leaves the group running.
+//!   the `ManagedChild` is dropped or killed, or when its exit is observed;
+//!   an owner that dies without unwinding leaves the group running.
 //! - [`reap_on_drop`](ManagedChildBuilder::reap_on_drop): dropping a child
 //!   that is still running kills and waits for it, so no zombie remains.
 //!
 //! This is process ownership, not a security boundary. Sandboxed children
 //! (`perception_client::containment`) build their own spawn.
 
-use std::io;
-use std::ops::{Deref, DerefMut};
-use std::process::{Child, Command, Output};
+use std::ffi::OsStr;
+use std::io::{self, Read};
+use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Output};
 
 /// Options for an owned child. See the [module docs](self).
 #[derive(Debug, Clone, Copy, Default)]
@@ -44,11 +44,13 @@ pub struct DetachedBuilder {
     no_window: bool,
 }
 
-/// A spawned child and whatever ties it to its owner. Dereferences to the
-/// [`Child`]; [`kill`](Self::kill) and [`wait_with_output`](Self::wait_with_output)
-/// replace the `Child` methods of the same name so they keep that tie.
+/// A spawned child and whatever ties it to its owner. It exposes only what
+/// keeps that tie sound: on Unix the leader is reaped through
+/// [`try_wait`](Self::try_wait) or [`wait`](Self::wait) alone, which kill the
+/// group while the exited leader still holds its id, so a reused id is never
+/// signalled.
 pub struct ManagedChild {
-    child: Option<Child>,
+    child: Child,
     owner: Option<Owner>,
     reap_on_drop: bool,
 }
@@ -58,57 +60,131 @@ impl ManagedChild {
         ManagedChildBuilder::default()
     }
 
+    pub fn id(&self) -> u32 {
+        self.child.id()
+    }
+
+    pub fn take_stdin(&mut self) -> Option<ChildStdin> {
+        self.child.stdin.take()
+    }
+
+    pub fn take_stdout(&mut self) -> Option<ChildStdout> {
+        self.child.stdout.take()
+    }
+
+    pub fn take_stderr(&mut self) -> Option<ChildStderr> {
+        self.child.stderr.take()
+    }
+
     /// Kill the child, and with [`kill_with_owner`](ManagedChildBuilder::kill_with_owner)
     /// every process it started.
     pub fn kill(&mut self) -> io::Result<()> {
         if let Some(owner) = &self.owner {
             owner.kill();
         }
-        self.child_mut().kill()
+        self.child.kill()
     }
 
-    /// [`Child::wait_with_output`]. Processes the child started stay under
-    /// the owner tie until the wait returns, then are killed with it.
+    /// [`Child::try_wait`]. With `kill_with_owner` on Unix, once the child
+    /// has exited the rest of its group is killed before it is reaped.
+    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        #[cfg(unix)]
+        if self.owner.is_some() {
+            match leader_exited(self.child.id(), false) {
+                Ok(false) => return Ok(None),
+                Ok(true) => self.release_group(),
+                Err(_) => self.owner = None,
+            }
+        }
+        self.child.try_wait()
+    }
+
+    /// [`Child::wait`], with the group handling of [`try_wait`](Self::try_wait).
+    pub fn wait(&mut self) -> io::Result<ExitStatus> {
+        #[cfg(unix)]
+        if self.owner.is_some() {
+            match leader_exited(self.child.id(), true) {
+                Ok(_) => self.release_group(),
+                Err(_) => self.owner = None,
+            }
+        }
+        self.child.wait()
+    }
+
+    /// [`Child::wait_with_output`], reaping through [`wait`](Self::wait).
     pub fn wait_with_output(mut self) -> io::Result<Output> {
-        self.child
-            .take()
-            .expect("child is present until consumed")
-            .wait_with_output()
+        fn drain<R: Read + Send + 'static>(
+            pipe: Option<R>,
+        ) -> std::thread::JoinHandle<io::Result<Vec<u8>>> {
+            std::thread::spawn(move || {
+                let mut bytes = Vec::new();
+                if let Some(mut pipe) = pipe {
+                    pipe.read_to_end(&mut bytes)?;
+                }
+                Ok(bytes)
+            })
+        }
+        drop(self.take_stdin());
+        let stdout = drain(self.take_stdout());
+        let stderr = drain(self.take_stderr());
+        let status = self.wait()?;
+        let join = |handle: std::thread::JoinHandle<io::Result<Vec<u8>>>| {
+            handle
+                .join()
+                .unwrap_or_else(|_| Err(io::Error::other("output reader panicked")))
+        };
+        Ok(Output {
+            status,
+            stdout: join(stdout)?,
+            stderr: join(stderr)?,
+        })
     }
 
-    fn child_mut(&mut self) -> &mut Child {
-        self.child
-            .as_mut()
-            .expect("child is present until consumed")
-    }
-}
-
-impl Deref for ManagedChild {
-    type Target = Child;
-
-    fn deref(&self) -> &Child {
-        self.child
-            .as_ref()
-            .expect("child is present until consumed")
-    }
-}
-
-impl DerefMut for ManagedChild {
-    fn deref_mut(&mut self) -> &mut Child {
-        self.child_mut()
+    #[cfg(unix)]
+    fn release_group(&mut self) {
+        if let Some(owner) = self.owner.take() {
+            owner.kill();
+        }
     }
 }
 
 impl Drop for ManagedChild {
     fn drop(&mut self) {
+        // On Unix an owner is present only while the leader is unreaped.
         if let Some(owner) = self.owner.take() {
             owner.kill();
         }
-        if let Some(mut child) = self.child.take() {
-            if self.reap_on_drop && !matches!(child.try_wait(), Ok(Some(_))) {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
+        if self.reap_on_drop && !matches!(self.child.try_wait(), Ok(Some(_))) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+}
+
+/// Whether the child `pid` has exited, without reaping it. With `block`,
+/// waits for the exit.
+#[cfg(unix)]
+fn leader_exited(pid: u32, block: bool) -> io::Result<bool> {
+    let pid = libc::id_t::from(pid);
+    let mut flags = libc::WEXITED | libc::WNOWAIT;
+    if !block {
+        flags |= libc::WNOHANG;
+    }
+    loop {
+        // SAFETY: zeroed siginfo_t is valid; waitid only writes into it.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        if unsafe { libc::waitid(libc::P_PID, pid, &mut info, flags) } == 0 {
+            // POSIX leaves si_pid 0 when WNOHANG finds no exited child.
+            #[cfg(target_vendor = "apple")]
+            let reported = info.si_pid;
+            #[cfg(not(target_vendor = "apple"))]
+            // SAFETY: waitid filled a SIGCHLD record or left it zeroed.
+            let reported = unsafe { info.si_pid() };
+            return Ok(reported != 0);
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
         }
     }
 }
@@ -171,7 +247,7 @@ impl ManagedChildBuilder {
             (child, owner)
         };
         Ok(ManagedChild {
-            child: Some(child),
+            child,
             owner,
             reap_on_drop: self.reap_on_drop,
         })
@@ -207,22 +283,34 @@ impl DetachedBuilder {
         self
     }
 
-    /// Spawn the child and return its pid. The child is never waited for.
-    ///
-    /// On Windows the child inherits no handles, so `command`'s stdio
-    /// settings do not apply, and it runs in the owner's environment and
-    /// working directory: a command that sets either is refused with
-    /// [`io::ErrorKind::InvalidInput`].
-    pub fn spawn(self, command: &mut Command) -> io::Result<u32> {
+    /// Spawn `program` with `args` and return its pid. The child gets null
+    /// stdio and the owner's environment and working directory, and is never
+    /// waited for. On Windows it inherits no handles at all.
+    pub fn spawn<S: AsRef<OsStr>>(
+        self,
+        program: impl AsRef<OsStr>,
+        args: impl IntoIterator<Item = S>,
+    ) -> io::Result<u32> {
+        let args = args
+            .into_iter()
+            .map(|arg| arg.as_ref().to_owned())
+            .collect::<Vec<_>>();
         #[cfg(unix)]
         {
+            use std::process::Stdio;
             let _ = self.no_window;
-            std::os::unix::process::CommandExt::process_group(command, 0);
+            let mut command = Command::new(program);
+            command
+                .args(&args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            std::os::unix::process::CommandExt::process_group(&mut command, 0);
             Ok(command.spawn()?.id())
         }
         #[cfg(windows)]
         {
-            win::spawn_detached(command, self.no_window)
+            win::spawn_detached(program.as_ref(), &args, self.no_window)
         }
     }
 }
@@ -259,6 +347,7 @@ fn process_group_target(pid: u32) -> Option<i32> {
 
 #[cfg(windows)]
 mod win {
+    use std::ffi::{OsStr, OsString};
     use std::io;
     use std::os::windows::ffi::OsStrExt as _;
     use std::os::windows::io::AsRawHandle;
@@ -361,19 +450,16 @@ mod win {
         Ok(())
     }
 
-    pub(super) fn spawn_detached(command: &Command, no_window: bool) -> io::Result<u32> {
-        if command.get_envs().next().is_some() || command.get_current_dir().is_some() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "a detached Windows child runs in the owner's environment and working directory",
-            ));
-        }
-        let program = command
-            .get_program()
+    pub(super) fn spawn_detached(
+        program: &OsStr,
+        args: &[OsString],
+        no_window: bool,
+    ) -> io::Result<u32> {
+        let wide_program = program
             .encode_wide()
             .chain(std::iter::once(0))
             .collect::<Vec<_>>();
-        let mut command_line = command_line(command);
+        let mut command_line = command_line(program, args);
         let startup = STARTUPINFOW {
             cb: std::mem::size_of::<STARTUPINFOW>() as u32,
             ..Default::default()
@@ -389,7 +475,7 @@ mod win {
         // CreateProcess with handle inheritance disabled is the boundary here.
         unsafe {
             CreateProcessW(
-                PCWSTR(program.as_ptr()),
+                PCWSTR(wide_program.as_ptr()),
                 PWSTR(command_line.as_mut_ptr()),
                 None,
                 None,
@@ -406,9 +492,9 @@ mod win {
         Ok(process.dwProcessId)
     }
 
-    fn command_line(command: &Command) -> Vec<u16> {
+    fn command_line(program: &OsStr, args: &[OsString]) -> Vec<u16> {
         let mut line = Vec::new();
-        for argument in std::iter::once(command.get_program()).chain(command.get_args()) {
+        for argument in std::iter::once(program).chain(args.iter().map(OsString::as_os_str)) {
             if !line.is_empty() {
                 line.push(' ' as u16);
             }
@@ -523,24 +609,16 @@ mod win {
 
         #[test]
         fn command_line_quotes_like_the_msvc_runtime_parses() {
-            let mut command = Command::new(r"C:\Program Files\cua\cua-driver.exe");
-            command.args(["serve", "", r#"a "b""#, r"c d\", r"e\f", "plain"]);
-            let line = String::from_utf16(&command_line(&command)).unwrap();
+            let args = ["serve", "", r#"a "b""#, r"c d\", r"e\f", "plain"].map(OsString::from);
+            let line = String::from_utf16(&command_line(
+                OsStr::new(r"C:\Program Files\cua\cua-driver.exe"),
+                &args,
+            ))
+            .unwrap();
             assert_eq!(
                 line,
                 "\"C:\\Program Files\\cua\\cua-driver.exe\" serve \"\" \"a \\\"b\\\"\" \"c d\\\\\" e\\f plain\0"
             );
-        }
-
-        #[test]
-        fn detached_spawn_refuses_an_environment_it_cannot_carry() {
-            let mut command = Command::new("cmd.exe");
-            command.env("CUA_PROCESS_TEST", "1");
-            let error = super::super::ManagedChild::builder()
-                .detached()
-                .spawn(&mut command)
-                .unwrap_err();
-            assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         }
     }
 }
@@ -568,7 +646,7 @@ mod tests {
             .stderr(Stdio::null());
         let mut child = builder.spawn(&mut command).expect("spawn sh");
         let mut line = String::new();
-        std::io::BufReader::new(child.stdout.take().unwrap())
+        std::io::BufReader::new(child.take_stdout().unwrap())
             .read_line(&mut line)
             .unwrap();
         (child, line.trim().parse().expect("grandchild pid"))
@@ -596,6 +674,34 @@ mod tests {
         assert!(
             wait_gone(grandchild),
             "grandchild {grandchild} outlived the drop"
+        );
+    }
+
+    #[test]
+    fn observing_the_exit_kills_the_group_and_drops_the_tie_before_reaping() {
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", "sleep 60 & echo $!"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let mut child = ManagedChild::builder()
+            .kill_with_owner()
+            .spawn(&mut command)
+            .expect("spawn sh");
+        let mut line = String::new();
+        std::io::BufReader::new(child.take_stdout().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        let grandchild: i32 = line.trim().parse().expect("grandchild pid");
+        assert!(child.wait().unwrap().success());
+        assert!(
+            child.owner.is_none(),
+            "a reaped leader's group id must never be signalled again"
+        );
+        assert!(
+            wait_gone(grandchild),
+            "grandchild {grandchild} outlived the leader"
         );
     }
 

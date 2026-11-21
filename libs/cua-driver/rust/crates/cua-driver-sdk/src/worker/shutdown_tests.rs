@@ -74,8 +74,8 @@ fn fixture_client(mode: &str, requests: &std::path::Path) -> Arc<PrivateWorkerCl
                 .stderr(Stdio::inherit()),
         )
         .unwrap();
-    let stdin = child.stdin.take().unwrap();
-    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let stdin = child.take_stdin().unwrap();
+    let mut stdout = BufReader::new(child.take_stdout().unwrap());
     // Bound readiness with an owned reader thread; failed readiness kills and
     // reaps this exact child before joining the reader.
     let (tx, rx) = mpsc::sync_channel(1);

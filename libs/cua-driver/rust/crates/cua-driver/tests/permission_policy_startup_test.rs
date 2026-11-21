@@ -6,6 +6,19 @@
 
 use std::process::{Command, Stdio};
 
+/// `serve` exits with this code when startup authorization or configuration
+/// is rejected. Each OS keeps the code it has always used.
+const STARTUP_AUTHORIZATION_EXIT: i32 = if cfg!(target_os = "macos") { 64 } else { 1 };
+
+fn assert_startup_authorization_exit(output: &std::process::Output) {
+    assert_eq!(
+        output.status.code(),
+        Some(STARTUP_AUTHORIZATION_EXIT),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn test_socket(directory: &tempfile::TempDir, suffix: &str) -> String {
     #[cfg(not(unix))]
     let _ = directory;
@@ -96,7 +109,7 @@ fn direct_mcp_still_reads_permission_profile_from_environment() {
         .output()
         .expect("run direct MCP with bounded profile from the environment");
 
-    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&output.stderr).contains("requires --capability-manifest"));
 }
 
@@ -120,10 +133,7 @@ fn missing_configured_policy_prevents_daemon_startup() {
         .output()
         .expect("run cua-driver serve with a missing configured policy");
 
-    assert!(
-        !output.status.success(),
-        "daemon unexpectedly started with a missing configured policy"
-    );
+    assert_startup_authorization_exit(&output);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("configured permission policy path does not exist"),
@@ -156,7 +166,7 @@ fn missing_managed_policy_prevents_daemon_startup() {
         .output()
         .expect("run cua-driver serve with a missing managed policy");
 
-    assert!(!output.status.success());
+    assert_startup_authorization_exit(&output);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("managed policy")
@@ -173,7 +183,7 @@ fn unrestricted_mode_requires_the_danger_acknowledgement_before_bind() {
     let socket = test_socket(&directory, "unrestricted-no-ack");
     let output = rejected_serve(&socket, &["--permission-mode", "unrestricted"]);
 
-    assert!(!output.status.success());
+    assert_startup_authorization_exit(&output);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("requires --dangerously-bypass-approvals"),
@@ -196,7 +206,7 @@ fn danger_acknowledgement_cannot_weaken_standard_mode() {
         ],
     );
 
-    assert!(!output.status.success());
+    assert_startup_authorization_exit(&output);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("cannot be combined with a non-unrestricted --permission-mode"),
@@ -225,7 +235,7 @@ fn danger_flag_alone_selects_unrestricted_and_managed_config_can_disable_it() {
         .output()
         .expect("run administratively disabled unrestricted mode");
 
-    assert!(!output.status.success());
+    assert_startup_authorization_exit(&output);
     assert!(String::from_utf8_lossy(&output.stderr)
         .contains("unrestricted is disabled by managed startup configuration"));
     #[cfg(unix)]
@@ -256,7 +266,7 @@ fn bounded_mode_requires_a_capability_manifest_before_bind() {
     let directory = tempfile::tempdir().expect("temporary bounded test directory");
     let socket = test_socket(&directory, "bounded-no-policy");
     let output = rejected_serve(&socket, &["--permission-mode", "bounded"]);
-    assert!(!output.status.success());
+    assert_startup_authorization_exit(&output);
     assert!(String::from_utf8_lossy(&output.stderr).contains("requires --capability-manifest"));
     #[cfg(unix)]
     assert!(!std::path::Path::new(&socket).exists());
@@ -276,7 +286,7 @@ fn bounded_mode_requires_launch_time_manifest_approval_before_bind() {
             &policy,
         ],
     );
-    assert!(!output.status.success());
+    assert_startup_authorization_exit(&output);
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("requires --approve-capability-manifest")
     );
@@ -376,7 +386,7 @@ allow:
         ],
     );
 
-    assert!(!output.status.success());
+    assert_startup_authorization_exit(&output);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("requires capability manifest expires_after and idle_timeout"),
@@ -400,7 +410,7 @@ fn capability_manifest_without_acknowledgement_fails_in_standard_mode() {
             &policy,
         ],
     );
-    assert!(!output.status.success());
+    assert_startup_authorization_exit(&output);
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("requires --approve-capability-manifest")
     );
@@ -420,7 +430,7 @@ fn capability_manifest_acknowledgement_without_manifest_fails_closed() {
             "--approve-capability-manifest",
         ],
     );
-    assert!(!output.status.success());
+    assert_startup_authorization_exit(&output);
     assert!(String::from_utf8_lossy(&output.stderr).contains("requires --capability-manifest"));
     #[cfg(unix)]
     assert!(!std::path::Path::new(&socket).exists());
@@ -431,7 +441,7 @@ fn autonomous_mode_name_remains_a_bounded_compatibility_alias() {
     let directory = tempfile::tempdir().expect("temporary mode alias test directory");
     let socket = test_socket(&directory, "autonomous-alias");
     let output = rejected_serve(&socket, &["--permission-mode", "autonomous"]);
-    assert!(!output.status.success());
+    assert_startup_authorization_exit(&output);
     assert!(String::from_utf8_lossy(&output.stderr)
         .contains("permission mode bounded requires --capability-manifest"));
     #[cfg(unix)]

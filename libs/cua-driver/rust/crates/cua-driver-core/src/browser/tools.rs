@@ -3703,6 +3703,39 @@ mod tests {
         BrowserEngine::new(Arc::new(MockPlatform::default()))
     }
 
+    /// Browser tools never take the desktop lane, so no call can hold it
+    /// while it waits for a browser mutation gate. The exemption is the
+    /// contract's, not an adapter attestation, so it holds for every
+    /// argument shape.
+    #[test]
+    fn no_registered_browser_tool_takes_the_desktop_lane() {
+        let mut registry = ToolRegistry::new();
+        register_browser_tools(&engine(), &mut registry);
+        let names: Vec<String> = registry.tool_names().map(str::to_owned).collect();
+        for action in cua_driver_contract::ACTION_RESULT_TOOLS
+            .iter()
+            .filter(|name| name.starts_with("browser_"))
+        {
+            assert!(names.iter().any(|name| name == action), "{action}");
+        }
+        for name in &names {
+            let tool = registry.registered_tool(name).unwrap();
+            for args in [
+                json!({}),
+                json!({"pid": 10, "window_id": 20}),
+                json!({"pid": 10, "window_id": 20, "scope": "desktop"}),
+                json!({"pid": 10, "delivery_mode": "foreground"}),
+            ] {
+                let independent = tool.has_independent_input_lane(&args);
+                assert!(!independent, "{name} {args}");
+                assert!(
+                    !crate::tool::requires_desktop_coordination(name, &args, independent),
+                    "{name} {args}"
+                );
+            }
+        }
+    }
+
     #[cfg(unix)]
     fn launching_engine() -> Arc<BrowserEngine> {
         slow_launching_engine(std::time::Duration::ZERO)

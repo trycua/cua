@@ -362,6 +362,17 @@ pub trait BrowserPlatform: Send + Sync {
         ))
     }
 
+    /// Where the machine's administrator forces extensions on `executable`
+    /// through managed browser policy, if anywhere: the admin-only policy
+    /// file, preference domain or registry key that does it (see
+    /// [`super::managed_policy::policy_forces_extensions`]). Only policy a
+    /// standard user cannot write counts. When it returns `Some`, the
+    /// isolated launch leaves extensions and background networking on so the
+    /// browser installs them. The default reports none.
+    fn managed_extension_policy(&self, _executable: &str) -> Option<String> {
+        None
+    }
+
     /// Spawn the driver-owned isolated browser that core fully configured in
     /// `command` for the private profile at `profile`. The default launches
     /// it with the Driver's own token. A platform may instead launch it with
@@ -577,6 +588,20 @@ pub trait BrowserPlatform: Send + Sync {
         error: BrowserRefusal,
     ) -> BrowserRefusal {
         error
+    }
+
+    /// Close the browser-owned connection prompt that a DevTools connection
+    /// the driver has abandoned left on screen. The browser keeps that prompt
+    /// after the connection closes, and answering it then attaches nothing, so
+    /// leaving it would only invite a person to approve a dead request. Must
+    /// use the same exact prompt matching as consent handling and only ever
+    /// choose the prompt's cancel action. Returns whether a prompt was closed.
+    async fn dismiss_abandoned_existing_profile_consent(
+        &self,
+        _pid: i64,
+        _window_id: u64,
+    ) -> Result<bool, BrowserRefusal> {
+        Ok(false)
     }
 
     /// Handle one pending browser-owned connection prompt. Implementations

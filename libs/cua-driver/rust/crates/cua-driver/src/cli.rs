@@ -28,10 +28,6 @@ pub enum Command {
         /// Own the runtime in this MCP process. On macOS this is an explicit
         /// TCC-attribution choice; it is mutually exclusive with `--socket`.
         direct: bool,
-        /// `--claude-code-computer-use-compat`: legacy compatibility flag.
-        /// It currently has no tool-surface effect and remains accepted so
-        /// existing Claude Code launch configurations keep working.
-        claude_code_compat: bool,
         /// Repeatable trusted launch grants for residual standard-mode
         /// boundaries, for example `--grant existing-profile`.
         grants: Vec<String>,
@@ -79,11 +75,6 @@ pub enum Command {
         /// two opt-out signals.
         no_permissions_gate: bool,
         no_automation_prompts: bool,
-        /// True when `--claude-code-computer-use-compat` is on argv. The MCP
-        /// proxy forwards this flag to a daemon it auto-launches (see
-        /// `launch_daemon_and_wait`) so existing launch configurations stay
-        /// stable. It currently has no tool-surface effect.
-        claude_code_compat: bool,
         /// Repeatable trusted launch grants.
         grants: Vec<String>,
         /// Admit the encrypted local Computer History early preview for this
@@ -255,7 +246,6 @@ const VALUE_FLAGS: &[&str] = &[
     "--socket",
     "--permission-mode",
     "--grant",
-    "--session-policy",
     "--capability-manifest",
     "--pid-file",
     "--expected-pid",
@@ -290,12 +280,40 @@ const SERVE_ONLY_AUTHORIZATION_FLAGS: &[&str] = &[
     "--permission-mode",
     "--capability-manifest",
     "--approve-capability-manifest",
-    "--session-policy",
-    "--approve-session-policy",
     "--dangerously-bypass-approvals",
     "--no-permissions-gate",
     "--no-automation-prompts",
 ];
+
+/// Options that were removed, each with what to do instead. Passing one fails
+/// with that message rather than being ignored or reported as unknown.
+const REMOVED_OPTIONS: &[(&str, &str)] = &[
+    (
+        "--session-policy",
+        "use `cua-driver serve --capability-manifest <path>` instead",
+    ),
+    (
+        "--approve-session-policy",
+        "use `cua-driver serve --approve-capability-manifest` instead",
+    ),
+    (
+        "--claude-code-computer-use-compat",
+        "it had no effect on the tool surface. Remove it and register the server as plain `cua-driver mcp` (see \"Claude Code registration\" in the Cua Driver README, or run `cua-driver mcp-config --client claude`)",
+    ),
+];
+
+fn removed_option_error(args: &[String]) -> Option<String> {
+    REMOVED_OPTIONS.iter().find_map(|(flag, instead)| {
+        args.iter()
+            .any(|arg| {
+                arg == flag
+                    || arg
+                        .strip_prefix(flag)
+                        .is_some_and(|remainder| remainder.starts_with('='))
+            })
+            .then(|| format!("cua-driver: {flag} was removed; {instead}."))
+    })
+}
 
 fn serve_only_authorization_flag(args: &[String]) -> Option<&'static str> {
     SERVE_ONLY_AUTHORIZATION_FLAGS.iter().copied().find(|flag| {
@@ -568,6 +586,11 @@ fn finite_tool_name_from_args(args: &[String]) -> Option<String> {
 pub fn parse_command() -> Command {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
+    if let Some(error) = removed_option_error(&args) {
+        eprintln!("{error}");
+        process::exit(64);
+    }
+
     // Handle --version / -V before any other parsing so they are never
     // silently stripped as "bare flags" and swallowed by MCP mode.
     if args.iter().any(|a| a == "--version" || a == "-V") {
@@ -678,10 +701,6 @@ pub fn parse_command() -> Command {
         );
         println!("  --approve-capability-manifest   Required with --capability-manifest; the trusted launcher asserts");
         println!("                                  that the human reviewed this exact manifest at startup.");
-        println!("  --session-policy <path>         Deprecated alias for --capability-manifest.");
-        println!(
-            "  --approve-session-policy        Deprecated alias for --approve-capability-manifest."
-        );
         println!();
         println!("authorization revocation:");
         println!("  cua-driver revoke --session <id>  Stop and revoke one session's grants.");
@@ -701,12 +720,6 @@ pub fn parse_command() -> Command {
             "  --host-bundle-id <id>   Advisory host bundle id label for check_permissions output."
         );
         println!("  --socket <path>         Select an explicit daemon socket/pipe endpoint.");
-        println!("  --claude-code-computer-use-compat");
-        println!("                          Legacy compatibility flag retained for existing launch configs.");
-        println!(
-            "                          It currently has no tool-surface effect and does not add a"
-        );
-        println!("                          standalone screenshot tool.");
         println!();
         println!("agent cursor overlay (serve only — needs the daemon UI runloop):");
         println!("  The overlay is ON by default: every MCP session automatically gets its own");
@@ -833,10 +846,6 @@ pub fn parse_command() -> Command {
         process::exit(64);
     }
 
-    let claude_code_compat = args
-        .iter()
-        .any(|a| a == "--claude-code-computer-use-compat");
-
     let mut pos = positionals.into_iter();
     match pos.next() {
         None => {
@@ -866,14 +875,12 @@ pub fn parse_command() -> Command {
             Command::Mcp {
                 socket: socket.clone(),
                 direct: args.iter().any(|a| a == "--direct"),
-                claude_code_compat,
                 grants: grants.clone(),
             }
         }
         Some("mcp") => Command::Mcp {
             socket: socket.clone(),
             direct: args.iter().any(|a| a == "--direct"),
-            claude_code_compat,
             grants: grants.clone(),
         },
         Some("list-tools") => Command::ListTools,
@@ -894,18 +901,11 @@ pub fn parse_command() -> Command {
             dangerously_bypass_approvals: args
                 .iter()
                 .any(|a| a == "--dangerously-bypass-approvals"),
-            capability_manifest: aliased_flag_value(
-                &args,
-                "--capability-manifest",
-                "--session-policy",
-            ),
-            approve_capability_manifest: args
-                .iter()
-                .any(|a| a == "--approve-capability-manifest" || a == "--approve-session-policy"),
+            capability_manifest: flag_value(&args, "--capability-manifest"),
+            approve_capability_manifest: args.iter().any(|a| a == "--approve-capability-manifest"),
             // Bare flag — present anywhere on argv counts as "skip the gate".
             no_permissions_gate: args.iter().any(|a| a == "--no-permissions-gate"),
             no_automation_prompts: args.iter().any(|a| a == "--no-automation-prompts"),
-            claude_code_compat,
             grants,
             experimental_history: args.iter().any(|a| a == "--experimental-history"),
         },
@@ -1459,19 +1459,6 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
     None
 }
 
-fn aliased_flag_value(args: &[String], preferred: &str, deprecated: &str) -> Option<String> {
-    let preferred_value = flag_value(args, preferred);
-    let deprecated_value = flag_value(args, deprecated);
-    if preferred_value.is_some()
-        && deprecated_value.is_some()
-        && preferred_value != deprecated_value
-    {
-        eprintln!("{preferred} conflicts with deprecated {deprecated}");
-        process::exit(64);
-    }
-    preferred_value.or(deprecated_value)
-}
-
 /// Return every value of a repeatable `--flag value` or `--flag=value`.
 fn flag_values(args: &[String], flag: &str) -> Vec<String> {
     let mut values = Vec::new();
@@ -1608,12 +1595,10 @@ impl std::error::Error for LaunchDaemonError {}
 pub fn launch_daemon_and_wait(
     socket_path: &str,
     timeout_secs: u64,
-    claude_code_compat: bool,
     grants: &[String],
     experimental_history: bool,
 ) -> Result<(), LaunchDaemonError> {
     let state = crate::history_runtime::DaemonLaunchState {
-        claude_code_compat,
         grants: grants.to_vec(),
         ..Default::default()
     };
@@ -1962,9 +1947,6 @@ fn append_daemon_launch_state(
     if state.no_automation_prompts {
         args.push("--no-automation-prompts".to_owned());
     }
-    if state.claude_code_compat {
-        args.push("--claude-code-computer-use-compat".to_owned());
-    }
     if experimental_history {
         args.push("--experimental-history".to_owned());
     }
@@ -2003,7 +1985,6 @@ impl McpDaemonStartup {
 
 pub fn run_mcp_via_daemon_proxy<F>(
     socket: Option<String>,
-    claude_code_compat: bool,
     grants: &[String],
     on_startup: F,
 ) -> anyhow::Result<()>
@@ -2066,13 +2047,7 @@ where
             }
             true
         };
-        if let Err(error) = launch_daemon_and_wait(
-            &socket_path,
-            10,
-            claude_code_compat,
-            grants,
-            experimental_history,
-        ) {
+        if let Err(error) = launch_daemon_and_wait(&socket_path, 10, grants, experimental_history) {
             if let Some(on_startup) = on_startup.take() {
                 on_startup(
                     if error.kind == LaunchDaemonErrorKind::Timeout {
@@ -2189,7 +2164,6 @@ pub fn build_manifest() -> serde_json::Value {
               "args": [
                   { "name": "--socket", "type": "string", "description": "Select an explicit daemon socket or named-pipe endpoint." },
                   { "name": "--direct", "type": "flag", "description": "Own the runtime in the MCP process; on macOS this explicitly accepts host TCC attribution. Mutually exclusive with --socket." },
-                  { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Legacy compatibility flag with no current tool-surface effect." },
                   { "name": "--embedded", "type": "flag", "description": "Declare embedding-host mode. Without --direct, requires the host's private service through --socket instead of auto-launching the standalone app." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." },
                   { "name": "--grant", "type": "repeatable-string", "description": "Pre-authorize a residual standard-mode boundary for a newly launched runtime. Supported value: existing-profile." }
@@ -2203,11 +2177,8 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--dangerously-bypass-approvals", "type": "flag", "description": "Select unrestricted mode and acknowledge its risk." },
                   { "name": "--capability-manifest", "type": "string", "description": "Optional narrow-only tool/resource ceiling; required in bounded mode." },
                   { "name": "--approve-capability-manifest", "type": "flag", "description": "Trusted-launcher confirmation that the exact capability manifest was reviewed." },
-                  { "name": "--session-policy", "type": "string", "description": "Deprecated alias for --capability-manifest." },
-                  { "name": "--approve-session-policy", "type": "flag", "description": "Deprecated alias for --approve-capability-manifest." },
                   { "name": "--no-permissions-gate", "type": "flag", "description": "Skip the macOS TCC first-launch gate." },
                   { "name": "--no-automation-prompts", "type": "flag", "description": "Refuse scripting actions without granted macOS Automation consent." },
-                  { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Legacy compatibility flag forwarded by the MCP proxy; no current tool-surface effect." },
                   { "name": "--embedded", "type": "flag", "description": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." }
                   ,{ "name": "--experimental-history", "type": "flag", "description": "Admit the encrypted local Computer History early preview for this daemon launch." }
@@ -2433,14 +2404,6 @@ pub fn run_mcp_config(client: Option<&str>, no_skills: bool) {
             // defaults to the per-project config (`<cwd>/.claude.json`),
             // which is the source of the "registered cua-driver but
             // Claude Code doesn't see it" surprise users hit.
-            //
-            // The `--claude-code-computer-use-compat` flag is NOT
-            // emitted: the only tool it ever gated (the compat
-            // screenshot) was removed in #1692, so the flag is a no-op
-            // today on every code path. Carrying it confused Claude
-            // Code's tool indexer in observed sessions; dropping it
-            // makes the registration shape match what `--client codex`,
-            // `--client cursor`, etc. already produce.
             //
             // Why `add-json` instead of `add -- BIN --flag`? PowerShell's
             // native-command arg parser mangles long flags after a bare
@@ -2696,7 +2659,7 @@ mod daemon_compatibility_tests {
 
     #[test]
     fn incompatible_daemon_is_refused_before_a_cli_action_can_dispatch() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
         let socket = directory.path().join("driver.sock");
         let listener = UnixListener::bind(&socket).unwrap();
         let server = std::thread::spawn(move || {
@@ -4202,7 +4165,6 @@ fn run_permissions_grant() {
             if let Err(e) = launch_daemon_and_wait(
                 &socket,
                 180,
-                false,
                 &[],
                 crate::history_runtime::preview_admitted_preference(),
             ) {
@@ -4736,7 +4698,6 @@ fn cli_docs_literal() -> serde_json::Value {
                 ],
                 "flags": [
                     {"name":"direct","short_name":null,"help":"Own the runtime in this MCP process; mutually exclusive with --socket.","default_value":false},
-                    {"name":"claude-code-computer-use-compat","short_name":null,"help":"Accepted for older Claude Code setup snippets; there is no standalone screenshot tool; use get_window_state for window screenshots.","default_value":false},
                     {"name":"embedded","short_name":null,"help":"Declare embedding-host mode. Without --direct, require the host's private service through --socket instead of auto-launching the standalone app.","default_value":false}
                 ],
                 "subcommands": no_subcommands
@@ -4785,7 +4746,6 @@ fn cli_docs_literal() -> serde_json::Value {
                     {"name":"permission-mode","short_name":null,"help":"Immutable agent authorization mode: standard, bounded, or unrestricted.","type":"String","default_value":"standard","is_optional":true},
                     {"name":"grant","short_name":null,"help":"Pre-authorize a residual standard-mode boundary. Repeatable; supported value: existing-profile.","type":"String","default_value":null,"is_optional":true,"is_repeatable":true},
                     {"name":"capability-manifest","short_name":null,"help":"Optional narrow-only tool/resource ceiling; required in bounded mode.","type":"Path","default_value":null,"is_optional":true},
-                    {"name":"session-policy","short_name":null,"help":"Deprecated alias for capability-manifest.","type":"Path","default_value":null,"is_optional":true},
                     {"name":"host-bundle-id","short_name":null,"help":"Advisory host bundle id label echoed in check_permissions output (embedded mode).","type":"String","default_value":null,"is_optional":true},
                     {"name":"cursor-theme","short_name":null,"help":"Installed cursor theme id for the agent cursor overlay.","type":"String","default_value":"cua.default","is_optional":true},
                     {"name":"cursor-reduced-motion","short_name":null,"help":"Agent cursor motion: auto follows the OS setting, on forces still frames, off allows animation.","type":"String","default_value":"auto","is_optional":true},
@@ -4794,10 +4754,8 @@ fn cli_docs_literal() -> serde_json::Value {
                     {"name":"idle-hide-ms","short_name":null,"help":"Override how long an idle agent cursor stays visible, in milliseconds.","type":"Number","default_value":null,"is_optional":true}
                 ],
                 "flags": [
-                    {"name":"claude-code-computer-use-compat","short_name":null,"help":"Legacy compatibility flag forwarded by `mcp` when it launches the daemon; no current tool-surface effect.","default_value":false},
                     {"name":"dangerously-bypass-approvals","short_name":null,"help":"Select unrestricted mode and acknowledge its risk.","default_value":false},
                     {"name":"approve-capability-manifest","short_name":null,"help":"Trusted-launcher confirmation that the exact capability manifest was reviewed.","default_value":false},
-                    {"name":"approve-session-policy","short_name":null,"help":"Deprecated alias for approve-capability-manifest.","default_value":false},
                     {"name":"no-permissions-gate","short_name":null,"help":"Skip the macOS first-launch permissions gate.","default_value":false},
                     {"name":"no-automation-prompts","short_name":null,"help":"Refuse scripting actions without granted macOS Automation consent.","default_value":false},
                     {"name":"embedded","short_name":null,"help":"Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1.","default_value":false},
@@ -6299,7 +6257,6 @@ mod tests {
             approve_capability_manifest: true,
             no_permissions_gate: true,
             no_automation_prompts: true,
-            claude_code_compat: true,
             grants,
         };
         #[cfg(target_os = "macos")]
@@ -6332,7 +6289,6 @@ mod tests {
         let restored: crate::history_runtime::DaemonLaunchState =
             serde_json::from_value(legacy).unwrap();
         assert!(!restored.no_automation_prompts);
-        assert!(launch.contains(&"--claude-code-computer-use-compat".to_owned()));
         assert!(launch.contains(&"--experimental-history".to_owned()));
         assert!(launch
             .windows(2)
@@ -6397,7 +6353,6 @@ mod tests {
             &[
                 "serve",
                 "--no-automation-prompts",
-                "--claude-code-computer-use-compat",
                 "--experimental-history",
                 "--grant",
                 "existing-profile",
@@ -6604,26 +6559,6 @@ mod tests {
         assert!(launch.contains(&"--dangerously-bypass-approvals".to_owned()));
         assert!(!state.no_automation_prompts);
         assert!(!launch.contains(&"--no-automation-prompts".to_owned()));
-    }
-
-    #[test]
-    fn deprecated_session_policy_flag_remains_a_capability_manifest_alias() {
-        let argv = args(&["serve", "--session-policy", "/tmp/legacy.yaml"]);
-        assert_eq!(
-            aliased_flag_value(&argv, "--capability-manifest", "--session-policy"),
-            Some("/tmp/legacy.yaml".to_owned())
-        );
-
-        let identical = args(&[
-            "serve",
-            "--capability-manifest=/tmp/shared.yaml",
-            "--session-policy",
-            "/tmp/shared.yaml",
-        ]);
-        assert_eq!(
-            aliased_flag_value(&identical, "--capability-manifest", "--session-policy"),
-            Some("/tmp/shared.yaml".to_owned())
-        );
     }
 
     #[test]

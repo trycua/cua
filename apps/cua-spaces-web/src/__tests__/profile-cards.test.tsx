@@ -103,7 +103,11 @@ describe.skipIf(!wasmBuilt)("profile cards", () => {
   it("default permissions are one line with an Edit link; Edit shows the three selects, each saved at once", async () => {
     const calls: { op: string; args: unknown }[] = [];
     // Ada's Hermes in release-checks has the default rights.
-    await mountApp(`/spaces/${encodeURIComponent("relay:mac-mini/release-checks")}`, { failsCreates: false, listsGhost: false, intercept: (op, args) => (calls.push({ op, args }), undefined) });
+    await mountApp(`/spaces/${encodeURIComponent("relay:mac-mini/release-checks")}`, {
+      failsCreates: false,
+      listsGhost: false,
+      intercept: (op, args) => (calls.push({ op, args }), undefined),
+    });
     await ready();
     await click(await found("[data-profile-trigger='hermes']"));
     const card = await found("[data-profile-card='agent'][data-profile='hermes']");
@@ -120,7 +124,8 @@ describe.skipIf(!wasmBuilt)("profile cards", () => {
     expect(options.some((o) => o?.startsWith("Only "))).toBe(true);
     const owner = [...document.querySelectorAll("[role=option]")].find((o) => o.textContent === "Owner")!;
     await act(async () => {
-      for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) fireEvent(owner, new MouseEvent(type, { bubbles: true, cancelable: true }));
+      for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"])
+        fireEvent(owner, new MouseEvent(type, { bubbles: true, cancelable: true }));
       await new Promise((r) => setTimeout(r, 20));
     });
     await waitFor(() => expect(calls.some((c) => c.op === "thread.setRights" && (c.args as { name: string; task: string }).task === "owner")).toBe(true));

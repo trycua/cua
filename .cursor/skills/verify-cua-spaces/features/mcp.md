@@ -38,5 +38,5 @@ Preconditions:
 ## Gotchas
 
 - `--embedded` keeps the MCP server off any cua daemon; without it `cua mcp` starts or reuses one under the cua home.
-- MCP tools take the Space by display name or id; the display name works here even where `cua sb` does not.
+- MCP tools take the Space by display name or id.
 - Tools that show a Space on screen (`open_space_viewer`, `show_space_pip`, `stream_space_window`) call back into a running Cua Spaces app and fail without one; they are unverified here.

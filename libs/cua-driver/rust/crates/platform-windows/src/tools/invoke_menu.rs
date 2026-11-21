@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_contract::InvokeMenuInput;
 use cua_driver_core::{
@@ -89,7 +92,7 @@ impl Tool for InvokeMenuTool {
         };
         let hwnd_value = input.window_id;
         let hwnd = HWND(hwnd_value as usize as *mut _);
-        if !unsafe { IsWindow(hwnd) }.as_bool() {
+        if !unsafe { IsWindow(Some(hwnd)) }.as_bool() {
             return menu_refusal("invoke_menu: window_id is closed, stale, or invalid".into());
         }
         let mut owner_pid = 0_u32;

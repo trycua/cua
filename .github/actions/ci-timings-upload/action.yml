@@ -1,0 +1,15 @@
+name: Upload test timings
+description: "Uploads the per-file test times that .github/scripts/flaky/timings.py wrote, for the weekly CI speed report (ci_weekly_report.py). Run with if: always()."
+inputs:
+  suite:
+    description: "The suite name given to flaky.py run or timings.py (unique per job, matrix legs included)."
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/upload-artifact@v4
+      with:
+        name: timings-${{ inputs.suite }}
+        path: ${{ runner.temp }}/ci-timings/
+        if-no-files-found: ignore
+        retention-days: 10

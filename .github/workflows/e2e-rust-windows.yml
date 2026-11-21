@@ -15,10 +15,15 @@ on:
         type: string
         default: "windows-latest"
       lane:
-        description: "Diagnostic lane; release gates use all"
+        description: "Diagnostic lane, or a comma list of lanes (the merge queue passes native,capture,installer); release gates use all"
         required: false
         type: string
         default: all
+      harness_filter:
+        description: "Comma list of harness hosts for the shared lane (the PR quick lane passes electron); empty runs them all"
+        required: false
+        type: string
+        default: ""
   workflow_dispatch:
     inputs:
       ref:
@@ -40,6 +45,10 @@ on:
           - native
           - capture
           - installer
+      harness_filter:
+        description: "Comma list of harness hosts for the shared lane (for example electron); empty runs them all"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -85,13 +94,14 @@ jobs:
           echo "sha=${sha,,}" >> "$GITHUB_OUTPUT"
 
   shared:
-    if: inputs.lane == 'all' || inputs.lane == 'shared'
+    if: inputs.lane == 'all' || contains(format(',{0},', inputs.lane), ',shared,')
     name: "Windows / shared Electron + Tauri"
     needs: source
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 90
     env:
       CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
+      CUA_E2E_HARNESS_FILTER: ${{ inputs.harness_filter }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -131,7 +141,7 @@ jobs:
           retention-days: 14
 
   native:
-    if: inputs.lane == 'all' || inputs.lane == 'native'
+    if: inputs.lane == 'all' || contains(format(',{0},', inputs.lane), ',native,')
     name: "Windows / native WPF + WinUI3 + WebView2"
     needs: source
     runs-on: ${{ inputs.runner }}
@@ -176,7 +186,7 @@ jobs:
           retention-days: 14
 
   capture:
-    if: inputs.lane == 'all' || inputs.lane == 'capture'
+    if: inputs.lane == 'all' || contains(format(',{0},', inputs.lane), ',capture,')
     name: "Windows / capture and desktop scope"
     needs: source
     runs-on: ${{ inputs.runner }}
@@ -221,7 +231,7 @@ jobs:
           retention-days: 14
 
   installer:
-    if: inputs.lane == 'all' || inputs.lane == 'installer'
+    if: inputs.lane == 'all' || contains(format(',{0},', inputs.lane), ',installer,')
     name: "Windows / installer and update smoke"
     needs: source
     runs-on: windows-latest

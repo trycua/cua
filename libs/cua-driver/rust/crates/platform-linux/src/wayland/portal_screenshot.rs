@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `xdg-desktop-portal` Screenshot capture path.
 //!
 //! Reaches GNOME/Mutter, KDE/KWin, and any compositor that ships an

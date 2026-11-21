@@ -18,6 +18,10 @@ Select them explicitly with `--tasks WEB-01 WEB-02`; `run_bench.WEB_TASKS` lists
 They use a Node built-in-only loopback service, task-local routes and checks,
 and a fresh workspace-local Chrome profile. No internet or external assets are used.
 
+The task manifest, [`v2-taskset.json`](v2-taskset.json), lists every Bench v2 task with its
+category, OS availability, conditions and `split`. A task kept out of this repository would run
+from a separate pack named by `CDB_TASKPACK_HELDOUT`, with the same layout.
+
 Each task directory holds:
 
 * `brief.md`: what the agent is told;

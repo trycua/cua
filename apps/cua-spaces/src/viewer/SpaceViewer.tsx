@@ -13,14 +13,7 @@
  * `desktop_stream` shows an "update the image" message instead.
  */
 
-import {
-  useEffect,
-  useMemo,
-  useReducer,
-  useRef,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-} from "react";
+import { useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { FEATURE } from "../model/spaces";
 import {
@@ -138,12 +131,7 @@ export function SpaceViewer({ bridge, transfer }: SpaceViewerProps) {
     return <div className="viewer viewer-message viewer-error">{boot.message}</div>;
   }
   return (
-    <ViewerSession
-      bridge={bridge}
-      transfer={transferBridge}
-      config={boot.config}
-      desktopStream={boot.desktopStream}
-    />
+    <ViewerSession bridge={bridge} transfer={transferBridge} config={boot.config} desktopStream={boot.desktopStream} />
   );
 }
 
@@ -273,15 +261,10 @@ function ViewerSession({
   const onAgentMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
     event.preventDefault();
-    const items = Array.from(
-      agentMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [],
-    );
+    const items = Array.from(agentMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
     if (items.length === 0) return;
     const current = items.indexOf(document.activeElement as HTMLButtonElement);
-    const next =
-      event.key === "ArrowDown"
-        ? (current + 1) % items.length
-        : (current - 1 + items.length) % items.length;
+    const next = event.key === "ArrowDown" ? (current + 1) % items.length : (current - 1 + items.length) % items.length;
     items[next]?.focus();
   };
   // The agent being installed and opened in a terminal. Its notice stays up
@@ -308,7 +291,10 @@ function ViewerSession({
       .then(() => setTopbarNotice(t("spaces.viewer.agent_opened", { agent: agent.name })))
       .catch((error: unknown) =>
         setTopbarNotice(
-          t("errors.viewer.agent_open_failed", { agent: agent.name, reason: error instanceof Error ? error.message : String(error) }),
+          t("errors.viewer.agent_open_failed", {
+            agent: agent.name,
+            reason: error instanceof Error ? error.message : String(error),
+          }),
         ),
       )
       .finally(() => setAgentInstalling(null));
@@ -321,8 +307,7 @@ function ViewerSession({
   useEffect(() => {
     let cancelled = false;
     let unsub: (() => void) | undefined;
-    const reflect = (status: HotspotStatus) =>
-      setHotspotOn(status.active && status.spaceId === space.id);
+    const reflect = (status: HotspotStatus) => setHotspotOn(status.active && status.spaceId === space.id);
     void bridge
       .hotspotStatus()
       .then((status) => {
@@ -485,11 +470,7 @@ function ViewerSession({
         </div>
       )}
       {blurredBg && phase !== "connected" && (
-        <div
-          className="viewer-bg"
-          aria-hidden="true"
-          style={{ backgroundImage: `url("${blurredBg}")` }}
-        />
+        <div className="viewer-bg" aria-hidden="true" style={{ backgroundImage: `url("${blurredBg}")` }} />
       )}
       <div
         className="viewer-screen"
@@ -522,7 +503,9 @@ function ViewerSession({
             onGeometry={(width, height) => setFrameSize({ width, height })}
           />
         )}
-        {phase !== "unsupported" && <PresenceOverlay spaceId={space.id} interactive={view === "space"} live={phase === "connected"} />}
+        {phase !== "unsupported" && (
+          <PresenceOverlay spaceId={space.id} interactive={view === "space"} live={phase === "connected"} />
+        )}
       </div>
       {phase !== "connected" && (
         <div className="viewer-status">
@@ -581,18 +564,12 @@ export function TransferOverlayView({
         <h2 className="viewer-transfer-title">{transferTitle(state)}</h2>
         {isError ? (
           <>
-            <p className="viewer-transfer-error">
-              {state.message || "The transfer did not complete."}
-            </p>
+            <p className="viewer-transfer-error">{state.message || "The transfer did not complete."}</p>
             <div className="viewer-transfer-actions">
               <button type="button" className="ghost-button" onClick={onRetry}>
                 {t("common.action.retry")}
               </button>
-              <button
-                type="button"
-                className="ghost-button viewer-transfer-cancel"
-                onClick={onCancel}
-              >
+              <button type="button" className="ghost-button viewer-transfer-cancel" onClick={onCancel}>
                 {t("common.action.cancel")}
               </button>
             </div>

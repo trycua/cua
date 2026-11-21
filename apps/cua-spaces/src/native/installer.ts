@@ -88,8 +88,7 @@ export interface InstallerBridge {
 
 export function createTauriInstallerBridge(): InstallerBridge {
   const core = import("@tauri-apps/api/core");
-  const invoke = async <T>(command: string, args?: Record<string, unknown>) =>
-    (await core).invoke<T>(command, args);
+  const invoke = async <T>(command: string, args?: Record<string, unknown>) => (await core).invoke<T>(command, args);
   return {
     isNative: true,
     cliPlan: () => invoke<CliInstallPlan>("installer_cli_plan"),
@@ -201,10 +200,24 @@ export function createFakeInstallerBridge(
       const outcomes: AgentSetupOutcome[] = [];
       for (const id of request.agents) {
         if (request.mcp)
-          outcomes.push({ agents: [id], target: "mcp", item: "cua", path: `/cfg/${id}`, change: "created", detail: "" });
+          outcomes.push({
+            agents: [id],
+            target: "mcp",
+            item: "cua",
+            path: `/cfg/${id}`,
+            change: "created",
+            detail: "",
+          });
         if (request.skills)
           for (const s of skills)
-            outcomes.push({ agents: [id], target: "skill", item: s.name, path: `/skills/${id}/${s.name}`, change: "created", detail: "" });
+            outcomes.push({
+              agents: [id],
+              target: "skill",
+              item: s.name,
+              path: `/skills/${id}/${s.name}`,
+              change: "created",
+              detail: "",
+            });
       }
       // `cua agents setup --cua-driver`: the cua-driver skill and MCP server.
       if (request.driver)
@@ -218,7 +231,14 @@ export function createFakeInstallerBridge(
             change: had ? "unchanged" : "created",
             detail: "",
           });
-          outcomes.push({ agents: [id], target: "mcp", item: "cua-driver", path: `/cfg/${id}`, change: "created", detail: "" });
+          outcomes.push({
+            agents: [id],
+            target: "mcp",
+            item: "cua-driver",
+            path: `/cfg/${id}`,
+            change: "created",
+            detail: "",
+          });
         }
       return { outcomes };
     },

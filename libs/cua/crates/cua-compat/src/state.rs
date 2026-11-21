@@ -21,7 +21,7 @@ pub enum OnTimeout {
 }
 
 /// One sandbox the gateway made.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Record {
     /// The provider-facing id.
     pub id: String,
@@ -77,6 +77,43 @@ pub struct Record {
     /// Provider extras (Daytona labels, names, ...).
     #[serde(default)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for Record {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Record")
+            .field("id", &self.id)
+            .field("cua_name", &self.cua_name)
+            .field("key_id", &self.key_id)
+            .field("identity_daemon", &self.identity_daemon)
+            .field(
+                "identity_token",
+                &self.identity_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("template_id", &self.template_id)
+            .field("alias", &self.alias)
+            .field("metadata", &self.metadata)
+            .field("env_vars", &self.env_vars)
+            .field("access_token", &"<redacted>")
+            .field(
+                "traffic_token",
+                &self.traffic_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("started_at_ms", &self.started_at_ms)
+            .field("end_at_ms", &self.end_at_ms)
+            .field("on_timeout", &self.on_timeout)
+            .field("delete_after_pause_ms", &self.delete_after_pause_ms)
+            .field("hard_end_at_ms", &self.hard_end_at_ms)
+            .field("auto_resume", &self.auto_resume)
+            .field("paused", &self.paused)
+            .field("internet", &self.internet)
+            .field("cpus", &self.cpus)
+            .field("memory_mb", &self.memory_mb)
+            .field("disk_mb", &self.disk_mb)
+            .field("held_checkpoint", &self.held_checkpoint)
+            .field("extra", &self.extra)
+            .finish()
+    }
 }
 
 fn yes() -> bool {

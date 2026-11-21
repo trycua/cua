@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS `kill_app` tool — force-terminate a process by pid via SIGKILL.
 //!
 //! Cross-platform mirror of the Windows `kill_app` tool (which calls

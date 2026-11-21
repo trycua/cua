@@ -177,7 +177,7 @@ describe.skipIf(!wasmBuilt)("the CI Runners page (real routes, wasm core)", () =
     const off: TestHost = { failsCreates: false, listsGhost: false };
     const { router } = await mountApp("/spaces", off);
     await router.load();
-    await screen.findByText("Machines");
+    await screen.findByRole("link", { name: /^Computers/ });
     expect(screen.queryByText("CI Runners")).toBeNull();
     await act(async () => {
       await router.navigate({ to: "/ci" });

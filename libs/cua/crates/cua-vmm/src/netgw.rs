@@ -346,6 +346,20 @@ fn is_gateway_pid(pid: i32) -> bool {
         .unwrap_or(false)
 }
 
+/// Whether the gateway of the VM in `dir` is running: its pid file names a
+/// live `cua-netgw`. Always true where gateways are not signalled (Windows).
+pub fn gateway_running(dir: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        gateway_pid(dir).is_some_and(is_gateway_pid)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+        true
+    }
+}
+
 /// Asks the gateway of the VM in `dir` to read its rules now (SIGHUP). Best
 /// effort: no gateway, or one already gone, is fine.
 fn reload(dir: &Path) {

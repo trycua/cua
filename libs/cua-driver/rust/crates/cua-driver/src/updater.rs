@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `cua-driver update --apply` implementation.
 //!
 //! Delegates the actual install work to the canonical installer scripts:
@@ -22,24 +25,69 @@
 
 use std::process::{Command, ExitStatus};
 
-pub(crate) const PACMAN_UPDATE_GUIDANCE: &str =
-    "This executable is managed by pacman. Update with `sudo pacman -Syu`; \
-     release selection and availability are controlled by your package repository. \
-     The upstream installer and stable/nightly channel switching are disabled.";
+/// Something other than Driver's own installer updates this executable, so
+/// Driver's update check, `update --apply` and channel commands refuse and
+/// point at it instead.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateOwner {
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Pacman,
+    /// The app that carries this driver in its `Contents/Helpers`, by name
+    /// (`Cua Spaces`). The driver updates with the app; the standalone
+    /// installer would add a second driver beside it.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    HostApp(String),
+}
 
-/// Only positive package ownership disables the upstream updater. Missing
-/// pacman, failed queries, and unresolved paths retain unmanaged behavior.
-pub(crate) fn is_pacman_managed() -> bool {
+impl UpdateOwner {
+    pub(crate) fn guidance(&self) -> String {
+        match self {
+            Self::Pacman => {
+                "This executable is managed by pacman. Update with `sudo pacman -Syu`; \
+                 release selection and availability are controlled by your package repository. \
+                 The upstream installer and stable/nightly channel switching are disabled."
+                    .to_owned()
+            }
+            Self::HostApp(app) => format!(
+                "This Cua Driver is part of {app} and updates with it. Update {app} itself \
+                 (in Cua Spaces: Cua Spaces > Check for Updates…). The standalone installer and \
+                 stable/nightly channel switching are disabled, so a second driver is never \
+                 installed beside it."
+            ),
+        }
+    }
+}
+
+/// Only positive ownership disables the upstream updater. Missing pacman,
+/// failed queries, and unresolved paths retain unmanaged behavior.
+pub(crate) fn update_owner() -> Option<UpdateOwner> {
+    #[cfg(target_os = "macos")]
+    {
+        let executable = std::fs::canonicalize(std::env::current_exe().ok()?).ok()?;
+        host_app(&executable).map(UpdateOwner::HostApp)
+    }
     #[cfg(target_os = "linux")]
     {
-        std::env::current_exe()
-            .map(|path| pacman_owns_executable(&path, std::path::Path::new("/usr/bin/pacman")))
-            .unwrap_or(false)
+        let executable = std::env::current_exe().ok()?;
+        pacman_owns_executable(&executable, std::path::Path::new("/usr/bin/pacman"))
+            .then_some(UpdateOwner::Pacman)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
-        false
+        None
     }
+}
+
+/// The `<App>` of `<App>.app/Contents/Helpers/<executable>`: the app that
+/// ships this executable as a helper. Driver's own apps keep theirs in
+/// `Contents/MacOS`.
+#[cfg(any(target_os = "macos", test))]
+fn host_app(path: &std::path::Path) -> Option<String> {
+    let mut parents = path.ancestors().skip(1).map(|dir| dir.file_name());
+    let helpers = parents.next().flatten()?;
+    let contents = parents.next().flatten()?;
+    let app = parents.next().flatten()?.to_str()?.strip_suffix(".app")?;
+    (helpers == "Helpers" && contents == "Contents" && !app.is_empty()).then(|| app.to_owned())
 }
 
 #[cfg(any(target_os = "linux", all(test, unix)))]
@@ -115,14 +163,17 @@ const RELEASE_VERSION_ENV: &str = "CUA_DRIVER_RELEASE_VERSION";
 /// installer's exit status so the caller can produce the right
 /// "succeeded / failed — re-run manually" message.
 pub fn run_install_script(version: &str) -> std::io::Result<ExitStatus> {
-    run_install_script_with_ownership(version, is_pacman_managed())
+    run_install_script_with_owner(version, update_owner())
 }
 
-fn run_install_script_with_ownership(version: &str, managed: bool) -> std::io::Result<ExitStatus> {
-    if managed {
+fn run_install_script_with_owner(
+    version: &str,
+    owner: Option<UpdateOwner>,
+) -> std::io::Result<ExitStatus> {
+    if let Some(owner) = owner {
         return Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
-            PACMAN_UPDATE_GUIDANCE,
+            owner.guidance(),
         ));
     }
     #[cfg(windows)]
@@ -188,9 +239,46 @@ mod tests {
 
     #[test]
     fn managed_install_never_starts_installer() {
-        let error = run_install_script_with_ownership("0.24.0", true).unwrap_err();
-        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
-        assert!(error.to_string().contains("sudo pacman -Syu"));
+        for (owner, guidance) in [
+            (UpdateOwner::Pacman, "sudo pacman -Syu"),
+            (
+                UpdateOwner::HostApp("Other".to_owned()),
+                "part of Other and updates with it",
+            ),
+        ] {
+            let error = run_install_script_with_owner("0.24.0", Some(owner)).unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+            assert!(error.to_string().contains(guidance));
+        }
+    }
+
+    #[test]
+    fn only_a_helper_inside_an_app_is_owned_by_that_app() {
+        use std::path::Path;
+        for (path, app) in [
+            (
+                "/Applications/Cua Spaces.app/Contents/Helpers/cua-driver",
+                Some("Cua Spaces"),
+            ),
+            (
+                "/Users/me/Applications/Cua Spaces Local.app/Contents/Helpers/cua-driver",
+                Some("Cua Spaces Local"),
+            ),
+            (
+                "/Applications/Other.app/Contents/Helpers/cua-driver",
+                Some("Other"),
+            ),
+            (
+                "/Applications/CuaDriver.app/Contents/MacOS/cua-driver",
+                None,
+            ),
+            ("/Users/me/.local/bin/cua-driver", None),
+            ("/Applications/Helpers/Contents/Helpers/cua-driver", None),
+            ("/opt/.app/Contents/Helpers/cua-driver", None),
+            ("cua-driver", None),
+        ] {
+            assert_eq!(host_app(Path::new(path)).as_deref(), app, "{path}");
+        }
     }
 
     #[cfg(unix)]

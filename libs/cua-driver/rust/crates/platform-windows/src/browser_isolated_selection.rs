@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Pure decision logic for choosing the Windows isolated-launch browser.
 //!
 //! The Windows adapter gathers facts about each trusted Chrome and Edge

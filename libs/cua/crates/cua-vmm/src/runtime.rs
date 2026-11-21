@@ -85,6 +85,36 @@ pub trait Runtime: Send + Sync {
         })
     }
 
+    /// Whether [`Runtime::save_prepared`] keeps an image on this backend.
+    fn keeps_prepared(&self) -> bool {
+        false
+    }
+
+    /// Saves the filesystem of the running instance `name` as an image that
+    /// instances start from instead of the one they were made from (what is
+    /// installed in it stays), named `tag`, and returns it. Used by the warm
+    /// pool so a member prepared once is not prepared again: the next one
+    /// boots from this. `None`: this backend has no such image (its members
+    /// are prepared one by one, or not at all).
+    async fn save_prepared(&self, name: &str, tag: &str) -> Result<Option<ImageSource>> {
+        let _ = (name, tag);
+        Ok(None)
+    }
+
+    /// The image [`Runtime::save_prepared`] saved as `tag`, when the backend
+    /// still has it (a daemon that restarted finds what the last one saved).
+    async fn find_prepared(&self, tag: &str) -> Result<Option<ImageSource>> {
+        let _ = tag;
+        Ok(None)
+    }
+
+    /// Deletes an image saved by [`Runtime::save_prepared`] (not an error
+    /// when it is gone).
+    async fn drop_prepared(&self, tag: &str) -> Result<()> {
+        let _ = tag;
+        Ok(())
+    }
+
     /// Create a new stopped instance `new_name` from a stopped base, checkpoint
     /// or instance `source`, copy-on-write where the backend can.
     async fn fork(&self, source: &str, new_name: &str) -> Result<()>;
@@ -165,6 +195,14 @@ pub trait Runtime: Send + Sync {
 
     /// How to reach a running instance.
     async fn endpoints(&self, name: &str) -> Result<Endpoints>;
+
+    /// Repairs a running instance that lost what it needs to be reached
+    /// (a macOS VM whose network gateway ended), returning it as it is
+    /// now when it had to be restarted. Default: nothing to repair.
+    async fn mend(&self, name: &str) -> Result<Option<Instance>> {
+        let _ = name;
+        Ok(None)
+    }
 
     /// Whether a TCP listener on `guest_port` exists *inside* the guest, as
     /// seen from the guest side of any host forwarder. `None` when the
@@ -287,6 +325,19 @@ pub trait GuestIdentity: Send + Sync {
     async fn resync_clock(&self, endpoints: &Endpoints, token: &str) -> Result<()> {
         let _ = (endpoints, token);
         Ok(())
+    }
+
+    /// Whether [`Self::renew`] can work in the guest reachable at
+    /// `endpoints` (token `token`): `Ok(None)` when it can, `Ok(Some(why))`
+    /// when the guest says it cannot (say its agent runs as an
+    /// unprivileged user without passwordless sudo), `Err` when it did not
+    /// answer. A golden memory snapshot is recorded only from a guest that
+    /// can: one that cannot boots cold every time instead of restoring,
+    /// failing to renew until the readiness budget is gone, and then
+    /// booting cold anyway.
+    async fn check_renewable(&self, endpoints: &Endpoints, token: &str) -> Result<Option<String>> {
+        let _ = (endpoints, token);
+        Ok(None)
     }
 }
 

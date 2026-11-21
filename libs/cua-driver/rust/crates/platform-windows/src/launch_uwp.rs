@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Launch packaged (Microsoft Store / UWP / MSIX) apps on Windows via
 //! `IApplicationActivationManager::ActivateApplication`.
 //!
@@ -33,7 +36,6 @@
 //! the module is `#[cfg(target_os = "windows")]`-gated at the crate
 //! root.
 
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
@@ -41,11 +43,11 @@ use cua_driver_core::single_flight::SingleFlight;
 
 use windows::core::{Interface, GUID, HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::PROPERTYKEY;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoTaskMemFree, IBindCtx, CLSCTX_LOCAL_SERVER,
     COINIT_APARTMENTTHREADED,
 };
-use windows::Win32::UI::Shell::PropertiesSystem::PROPERTYKEY;
 use windows::Win32::UI::Shell::{
     ApplicationActivationManager, BHID_EnumItems, IApplicationActivationManager, IEnumShellItems,
     IShellItem, IShellItem2, SHCreateItemFromParsingName, AO_NONE, SIGDN_NORMALDISPLAY,
@@ -177,7 +179,7 @@ fn restore_foreground_best_effort(prior: HWND) {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         unsafe {
-            if !IsWindow(prior).as_bool() {
+            if !IsWindow(Some(prior)).as_bool() {
                 tracing::debug!(target: "launch_uwp", "prior foreground HWND no longer valid");
                 return;
             }
@@ -294,7 +296,7 @@ where
     let Some(permit) = gate.try_acquire() else {
         return Err(AppsFolderLookupError::Busy);
     };
-    let timed_out = permit.timeout_flag();
+    let deadline = permit.deadline();
     let worker = tokio::task::spawn_blocking(move || {
         let _permit = permit;
         work()
@@ -310,11 +312,9 @@ where
             Err(AppsFolderLookupError::Unavailable)
         }
         Err(_) => {
-            timed_out.store(true, Ordering::Release);
-            // Also arm the cooldown on the caller side. The worker can
-            // return between the deadline firing and observing
-            // `timed_out`; recording it here closes that race.
-            gate.arm_cooldown();
+            // Starts the cooldown even when the worker returned between
+            // the deadline firing and this call.
+            deadline.expire();
             Err(AppsFolderLookupError::Timeout)
         }
     }
@@ -520,7 +520,7 @@ fn pwstr_to_string_and_free(p: PWSTR) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, AtomicU64};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::time::Instant;
 
     #[tokio::test]

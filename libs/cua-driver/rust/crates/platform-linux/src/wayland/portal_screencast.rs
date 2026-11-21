@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Compositor-agnostic capture via `xdg-desktop-portal` ScreenCast + PipeWire.
 //!
 //! Reaches GNOME/Mutter and KDE/KWin, which expose no wlroots capture

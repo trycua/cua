@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Fail-closed resolution for actions addressed only by process id.
 
 use std::collections::HashSet;
@@ -74,6 +77,9 @@ pub type SnapshotWindowResolver = Arc<dyn Fn(i64, &str) -> Option<u64> + Send + 
 /// current snapshots (see `SnapshotStore::token_owner`), so a stale refusal can
 /// name what is current instead of only saying the token is stale.
 pub type TokenPidResolver = Arc<dyn Fn(&Value) -> TokenOwner + Send + Sync + 'static>;
+/// What the platform knows about why a pid has no window, for the
+/// `window_target_not_found` message. Runs on a blocking thread.
+pub type PidNotFoundNote = Arc<dyn Fn(i64) -> Option<String> + Send + Sync + 'static>;
 
 /// Desktop-frame `x`/`y` of an action, when the call carries them.
 fn desktop_frame_point(args: &Value) -> Option<(f64, f64)> {
@@ -97,6 +103,7 @@ pub struct PidOnlyWindowTargetGuard {
     fallback_resolver: Option<PidFallbackWindowResolver>,
     snapshot_resolver: Option<SnapshotWindowResolver>,
     token_pid_resolver: Option<TokenPidResolver>,
+    not_found_note: Option<PidNotFoundNote>,
 }
 
 impl PidOnlyWindowTargetGuard {
@@ -108,7 +115,15 @@ impl PidOnlyWindowTargetGuard {
             fallback_resolver: None,
             snapshot_resolver: None,
             token_pid_resolver: None,
+            not_found_note: None,
         }
+    }
+
+    /// Add what the platform knows about why a pid has no window to the
+    /// `window_target_not_found` message.
+    pub fn with_not_found_note(mut self, note: PidNotFoundNote) -> Self {
+        self.not_found_note = Some(note);
+        self
     }
 
     /// Take a missing `pid` from the call's `element_token`, so a token-only
@@ -234,15 +249,25 @@ impl Tool for PidOnlyWindowTargetGuard {
             }
         };
         match resolve_pid_window_target(candidates) {
-            PidWindowTargetResolution::NotFound => ToolResult::error(format!(
-                "No eligible top-level windows found for pid {pid}."
-            ))
-            .with_structured(serde_json::json!({
-                "code": "window_target_not_found",
-                "effect": "refused",
-                "pid": pid,
-                "candidates": []
-            })),
+            PidWindowTargetResolution::NotFound => {
+                let mut message = format!("No eligible top-level windows found for pid {pid}.");
+                if let Some(note) = self.not_found_note.clone() {
+                    let note = tokio::task::spawn_blocking(move || note(pid))
+                        .await
+                        .ok()
+                        .flatten();
+                    if let Some(note) = note {
+                        message.push(' ');
+                        message.push_str(&note);
+                    }
+                }
+                ToolResult::error(message).with_structured(serde_json::json!({
+                    "code": "window_target_not_found",
+                    "effect": "refused",
+                    "pid": pid,
+                    "candidates": []
+                }))
+            }
             PidWindowTargetResolution::Resolved(candidate) => {
                 if let Some(object) = args.as_object_mut() {
                     object.insert("window_id".to_owned(), candidate.window_id.into());
@@ -313,7 +338,7 @@ impl Tool for PidOnlyWindowTargetGuard {
 }
 
 /// `window_id 7 "Position and Size" (dialog, transient of window 3); window_id 3 "doc - Writer"`
-fn describe_candidates(candidates: &[WindowTargetCandidate]) -> String {
+pub fn describe_candidates(candidates: &[WindowTargetCandidate]) -> String {
     candidates
         .iter()
         .map(|candidate| {
@@ -461,6 +486,39 @@ mod tests {
             resolve_pid_window_target([candidate(7), candidate(8)]),
             PidWindowTargetResolution::Ambiguous(vec![candidate(7), candidate(8)])
         );
+    }
+
+    #[tokio::test]
+    async fn not_found_refusal_carries_the_platform_note_for_that_pid() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let guard = PidOnlyWindowTargetGuard::new(
+            Box::new(EchoTool {
+                calls: calls.clone(),
+            }),
+            Arc::new(|_| Vec::new()),
+        )
+        .with_not_found_note(Arc::new(|pid| (pid == 42).then(|| "why".to_owned())));
+        let text = |result: &ToolResult| match &result.content[0] {
+            crate::protocol::Content::Text { text, .. } => text.clone(),
+            other => panic!("expected text, got {other:?}"),
+        };
+
+        let noted = guard.invoke(serde_json::json!({"pid": 42})).await;
+        assert_eq!(
+            text(&noted),
+            "No eligible top-level windows found for pid 42. why"
+        );
+        assert_eq!(
+            noted.structured_content.as_ref().expect("structured")["code"],
+            "window_target_not_found"
+        );
+
+        let silent = guard.invoke(serde_json::json!({"pid": 7})).await;
+        assert_eq!(
+            text(&silent),
+            "No eligible top-level windows found for pid 7."
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

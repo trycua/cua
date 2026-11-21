@@ -5,7 +5,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from ci_component_scope import decide  # noqa: E402
+import ci_graph  # noqa: E402
+from ci_component_scope import decide, decide_relay_e2e  # noqa: E402
 
 D = "libs/cua-driver/rust/crates/"
 
@@ -61,3 +62,38 @@ class ScopeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RelayE2eScopeTests(unittest.TestCase):
+    """`relay e2e (docker)` starts only for the packages its closure reaches (CUA-3558)."""
+
+    graph = ci_graph.load()
+
+    def relay(self, files, event="pull_request", ref="feature/x"):
+        return decide_relay_e2e(files, event, ref, self.graph)[0]
+
+    def test_driver_only_changes_skip(self):
+        self.assertFalse(self.relay([D + "cua-driver/src/main.rs"]))
+        self.assertFalse(self.relay([D + "cua-driver-e2e/tests/a.rs"]))
+        self.assertFalse(self.relay([D + "platform-macos/src/x.rs", D + "platform-windows/src/y.rs"]))
+
+    def test_spacesd_crates_outside_the_closure_skip(self):
+        self.assertFalse(self.relay(["libs/cua-spacesd/crates/cua-oidc/src/lib.rs"]))
+
+    def test_relay_server_and_their_dependencies_run(self):
+        for f in ("libs/cua-spacesd/crates/cua-relay/src/lib.rs",
+                  "libs/cua-spacesd/crates/cua-spacesd-server/tests/conformance.rs",
+                  D + "cua-driver-core/src/lib.rs",
+                  D + "platform-linux/src/x.rs",
+                  "libs/cua/crates/cua-mesh/src/lib.rs"):
+            self.assertTrue(self.relay([f]), f)
+
+    def test_lane_scripts_and_shared_inputs_run(self):
+        for f in ("libs/cua-spacesd/scripts/ci/relay-e2e.sh", "libs/cua-spacesd/Cargo.lock",
+                  ".github/workflows/ci-cua-spacesd.yml", ".github/scripts/ci_graph.py"):
+            self.assertTrue(self.relay([f]), f)
+
+    def test_other_events_and_release_prs_run(self):
+        self.assertTrue(self.relay([D + "cua-driver/src/main.rs"], event="push"))
+        self.assertTrue(self.relay([D + "cua-driver/src/main.rs"], ref="release-please--branches--main"))
+        self.assertTrue(self.relay([]))

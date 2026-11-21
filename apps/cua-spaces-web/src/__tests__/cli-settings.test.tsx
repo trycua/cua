@@ -23,20 +23,28 @@ describe.skipIf(!wasmBuilt)("Settings, General, Terminal", () => {
         return undefined;
       },
     });
-    const row = await waitFor(() => {
-      const r = document.querySelector<HTMLElement>('[data-settings-cli="missing"]');
-      expect(r).not.toBeNull();
-      return r!;
-    }, { timeout: 8000 });
+    const row = await waitFor(
+      () => {
+        const r = document.querySelector<HTMLElement>('[data-settings-cli="missing"]');
+        expect(r).not.toBeNull();
+        return r!;
+      },
+      { timeout: 8000 },
+    );
     expect(row.textContent).toMatch(/Not installed\. Install puts it at ~\/\.local\/bin\/cua\./);
     expect(calls.some((c) => c.op === "cli.install")).toBe(false);
     fireEvent.click(row.querySelector("[data-settings-cli-install]")!);
-    await waitFor(() => expect(document.querySelector('[data-settings-cli="installed"]')?.textContent).toMatch(/Installed at ~\/\.local\/bin\/cua\..*cua spaces ls/));
+    await waitFor(() =>
+      expect(document.querySelector('[data-settings-cli="installed"]')?.textContent).toMatch(/Installed at ~\/\.local\/bin\/cua\..*cua spaces ls/),
+    );
     expect(calls.find((c) => c.op === "cli.install")?.args).toEqual({ modifyPath: true });
   });
 
   it("shows where a Local build's CLI is", { timeout: 20_000 }, async () => {
     await mountApp("/settings/general", { failsCreates: false, listsGhost: false, demo: { cli: "local" } });
-    await waitFor(() => expect(document.querySelector('[data-settings-cli="installed"]')?.textContent).toMatch(/~\/\.local\/bin\/cua-local.*cua-local spaces ls/), { timeout: 8000 });
+    await waitFor(
+      () => expect(document.querySelector('[data-settings-cli="installed"]')?.textContent).toMatch(/~\/\.local\/bin\/cua-local.*cua-local spaces ls/),
+      { timeout: 8000 },
+    );
   });
 });

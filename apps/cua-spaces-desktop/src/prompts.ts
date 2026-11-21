@@ -61,7 +61,9 @@ export async function electronKeyvaultPrompts(native: Pick<Native, "kvPassphrase
   return keyvaultPrompts(
     {
       showMessageBox: (parent, options) =>
-        parent instanceof BrowserWindow && !parent.isDestroyed() && parent.isVisible() ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options),
+        parent instanceof BrowserWindow && !parent.isDestroyed() && parent.isVisible()
+          ? dialog.showMessageBox(parent, options)
+          : dialog.showMessageBox(options),
     },
     native,
   );

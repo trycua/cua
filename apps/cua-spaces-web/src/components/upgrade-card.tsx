@@ -7,8 +7,8 @@ import { Button } from "@/components/ui/button";
 /**
  * What a limit offers, at the moment it stops someone: what happened, the one
  * line of what Pro or Teams gives, the price, Upgrade (opens the checkout on
- * the account app) and Not now. Behind the `upsell_cards` flag; nothing is
- * drawn while it is off, there is nothing to offer, or after Not now. The
+ * the account app) and Not now. Nothing is
+ * drawn when there is nothing to offer, or after Not now. The
  * words and the plan each reason leads to are the app core's
  * (`upsell.card`). It never blocks anything: the relay and the control plane
  * enforce the limit.

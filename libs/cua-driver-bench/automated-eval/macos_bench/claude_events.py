@@ -110,12 +110,59 @@ CU_HELPER_CLASSES = {
 }
 
 
+# Adapter arms: agent-desktop (server "agentdesktop", one tool per CLI command) and the Browser Use macOS harness
+# (server "browseruse", one `macos_harness` tool whose command string starts with the vendor subcommand).
+AGENT_DESKTOP_CLASSES = {
+    "snapshot": "observe",
+    "find": "observe",
+    "get": "observe",
+    "is": "observe",
+    "screenshot": "observe",
+    "list_windows": "observe",
+    "list_apps": "observe",
+    "click": "click",
+    "double_click": "click",
+    "right_click": "click",
+    "mouse_click": "click",
+    "type": "type",
+    "set_value": "set_value",
+    "press": "key",
+    "scroll": "scroll",
+    "scroll_to": "scroll",
+    "mouse_wheel": "scroll",
+    "drag": "drag",
+}
+BROWSER_USE_CLASSES = {
+    "get_app_state": "observe",
+    "list_apps": "observe",
+    "click": "click",
+    "perform_secondary_action": "click",
+    "type_text": "type",
+    "paste": "type",
+    "set_value": "set_value",
+    "press_key": "key",
+    "scroll": "scroll",
+    "drag": "drag",
+}
+
+
 def tool_class(name: str, tool_input: dict[str, Any] | None = None) -> str:
     server, tool = strip_mcp(name)
     if server is None:
         return "builtin"
     if server == "claude-cu-helper":
         return CU_HELPER_CLASSES.get(tool, "other")
+    if server == "agentdesktop":
+        return AGENT_DESKTOP_CLASSES.get(tool, "other")
+    if server == "browseruse":
+        if tool != "macos_harness":
+            return "observe" if tool == "view_screenshot" else "other"
+        words = str((tool_input or {}).get("command") or "").replace("macos-harness", " ").split()
+        classes = [BROWSER_USE_CLASSES.get(w) for w in words if w in BROWSER_USE_CLASSES]
+        for preferred in ("drag", "click", "type", "key", "scroll", "set_value", "observe"):
+            if preferred in classes:
+                return preferred
+        return "other"
     if tool in CUA_CLASSES:
         return CUA_CLASSES[tool]
     if tool == "js":

@@ -12,6 +12,7 @@
 import { app, shell } from "electron";
 import * as os from "node:os";
 import * as path from "node:path";
+import { channel } from "./channel";
 import { LinuxAutostart, type LoginItemControlling, type LoginItemStatus } from "./model/login-item";
 
 /** The flag a login launch carries on Windows and Linux. */
@@ -41,7 +42,7 @@ class MacLoginItem implements LoginItemControlling {
 }
 
 /** The Run entry's name: the AppUserModelID (main.ts), the name Electron reads `openAtLogin` under whatever `name` it is given. */
-export const WINDOWS_RUN_NAME = "ai.cua.spaces.desktop";
+export const WINDOWS_RUN_NAME = channel.appUserModelId;
 
 /**
  * What both `setLoginItemSettings` and `getLoginItemSettings` are given on

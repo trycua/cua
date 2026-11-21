@@ -7,6 +7,7 @@ These are the steps that need an account holder: accounts, keys, certificates an
 **Why:** `cua-cli` only allows a loopback redirect, so the phone needs its own client. Until it exists, "Sign in with cua.ai" is refused by the provider and the app says so.
 
 **Steps** (Keycloak admin console, realm `cyclops-cs` on auth.cua.ai; the pre-production environment has its own realm, do it there first):
+
 1. Clients, Create client. Client type `OpenID Connect`. Client ID `cua-spaces-mobile` (or any id, then build the app with `EXPO_PUBLIC_CUA_OIDC_CLIENT_ID=<id>`).
 2. Client authentication **off** (a public client). Authentication flow: **Standard flow** only (authorization code). Turn off Direct access grants and Implicit.
 3. Valid redirect URIs: exactly `ai.cua.spaces:/oauth/callback`. Web origins: none.
@@ -21,6 +22,7 @@ These are the steps that need an account holder: accounts, keys, certificates an
 **Why:** the app is built for the Simulator only. A phone needs a signed build; testers need TestFlight.
 
 **Steps:**
+
 1. Enroll the company in the Apple Developer Program (Organization, needs a D-U-N-S number) at developer.apple.com/programs. Accept the agreements in App Store Connect.
 2. Certificates, Identifiers & Profiles, Identifiers: create an App ID with bundle id **`ai.cua.spaces.mobile`** (explicit). Enable the capability **Push Notifications**. No other capability is needed (microphone and speech recognition are permission prompts, not entitlements).
 3. Create an Apple Distribution certificate and an App Store provisioning profile for that App ID (or let Xcode manage signing once the team is added to the project).
@@ -36,6 +38,7 @@ These are the steps that need an account holder: accounts, keys, certificates an
 **Why:** the relay needs a key to send the alert; the phone side (registration, tap routing, Settings) is built and tested against a mock provider.
 
 **Steps:**
+
 1. developer.apple.com, Certificates, Identifiers & Profiles, Keys, Create a key. Name "Cua Spaces push", enable **Apple Push Notifications service (APNs)**, Continue, Register.
 2. Download the `.p8` **once** (Apple will not show it again) and note the **Key ID** (10 characters) and your **Team ID** (Membership details, 10 characters).
 3. Put the three values on the relay as secrets (never in git): `CUA_PUSH_APNS_KEY_FILE` (path of `AuthKey_<id>.p8` in the relay's secret mount), `CUA_PUSH_APNS_KEY_ID`, `CUA_PUSH_APNS_TEAM_ID`; `CUA_PUSH_APNS_TOPIC` is the bundle id (default `ai.cua.spaces.mobile`).
@@ -62,10 +65,12 @@ These are the steps that need an account holder: accounts, keys, certificates an
 Everything below is a production change or an Apple-side action; nothing in the repository does it.
 
 **Relay deploy .** Two additive changes in `cua-relay`:
+
 1. Push routes `/v1/push/...`: off unless `CUA_RELAY_PUSH=on`; a relay deployed without it behaves as before (404).
 2. Viewer support for a phone's web view: `GET /m/<id>/viewer...` is forwarded without a credential (static page), and a computer-minted viewer ticket in `x-cua-env-authorization: Bearer v1....` is forwarded instead of stripped (revocation checked at the relay, signature and scope at the computer). This changes what an unauthenticated request may reach (only the viewer's static page) and what a ticket may do (also on header calls). Review `libs/cua-spacesd/crates/cua-relay/src/server.rs` (`viewer_page`, `has_forwardable_credential`) and `grants.rs` (`header_ticket`) before deploying; tests are `tests/viewer_ticket.rs` and `tests/push.rs`. Deploy to the pre-production environment first.
 
 **APNs key, exactly what is needed** (after the Apple Developer account and the App ID `ai.cua.spaces.mobile` with Push Notifications, section 2 and 3 above):
+
 - the `.p8` file, mounted on the relay as a secret (not in the image, not in git): `CUA_PUSH_APNS_KEY_FILE=/path/AuthKey_XXXXXXXXXX.p8`
 - `CUA_PUSH_APNS_KEY_ID` (10 characters), `CUA_PUSH_APNS_TEAM_ID` (10 characters), `CUA_PUSH_APNS_TOPIC` (the bundle id; default `ai.cua.spaces.mobile`)
 - `CUA_RELAY_PUSH=on`, and a persistent volume path for `CUA_RELAY_PUSH_FILE` (default: next to the state file; it holds device tokens, 0600)
@@ -76,7 +81,7 @@ Everything below is a production change or an Apple-side action; nothing in the 
 
 ## 7. Export compliance (TestFlight and the App Store)
 
-`ITSAppUsesNonExemptEncryption` is left out of `app.json` on purpose. Setting it to `false` is only true for an app whose only encryption is standard HTTPS. This app also seals its on-disk store with AES-256-GCM (the Rust core, `core/src/store.rs`), so it does use encryption of its own. With the key absent, App Store Connect asks the export compliance question for each new build. The usual answer for this case is that the app uses encryption and qualifies for the exemption or self-classification; confirm that with your counsel. Once it is decided, add `"ITSAppUsesNonExemptEncryption": true` or `false` to `ios.infoPlist` in `app.json` to skip the prompt.
+`app.json` sets `ITSAppUsesNonExemptEncryption` to `false`, so App Store Connect does not ask the export compliance questions for each new build. The answers behind it (the owner's, given once in App Store Connect): the app uses standard encryption only (HTTPS through the platform, and AES-256-GCM, a standard algorithm, from a standard library, to seal the on-disk store in the Rust core, `core/src/store.rs`), and the France-specific question is answered no. If the app ever adds encryption of its own design, or a non-standard algorithm, change the key back (remove it) and answer the questions again for that build, and update this section.
 
 ## 8. Uploading a build
 

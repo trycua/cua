@@ -72,7 +72,5 @@ export const CONTAINER_BACKENDS = ["container", "managed", "docker", "runsc"];
 
 /** Whether a container Space (gVisor / runc) can be created. */
 export function canRunContainer(status: LocalStatus | null | undefined): boolean {
-  return Boolean(
-    status?.available && status.backends.some((b) => CONTAINER_BACKENDS.includes(b)),
-  );
+  return Boolean(status?.available && status.backends.some((b) => CONTAINER_BACKENDS.includes(b)));
 }

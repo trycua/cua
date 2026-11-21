@@ -6,7 +6,8 @@
 #   Cargo.lock         cargo metadata --locked (resolves, never writes)
 #   pnpm-lock.yaml     pnpm install --frozen-lockfile --lockfile-only, and the
 #                      file must come back byte-identical (pnpm version from
-#                      the package.json "packageManager" field)
+#                      the package.json "packageManager" field, run through
+#                      corepack; a missing pin fails)
 #   package-lock.json  npm install --package-lock-only, compared on the
 #                      dependency graph (versions, sources, integrity, ranges)
 #   uv.lock            uv lock --check
@@ -78,7 +79,7 @@ fix_command() {
   local dir="$1" kind="$2"
   case "$kind" in
     cargo) echo "(cd $dir && cargo update --workspace)" ;;
-    pnpm) echo "(cd $dir && pnpm install --lockfile-only --ignore-scripts)" ;;
+    pnpm) echo "(cd $dir && PATH=\"$PNPM_SHIM_DIR:\$PATH\" pnpm install --lockfile-only --ignore-scripts)" ;;
     npm) echo "(cd $dir && npm install --package-lock-only --ignore-scripts)" ;;
     uv) echo "uv lock --project $dir" ;;
   esac
@@ -98,20 +99,14 @@ with_restore() {
   return $rc
 }
 
-pnpm_cmd() {
-  local dir="$1" pm want have
-  pm="$(node -e 'try{process.stdout.write(require(process.argv[1]).packageManager||"")}catch{}' "$ROOT/$dir/package.json" 2>/dev/null)"
-  want=""
-  case "$pm" in pnpm@*) want="${pm#pnpm@}"; want="${want%%+*}" ;; esac
-  have="$(pnpm --version 2>/dev/null || true)"
-  if [ -n "$want" ] && [ "$want" != "$have" ]; then
-    echo "npx --yes pnpm@$want"
-  elif [ -n "$have" ]; then
-    echo "pnpm"
-  else
-    echo "npx --yes pnpm@9"
-  fi
-}
+# pnpm at the version each package pins (packageManager), through corepack: the
+# shim directory goes first on PATH, so a machine pnpm of another major never
+# rewrites a lockfile. A package without a pin, or a version that cannot be
+# activated, fails with a message (see scripts/ci/lib/pnpm/pnpm).
+PNPM_SHIM_DIR="$ROOT/scripts/ci/lib/pnpm"
+export PATH="$PNPM_SHIM_DIR:$PATH"
+
+pnpm_cmd() { echo pnpm; }
 
 # The dependency graph of a package-lock.json, for a comparison that ignores
 # npm-version-specific metadata (root "repository", key order, ...).

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cross-platform behavioral scenarios derived from the external CUA matrix.
 //!
 //! These are source-owned Rust tests, not a copy of a partner test runner. The
@@ -588,7 +591,17 @@ fn screenshot_scale(state: &ToolResponse) -> (f64, f64) {
 }
 
 fn screenshot_scale_for_platform(state: &serde_json::Value, linux: bool) -> (f64, f64) {
-    let window_role = if linux { "frame" } else { "AXWindow" };
+    if linux {
+        // The AT-SPI frame can include a client-side shadow that the window
+        // capture leaves out, so its size says nothing about a resize. The
+        // driver publishes frame_scale exactly when it shrank the capture.
+        let scale = state["frame_scale"].as_f64().unwrap_or(1.0);
+        assert!(
+            scale.is_finite() && scale > 0.0,
+            "invalid frame_scale: {scale}"
+        );
+        return (scale, scale);
+    }
     let capture = (
         state["screenshot_width"].as_f64().unwrap_or(0.0),
         state["screenshot_height"].as_f64().unwrap_or(0.0),
@@ -598,7 +611,7 @@ fn screenshot_scale_for_platform(state: &serde_json::Value, linux: bool) -> (f64
         .and_then(|elements| {
             elements
                 .iter()
-                .find(|element| element["role"].as_str() == Some(window_role))
+                .find(|element| element["role"].as_str() == Some("AXWindow"))
         })
         .map(|window| {
             (
@@ -626,10 +639,11 @@ fn screenshot_local_point(
 }
 
 #[test]
-fn linux_frame_geometry_drives_resized_screenshot_scale() {
+fn linux_frame_scale_drives_resized_screenshot_scale() {
     let state = serde_json::json!({
         "screenshot_width": 1568,
         "screenshot_height": 852,
+        "frame_scale": 0.8,
         "elements": [{
             "element_index": 0,
             "role": "frame",
@@ -641,9 +655,7 @@ fn linux_frame_geometry_drives_resized_screenshot_scale() {
         }]
     });
 
-    let linux_scale = screenshot_scale_for_platform(&state, true);
-    assert!((linux_scale.0 - 1568.0 / 1896.0).abs() < f64::EPSILON);
-    assert!((linux_scale.1 - 852.0 / 1030.0).abs() < f64::EPSILON);
+    assert_eq!(screenshot_scale_for_platform(&state, true), (0.8, 0.8));
 
     let ax_scale = screenshot_scale_for_platform(&state, false);
     assert!((ax_scale.0 - 1568.0 / 1000.0).abs() < f64::EPSILON);
@@ -651,10 +663,33 @@ fn linux_frame_geometry_drives_resized_screenshot_scale() {
 }
 
 #[test]
+fn linux_decorated_frame_is_not_a_screenshot_resize() {
+    // A cua-compositor window capture is the 896x736 window without its
+    // client-side shadow, while AT-SPI reports the 940x780 shadowed frame.
+    // The driver did not resize the capture, so it publishes no frame_scale.
+    let state = serde_json::json!({
+        "screenshot_width": 896,
+        "screenshot_height": 736,
+        "elements": [{
+            "element_index": 0,
+            "role": "frame",
+            "frame": {"x": 0, "y": 0, "w": 940, "h": 780}
+        }]
+    });
+
+    let scale = screenshot_scale_for_platform(&state, true);
+    assert_eq!(scale, (1.0, 1.0));
+    // The "Open child window" button centre stays on the button.
+    let point = screenshot_local_point((672.5, 363.5), (0.0, 0.0), scale);
+    assert_eq!(point, (672.5, 363.5));
+}
+
+#[test]
 fn resized_screenshot_coordinates_use_capture_scale() {
     let state = serde_json::json!({
         "screenshot_width": 1568,
         "screenshot_height": 852,
+        "frame_scale": 0.8,
         "elements": [{
             "role": "frame",
             "frame": {"x": 12, "y": 38, "w": 1896, "h": 1030}
@@ -663,8 +698,9 @@ fn resized_screenshot_coordinates_use_capture_scale() {
     let scale = screenshot_scale_for_platform(&state, true);
     let point = screenshot_local_point((949.0, 398.0), (12.0, 38.0), scale);
 
-    assert!((point.0 - 774.903).abs() < 0.001);
-    assert!((point.1 - 297.786).abs() < 0.001);
+    // (949 - 12) * 0.8 and (398 - 38) * 0.8.
+    assert!((point.0 - 749.6).abs() < 0.001);
+    assert!((point.1 - 288.0).abs() < 0.001);
     assert!(point.0 < 1568.0);
     assert!(point.1 < 852.0);
 }
@@ -869,6 +905,25 @@ fn scroll_oracle_rejects_missing_or_invalid_geometry() {
     }
 }
 
+// Exercise text-only MCP clients even though the testkit requests full_output.
+fn text_snapshot_id(state: &ToolResponse) -> String {
+    let text = state.raw["result"]["content"]
+        .as_array()
+        .expect("MCP content blocks")
+        .iter()
+        .find_map(|block| block.get("text")?.as_str())
+        .unwrap();
+    let handle = text
+        .lines()
+        .next()
+        .unwrap()
+        .split_whitespace()
+        .find_map(|field| field.strip_prefix("snapshot_id="))
+        .expect("snapshot_id in text header");
+    assert_eq!(handle, state.snapshot_id());
+    handle.to_owned()
+}
+
 fn action_target_args(
     fixture: &Fixture,
     state: &ToolResponse,
@@ -886,7 +941,7 @@ fn action_target_args(
     if addressing == "ax" {
         object.insert(
             "element_token".to_owned(),
-            serde_json::json!(state.element_token(index)),
+            serde_json::json!(format!("{}:{index}", text_snapshot_id(state))),
         );
     } else {
         let origin = window_origin(fixture, state);
@@ -1654,8 +1709,7 @@ fn native_hyprland_semantic_input_available() -> bool {
     {
         // AT-SPI does not need an input-plugin socket. DISPLAY can coexist
         // with native Wayland for XWayland clients in the same desktop.
-        platform_linux::wayland::wayland_input_enabled()
-            && platform_linux::wayland::hyprland::is_session()
+        platform_linux::wayland::is_wayland() && platform_linux::wayland::hyprland::is_session()
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -1749,6 +1803,10 @@ fn shared_case_with_native_hyprland(
     let cell_id = format!("{}-{}-{scenario}", std::env::consts::OS, spec.name).replace('_', "-");
     let native_semantic =
         native_hyprland_semantic_case(native_hyprland, spec.name, action, targeting, delivery_kind);
+    let linux_x11 = cfg!(target_os = "linux")
+        && std::env::var_os("CUA_INJECT_SOCKET").is_none()
+        && cua_driver_testkit::e2e::DisplayServer::current()
+            == cua_driver_testkit::e2e::DisplayServer::X11;
     let expected_refusals = if native_semantic {
         Vec::new()
     } else if cfg!(target_os = "windows") && delivery_kind == Delivery::Background {
@@ -1786,15 +1844,17 @@ fn shared_case_with_native_hyprland(
         && spec.name == "electron"
         && delivery_kind == Delivery::Background
     {
-        // Chromium's X11 renderer drops synthetic input addressed to a fully
-        // occluded, unfocused toplevel. Focus-free AT-SPI button actions are
-        // the exception: they are externally verified by the fixture and the
-        // focus/z-order/leak sentinels.
+        // Chromium's X11 renderer drops synthetic input addressed to an
+        // unfocused toplevel. Focus-free AT-SPI button actions are the
+        // exception, by element or (on X11) at the button's pixel: they are
+        // externally verified by the fixture and the focus/z-order/leak
+        // sentinels.
         if std::env::var_os("CUA_INJECT_SOCKET").is_some() {
             Vec::new()
         } else {
             match (action, targeting) {
                 ("left_click" | "child_window", Targeting::Ax) => Vec::new(),
+                ("left_click" | "child_window", Targeting::Px) if linux_x11 => Vec::new(),
                 _ => vec![RefusalCode::BackgroundUnavailable],
             }
         }
@@ -1858,7 +1918,13 @@ fn shared_case_with_native_hyprland(
         delivery_kind,
     )
     .unwrap_or_else(|error| panic!("{error}"));
-    if native_semantic {
+    if native_semantic
+        || (linux_x11
+            && spec.name == "electron"
+            && targeting == Targeting::Px
+            && delivery_kind == Delivery::Background
+            && matches!(action, "left_click" | "child_window"))
+    {
         route = cua_driver_testkit::e2e::DriverRoute::LinuxAtSpiAction;
     } else if cfg!(target_os = "windows")
         && spec.name == "electron"
@@ -2276,8 +2342,7 @@ fn embedded_browser_refusal(spec: &HostSpec) -> Option<RefusalCode> {
 fn niri_session() -> bool {
     #[cfg(target_os = "linux")]
     {
-        platform_linux::wayland::wayland_input_enabled()
-            && platform_linux::wayland::niri::is_session()
+        platform_linux::wayland::is_wayland() && platform_linux::wayland::niri::is_session()
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -2316,6 +2381,86 @@ fn embedded_browser_routes_are_exact_or_refused() {
         selected > 0,
         "no embedded-browser cells were selected; check CUA_E2E_HARNESS_FILTER"
     );
+    resume_first_failure(failure);
+}
+
+/// A background Cmd+V to a WebKit page runs the app's Edit > Paste: AppKit
+/// sends a key equivalent only to the active app, and WebKit pastes only from
+/// the `paste:` action (#5355). Each row must put the clipboard in the page
+/// field it names.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore]
+fn webkit_background_paste_runs_the_edit_menu_item() {
+    const PASTED: &str = "cua-background-paste";
+    let mut failure = None;
+    let mut selected = 0usize;
+    for spec in host_specs()
+        .into_iter()
+        .filter(|spec| matches!(spec.name, "tauri" | "wkwebview"))
+    {
+        for addressing in ["ax", "px"] {
+            let oracles = vec![
+                OracleKind::FixtureState,
+                OracleKind::Focus,
+                OracleKind::ZOrder,
+                OracleKind::NoLeakedInput,
+                OracleKind::Cursor,
+            ];
+            let case = CaseSpec::delivered(
+                format!("macos-{}-paste-hotkey-{addressing}-background", spec.name),
+                spec.name,
+                "platform-webview",
+                "paste_hotkey",
+                if addressing == "ax" {
+                    Targeting::Ax
+                } else {
+                    Targeting::Px
+                },
+                Delivery::Background,
+                Scope::Window,
+                cua_driver_testkit::e2e::DriverRoute::MacosAxAction,
+                oracles,
+            );
+            if !cell_selected(&case) {
+                continue;
+            }
+            selected += 1;
+            let result = run_host_case_with_outcome(case, &spec, |fixture| {
+                let _clipboard = TextClipboardGuard::replace(PASTED);
+                let state = snapshot(fixture);
+                let mut args =
+                    action_target_args(fixture, &state, "keyboard-input", addressing, "background");
+                args["keys"] = serde_json::json!(["cmd", "v"]);
+                let response = fixture.driver.call("hotkey", args);
+                assert!(
+                    !response.is_error(),
+                    "{}: background Cmd+V ({addressing}) failed: {}",
+                    fixture.name,
+                    response.raw
+                );
+                assert!(
+                    response.text().contains("key equivalent of Edit > Paste"),
+                    "{}: background Cmd+V ({addressing}) did not run Edit > Paste: {}",
+                    fixture.name,
+                    response.raw
+                );
+                assert_fixture_value(fixture, "keyboard-input", PASTED);
+                delivered_observation()
+            });
+            if failure.is_none() {
+                failure = result;
+            }
+        }
+    }
+    let filtered = ["CUA_E2E_HARNESS_FILTER", "CUA_E2E_CELL_FILTER"]
+        .iter()
+        .any(|name| std::env::var(name).is_ok_and(|filter| !filter.trim().is_empty()));
+    if selected == 0 && filtered {
+        eprintln!("no WebKit paste rows matched CUA_E2E_HARNESS_FILTER or CUA_E2E_CELL_FILTER");
+        return;
+    }
+    assert!(selected > 0, "no WebKit paste cells were selected");
     resume_first_failure(failure);
 }
 

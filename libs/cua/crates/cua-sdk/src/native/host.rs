@@ -125,6 +125,92 @@ impl From<cua_host::Machine> for RelayMachine {
     }
 }
 
+/// The account's default Space and the order to try when it is offline.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SpacesSettings {
+    /// `relay:<machine>` or `relay:<machine>/<name>`; none when unset.
+    pub default_space: Option<String>,
+    /// The order to try when the default is offline; empty means every
+    /// online computer you can use, oldest first.
+    pub fallback: Vec<String>,
+    /// false: only the default, then this device.
+    pub fallback_on: bool,
+    /// Unix seconds the relay saved it (ignored when writing).
+    pub updated_at: u64,
+}
+
+impl From<cua_host::SpacesSettings> for SpacesSettings {
+    fn from(s: cua_host::SpacesSettings) -> Self {
+        Self {
+            default_space: s.default_space.filter(|d| !d.is_empty()),
+            fallback: s.fallback,
+            fallback_on: s.fallback_on,
+            updated_at: s.updated_at,
+        }
+    }
+}
+
+impl From<SpacesSettings> for cua_host::SpacesSettings {
+    fn from(s: SpacesSettings) -> Self {
+        Self {
+            default_space: s.default_space.filter(|d| !d.trim().is_empty()),
+            fallback: s.fallback,
+            fallback_on: s.fallback_on,
+            updated_at: s.updated_at,
+        }
+    }
+}
+
+/// One entry of the order [`Devices::resolve_default_space`] tried.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct DefaultSpaceStep {
+    /// The Space id.
+    pub space: String,
+    /// Its display name.
+    pub name: String,
+    /// Connected and sharing now.
+    pub online: bool,
+    /// `default`, `fallback` or `here`.
+    pub role: String,
+}
+
+/// Where the default Space resolves now.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct DefaultSpace {
+    /// The first online entry; none when this device is the answer
+    /// (`reason` `here`).
+    pub space: Option<String>,
+    /// `default`, `fallback`, `here` or `unset`.
+    pub reason: String,
+    /// The chosen default, online or not.
+    pub default_space: Option<String>,
+    /// Whether the default is online; none when unset.
+    pub default_online: Option<bool>,
+    /// The order the relay tried.
+    pub order: Vec<DefaultSpaceStep>,
+}
+
+impl From<cua_host::DefaultSpace> for DefaultSpace {
+    fn from(d: cua_host::DefaultSpace) -> Self {
+        Self {
+            space: d.space.filter(|s| !s.is_empty()),
+            reason: d.reason,
+            default_space: d.default_space.filter(|s| !s.is_empty()),
+            default_online: d.default_online,
+            order: d
+                .order
+                .into_iter()
+                .map(|s| DefaultSpaceStep {
+                    space: s.space,
+                    name: s.name,
+                    online: s.online,
+                    role: s.role,
+                })
+                .collect(),
+        }
+    }
+}
+
 /// A one-time code that adds a machine to the account ("Add a machine"
 /// by link or QR code).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -242,7 +328,7 @@ impl Relay {
     /// account behind `account_token` (a cua.ai access token).
     #[uniffi::constructor]
     pub fn new(relay_url: Option<String>, account_token: String) -> Result<Arc<Self>> {
-        let url = cua_host::relay_url_for(relay_url.as_deref(), &cua_daemon::cua_home());
+        let url = cua_host::relay_url_for(relay_url.as_deref(), &cua_daemon_core::cua_home());
         Ok(Arc::new(Self {
             client: cua_host::RelayClient::new(&url)?,
             account_token,
@@ -725,7 +811,7 @@ impl Host {
         Arc::new(Self {
             home: cua_home
                 .map(Into::into)
-                .unwrap_or_else(cua_daemon::cua_home),
+                .unwrap_or_else(cua_daemon_core::cua_home),
         })
     }
 
@@ -905,7 +991,28 @@ impl Host {
     pub async fn remove(&self) -> Result<()> {
         let home = self.home.clone();
         run(async move {
-            cua_host::Host::new(home).remove().await?;
+            let host = cua_host::Host::new(home);
+            // The relay is told with this computer's own token; when that is
+            // refused (or it has none) as the signed-in owner, so a
+            // computer that cannot prove itself is still taken off the
+            // account, and one the relay could not be reached for is
+            // retried later.
+            let tokens = SessionTokens(Arc::new(cua_auth::Session::from_env()));
+            let device_session = match host.config()?.and_then(|c| c.relay_url) {
+                Some(url) => tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    own_device_session(&url),
+                )
+                .await
+                .ok()
+                .flatten(),
+                None => None,
+            };
+            host.remove_with_account(&cua_host::RemovalAccount {
+                tokens: &tokens,
+                device_session,
+            })
+            .await?;
             // Then the runtimes cua set up itself (the built-in Lume and the
             // built-in Linux runtime, set up again on the next create that
             // needs them); the user's own stay.
@@ -1057,7 +1164,7 @@ impl Auth {
     /// `https://relay.cua.ai`) as the signed-in account, shown as `name`
     /// (default: this computer's name).
     pub fn devices(&self, relay_url: Option<String>, name: Option<String>) -> Result<Arc<Devices>> {
-        let home = cua_daemon::cua_home();
+        let home = cua_daemon_core::cua_home();
         let url = cua_host::relay_url_for(relay_url.as_deref(), &home);
         let session = self.session();
         let tokens = Arc::new(SessionTokens(session.clone()));
@@ -1290,8 +1397,73 @@ impl Devices {
                 )
                 .await?
                 .into();
-            cua_host::Host::new(cua_daemon::cua_home()).adopt_name(&machine_id, &name)?;
+            // Every copy of the name on this device (this computer's host
+            // setup, the saved directory, the registry), by the machine id.
+            cua_spaces::relay::adopt_machine_name(
+                &cua_daemon_core::cua_home(),
+                auth.relay_url(),
+                &machine_id,
+                &name,
+            );
             Ok(m)
+        })
+        .await
+    }
+
+    /// The account's default Space and fallback order. A relay that
+    /// predates them answers "the Cua relay needs an update".
+    pub async fn spaces_settings(&self) -> Result<SpacesSettings> {
+        let auth = self.auth.clone();
+        let tokens = self.tokens.clone();
+        run(async move {
+            let session = auth.session().await?;
+            let token = cua_host::AccountTokens::access_token(tokens.as_ref()).await?;
+            Ok(cua_host::RelayClient::new(auth.relay_url())?
+                .with_device_session(Some(session))
+                .spaces_settings(&token)
+                .await?
+                .into())
+        })
+        .await
+    }
+
+    /// Replaces the account's default Space settings (the whole object;
+    /// `updated_at` is set by the relay). Returns what the relay saved.
+    pub async fn set_spaces_settings(&self, settings: SpacesSettings) -> Result<SpacesSettings> {
+        let auth = self.auth.clone();
+        let tokens = self.tokens.clone();
+        run(async move {
+            let session = auth.session().await?;
+            let token = cua_host::AccountTokens::access_token(tokens.as_ref()).await?;
+            Ok(cua_host::RelayClient::new(auth.relay_url())?
+                .with_device_session(Some(session))
+                .set_spaces_settings(&token, &settings.into())
+                .await?
+                .into())
+        })
+        .await
+    }
+
+    /// Where the default Space resolves now: the first online entry of the
+    /// default, the fallback order, then this computer (its own relay
+    /// machine id, when it has one). Creates nothing.
+    pub async fn resolve_default_space(&self) -> Result<DefaultSpace> {
+        let auth = self.auth.clone();
+        let tokens = self.tokens.clone();
+        run(async move {
+            let session = auth.session().await?;
+            let token = cua_host::AccountTokens::access_token(tokens.as_ref()).await?;
+            let here = cua_host::Host::new(cua_daemon_core::cua_home())
+                .config()
+                .ok()
+                .flatten()
+                .and_then(|c| c.machine_id)
+                .filter(|id| !id.is_empty());
+            Ok(cua_host::RelayClient::new(auth.relay_url())?
+                .with_device_session(Some(session))
+                .resolve_default_space(&token, here.as_deref())
+                .await?
+                .into())
         })
         .await
     }

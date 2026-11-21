@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cancellation ownership shared by the ABI and native operations.
 use std::sync::{
     atomic::{AtomicU8, Ordering},

@@ -1,0 +1,47 @@
+{
+  "platform": "windows",
+  "descriptor_version": "1",
+  "task_id": "IR-02",
+  "app": "windows/benchlab.py",
+  "app_args": [
+    "--mode",
+    "irbanner"
+  ],
+  "app_executable": "BenchLab.exe (a copy of pythonw.exe; see launch/windows_session.py)",
+  "sentinel": "windows/sentinel.py",
+  "launcher": [
+    "${python}",
+    "launch/windows_session.py",
+    "--task",
+    "IR-02",
+    "--run-index",
+    "${run_index}",
+    "--condition",
+    "${condition}",
+    "--out",
+    "${artifacts}",
+    "--",
+    "${agent_command}"
+  ],
+  "conditions": [
+    "foreground",
+    "background"
+  ],
+  "evaluate": [
+    "${python}",
+    "probes/IR-02/evaluate.py",
+    "--seed",
+    "${seed}",
+    "--state",
+    "${artifacts}/state.json",
+    "--events",
+    "${artifacts}/events.jsonl",
+    "--result",
+    "${result}"
+  ],
+  "requires": [
+    "Python 3.12",
+    "wxPython 4.2 or later",
+    "an interactive desktop session (not session 0)"
+  ]
+}

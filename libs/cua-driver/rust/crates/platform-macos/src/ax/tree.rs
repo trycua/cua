@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! AX tree walker: produces the treeMarkdown string and element cache.
 //!
 //! Format (matching libs/cua-driver exactly):
@@ -11,6 +14,7 @@
 //! - AXStaticText with no title/value is omitted.
 //! - Tree is walked depth-first; element_index is assigned in DFS order.
 
+use super::batch::{copy_string_attrs, NodeAttr, NodeAttributes};
 use super::bindings::*;
 use super::launch::{is_still_launching, LaunchStep, LaunchWait};
 use super::window_scope::{decide_window_scope, ScopeDecision, TopLevelCandidate, WindowScope};
@@ -24,7 +28,7 @@ use std::time::Instant;
 ///
 /// Callers can override per-call via `walk_tree`'s `max_depth` parameter to
 /// trade fidelity for context-window budget on AX-heavy apps (Electron,
-/// Obsidian, large web apps — issue #22865).
+/// Obsidian and other large web apps).
 pub const DEFAULT_MAX_DEPTH: usize = 25;
 
 /// Default maximum total nodes visited during a single AX walk. Chromium-family
@@ -34,14 +38,18 @@ pub const DEFAULT_MAX_DEPTH: usize = 25;
 /// with a warning line appended (mirrors Swift reference implementation).
 ///
 /// Callers can override per-call via `walk_tree`'s `max_elements` parameter
-/// (issue #22865).
+/// for large accessibility trees.
 pub const DEFAULT_MAX_ELEMENTS: usize = 2_000;
 
 /// Bound each native AX request. Tokio cannot cancel a blocked
 /// `AXUIElementCopyAttributeValue` after `spawn_blocking` starts, so the native
 /// messaging timeout is what keeps an unresponsive app from retaining a worker
 /// indefinitely.
-const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 2.0;
+pub(crate) const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 2.0;
+
+/// Most windows of one app a walk brings up to date (see
+/// [`super::enablement::flush_pending_web_updates`]).
+const MAX_WEB_FLUSH_WINDOWS: usize = 4;
 
 unsafe fn set_messaging_timeout(element: AXUIElementRef) {
     let _ = AXUIElementSetMessagingTimeout(element, AX_MESSAGING_TIMEOUT_SECONDS);
@@ -61,14 +69,19 @@ pub struct AXNode {
     /// Kept separate from `title` so `_find_calc_button("2")` can find
     /// Calculator buttons where AXTitle="" but AXDescription="2".
     pub description: Option<String>,
+    /// Raw AXPlaceholderValue, kept separate from the value it may also label.
+    pub placeholder: Option<String>,
+    /// Raw AXSubrole, kept separate from the element's role.
+    pub subrole: Option<String>,
     pub identifier: Option<String>,
     pub help: Option<String>,
     pub actions: Vec<String>,
+    pub custom_actions: Vec<super::actions::CustomAction>,
     /// The raw AXUIElementRef pointer value, for caching.
     pub element_ptr: usize,
     /// Depth in the rendered markdown tree (matches the indent level used in
-    /// `tree_markdown`). Layout containers AXScrollArea/AXGroup collapse so
-    /// children share the parent's depth.
+    /// `tree_markdown`). Unnamed AXScrollArea/AXGroup layout wrappers collapse
+    /// so children share the parent's depth; named ones keep their own row.
     pub depth: usize,
     /// `element_index` of the nearest actionable ancestor, if any. Walks the
     /// rendered tree (so it skips collapsed layout containers).
@@ -118,6 +131,36 @@ where
     }
 }
 
+/// Raw AXPlaceholderValue and AXSubrole kept beside the display label.
+#[derive(Debug, Default, PartialEq)]
+struct IdentityAttrs {
+    placeholder: Option<String>,
+    subrole: Option<String>,
+}
+
+/// When an app refuses the batched read, each attribute is a synchronous AX
+/// request against the walk's time budget. Display-only rows never reach the
+/// public `elements` array, so they read AXPlaceholderValue only as the
+/// empty-AXValue fallback and skip AXSubrole.
+fn read_identity_attrs(
+    is_actionable: bool,
+    value_is_empty: bool,
+    mut read: impl FnMut(NodeAttr) -> Option<String>,
+) -> IdentityAttrs {
+    IdentityAttrs {
+        placeholder: if is_actionable || value_is_empty {
+            read(NodeAttr::PlaceholderValue)
+        } else {
+            None
+        },
+        subrole: if is_actionable {
+            read(NodeAttr::Subrole)
+        } else {
+            None
+        },
+    }
+}
+
 fn role_supports_value_addressing(role: &str) -> bool {
     matches!(
         role,
@@ -131,8 +174,8 @@ fn role_supports_value_addressing(role: &str) -> bool {
     )
 }
 
-fn is_addressable(actions_present: bool, value_settable: bool, enabled: Option<bool>) -> bool {
-    (actions_present || value_settable) && enabled != Some(false)
+fn is_addressable(actions_present: bool, value_settable: bool) -> bool {
+    actions_present || value_settable
 }
 
 pub struct TreeWalkResult {
@@ -153,6 +196,36 @@ pub struct TreeWalkResult {
     /// [`WindowScope::Matched`] comes with an EMPTY walk, so `nodes` never
     /// describes a window other than the requested one.
     pub window_scope: Option<WindowScope>,
+    /// What the application AX element enumerated, set only when
+    /// `window_scope` is [`WindowScope::AxUnresolved`] after a read of the
+    /// application's top level (issue #4039). Diagnostic only: the walk
+    /// stays empty.
+    pub ax_enumeration: Option<AXEnumerationSummary>,
+}
+
+/// Counts read at the application AX element by a window-scoped walk.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AXEnumerationSummary {
+    /// Elements in the application's `AXChildren`.
+    pub children_count: usize,
+    /// Elements in its `AXWindows`, plus a requested window recovered from
+    /// another Space.
+    pub windows_count: usize,
+    /// Top-level elements after the two lists are merged by AX identity.
+    pub union_count: usize,
+    /// Top-level elements whose role is `AXWindow`.
+    pub ax_window_count: usize,
+    /// `AXWindow` elements that `_AXUIElementGetWindow` mapped to any
+    /// CGWindowID.
+    pub mapped_window_count: usize,
+}
+
+impl AXEnumerationSummary {
+    fn count_windows(&mut self, candidates: &[TopLevelCandidate]) {
+        let windows = candidates.iter().filter(|c| c.role == "AXWindow");
+        self.ax_window_count = windows.clone().count();
+        self.mapped_window_count = windows.filter(|c| c.ax_window_id.is_some()).count();
+    }
 }
 
 /// Walk the AX tree of `pid`, optionally filtered to a specific window.
@@ -185,7 +258,7 @@ pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeW
 /// the cap) and depth-wise (nodes whose markdown indent would exceed the cap
 /// are omitted). Markdown and the `nodes` vec are truncated identically.
 ///
-/// Issue #22865: caps protect against Electron / Obsidian / large web apps
+/// These caps protect against Electron / Obsidian / large web apps
 /// that produce 10k+ element trees and blow context windows.
 pub fn walk_tree_bounded(
     pid: i32,
@@ -245,6 +318,7 @@ fn walk_tree_with_web_content(
     let mut index_counter = 0usize;
     let mut depth_truncated = false;
     let mut window_scope: Option<WindowScope> = None;
+    let mut ax_enumeration: Option<AXEnumerationSummary> = None;
 
     unsafe {
         let app_elem = AXUIElementCreateApplication(pid);
@@ -257,7 +331,11 @@ fn walk_tree_with_web_content(
                 walk: budget.outcome(),
                 // No application AX element at all, so a requested window
                 // certainly did not resolve.
-                window_scope: window_id.map(|_| WindowScope::AxUnresolved { ax_window_count: 0 }),
+                window_scope: window_id.map(|_| WindowScope::AxUnresolved {
+                    ax_window_count: 0,
+                    ax_windows_error: None,
+                }),
+                ax_enumeration: None,
             };
         }
         set_messaging_timeout(app_elem);
@@ -280,7 +358,8 @@ fn walk_tree_with_web_content(
             let attempt_started = Instant::now();
             super::enablement::ensure_chromium_ax_enabled(pid, app_elem);
 
-            let top_level = copy_top_level(app_elem, pid, window_id);
+            let (mut top_level, ax_windows_error, mut enumeration) =
+                copy_top_level(app_elem, pid, window_id);
 
             // Scope: keep non-window children (menu bar) + the target window —
             // but ONLY once the target window has actually been identified. When
@@ -291,7 +370,8 @@ fn walk_tree_with_web_content(
                 let walk = top_level.clone();
                 break (top_level, walk);
             };
-            let decision = scope_top_level(&top_level, pid, wid);
+            let decision =
+                scope_top_level(&mut top_level, pid, wid, ax_windows_error, &mut enumeration);
             if matches!(decision.scope, WindowScope::AxUnresolved { .. }) {
                 match launch_wait.step(attempt_started, Instant::now(), || is_still_launching(pid))
                 {
@@ -311,14 +391,30 @@ fn walk_tree_with_web_content(
                 .iter()
                 .map(|&index| top_level[index])
                 .collect();
+            ax_enumeration =
+                matches!(decision.scope, WindowScope::AxUnresolved { .. }).then_some(enumeration);
             window_scope = Some(decision.scope);
             break (top_level, walk);
         };
 
+        // A hidden or covered Chromium window holds back the page changes of
+        // the last action until it is asked something; ask first so the walk
+        // reads the page as it is now.
+        if include_web_content {
+            for &child in walk_these.iter().take(MAX_WEB_FLUSH_WINDOWS) {
+                if copy_string_attr(child, "AXRole").as_deref() == Some("AXWindow") {
+                    super::enablement::flush_pending_web_updates(pid, child);
+                }
+            }
+        }
+
         // Walk each top-level child at depth 0.
-        for child in walk_these {
+        let shares = SiblingShares::reserve(&mut budget, false, walk_these.len());
+        for (position, child) in walk_these.into_iter().enumerate() {
+            budget.release(shares.of(position));
             walk_element(
                 child,
+                0,
                 0,
                 None,
                 false,
@@ -342,7 +438,7 @@ fn walk_tree_with_web_content(
     prune_echo_text_rows(&mut lines);
     let raw_markdown = render_lines(&lines);
     let mut tree_markdown = if let Some(q) = query {
-        filter_tree(&raw_markdown, q)
+        cua_driver_core::element_query::filter_tree(&raw_markdown, q)
     } else {
         raw_markdown
     };
@@ -359,6 +455,7 @@ fn walk_tree_with_web_content(
         depth_truncated,
         walk,
         window_scope,
+        ax_enumeration,
     }
 }
 
@@ -367,19 +464,22 @@ fn walk_tree_with_web_content(
 /// `AXChildren` omits windows when the app isn't frontmost (AppKit
 /// limitation); `AXWindows` returns the window list regardless of activation
 /// state, so the union is the only way to see background windows. Every
-/// returned element is retained; release them with [`release_all`].
+/// returned element is retained; release them with [`release_all`]. The
+/// summary holds the list sizes; [`scope_top_level`] adds the window counts.
 unsafe fn copy_top_level(
     app_elem: AXUIElementRef,
     pid: i32,
     window_id: Option<u32>,
-) -> Vec<AXUIElementRef> {
+) -> (Vec<AXUIElementRef>, Option<AXError>, AXEnumerationSummary) {
     let mut top_level = copy_children(app_elem);
+    let children_count = top_level.len();
     // A requested window on another Space is absent from AXWindows; the
     // `_including` variant recovers it by exact CGWindowID.
-    let from_windows = match window_id {
-        Some(wid) => copy_ax_windows_including(app_elem, pid, wid),
-        None => copy_ax_windows(app_elem),
+    let (from_windows, ax_windows_error) = match window_id {
+        Some(wid) => copy_ax_windows_including_or_error(app_elem, pid, wid),
+        None => (copy_ax_windows(app_elem), None),
     };
+    let windows_count = from_windows.len();
     for w in from_windows {
         // AXChildren and AXWindows can return different proxy pointers for
         // the same native window. CFEqual compares their AX identity;
@@ -395,36 +495,81 @@ unsafe fn copy_top_level(
             CFRelease(w as CFTypeRef);
         }
     }
-    top_level
+    let enumeration = AXEnumerationSummary {
+        children_count,
+        windows_count,
+        union_count: top_level.len(),
+        ..AXEnumerationSummary::default()
+    };
+    (top_level, ax_windows_error, enumeration)
 }
 
 /// Decide which of `top_level` a walk scoped to `wid` covers.
-unsafe fn scope_top_level(top_level: &[AXUIElementRef], pid: i32, wid: u32) -> ScopeDecision {
-    let candidates: Vec<TopLevelCandidate> = top_level
+///
+/// A sheet's own id is never a top-level window: the sheet hangs off the
+/// window it is attached to. When no window claims `wid`, the matching
+/// attached sheet is appended to `top_level`, so the walk covers that sheet
+/// and not the parent window's own controls.
+unsafe fn scope_top_level(
+    top_level: &mut Vec<AXUIElementRef>,
+    pid: i32,
+    wid: u32,
+    ax_windows_error: Option<AXError>,
+    enumeration: &mut AXEnumerationSummary,
+) -> ScopeDecision {
+    let mut candidates: Vec<TopLevelCandidate> = top_level
         .iter()
-        .map(|&child| {
-            set_messaging_timeout(child);
-            let role = copy_string_attr(child, "AXRole").unwrap_or_default();
-            let subrole = copy_string_attr(child, "AXSubrole");
-            let identifier = copy_string_attr(child, "AXIdentifier");
-            // Match AX window element → CGWindowID via private SPI.
-            // Only windows carry one, so skip the round-trip elsewhere.
-            let ax_window_id = if role == "AXWindow" {
-                ax_get_window_id(child)
-            } else {
-                None
-            };
-            TopLevelCandidate {
-                role,
-                subrole,
-                identifier,
-                ax_window_id,
-            }
-        })
+        .map(|&child| top_level_candidate(child))
         .collect();
-    decide_window_scope(&candidates, wid, || {
+    enumeration.count_windows(&candidates);
+    if !candidates
+        .iter()
+        .any(|candidate| candidate.ax_window_id == Some(wid))
+    {
+        let windows: Vec<AXUIElementRef> = top_level
+            .iter()
+            .zip(&candidates)
+            .filter(|(_, candidate)| candidate.role == "AXWindow")
+            .map(|(&window, _)| window)
+            .collect();
+        for sheet in windows
+            .into_iter()
+            .flat_map(|window| super::exact_target::attached_sheets(window))
+        {
+            let candidate = top_level_candidate(sheet);
+            if candidate.ax_window_id == Some(wid)
+                && !candidates.iter().any(|c| c.ax_window_id == Some(wid))
+            {
+                top_level.push(sheet);
+                candidates.push(candidate);
+            } else {
+                CFRelease(sheet as CFTypeRef);
+            }
+        }
+    }
+    decide_window_scope(&candidates, wid, ax_windows_error, || {
         crate::windows::resolve_window_owner(pid, wid)
     })
+}
+
+unsafe fn top_level_candidate(child: AXUIElementRef) -> TopLevelCandidate {
+    set_messaging_timeout(child);
+    let [role, subrole, identifier] =
+        copy_string_attrs(child, ["AXRole", "AXSubrole", "AXIdentifier"]);
+    let role = role.unwrap_or_default();
+    // Match AX window element → CGWindowID via private SPI. Only windows and
+    // sheets carry one, so skip the round-trip elsewhere.
+    let ax_window_id = if matches!(role.as_str(), "AXWindow" | "AXSheet") {
+        ax_get_window_id(child)
+    } else {
+        None
+    };
+    TopLevelCandidate {
+        role,
+        subrole,
+        identifier,
+        ax_window_id,
+    }
 }
 
 /// Release elements retained by [`copy_top_level`].
@@ -434,10 +579,78 @@ unsafe fn release_all(elements: Vec<AXUIElementRef>) {
     }
 }
 
+fn is_layout_container(role: &str) -> bool {
+    matches!(role, "AXGroup" | "AXScrollArea")
+}
+
+/// Whether an AXGroup/AXScrollArea is only a layout wrapper to collapse. One
+/// that carries content (AXTitle or AXDescription, such as a "Profile" or
+/// "Billing" section, or a non-empty AXValue or AXHelp) keeps its row, so
+/// identical controls in different sections can be told apart, and its own
+/// actions (a SwiftUI row's press or custom actions) stay addressable.
+fn collapse_layout_container(
+    role: &str,
+    title: Option<&str>,
+    description: Option<&str>,
+    has_value_or_help: bool,
+) -> bool {
+    is_layout_container(role)
+        && title.is_none_or(|text| text.trim().is_empty())
+        && description.is_none_or(|text| text.trim().is_empty())
+        && !has_value_or_help
+}
+
+/// Whether a node gets a row of its own. A node with no action and nothing to
+/// show collapses into its parent, except a window or sheet, and a group or
+/// scroll area kept for its help: with no action it is an unindexed display
+/// row, and its help is the content that row shows.
+fn keeps_row(role: &str, is_actionable: bool, has_content: bool, has_help: bool) -> bool {
+    is_actionable
+        || has_content
+        || role == "AXWindow"
+        || role == "AXSheet"
+        || (has_help && is_layout_container(role))
+}
+
+/// The actions a node is addressable by. A named group or scroll area whose
+/// only actions are the generic menu and scroll ones every section carries
+/// (SwiftUI, Catalyst and web content) is a section label, not a target, so
+/// it stays an unindexed display row and indexes after it do not shift. One
+/// with an action of its own (a press, an app's custom action) is a target,
+/// and so is a group kept for its value or help, which only an indexed row
+/// shows.
+fn layout_group_actions(
+    role: &str,
+    named: bool,
+    mut advertised: super::actions::ElementActions,
+) -> super::actions::ElementActions {
+    let generic = |action: &String| action == "AXShowMenu" || action.starts_with("AXScroll");
+    if is_layout_container(role)
+        && named
+        && advertised.custom.is_empty()
+        && advertised.standard.iter().all(generic)
+    {
+        advertised.standard.clear();
+    }
+    advertised
+}
+
+/// `max_depth` budget a node's children are walked at. A named layout group
+/// kept as a row indents its children but spends no budget, so `max_depth`
+/// admits the same elements as when every group collapsed.
+fn child_walk_depth(role: &str, walk_depth: usize) -> usize {
+    if is_layout_container(role) {
+        walk_depth
+    } else {
+        walk_depth + 1
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 unsafe fn walk_element(
     element: AXUIElementRef,
     depth: usize,
+    walk_depth: usize,
     parent_index: Option<usize>,
     in_web_content: bool,
     nodes: &mut Vec<AXNode>,
@@ -448,7 +661,7 @@ unsafe fn walk_element(
     max_depth: usize,
     include_web_content: bool,
 ) {
-    if depth > max_depth {
+    if walk_depth > max_depth {
         *depth_truncated = true;
         return;
     }
@@ -462,23 +675,54 @@ unsafe fn walk_element(
     // element, so every descendant must be bounded before any attribute read.
     set_messaging_timeout(element);
 
-    let role = copy_string_attr(element, "AXRole").unwrap_or_else(|| "AXUnknown".into());
+    // One round trip for every attribute this node can need (see
+    // `super::batch`); the reads below only convert the reply.
+    let attrs = NodeAttributes::read(element);
+    let role = attrs
+        .string(NodeAttr::Role)
+        .unwrap_or_else(|| "AXUnknown".into());
 
     let in_web_content = in_web_content || is_web_content_role(&role);
     if in_web_content && !include_web_content {
         return;
     }
 
-    // Skip pure layout containers that have no interesting content.
-    if role == "AXScrollArea" || role == "AXGroup" {
+    // Keep AXTitle and AXDescription SEPARATE so that the tree format matches
+    // the Swift reference: title → "title", description → (description).
+    // This is critical for Calculator where AXTitle="" but AXDescription="2"
+    // (digit buttons). Merging them would produce "2" (quoted) instead of (2)
+    // (parens), breaking _find_calc_button which searches for "(2)".
+    let title = attrs.string(NodeAttr::Title);
+    // Read AXValue once with enough type information to preserve the existing
+    // string-only markdown while also exposing numeric/boolean control state.
+    let copied_value = attrs.stringish(NodeAttr::Value);
+    let value = copied_value
+        .as_ref()
+        .and_then(|copied| copied.string_value.clone());
+    let value = value.filter(|v| !v.trim().is_empty());
+    let description = attrs.string(NodeAttr::Description);
+    let identifier = attrs.string(NodeAttr::Identifier);
+    let help = attrs
+        .string(NodeAttr::Help)
+        .filter(|h| !h.trim().is_empty());
+    if collapse_layout_container(
+        &role,
+        title.as_deref(),
+        description.as_deref(),
+        value.is_some() || help.is_some(),
+    ) {
         // Still recurse — children may be interesting. Layout containers
         // collapse, so children inherit the parent's depth AND the same
         // parent_index (no actionable node was emitted here).
-        let children = copy_children(element);
-        for child in children {
+        let children = attrs.children();
+        drop(attrs);
+        let shares = SiblingShares::reserve(budget, in_web_content, children.len());
+        for (position, child) in children.into_iter().enumerate() {
+            budget.release(shares.of(position));
             walk_element(
                 child,
                 depth,
+                walk_depth,
                 parent_index,
                 in_web_content,
                 nodes,
@@ -493,27 +737,37 @@ unsafe fn walk_element(
         }
         return;
     }
+    let named = !title.as_deref().unwrap_or("").trim().is_empty()
+        || !description.as_deref().unwrap_or("").trim().is_empty();
+    let advertised = layout_group_actions(
+        &role,
+        named,
+        super::actions::split(copy_action_names(element)),
+    );
 
-    // Keep AXTitle and AXDescription SEPARATE so that the tree format matches
-    // the Swift reference: title → "title", description → (description).
-    // This is critical for Calculator where AXTitle="" but AXDescription="2"
-    // (digit buttons). Merging them would produce "2" (quoted) instead of (2)
-    // (parens), breaking _find_calc_button which searches for "(2)".
-    let title = copy_string_attr(element, "AXTitle");
-    // Read AXValue once with enough type information to preserve the existing
-    // string-only markdown while also exposing numeric/boolean control state.
-    let copied_value = copy_stringish_attr(element, "AXValue");
-    let value = copied_value
-        .as_ref()
-        .and_then(|copied| copied.string_value.clone());
-    // AXPlaceholderValue as fallback for empty text fields.
-    let value = value
-        .filter(|v| !v.trim().is_empty())
-        .or_else(|| copy_string_attr(element, "AXPlaceholderValue"));
-    let description = copy_string_attr(element, "AXDescription");
-    let identifier = copy_string_attr(element, "AXIdentifier");
-    let help = copy_string_attr(element, "AXHelp").filter(|h| !h.trim().is_empty());
-    let actions = copy_action_names(element);
+    // Some native controls expose no AX action names but do expose a writable
+    // AXValue. Finder's transient inline-rename field is the important case:
+    // rendering it without an element_index leaves an agent able to see the
+    // field but unable to call set_value on it. Probe writability only for the
+    // small family of value controls so arbitrary display nodes do not pay an
+    // extra AX round trip.
+    let value_settable = advertised.is_empty()
+        && role_supports_value_addressing(&role)
+        && is_attribute_settable(element, "AXValue");
+    // A disabled control is still indexed and published with `enabled: false`:
+    // enablement is state the caller needs to read (a form's Save button, a
+    // toolbar item in a window that is not key), not a reason to hide the row.
+    // click, right_click, double_click, set_value and type_text re-read
+    // AXEnabled before dispatch and refuse a disabled token target with
+    // `element_disabled` (`tools::refuse_if_disabled`).
+    let enabled = if !advertised.is_empty() || value_settable {
+        attrs.bool(NodeAttr::Enabled)
+    } else {
+        None
+    };
+    let is_actionable = is_addressable(!advertised.is_empty(), value_settable);
+    let identity = read_identity_attrs(is_actionable, value.is_none(), |attr| attrs.string(attr));
+    let value = value.or_else(|| identity.placeholder.clone());
 
     let visible_title = title.as_deref().unwrap_or("").trim().to_owned();
     let visible_description = description.as_deref().unwrap_or("").trim().to_owned();
@@ -521,32 +775,22 @@ unsafe fn walk_element(
 
     let has_content =
         !visible_title.is_empty() || !visible_description.is_empty() || !visible_value.is_empty();
-    // Some native controls expose no AX action names but do expose a writable
-    // AXValue. Finder's transient inline-rename field is the important case:
-    // rendering it without an element_index leaves an agent able to see the
-    // field but unable to call set_value on it. Probe writability only for the
-    // small family of value controls so arbitrary display nodes do not pay an
-    // extra AX round trip.
-    let value_settable = actions.is_empty()
-        && role_supports_value_addressing(&role)
-        && is_attribute_settable(element, "AXValue");
-    // A closed submenu can keep its descendants in AXChildren while reporting
-    // those controls disabled. Never assign such a row a live element index:
-    // the same native state also causes dispatch to refuse it, and exposing an
-    // index for it invites agents to retain an unusable menu target.
-    let enabled = if !actions.is_empty() || value_settable {
-        copy_bool_attr(element, "AXEnabled")
-    } else {
-        None
-    };
-    let is_actionable = is_addressable(!actions.is_empty(), value_settable, enabled);
 
-    if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
-        let children = copy_children(element);
-        for child in children {
+    if !keeps_row(&role, is_actionable, has_content, help.is_some()) {
+        let (child_depth, child_walk_depth) = if is_layout_container(&role) {
+            (depth, walk_depth)
+        } else {
+            (depth + 1, walk_depth + 1)
+        };
+        let children = attrs.children();
+        drop(attrs);
+        let shares = SiblingShares::reserve(budget, in_web_content, children.len());
+        for (position, child) in children.into_iter().enumerate() {
+            budget.release(shares.of(position));
             walk_element(
                 child,
-                depth + 1,
+                child_depth,
+                child_walk_depth,
                 parent_index,
                 in_web_content,
                 nodes,
@@ -563,7 +807,7 @@ unsafe fn walk_element(
     }
 
     let element_ptr = element as usize;
-    let frame = element_screen_rect(element);
+    let frame = attrs.screen_rect();
     // Structured `elements` only contains actionable nodes. Keep all new AX
     // round-trips behind that same gate so display-only rows pay no cost.
     let control_state = read_control_state_if_actionable(is_actionable, || ControlState {
@@ -573,13 +817,14 @@ unsafe fn walk_element(
             .or_else(|| value.clone())
             .map(|v| v.trim().to_owned())
             .filter(|v| !v.is_empty()),
-        value_description: copy_string_attr(element, "AXValueDescription")
+        value_description: attrs
+            .string(NodeAttr::ValueDescription)
             .map(|v| v.trim().to_owned())
             .filter(|v| !v.is_empty()),
-        min_value: copy_number_attr(element, "AXMinValue"),
-        max_value: copy_number_attr(element, "AXMaxValue"),
+        min_value: attrs.number(NodeAttr::MinValue),
+        max_value: attrs.number(NodeAttr::MaxValue),
         enabled,
-        selected: copy_bool_attr(element, "AXSelected"),
+        selected: attrs.bool(NodeAttr::Selected),
     });
     let node = if is_actionable {
         let idx = *counter;
@@ -605,9 +850,12 @@ unsafe fn walk_element(
             } else {
                 Some(visible_description.clone())
             },
+            placeholder: identity.placeholder,
+            subrole: identity.subrole,
             identifier: identifier.clone(),
             help: help.clone(),
-            actions: actions.clone(),
+            actions: advertised.standard,
+            custom_actions: advertised.custom,
             element_ptr,
             depth,
             parent_element_index: parent_index,
@@ -639,9 +887,12 @@ unsafe fn walk_element(
             } else {
                 Some(visible_description.clone())
             },
+            placeholder: identity.placeholder,
+            subrole: identity.subrole,
             identifier: identifier.clone(),
             help: help.clone(),
             actions: vec![],
+            custom_actions: vec![],
             element_ptr,
             depth,
             parent_element_index: parent_index,
@@ -667,7 +918,7 @@ unsafe fn walk_element(
     // and ate the node budget before the window content.
     let collapse_here = role == "AXMenuBarItem"
         && MENUS_COLLAPSED.with(std::cell::Cell::get)
-        && copy_bool_attr(element, "AXSelected") != Some(true);
+        && attrs.bool(NodeAttr::Selected) != Some(true);
     let line = if role == "AXMenuBar" && MENUS_COLLAPSED.with(std::cell::Cell::get) {
         format!("{} {COLLAPSED_MENU_NOTE}", format_node_line(&node))
     } else {
@@ -679,11 +930,15 @@ unsafe fn walk_element(
         return;
     }
 
-    let children = copy_children(element);
-    for child in children {
+    let children = attrs.children();
+    drop(attrs);
+    let shares = SiblingShares::reserve(budget, in_web_content, children.len());
+    for (position, child) in children.into_iter().enumerate() {
+        budget.release(shares.of(position));
         walk_element(
             child,
             depth + 1,
+            child_walk_depth(&role, walk_depth),
             next_parent,
             in_web_content,
             nodes,
@@ -698,6 +953,50 @@ unsafe fn walk_element(
     }
 }
 
+/// Most children a node holds nodes for (see [`SiblingShares`]). A pane,
+/// toolbar or button row is this small; a list or table is not.
+const MAX_RESERVED_SIBLINGS: usize = 16;
+
+/// Most nodes held for one sibling: enough for a later container's own row
+/// and a few controls nested in it (a button bar inside an unnamed group).
+const MAX_SHARE_PER_SIBLING: usize = 8;
+
+/// Nodes of the budget held for a native node's children before the first is
+/// walked, so a deep early child cannot use up `max_elements` before the
+/// children after it get rows. An Open panel's file browser holds hundreds of
+/// rows and took the whole default budget ahead of the panel's Cancel and Open
+/// buttons, so a read of the panel showed no way to answer it (#3351).
+///
+/// Each child's share is at most [`MAX_SHARE_PER_SIBLING`], spread evenly
+/// over what is free. Lists and tables (more than [`MAX_RESERVED_SIBLINGS`]
+/// children) and web content keep their depth-first order, so their first
+/// rows still show their cells.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SiblingShares {
+    held: usize,
+    children: usize,
+}
+
+impl SiblingShares {
+    fn reserve(budget: &mut WalkBudget, in_web_content: bool, children: usize) -> Self {
+        let held = if in_web_content || children > MAX_RESERVED_SIBLINGS {
+            0
+        } else {
+            budget.reserve(children * MAX_SHARE_PER_SIBLING)
+        };
+        Self { held, children }
+    }
+
+    /// The nodes held for the child at `position`; the walker releases them
+    /// just before walking it. The shares add up to `held`.
+    fn of(self, position: usize) -> usize {
+        if self.children == 0 {
+            return 0;
+        }
+        self.held / self.children + usize::from(position < self.held % self.children)
+    }
+}
+
 fn is_web_content_role(role: &str) -> bool {
     let normalized = role
         .chars()
@@ -705,6 +1004,54 @@ fn is_web_content_role(role: &str) -> bool {
         .flat_map(char::to_lowercase)
         .collect::<String>();
     normalized.contains("webarea") || normalized.contains("documentweb") || normalized == "document"
+}
+
+#[cfg(test)]
+mod sibling_reservation_tests {
+    use super::{SiblingShares, MAX_RESERVED_SIBLINGS, MAX_SHARE_PER_SIBLING};
+    use cua_driver_core::walk_budget::WalkBudget;
+
+    #[test]
+    fn a_pane_holds_nodes_for_each_child_but_a_list_does_not() {
+        let mut budget = WalkBudget::nodes_only(250);
+        let pane = SiblingShares::reserve(&mut budget, false, 5);
+        assert_eq!(pane.of(0), MAX_SHARE_PER_SIBLING);
+        let list = SiblingShares::reserve(&mut budget, false, MAX_RESERVED_SIBLINGS + 1);
+        assert_eq!(list.of(0), 0);
+        let web = SiblingShares::reserve(&mut budget, true, 5);
+        assert_eq!(web.of(0), 0);
+    }
+
+    #[test]
+    fn a_short_budget_is_spread_evenly_and_fully_released() {
+        let mut budget = WalkBudget::nodes_only(8);
+        assert!(budget.admit());
+        // 7 free nodes over 3 children: 3, 2, 2.
+        let shares = SiblingShares::reserve(&mut budget, false, 3);
+        assert_eq!((0..3).map(|i| shares.of(i)).collect::<Vec<_>>(), [3, 2, 2]);
+    }
+
+    /// A deep first child, then a group whose two buttons sit one level down:
+    /// the group's share leaves room for both buttons.
+    #[test]
+    fn a_later_group_keeps_rows_for_its_nested_controls() {
+        let mut budget = WalkBudget::nodes_only(40);
+        assert!(budget.admit(), "sheet");
+        let sheet = SiblingShares::reserve(&mut budget, false, 2);
+        budget.release(sheet.of(0));
+        let mut deep = 0;
+        while budget.admit() {
+            deep += 1;
+        }
+        assert!(deep > 0, "the file list still gets the free nodes");
+        budget.release(sheet.of(1));
+        assert!(budget.admit(), "button group");
+        let group = SiblingShares::reserve(&mut budget, false, 2);
+        for button in 0..2 {
+            budget.release(group.of(button));
+            assert!(budget.admit(), "button {button}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -751,8 +1098,14 @@ fn format_node_line(node: &AXNode) -> String {
         parts.push_str(&format!(" ({})", d));
     }
 
-    // Bracketed metadata block (identifier, help, actions).
-    if node.element_index.is_some() {
+    // Bracketed metadata block (identifier, help, actions). An unindexed row
+    // shows only its help, which a group kept for its help has no other way
+    // to show.
+    if node.element_index.is_none() {
+        if let Some(h) = &node.help {
+            parts.push_str(&format!(" [help=\"{}\"]", h));
+        }
+    } else {
         let mut attrs: Vec<String> = Vec::new();
         if let Some(id) = node
             .identifier
@@ -764,6 +1117,9 @@ fn format_node_line(node: &AXNode) -> String {
         if let Some(h) = &node.help {
             attrs.push(format!("help=\"{}\"", h));
         }
+        if node.enabled == Some(false) {
+            attrs.push("enabled=false".to_owned());
+        }
         let shown: Vec<String> = node
             .actions
             .iter()
@@ -772,6 +1128,15 @@ fn format_node_line(node: &AXNode) -> String {
             .collect();
         if !shown.is_empty() {
             attrs.push(format!("actions=[{}]", shown.join(",")));
+        }
+        if !node.custom_actions.is_empty() {
+            let action_str = node
+                .custom_actions
+                .iter()
+                .map(|action| serde_json::to_string(&action.name).expect("string serialization"))
+                .collect::<Vec<_>>()
+                .join(",");
+            attrs.push(format!("custom_actions=[{}]", action_str));
         }
         if !attrs.is_empty() {
             parts.push_str(" [");
@@ -809,7 +1174,9 @@ const UNLISTED_ACTIONS: &[&str] = &["AXShowMenu", "AXScrollToVisible"];
 /// Drop static-text leaf rows that only repeat text already shown on their
 /// parent row (a web button "Save case" with a child text "Save case"). The
 /// rows keep their element indices; only the rendering omits them, and a
-/// `query` for the text still matches the parent.
+/// `query` for the text still matches the parent. Only an addressable parent
+/// (one with its own `[N]` index) stands in for the child: a named group kept
+/// as a display row has no index, so its echoing text row stays the target.
 fn prune_echo_text_rows(lines: &mut Vec<(usize, String)>) {
     let mut keep = vec![true; lines.len()];
     for i in 0..lines.len() {
@@ -822,7 +1189,9 @@ fn prune_echo_text_rows(lines: &mut Vec<(usize, String)>) {
             continue;
         }
         let parent = lines[..i].iter().rev().find(|(d, _)| *d + 1 == *depth);
-        if parent.is_some_and(|(_, parent_line)| quoted_text_contains(parent_line, text)) {
+        if parent.is_some_and(|(_, parent_line)| {
+            parent_line.starts_with("- [") && quoted_text_contains(parent_line, text)
+        }) {
             keep[i] = false;
         }
     }
@@ -866,75 +1235,238 @@ fn render_lines(lines: &[(usize, String)]) -> String {
     out
 }
 
-/// Filter the tree markdown to lines matching `query` plus their ancestor chain.
-fn filter_tree(markdown: &str, query: &str) -> String {
-    let needle = query.to_lowercase();
-    let lines: Vec<&str> = markdown.lines().collect();
-
-    let mut current_ancestor: Vec<&str> = Vec::new();
-    let mut last_emitted_at: Vec<Option<&str>> = Vec::new();
-    let mut output: Vec<&str> = Vec::new();
-
-    for line in &lines {
-        let depth = leading_indent_depth(line);
-
-        while current_ancestor.len() <= depth {
-            current_ancestor.push("");
-            last_emitted_at.push(None);
-        }
-        for emitted_at in last_emitted_at.iter_mut().skip(depth + 1) {
-            *emitted_at = None;
-        }
-        current_ancestor[depth] = line;
-
-        if line.to_lowercase().contains(&needle) {
-            for ancestor_depth in 0..depth {
-                let ancestor = current_ancestor[ancestor_depth];
-                if ancestor.is_empty() {
-                    continue;
-                }
-                if last_emitted_at[ancestor_depth] == Some(ancestor) {
-                    continue;
-                }
-                last_emitted_at[ancestor_depth] = Some(ancestor);
-                output.push(ancestor);
-            }
-            last_emitted_at[depth] = Some(line);
-            output.push(line);
-        }
-    }
-
-    if output.is_empty() {
-        return String::new();
-    }
-    let mut result = output.join("\n");
-    result.push('\n');
-    result
-}
-
-fn leading_indent_depth(line: &str) -> usize {
-    let mut count = 0;
-    for ch in line.chars() {
-        if ch == ' ' {
-            count += 1;
-        } else {
-            break;
-        }
-    }
-    count / 2
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::cell::Cell;
 
+    /// Issue #4039: an unresolved scope reports how many top-level AXWindows
+    /// the SPI mapped to any CGWindowID, apart from how many there were.
+    #[test]
+    fn enumeration_counts_windows_and_mapped_windows_only() {
+        let mut enumeration = AXEnumerationSummary {
+            children_count: 3,
+            windows_count: 2,
+            union_count: 4,
+            ..AXEnumerationSummary::default()
+        };
+        enumeration.count_windows(&[
+            TopLevelCandidate::new("AXMenuBar", None),
+            TopLevelCandidate::new("AXWindow", Some(11)),
+            TopLevelCandidate::new("AXWindow", None),
+            TopLevelCandidate::new("AXSheet", Some(12)),
+        ]);
+        assert_eq!(
+            enumeration,
+            AXEnumerationSummary {
+                children_count: 3,
+                windows_count: 2,
+                union_count: 4,
+                ax_window_count: 2,
+                mapped_window_count: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn named_layout_groups_keep_their_row_and_unnamed_wrappers_collapse() {
+        for role in ["AXGroup", "AXScrollArea"] {
+            assert!(!collapse_layout_container(
+                role,
+                Some("Billing"),
+                None,
+                false
+            ));
+            assert!(!collapse_layout_container(
+                role,
+                None,
+                Some("Profile"),
+                false
+            ));
+            assert!(!collapse_layout_container(
+                role,
+                Some("  "),
+                Some("Billing"),
+                false
+            ));
+            // An unnamed group with its own value or help is content, not a
+            // wrapper.
+            assert!(!collapse_layout_container(role, None, None, true));
+            assert!(collapse_layout_container(role, None, None, false));
+            assert!(collapse_layout_container(
+                role,
+                Some(" "),
+                Some("\n\t"),
+                false
+            ));
+        }
+        assert!(!collapse_layout_container("AXButton", None, None, false));
+        assert!(!collapse_layout_container("AXWebArea", None, None, false));
+        assert!(is_layout_container("AXGroup") && is_layout_container("AXScrollArea"));
+        assert!(!is_layout_container("AXButton"));
+    }
+
+    #[test]
+    fn a_kept_group_is_addressable_only_by_an_action_of_its_own() {
+        let actions = |names: &[&str]| {
+            super::super::actions::split(names.iter().map(|n| (*n).to_owned()).collect())
+        };
+        // Web and SwiftUI sections advertise only menu and scroll actions:
+        // the group stays a display row, so an echoing text child keeps
+        // its own index (#7780).
+        for generic in [
+            &["AXShowMenu", "AXScrollToVisible"][..],
+            &["AXScrollUpByPage", "AXScrollDownByPage"][..],
+            &[][..],
+        ] {
+            assert!(layout_group_actions("AXGroup", true, actions(generic)).is_empty());
+            assert!(layout_group_actions("AXScrollArea", true, actions(generic)).is_empty());
+        }
+        let pressable = layout_group_actions("AXGroup", true, actions(&["AXPress", "AXShowMenu"]));
+        assert_eq!(pressable.standard, ["AXPress", "AXShowMenu"]);
+        let custom = layout_group_actions(
+            "AXGroup",
+            true,
+            actions(&["AXShowMenu", "Name:Pin List\nTarget:0x0\nSelector:(null)"]),
+        );
+        assert_eq!(custom.standard, ["AXShowMenu"]);
+        assert_eq!(custom.custom.len(), 1);
+        // A group kept for its help or value has no name to show as a
+        // display row, so it keeps its actions and its index.
+        let help_only = layout_group_actions("AXGroup", false, actions(&["AXShowMenu"]));
+        assert_eq!(help_only.standard, ["AXShowMenu"]);
+        // Other roles keep every action they advertise.
+        let menu_only = layout_group_actions("AXImage", true, actions(&["AXShowMenu"]));
+        assert_eq!(menu_only.standard, ["AXShowMenu"]);
+    }
+
+    #[test]
+    fn a_help_only_group_with_no_action_keeps_an_unindexed_row() {
+        for role in ["AXGroup", "AXScrollArea"] {
+            assert!(keeps_row(role, false, false, true));
+            assert!(!keeps_row(role, false, false, false));
+        }
+        // Help alone does not keep a row for another role's empty node.
+        assert!(!keeps_row("AXImage", false, false, true));
+        assert!(keeps_row("AXWindow", false, false, false));
+
+        let node = AXNode {
+            element_index: None,
+            role: "AXGroup".into(),
+            title: None,
+            value: None,
+            description: None,
+            placeholder: None,
+            subrole: None,
+            identifier: Some("grp-help-only".into()),
+            help: Some("Swipe left to archive.".into()),
+            actions: vec![],
+            custom_actions: vec![],
+            element_ptr: 0,
+            depth: 1,
+            parent_element_index: None,
+            frame: None,
+            value_state: None,
+            value_description: None,
+            min_value: None,
+            max_value: None,
+            enabled: None,
+            selected: None,
+            in_web_content: false,
+        };
+        assert_eq!(
+            format_node_line(&node),
+            "- AXGroup [help=\"Swipe left to archive.\"]"
+        );
+    }
+
+    #[test]
+    fn a_kept_named_group_spends_no_max_depth_budget() {
+        // A button at walk depth 3 under a named group stays within
+        // max_depth=3, as it did when the group collapsed.
+        assert_eq!(child_walk_depth("AXGroup", 3), 3);
+        assert_eq!(child_walk_depth("AXScrollArea", 3), 3);
+        assert_eq!(child_walk_depth("AXWindow", 2), 3);
+        assert_eq!(child_walk_depth("AXButton", 2), 3);
+    }
+
+    #[test]
+    fn a_disabled_control_row_says_so() {
+        let node = AXNode {
+            element_index: Some(7),
+            role: "AXCheckBox".into(),
+            title: Some("Reset".into()),
+            value: None,
+            description: None,
+            placeholder: None,
+            subrole: None,
+            identifier: None,
+            help: None,
+            actions: vec!["AXPress".into()],
+            custom_actions: vec![],
+            element_ptr: 0,
+            depth: 2,
+            parent_element_index: None,
+            frame: None,
+            value_state: None,
+            value_description: None,
+            min_value: None,
+            max_value: None,
+            enabled: Some(false),
+            selected: None,
+            in_web_content: false,
+        };
+        assert_eq!(
+            format_node_line(&node),
+            "- [7] AXCheckBox \"Reset\" [enabled=false actions=[press]]"
+        );
+    }
+
+    #[test]
+    fn a_custom_action_name_cannot_add_tree_rows() {
+        let node = AXNode {
+            element_index: Some(4),
+            role: "AXCell".into(),
+            title: None,
+            value: None,
+            description: None,
+            placeholder: None,
+            subrole: None,
+            identifier: None,
+            help: None,
+            actions: vec!["AXPress".into()],
+            custom_actions: crate::ax::actions::split(vec![
+                "Name:Pin List\nTarget:0x0\nSelector:(null)".into(),
+                "Name:Move Down\nTarget:0x0\nSelector:(null)".into(),
+            ])
+            .custom,
+            element_ptr: 0,
+            depth: 0,
+            parent_element_index: None,
+            frame: None,
+            value_state: None,
+            value_description: None,
+            min_value: None,
+            max_value: None,
+            enabled: Some(true),
+            selected: None,
+            in_web_content: false,
+        };
+        let rendered = format_node_line(&node);
+        assert_eq!(rendered.lines().count(), 1, "{rendered}");
+        assert!(rendered.contains("actions=[press]"), "{rendered}");
+        assert!(
+            rendered.contains("custom_actions=[\"Pin List\",\"Move Down\"]"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("Selector"), "{rendered}");
+    }
+
     #[test]
     fn writable_value_controls_are_addressable_without_actions() {
-        assert!(is_addressable(false, true, Some(true)));
-        assert!(is_addressable(true, false, None));
-        assert!(!is_addressable(false, false, Some(true)));
-        assert!(!is_addressable(true, false, Some(false)));
+        assert!(is_addressable(false, true));
+        assert!(is_addressable(true, false));
+        assert!(!is_addressable(false, false));
 
         for role in [
             "AXTextField",
@@ -975,6 +1507,43 @@ mod tests {
         assert_eq!(reads.get(), 1, "actionable nodes must read state once");
         assert_eq!(actionable.enabled, Some(true));
     }
+
+    fn identity_reads(is_actionable: bool, value_is_empty: bool) -> (Vec<NodeAttr>, IdentityAttrs) {
+        let mut reads = Vec::new();
+        let identity = read_identity_attrs(is_actionable, value_is_empty, |attr| {
+            reads.push(attr);
+            Some(format!("raw {}", attr.name()))
+        });
+        (reads, identity)
+    }
+
+    #[test]
+    fn display_only_nodes_skip_identity_reads_unless_placeholder_is_the_value() {
+        let (reads, identity) = identity_reads(false, false);
+        assert!(reads.is_empty(), "display row with a value read {reads:?}");
+        assert_eq!(identity, IdentityAttrs::default());
+
+        let (reads, identity) = identity_reads(false, true);
+        assert_eq!(reads, [NodeAttr::PlaceholderValue]);
+        assert_eq!(
+            identity.placeholder.as_deref(),
+            Some("raw AXPlaceholderValue")
+        );
+        assert_eq!(identity.subrole, None);
+    }
+
+    #[test]
+    fn actionable_nodes_read_placeholder_and_subrole_once() {
+        for value_is_empty in [false, true] {
+            let (reads, identity) = identity_reads(true, value_is_empty);
+            assert_eq!(reads, [NodeAttr::PlaceholderValue, NodeAttr::Subrole]);
+            assert_eq!(
+                identity.placeholder.as_deref(),
+                Some("raw AXPlaceholderValue")
+            );
+            assert_eq!(identity.subrole.as_deref(), Some("raw AXSubrole"));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1010,6 +1579,22 @@ mod lean_row_tests {
                 "- [12] AXStaticText = \"Inbox\"",
             ]
         );
+    }
+
+    #[test]
+    fn echo_text_under_an_unindexed_group_is_kept_as_the_target() {
+        // A named group is a display row with no element_index, so the text
+        // row repeating its name is the only addressable carrier (a web
+        // scroll region labelled by its own text).
+        let mut lines = rows(&[
+            (0, "- [0] AXWindow \"Harness\" [actions=[raise]]"),
+            (1, "- AXGroup \"scroll-tall\""),
+            (2, "- [33] AXStaticText = \"top marker\""),
+            (2, "- [34] AXStaticText = \"scroll-tall\""),
+            (2, "- [35] AXStaticText = \"line 02\""),
+        ]);
+        prune_echo_text_rows(&mut lines);
+        assert_eq!(lines.len(), 5);
     }
 
     #[test]

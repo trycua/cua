@@ -32,9 +32,7 @@ Preconditions:
 
 ## Gotchas
 
-- On current main, **No sound server** fails: the viewer shows "audio: audio: pa_simple_new(@DEFAULT_MONITOR@): Connection refused" with a Reconnect button and no picture. `OpenMedia` fails as a whole when the audio capture cannot start, although the capability report still claims `audio.desktop`.
 - PipeWire without a session manager (no WirePlumber) accepts the record stream but never links it: `OpenMedia` then blocks and the viewer sits at "Connecting to the sandbox…". `up` starts WirePlumber for that reason; a missing WirePlumber is a setup failure, not a product verdict.
 - The link carries a viewer ticket (a credential, 1 h by default). `drive-viewer.mjs` redacts it in its JSON.
 - Input is leased to one viewer at a time for 5 s after its last input. A second viewer opened right after another one gets `RateLimited ... leased to Web viewer` (in `cua-spacesd.log`) and nothing reaches the pad; `drive-viewer.mjs` waits 6 s before acting for that reason.
 - The click lands in pad coordinates: 958,579 for the 75%/75% canvas point, because openbox's title bar takes the top 19 px.
-- `view-index` shows nothing for a Space that only `cua spaces add` registered (see register-and-list `sb-ls`).

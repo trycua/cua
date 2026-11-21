@@ -11,8 +11,7 @@ import { readSettings, writeSettings } from "./settings";
 // Window control glyphs on the overlay: the web UI's `--foreground`.
 export { BACKGROUND, SYMBOL } from "./overlay";
 
-export const resolvedTheme = (): ResolvedTheme =>
-  nativeTheme.shouldUseDarkColors ? "dark" : "light";
+export const resolvedTheme = (): ResolvedTheme => (nativeTheme.shouldUseDarkColors ? "dark" : "light");
 
 export const themeState = (): ThemeState => ({
   source: nativeTheme.themeSource,

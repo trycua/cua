@@ -246,6 +246,13 @@ impl Journal {
             > CREATE_SETTLE
     }
 
+    /// Restarts the [`Self::settled`] clock of `name`: a Space of that name
+    /// was just found (and ended), so a create still running in the daemon
+    /// may make it again.
+    pub fn unsettle(&self, name: &str) {
+        self.judged.lock().expect("journal").remove(name);
+    }
+
     /// True the first time it is asked for `name` (to log a failure once).
     pub fn first_failure(&self, name: &str) -> bool {
         self.failed
@@ -305,8 +312,12 @@ impl Journaled {
         for (name, who) in self.journal.orphans(&recorded) {
             match self.inner.delete(&who, &name).await {
                 Ok(true) => {
+                    // Kept, not resolved: the daemon may still be finishing
+                    // the create a dead gateway asked for (a fork runs to
+                    // completion) and record the Space after this delete.
+                    // It goes once deletes have found nothing for a while.
                     tracing::info!("compat: ended the unowned Space {name}");
-                    self.journal.resolve(&name);
+                    self.journal.unsettle(&name);
                     ended += 1;
                 }
                 Ok(false) | Err(BackendError::NotFound(_)) => {
@@ -556,9 +567,38 @@ mod tests {
         claimed.lock().unwrap().insert("kept".into());
         assert_eq!(b.sweep().await, 1);
         assert_eq!(mock.names().await, ["kept"]);
-        // Deleting through the wrapper resolves the entry.
+        // Deleting through the wrapper resolves the entry; the swept one is
+        // kept until deletes have found nothing for a while.
         b.delete(&who, "kept").await.unwrap();
-        assert!(j.owned_names().is_empty());
+        assert_eq!(j.owned_names(), ["lost"]);
+    }
+
+    /// A dead gateway's create still finishing in the daemon: the sweep ends
+    /// what is there, the create then records the Space again, and the next
+    /// sweep ends that too (the name is not forgotten after one delete).
+    #[tokio::test]
+    async fn a_space_made_again_after_its_sweep_is_swept_again() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("owned.jsonl");
+        Journal::open(Some(p.clone()))
+            .unwrap()
+            .begin("x", &Identity::default());
+        // The gateway restarts: an entry of an earlier process is judged now.
+        let mock = Arc::new(MockBackend::new());
+        let j = Journal::open(Some(p)).unwrap();
+        let b = Journaled::new(
+            mock.clone(),
+            j.clone(),
+            Some(Arc::new(|| Box::pin(async { HashSet::new() }))),
+        );
+        let who = Identity::default();
+        mock.create(&who, spec("x")).await.unwrap();
+        assert_eq!(b.sweep().await, 1);
+        assert!(mock.names().await.is_empty());
+        mock.create(&who, spec("x")).await.unwrap();
+        assert_eq!(b.sweep().await, 1, "the late Space is ended too");
+        assert!(mock.names().await.is_empty());
+        assert_eq!(j.owned_names(), ["x"], "kept until it settles");
     }
 
     #[tokio::test]

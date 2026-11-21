@@ -3,8 +3,7 @@
 
 // CUA-2644: an agent that runs on another machine (the customer's Hermes on Linux, driving their
 // MacBook). Connect says which machine it set up and which it did not touch, and has an "On another
-// machine" block with the host, the exact commands, the permissions and the reload note. The first
-// run offers "An agent on another machine", which opens the join sheet.
+// machine" block with the host, the exact commands, the permissions and the reload note.
 
 import { createMemoryHistory, createRootRoute, createRouter, RouterProvider } from "@tanstack/react-router";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -34,16 +33,16 @@ async function mountDialog() {
 }
 
 describe.skipIf(!wasmBuilt)("an agent on another machine", () => {
-  it("Connect names the machine it edits, and its On another machine block has the host, commands, permissions and reload note", async () => {
+  it("Connect names the machine it edits, and its On another computer block has the host, commands, permissions and reload note", async () => {
     await mountDialog();
     const here = await waitFor(() => {
       const h = q("[data-connect-here]");
-      if (!h || !/^On \S/.test(h.textContent ?? "") || /this machine$/.test(h.textContent ?? "") === false) throw new Error("not named yet");
+      if (!h || !/^On \S/.test(h.textContent ?? "") || /this computer$/.test(h.textContent ?? "") === false) throw new Error("not named yet");
       return h;
     });
-    const name = here.textContent!.replace(/^On /, "").replace(/this machine$/, "");
+    const name = here.textContent!.replace(/^On /, "").replace(/this computer$/, "");
     const block = q("[data-connect-other-machine]")!;
-    expect(screen.getByRole("heading", { name: "On another machine" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "On another computer" })).toBeTruthy();
     expect(block.textContent).toContain(`Host to name: ${name}`);
     // The exact commands for the chosen agent: the same account, then the agent's setup.
     expect(block.textContent).toContain("cua auth login");
@@ -92,21 +91,5 @@ describe.skipIf(!wasmBuilt)("an agent on another machine", () => {
     cleanup();
     await mountApp("/settings/connections/claude-code", { failsCreates: false, listsGhost: false });
     await waitFor(() => expect(q("[data-connector-on]")?.textContent).toMatch(/^On \S+/));
-  });
-
-  it("the first run offers An agent on another computer, which opens the join sheet", async () => {
-    await mountApp("/onboarding?demo=fresh", { failsCreates: false, listsGhost: false });
-    const skip = await screen.findByRole("button", { name: "Get started" });
-    fireEvent.click(skip);
-    const skipSignIn = await screen.findByRole("button", { name: "Skip", exact: true } as never).catch(() => null);
-    if (skipSignIn) fireEvent.click(skipSignIn);
-    const row = await waitFor(() => {
-      const r = q("[data-first-run-other-machine]");
-      if (!r) throw new Error("not on the connect step yet");
-      return r;
-    }, { timeout: 8000 });
-    expect(row.textContent).toContain("An agent on another computer");
-    fireEvent.click(q("[data-first-run-other-machine-open]")!);
-    await waitFor(() => expect(q('[data-add-agent="connect"]')).not.toBeNull());
   });
 });

@@ -8,6 +8,7 @@
  */
 
 import type { AgentSetupRow } from "@/bridge";
+import { t } from "@/i18n";
 
 /** What Cua remembers between runs (one local key, `cua.connectedApps`). */
 export interface ConnectedAppsState {
@@ -97,10 +98,13 @@ export const getItUrl = (agent: string): string | null => GET_IT[agent] ?? null;
 
 /** What to paste by hand for an app, when Cua can't edit its file. */
 export const BY_HAND: Record<string, { file: string; snippet: string }> = {
-  "claude-code": { file: "Terminal (writes ~/.claude.json)", snippet: "claude mcp add --scope user cua -- cua mcp" },
+  "claude-code": { file: "~/.claude.json", snippet: "claude mcp add --scope user cua -- cua mcp" },
   codex: { file: "~/.codex/config.toml", snippet: '[mcp_servers.cua]\ncommand = "cua"\nargs = ["mcp"]' },
   hermes: { file: "~/.hermes/config.yaml", snippet: "mcp_servers:\n  cua:\n    command: cua\n    args: [mcp]" },
-  openclaw: { file: "~/.openclaw/openclaw.json", snippet: '{\n  "mcp": {\n    "servers": {\n      "cua": { "command": "cua", "args": ["mcp"] }\n    }\n  }\n}' },
+  openclaw: {
+    file: "~/.openclaw/openclaw.json",
+    snippet: '{\n  "mcp": {\n    "servers": {\n      "cua": { "command": "cua", "args": ["mcp"] }\n    }\n  }\n}',
+  },
   cursor: { file: "~/.cursor/mcp.json", snippet: '{\n  "mcpServers": {\n    "cua": { "command": "cua", "args": ["mcp"] }\n  }\n}' },
 };
 
@@ -110,8 +114,12 @@ export const BY_HAND: Record<string, { file: string; snippet: string }> = {
  */
 export function failureText(name: string, detail: string): string {
   if (/permission|read-only|readonly|EACCES|EPERM|os error 13|not writable/i.test(detail)) {
-    return `Couldn't set up ${name}. Cua can't change this file because it is read-only or belongs to another user.`;
+    return t("settings.connections.failure.read_only", { name });
   }
   const said = detail.trim();
-  return `Couldn't set up ${name}. ${!said || /^not set up$/i.test(said) ? "" : "Cua said: " + said.replace(/\.$/, "") + "."}`.trim();
+  return (
+    !said || /^not set up$/i.test(said)
+      ? t("settings.connections.failure.generic", { name })
+      : t("settings.connections.failure.said", { name, said: said.replace(/\.$/, "") })
+  ).trim();
 }

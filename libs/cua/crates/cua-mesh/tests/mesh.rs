@@ -150,6 +150,53 @@ async fn streams_go_direct_and_carry_data() {
     assert_eq!(seen.grant.unwrap().account, "acct-1");
 }
 
+/// A node whose network refuses the local network (`lan = false`) still
+/// carries streams, and none of its paths is a local-network one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_node_without_the_local_network_still_carries_streams() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    let start = |kind: NodeKind, name: &'static str| {
+        let coord = &coord;
+        let dir = dir.path().to_path_buf();
+        async move {
+            let mut headers = Vec::new();
+            if kind == NodeKind::Machine {
+                headers.push(("x-cua-machine-id".to_owned(), format!("machine-{name}")));
+            }
+            let mut cfg = MeshConfig::new(
+                coord.url.clone(),
+                kind,
+                Some(dir.join(format!("{name}.json"))),
+                static_auth(headers),
+            );
+            cfg.name = name.to_owned();
+            cfg.stun = vec![coord.stun.to_string()];
+            cfg.lan = false;
+            cfg.reconnect_speedup = FAST_RECONNECT;
+            cfg.approved_path = Some(dir.join(format!("{name}-approved.json")));
+            let m = Mesh::start(cfg).await.expect("start");
+            m.wait_ready(READY).await.expect("ready");
+            m
+        }
+    };
+    let machine = start(NodeKind::Machine, "m").await;
+    let client = start(NodeKind::Client, "c").await;
+    serve_echo(&machine);
+    wait_peer(&client, &machine.node_key()).await;
+    let mut s = client
+        .open_stream(&machine.node_key(), "echo", None)
+        .await
+        .unwrap();
+    roundtrip(&mut s, 256 * 1024).await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    for m in [&machine, &client] {
+        for p in m.status().peers {
+            assert_ne!(p.path_kind, "lan", "{p:?}");
+        }
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_relay_carries_only_ciphertext_when_direct_fails() {
     let dir = tempfile::tempdir().unwrap();
@@ -257,30 +304,28 @@ async fn a_nat_rebinding_falls_back_and_finds_a_new_direct_path() {
         .await
         .unwrap();
     roundtrip(&mut s, 1024).await;
-    let before = wait_path(&client, &machine.node_key(), true, Duration::from_secs(10)).await;
+    wait_path(&client, &machine.node_key(), true, Duration::from_secs(10)).await;
 
-    // The client moves to a new port, as after a network change.
+    // The client moves to new ports, as after a network change.
     client.rebind().await.unwrap();
     roundtrip(&mut s, 128 * 1024).await;
-    let after = wait_path(&machine, &client.node_key(), true, Duration::from_secs(15)).await;
-    let Path::Direct(before) = before else {
-        unreachable!()
-    };
-    let _ = before;
-    let Path::Direct(after) = after else {
-        unreachable!()
-    };
-    let (v4, _) = client
-        .status()
-        .endpoints
-        .first()
-        .map(|e| (e.port(), ()))
-        .unwrap_or((0, ()));
-    assert_eq!(
-        after.port(),
-        v4,
-        "the machine follows the client's new port"
-    );
+    // The machine's direct path lands on one of the client's new ports. The
+    // IPv4 and IPv6 sockets can get different ports (Windows hands the IPv6
+    // one the next free port), and the machine's old path stays trusted for
+    // a moment, so poll for any new port rather than the first endpoint's.
+    let ports: Vec<u16> = client.status().endpoints.iter().map(|e| e.port()).collect();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let p = machine.path(&client.node_key()).expect("peer");
+        if matches!(p, Path::Direct(a) if ports.contains(&a.port())) {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the machine follows the client's new ports {ports:?}: path stayed {p}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
     roundtrip(&mut s, 128 * 1024).await;
 }
 
@@ -884,4 +929,49 @@ async fn a_node_dropped_for_other_reasons_keeps_reconnecting() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert!(client.control_state().denied.is_none());
+}
+
+/// A dial to a machine the map lists offline fails, but once the map lists
+/// it online again the next stream dials it at once, instead of answering
+/// with the old failure for a few seconds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_machine_back_online_is_dialed_again_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    let machine = node(&coord, NodeKind::Machine, dir.path(), "m", false).await;
+    let key = machine.node_key();
+    let client = node(&coord, NodeKind::Client, dir.path(), "c", false).await;
+    wait_peer(&client, &key).await;
+    machine.shutdown();
+    drop(machine);
+    let online = |c: &Mesh| c.machine("machine-m").is_some_and(|p| p.online);
+    for _ in 0..100 {
+        if !online(&client) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(!online(&client), "the map never listed the machine offline");
+    // The dial times out (only that is remembered) and starts the hold.
+    let failed_at = std::time::Instant::now();
+    assert!(client.open_stream(&key, "echo", None).await.is_err());
+
+    // The same machine (same identity) comes back.
+    let machine = node(&coord, NodeKind::Machine, dir.path(), "m", false).await;
+    assert_eq!(machine.node_key(), key);
+    serve_echo(&machine);
+    for _ in 0..100 {
+        if online(&client) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(online(&client), "the map never listed the machine online");
+    // Inside the hold, or this test passes without the fix.
+    assert!(failed_at.elapsed() < Duration::from_secs(5));
+    let mut s = client
+        .open_stream(&key, "echo", None)
+        .await
+        .expect("a machine back online is dialed again");
+    roundtrip(&mut s, 1024).await;
 }

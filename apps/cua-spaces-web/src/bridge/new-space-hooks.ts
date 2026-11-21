@@ -7,7 +7,17 @@ import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore 
 import { isUnsupported } from "./adapter";
 import { BridgeContext } from "./BridgeProvider";
 import type { CoreClient } from "./core";
-import type { CloudConnectWire, CloudSheetAction, CloudSheetView, CloudTarget, RuntimeFix, RuntimeSwitch, WizardAction, WizardEnv, WizardView } from "./contracts/new-space";
+import type {
+  CloudConnectWire,
+  CloudSheetAction,
+  CloudSheetView,
+  CloudTarget,
+  RuntimeFix,
+  RuntimeSwitch,
+  WizardAction,
+  WizardEnv,
+  WizardView,
+} from "./contracts/new-space";
 import type { Space, SpaceOs } from "./contracts/spaces";
 import { useMachines, useSettings, useSpaces } from "./hooks";
 import { newPendingId } from "./store";
@@ -131,7 +141,7 @@ export function useNewSpaceWizard(): NewSpaceWizardHook {
       // The Network choice under Advanced (Internet only unless changed).
       const net = ctx.adapter?.network;
       if (net && net.wizardPreset !== "internet") {
-        args = { ...args, network: net.wizardPreset === "localhost" ? "localhost:all" : net.wizardPreset };
+        args = { ...args, network: net.wizardPreset === "localhost" || net.wizardPreset === "localhost+lan" ? `${net.wizardPreset}:all` : net.wizardPreset };
       }
       net?.setWizardPreset("internet");
       update((x) => ({ ...x, open: false, state: null, pinnedEnv: null }));
@@ -239,9 +249,7 @@ export function useNewSpaceRequests(): void {
   }, [s.requested, ready, wizard.offered]);
   // The machine is offered once the host's options and machines are in:
   // until then the request waits (the wizard opens on the default).
-  const offeredNow = Boolean(
-    ready && s.open && s.state && s.placeOn && wizardView(core, s.state, env).placements.some((p) => p.id === s.placeOn && p.enabled),
-  );
+  const offeredNow = Boolean(ready && s.open && s.state && s.placeOn && wizardView(core, s.state, env).placements.some((p) => p.id === s.placeOn && p.enabled));
   useEffect(() => {
     if (!offeredNow || !s.placeOn) return;
     const on = s.placeOn;
@@ -400,7 +408,7 @@ export function useCloudActions(): CloudActionsHook {
   };
 }
 
-/* ---- Windows: the runtime fix ("Install Docker Desktop") ------------------ */
+/* ---- Windows: the runtime fix ("Set up Linux support") --------------------- */
 
 /** How often the options are read again while a fix runs, and for how long after one started. */
 export const RUNTIME_FIX_POLL_MS = 3_000;
@@ -416,8 +424,7 @@ export interface RuntimeFixHook {
 }
 
 /**
- * The host's fix for a machine with no local runtime (Windows: install or
- * start Docker Desktop). While it runs, or for a while after it started,
+ * The host's fix for a machine with no local runtime (Windows: set up WSL 2). While it runs, or for a while after it started,
  * the options are read again so the reason, the button and the wizard's
  * Continue follow the install and the engine's start.
  */
@@ -451,4 +458,3 @@ export function useRuntimeFix(): RuntimeFixHook {
     },
   };
 }
-

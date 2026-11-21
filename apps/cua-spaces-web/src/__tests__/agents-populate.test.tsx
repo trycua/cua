@@ -9,6 +9,7 @@
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
 afterEach(cleanup);
@@ -17,9 +18,10 @@ stubBrowserApis();
 
 const q = (s: string) => document.querySelector<HTMLElement>(s);
 const qa = (s: string) => [...document.querySelectorAll<HTMLElement>(s)];
-const HERMES = "acct_ada/hermes/hermes";
-const CODEX = "acct_ada/codex/codex";
 const UBUNTU = "relay:linux-box/ubuntu-build";
+// Each agent in each Space is its own entry, keyed on its Space and handle.
+const HERMES = "relay:mac-mini/release-checks/hermes";
+const CODEX = "local:design-review/codex";
 const never = () => new Promise<never>(() => undefined);
 const found = (s: string, timeout = 5000) =>
   waitFor(
@@ -31,7 +33,7 @@ const found = (s: string, timeout = 5000) =>
     { timeout },
   );
 
-describe("the Agents page while Spaces are slow", () => {
+describe.skipIf(!wasmBuilt)("the Agents page while Spaces are slow", () => {
   it("draws the Spaces that answered and says it is still checking the one that has not", async () => {
     const t0 = Date.now();
     await mountApp("/agents", {
@@ -60,15 +62,16 @@ describe("the Agents page while Spaces are slow", () => {
     await mountApp("/agents", { failsCreates: false, listsGhost: false, intercept: (op) => (op.startsWith("thread.") ? never() : undefined) });
     await found(`[data-chat='${CODEX}']`, 2000);
     expect(q(`[data-chat='${CODEX}'] [data-chat-line]`)?.textContent).toBe("Waiting for you in design-review");
-    // And it says it is checking, quietly.
-    await found("[data-agents-loading]");
+    // Reading them again is silent: "Checking" is only for a Space that has never answered.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(q("[data-agents-loading]")).toBeNull();
   });
 
   it("a DM opens on the newest messages; earlier ones are a click away", async () => {
     const { router, demo } = await mountApp("/", { failsCreates: false, listsGhost: false });
     for (let i = 1; i <= 70; i++) await demo.call("thread.post", { spaceId: UBUNTU, text: `@hermes message ${i}` });
     await act(async () => {
-      await router.navigate({ to: "/agents", search: { agent: HERMES, space: UBUNTU } });
+      await router.navigate({ to: "/agents", search: { agent: `${UBUNTU}/hermes` } });
     });
     await found("[data-dm-log] > div > *");
     // The log's rows (the button above them is not one).
@@ -86,14 +89,15 @@ describe("the Agents page while Spaces are slow", () => {
     await waitFor(() => expect(shown()).toBeGreaterThan(first));
   });
 
-  it("one Space of an agent's DM never answering does not hold the other's messages", async () => {
+  it("another Space's thread never answering does not hold this entry's messages", async () => {
     await mountApp(`/agents?agent=${encodeURIComponent(HERMES)}`, {
       failsCreates: false,
       listsGhost: false,
-      intercept: (op, args) => (op === "thread.read" && (args as { spaceId?: string; with?: string }).spaceId === UBUNTU && (args as { with?: string }).with ? never() : undefined),
+      intercept: (op, args) =>
+        op === "thread.read" && (args as { spaceId?: string; with?: string }).spaceId === UBUNTU && (args as { with?: string }).with ? never() : undefined,
     });
-    // release-checks' messages show though ubuntu-build's DM is still loading.
-    await found(`[data-dm='${HERMES}'][data-dm-space='all']`);
+    // release-checks' messages show though ubuntu-build's thread is still loading.
+    await found(`[data-dm='${HERMES}'][data-dm-space='relay:mac-mini/release-checks']`);
     await waitFor(() => expect(q("[data-dm-log]")?.textContent?.length ?? 0).toBeGreaterThan(0), { timeout: 3000 });
     expect(q("[data-dm-empty]")).toBeNull();
   });

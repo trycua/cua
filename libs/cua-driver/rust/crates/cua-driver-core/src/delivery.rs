@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Per-call input delivery mode and the shared `background_unavailable`
 //! refusal envelope.
 //!
@@ -14,27 +17,34 @@ use crate::protocol::ToolResult;
 /// best-effort-background ladder, passed per call (never a stored or
 /// configured setting).
 ///
-/// - `Background` (default): inject without activating or raising the target.
-///   When the platform cannot do that for the target, the tool refuses with
-///   [`background_unavailable_result`] instead of fronting.
+/// - `BackgroundPreferred` (default, `delivery_mode` omitted): inject without
+///   activating or raising the target. When the platform cannot do that, the
+///   tool refuses with [`background_unavailable_result`] instead of fronting,
+///   unless the operator allowed a brief foreground step or `run_steps` was
+///   given `foreground_fallback`.
+/// - `BackgroundStrict` (explicit `"background"`): the same injection, and the
+///   call opts out of every escalation: no brief foreground step and no
+///   `run_steps` foreground fallback.
 /// - `Foreground`: activate the target for the action. This is the agent's
 ///   explicit last resort.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum DeliveryMode {
     #[default]
-    Background,
+    BackgroundPreferred,
+    BackgroundStrict,
     Foreground,
 }
 
 impl DeliveryMode {
-    /// Parse the per-call `delivery_mode` argument. Anything other than an
-    /// explicit case-insensitive `"foreground"` resolves to `Background`, so
-    /// an omitted, garbage, or removed legacy value (`"auto"`) never silently
-    /// fronts.
+    /// Parse the per-call `delivery_mode` argument. Only an explicit
+    /// case-insensitive `"foreground"` fronts. An explicit `"background"` is
+    /// strict; anything else, omitted, garbage or a removed legacy value
+    /// (`"auto"`), is preferred background, so it never silently fronts.
     pub fn parse(arg: Option<&str>) -> Self {
         match arg {
             Some(s) if s.eq_ignore_ascii_case("foreground") => Self::Foreground,
-            _ => Self::Background,
+            Some(s) if s.eq_ignore_ascii_case("background") => Self::BackgroundStrict,
+            _ => Self::BackgroundPreferred,
         }
     }
 
@@ -45,6 +55,17 @@ impl DeliveryMode {
 
     pub fn is_foreground(self) -> bool {
         matches!(self, Self::Foreground)
+    }
+
+    pub fn is_background(self) -> bool {
+        !self.is_foreground()
+    }
+
+    /// Whether a background refusal may escalate to the foreground on the
+    /// call's behalf: the operator's brief foreground step, or `run_steps`
+    /// `foreground_fallback`. Only a call that left `delivery_mode` out may.
+    pub fn allows_escalation(self) -> bool {
+        matches!(self, Self::BackgroundPreferred)
     }
 }
 
@@ -60,7 +81,7 @@ pub const BRIEF_FOREGROUND_ENV: &str = "CUA_DRIVER_ALLOW_BRIEF_FOREGROUND";
 /// step in the foreground, then hands the frontmost app and the pointer back,
 /// and says so in its result. It is read from the daemon's environment, which
 /// the agent can't change, and a call that passes `delivery_mode:"background"`
-/// explicitly is never escalated.
+/// explicitly is never escalated ([`DeliveryMode::allows_escalation`]).
 pub fn brief_foreground_allowed() -> bool {
     brief_foreground_flag(std::env::var(BRIEF_FOREGROUND_ENV).ok().as_deref())
 }
@@ -74,14 +95,6 @@ pub fn brief_foreground_flag(value: Option<&str>) -> bool {
     )
 }
 
-/// Whether the call itself asked for background delivery by name, which opts
-/// it out of the brief foreground step.
-pub fn background_requested_explicitly(args: &Value) -> bool {
-    args.get("delivery_mode")
-        .and_then(Value::as_str)
-        .is_some_and(|mode| mode.eq_ignore_ascii_case("background"))
-}
-
 /// The `suggestion` every background refusal carries.
 pub const FOREGROUND_RETRY_SUGGESTION: &str =
     "Retry this action with delivery_mode:\"foreground\".";
@@ -92,7 +105,8 @@ pub const FOREGROUND_RETRY_SUGGESTION: &str =
 /// holds `code`, the shared [`FOREGROUND_RETRY_SUGGESTION`], and an
 /// `escalation` that recommends `foreground` for `escalation_reason`, plus
 /// every field of the `fields` object. `fields` cannot override those
-/// contract keys.
+/// contract keys. `effect` is `refused` unless `fields` names the effect of
+/// input that was already sent.
 pub fn background_unavailable_result(
     message: impl Into<String>,
     code: &str,
@@ -123,6 +137,9 @@ pub fn background_unavailable_result_with_suggestion(
         Value::Object(fields) => fields,
         _ => serde_json::Map::new(),
     };
+    structured
+        .entry("effect")
+        .or_insert_with(|| json!("refused"));
     structured.insert("code".to_owned(), json!(code));
     structured.insert("suggestion".to_owned(), json!(suggestion));
     structured.insert(
@@ -154,52 +171,44 @@ mod tests {
         }
     }
 
-    #[test]
-    fn explicit_background_opts_out_of_the_brief_foreground_step() {
-        use serde_json::json;
-        assert!(super::background_requested_explicitly(
-            &json!({"delivery_mode": "Background"})
-        ));
-        assert!(!super::background_requested_explicitly(&json!({})));
-        assert!(!super::background_requested_explicitly(
-            &json!({"delivery_mode": "foreground"})
-        ));
-    }
-
     use super::*;
 
     #[test]
     fn delivery_mode_parse_fronts_only_on_explicit_foreground() {
+        use DeliveryMode::{BackgroundPreferred, BackgroundStrict, Foreground};
         for (args, expected) in [
-            (
-                json!({"delivery_mode": "background"}),
-                DeliveryMode::Background,
-            ),
-            (
-                json!({"delivery_mode": "foreground"}),
-                DeliveryMode::Foreground,
-            ),
-            (
-                json!({"delivery_mode": "Foreground"}),
-                DeliveryMode::Foreground,
-            ),
-            (
-                json!({"delivery_mode": "FOREGROUND"}),
-                DeliveryMode::Foreground,
-            ),
-            (json!({}), DeliveryMode::Background),
-            (
-                json!({"delivery_mode": "garbage"}),
-                DeliveryMode::Background,
-            ),
-            (json!({"delivery_mode": "auto"}), DeliveryMode::Background),
-            (json!({"delivery_mode": null}), DeliveryMode::Background),
-            (json!({"delivery_mode": 1}), DeliveryMode::Background),
+            (json!({"delivery_mode": "background"}), BackgroundStrict),
+            (json!({"delivery_mode": "Background"}), BackgroundStrict),
+            (json!({"delivery_mode": "foreground"}), Foreground),
+            (json!({"delivery_mode": "Foreground"}), Foreground),
+            (json!({"delivery_mode": "FOREGROUND"}), Foreground),
+            (json!({}), BackgroundPreferred),
+            (json!({"delivery_mode": "garbage"}), BackgroundPreferred),
+            (json!({"delivery_mode": "auto"}), BackgroundPreferred),
+            (json!({"delivery_mode": null}), BackgroundPreferred),
+            (json!({"delivery_mode": 1}), BackgroundPreferred),
         ] {
             let mode = DeliveryMode::from_args(&args);
             assert_eq!(mode, expected, "{args}");
-            assert_eq!(mode.is_foreground(), expected == DeliveryMode::Foreground);
+            assert_eq!(mode.is_foreground(), expected == Foreground, "{args}");
+            assert_eq!(mode.is_background(), expected != Foreground, "{args}");
         }
+    }
+
+    #[test]
+    fn only_an_omitted_delivery_mode_allows_escalation() {
+        // Omitted: the brief foreground step and run_steps foreground_fallback
+        // may escalate a background refusal.
+        assert!(DeliveryMode::from_args(&json!({})).allows_escalation());
+        assert_eq!(DeliveryMode::default(), DeliveryMode::BackgroundPreferred);
+        // Explicit background opts out of both; explicit foreground has
+        // nothing to escalate to.
+        assert!(
+            !DeliveryMode::from_args(&json!({"delivery_mode": "background"})).allows_escalation()
+        );
+        assert!(
+            !DeliveryMode::from_args(&json!({"delivery_mode": "foreground"})).allows_escalation()
+        );
     }
 
     #[test]
@@ -218,6 +227,28 @@ mod tests {
     }
 
     #[test]
+    fn background_unavailable_result_is_recorded_as_a_refusal() {
+        let result = background_unavailable_result(
+            "Background delivery is not available.",
+            "background_unavailable",
+            "background input is dropped by this surface",
+            json!({"event_kind": "keystroke"}),
+        );
+        let record = crate::action_record::ActionExecutionRecord::from_legacy(
+            "press_key",
+            &json!({"pid": 1, "window_id": 2, "key": "f5", "delivery_mode": "background"}),
+            result.structured_content.as_ref().unwrap(),
+        )
+        .expect("a background refusal normalizes");
+        let public = record.public_result().expect("a refusal projects");
+        assert_eq!(public.effect, cua_driver_contract::ActionEffect::Refused);
+        assert_eq!(
+            public.error.map(|error| error.code),
+            Some("background_unavailable".to_owned())
+        );
+    }
+
+    #[test]
     fn background_unavailable_result_carries_the_foreground_escalation() {
         let result = background_unavailable_result(
             "Background delivery is not available.",
@@ -233,6 +264,7 @@ mod tests {
         assert_eq!(
             result.structured_content,
             Some(json!({
+                "effect": "refused",
                 "code": "background_occluded",
                 "event_kind": "mouse_click",
                 "suggestion": "Retry this action with delivery_mode:\"foreground\".",

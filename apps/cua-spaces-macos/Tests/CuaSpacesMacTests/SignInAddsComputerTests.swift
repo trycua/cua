@@ -58,6 +58,6 @@ struct SignInAddsComputerTests {
     }
 
     @Test func addAComputerOpensTheNewUISheet() {
-        #expect(AppModel.addComputerRoute == .path("/machines?add=1"))
+        #expect(AppModel.addComputerRoute == .path("/spaces?add=1"))
     }
 }

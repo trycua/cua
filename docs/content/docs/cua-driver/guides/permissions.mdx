@@ -56,6 +56,13 @@ What `standard` allows:
 | Attach to a logged-in Chromium profile | Needs `--grant existing-profile` or host approval |
 | Terminate a foreign process; raise an OS permission prompt from a tool; legacy page mutations; unknown risky operations | Deny |
 
+Input that would land on a macOS security or consent prompt (an administrator
+password sheet, a privacy "would like to access" alert, an Accessibility or
+Gatekeeper warning) is refused with `security_prompt_protected` in `standard`
+and `bounded` mode; answering it is the user's call. Reading the prompt stays
+allowed. Only `unrestricted` mode lets input reach it, for disposable machines
+such as a VM being prepared unattended.
+
 ### Without CLI flags
 
 `cua-driver mcp` on Windows and Linux, the Windows autostart task, and
@@ -206,10 +213,17 @@ allow:
     - get_window_state
     - list_apps
     - list_windows
-    - click
     - press_key
     - wait
   rules:                       # allowed when every constraint passes
+    - tool: click
+      constraints:
+        delivery_mode:         # absent means the tool default
+          optional: true
+          allowed: [background]
+        scope:                 # desktop clicks always use foreground input
+          optional: true
+          allowed: [window]
     - tool: type_text
       constraints:
         text:
@@ -231,8 +245,34 @@ deny:
 
 Evaluation: `deny.tools` → `allow.tools` → any matching `allow.rules` entry →
 deny. Constraint checks are `min`, `max`, `max_length`, `pattern` (RE2 syntax),
-and `allowed`. `allow` and `deny` also accept a flat list of names.
+`allowed`, and `items`, which applies its own checks to every element of an
+array argument. A constrained argument must be present unless the constraint
+sets `optional: true`; an absent optional argument passes and the tool uses
+its default. The run_script helpers, which omit `delivery_mode`, therefore
+pass `delivery_mode: { optional: true, allowed: [background] }`. Check what
+the default does before relying on it: a `scope: desktop` click with no
+`delivery_mode` uses foreground input, which is why the example also limits
+`scope`. A rule passes whatever other arguments the call carries, so forbid
+any argument that overrides a constrained one with `optional: true` and
+`allowed: []`. `allow` and `deny` also accept a flat list of names.
 `type_text_chars` is normalized to `type_text`.
+
+The `bundle_id` rule above is for macOS. On Windows, `launch_app` prefers
+`launch_path`, then `path`, over `bundle_id`, so a Windows policy pins `path`
+and forbids the arguments that would override it:
+
+```yaml test="config" id="yaml-config-policy-windows-launch"
+allow:
+  rules:
+    - tool: launch_app
+      constraints:
+        path: { pattern: '^C:\\Windows\\System32\\notepad\.exe$' }
+        launch_path: { optional: true, allowed: [] }   # must be absent
+        urls: { optional: true, allowed: [] }
+        additional_arguments:
+          optional: true
+          items: { pattern: '^[\w.-]+\.txt$' }
+```
 
 ```bash test="cli-shape" id="cua-driver-serve"
 CUA_DRIVER_POLICY_FILE=~/.cua-driver/policy.yaml cua-driver serve
@@ -253,7 +293,7 @@ package cua.policy
 
 import rego.v1
 
-safe_tools := {"screenshot", "get_window_state", "list_apps", "list_windows", "click", "press_key", "wait"}
+safe_tools := {"get_window_state", "list_apps", "list_windows", "click", "press_key", "wait"}
 
 allow if {
     input.tool in safe_tools

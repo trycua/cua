@@ -105,6 +105,9 @@ export function initCrashReporting(): void {
     void Sentry.close(0);
   });
 
-  if (test === "main-js") setTimeout(() => { throw new Error("CUA_CRASH_TEST main-js"); }, 4000);
+  if (test === "main-js")
+    setTimeout(() => {
+      throw new Error("CUA_CRASH_TEST main-js");
+    }, 4000);
   if (test === "main-native") setTimeout(() => process.crash(), 4000);
 }

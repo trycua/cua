@@ -47,10 +47,12 @@ struct WebUIHostTests {
     }
 
     @Test func coreRecordsEncodeAsPlainValues() {
-        let x = AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: true, secureSpaces: false, childSpaces: false, askFirst: false, ciRunners: false, tcpShares: false, mobile: false)
+        let x = AppExperiments(cuaVolume: true, ciRunners: false, tcpShares: false, mobile: false)
         let v = BridgeValue.encode(x) as? [String: Any]
         #expect(v?["cuaVolume"] as? Bool == true)
-        #expect(v?["webUi"] as? Bool == true)
+        #expect(v?["ciRunners"] as? Bool == false)
+        // Secure Spaces and Ask first are always on: they have no switch to send.
+        for gone in ["secureSpaces", "askFirst"] { #expect(v?[gone] == nil, "\(gone)") }
         #expect(BridgeValue.encode(Optional<String>.none) is NSNull)
         #expect(BridgeValue.encode([1, 2]) as? [Int] == [1, 2])
         #expect(BridgeValue.encode(AppSignInPhase.idle) as? String == "idle")
@@ -183,6 +185,31 @@ struct WebUIHostTests {
         #expect(try await bridge.handle("spaces.droppedFiles", ["names": ["a.txt"]]) as? [String] == ["/tmp/a.txt"])
         #expect(try await bridge.handle("spaces.droppedFiles", ["names": ["other.txt"]]) as? [String] == [])
         #expect(try await bridge.handle("spaces.sendFiles", ["spaceId": id, "paths": ["/tmp/a.txt"]]) is [Any])
+    }
+
+    /// "Choose Windows ISO…": the picked file is checked and remembered for
+    /// the image at once; a wrong file is refused in plain words, a cancelled
+    /// picker answers nothing, and no image means a bad request.
+    @Test func chooseWindowsIsoChecksAndRemembersThePickedFile() async throws {
+        let (bridge, _) = bridge()
+        var remembered: [(String, String)] = []
+        bridge.pickIso = { URL(fileURLWithPath: "/tmp/Win11_ARM64.iso") }
+        bridge.useWindowsIso = { image, path in
+            remembered.append((image, path))
+            return WindowsIsoChoice(ok: true, name: "Win11_ARM64.iso", problem: "")
+        }
+        let chosen = try await bridge.handle("windows.chooseIso", ["image": "ghcr.io/trycua/windows:11"]) as? [String: Any]
+        #expect(chosen?["name"] as? String == "Win11_ARM64.iso")
+        #expect(remembered.count == 1 && remembered[0].0 == "ghcr.io/trycua/windows:11" && remembered[0].1 == "/tmp/Win11_ARM64.iso")
+
+        bridge.useWindowsIso = { _, _ in
+            WindowsIsoChoice(ok: false, name: "", problem: "notes.txt is not a Windows disc image (.iso). Choose the file you downloaded from Microsoft.")
+        }
+        #expect(await failure(bridge, "windows.chooseIso", ["image": "ghcr.io/trycua/windows:11"]) == "bad_iso")
+
+        bridge.pickIso = { nil }
+        #expect(try await bridge.handle("windows.chooseIso", ["image": "ghcr.io/trycua/windows:11"]) is NSNull)
+        #expect(await failure(bridge, "windows.chooseIso", [:]) == "bad_args")
     }
 
     /// The operations the Electron router answers under the same names.
@@ -359,6 +386,27 @@ struct WebUIHostTests {
         #expect(removed?.first { $0["agent"] as? String == "claude-code" }?["configured"] as? Bool == false)
     }
 
+    /// Setup's checklist (CUA-4067): `agents.connect` answers one result per
+    /// part, and runs one part on its own for a row's Retry. `driver` adds the
+    /// Cua Driver this app carries; a build without one (this test's) writes
+    /// none and answers no driver part rather than a failure.
+    @Test func connectAnswersEachPartAndRunsOneAlone() async throws {
+        let setup = FixtureAgentSetup()
+        let (bridge, _) = bridge(agentSetup: setup)
+        let all = try await bridge.handle("agents.connect", ["agents": ["claude-code"], "signIn": true]) as? [[String: Any]]
+        let parts = (all?.first?["parts"] as? [[String: Any]])?.compactMap { $0["part"] as? String }
+        #expect(parts == ["skills", "mcp", "sign_in"])
+        let mcpOnly = try await bridge.handle("agents.connect", ["agents": ["claude-code"], "signIn": false, "skills": false, "mcp": true])
+            as? [[String: Any]]
+        let mcp = (mcpOnly?.first?["parts"] as? [[String: Any]]) ?? []
+        #expect(mcp.compactMap { $0["part"] as? String } == ["mcp"])
+        #expect(mcp.first?["where"] as? String == "~/.claude.json")
+        let driverOnly = try await bridge.handle("agents.connect", ["agents": ["claude-code"], "signIn": false, "skills": false,
+                                                                    "mcp": false, "driver": true]) as? [[String: Any]]
+        #expect((driverOnly?.first?["parts"] as? [[String: Any]])?.isEmpty == true)
+        #expect(setup.lastDriver == nil)
+    }
+
     /// The page opens one notification and marks just that one read; the
     /// list carries the Space each entry is about (its Open Space).
     @Test func oneNotificationIsMarkedReadAndCarriesItsSpace() async throws {
@@ -387,6 +435,27 @@ struct WebUIHostTests {
         #expect(await failure(bridge, "notifications.markRead", [:]) == "bad_args")
     }
 
+    @Test func notificationsAreDeletedOneAtATimeOrAll() async throws {
+        let backend = BridgeContractTests.ToolBackend(FixtureSpacesBackend())
+        backend.agents.notifications.append(["id": "n2", "at_ms": backend.agents.now - 30_000, "agent": "ada", "kind": "message",
+                                             "title": "ada", "body": "Second.", "read": false])
+        let (bridge, _) = bridge(backend: backend)
+        func ids() async throws -> [String] {
+            let rows = try await bridge.handle("notifications.list", [:]) as? [[String: Any]] ?? []
+            return rows.compactMap { $0["id"] as? String }.sorted()
+        }
+        let all = try await ids()
+        #expect(all.count >= 2)
+        #expect(try await bridge.handle("notifications.delete", ["ids": [all[0]]]) is NSNull)
+        #expect(try await ids() == Array(all.dropFirst()))
+        // No ids deletes nothing (never all).
+        _ = try await bridge.handle("notifications.delete", ["ids": [String]()])
+        #expect(try await ids() == Array(all.dropFirst()))
+        #expect(await failure(bridge, "notifications.delete", [:]) == "bad_args")
+        #expect(try await bridge.handle("notifications.deleteAll", [:]) is NSNull)
+        #expect(try await ids().isEmpty)
+    }
+
     @Test func persistentAgentsListAsCamelCaseRecords() async throws {
         let m = PersistentModel(tools: FakeAgentsTools())
         let agents = try await m.listAgents()
@@ -407,11 +476,11 @@ struct WebUIHostTests {
     @Test func theUpdateChannelIsReadAndChosenByRow() async throws {
         let (bridge, model) = bridge()
         #expect((try await bridge.handle("settings.get", [:]) as? [String: Any])?["updateChannel"] is NSNull)
-        #expect(await failure(bridge, "settings.choose", ["row": "update-channel", "option": "beta"]) == "unsupported")
+        #expect(await failure(bridge, "settings.choose", ["row": "update-channel", "option": "nightly"]) == "unsupported")
         model.updates = UpdatesModel(updater: FixtureUpdater(), channel: .stable)
-        let s = try await bridge.handle("settings.choose", ["row": "update-channel", "option": "beta"]) as? [String: Any]
-        #expect(s?["updateChannel"] as? String == "beta")
-        #expect(model.updates.channel == .beta)
+        let s = try await bridge.handle("settings.choose", ["row": "update-channel", "option": "nightly"]) as? [String: Any]
+        #expect(s?["updateChannel"] as? String == "nightly")
+        #expect(model.updates.channel == .nightly)
     }
 
     /// The page's core has no environment: the host names the account app
@@ -420,6 +489,18 @@ struct WebUIHostTests {
         let (bridge, _) = bridge()
         let s = try await bridge.handle("settings.get", [:]) as? [String: Any]
         #expect(s?["accountUrl"] as? String == appAccountAppUrl())
+    }
+
+    /// Settings carry the channel and environment the app resolved, for the
+    /// title bar's "Local · Staging" tag.
+    @Test func settingsNameTheTarget() async throws {
+        let (bridge, _) = bridge()
+        let s = try await bridge.handle("settings.get", [:]) as? [String: Any]
+        let target = s?["target"] as? [String: Any]
+        let expected = appTarget()
+        #expect(target?["channel"] as? String == expected.channel)
+        #expect(target?["env"] as? String == expected.env)
+        #expect(target?["authHost"] as? String == expected.authHost)
     }
 
     /// Settings, Advanced's rows come with the page's first `settings.get`,
@@ -511,13 +592,11 @@ struct WebUIHostTests {
         #expect(await failure(bridge, "spaces.create", ["config": config, "pendingId": "pending:web-2"]) == "cancelled")
     }
 
-    /// New Space opens the web wizard, whatever an older build saved for
-    /// the New UI.
+    /// New Space opens the web wizard.
     @Test func newSpaceOpensTheWebWizard() async {
         let (_, model) = bridge()
         var asked: [String?] = []
         model.openWebNewSpace = { on in asked.append(on); return true }
-        model.settings.experiments.webUi = false
         await model.openNewSpace()
         await model.openNewSpace(on: "host:m1")
         #expect(asked == [nil, "host:m1"])
@@ -567,6 +646,7 @@ struct WebUIHostTests {
         #expect(await failure(bridge, "volume.overview", [:]) == "unsupported")
         #expect(await failure(bridge, "notifications.list", [:]) == "unsupported")
         #expect(await failure(bridge, "notifications.markRead", ["ids": ["n1"]]) == "unsupported")
+        #expect(await failure(bridge, "notifications.deleteAll", [:]) == "unsupported")
         #expect(await failure(bridge, "about.set", ["autoCheck": true]) == "unsupported")
         #expect(await failure(bridge, "host.openSettings", ["url": "https://example.com"]) == "bad_args")
         #expect(await failure(bridge, "volume.reveal", ["path": "/etc/hosts"]) == "bad_args")
@@ -658,6 +738,22 @@ struct WebUIHostTests {
             #expect((e["details"] as? String)?.contains("connection refused") == true)
             #expect(e["actionLabel"] as? String == "Retry")
         }
+    }
+
+    @Test func aRefusedNewComputerCarriesItsKindAndCodeToThePage() throws {
+        let f = HostSetupFailure.presenting(
+            "relay: add computers from a computer you already added, or with a pairing code [code: new_computer_needs_proof]")
+        let e = try #require(WebUIBridge.reply(id: "1", error: WebUIBridge.hostFailure(f))["error"] as? [String: Any])
+        #expect(e["kind"] as? String == "needsProof")
+        #expect(e["refusalCode"] as? String == "new_computer_needs_proof")
+        #expect(e["title"] as? String == "Confirm it\u{2019}s you")
+        #expect(e["actionLabel"] as? String == "Use a code from another computer")
+        // Any other failure says its kind, and no code it does not have.
+        let other = try #require(
+            WebUIBridge.reply(id: "2", error: WebUIBridge.hostFailure(HostSetupFailure.presenting("boom")))["error"]
+                as? [String: Any])
+        #expect(other["kind"] as? String == "other")
+        #expect(other["refusalCode"] == nil)
     }
 
     @Test func aFailedButtonIsWordedWithTheRawErrorAsDetails() async throws {
@@ -805,9 +901,9 @@ struct WebUIHostTests {
     @Test func aboutIsTheUpdatesModelsInput() async throws {
         let (bridge, model) = bridge()
         model.updates = UpdatesModel(updater: FixtureUpdater(), channel: .stable)
-        let a = try await bridge.handle("about.set", ["autoCheck": true, "channel": "beta"]) as? [String: Any]
+        let a = try await bridge.handle("about.set", ["autoCheck": true, "channel": "nightly"]) as? [String: Any]
         #expect(a?["autoCheck"] as? Bool == true)
-        #expect(a?["channel"] as? String == "beta")
+        #expect(a?["channel"] as? String == "nightly")
         #expect(a?["updater"] as? Bool == true)
     }
 }

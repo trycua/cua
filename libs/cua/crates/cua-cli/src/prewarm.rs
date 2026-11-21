@@ -14,7 +14,6 @@
 //! `--parallel` (default 1).
 
 use async_trait::async_trait;
-use std::collections::{BTreeMap, HashMap};
 
 /// One `--prewarm` value.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,17 +78,7 @@ pub fn plan(provider: &str, specs: &[Spec], parallel: Option<u32>) -> Result<Vec
 }
 
 fn resolve(provider: &str, reference: &str) -> Result<Option<String>, String> {
-    match provider.trim().to_ascii_lowercase().as_str() {
-        "e2b" => cua_compat::e2b::prewarm::resolve_image(
-            reference,
-            &BTreeMap::new().into_iter().collect(),
-        ),
-        "daytona" => cua_compat::daytona::prewarm::resolve(reference, &[], "", (1, 1024))
-            .map(|t| Some(t.cua_image).filter(|i| !i.is_empty())),
-        "modal" => cua_compat::modal::prewarm::resolve_image(reference, &HashMap::new(), "")
-            .map(|t| t.cua_image),
-        other => Err(format!("--prewarm: unknown provider {other}")),
-    }
+    crate::extension::compat_prewarm_image(provider, reference)
 }
 
 /// The core prewarm, as `Spaces::prewarm` and `remove_prewarm` offer it.

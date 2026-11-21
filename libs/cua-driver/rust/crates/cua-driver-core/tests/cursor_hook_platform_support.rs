@@ -1,15 +1,19 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! The cursor hook must publish its platform limitation explicitly.
 //!
 //! `AGENTS.md`: "When a platform cannot support the same contract, return or
 //! publish that limitation explicitly instead of substituting misleading
 //! behavior."
 //!
-//! The macOS and Linux adapters emit cursor events; the Windows adapter has no
-//! cursor write path wired to the hook. But `set_cursor_hook_fn`
-//! succeeds everywhere, so an embedder that trusted `cursor_hook_enabled()`
-//! would conclude on Windows that tracking was live and then wait forever for a
-//! first event. The viewer would show a pointer frozen at the origin — a
-//! confidently wrong picture, indistinguishable from a hung stream.
+//! An adapter declares an emitter only once it can produce events: macOS and
+//! Linux during tool registration, Windows once its overlay window is up. But
+//! `set_cursor_hook_fn` succeeds everywhere, so an embedder that trusted
+//! `cursor_hook_enabled()` in a build without an emitter would conclude that
+//! tracking was live and then wait forever for a first event. The viewer would
+//! show a pointer frozen at the origin — a confidently wrong picture,
+//! indistinguishable from a hung stream.
 //!
 //! `cursor_hook_supported()` is the explicit publication of that limitation.
 //! Its own binary, because both flags it reads are process-global one-shots and
@@ -26,8 +30,7 @@ use std::sync::{
 
 #[test]
 fn support_is_about_the_platform_not_about_registration() {
-    // A bare core build — which is what the Windows and Linux adapters link
-    // against for this module — declares no emitter.
+    // A bare core build declares no emitter.
     assert!(
         !cursor_hook_supported(),
         "no adapter declared an emitter, so this build must report cursor \

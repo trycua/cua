@@ -8,6 +8,7 @@
  */
 
 import type { ComputerResources, SharedBase, SpaceResources } from "@/bridge";
+import { thisComputerLabel, thisComputerText } from "./host-labels";
 
 export const LABELS = { cpu: "Processor", memory: "Memory", disk: "Space for files" } as const;
 
@@ -98,7 +99,7 @@ export const isRunning = (s: SpaceResources) => s.powerState === "running";
  * "Shares space with other copies" when it couldn't be measured; null when
  * there's nothing to say.
  */
-export function onHostLine(s: SpaceResources, computer = "this Mac"): string | null {
+export function onHostLine(s: SpaceResources, computer = thisComputerText()): string | null {
   const d = s.diskOnHost;
   if (!d) return null;
   if (d.bytes == null) return d.sharesSpace ? "Shares space with other copies." : null;
@@ -141,7 +142,11 @@ export function lowDiskWarning(c: ComputerResources, computer: string): { level:
   const free = `${size(c.diskFree)} free of ${size(c.diskTotal)}.`;
   return level === "critical"
     ? { level, title: `${computer} is out of space. Delete old Spaces or snapshots.`, detail: `${free} New Spaces can’t start until there’s more room.` }
-    : { level, title: `${computer} is almost out of space. Delete old Spaces or snapshots.`, detail: `${free} New Spaces may not fit, and apps can slow down.` };
+    : {
+        level,
+        title: `${computer} is almost out of space. Delete old Spaces or snapshots.`,
+        detail: `${free} New Spaces may not fit, and apps can slow down.`,
+      };
 }
 
 /* ---- A Space's resources dialog (the core's `resources.spacePanel`) ---------------- */
@@ -187,7 +192,7 @@ export interface SpacePanelInput {
   space: SpaceResources;
   name: string;
   host: ComputerResources | null;
-  /** "this Mac", or the other computer's name. */
+  /** "this Mac" (in this computer's words), or the other computer's name. */
   computer: string;
   /** Every Space on that computer. */
   spaces: SpaceResources[];
@@ -256,8 +261,8 @@ export function diskFit(host: ComputerResources, me: SpaceResources, name: strin
       : {
           text:
             level === "critical"
-              ? "This Mac is out of space, so new Spaces can’t be created. Delete old Spaces or snapshots."
-              : "This Mac is almost out of space. Delete old Spaces or snapshots.",
+              ? `${thisComputerLabel()} is out of space, so new Spaces can’t be created. Delete old Spaces or snapshots.`
+              : `${thisComputerLabel()} is almost out of space. Delete old Spaces or snapshots.`,
           button: "See what’s using space",
           critical: level === "critical",
         };
@@ -268,7 +273,7 @@ export function diskFit(host: ComputerResources, me: SpaceResources, name: strin
 export function spacePanel(i: SpacePanelInput): SpacePanelView {
   const s = i.space;
   const u = s.powerState === "running" ? s.usage : null;
-  const whose = `${i.computer || "this Mac"}’s`;
+  const whose = `${i.computer || thisComputerText()}’s`;
   const host = i.host;
   const processor: SpacePanelCard = {
     label: LABELS.cpu,

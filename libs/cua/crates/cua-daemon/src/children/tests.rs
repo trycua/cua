@@ -26,8 +26,6 @@ struct World {
 /// other ── o1
 /// owner-dup ("dup", a Space of the owner's own)
 fn world() -> World {
-    // Child Spaces are an experiment; these tests run with it on.
-    cua_vmm::experiments::set_enabled(cua_vmm::experiments::Gate::ChildSpaces, Some(true));
     let home = tempfile::tempdir().unwrap();
     let runtime = Runtime::new(RuntimeConfig {
         state_dir: Some(home.path().join("sandboxes")),
@@ -469,6 +467,71 @@ async fn a_create_becomes_a_child_or_a_plain_refusal() {
     );
 }
 
+/// From inside a Space with network rules: a run that would escape them (a
+/// native job, host services, the owner's cloud) is refused with an
+/// actionable reason, on the real channel, and records nothing.
+#[tokio::test]
+async fn a_restricted_space_cannot_start_a_run_that_escapes_its_rules() {
+    let w = world();
+    w.shared
+        .runtime
+        .spaces()
+        .registry()
+        .update_meta("local:a", |m| {
+            m.network = Some(cua_spaces::network::NetworkSettings::none());
+        })
+        .unwrap();
+    let cap = mint(&w.shared, "local:a", "local:root", 1);
+    let mut c = SpaceServiceClient::new(channel(&w.shared, "local:a").await);
+    for (what, params) in [
+        (
+            "a native job",
+            serde_json::json!({"kind": "machine", "command": ["x"]}),
+        ),
+        (
+            "an explicit native job",
+            serde_json::json!({"jobs": [{"spec": {"kind": "machine", "argv": ["x"]}}]}),
+        ),
+        (
+            "host services",
+            serde_json::json!({"services": ["compat:e2b"], "command": ["x"]}),
+        ),
+        (
+            "the owner's cloud",
+            serde_json::json!({"on": "modal", "command": ["x"]}),
+        ),
+        // The Space lies about where it is: the daemon's word wins, so this is
+        // still refused as a native job from a closed Space.
+        (
+            "a forged parent",
+            serde_json::json!({"kind": "machine", "env": {"CUA_PARENT_NETWORK": "{}"}, "command": ["x"]}),
+        ),
+    ] {
+        let e = c
+            .pool_request(with(
+                &cap,
+                pb::PoolRequestRequest {
+                    target: String::new(),
+                    method: "submit".into(),
+                    params_json: params.to_string(),
+                },
+            ))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code(), Code::PermissionDenied, "{what}: {e}");
+        assert!(
+            e.message().contains("owner") || e.message().contains("network rules"),
+            "{what}: the refusal says what to do: {e}"
+        );
+    }
+    // Nothing was recorded for the refused runs.
+    assert!(
+        super::runs::Ledger::load(w.shared.runtime.spaces().home_dir())
+            .runs
+            .is_empty()
+    );
+}
+
 #[tokio::test]
 async fn a_childs_env_is_reachable_only_below_and_never_its_spawn_channel() {
     let w = world();
@@ -642,4 +705,161 @@ fn orphans_are_listed_and_only_provable_ones_will_end() {
     );
     // Children whose parents are here are not orphans.
     assert!(orphans.iter().all(|o| !o.space.starts_with("local:a")));
+}
+
+/// Marks `space` as an agent home with the given grants.
+fn make_home(w: &World, space: &str, scope: super::home::HomeScope) {
+    w.shared
+        .runtime
+        .spaces()
+        .registry()
+        .update_meta(space, |m| m.labels.extend(scope.to_labels()))
+        .unwrap();
+}
+
+#[tokio::test]
+async fn an_agent_home_lists_only_what_it_was_granted() {
+    use super::home::HomeScope;
+    let w = world();
+    let cap = mint(&w.shared, "local:root", "local:root", 0);
+    let ids = |w: &World, cap: String| {
+        let shared = w.shared.clone();
+        async move {
+            let mut c = SpaceServiceClient::new(channel(&shared, "local:root").await);
+            let mut ids: Vec<String> = c
+                .list_spaces(with(&cap, pb::ListSpacesRequest::default()))
+                .await
+                .unwrap()
+                .into_inner()
+                .spaces
+                .into_iter()
+                .map(|s| s.id)
+                .collect();
+            ids.sort();
+            ids
+        }
+    };
+    // A Space that is no home sees its subtree only (as before).
+    assert_eq!(
+        ids(&w, cap.clone()).await,
+        ["local:a", "local:a1", "local:b"]
+    );
+
+    // A new home: its tree and the Space the person @mentioned by name.
+    make_home(
+        &w,
+        "local:root",
+        HomeScope {
+            is_home: true,
+            agent: "claude-code".into(),
+            mentions: ["other".to_owned()].into(),
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        ids(&w, cap.clone()).await,
+        ["local:a", "local:a1", "local:b", "local:other"]
+    );
+
+    // Listing all, once the person approved it.
+    make_home(
+        &w,
+        "local:root",
+        HomeScope {
+            is_home: true,
+            list_all: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(ids(&w, cap).await.len(), 7);
+}
+
+#[tokio::test]
+async fn an_agent_home_uses_a_machine_only_when_granted() {
+    use super::home::HomeScope;
+    let w = world();
+    let scoped = super::api::Scoped {
+        shared: w.shared.clone(),
+        space: "local:root".into(),
+    };
+    let claims = super::capability::Claims {
+        space: "local:root".into(),
+        root: "local:root".into(),
+        depth: 0,
+        max_depth: 2,
+        exp: u64::MAX,
+        iat: 0,
+        jti: String::new(),
+        kid: String::new(),
+    };
+    let on_host = || pb::CreateSpaceRequest {
+        location: "host:my-mac".into(),
+        ..Default::default()
+    };
+    // Not a home: unchanged.
+    assert!(scoped.child_request(&claims, on_host()).is_ok());
+    // A home that was not given the machine: refused in words the agent can act on.
+    make_home(
+        &w,
+        "local:root",
+        HomeScope {
+            is_home: true,
+            ..Default::default()
+        },
+    );
+    let e = scoped.child_request(&claims, on_host()).unwrap_err();
+    assert_eq!(e.code(), Code::PermissionDenied);
+    assert!(e.message().contains("my-mac"), "{}", e.message());
+    // `auto` and this machine need no grant.
+    for loc in ["auto", "local"] {
+        let r = pb::CreateSpaceRequest {
+            location: loc.into(),
+            ..Default::default()
+        };
+        assert!(scoped.child_request(&claims, r).is_ok(), "{loc}");
+    }
+    // Granted (or @mentioned).
+    make_home(
+        &w,
+        "local:root",
+        HomeScope {
+            is_home: true,
+            machines: ["my-mac".to_owned()].into(),
+            ..Default::default()
+        },
+    );
+    assert!(scoped.child_request(&claims, on_host()).is_ok());
+}
+
+#[tokio::test]
+async fn a_grant_given_while_the_home_runs_takes_effect_at_once() {
+    use super::home::{HomeScope, grants_path};
+    let w = world();
+    make_home(
+        &w,
+        "local:root",
+        HomeScope {
+            is_home: true,
+            ..Default::default()
+        },
+    );
+    let cap = mint(&w.shared, "local:root", "local:root", 0);
+    let c = SpaceServiceClient::new(channel(&w.shared, "local:root").await);
+    let count = |mut c: SpaceServiceClient<Chan>, cap: String| async move {
+        c.list_spaces(with(&cap, pb::ListSpacesRequest::default()))
+            .await
+            .unwrap()
+            .into_inner()
+            .spaces
+            .len()
+    };
+    assert_eq!(count(c.clone(), cap.clone()).await, 3, "its tree only");
+    // The app writes the person's approval outside the home; no restart.
+    let file = grants_path(w.shared.runtime.spaces().home_dir());
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, r#"{"local:root":{"list_all":true,"machines":[]}}"#).unwrap();
+    assert_eq!(count(c.clone(), cap.clone()).await, 7);
+    // Another home's grant does not widen this one.
+    std::fs::write(&file, r#"{"local:other":{"list_all":true}}"#).unwrap();
+    assert_eq!(count(c, cap).await, 3);
 }

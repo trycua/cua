@@ -149,7 +149,16 @@ describe("the viewer windows", () => {
     const viewers = createViewerWindows();
     const win = viewers.open("local:a", "Aurora", "linux") as unknown as FakeWindow;
     expect(win.url).toBe("cua-spaces://app/viewer?space=local%3Aa&name=Aurora&os=linux");
-    expect(win.options).toMatchObject({ title: "Aurora", useContentSize: true, titleBarStyle: "default", titleBarOverlay: false, minWidth: 640, minHeight: 400, width: 960, height: 644 });
+    expect(win.options).toMatchObject({
+      title: "Aurora",
+      useContentSize: true,
+      titleBarStyle: "default",
+      titleBarOverlay: false,
+      minWidth: 640,
+      minHeight: 400,
+      width: 960,
+      height: 644,
+    });
     win.emit("ready-to-show");
     expect(win.shown).toBe(true);
     // Open again: the same window, brought forward.

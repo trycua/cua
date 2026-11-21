@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Platform-independent Driver core and dual-era MCP dispatch.
 //!
 //! Stdio supports legacy initialization and modern per-request negotiation.
@@ -58,6 +61,7 @@ pub fn parent_liveness_stdin_enabled() -> bool {
 pub mod action_record;
 pub mod action_target;
 pub mod agent_cursor;
+pub mod app_names;
 pub mod authorization;
 pub mod background_input;
 pub mod batch_nudge;
@@ -70,6 +74,7 @@ pub mod capture_runtime;
 pub mod capture_scope;
 pub mod cdp;
 pub mod clipboard;
+pub mod config_file;
 pub mod consent;
 pub mod cursor_events;
 pub mod cursor_hook;
@@ -77,6 +82,7 @@ pub mod cursor_sampler;
 pub mod cursor_shape;
 pub mod daemon;
 pub mod delivery;
+pub mod deprecation;
 pub mod desktop_capture_scale;
 pub mod element_frame;
 pub mod element_query;
@@ -89,6 +95,7 @@ pub mod history;
 #[cfg(feature = "keyring")]
 pub mod history_keyring;
 pub mod image_utils;
+pub mod input_pacing;
 pub mod interactive_input;
 pub mod key_pacing;
 pub mod launch_guard;
@@ -96,7 +103,6 @@ pub mod mcp_result;
 pub mod page;
 pub mod perception_client;
 pub mod perception_tools;
-pub mod pip_hook;
 pub mod pointer_shape;
 pub mod policy;
 pub mod post_action_wait;
@@ -109,6 +115,7 @@ pub mod recording_zoom;
 pub mod recovery_hint;
 #[cfg(feature = "script")]
 pub mod script_tool;
+pub mod security_prompt;
 pub mod server;
 pub mod session;
 pub mod session_authorization;
@@ -126,6 +133,7 @@ pub mod tool;
 pub mod tool_activity;
 pub mod tool_args;
 pub mod tool_schema;
+pub mod type_pacing;
 pub mod video;
 pub mod video_ffmpeg;
 pub mod walk_budget;
@@ -134,5 +142,5 @@ pub mod window_observation;
 pub mod window_state_view;
 pub mod window_target;
 
-pub use cua_driver_contract::{CaptureScope, EscalationReason, TOOL_INVOCATION_FAILED_CODE};
+pub use cua_driver_contract::{CaptureScope, TOOL_INVOCATION_FAILED_CODE};
 pub use recording::RecordingSession;

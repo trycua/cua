@@ -29,7 +29,6 @@ Preconditions:
 
 ## Gotchas
 
-- `cua do switch verify` (the display name) fails with `not found: sandbox verify` on a Space only `cua spaces add` registered; use the id. See register-and-list `sb-ls`.
 - Screenshot coordinates are in the scaled image (1200x750 here), not display pixels; `cua do` maps them.
 - `cua do` records a trajectory per command under the cua home (`--no-record` turns it off); `down` deletes it with `RUN`.
 - The Space is this host: `do shell` runs as you, on your filesystem. Keep writes under `/tmp/cua-verify-*`.

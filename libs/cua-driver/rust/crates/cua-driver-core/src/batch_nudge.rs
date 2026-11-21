@@ -1,10 +1,13 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! A nudge toward `run_steps` for agents that act one call at a time.
 //!
 //! Every single action call costs the agent a model turn, and in recorded runs
 //! a turn took 3 to 5 s while the action itself took a fraction of that.
 //! `run_steps` chains the actions, stops at the first failure and returns what
 //! changed. This module notices a streak of direct action calls in one session
-//! and puts a one-line `hint` on the third result, and on every third after it.
+//! and puts a short `hint` on the second result, and on every second after it.
 //!
 //! The nudge is a `hint` on a successful action result, the same field the
 //! recovery hints use ([`crate::recovery_hint`]). Most clicks and keypresses
@@ -21,7 +24,9 @@ use serde_json::Value;
 use crate::protocol::ToolResult;
 
 /// Direct actions in a row before the first nudge, and between nudges.
-pub const STREAK_LEN: u32 = 3;
+/// Recorded bench runs (CUA-3763) show agents act, then read, then act again:
+/// the second direct action is already the pattern one `run_steps` replaces.
+pub const STREAK_LEN: u32 = 2;
 
 /// A pause longer than this ends a streak: the agent has stopped and started
 /// again, so the next action is not one of an unbroken run.
@@ -31,9 +36,22 @@ pub const STREAK_GAP: Duration = Duration::from_secs(60);
 /// daemon that sees many short sessions keeps a bounded table.
 const MAX_SESSIONS: usize = 256;
 
-/// The hint text. One sentence, so it costs few tokens.
-pub const NUDGE: &str = "Three single actions in a row: send the next ones as one run_steps \
-     call. It runs them in order, stops at the first failure and returns what changed.";
+/// The hint text. Short, so it costs few tokens, and it names the read it
+/// saves: the agent's next move after an action is usually a re-read.
+pub const NUDGE: &str = "Send known next actions in one run_steps call with observe:{} \
+     (no separate read): it runs them in order, stops at the first failure and returns \
+     what changed.";
+
+/// [`NUDGE`] with a ready call for the window the action targeted.
+fn nudge_for(pid: Option<&Value>, window_id: Option<&Value>) -> String {
+    match (pid.filter(|v| v.is_i64()), window_id.filter(|v| v.is_u64())) {
+        (Some(pid), Some(window_id)) => format!(
+            "{NUDGE} Ready: run_steps({{pid:{pid},window_id:{window_id},\
+             steps:[{{click:{{role,name}}}},{{type_text:{{text}}}}],observe:{{}}}})"
+        ),
+        _ => NUDGE.to_owned(),
+    }
+}
 
 /// Action tools that count toward a streak: the ones `run_steps` can chain.
 /// `move_cursor` only moves the agent cursor, so it is left out.
@@ -108,7 +126,13 @@ fn note(session: &str, tool: &str, now: Instant) -> bool {
 /// Add the nudge to `result` when `tool`, called directly in `session`, makes
 /// a streak. Call once per tool call at the dispatch seam, with the call's
 /// public `session` label and whether the call is a step of a batch.
-pub fn annotate(tool: &str, session: Option<&str>, in_batch: bool, result: &mut ToolResult) {
+pub fn annotate(
+    tool: &str,
+    session: Option<&str>,
+    in_batch: bool,
+    args: &Value,
+    result: &mut ToolResult,
+) {
     if in_batch || result.is_error == Some(true) {
         return;
     }
@@ -122,14 +146,15 @@ pub fn annotate(tool: &str, session: Option<&str>, in_batch: bool, result: &mut 
     if !structured.contains_key("effect") {
         return;
     }
+    let nudge = nudge_for(args.get("pid"), args.get("window_id"));
     match structured.get_mut("hint") {
         Some(Value::String(existing)) => {
             existing.push(' ');
-            existing.push_str(NUDGE);
+            existing.push_str(&nudge);
         }
         Some(_) => {}
         None => {
-            structured.insert("hint".to_owned(), Value::String(NUDGE.to_owned()));
+            structured.insert("hint".to_owned(), Value::String(nudge));
         }
     }
 }
@@ -139,19 +164,23 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn no_args() -> Value {
+        json!({})
+    }
+
     fn action_result() -> ToolResult {
         ToolResult::text("done")
             .with_structured(json!({ "effect": "confirmed", "route": "accessibility" }))
     }
 
     #[test]
-    fn the_third_direct_action_in_a_row_is_nudged_and_so_is_every_third_after() {
+    fn the_second_direct_action_in_a_row_is_nudged_and_so_is_every_second_after() {
         let mut tracker = Tracker::default();
         let t0 = Instant::now();
         let nudged: Vec<bool> = (0..7)
             .map(|i| tracker.note("s", "click", t0 + Duration::from_secs(i)))
             .collect();
-        assert_eq!(nudged, [false, false, true, false, false, true, false]);
+        assert_eq!(nudged, [false, true, false, true, false, true, false]);
     }
 
     #[test]
@@ -159,8 +188,8 @@ mod tests {
         let mut tracker = Tracker::default();
         let t0 = Instant::now();
         assert!(!tracker.note("s", "click", t0));
-        assert!(!tracker.note("s", "type_text", t0));
-        assert!(tracker.note("s", "press_key", t0));
+        assert!(tracker.note("s", "type_text", t0));
+        assert!(!tracker.note("s", "press_key", t0));
     }
 
     #[test]
@@ -171,8 +200,8 @@ mod tests {
         for tool in ["get_window_state", "list_windows", "move_cursor", "zoom"] {
             assert!(!tracker.note("s", tool, t0));
         }
-        assert!(!tracker.note("s", "click", t0));
         assert!(tracker.note("s", "click", t0));
+        assert!(!tracker.note("s", "click", t0));
     }
 
     #[test]
@@ -180,9 +209,7 @@ mod tests {
         let mut tracker = Tracker::default();
         let t0 = Instant::now();
         assert!(!tracker.note("s", "click", t0));
-        assert!(!tracker.note("s", "click", t0));
         assert!(!tracker.note("s", "run_steps", t0));
-        assert!(!tracker.note("s", "click", t0));
         assert!(!tracker.note("s", "click", t0));
         assert!(tracker.note("s", "click", t0));
         #[cfg(feature = "script")]
@@ -197,10 +224,8 @@ mod tests {
         let mut tracker = Tracker::default();
         let t0 = Instant::now();
         assert!(!tracker.note("s", "click", t0));
-        assert!(!tracker.note("s", "click", t0 + Duration::from_secs(1)));
         // The agent comes back after the gap: this is the first of a new run.
         let later = t0 + STREAK_GAP + Duration::from_secs(5);
-        assert!(!tracker.note("s", "click", later));
         assert!(!tracker.note("s", "click", later));
         assert!(tracker.note("s", "click", later));
     }
@@ -209,8 +234,6 @@ mod tests {
     fn sessions_keep_separate_streaks() {
         let mut tracker = Tracker::default();
         let t0 = Instant::now();
-        assert!(!tracker.note("a", "click", t0));
-        assert!(!tracker.note("b", "click", t0));
         assert!(!tracker.note("a", "click", t0));
         assert!(!tracker.note("b", "click", t0));
         assert!(tracker.note("a", "click", t0));
@@ -239,9 +262,9 @@ mod tests {
     #[test]
     fn the_nudge_rides_on_a_successful_action_result() {
         let session = "nudge-annotate-success";
-        let mut results: Vec<ToolResult> = (0..3).map(|_| action_result()).collect();
+        let mut results: Vec<ToolResult> = (0..2).map(|_| action_result()).collect();
         for result in &mut results {
-            annotate("click", Some(session), false, result);
+            annotate("click", Some(session), false, &no_args(), result);
         }
         let hint = |result: &ToolResult| {
             result
@@ -252,8 +275,22 @@ mod tests {
                 .map(str::to_owned)
         };
         assert_eq!(hint(&results[0]), None);
-        assert_eq!(hint(&results[1]), None);
-        assert_eq!(hint(&results[2]).as_deref(), Some(NUDGE));
+        assert_eq!(hint(&results[1]).as_deref(), Some(NUDGE));
+    }
+
+    #[test]
+    fn the_nudge_names_the_window_when_the_action_targeted_one() {
+        let session = "nudge-annotate-target";
+        let args = json!({ "pid": 42, "window_id": 7 });
+        let mut second = action_result();
+        annotate("click", Some(session), false, &args, &mut action_result());
+        annotate("click", Some(session), false, &args, &mut second);
+        let hint = second.structured_content.unwrap()["hint"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(hint.starts_with(NUDGE), "{hint}");
+        assert!(hint.contains("run_steps({pid:42,window_id:7,"), "{hint}");
     }
 
     #[test]
@@ -261,13 +298,13 @@ mod tests {
         let session = "nudge-annotate-batch";
         for _ in 0..6 {
             let mut result = action_result();
-            annotate("click", Some(session), true, &mut result);
+            annotate("click", Some(session), true, &no_args(), &mut result);
             assert!(result.structured_content.unwrap().get("hint").is_none());
         }
-        // The six batched steps did not count: two direct calls are not yet a streak.
-        for _ in 0..2 {
+        // The six batched steps did not count: one direct call is not yet a streak.
+        for _ in 0..1 {
             let mut result = action_result();
-            annotate("click", Some(session), false, &mut result);
+            annotate("click", Some(session), false, &no_args(), &mut result);
             assert!(result.structured_content.unwrap().get("hint").is_none());
         }
     }
@@ -275,12 +312,16 @@ mod tests {
     #[test]
     fn an_error_is_never_nudged() {
         let session = "nudge-annotate-error";
-        for _ in 0..2 {
-            annotate("click", Some(session), false, &mut action_result());
-        }
+        annotate(
+            "click",
+            Some(session),
+            false,
+            &no_args(),
+            &mut action_result(),
+        );
         let mut refused = ToolResult::error("refused")
             .with_structured(json!({ "code": "background_unavailable", "effect": "refused" }));
-        annotate("click", Some(session), false, &mut refused);
+        annotate("click", Some(session), false, &no_args(), &mut refused);
         assert!(refused.structured_content.unwrap().get("hint").is_none());
     }
 
@@ -294,11 +335,15 @@ mod tests {
                 "hint": "Read what changed before repeating.",
             }))
         };
-        for _ in 0..2 {
-            annotate("click", Some(session), false, &mut unverifiable());
-        }
+        annotate(
+            "click",
+            Some(session),
+            false,
+            &no_args(),
+            &mut unverifiable(),
+        );
         let mut third = unverifiable();
-        annotate("click", Some(session), false, &mut third);
+        annotate("click", Some(session), false, &no_args(), &mut third);
         assert_eq!(
             third.structured_content.unwrap()["hint"],
             format!("Read what changed before repeating. {NUDGE}")
@@ -308,12 +353,16 @@ mod tests {
     #[test]
     fn a_result_that_is_not_an_action_result_is_left_alone() {
         let session = "nudge-annotate-read";
-        for _ in 0..2 {
-            annotate("click", Some(session), false, &mut action_result());
-        }
-        // The third direct action has no `effect`: nothing to attach a hint to.
+        annotate(
+            "click",
+            Some(session),
+            false,
+            &no_args(),
+            &mut action_result(),
+        );
+        // The second direct action has no `effect`: nothing to attach a hint to.
         let mut odd = ToolResult::text("done").with_structured(json!({ "ok": true }));
-        annotate("click", Some(session), false, &mut odd);
+        annotate("click", Some(session), false, &no_args(), &mut odd);
         assert_eq!(odd.structured_content.unwrap(), json!({ "ok": true }));
     }
 }

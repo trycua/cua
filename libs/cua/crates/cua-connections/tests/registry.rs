@@ -566,12 +566,43 @@ fn every_top_provider_with_a_default_model_lists_it_and_the_first_fast_one_is_ma
             p.id
         );
     }
-    // The picker's default for a new prompt is the first fast model.
+    // The default for a new prompt is the reliable-at-tool-use model, not the fastest;
+    // the fast one is still listed, one tap away.
     let anthropic = provider("anthropic").unwrap();
+    assert_eq!(anthropic.default_model, "claude-sonnet-5-5");
     assert_eq!(
-        anthropic.models.iter().find(|m| m.fast).map(|m| m.id),
-        Some("claude-haiku-4-5")
+        anthropic
+            .models
+            .iter()
+            .find(|m| m.fast && !m.legacy)
+            .map(|m| m.id),
+        Some("claude-haiku-5-5")
     );
+}
+
+#[test]
+fn a_default_model_is_never_a_legacy_one_and_older_anthropic_ids_stay_accepted() {
+    for p in visible() {
+        if let Some(d) = p.models.iter().find(|m| m.id == p.default_model) {
+            assert!(!d.legacy, "{}: the default is not a legacy id", p.id);
+        }
+    }
+    let anthropic = provider("anthropic").unwrap();
+    for id in ["claude-haiku-4-5", "claude-sonnet-5"] {
+        let m = anthropic.models.iter().find(|m| m.id == id).expect(id);
+        assert!(m.legacy, "{id} is kept only so a saved choice works");
+    }
+    for id in [
+        "claude-fable-5-1",
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
+        "claude-haiku-5-5",
+    ] {
+        assert!(
+            anthropic.models.iter().any(|m| m.id == id && !m.legacy),
+            "{id}"
+        );
+    }
 }
 
 #[test]

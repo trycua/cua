@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Canonical typed Cua Driver SDK and UniFFI export boundary.
 //!
 //! [`CuaDriver::create`] owns the platform runtime in the importing process.
@@ -7,12 +10,11 @@
 
 use cua_driver_contract::{
     ActionResult, ClickInput, ClipboardReadInput, ClipboardWriteInput, DragInput, EndSessionInput,
-    EndSessionOutput, EscalateSessionInput, GetAgentCursorStateInput, GetCursorPositionInput,
-    GetDesktopStateInput, GetScreenSizeInput, GetSessionInput, GetSessionStateInput,
-    GetWindowStateInput, HotkeyInput, InvokeMenuInput, ListAppsInput, ListAppsOutput,
-    ListSessionsInput, ListSessionsOutput, ListWindowsInput, ListWindowsOutput, MoveCursorInput,
-    ParseVisualRegionsInput, PressKeyInput, ScrollInput, SessionOutput, SessionStateOutput,
-    SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
+    EndSessionOutput, GetAgentCursorStateInput, GetCursorPositionInput, GetDesktopStateInput,
+    GetScreenSizeInput, GetSessionInput, GetWindowStateInput, HotkeyInput, InvokeMenuInput,
+    ListAppsInput, ListAppsOutput, ListSessionsInput, ListSessionsOutput, ListWindowsInput,
+    ListWindowsOutput, MoveCursorInput, ParseVisualRegionsInput, PressKeyInput, ScrollInput,
+    SessionOutput, SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
     SetWindowFrameInput, SnapshotImage, StartSessionInput, StartSessionOutput, ToolInput,
     ToolOutput, TypeTextInput, VerifyStateInput, VerifyStateOutput, WindowStateOutput,
 };
@@ -322,6 +324,26 @@ impl CuaDriver {
             DriverBackend::Daemon(_)
             | DriverBackend::PrivateWorker(_)
             | DriverBackend::Remote(_) => None,
+        }
+    }
+
+    /// Daemon-host seam for its permission gate: while awaiting, every tool
+    /// route refuses with `permissions_pending` before dispatch. Only an
+    /// embedded runtime has a gate; other backends ignore it.
+    #[doc(hidden)]
+    pub fn set_awaiting_permissions(&self, awaiting: bool) {
+        if let DriverBackend::Embedded(runtime) = &self.backend {
+            runtime.set_awaiting_permissions(awaiting);
+        }
+    }
+
+    /// The raw `permissions_pending` tool result while the permission gate is
+    /// pending, so a host transport can answer it before its own refusals.
+    #[doc(hidden)]
+    pub fn permissions_pending_result(&self) -> Option<Value> {
+        match &self.backend {
+            DriverBackend::Embedded(runtime) => runtime.permissions_pending_result(),
+            _ => None,
         }
     }
 
@@ -729,10 +751,8 @@ macro_rules! define_exported_tool_names {
         #[cfg(test)]
         const EXPORTED_TOOL_NAMES: &[&str] = &[
             <StartSessionInput as ToolInput>::TOOL_NAME,
-            <EscalateSessionInput as ToolInput>::TOOL_NAME,
             <GetSessionInput as ToolInput>::TOOL_NAME,
             <ListSessionsInput as ToolInput>::TOOL_NAME,
-            <GetSessionStateInput as ToolInput>::TOOL_NAME,
             <EndSessionInput as ToolInput>::TOOL_NAME,
             <ListAppsInput as ToolInput>::TOOL_NAME,
             <ListWindowsInput as ToolInput>::TOOL_NAME,
@@ -1527,24 +1547,6 @@ impl CuaDriver {
             .typed_success(StartSessionInput::TOOL_NAME)
     }
 
-    pub async fn escalate_session(
-        &self,
-        input: EscalateSessionInput,
-    ) -> Result<SessionStateOutput, DriverError> {
-        self.invoke_typed(EscalateSessionInput::TOOL_NAME, input)
-            .await?
-            .typed_success(EscalateSessionInput::TOOL_NAME)
-    }
-
-    pub async fn get_session_state(
-        &self,
-        input: GetSessionStateInput,
-    ) -> Result<SessionStateOutput, DriverError> {
-        self.invoke_typed(GetSessionStateInput::TOOL_NAME, input)
-            .await?
-            .typed_success(GetSessionStateInput::TOOL_NAME)
-    }
-
     pub async fn get_session(&self, input: GetSessionInput) -> Result<SessionOutput, DriverError> {
         self.invoke_typed(GetSessionInput::TOOL_NAME, input)
             .await?
@@ -1603,24 +1605,6 @@ impl CuaDriverSession {
         self.invoke_typed(StartSessionInput::TOOL_NAME, input)
             .await?
             .typed_success(StartSessionInput::TOOL_NAME)
-    }
-
-    pub async fn escalate_session(
-        &self,
-        input: EscalateSessionInput,
-    ) -> Result<SessionStateOutput, DriverError> {
-        self.invoke_typed(EscalateSessionInput::TOOL_NAME, input)
-            .await?
-            .typed_success(EscalateSessionInput::TOOL_NAME)
-    }
-
-    pub async fn get_session_state(
-        &self,
-        input: GetSessionStateInput,
-    ) -> Result<SessionStateOutput, DriverError> {
-        self.invoke_typed(GetSessionStateInput::TOOL_NAME, input)
-            .await?
-            .typed_success(GetSessionStateInput::TOOL_NAME)
     }
 
     pub async fn get_session(&self, input: GetSessionInput) -> Result<SessionOutput, DriverError> {
@@ -2043,6 +2027,16 @@ fn normalize_result(tool: &str, raw: Value) -> Result<ToolResult, DriverError> {
 
 uniffi::setup_scaffolding!("cua_driver_sdk");
 
+/// Test directory for Unix socket endpoints. sun_path holds 104 bytes on
+/// macOS and a long TMPDIR can use most of it, so tests bind under /tmp.
+#[cfg(all(test, unix))]
+fn socket_tempdir() -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix("cd")
+        .tempdir_in("/tmp")
+        .unwrap()
+}
+
 #[cfg(test)]
 #[path = "tests/snapshot_lifecycle.rs"]
 mod snapshot_lifecycle_tests;
@@ -2071,6 +2065,7 @@ mod tests {
 
     mod native_windows;
     use super::*;
+    #[cfg(unix)]
     use cua_driver_contract::{ParseVisualRegionsOutput, VisualParseError};
     #[cfg(unix)]
     use std::io::{BufRead, BufReader, Write};
@@ -2092,13 +2087,9 @@ mod tests {
 
     #[cfg(unix)]
     fn serve_once(response: Value) -> (tempfile::TempDir, String, std::thread::JoinHandle<Value>) {
-        // Short path under /tmp: sun_path holds ~104 bytes on macOS and a CI
-        // TMPDIR can eat most of it. The listener is bound before returning,
-        // so the client needs no readiness wait.
-        let directory = tempfile::Builder::new()
-            .prefix("cd")
-            .tempdir_in("/tmp")
-            .unwrap();
+        // The listener is bound before returning, so the client needs no
+        // readiness wait.
+        let directory = crate::socket_tempdir();
         let socket = directory.path().join("d.sock");
         let listener = UnixListener::bind(&socket).unwrap();
         let handle = std::thread::spawn(move || {
@@ -2143,6 +2134,194 @@ mod tests {
             },
         })
         .unwrap()
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[ignore = "requires an interactive Windows desktop; selected by the canonical Windows capture lane"]
+    fn embedded_abi_uses_physical_pixels_from_an_unaware_host_thread() {
+        use windows::Win32::UI::HiDpi::{
+            AreDpiAwarenessContextsEqual, GetDpiForSystem, GetThreadDpiAwarenessContext,
+            SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+            DPI_AWARENESS_CONTEXT_UNAWARE,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+
+        if platform_windows::diagnostics::current_session_id() == Some(0) {
+            return;
+        }
+
+        struct RestoreThreadDpi(windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT);
+        impl Drop for RestoreThreadDpi {
+            fn drop(&mut self) {
+                unsafe {
+                    SetThreadDpiAwarenessContext(self.0);
+                }
+            }
+        }
+
+        let original =
+            unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+        assert!(!original.0.is_null(), "test thread could not enter PMv2");
+        let _restore = RestoreThreadDpi(original);
+        let expected_width = unsafe { GetSystemMetrics(SM_CXSCREEN) } as u64;
+        let expected_height = unsafe { GetSystemMetrics(SM_CYSCREEN) } as u64;
+        let system_dpi = unsafe { GetDpiForSystem() };
+        let expected_scale_factor = if system_dpi == 0 {
+            1.0
+        } else {
+            f64::from(system_dpi) / 96.0
+        };
+
+        let previous = unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_UNAWARE) };
+        assert!(
+            !previous.0.is_null(),
+            "test thread could not become DPI-unaware"
+        );
+        assert!(unsafe {
+            AreDpiAwarenessContextsEqual(
+                GetThreadDpiAwarenessContext(),
+                DPI_AWARENESS_CONTEXT_UNAWARE,
+            )
+            .as_bool()
+        });
+
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.blocking_lock();
+        let driver = configured_standard_driver();
+        // Keep the temporary directory alive until after the screenshot has
+        // been read; the path itself is passed through the public ABI.
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join("embedded-abi.png");
+        let trusted_output = directory.path().join("embedded-trusted-adapter.png");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (screen, desktop, trusted_screen, trusted_desktop) = runtime.block_on(async {
+            let screen = driver
+                .get_screen_size(GetScreenSizeInput {
+                    session: Some("dpi-embedded-abi".into()),
+                })
+                .await
+                .unwrap();
+            let desktop = driver
+                .get_desktop_state(GetDesktopStateInput {
+                    session: Some("dpi-embedded-abi".into()),
+                    screenshot_out_file: Some(output.to_string_lossy().into_owned()),
+                    max_image_dimension: None,
+                })
+                .await
+                .unwrap();
+            let trusted_screen = driver
+                .call_tool_from_trusted_adapter(
+                    "get_screen_size",
+                    serde_json::json!({"session": "dpi-embedded-abi"}),
+                )
+                .await
+                .unwrap();
+            let trusted_desktop = driver
+                .call_tool_from_trusted_adapter(
+                    "get_desktop_state",
+                    serde_json::json!({
+                        "session": "dpi-embedded-abi",
+                        "screenshot_out_file": trusted_output.to_string_lossy().into_owned()
+                    }),
+                )
+                .await
+                .unwrap();
+            driver.shutdown().await.unwrap();
+            (screen, desktop, trusted_screen, trusted_desktop)
+        });
+
+        assert!(!screen.is_error, "get_screen_size failed: {}", screen.text);
+        assert!(
+            !desktop.is_error,
+            "get_desktop_state failed: {}",
+            desktop.text
+        );
+        let screen: Value =
+            serde_json::from_str(screen.structured_json.as_deref().unwrap()).unwrap();
+        let desktop: Value =
+            serde_json::from_str(desktop.structured_json.as_deref().unwrap()).unwrap();
+        assert_eq!(screen["width"].as_u64(), Some(expected_width));
+        assert_eq!(screen["height"].as_u64(), Some(expected_height));
+        assert_eq!(desktop["screen_width"].as_u64(), Some(expected_width));
+        assert_eq!(desktop["screen_height"].as_u64(), Some(expected_height));
+        assert_eq!(desktop["screenshot_width"].as_u64(), Some(expected_width));
+        assert_eq!(desktop["screenshot_height"].as_u64(), Some(expected_height));
+        let reported_scale_factor = desktop["scale_factor"]
+            .as_f64()
+            .expect("desktop state should report a numeric scale factor");
+        assert!(
+            (reported_scale_factor - expected_scale_factor).abs() < f64::EPSILON,
+            "desktop state scale factor should match the physical desktop DPI: expected {expected_scale_factor}, got {reported_scale_factor}"
+        );
+
+        assert!(
+            !trusted_screen.is_error,
+            "trusted-adapter get_screen_size failed: {}",
+            trusted_screen.text
+        );
+        assert!(
+            !trusted_desktop.is_error,
+            "trusted-adapter get_desktop_state failed: {}",
+            trusted_desktop.text
+        );
+        let trusted_screen: Value = serde_json::from_str(
+            trusted_screen
+                .structured_json
+                .as_deref()
+                .expect("trusted screen should return structured JSON"),
+        )
+        .unwrap();
+        let trusted_desktop: Value = serde_json::from_str(
+            trusted_desktop
+                .structured_json
+                .as_deref()
+                .expect("trusted desktop should return structured JSON"),
+        )
+        .unwrap();
+        assert_eq!(trusted_screen["width"].as_u64(), Some(expected_width));
+        assert_eq!(trusted_screen["height"].as_u64(), Some(expected_height));
+        assert_eq!(
+            trusted_desktop["screenshot_width"].as_u64(),
+            Some(expected_width)
+        );
+        assert_eq!(
+            trusted_desktop["screenshot_height"].as_u64(),
+            Some(expected_height)
+        );
+
+        let png = std::fs::read(&output).unwrap();
+        assert!(
+            png.len() >= 24,
+            "captured PNG is too short to contain an IHDR chunk: {} bytes",
+            png.len()
+        );
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+        let png_width = u32::from_be_bytes(png[16..20].try_into().unwrap()) as u64;
+        let png_height = u32::from_be_bytes(png[20..24].try_into().unwrap()) as u64;
+        assert_eq!((png_width, png_height), (expected_width, expected_height));
+        let trusted_png = std::fs::read(&trusted_output).unwrap();
+        assert!(
+            trusted_png.len() >= 24,
+            "trusted-adapter PNG is too short to contain an IHDR chunk: {} bytes",
+            trusted_png.len()
+        );
+        assert_eq!(&trusted_png[..8], b"\x89PNG\r\n\x1a\n");
+        let trusted_png_width = u32::from_be_bytes(trusted_png[16..20].try_into().unwrap()) as u64;
+        let trusted_png_height = u32::from_be_bytes(trusted_png[20..24].try_into().unwrap()) as u64;
+        assert_eq!(
+            (trusted_png_width, trusted_png_height),
+            (expected_width, expected_height)
+        );
+        assert!(unsafe {
+            AreDpiAwarenessContextsEqual(
+                GetThreadDpiAwarenessContext(),
+                DPI_AWARENESS_CONTEXT_UNAWARE,
+            )
+            .as_bool()
+        });
     }
 
     #[derive(Default)]
@@ -2248,6 +2427,100 @@ mod tests {
 
     fn register_slow_host_tool(registry: &mut cua_driver_core::tool::ToolRegistry) {
         registry.register(Box::new(SlowHostTool));
+    }
+
+    struct TrustedCancellationTool;
+
+    static TRUSTED_CANCELLATION_TOOL_DEF: std::sync::OnceLock<cua_driver_core::tool::ToolDef> =
+        std::sync::OnceLock::new();
+    static TRUSTED_CANCELLATION_STARTED: std::sync::OnceLock<tokio::sync::Notify> =
+        std::sync::OnceLock::new();
+    static TRUSTED_CANCELLATION_DROPPED: std::sync::OnceLock<tokio::sync::Notify> =
+        std::sync::OnceLock::new();
+
+    struct TrustedCancellationDropProbe;
+
+    impl Drop for TrustedCancellationDropProbe {
+        fn drop(&mut self) {
+            TRUSTED_CANCELLATION_DROPPED
+                .get_or_init(tokio::sync::Notify::new)
+                .notify_one();
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl cua_driver_core::tool::Tool for TrustedCancellationTool {
+        fn def(&self) -> &cua_driver_core::tool::ToolDef {
+            TRUSTED_CANCELLATION_TOOL_DEF.get_or_init(|| cua_driver_core::tool::ToolDef {
+                name: "health_report".into(),
+                description: "test-only trusted adapter cancellation probe".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: true,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            })
+        }
+
+        async fn invoke(&self, _args: Value) -> cua_driver_core::protocol::ToolResult {
+            let _drop_probe = TrustedCancellationDropProbe;
+            TRUSTED_CANCELLATION_STARTED
+                .get_or_init(tokio::sync::Notify::new)
+                .notify_one();
+            std::future::pending::<()>().await;
+            unreachable!("cancelled trusted adapter tool unexpectedly resumed")
+        }
+    }
+
+    fn register_trusted_cancellation_tool(registry: &mut cua_driver_core::tool::ToolRegistry) {
+        registry.register(Box::new(TrustedCancellationTool));
+    }
+
+    #[tokio::test]
+    async fn dropping_trusted_adapter_call_cancels_shared_abi_operation() {
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
+        let driver = CuaDriver::try_create_for_host(DriverHostOptions {
+            cursor: cursor_overlay::CursorConfig {
+                enabled: false,
+                ..cursor_overlay::CursorConfig::default()
+            },
+            host_owns_permission_ux: false,
+            host_bundle_id: None,
+            claude_code_compatibility: false,
+            prepare_desktop_environment: false,
+            register_host_tools: Some(register_trusted_cancellation_tool),
+            authorization_host: None,
+            activity_observer: None,
+        })
+        .unwrap();
+
+        let action_driver = driver.clone();
+        let action = tokio::spawn(async move {
+            action_driver
+                .call_tool_from_trusted_adapter("health_report", serde_json::json!({}))
+                .await
+        });
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            TRUSTED_CANCELLATION_STARTED
+                .get_or_init(tokio::sync::Notify::new)
+                .notified(),
+        )
+        .await
+        .expect("trusted adapter test tool did not start");
+
+        action.abort();
+        assert!(action.await.unwrap_err().is_cancelled());
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            TRUSTED_CANCELLATION_DROPPED
+                .get_or_init(tokio::sync::Notify::new)
+                .notified(),
+        )
+        .await
+        .expect("trusted adapter work was not cancelled after its caller dropped");
+
+        driver.shutdown().await.unwrap();
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -2641,7 +2914,7 @@ mod tests {
 
         let second_state = second_session
             .call_tool(
-                "get_session_state".into(),
+                "get_session".into(),
                 serde_json::json!({"session": "same-public-label"}).to_string(),
             )
             .await
@@ -2650,7 +2923,7 @@ mod tests {
         let structured: Value =
             serde_json::from_str(second_state.structured_json.as_deref().unwrap()).unwrap();
         assert_eq!(structured["session"], "same-public-label");
-        assert_eq!(structured["capture_scope"], "window");
+        assert_eq!(structured["state"], "active");
         let recording_state = second_session
             .call_tool(
                 "get_recording_state".into(),
@@ -3162,7 +3435,7 @@ mod tests {
     #[tokio::test]
     #[cfg(unix)]
     async fn daemon_version_mismatch_is_refused_before_action_dispatch() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::socket_tempdir();
         let socket = directory.path().join("incompatible.sock");
         let listener = UnixListener::bind(&socket).unwrap();
         let action_dispatched = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -3226,8 +3499,6 @@ mod tests {
                     "effective_scope": "window",
                     "desktop_capture_authorized": false,
                     "desktop_unlocked": false,
-                    "escalation_reason": null,
-                    "escalation_detail": null,
                     "active": true,
                     "revived": false
                 },

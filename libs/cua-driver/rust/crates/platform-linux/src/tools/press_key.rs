@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_contract::PressKeyInput;
 use cua_driver_core::{
@@ -17,8 +20,8 @@ use super::impl_::{
     key_route_result, position_named_session_keyboard_cursor, prove_token_element,
     resolve_cursor_key, spawn_blocking_bounded, split_key_combo, stale_observed_element,
     unavailable_chromium_background, unavailable_gtk_keyboard_background,
-    unavailable_wayland_focused_input_background, unavailable_webkit_keyboard_background,
-    wm_chord_background, KeyRoute, ToolState,
+    unavailable_qt_shortcut_background, unavailable_wayland_focused_input_background,
+    unavailable_webkit_keyboard_background, wm_chord_background, KeyRoute, ToolState,
 };
 
 /// True when `key` names the Enter key in the shared X keysym vocabulary
@@ -50,55 +53,6 @@ fn press_key_chord(mods: &[String], key: &str) -> Option<Vec<String>> {
     let mut chord = mods.to_vec();
     chord.push(key.to_owned());
     Some(chord)
-}
-
-#[cfg(test)]
-mod press_key_tests {
-    use super::is_enter_key;
-    use super::press_key_chord;
-
-    #[test]
-    fn unmodified_press_stays_on_the_single_key_route() {
-        assert_eq!(press_key_chord(&[], "return"), None);
-    }
-
-    #[test]
-    fn enter_key_gate_accepts_the_documented_enter_spelling() {
-        assert!(is_enter_key("enter"));
-        assert!(is_enter_key("Enter"));
-        assert!(is_enter_key("ENTER"));
-    }
-
-    #[test]
-    fn enter_key_gate_accepts_the_documented_return_spelling() {
-        // `key_name_to_keysym` resolves "return" and "enter" to the same
-        // physical key (XK_Return, 0xFF0D); the pty short-circuit must not
-        // drop a documented spelling on terminals (they discard synthetic
-        // XSendEvent keys, so a dropped short-circuit loses the keypress).
-        assert!(is_enter_key("return"));
-        assert!(is_enter_key("Return"));
-        assert!(is_enter_key("RETURN"));
-    }
-
-    #[test]
-    fn enter_key_gate_rejects_non_enter_keys() {
-        assert!(!is_enter_key("tab"));
-        assert!(!is_enter_key("escape"));
-        assert!(!is_enter_key("space"));
-        assert!(!is_enter_key(""));
-    }
-
-    #[test]
-    fn modifiers_are_promoted_to_a_chord_in_order() {
-        assert_eq!(
-            press_key_chord(&["ctrl".to_owned()], "s"),
-            Some(vec!["ctrl".to_owned(), "s".to_owned()])
-        );
-        assert_eq!(
-            press_key_chord(&["ctrl".to_owned(), "shift".to_owned()], "t"),
-            Some(vec!["ctrl".to_owned(), "shift".to_owned(), "t".to_owned()])
-        );
-    }
 }
 
 #[async_trait]
@@ -141,7 +95,7 @@ impl Tool for PressKeyTool {
             let modifiers = input.modifiers.unwrap_or_default();
             position_named_session_keyboard_cursor(&self.state, &args, 0, 0, None, None, false)
                 .await;
-            let wayland = crate::wayland::wayland_input_enabled();
+            let wayland = crate::wayland::is_wayland();
             let path = if wayland { "wayland_focused" } else { "xtest" };
             let result =
                 spawn_blocking_bounded("desktop press_key", foreground_budget(1), move || {
@@ -297,6 +251,9 @@ impl Tool for PressKeyTool {
         if let Some(result) = wm_chord_background(pid, xid, &key, &mods, delivery).await {
             return result;
         }
+        if let Some(refusal) = unavailable_qt_shortcut_background(pid, xid, &mods, delivery) {
+            return refusal;
+        }
 
         let px = args.get("x").and_then(|value| value.as_f64());
         let py = args.get("y").and_then(|value| value.as_f64());
@@ -356,7 +313,8 @@ impl Tool for PressKeyTool {
         // Preserve legacy modifiers by promoting the request to a chord.
         if crate::wayland::is_inject_mode() {
             if let Err(error) =
-                focus_nested_inject_target(pid, xid, token.clone(), px.zip(py)).await
+                focus_nested_inject_target(&self.state, &args, pid, xid, token.clone(), px.zip(py))
+                    .await
             {
                 return error;
             }
@@ -410,7 +368,7 @@ impl Tool for PressKeyTool {
         // `wayland::press_key` carries no modifier list, so a modified request has
         // to become a chord here — otherwise the modifiers are dropped and the
         // bare key is typed as a character (Ctrl+S inserts a literal "s").
-        if crate::wayland::wayland_input_enabled() {
+        if crate::wayland::is_wayland() {
             let key_w = key.clone();
             let chord = press_key_chord(&mods, &key);
             let element = token.clone();
@@ -418,7 +376,7 @@ impl Tool for PressKeyTool {
                 crate::interaction::with_target_foreground(
                     pid,
                     xid,
-                    crate::interaction::RestoreMode::RestorePrevious,
+                    crate::interaction::session_policy().key,
                     || {
                         if let Some(element) = &element {
                             if !crate::atspi::focus_token(pid, element)? {
@@ -450,8 +408,9 @@ impl Tool for PressKeyTool {
         let key_for_task = key.clone();
         let cursor_id = resolve_cursor_key(&args);
         // Foreground delivery is one atomic activate-and-XTest transaction.
-        // A preceding PX click establishes internal widget focus, but that
-        // click restores the prior top-level before returning.
+        // A preceding PX click establishes internal widget focus and gives the
+        // prior top-level back; this transaction activates the target again,
+        // and the toolkit keeps the widget focus it set.
         let deliver_fg = delivery.is_foreground();
         let result = spawn_blocking_bounded(
             "press_key",
@@ -475,6 +434,7 @@ impl Tool for PressKeyTool {
                 return crate::interaction::with_x11_foreground(
                     xid,
                     crate::input::ForegroundOptions::keyboard(),
+                    crate::interaction::session_policy().key,
                     || {
                         if let Some(element) = &token {
                             let element_index = element.index;
@@ -510,5 +470,54 @@ impl Tool for PressKeyTool {
             Ok(Err(e)) => input_error_result(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod press_key_tests {
+    use super::is_enter_key;
+    use super::press_key_chord;
+
+    #[test]
+    fn unmodified_press_stays_on_the_single_key_route() {
+        assert_eq!(press_key_chord(&[], "return"), None);
+    }
+
+    #[test]
+    fn enter_key_gate_accepts_the_documented_enter_spelling() {
+        assert!(is_enter_key("enter"));
+        assert!(is_enter_key("Enter"));
+        assert!(is_enter_key("ENTER"));
+    }
+
+    #[test]
+    fn enter_key_gate_accepts_the_documented_return_spelling() {
+        // `key_name_to_keysym` resolves "return" and "enter" to the same
+        // physical key (XK_Return, 0xFF0D); the pty short-circuit must not
+        // drop a documented spelling on terminals (they discard synthetic
+        // XSendEvent keys, so a dropped short-circuit loses the keypress).
+        assert!(is_enter_key("return"));
+        assert!(is_enter_key("Return"));
+        assert!(is_enter_key("RETURN"));
+    }
+
+    #[test]
+    fn enter_key_gate_rejects_non_enter_keys() {
+        assert!(!is_enter_key("tab"));
+        assert!(!is_enter_key("escape"));
+        assert!(!is_enter_key("space"));
+        assert!(!is_enter_key(""));
+    }
+
+    #[test]
+    fn modifiers_are_promoted_to_a_chord_in_order() {
+        assert_eq!(
+            press_key_chord(&["ctrl".to_owned()], "s"),
+            Some(vec!["ctrl".to_owned(), "s".to_owned()])
+        );
+        assert_eq!(
+            press_key_chord(&["ctrl".to_owned(), "shift".to_owned()], "t"),
+            Some(vec!["ctrl".to_owned(), "shift".to_owned(), "t".to_owned()])
+        );
     }
 }

@@ -7,7 +7,7 @@ import { createDemoAdapter } from "../adapters/demo";
 import type { CoreClient } from "../core";
 import { BridgeProvider, useAgentKeys, type AgentKeysHook } from "../index";
 import { agentKeysFromWire, tauriAgentKeysOps, webkitAgentKeysOps } from "../ops/agent-keys";
-import { agentKeyForm, agentKeyNameProblemOf } from "../agent-keys";
+import { agentKeyForm, agentKeyNameProblemOf, agentKeysInputOf } from "../agent-keys";
 import { replayFlow } from "../parity";
 import { noCore, testCore, wasmBuilt } from "./testCore";
 
@@ -38,6 +38,17 @@ describe("agent key operations", () => {
     expect(off).toMatchObject({ available: false, unavailable: "no Keychain" });
     expect(off.providers.map((p) => p.id)).toEqual(["anthropic", "openai"]);
     expect(agentKeysFromWire(null).keys).toEqual([]);
+  });
+
+  it("carries the unencrypted-file warning of a Local development build into the core's input", () => {
+    const warning =
+      "Keychain not available in this development build: keys are stored unencrypted in ~/.cua-local/agent-keys. Do not use real production secrets";
+    const r = agentKeysFromWire({ ...WIRE, insecure: warning });
+    expect(r).toMatchObject({ available: true, insecure: warning });
+    expect(agentKeysInputOf(r, null)).toMatchObject({ unavailable: null, warning });
+    // A normal report has no warning, and a refusal never carries one.
+    expect(agentKeysInputOf(agentKeysFromWire(WIRE), null)).not.toHaveProperty("warning");
+    expect(agentKeysInputOf({ ...r, available: false, unavailable: "no Keychain" }, null)).not.toHaveProperty("warning");
   });
 
   it("calls the daemon's app methods through Tauri's agents_tool", async () => {

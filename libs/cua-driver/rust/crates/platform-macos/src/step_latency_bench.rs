@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Micro-benchmark: how long one step of a batch is held up by the agent
 //! cursor's glide and by the post-action window watch, before and after the
 //! batch pacing in `cua_driver_core::step_pacing`.

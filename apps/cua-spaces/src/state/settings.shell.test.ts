@@ -31,6 +31,8 @@ describe("settings in the app shell", () => {
     writeMenuBar(false);
     expect(readMenuBar()).toBe(false);
     expect(window.localStorage.length).toBe(0);
-    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("ui_storage_set", { key: SETTINGS_KEYS.menuBar, value: "false" }));
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("ui_storage_set", { key: SETTINGS_KEYS.menuBar, value: "false" }),
+    );
   });
 });

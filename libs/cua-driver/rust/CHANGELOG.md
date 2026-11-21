@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.56.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.1...cua-driver-rs-v0.56.2) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-driver:** admit input lanes after consent, with explicit lane and gate state ([#8344](https://github.com/trycua/cua/issues/8344)) ([d6e4876](https://github.com/trycua/cua/commit/d6e48769dfb04e69d0bf83a472a2b048b32ad9bd))
+* **cua-driver:** refuse removed --session-policy and Claude Code compat flags ([#8339](https://github.com/trycua/cua/issues/8339)) ([cac2c10](https://github.com/trycua/cua/commit/cac2c10af703be40f719a2f9eb8c7f938f8a9bfe))
+
 ## [0.56.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.0...cua-driver-rs-v0.56.1) (2026-11-21)
 
 

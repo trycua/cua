@@ -72,12 +72,14 @@ libc = "0.2"
 
 # Used by `cursor_sampler::sample_cursor` to poll the OS mouse position
 # during video recording, and by `perception_client::containment` for the
-# worker's Job Object, and by `ipc` for named-pipe I/O. Same version as
-# platform-windows uses to avoid a duplicate crate version.
+# worker's Job Object, and by `ipc` for named-pipe I/O and the pipe
+# security descriptor. Same version as platform-windows uses to avoid a
+# duplicate crate version.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",
+    "Win32_Security_Authorization",
     "Win32_Storage_FileSystem",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_IO",

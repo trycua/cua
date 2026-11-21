@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Named-pipe client with socket-style read and write timeouts.
+//! Named-pipe client with socket-style read and write timeouts, and the
+//! server's pipe security descriptor and client identity.
 //!
 //! A pipe opened through `std::fs` blocks in `ReadFile` until the daemon
 //! answers, so a stalled daemon hangs its client forever. This client opens the
@@ -17,14 +18,24 @@ use std::os::windows::fs::OpenOptionsExt as _;
 use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle};
 use std::time::Duration;
 
-use windows::core::{HRESULT, PCWSTR};
+use windows::core::{HRESULT, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
-    ERROR_BROKEN_PIPE, ERROR_IO_PENDING, ERROR_OPERATION_ABORTED, HANDLE, WAIT_OBJECT_0,
-    WAIT_TIMEOUT, WIN32_ERROR,
+    LocalFree, ERROR_BROKEN_PIPE, ERROR_IO_PENDING, ERROR_OPERATION_ABORTED, HANDLE, HLOCAL,
+    WAIT_OBJECT_0, WAIT_TIMEOUT, WIN32_ERROR,
+};
+use windows::Win32::Security::Authorization::{
+    ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+};
+use windows::Win32::Security::{
+    GetTokenInformation, TokenUser, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY,
+    TOKEN_USER,
 };
 use windows::Win32::Storage::FileSystem::{ReadFile, WriteFile, FILE_FLAG_OVERLAPPED};
-use windows::Win32::System::Pipes::{WaitNamedPipeW, NMPWAIT_NOWAIT};
-use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject, INFINITE};
+use windows::Win32::System::Pipes::{GetNamedPipeClientProcessId, WaitNamedPipeW, NMPWAIT_NOWAIT};
+use windows::Win32::System::Threading::{
+    CreateEventW, GetCurrentProcess, OpenProcess, OpenProcessToken, WaitForSingleObject, INFINITE,
+    PROCESS_QUERY_LIMITED_INFORMATION,
+};
 use windows::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 
 /// `WaitNamedPipeW` without waiting: `Ok` when an instance of `path` is free
@@ -180,16 +191,157 @@ impl super::Transport for PipeStream {
     }
 }
 
+/// A current-user pipe security descriptor, built once and passed to every
+/// pipe instance.
+///
+/// The DACL grants only the daemon's own user, and the low mandatory label
+/// lets a host at a different integrity level still connect. Every accepted
+/// client is checked against its process token as well.
+pub(super) struct PipeSecurity {
+    attributes: SECURITY_ATTRIBUTES,
+    user_sid: String,
+}
+
+// SAFETY: the descriptor is never written after it is built, and the pipe
+// copies it at creation, so sharing or moving it across threads is sound.
+unsafe impl Send for PipeSecurity {}
+unsafe impl Sync for PipeSecurity {}
+
+impl PipeSecurity {
+    pub(super) fn current_user() -> std::io::Result<Self> {
+        let user_sid = current_user_sid()?;
+        let sddl: Vec<u16> = format!("D:P(A;;GA;;;{user_sid})S:(ML;;NW;;;LW)\0")
+            .encode_utf16()
+            .collect();
+        let mut descriptor = PSECURITY_DESCRIPTOR::default();
+        // SAFETY: `sddl` is NUL-terminated and outlives the call; the
+        // descriptor it returns is owned here and freed in `drop`.
+        unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                PCWSTR(sddl.as_ptr()),
+                SDDL_REVISION_1,
+                &mut descriptor,
+                None,
+            )
+        }
+        .map_err(os_error)?;
+        Ok(Self {
+            attributes: SECURITY_ATTRIBUTES {
+                nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+                lpSecurityDescriptor: descriptor.0,
+                bInheritHandle: false.into(),
+            },
+            user_sid,
+        })
+    }
+
+    /// The `SECURITY_ATTRIBUTES` to pass when creating a pipe instance.
+    pub(super) fn attributes(&self) -> *mut std::ffi::c_void {
+        std::ptr::addr_of!(self.attributes).cast_mut().cast()
+    }
+
+    pub(super) fn user_sid(&self) -> &str {
+        &self.user_sid
+    }
+}
+
+impl Drop for PipeSecurity {
+    fn drop(&mut self) {
+        // SAFETY: the descriptor came from LocalAlloc and nothing uses it now.
+        unsafe { LocalFree(Some(HLOCAL(self.attributes.lpSecurityDescriptor))) };
+    }
+}
+
+/// Whether a client SID names the daemon's own user. SIDs compare without
+/// regard to case.
+pub(super) fn sid_is_authorized(expected: &str, actual: &str) -> bool {
+    expected.eq_ignore_ascii_case(actual)
+}
+
+/// The process id and user SID of the client connected to `pipe`.
+pub(super) fn pipe_client_identity(pipe: HANDLE) -> std::io::Result<(u32, String)> {
+    let mut pid = 0_u32;
+    // SAFETY: `pipe` is a connected server instance the caller keeps open.
+    unsafe { GetNamedPipeClientProcessId(pipe, &mut pid) }.map_err(os_error)?;
+    if pid == 0 {
+        return Err(std::io::Error::other(
+            "named pipe client process id is unavailable",
+        ));
+    }
+    // SAFETY: the handle it returns is owned right away.
+    let process =
+        unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.map_err(os_error)?;
+    // SAFETY: `process` is a fresh handle this function alone owns.
+    let process = unsafe { OwnedHandle::from_raw_handle(process.0) };
+    Ok((pid, process_user_sid(HANDLE(process.as_raw_handle()))?))
+}
+
+fn current_user_sid() -> std::io::Result<String> {
+    // SAFETY: the pseudo-handle needs no closing.
+    process_user_sid(unsafe { GetCurrentProcess() })
+}
+
+/// The user SID of `process`'s token, in its string form.
+fn process_user_sid(process: HANDLE) -> std::io::Result<String> {
+    let mut token = HANDLE::default();
+    // SAFETY: `process` stays open for the call; the token is owned below.
+    unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) }.map_err(os_error)?;
+    // SAFETY: `token` is a fresh handle this function alone owns.
+    let token = unsafe { OwnedHandle::from_raw_handle(token.0) };
+    let token = HANDLE(token.as_raw_handle());
+
+    let mut required = 0_u32;
+    // SAFETY: a size query; it fails with the length it needs.
+    let _ = unsafe { GetTokenInformation(token, TokenUser, None, 0, &mut required) };
+    if required == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let mut buffer = vec![0_u8; required as usize];
+    // SAFETY: `buffer` holds `required` writable bytes.
+    unsafe {
+        GetTokenInformation(
+            token,
+            TokenUser,
+            Some(buffer.as_mut_ptr().cast()),
+            required,
+            &mut required,
+        )
+    }
+    .map_err(os_error)?;
+    // The byte buffer need not be aligned for TOKEN_USER, so copy it out.
+    // SAFETY: GetTokenInformation wrote a TOKEN_USER at the buffer's start,
+    // and its SID points into `buffer`, which lives until after the convert.
+    let user = unsafe { std::ptr::read_unaligned(buffer.as_ptr().cast::<TOKEN_USER>()) };
+    let mut text = PWSTR::null();
+    // SAFETY: the SID is valid; the string it returns is freed below.
+    unsafe { ConvertSidToStringSidW(user.User.Sid, &mut text) }.map_err(os_error)?;
+    // SAFETY: `text` is a NUL-terminated string from LocalAlloc.
+    let sid = unsafe { text.to_string() };
+    unsafe { LocalFree(Some(HLOCAL(text.0.cast()))) };
+    let sid = sid.map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    if sid.is_empty() {
+        return Err(std::io::Error::other("token user SID is empty"));
+    }
+    Ok(sid)
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::{ConnectPolicy, ExchangeError, LocalIpcClient, LocalIpcStream, Transport};
-    use super::PipeStream;
+    use super::{sid_is_authorized, PipeStream};
     use std::time::{Duration, Instant};
     use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
     use tokio::net::windows::named_pipe::ServerOptions;
 
     fn pipe_name(label: &str) -> String {
         format!(r"\\.\pipe\cua-driver-ipc-{label}-{}", std::process::id())
+    }
+
+    #[test]
+    fn only_the_daemon_users_sid_is_authorized() {
+        assert!(!sid_is_authorized("S-1-5-21-1", "S-1-5-21-2"));
+        assert!(!sid_is_authorized("S-1-5-21-1", ""));
+        assert!(sid_is_authorized("S-1-5-21-1", "s-1-5-21-1"));
     }
 
     #[tokio::test(flavor = "multi_thread")]

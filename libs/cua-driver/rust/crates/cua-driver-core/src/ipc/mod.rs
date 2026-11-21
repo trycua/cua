@@ -1,17 +1,23 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Client end of the daemon's local socket or named pipe.
+//! The daemon's local socket or named pipe, both ends.
 //!
 //! [`LocalIpcClient`] is the one synchronous client: the daemon request path
 //! and the SDK's trusted service session both send newline-delimited JSON
 //! through it, with the same connect retry, poll slices and deadline on every
 //! OS. [`LocalIpcStream`] is the async connection the MCP proxy and the MCP
-//! envelope relay hold open. Framing beyond one line per message, and the
-//! request protocol itself, belong to the callers.
+//! envelope relay hold open, and the one [`LocalIpcListener`] accepts.
+//! Framing beyond one line per message, and the request protocol itself,
+//! belong to the callers.
 
+#[cfg(any(unix, windows))]
+mod server;
 #[cfg(windows)]
 mod windows;
+
+#[cfg(any(unix, windows))]
+pub use self::server::{serve_connections, LocalIpcListener, PeerIdentity};
 
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -303,10 +309,17 @@ fn read_line<S: Transport>(
 
 #[cfg(unix)]
 type AsyncStream = tokio::net::UnixStream;
-#[cfg(windows)]
-type AsyncStream = tokio::net::windows::named_pipe::NamedPipeClient;
 
-/// An async connection to a Unix socket or named pipe.
+/// Either end of a named pipe: the client end this process opened, or a
+/// server instance a [`LocalIpcListener`] accepted.
+#[cfg(windows)]
+#[derive(Debug)]
+enum AsyncStream {
+    Client(tokio::net::windows::named_pipe::NamedPipeClient),
+    Server(tokio::net::windows::named_pipe::NamedPipeServer),
+}
+
+/// An async connection over a Unix socket or named pipe.
 #[derive(Debug)]
 pub struct LocalIpcStream(AsyncStream);
 
@@ -317,7 +330,9 @@ impl LocalIpcStream {
             #[cfg(unix)]
             let attempt = AsyncStream::connect(path).await;
             #[cfg(windows)]
-            let attempt = tokio::net::windows::named_pipe::ClientOptions::new().open(path);
+            let attempt = tokio::net::windows::named_pipe::ClientOptions::new()
+                .open(path)
+                .map(AsyncStream::Client);
             match attempt {
                 Ok(stream) => return Ok(Self(stream)),
                 Err(error) => match policy.pause(give_up) {
@@ -327,6 +342,34 @@ impl LocalIpcStream {
             }
         }
     }
+
+    #[cfg(unix)]
+    fn from_unix(stream: tokio::net::UnixStream) -> Self {
+        Self(stream)
+    }
+
+    #[cfg(windows)]
+    fn from_pipe_server(instance: tokio::net::windows::named_pipe::NamedPipeServer) -> Self {
+        Self(AsyncStream::Server(instance))
+    }
+}
+
+/// Forward one poll method to whichever stream `$stream` holds.
+#[cfg(unix)]
+macro_rules! on_stream {
+    ($stream:expr, |$inner:ident| $body:expr) => {{
+        let $inner = &mut $stream.0;
+        $body
+    }};
+}
+#[cfg(windows)]
+macro_rules! on_stream {
+    ($stream:expr, |$inner:ident| $body:expr) => {
+        match &mut $stream.0 {
+            AsyncStream::Client($inner) => $body,
+            AsyncStream::Server($inner) => $body,
+        }
+    };
 }
 
 impl tokio::io::AsyncRead for LocalIpcStream {
@@ -335,7 +378,7 @@ impl tokio::io::AsyncRead for LocalIpcStream {
         cx: &mut Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.0).poll_read(cx, buf)
+        on_stream!(self, |inner| Pin::new(inner).poll_read(cx, buf))
     }
 }
 
@@ -345,15 +388,15 @@ impl tokio::io::AsyncWrite for LocalIpcStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut self.0).poll_write(cx, buf)
+        on_stream!(self, |inner| Pin::new(inner).poll_write(cx, buf))
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.0).poll_flush(cx)
+        on_stream!(self, |inner| Pin::new(inner).poll_flush(cx))
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.0).poll_shutdown(cx)
+        on_stream!(self, |inner| Pin::new(inner).poll_shutdown(cx))
     }
 }
 

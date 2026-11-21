@@ -249,7 +249,7 @@ function applyGroup(root, inventoryName, files) {
       }
     }
     if (differences.length) {
-      throw new Error(`stale UniFFI generated files under ${root}: ${differences.join(", ")}`)
+      throw new Error(`stale UniFFI generated files under ${root}: ${differences.join(", ")}\nRun scripts/regen-all.sh --only driver`)
     }
     return
   }

@@ -348,6 +348,33 @@ pub(crate) fn get_atom(conn: &RustConnection, name: &str) -> Result<Atom> {
     Ok(conn.intern_atom(false, name.as_bytes())?.reply()?.atom)
 }
 
+/// The X11 frame route: [`set_window_frame`] with the frame read before and
+/// after, so the caller can tell whether it changed.
+pub(crate) fn set_window_frame_route(
+    request: crate::routes::FrameRequest,
+) -> crate::routes::Route<crate::routes::FrameOutcome> {
+    let crate::routes::FrameRequest {
+        window_id,
+        pid,
+        x,
+        y,
+        width,
+        height,
+    } = request;
+    let before = list_windows(Some(pid))
+        .into_iter()
+        .find(|window| window.xid == window_id)
+        .map(|window| (window.x, window.y, window.width, window.height));
+    let (observed, confirmed, mutation_error) =
+        match set_window_frame(window_id, pid, x, y, width, height) {
+            Ok(outcome) => outcome,
+            Err(error) => return crate::routes::Route::Refused(error),
+        };
+    let observed_frame = observed.map(|window| (window.x, window.y, window.width, window.height));
+    let changed = observed_frame.is_some_and(|observed| before != Some(observed));
+    crate::routes::Route::Done((observed_frame, confirmed, changed, mutation_error))
+}
+
 /// Ask the X11 window manager to set one exact top-level window frame, then
 /// read the window geometry back in the same desktop coordinate space exposed
 /// by `list_windows`. Uses EWMH rather than configuring a client directly.

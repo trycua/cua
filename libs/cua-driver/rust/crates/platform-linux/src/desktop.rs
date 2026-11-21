@@ -76,6 +76,7 @@ pub fn desktop() -> Desktop {
 pub(crate) fn reclassify() -> Desktop {
     let desktop = classify(|name| std::env::var_os(name));
     *DESKTOP.write().unwrap_or_else(PoisonError::into_inner) = Some(desktop);
+    crate::routes::reselect(desktop);
     desktop
 }
 

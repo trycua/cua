@@ -2051,10 +2051,11 @@ fn no_input_activation(window_id: u64) -> anyhow::Error {
 /// path fired through AT-SPI. No global input follows, so KWin's activation is
 /// safe here where [`activate_window_for_input_target`] refuses it.
 pub fn activate_window(window_id: u64, target_pid: Option<u32>) -> anyhow::Result<()> {
-    if kwin_capture::knows_window(window_id) {
-        return kwin_capture::activate(window_id, target_pid);
-    }
-    activate_window_for_input_target(window_id, target_pid)
+    activate_through(
+        &crate::routes::routes().bring_forward,
+        window_id,
+        target_pid,
+    )
 }
 
 /// Focus and raise a specific native Wayland toplevel before focus-bound
@@ -2070,29 +2071,84 @@ pub fn activate_window_for_input(window_id: u64) -> anyhow::Result<()> {
     activate_window_for_input_target(window_id, pid)
 }
 
-/// Activate a Wayland target with an explicit process identity when available.
-/// The bundled compositor does not depend on connection-local Wayland object
-/// ids: its control protocol resolves the one mapped toplevel owned by `pid`.
+/// Activate a Wayland target with an explicit process identity when available,
+/// through this desktop's [`crate::routes::LinuxRoutes::focus`].
 pub fn activate_window_for_input_target(
     window_id: u64,
     target_pid: Option<u32>,
 ) -> anyhow::Result<()> {
-    refuse_kwin_input(window_id)?;
-    if is_wayland() && hyprland::is_session() {
-        // A full compositor address must never enter the generic protocol-id
-        // or title-matching route. This observation-only adapter can attest an
-        // already-active target, but cannot switch focus to a different one.
-        if hyprland::target_is_active(window_id, target_pid)? {
+    activate_through(&crate::routes::routes().focus, window_id, target_pid)
+}
+
+fn activate_through(
+    routes: &[crate::routes::FocusRoute],
+    window_id: u64,
+    target_pid: Option<u32>,
+) -> anyhow::Result<()> {
+    use crate::routes::{LinuxFocus, Route};
+    for route in routes {
+        match route.activate(window_id, target_pid) {
+            Route::Done(()) => return Ok(()),
+            Route::Refused(error) => return Err(error),
+            Route::NotApplicable => {}
+        }
+    }
+    Err(no_input_activation(window_id))
+}
+
+fn route_result(result: anyhow::Result<()>) -> crate::routes::Route<()> {
+    result.map_or_else(crate::routes::Route::Refused, crate::routes::Route::Done)
+}
+
+pub(crate) fn kwin_activation(window_id: u64, target_pid: Option<u32>) -> crate::routes::Route<()> {
+    if !kwin_capture::knows_window(window_id) {
+        return crate::routes::Route::NotApplicable;
+    }
+    route_result(kwin_capture::activate(window_id, target_pid))
+}
+
+pub(crate) fn kwin_input_refusal(window_id: u64) -> crate::routes::Route<()> {
+    match refuse_kwin_input(window_id) {
+        Ok(()) => crate::routes::Route::NotApplicable,
+        Err(error) => crate::routes::Route::Refused(error),
+    }
+}
+
+pub(crate) fn hyprland_activation(
+    window_id: u64,
+    target_pid: Option<u32>,
+) -> crate::routes::Route<()> {
+    // A full compositor address must never enter the generic protocol-id
+    // or title-matching route. This observation-only adapter can attest an
+    // already-active target, but cannot switch focus to a different one.
+    route_result(hyprland::target_is_active(window_id, target_pid).and_then(|active| {
+        if active {
             return Ok(());
         }
         anyhow::bail!("foreground_unavailable: exact-address Hyprland activation is not implemented; refusing title-based activation");
+    }))
+}
+
+pub(crate) fn niri_activation(window_id: u64, target_pid: Option<u32>) -> crate::routes::Route<()> {
+    if !niri::is_session() {
+        return crate::routes::Route::NotApplicable;
     }
-    if niri::is_session() {
-        // A niri id never enters the foreign-toplevel title route: focus the
-        // exact window and read the focus back.
-        return niri::activate(window_id, target_pid);
+    // A niri id never enters the foreign-toplevel title route: focus the
+    // exact window and read the focus back.
+    route_result(niri::activate(window_id, target_pid))
+}
+
+pub(crate) fn inject_activation(
+    window_id: u64,
+    target_pid: Option<u32>,
+) -> crate::routes::Route<()> {
+    if !is_inject_mode() {
+        return crate::routes::Route::NotApplicable;
     }
-    if is_inject_mode() {
+    // The bundled compositor does not depend on connection-local Wayland
+    // object ids: its control protocol resolves the one mapped toplevel
+    // owned by `pid`.
+    route_result((|| -> anyhow::Result<()> {
         let pid = target_pid.ok_or_else(|| {
             anyhow::anyhow!(
                 "foreground_unavailable: cua-compositor activation requires a verified target pid"
@@ -2101,29 +2157,35 @@ pub fn activate_window_for_input_target(
         inject_send(&[format!("f {pid}")])?;
         remember_inject_focused_target(pid, window_id);
         crate::interaction::pause(std::time::Duration::from_millis(60));
-        return Ok(());
-    }
+        Ok(())
+    })())
+}
 
-    let conn = Connection::connect_to_env()?;
-    let mut queue = conn.new_event_queue::<State>();
-    let qh = queue.handle();
-    conn.display().get_registry(&qh, ());
-    let mut state = State::default();
-    queue.roundtrip(&mut state)?;
-    for _ in 0..4 {
+pub(crate) fn foreign_toplevel_activation(window_id: u64) -> crate::routes::Route<()> {
+    use crate::routes::Route;
+    let activated = (|| -> anyhow::Result<bool> {
+        let conn = Connection::connect_to_env()?;
+        let mut queue = conn.new_event_queue::<State>();
+        let qh = queue.handle();
+        conn.display().get_registry(&qh, ());
+        let mut state = State::default();
         queue.roundtrip(&mut state)?;
-    }
+        for _ in 0..4 {
+            queue.roundtrip(&mut state)?;
+        }
 
-    if let (Some(_), Some(seat), Some(handle)) = (
-        state.manager.as_ref(),
-        state.seats.selected(),
-        matching_handle(&state, window_id),
-    ) {
+        let (Some(_), Some(seat), Some(handle)) = (
+            state.manager.as_ref(),
+            state.seats.selected(),
+            matching_handle(&state, window_id),
+        ) else {
+            return Ok(false);
+        };
         let protocol_id = handle.id().protocol_id();
         handle.activate(&seat);
         let deadline =
             crate::interaction::operation_deadline(std::time::Duration::from_millis(500));
-        let activated = crate::interaction::confirm(deadline, |_| {
+        crate::interaction::confirm(deadline, |_| {
             queue.roundtrip(&mut state)?;
             anyhow::Ok(
                 state
@@ -2131,18 +2193,21 @@ pub fn activate_window_for_input_target(
                     .get(&protocol_id)
                     .is_some_and(|toplevel| toplevel.activated),
             )
-        })?;
-        if activated {
-            return Ok(());
-        }
+        })
+    })();
+    match activated {
+        Ok(true) => Route::Done(()),
+        Ok(false) => Route::NotApplicable,
+        Err(error) => Route::Refused(error),
     }
+}
 
-    if shell_helper::activate_window(window_id) {
-        crate::interaction::pause(std::time::Duration::from_millis(60));
-        return Ok(());
+pub(crate) fn gnome_helper_activation(window_id: u64) -> crate::routes::Route<()> {
+    if !shell_helper::activate_window(window_id) {
+        return crate::routes::Route::NotApplicable;
     }
-
-    Err(no_input_activation(window_id))
+    crate::interaction::pause(std::time::Duration::from_millis(60));
+    crate::routes::Route::Done(())
 }
 
 /// Query one `wl_output`'s pixel dimensions via a short Wayland roundtrip,
@@ -4205,148 +4270,186 @@ fn apply_pid_filter(mut windows: Vec<WindowInfo>, filter_pid: Option<u32>) -> Ve
     windows
 }
 
-/// Window-enumeration dispatcher: native Wayland when available, else X11.
+/// Window-enumeration dispatcher: the first of this desktop's
+/// [`crate::routes::LinuxRoutes::windows`] that applies.
 pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
-    if is_wayland() {
-        if hyprland::is_session() {
-            // Hyprland IPC already attests PID and full native identity. A
-            // foreign-toplevel title join only makes that identity weaker.
-            return match hyprland::list_windows() {
-                Ok(windows) => listed_windows(apply_pid_filter(
-                    windows
-                        .into_iter()
-                        .map(|w| WindowInfo {
-                            xid: w.address,
-                            pid: Some(w.pid),
-                            app_name: w.app_id,
-                            title: w.title,
-                            is_on_screen: w.visible,
-                            z_index: None,
-                            x: w.x,
-                            y: w.y,
-                            width: w.width,
-                            height: w.height,
-                        })
-                        .collect(),
-                    filter_pid,
-                )),
-                Err(error) => {
-                    tracing::warn!("Hyprland window enumeration unavailable: {error:#}");
-                    Vec::new()
-                }
-            };
-        }
-        if niri::is_session() {
-            // niri IPC attests PIDs and its own window ids. Once niri is
-            // recognised, an IPC failure must not fall back to the
-            // foreign-toplevel title join, which loses that id namespace.
-            return match niri::list_windows() {
-                Ok(windows) => listed_windows(apply_pid_filter(
-                    windows.into_iter().map(niri_window_info).collect(),
-                    filter_pid,
-                )),
-                Err(error) => {
-                    tracing::warn!("niri window enumeration unavailable: {error:#}");
-                    Vec::new()
-                }
-            };
-        }
-        // A verified GNOME helper already supplies exact IDs and ownership.
-        // Do not probe unrelated compositor protocols for every preview frame.
-        if let Some(ws) = shell_helper::list_windows(filter_pid) {
-            return listed_windows(ws);
-        }
-        if kwin_capture::may_be_session() && kwin_access::allowed() {
-            match kwin_capture::list_windows() {
-                Ok(ws) => return listed_windows(apply_pid_filter(ws, filter_pid)),
-                Err(error) => tracing::debug!("KWin window enumeration unavailable: {error:#}"),
+    use crate::routes::{LinuxWindows, Route};
+    for route in &crate::routes::routes().windows {
+        match route.list(filter_pid) {
+            Route::Done(windows) => return listed_windows(windows),
+            Route::Refused(reason) => {
+                tracing::warn!("{reason:#}");
+                return Vec::new();
             }
+            Route::NotApplicable => {}
         }
-        if let Some(ws) = kwin_helper::list_window_infos() {
-            return listed_windows(apply_pid_filter(ws, filter_pid));
-        }
-        // Prefer the richer wlroots protocol when no trusted KWin helper is available.
-        // only consulted when wlroots yields no windows (including when its
-        // manager global is absent).
-        let native = match list_windows() {
-            Ok(ws) if !ws.is_empty() => Ok(enrich_native_windows(
-                ws,
-                wayland_atspi_windows(filter_pid),
-                is_inject_mode(),
-            )),
-            Ok(_) => ext_toplevel::list_windows(),
-            Err(wlr_error) => ext_toplevel::list_windows().map_err(|ext_error| {
-                anyhow::anyhow!(
-                    "wlr provider failed ({wlr_error}); ext provider failed ({ext_error})"
-                )
-            }),
-        };
-        match native {
-            Ok(ws) if !ws.is_empty() => {
-                if let Some(pid) = filter_pid {
-                    if let Some(filtered) = native_windows_for_pid(ws, pid) {
-                        return listed_windows(filtered);
-                    }
-                } else {
-                    return listed_windows(ws);
-                }
-                // A compositor window without pid metadata cannot satisfy a
-                // pid-scoped request. Continue to the AT-SPI registry.
-                let ws = wayland_atspi_windows(filter_pid);
-                if !ws.is_empty() {
-                    return listed_windows(ws);
-                }
-            }
-            Ok(_) => {
-                if let Some(ws) = shell_helper::list_windows(filter_pid).filter(|ws| !ws.is_empty())
-                {
-                    return listed_windows(ws);
-                }
-                let ws = wayland_atspi_windows(filter_pid);
-                if !ws.is_empty() {
-                    return listed_windows(ws);
-                }
-            }
-            Err(e) => {
-                if let Some(ws) = shell_helper::list_windows(filter_pid).filter(|ws| !ws.is_empty())
-                {
-                    tracing::debug!(
-                        "native Wayland protocols unavailable ({e}); using compositor helper"
-                    );
-                    return listed_windows(ws);
-                }
-                tracing::warn!("native Wayland list_windows failed: {e}; trying AT-SPI registry");
-                let ws = wayland_atspi_windows(filter_pid);
-                if !ws.is_empty() {
-                    return listed_windows(ws);
-                }
-            }
-        }
-        // Last resort under Wayland: an Xwayland app may still have an X11 XID.
     }
-    // If native enumeration and its AT-SPI fallback found nothing, X11 may still
-    // expose XWayland clients. Merge one final AT-SPI snapshot so native windows
-    // remain visible on hybrid sessions even when neither foreign-toplevel
-    // protocol is advertised (#1978). Gated on the native-Wayland opt-in.
-    //
-    // Caveats for the merged AT-SPI entries: they carry a synthetic (non-X11)
-    // xid and zero geometry (x/y/w/h = 0), like the existing wlroots AT-SPI
-    // fallback — so `bring_to_front` / `screenshot_window` / pixel translation
-    // against them error cleanly rather than acting (input on GNOME/KDE routes
-    // by pid + screen coords, not xid, so it's unaffected). Dedup is per-pid, so
-    // the rare app owning BOTH an XWayland window and a separate native-Wayland
-    // toplevel would list only the XWayland one.
+    Vec::new()
+}
+
+pub(crate) fn hyprland_windows(filter_pid: Option<u32>) -> crate::routes::Route<Vec<WindowInfo>> {
+    use crate::routes::Route;
+    // Hyprland IPC already attests PID and full native identity. A
+    // foreign-toplevel title join only makes that identity weaker.
+    match hyprland::list_windows() {
+        Ok(windows) => Route::Done(apply_pid_filter(
+            windows
+                .into_iter()
+                .map(|w| WindowInfo {
+                    xid: w.address,
+                    pid: Some(w.pid),
+                    app_name: w.app_id,
+                    title: w.title,
+                    is_on_screen: w.visible,
+                    z_index: None,
+                    x: w.x,
+                    y: w.y,
+                    width: w.width,
+                    height: w.height,
+                })
+                .collect(),
+            filter_pid,
+        )),
+        Err(error) => Route::Refused(error.context("Hyprland window enumeration unavailable")),
+    }
+}
+
+pub(crate) fn niri_windows(filter_pid: Option<u32>) -> crate::routes::Route<Vec<WindowInfo>> {
+    use crate::routes::Route;
+    if !niri::is_session() {
+        return Route::NotApplicable;
+    }
+    // niri IPC attests PIDs and its own window ids. Once niri is
+    // recognised, an IPC failure must not fall back to the
+    // foreign-toplevel title join, which loses that id namespace.
+    match niri::list_windows() {
+        Ok(windows) => Route::Done(apply_pid_filter(
+            windows.into_iter().map(niri_window_info).collect(),
+            filter_pid,
+        )),
+        Err(error) => Route::Refused(error.context("niri window enumeration unavailable")),
+    }
+}
+
+pub(crate) fn gnome_helper_windows(
+    filter_pid: Option<u32>,
+) -> crate::routes::Route<Vec<WindowInfo>> {
+    use crate::routes::Route;
+    // A verified GNOME helper already supplies exact IDs and ownership.
+    // Do not probe unrelated compositor protocols for every preview frame.
+    shell_helper::list_windows(filter_pid).map_or(Route::NotApplicable, Route::Done)
+}
+
+pub(crate) fn kwin_capture_windows(
+    filter_pid: Option<u32>,
+) -> crate::routes::Route<Vec<WindowInfo>> {
+    use crate::routes::Route;
+    if !(kwin_capture::may_be_session() && kwin_access::allowed()) {
+        return Route::NotApplicable;
+    }
+    match kwin_capture::list_windows() {
+        Ok(ws) => Route::Done(apply_pid_filter(ws, filter_pid)),
+        Err(error) => {
+            tracing::debug!("KWin window enumeration unavailable: {error:#}");
+            Route::NotApplicable
+        }
+    }
+}
+
+pub(crate) fn kwin_helper_windows(
+    filter_pid: Option<u32>,
+) -> crate::routes::Route<Vec<WindowInfo>> {
+    use crate::routes::Route;
+    kwin_helper::list_window_infos().map_or(Route::NotApplicable, |ws| {
+        Route::Done(apply_pid_filter(ws, filter_pid))
+    })
+}
+
+pub(crate) fn native_protocol_windows(
+    filter_pid: Option<u32>,
+) -> crate::routes::Route<Vec<WindowInfo>> {
+    use crate::routes::Route;
+    // Prefer the richer wlroots protocol when no trusted KWin helper is available.
+    // only consulted when wlroots yields no windows (including when its
+    // manager global is absent).
+    let native = match list_windows() {
+        Ok(ws) if !ws.is_empty() => Ok(enrich_native_windows(
+            ws,
+            wayland_atspi_windows(filter_pid),
+            is_inject_mode(),
+        )),
+        Ok(_) => ext_toplevel::list_windows(),
+        Err(wlr_error) => ext_toplevel::list_windows().map_err(|ext_error| {
+            anyhow::anyhow!("wlr provider failed ({wlr_error}); ext provider failed ({ext_error})")
+        }),
+    };
+    match native {
+        Ok(ws) if !ws.is_empty() => {
+            if let Some(pid) = filter_pid {
+                if let Some(filtered) = native_windows_for_pid(ws, pid) {
+                    return Route::Done(filtered);
+                }
+            } else {
+                return Route::Done(ws);
+            }
+            // A compositor window without pid metadata cannot satisfy a
+            // pid-scoped request. Continue to the AT-SPI registry.
+            let ws = wayland_atspi_windows(filter_pid);
+            if !ws.is_empty() {
+                return Route::Done(ws);
+            }
+        }
+        Ok(_) => {
+            if let Some(ws) = shell_helper::list_windows(filter_pid).filter(|ws| !ws.is_empty()) {
+                return Route::Done(ws);
+            }
+            let ws = wayland_atspi_windows(filter_pid);
+            if !ws.is_empty() {
+                return Route::Done(ws);
+            }
+        }
+        Err(e) => {
+            if let Some(ws) = shell_helper::list_windows(filter_pid).filter(|ws| !ws.is_empty()) {
+                tracing::debug!(
+                    "native Wayland protocols unavailable ({e}); using compositor helper"
+                );
+                return Route::Done(ws);
+            }
+            tracing::warn!("native Wayland list_windows failed: {e}; trying AT-SPI registry");
+            let ws = wayland_atspi_windows(filter_pid);
+            if !ws.is_empty() {
+                return Route::Done(ws);
+            }
+        }
+    }
+    // Last resort under Wayland: an Xwayland app may still have an X11 XID.
+    Route::NotApplicable
+}
+
+/// If native enumeration and its AT-SPI fallback found nothing, X11 may still
+/// expose XWayland clients. Merge one final AT-SPI snapshot so native windows
+/// remain visible on hybrid sessions even when neither foreign-toplevel
+/// protocol is advertised (#1978). Selected only on native Wayland.
+///
+/// Caveats for the merged AT-SPI entries: they carry a synthetic (non-X11)
+/// xid and zero geometry (x/y/w/h = 0), like the existing wlroots AT-SPI
+/// fallback — so `bring_to_front` / `screenshot_window` / pixel translation
+/// against them error cleanly rather than acting (input on GNOME/KDE routes
+/// by pid + screen coords, not xid, so it's unaffected). Dedup is per-pid, so
+/// the rare app owning BOTH an XWayland window and a separate native-Wayland
+/// toplevel would list only the XWayland one.
+pub(crate) fn xwayland_with_atspi_windows(
+    filter_pid: Option<u32>,
+) -> crate::routes::Route<Vec<WindowInfo>> {
     let mut ws = crate::x11::list_windows(filter_pid);
-    if is_wayland() {
-        let seen: std::collections::HashSet<u32> = ws.iter().filter_map(|w| w.pid).collect();
-        // A specific pid already resolved via X11 needs no AT-SPI walk (a full
-        // D-Bus enumeration of every registered app): it can only add duplicates.
-        let already_covered = filter_pid.is_some_and(|p| seen.contains(&p));
-        if !already_covered {
-            merge_atspi_windows(&mut ws, &seen, wayland_atspi_windows(filter_pid));
-        }
+    let seen: std::collections::HashSet<u32> = ws.iter().filter_map(|w| w.pid).collect();
+    // A specific pid already resolved via X11 needs no AT-SPI walk (a full
+    // D-Bus enumeration of every registered app): it can only add duplicates.
+    let already_covered = filter_pid.is_some_and(|p| seen.contains(&p));
+    if !already_covered {
+        merge_atspi_windows(&mut ws, &seen, wayland_atspi_windows(filter_pid));
     }
-    listed_windows(ws)
+    crate::routes::Route::Done(ws)
 }
 
 fn merge_atspi_windows(

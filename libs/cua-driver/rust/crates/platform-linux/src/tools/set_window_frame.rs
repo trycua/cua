@@ -12,6 +12,8 @@ use serde_json::Value;
 
 pub struct SetWindowFrameTool;
 
+const NO_FRAME_ROUTE: &str = "this Wayland compositor exposes no protocol that permits a client to set another top-level window's geometry";
+
 static SET_WINDOW_FRAME_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 #[async_trait]
@@ -44,10 +46,9 @@ impl Tool for SetWindowFrameTool {
                 Ok(input) => input,
                 Err(result) => return result,
             };
-        if crate::wayland::is_wayland() {
-            return ToolResult::error(
-                "set_window_frame: this Wayland compositor exposes no protocol that permits a client to set another top-level window's geometry",
-            );
+        let routes = crate::routes::routes();
+        if routes.frame.is_empty() {
+            return ToolResult::error(format!("set_window_frame: {NO_FRAME_ROUTE}"));
         }
         let values = [input.x, input.y, input.width, input.height];
         if values.iter().any(|value| !value.is_finite())
@@ -90,20 +91,24 @@ impl Tool for SetWindowFrameTool {
             Ok(value) => value,
             Err(error) => return ToolResult::error(format!("set_window_frame: {error}")),
         };
-        let window_id = input.window_id;
-        let pid = input.pid;
+        let request = crate::routes::FrameRequest {
+            window_id: input.window_id,
+            pid: input.pid,
+            x,
+            y,
+            width,
+            height,
+        };
         let outcome = tokio::task::spawn_blocking(move || {
-            let before = crate::x11::list_windows(Some(pid))
-                .into_iter()
-                .find(|window| window.xid == window_id)
-                .map(|window| (window.x, window.y, window.width, window.height));
-            let (observed, confirmed, mutation_error) =
-                crate::x11::set_window_frame(window_id, pid, x, y, width, height)
-                    .map_err(|error| error.to_string())?;
-            let observed_frame =
-                observed.map(|window| (window.x, window.y, window.width, window.height));
-            let changed = observed_frame.is_some_and(|observed| before != Some(observed));
-            Ok::<_, String>((observed_frame, confirmed, changed, mutation_error))
+            use crate::routes::{LinuxWindows, Route};
+            for route in &routes.frame {
+                match route.set_frame(request) {
+                    Route::Done(outcome) => return Ok(outcome),
+                    Route::Refused(error) => return Err(error.to_string()),
+                    Route::NotApplicable => {}
+                }
+            }
+            Err(NO_FRAME_ROUTE.to_owned())
         })
         .await;
         let (observed, confirmed, changed, mutation_error) = match outcome {

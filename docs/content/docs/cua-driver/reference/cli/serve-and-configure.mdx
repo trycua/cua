@@ -291,6 +291,7 @@ cua-driver serve [OPTIONS]
 | --- | --- | --- | --- |
 | <span id="cua-driver-serve--socket"></span>`--socket` | string |  | Override the daemon socket or named-pipe path. |
 | <span id="cua-driver-serve--pid-file"></span>`--pid-file` | path |  | Override the pid-file path. |
+| <span id="cua-driver-serve--owner-pid"></span>`--owner-pid` | number |  | Shut down, as `stop` does, once the process with this PID exits. |
 | <span id="cua-driver-serve--permission-mode"></span>`--permission-mode` | string | `standard` | Immutable agent authorization mode: standard, bounded, or unrestricted. |
 | <span id="cua-driver-serve--grant"></span>`--grant` | string |  | Pre-authorize a residual standard-mode boundary. Repeatable; supported value: existing-profile. |
 | <span id="cua-driver-serve--capability-manifest"></span>`--capability-manifest` | path |  | Optional narrow-only tool/resource ceiling; required in bounded mode. |

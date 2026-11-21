@@ -259,7 +259,10 @@ impl SshExec {
             // turn them off for every host), and a shared connection is
             // never reused: loopback forward ports are recycled. No ssh
             // config is read at all: a `Host *` block could still send the
-            // password elsewhere (`ProxyCommand`, `HostName`).
+            // password elsewhere (`ProxyCommand`, `HostName`). A rejected
+            // password makes `ssh` try keyboard-interactive and ask the
+            // helper again; it has deleted itself, so that second ask fails
+            // with an `ssh_askpass` exec error naming only its path.
             args.push("-F".into());
             args.push("/dev/null".into());
             for o in [
@@ -357,9 +360,11 @@ impl GuestExec for SshExec {
 /// password login needs no terminal: a script in a fresh private (`0700`)
 /// temporary directory, with the password inside it rather than in an
 /// environment variable or argument. The script deletes itself when `ssh`
-/// runs it (a password login asks once: `NumberOfPasswordPrompts=1`), so the
-/// password stays on disk only until it is read, even if this process is
-/// then killed; dropping the helper deletes the directory.
+/// runs it (a password login asks once: `NumberOfPasswordPrompts=1`), so once
+/// `ssh` has read the password it is on disk no longer, even if this process
+/// is then killed; dropping the helper deletes the directory, so only a
+/// process killed before `ssh` reached the prompt (sshd still booting) can
+/// leave one behind.
 struct Askpass {
     dir: tempfile::TempDir,
 }

@@ -302,9 +302,10 @@ impl GatewaySshExec {
     /// SSH.
     fn login(&self) -> Result<crate::exec::SshExec> {
         // Running first, then the port, so a gateway replaced between
-        // commands is dialled on its new port. One still being replaced
-        // (new pid file written, gateway.json not yet) can be read with
-        // the previous port for that moment.
+        // commands is dialled on its new port. While one is being replaced
+        // (new pid file written, its gateway.json not yet) there is no
+        // record at all: the old one is removed before the new gateway
+        // starts, so this fails and the caller retries.
         if !crate::netgw::gateway_running(&self.dir) {
             return Err(VmmError::NotRunning {
                 what: format!("the network gateway of VM {}", self.vm),
@@ -336,6 +337,15 @@ impl GuestExec for GatewaySshExec {
     ) -> Result<i64> {
         self.login()?.exec_streaming(req, sink).await
     }
+}
+
+/// A channel for background commands in a macOS guest
+/// ([`LumeRuntime::macos_command_exec`]).
+struct MacosCommandExec {
+    exec: Arc<dyn GuestExec>,
+    /// Whether the channel forwards stdin (the gateway's SSH does, `lume
+    /// ssh` does not), so a script can travel there instead of on argv.
+    over_stdin: bool,
 }
 
 /// Whether a VM with `settings` runs behind a gateway: under the secure
@@ -505,8 +515,12 @@ pub fn warm_vm_names(base: &str) -> [String; 2] {
 /// VM resumed from a state other VMs share (a warm state, a checkpoint) or
 /// a claimed pool member would otherwise keep the name it was saved with.
 /// Bounded retries while SSH comes up; failures are logged, never fatal.
-fn set_macos_hostname_later(exec: Option<Arc<dyn GuestExec>>, vm: &str, name: &str) {
-    let Some(exec) = exec else { return };
+/// The script (it hands `sudo` the password) goes on stdin when the channel
+/// takes it ([`MacosCommandExec::over_stdin`]).
+fn set_macos_hostname_later(exec: Option<MacosCommandExec>, vm: &str, name: &str) {
+    let Some(MacosCommandExec { exec, over_stdin }) = exec else {
+        return;
+    };
     let host = macos_hostname(name);
     let vm = vm.to_string();
     crate::cleanup::spawn(async move {
@@ -519,7 +533,7 @@ fn set_macos_hostname_later(exec: Option<Arc<dyn GuestExec>>, vm: &str, name: &s
             if attempt > 0 {
                 tokio::time::sleep(Duration::from_secs(3)).await;
             }
-            let req = crate::exec::ExecRequest::sh(script.clone()).timeout(Duration::from_secs(30));
+            let req = macos_script_request(&script, over_stdin, Duration::from_secs(30));
             match exec.exec(req).await {
                 Ok(out) if out.exit_code == 0 => {
                     tracing::info!(%vm, %host, "set the guest's hostname");
@@ -1337,12 +1351,17 @@ impl LumeRuntime {
     /// The channel for background guest commands in the macOS VM `name`
     /// (its host names): [`Self::gateway_ssh`] behind a gateway, else
     /// `lume ssh`; `None` when neither is available (logged).
-    fn macos_command_exec(&self, name: &str) -> Option<Arc<dyn GuestExec>> {
+    fn macos_command_exec(&self, name: &str) -> Option<MacosCommandExec> {
         if let Some(ssh) = self.gateway_ssh(name) {
-            return Some(Arc::new(ssh));
+            return Some(MacosCommandExec {
+                exec: Arc::new(ssh),
+                over_stdin: true,
+            });
         }
-        self.lume_or_log()
-            .map(|l| Arc::new(lume_ssh_prefix(&l, name)) as Arc<dyn GuestExec>)
+        self.lume_or_log().map(|l| MacosCommandExec {
+            exec: Arc::new(lume_ssh_prefix(&l, name)),
+            over_stdin: false,
+        })
     }
 
     /// `ep` as the host reaches a VM behind its gateway: on loopback,
@@ -1473,6 +1492,11 @@ impl LumeRuntime {
             dir.join(crate::netgw::CONFIG_FILE),
             serde_json::to_vec_pretty(&config)?,
         )?;
+        // The previous gateway's ports are free again, maybe for another
+        // VM's gateway: drop its record before the new one runs, so no
+        // reader pairs the new gateway with the old forward of port 22
+        // ([`GatewaySshExec::login`]).
+        let _ = std::fs::remove_file(self.gateway_file(name));
         crate::netgw::start(&bin, &dir, Duration::from_secs(15)).await?;
         let gw = LumeGateway {
             network: format!("gateway:{}", sock.display()),
@@ -2241,17 +2265,28 @@ pub fn macos_env_script(env: &std::collections::BTreeMap<String, String>) -> Res
     ))
 }
 
-/// The request that runs the env `script` ([`macos_env_script`]): with
-/// `over_stdin`, the script goes on stdin to `/bin/sh -s`, so the values are
-/// on no host command line (`ssh`'s argv is visible to every local user);
-/// otherwise inline, for a channel that forwards no stdin (`lume ssh`).
-fn macos_env_request(script: &str, over_stdin: bool) -> crate::exec::ExecRequest {
+/// The request that runs `script` in a macOS guest: with `over_stdin`, the
+/// script goes on stdin to `/bin/sh -s`, so what it carries (env values, the
+/// `sudo` password) is on no host command line (`ssh`'s argv is visible to
+/// every local user); otherwise inline, for a channel that forwards no stdin
+/// (`lume ssh`).
+fn macos_script_request(
+    script: &str,
+    over_stdin: bool,
+    timeout: Duration,
+) -> crate::exec::ExecRequest {
     let req = if over_stdin {
         crate::exec::ExecRequest::sh("exec /bin/sh -s").stdin(script.as_bytes())
     } else {
         crate::exec::ExecRequest::sh(script)
     };
-    req.timeout(Duration::from_secs(60))
+    req.timeout(timeout)
+}
+
+/// The request that runs the env `script` ([`macos_env_script`]):
+/// [`macos_script_request`].
+fn macos_env_request(script: &str, over_stdin: bool) -> crate::exec::ExecRequest {
+    macos_script_request(script, over_stdin, Duration::from_secs(60))
 }
 
 /// Runs [`macos_env_script`] through `exec` ([`macos_env_request`]: on its
@@ -4607,6 +4642,22 @@ mod tests {
         assert_eq!(ssh.user, "lume");
         assert_eq!(ssh.password.as_deref(), Some("lume"));
         assert!(ssh.private_key.is_none());
+    }
+
+    #[test]
+    fn a_script_for_the_gateway_ssh_stays_off_the_host_command_line() {
+        // The hostname script hands `sudo` the image's password.
+        let script = "printf '%s\\n' lume | sudo -S -p '' scutil --set HostName h";
+        let req = macos_script_request(script, true, Duration::from_secs(30));
+        assert_eq!(req.script, "exec /bin/sh -s");
+        assert_eq!(req.stdin.as_deref(), Some(script.as_bytes()));
+        let ssh = crate::exec::SshExec::new("127.0.0.1", 50022, "lume").password("lume");
+        let argv = ssh.argv(&req);
+        assert!(!argv.iter().any(|a| a.contains("sudo")), "{argv:?}");
+        // `lume ssh` forwards no stdin: the script stays inline there.
+        let inline = macos_script_request(script, false, Duration::from_secs(30));
+        assert_eq!(inline.script, script);
+        assert!(inline.stdin.is_none());
     }
 
     /// A live process named `cua-netgw` (a copy of `sleep`), recorded as

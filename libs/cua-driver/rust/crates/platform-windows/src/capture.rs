@@ -637,15 +637,16 @@ pub fn screenshot_window(hwnd: u64) -> Result<(String, u32, u32)> {
 /// from the duplicated frame the same way it is for desktop captures.
 ///
 /// Returns `None` unless, both before and after the capture, the window is
-/// shown at the same bounds, covers a whole monitor and no other window
-/// overlaps its frame, and duplication succeeds, so the caller keeps the
-/// PrintWindow / WGC / BitBlt ladder as the fallback for every other case.
+/// shown and not layered at the same bounds, covers a whole monitor and no
+/// other window overlaps its frame, and duplication succeeds, so the caller
+/// keeps the PrintWindow / WGC / BitBlt ladder as the fallback for every other
+/// case.
 unsafe fn screenshot_via_dxgi_duplication(
     hwnd: HWND,
 ) -> Option<(Vec<u8>, i32, i32, FrameGeometry)> {
     use cursor_overlay::capture_exclusion::{capture_excluding_overlays, ResidualCheck};
 
-    if !window_shown(hwnd) {
+    if !window_shown(hwnd) || layered(hwnd) {
         return None;
     }
     let geometry = window_geometry(hwnd).ok()?;
@@ -691,6 +692,7 @@ unsafe fn screenshot_via_dxgi_duplication(
     // Duplication waits for a present: in that time the target may have hidden,
     // moved, or been covered, and the frame would show something else.
     if !window_shown(hwnd)
+        || layered(hwnd)
         || window_geometry(hwnd).ok() != Some(geometry)
         || window_above_overlaps(hwnd, frame)
     {
@@ -759,6 +761,14 @@ unsafe fn window_shown(window: HWND) -> bool {
     IsWindowVisible(window).as_bool()
         && !IsIconic(window).as_bool()
         && cloaked(window) == Some(false)
+}
+
+/// Whether `window` is layered. A layered window can be partly transparent, so
+/// the monitor shows whatever lies behind it in those pixels.
+unsafe fn layered(window: HWND) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, GWL_EXSTYLE, WS_EX_LAYERED};
+
+    (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_LAYERED.0 as isize) != 0
 }
 
 /// DWM's cloak state for `window`, or `None` when it cannot be read.

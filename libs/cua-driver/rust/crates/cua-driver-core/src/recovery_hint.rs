@@ -810,12 +810,18 @@ static RULES: &[Rule] = &[
         codes: &["browser_input_incomplete"],
         build: |c| {
             if c.tool == "browser_press_key" {
-                let unpressed = c
-                    .refusal_detail()
+                let detail = c.refusal_detail();
+                let unpressed = detail
                     .and_then(|detail| detail.get("pressed"))
                     .and_then(Value::as_bool)
                     == Some(false);
-                return RecoveryHint::new(if unpressed {
+                let dialog = detail
+                    .and_then(|detail| detail.get("dialog"))
+                    .is_some_and(|dialog| !dialog.is_null());
+                return RecoveryHint::new(if dialog {
+                    "A key handler opened a page dialog before the key was pressed. Resolve it with \
+                     browser_dialog, then read the page with get_browser_state."
+                } else if unpressed {
                     "The key was not pressed. Read the page with get_browser_state, then press it again."
                 } else {
                     "The key may have reached the page. Read the page with get_browser_state to see \

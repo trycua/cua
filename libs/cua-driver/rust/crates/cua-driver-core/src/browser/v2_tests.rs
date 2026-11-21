@@ -4869,7 +4869,7 @@ async fn press_key_with_a_ref_focuses_it_on_its_own_frame_session() {
 }
 
 #[tokio::test]
-async fn press_key_that_fails_before_the_key_goes_down_releases_held_modifiers() {
+async fn press_key_that_fails_before_the_key_goes_down_releases_every_sent_modifier() {
     // Index 1 is shift's down, after ctrl went down at index 0.
     let f = fixture_with(|state| state.fail_key_event_at = Some(1)).await;
     let result = press_key_with(&f, json!({ "key": "z", "modifiers": ["ctrl", "shift"] })).await;
@@ -4882,9 +4882,12 @@ async fn press_key_that_fails_before_the_key_goes_down_releases_held_modifiers()
             .into_iter()
             .map(|(t, k, _)| (t, k))
             .collect::<Vec<_>>(),
+        // Shift's down was not acknowledged but may have landed, so it is
+        // released too.
         [
             ("rawKeyDown".to_owned(), "Control".to_owned()),
             ("rawKeyDown".to_owned(), "Shift".to_owned()),
+            ("keyUp".to_owned(), "Shift".to_owned()),
             ("keyUp".to_owned(), "Control".to_owned()),
         ]
     );
@@ -4967,6 +4970,7 @@ async fn press_key_returns_when_its_handler_opens_a_dialog() {
     let s = structured(&result);
     assert_eq!(s["status"], "ok", "{s}");
     assert_eq!(s["pressed"], true);
+    assert_eq!(s["released"], false, "the blocked key up is unconfirmed");
     assert_eq!(s["effect"], "unverifiable");
     assert_eq!(s["dialog"]["present"], true, "{s}");
     assert_eq!(s["dialog"]["kind"], "confirm");
@@ -4992,6 +4996,28 @@ async fn press_key_returns_when_its_handler_opens_a_dialog() {
         "{again}"
     );
     assert_eq!(key_event_summary(&f).len(), 2);
+}
+
+#[tokio::test]
+async fn press_key_whose_modifier_opens_a_dialog_never_sends_the_key() {
+    let f = fixture_with(|state| state.key_event_opens_dialog_at = Some(0)).await;
+    let result = press_key_with(&f, json!({ "key": "a", "modifiers": ["ctrl"] })).await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(s["refusal"]["code"], "browser_input_incomplete");
+    assert_eq!(s["refusal"]["detail"]["pressed"], false);
+    assert_eq!(s["refusal"]["detail"]["released"], false);
+    assert_eq!(s["refusal"]["detail"]["dialog"]["present"], true, "{s}");
+    assert_eq!(
+        key_event_summary(&f)
+            .into_iter()
+            .map(|(t, k, _)| (t, k))
+            .collect::<Vec<_>>(),
+        [
+            ("rawKeyDown".to_owned(), "Control".to_owned()),
+            ("keyUp".to_owned(), "Control".to_owned()),
+        ]
+    );
 }
 
 #[tokio::test]

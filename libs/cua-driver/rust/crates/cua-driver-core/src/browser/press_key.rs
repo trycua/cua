@@ -255,10 +255,26 @@ impl KeyPress {
         self.modifiers.iter().fold(0, |mask, m| mask | m.bit())
     }
 
-    /// The `Input.dispatchKeyEvent` parameters, in dispatch order: each
-    /// modifier down, the key down and up, then each modifier up. Every event
-    /// carries the modifier state the page would observe at that point.
+    /// The `Input.dispatchKeyEvent` parameters of a whole press, in dispatch
+    /// order: each modifier down, the key down and up, then each modifier up.
+    #[cfg(test)]
     fn events(&self) -> Vec<Value> {
+        let mut events = self.down_events();
+        events.extend(self.release_events(self.modifiers.len(), true));
+        events
+    }
+
+    fn dom_key(&self) -> &str {
+        if self.mask() & SHIFT != 0 {
+            &self.key.shifted_key
+        } else {
+            &self.key.key
+        }
+    }
+
+    /// Each modifier down, then the key down. Every event carries the
+    /// modifier state the page observes at that point.
+    fn down_events(&self) -> Vec<Value> {
         let mask = self.mask();
         let mut events = Vec::new();
         let mut held = 0;
@@ -274,15 +290,9 @@ impl KeyPress {
                 "nativeVirtualKeyCode": virtual_key,
             }));
         }
-        let shifted = mask & SHIFT != 0;
-        let key = if shifted {
-            &self.key.shifted_key
-        } else {
-            &self.key.key
-        };
         // A command modifier turns a printable key into a shortcut: no text.
         let text = if mask & (CTRL | ALT | META) == 0 {
-            if shifted {
+            if mask & SHIFT != 0 {
                 self.key.shifted_text.as_ref()
             } else {
                 self.key.text.as_ref()
@@ -293,7 +303,7 @@ impl KeyPress {
         let mut down = json!({
             "type": if text.is_some() { "keyDown" } else { "rawKeyDown" },
             "modifiers": mask,
-            "key": key,
+            "key": self.dom_key(),
             "code": self.key.code,
             "windowsVirtualKeyCode": self.key.virtual_key,
             "nativeVirtualKeyCode": self.key.virtual_key,
@@ -306,20 +316,32 @@ impl KeyPress {
             down["commands"] = json!([command]);
         }
         events.push(down);
-        events.push(json!({
-            "type": "keyUp",
-            "modifiers": mask,
-            "key": key,
-            "code": self.key.code,
-            "windowsVirtualKeyCode": self.key.virtual_key,
-            "nativeVirtualKeyCode": self.key.virtual_key,
-        }));
-        for modifier in self.modifiers.iter().rev() {
-            held &= !modifier.bit();
+        events
+    }
+
+    /// The releases for a press whose first `held` modifiers went down: the
+    /// key up when the key went down too, then those modifiers up in reverse.
+    fn release_events(&self, held: usize, key_sent: bool) -> Vec<Value> {
+        let mut mask = self.modifiers[..held]
+            .iter()
+            .fold(0, |mask, m| mask | m.bit());
+        let mut events = Vec::new();
+        if key_sent {
+            events.push(json!({
+                "type": "keyUp",
+                "modifiers": mask,
+                "key": self.dom_key(),
+                "code": self.key.code,
+                "windowsVirtualKeyCode": self.key.virtual_key,
+                "nativeVirtualKeyCode": self.key.virtual_key,
+            }));
+        }
+        for modifier in self.modifiers[..held].iter().rev() {
+            mask &= !modifier.bit();
             let (key, code, virtual_key) = modifier.identity();
             events.push(json!({
                 "type": "keyUp",
-                "modifiers": held,
+                "modifiers": mask,
                 "key": key,
                 "code": code,
                 "windowsVirtualKeyCode": virtual_key,
@@ -350,13 +372,17 @@ const BLOCKED_FOCUS_RESTORE_TIMEOUT: Duration = Duration::from_millis(50);
 
 /// What happened to the key itself.
 enum KeyDelivery {
-    /// Every event up to and including the key down was acknowledged.
+    /// The key down was acknowledged, or a dialog its handler opened is
+    /// blocking the reply.
     Pressed,
-    /// The key down was sent but not acknowledged: it may have reached the
-    /// page.
+    /// The key down was sent but neither acknowledged nor followed by a
+    /// dialog: it may have reached the page.
     Unknown(anyhow::Error),
-    /// Dispatch failed before the key down was sent.
+    /// A modifier down failed, so the key down was never sent.
     NotPressed(anyhow::Error),
+    /// A modifier's key handler opened a dialog, so the key down was never
+    /// sent.
+    DialogBeforeKey,
 }
 
 pub struct BrowserPressKeyTool {
@@ -591,44 +617,46 @@ impl Tool for BrowserPressKeyTool {
             }
         }
 
-        // Every event goes out even after one fails or a key handler opens a
-        // dialog, so the page is never left with a key or modifier held: a
-        // blocked renderer applies the releases once its dialog closes. Before
-        // the key down only the modifiers already down are released.
-        let events = press.events();
+        // Key downs stop at the first failure or dialog. Every modifier that
+        // may have gone down, the unacknowledged one included, is then
+        // released, and the key too once its down was sent: a blocked
+        // renderer applies the releases when its dialog closes.
+        let downs = press.down_events();
         let key_down_index = press.modifiers.len();
         let mut delivery = KeyDelivery::Pressed;
-        let mut released = true;
         let mut opened = None;
-        for (index, event) in events.into_iter().enumerate() {
+        let mut sent = 0;
+        for (index, event) in downs.into_iter().enumerate() {
+            sent = index + 1;
+            let call = conn.call(Some(cdp), "Input.dispatchKeyEvent", event);
+            match call_until_dialog(conn, cdp_target_id, call).await {
+                Ok(Ok(_)) => continue,
+                Err(open) => {
+                    opened = Some(open);
+                    if index < key_down_index {
+                        delivery = KeyDelivery::DialogBeforeKey;
+                    }
+                }
+                Ok(Err(error)) if index < key_down_index => {
+                    delivery = KeyDelivery::NotPressed(error)
+                }
+                Ok(Err(error)) => delivery = KeyDelivery::Unknown(error),
+            }
+            break;
+        }
+        let key_sent = sent > key_down_index;
+        let held = sent.min(key_down_index);
+        // Every release must be acknowledged for the keys to count as up.
+        let mut released = true;
+        for event in press.release_events(held, key_sent) {
             let call = conn.call(Some(cdp), "Input.dispatchKeyEvent", event);
             match call_until_dialog(conn, cdp_target_id, call).await {
                 Ok(Ok(_)) => {}
-                Err(open) => opened = Some(open),
-                Ok(Err(error)) if index < key_down_index => {
-                    delivery = KeyDelivery::NotPressed(error);
-                    for modifier in press.modifiers[..index].iter().rev() {
-                        let (key, code, virtual_key) = modifier.identity();
-                        let _ = conn
-                            .call(
-                                Some(cdp),
-                                "Input.dispatchKeyEvent",
-                                json!({
-                                    "type": "keyUp",
-                                    "key": key,
-                                    "code": code,
-                                    "windowsVirtualKeyCode": virtual_key,
-                                    "nativeVirtualKeyCode": virtual_key,
-                                }),
-                            )
-                            .await;
-                    }
-                    break;
-                }
-                Ok(Err(error)) if index == key_down_index => {
-                    delivery = KeyDelivery::Unknown(error);
-                }
                 Ok(Err(_)) => released = false,
+                Err(open) => {
+                    released = false;
+                    opened.get_or_insert(open);
+                }
             }
         }
         let opened = opened.or_else(|| conn.dialog_state(cdp_target_id));
@@ -637,46 +665,43 @@ impl Tool for BrowserPressKeyTool {
         } else {
             FOCUS_RESTORE_TIMEOUT
         };
-        let focus_emulation_restored =
-            disable_focus_emulation(conn, cdp, restore_timeout).await || opened.is_some();
-
-        let error = match delivery {
-            KeyDelivery::NotPressed(error) => {
-                return BrowserRefusal::new(
-                    BrowserRefusalCode::BrowserInputIncomplete,
-                    format!("the key was not pressed: {error}"),
-                )
-                .with_detail(json!({
-                    "pressed": false,
-                    "focus_emulation_restored": focus_emulation_restored,
-                    "retryable": false,
-                }))
-                .to_tool_result();
-            }
-            KeyDelivery::Unknown(error) => Some(error),
-            KeyDelivery::Pressed => None,
-        };
-        // The press may have reloaded, navigated, or edited the page.
+        let focus_emulation_restored = disable_focus_emulation(conn, cdp, restore_timeout).await;
+        // Whatever reached the page may have reloaded, navigated, or edited it.
         self.engine
             .store
             .invalidate_tab_snapshots(&session, &target_id, &tab_id);
-        if let Some(error) = error {
-            return BrowserRefusal::new(
-                BrowserRefusalCode::BrowserInputIncomplete,
+
+        let refusal = match delivery {
+            KeyDelivery::Pressed => None,
+            KeyDelivery::NotPressed(error) => Some((
+                format!("the key was not pressed: {error}"),
+                json!({ "pressed": false }),
+            )),
+            KeyDelivery::DialogBeforeKey => Some((
+                "a modifier's key handler opened a page dialog before the key was sent, so the \
+                 key was not pressed; resolve the dialog with browser_dialog first"
+                    .to_owned(),
+                json!({
+                    "pressed": false,
+                    "dialog": opened.as_ref().map(dialog_block),
+                }),
+            )),
+            KeyDelivery::Unknown(error) => Some((
                 format!(
                     "the key down was sent but not acknowledged ({error}); it may have reached \
                      the page, so read the page before pressing it again"
                 ),
-            )
-            .with_detail(json!({
-                "pressed": "unknown",
-                "delivery": "unknown",
-                "released": released,
-                "refs_invalidated": true,
-                "focus_emulation_restored": focus_emulation_restored,
-                "retryable": false,
-            }))
-            .to_tool_result();
+                json!({ "pressed": "unknown", "delivery": "unknown" }),
+            )),
+        };
+        if let Some((message, mut detail)) = refusal {
+            detail["released"] = json!(released);
+            detail["refs_invalidated"] = json!(true);
+            detail["focus_emulation_restored"] = json!(focus_emulation_restored);
+            detail["retryable"] = json!(false);
+            return BrowserRefusal::new(BrowserRefusalCode::BrowserInputIncomplete, message)
+                .with_detail(detail)
+                .to_tool_result();
         }
 
         let modifiers: Vec<&str> = press.modifiers.iter().map(|m| m.name()).collect();
@@ -700,6 +725,7 @@ impl Tool for BrowserPressKeyTool {
             structured["ref"] = json!(ext_ref);
         }
         if !focus_emulation_restored {
+            // Behind a dialog the restore is applied once the dialog closes.
             structured["focus_emulation_restored"] = json!(false);
         }
         let Some(open) = opened else {

@@ -1335,6 +1335,9 @@ pub struct ToolRegistry {
     _recording_state_readers: Vec<crate::session::RecordingStateReaderRegistration>,
     runtime_cleanups: Vec<RuntimeCleanup>,
     capture_service: Arc<crate::capture_runtime::CaptureService>,
+    /// Fast-path read-time state, owned by this runtime and cleared per
+    /// session when that session ends.
+    guard_store: Arc<crate::fast_path::store::GuardStore>,
     /// Runtime-owned protected-consent broker shared by every resource
     /// adapter. Keeping it at the canonical dispatch boundary prevents
     /// browser, desktop, and file adapters from growing independent provider
@@ -1381,6 +1384,8 @@ impl ToolRegistry {
         let weak_grants = Arc::downgrade(&protected_resource_grants);
         let weak_ownership = Arc::downgrade(&protected_resource_ownership);
         let weak_captures = Arc::downgrade(&capture_service);
+        let guard_store = Arc::new(crate::fast_path::store::GuardStore::new());
+        let weak_guard_store = Arc::downgrade(&guard_store);
         let session_end_hook =
             crate::session::register_scoped_session_end_hook(move |session_id| {
                 crate::agent_cursor::forget_input_origin(session_id);
@@ -1395,6 +1400,9 @@ impl ToolRegistry {
                 }
                 if let Some(captures) = weak_captures.upgrade() {
                     captures.retire_session_id(session_id);
+                }
+                if let Some(guard_store) = weak_guard_store.upgrade() {
+                    guard_store.retire_session(session_id);
                 }
                 let Some(grants) = weak_grants.upgrade() else {
                     return;
@@ -1432,6 +1440,7 @@ impl ToolRegistry {
             _recording_state_readers: vec![recording_state_reader],
             runtime_cleanups: Vec::new(),
             capture_service,
+            guard_store,
             approval_broker,
             protected_resource_grants,
             protected_resource_ownership,
@@ -1469,6 +1478,11 @@ impl ToolRegistry {
     /// Return the immutable-capture service owned by this runtime registry.
     pub fn capture_service(&self) -> Arc<crate::capture_runtime::CaptureService> {
         self.capture_service.clone()
+    }
+
+    /// Return the fast-path guard store owned by this runtime registry.
+    pub fn guard_store(&self) -> Arc<crate::fast_path::store::GuardStore> {
+        self.guard_store.clone()
     }
 
     pub fn protected_resource_grants(&self) -> Arc<crate::consent::ProtectedResourceGrants> {
@@ -1960,7 +1974,7 @@ impl ToolRegistry {
             Ok(crate::post_action_wait::PostActionWait::Default)
         };
         let delta_target = (!in_batch && crate::fast_path::wire::returns_delta(tool))
-            .then(|| crate::fast_path::wire::delta_target(&args))
+            .then(|| crate::fast_path::wire::delta_target(&args, &self.guard_store))
             .flatten();
         let mut result = match wait {
             Ok(wait) => {
@@ -6792,6 +6806,39 @@ resources:
         let after_end = registry.invoke_with_context("click", args, context).await;
         assert_eq!(after_end.is_error, Some(true));
         assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn guard_state_belongs_to_its_runtime_and_ends_with_its_session() {
+        use crate::fast_path::{pixel::GrayImage, store::ReadImage, window::WindowFingerprint};
+        let image = |snapshot_id| ReadImage {
+            snapshot_id,
+            image: GrayImage::filled(2, 2, 0),
+            window: WindowFingerprint {
+                window_id: 7,
+                pid: 42,
+                frame: crate::fast_path::Rect::new(0.0, 0.0, 10.0, 10.0),
+                scale: 1.0,
+            },
+        };
+        let context = standard_context();
+        let ended = context.runtime_session_key("guard-ended");
+        let kept = context.runtime_session_key("guard-kept");
+        let first = super::ToolRegistry::new();
+        let second = super::ToolRegistry::new();
+        first.guard_store().put_image(Some(&ended), 42, image(1));
+        first.guard_store().put_image(Some(&kept), 42, image(2));
+        assert!(second.guard_store().image(Some(&ended), 42, 7).is_none());
+
+        crate::session::fire_session_end(&ended);
+        assert!(first.guard_store().image(Some(&ended), 42, 7).is_none());
+        assert_eq!(
+            first
+                .guard_store()
+                .image(Some(&kept), 42, 7)
+                .map(|read| read.snapshot_id),
+            Some(2)
+        );
     }
 
     #[tokio::test]

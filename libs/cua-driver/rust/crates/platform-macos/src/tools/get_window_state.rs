@@ -274,7 +274,9 @@ impl Tool for GetWindowStateTool {
         // Fast path `on`: re-reads skip the screenshot unless asked for one.
         let should_capture = should_capture
             && !cua_driver_core::fast_path::wire::skip_reread_screenshot(
+                &self.state.guard_store,
                 &args,
+                session_id.as_deref(),
                 pid,
                 u64::from(window_id),
             );
@@ -446,6 +448,8 @@ impl Tool for GetWindowStateTool {
         };
         let screenshot = if should_capture {
             let out_file = screenshot_out_file.clone();
+            let guard_store = self.state.guard_store.clone();
+            let guard_session = session_id.clone();
             let res = tokio::task::spawn_blocking(move || -> Result<
                 (
                     Vec<u8>,
@@ -468,7 +472,14 @@ impl Tool for GetWindowStateTool {
                     &bounds,
                     || crate::capture::screenshot_window_image(window_id),
                 )?;
-                crate::fast_path_guard::record_read_image(pid, window_id, &raw, &bounds);
+                crate::fast_path_guard::record_read_image(
+                    &guard_store,
+                    guard_session.as_deref(),
+                    pid,
+                    window_id,
+                    &raw,
+                    &bounds,
+                );
                 // Resize and encode once from the raw pixels; the PNG bytes
                 // are identical to the former encode-decode-resize round trip.
                 let (png, w, h) = raw.encode(max_dim, encoding).map_err(|e| {
@@ -638,13 +649,20 @@ impl Tool for GetWindowStateTool {
         if let (Some(sid), Some(tree)) = (snapshot_id, tree_result.as_ref()) {
             if !observation_only {
                 crate::fast_path_guard::record_snapshot(
+                    &self.state.guard_store,
+                    session_id.as_deref(),
                     pid,
                     u64::from(window_id),
                     sid,
                     &tree.nodes,
                 );
                 if screenshot.is_none() {
-                    crate::fast_path_guard::record_window(pid, window_id);
+                    crate::fast_path_guard::record_window(
+                        &self.state.guard_store,
+                        session_id.as_deref(),
+                        pid,
+                        window_id,
+                    );
                 }
             }
         }

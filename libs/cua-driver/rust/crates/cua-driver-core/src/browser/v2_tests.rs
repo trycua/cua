@@ -29,6 +29,7 @@ use super::platform::{
     ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use super::pointer::BrowserPointerTool;
+use super::press_key::BrowserPressKeyTool;
 use super::refusal::BrowserRefusal;
 use super::tools::{
     browser_protected_resource_scope, BrowserClickTool, BrowserDialogTool, BrowserMotionPolicyTool,
@@ -62,6 +63,25 @@ pub(super) struct FixtureState {
     oopif_sessions: u64,
     fail_key_down_after: Option<usize>,
     completed_key_pairs: usize,
+    /// Fail the `Input.dispatchKeyEvent` call at this zero-based index.
+    fail_key_event_at: Option<usize>,
+    /// The `Input.dispatchKeyEvent` call at this index opens a confirm()
+    /// dialog and is never answered.
+    key_event_opens_dialog_at: Option<usize>,
+    /// The `Input.dispatchKeyEvent` call at this index opens a confirm()
+    /// dialog whose event frame comes just before the call's reply.
+    key_event_opens_dialog_before_reply_at: Option<usize>,
+    /// ...whose event frame comes just after the call's reply.
+    key_event_opens_dialog_after_reply_at: Option<usize>,
+    key_events: usize,
+    focus_emulation_enable_fails: bool,
+    /// `DOM.focus` runs a focus handler that opens a confirm() dialog.
+    focus_opens_dialog: bool,
+    /// ...whose event frame comes just before `DOM.focus`'s reply.
+    focus_opens_dialog_before_reply: bool,
+    /// ...whose event frame comes just after `DOM.focus`'s reply (a
+    /// deferred handler).
+    focus_opens_dialog_after_reply: bool,
     /// A synthetic `this.click()` opens a confirm() dialog: the mock emits
     /// `Page.javascriptDialogOpening` and never answers the call.
     click_opens_dialog: bool,
@@ -177,6 +197,15 @@ impl Default for FixtureState {
             oopif_sessions: 0,
             fail_key_down_after: None,
             completed_key_pairs: 0,
+            fail_key_event_at: None,
+            key_event_opens_dialog_at: None,
+            key_event_opens_dialog_before_reply_at: None,
+            key_event_opens_dialog_after_reply_at: None,
+            key_events: 0,
+            focus_emulation_enable_fails: false,
+            focus_opens_dialog: false,
+            focus_opens_dialog_before_reply: false,
+            focus_opens_dialog_after_reply: false,
             click_opens_dialog: false,
             dialog_vanished: false,
             trusted_click_opens_dialog: None,
@@ -872,7 +901,35 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             }
             "Input.dispatchKeyEvent" => {
                 let event_type = call.params["type"].as_str().unwrap_or_default();
-                if event_type == "keyDown" && st.fail_key_down_after == Some(st.completed_key_pairs)
+                let index = st.key_events;
+                st.key_events += 1;
+                if st.renderer_blocked {
+                    return MockReply::hang();
+                }
+                let before_reply = st.key_event_opens_dialog_before_reply_at == Some(index);
+                let after_reply = st.key_event_opens_dialog_after_reply_at == Some(index);
+                if before_reply || after_reply || st.key_event_opens_dialog_at == Some(index) {
+                    st.renderer_blocked = true;
+                    let events = st
+                        .page_sessions
+                        .iter()
+                        .map(|page_session| MockEvent {
+                            method: "Page.javascriptDialogOpening".into(),
+                            session_id: Some(page_session.clone()),
+                            params: json!({ "type": "confirm", "message": "Leave?", "url": st.main_url }),
+                        })
+                        .collect();
+                    return if before_reply {
+                        MockReply::ok(json!({})).with_events(events)
+                    } else if after_reply {
+                        MockReply::ok(json!({})).with_events_after(events)
+                    } else {
+                        MockReply::hang().with_events(events)
+                    };
+                }
+                if st.fail_key_event_at == Some(index)
+                    || (event_type == "keyDown"
+                        && st.fail_key_down_after == Some(st.completed_key_pairs))
                 {
                     MockReply::err(-32000, "fixture key delivery failure")
                 } else {
@@ -911,6 +968,11 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 MockReply::ok(json!({}))
             }
             "Emulation.setFocusEmulationEnabled"
+                if call.params["enabled"] == true && st.focus_emulation_enable_fails =>
+            {
+                MockReply::err(-32000, "fixture focus emulation failure")
+            }
+            "Emulation.setFocusEmulationEnabled"
                 if call.params["enabled"] == false && st.focus_emulation_restore_fails =>
             {
                 MockReply::err(-32000, "fixture focus restore failure")
@@ -920,6 +982,29 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             {
                 st.covering_node = st.focus_emulation_covers;
                 MockReply::ok(json!({}))
+            }
+            "DOM.focus"
+                if st.focus_opens_dialog
+                    || st.focus_opens_dialog_before_reply
+                    || st.focus_opens_dialog_after_reply =>
+            {
+                st.renderer_blocked = true;
+                let events = st
+                    .page_sessions
+                    .iter()
+                    .map(|page_session| MockEvent {
+                        method: "Page.javascriptDialogOpening".into(),
+                        session_id: Some(page_session.clone()),
+                        params: json!({ "type": "confirm", "message": "Sure?", "url": st.main_url }),
+                    })
+                    .collect();
+                if st.focus_opens_dialog_before_reply {
+                    MockReply::ok(json!({})).with_events(events)
+                } else if st.focus_opens_dialog_after_reply {
+                    MockReply::ok(json!({})).with_events_after(events)
+                } else {
+                    MockReply::hang().with_events(events)
+                }
             }
             "DOM.focus" | "Emulation.setFocusEmulationEnabled" | "Input.insertText" => {
                 MockReply::ok(json!({}))
@@ -4710,6 +4795,452 @@ async fn select_in_an_oopif_routes_to_the_child_session() {
     let scripts = select_scripts(&f);
     assert_eq!(scripts.len(), 1);
     assert!(scripts[0].0.as_deref().unwrap().starts_with("oopif-sess-"));
+}
+
+async fn press_key_with(f: &Fixture, extra: Value) -> ToolResult {
+    let (target, tab) = bind(f).await;
+    let mut args = json!({ "target_id": target, "tab_id": tab, "session": SESSION });
+    args.as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    BrowserPressKeyTool::new(f.engine.clone())
+        .invoke(args)
+        .await
+}
+
+fn key_event_summary(f: &Fixture) -> Vec<(String, String, i64)> {
+    recorded_calls(f, "Input.dispatchKeyEvent")
+        .into_iter()
+        .map(|(_, params)| {
+            (
+                params["type"].as_str().unwrap_or_default().to_owned(),
+                params["key"].as_str().unwrap_or_default().to_owned(),
+                params["modifiers"].as_i64().unwrap_or(-1),
+            )
+        })
+        .collect()
+}
+
+fn summary(events: &[(&str, &str, i64)]) -> Vec<(String, String, i64)> {
+    events
+        .iter()
+        .map(|(t, k, m)| (t.to_string(), k.to_string(), *m))
+        .collect()
+}
+
+#[tokio::test]
+async fn press_key_sends_a_chord_on_the_tab_session_without_activating_it() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let old_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserPressKeyTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "key": "a",
+            "modifiers": ["ctrl"]
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["modifiers"], json!(["ctrl"]));
+    assert_eq!(s["pressed"], true);
+    assert_eq!(s["released"], true);
+    assert_eq!(s["refs_invalidated"], true);
+
+    assert_eq!(
+        key_event_summary(&f),
+        summary(&[
+            ("rawKeyDown", "Control", 2),
+            ("rawKeyDown", "a", 2),
+            ("keyUp", "a", 2),
+            ("keyUp", "Control", 0),
+        ])
+    );
+    assert!(recorded_calls(&f, "Input.dispatchKeyEvent")
+        .iter()
+        .all(|(session, _)| session.as_deref().unwrap().starts_with("tab-sess-")));
+    let focus_emulation = recorded_calls(&f, "Emulation.setFocusEmulationEnabled");
+    assert_eq!(focus_emulation.len(), 2);
+    assert_eq!(focus_emulation[0].1["enabled"], true);
+    assert_eq!(focus_emulation[1].1["enabled"], false);
+    assert!(recorded_calls(&f, "DOM.focus").is_empty());
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+
+    // The press may have reloaded or edited the page, so its refs are gone.
+    let stale = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": old_ref,
+            "text": "x",
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&stale)["refusal"]["code"], "browser_ref_stale");
+}
+
+#[tokio::test]
+async fn press_key_with_a_ref_focuses_it_on_its_own_frame_session() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let oopif_ref = ref_of(&snap, "oopif", "ad-input");
+
+    let result = BrowserPressKeyTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "key": "return",
+            "ref": oopif_ref
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["ref"], oopif_ref);
+    let focuses = recorded_calls(&f, "DOM.focus");
+    assert_eq!(focuses.len(), 1);
+    assert!(focuses[0].0.as_deref().unwrap().starts_with("oopif-sess-"));
+    let events = recorded_calls(&f, "Input.dispatchKeyEvent");
+    assert_eq!(events.len(), 2);
+    assert!(events
+        .iter()
+        .all(|(session, _)| session.as_deref().unwrap().starts_with("oopif-sess-")));
+    assert_eq!(events[0].1["type"], "keyDown");
+    assert_eq!(events[0].1["windowsVirtualKeyCode"], 13);
+    assert_eq!(events[0].1["text"], "\r");
+    assert_no_dom_calls_after_focus(&f);
+}
+
+#[tokio::test]
+async fn press_key_that_fails_before_the_key_goes_down_releases_every_sent_modifier() {
+    // Index 1 is shift's down, after ctrl went down at index 0.
+    let f = fixture_with(|state| state.fail_key_event_at = Some(1)).await;
+    let result = press_key_with(&f, json!({ "key": "z", "modifiers": ["ctrl", "shift"] })).await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(s["refusal"]["code"], "browser_input_incomplete");
+    assert_eq!(s["refusal"]["detail"]["pressed"], false);
+    assert_eq!(
+        key_event_summary(&f)
+            .into_iter()
+            .map(|(t, k, _)| (t, k))
+            .collect::<Vec<_>>(),
+        // Shift's down was not acknowledged but may have landed, so it is
+        // released too.
+        [
+            ("rawKeyDown".to_owned(), "Control".to_owned()),
+            ("rawKeyDown".to_owned(), "Shift".to_owned()),
+            ("keyUp".to_owned(), "Shift".to_owned()),
+            ("keyUp".to_owned(), "Control".to_owned()),
+        ]
+    );
+    let focus_emulation = recorded_calls(&f, "Emulation.setFocusEmulationEnabled");
+    assert_eq!(focus_emulation.last().unwrap().1["enabled"], false);
+}
+
+#[tokio::test]
+async fn press_key_whose_key_down_is_unacknowledged_reports_unknown_delivery() {
+    // Index 1 is the key's own down: it may have reached the page.
+    let f = fixture_with(|state| state.fail_key_event_at = Some(1)).await;
+    let result = press_key_with(&f, json!({ "key": "z", "modifiers": ["ctrl"] })).await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(s["refusal"]["code"], "browser_input_incomplete");
+    assert_eq!(s["refusal"]["detail"]["delivery"], "unknown");
+    assert_eq!(s["refusal"]["detail"]["refs_invalidated"], true);
+    assert_eq!(s["refusal"]["detail"]["retryable"], false);
+    // The key and the modifier are still released.
+    assert_eq!(
+        key_event_summary(&f),
+        summary(&[
+            ("rawKeyDown", "Control", 2),
+            ("rawKeyDown", "z", 2),
+            ("keyUp", "z", 2),
+            ("keyUp", "Control", 0),
+        ])
+    );
+}
+
+#[tokio::test]
+async fn press_key_reports_a_lost_release_and_still_sends_the_rest() {
+    // ctrl+w can close the tab before its key up is answered.
+    let f = fixture_with(|state| state.fail_key_event_at = Some(2)).await;
+    let result = press_key_with(&f, json!({ "key": "w", "modifiers": ["ctrl"] })).await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["pressed"], true);
+    assert_eq!(s["released"], false);
+    let events = key_event_summary(&f);
+    assert_eq!(events.len(), 4, "{events:?}");
+    assert_eq!(
+        events[3],
+        ("keyUp".to_owned(), "Control".to_owned(), 0),
+        "ctrl must still be released"
+    );
+}
+
+#[tokio::test]
+async fn press_key_restores_focus_emulation_when_enabling_it_fails() {
+    let f = fixture_with(|state| state.focus_emulation_enable_fails = true).await;
+    let result = press_key_with(&f, json!({ "key": "f5" })).await;
+    let s = structured(&result);
+    assert_eq!(
+        s["refusal"]["code"], "browser_input_trust_unavailable",
+        "{s}"
+    );
+    assert_eq!(s["refusal"]["detail"]["pressed"], false);
+    let focus_emulation = recorded_calls(&f, "Emulation.setFocusEmulationEnabled");
+    assert_eq!(focus_emulation.len(), 2);
+    assert_eq!(focus_emulation[1].1["enabled"], false);
+    assert!(recorded_calls(&f, "Input.dispatchKeyEvent").is_empty());
+}
+
+#[tokio::test]
+async fn press_key_returns_when_its_handler_opens_a_dialog() {
+    let f = fixture_with(|state| state.key_event_opens_dialog_at = Some(0)).await;
+    let (target, tab) = bind(&f).await;
+    let started = std::time::Instant::now();
+    let result = BrowserPressKeyTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "session": SESSION, "key": "return"
+        }))
+        .await;
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "the press must not wait out the CDP call timeout: {:?}",
+        started.elapsed()
+    );
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["pressed"], true);
+    assert_eq!(s["released"], false, "the blocked key up is unconfirmed");
+    assert_eq!(s["effect"], "unverifiable");
+    assert_eq!(s["dialog"]["present"], true, "{s}");
+    assert_eq!(s["dialog"]["kind"], "confirm");
+    let events = key_event_summary(&f);
+    assert_eq!(
+        events.len(),
+        2,
+        "the key must still be released: {events:?}"
+    );
+    assert_eq!(events[1].0, "keyUp");
+    let focus_emulation = recorded_calls(&f, "Emulation.setFocusEmulationEnabled");
+    assert_eq!(focus_emulation.last().unwrap().1["enabled"], false);
+
+    // While the dialog blocks the page, the next press is refused up front.
+    let again = BrowserPressKeyTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "session": SESSION, "key": "a"
+        }))
+        .await;
+    let again = structured(&again);
+    assert_eq!(
+        again["refusal"]["code"], "browser_action_unavailable",
+        "{again}"
+    );
+    assert_eq!(key_event_summary(&f).len(), 2);
+}
+
+#[tokio::test]
+async fn press_key_whose_modifier_opens_a_dialog_never_sends_the_key() {
+    let f = fixture_with(|state| state.key_event_opens_dialog_at = Some(0)).await;
+    let result = press_key_with(&f, json!({ "key": "a", "modifiers": ["ctrl"] })).await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(s["refusal"]["code"], "browser_input_incomplete");
+    assert_eq!(s["refusal"]["detail"]["pressed"], false);
+    assert_eq!(s["refusal"]["detail"]["released"], false);
+    assert_eq!(s["refusal"]["detail"]["dialog"]["present"], true, "{s}");
+    assert_eq!(
+        key_event_summary(&f)
+            .into_iter()
+            .map(|(t, k, _)| (t, k))
+            .collect::<Vec<_>>(),
+        [
+            ("rawKeyDown".to_owned(), "Control".to_owned()),
+            ("keyUp".to_owned(), "Control".to_owned()),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn press_key_stops_when_a_modifier_reply_follows_its_dialog() {
+    let f = fixture_with(|state| state.key_event_opens_dialog_before_reply_at = Some(0)).await;
+    let result = press_key_with(&f, json!({ "key": "a", "modifiers": ["ctrl"] })).await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(s["refusal"]["code"], "browser_input_incomplete");
+    assert_eq!(s["refusal"]["detail"]["pressed"], false);
+    assert_eq!(s["refusal"]["detail"]["dialog"]["present"], true, "{s}");
+    assert_eq!(
+        key_event_summary(&f)
+            .into_iter()
+            .map(|(t, k, _)| (t, k))
+            .collect::<Vec<_>>(),
+        [
+            ("rawKeyDown".to_owned(), "Control".to_owned()),
+            ("keyUp".to_owned(), "Control".to_owned()),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn press_key_reports_a_dialog_opened_by_a_cleanup_release() {
+    // ctrl's down fails, then its cleanup key up opens a dialog.
+    let f = fixture_with(|state| {
+        state.fail_key_event_at = Some(0);
+        state.key_event_opens_dialog_at = Some(1);
+    })
+    .await;
+    let result = press_key_with(&f, json!({ "key": "a", "modifiers": ["ctrl"] })).await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(s["refusal"]["code"], "browser_input_incomplete");
+    assert_eq!(s["refusal"]["detail"]["pressed"], false);
+    assert_eq!(s["refusal"]["detail"]["released"], false);
+    assert_eq!(s["refusal"]["detail"]["dialog"]["present"], true, "{s}");
+}
+
+#[tokio::test]
+async fn press_key_whose_ref_focus_opens_a_dialog_sends_no_key() {
+    press_key_whose_ref_focus_opens_a_dialog(|state| state.focus_opens_dialog = true).await;
+}
+
+#[tokio::test]
+async fn press_key_whose_ref_focus_reply_follows_its_dialog_sends_no_key() {
+    press_key_whose_ref_focus_opens_a_dialog(|state| state.focus_opens_dialog_before_reply = true)
+        .await;
+}
+
+/// A dialog that opens after a reply races the driver's next check, in
+/// Chromium as here. Either way the result is honest: the key was not sent
+/// and the press is refused, or it was sent and is reported pressed with the
+/// dialog and an unverifiable effect. The press never stalls.
+fn assert_honest_dialog_outcome(f: &Fixture, result: &ToolResult, key: &str) {
+    let s = structured(result);
+    // The driver cannot tell which handler opened the dialog, so its wording
+    // never names one.
+    let text = match result.content.first() {
+        Some(Content::Text { text, .. }) => text.clone(),
+        _ => String::new(),
+    };
+    for said in [
+        text.as_str(),
+        s["escalation"]["reason"].as_str().unwrap_or_default(),
+        s["refusal"]["message"].as_str().unwrap_or_default(),
+    ] {
+        assert!(!said.contains("handler opened"), "{said}");
+        assert!(!said.contains("the key opened"), "{said}");
+    }
+    let key_sent = key_event_summary(f)
+        .iter()
+        .any(|(event, name, _)| event != "keyUp" && name == key);
+    if s["status"] == "ok" {
+        assert!(key_sent, "{s}");
+        assert_eq!(s["pressed"], true, "{s}");
+        assert_eq!(s["effect"], "unverifiable", "{s}");
+        assert_eq!(s["dialog"]["present"], true, "{s}");
+    } else {
+        assert!(!key_sent, "{s}");
+        assert_eq!(s["refusal"]["code"], "browser_input_incomplete", "{s}");
+        assert_eq!(s["refusal"]["detail"]["pressed"], false, "{s}");
+        assert_eq!(s["refusal"]["detail"]["dialog"]["present"], true, "{s}");
+    }
+}
+
+#[tokio::test]
+async fn press_key_whose_modifier_opens_a_dialog_after_its_reply_reports_honestly() {
+    let f = fixture_with(|state| state.key_event_opens_dialog_after_reply_at = Some(0)).await;
+    let started = std::time::Instant::now();
+    let result = press_key_with(&f, json!({ "key": "a", "modifiers": ["ctrl"] })).await;
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    assert_honest_dialog_outcome(&f, &result, "a");
+}
+
+#[tokio::test]
+async fn press_key_whose_ref_focus_opens_a_dialog_after_its_reply_reports_honestly() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let field = ref_of(&snap, "main", "Shadow Input");
+    f.state.lock().unwrap().focus_opens_dialog_after_reply = true;
+    let started = std::time::Instant::now();
+    let result = BrowserPressKeyTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "session": SESSION,
+            "key": "a", "ref": field
+        }))
+        .await;
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    assert_honest_dialog_outcome(&f, &result, "a");
+    assert_no_dom_calls_after_focus(&f);
+}
+
+fn assert_no_dom_calls_after_focus(f: &Fixture) {
+    let state = f.state.lock().unwrap();
+    let focus = state
+        .calls
+        .iter()
+        .position(|(_, method, _)| method == "DOM.focus")
+        .expect("the ref was focused");
+    let after: Vec<&str> = state.calls[focus + 1..]
+        .iter()
+        .map(|(_, method, _)| method.as_str())
+        .filter(|method| method.starts_with("DOM."))
+        .collect();
+    assert!(after.is_empty(), "DOM calls after the focus: {after:?}");
+}
+
+async fn press_key_whose_ref_focus_opens_a_dialog(configure: impl FnOnce(&mut FixtureState)) {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let field = ref_of(&snap, "main", "Shadow Input");
+    configure(&mut f.state.lock().unwrap());
+
+    let started = std::time::Instant::now();
+    let result = BrowserPressKeyTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "session": SESSION,
+            "key": "a", "ref": field
+        }))
+        .await;
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "the focus must not wait out the CDP call timeout: {:?}",
+        started.elapsed()
+    );
+    let s = structured(&result);
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(s["refusal"]["code"], "browser_input_incomplete");
+    assert_eq!(s["refusal"]["detail"]["pressed"], false);
+    assert_eq!(s["refusal"]["detail"]["dialog"]["present"], true, "{s}");
+    assert!(recorded_calls(&f, "Input.dispatchKeyEvent").is_empty());
+    // Nothing may queue behind the focus handler's dialog: no geometry or
+    // visual lookup runs between the focus and the key loop.
+    assert_no_dom_calls_after_focus(&f);
+}
+
+#[tokio::test]
+async fn press_key_refuses_unknown_keys_and_modifiers_before_any_cdp_input() {
+    for extra in [
+        json!({ "key": "f13" }),
+        json!({ "key": "a", "modifiers": ["hyper"] }),
+        json!({ "key": "a", "modifiers": "ctrl" }),
+        json!({ "key": "shift" }),
+    ] {
+        let f = fixture().await;
+        let result = press_key_with(&f, extra.clone()).await;
+        assert_eq!(result.is_error, Some(true), "{extra}");
+        assert!(recorded_calls(&f, "Input.dispatchKeyEvent").is_empty());
+        assert!(recorded_calls(&f, "Emulation.setFocusEmulationEnabled").is_empty());
+    }
 }
 
 // ---- window-less page targets (trycua/cua#3540) ------------------------------------------

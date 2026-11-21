@@ -165,12 +165,13 @@ Read and act on web pages, and prepare and navigate browsers. [Reference](/cua-d
 
 ## Browser input tools
 
-Exact browser input over CDP: clicks, typing, pointer, dialogs, files and downloads. [Reference](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#browser-input-tools).
+Exact browser input over CDP: clicks, typing, keys, pointer, dialogs, files and downloads. [Reference](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#browser-input-tools).
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
 | <span id="browser_click"></span>[`browser_click`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#browser_click) | Click a page element (by ref) or viewport coordinates in an exactly-bound tab. | macOS, Linux, Windows |
 | <span id="browser_type"></span>[`browser_type`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#browser_type) | Type text into an exactly-bound tab via the Input domain. | macOS, Linux, Windows |
+| <span id="browser_press_key"></span>[`browser_press_key`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#browser_press_key) | Press one key or chord in an exactly-bound tab through CDP Input.dispatchKeyEvent, without activating the tab or raising the browser window. | macOS, Linux, Windows |
 | <span id="browser_select"></span>[`browser_select`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#browser_select) | Select one option of a native HTML &lt;select&gt; ref on an exactly-bound tab without opening its popup. | macOS, Linux, Windows |
 | <span id="browser_pointer"></span>[`browser_pointer`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#browser_pointer) | Perform hover, right-click, double-click, scroll, or drag in an exactly-bound browser tab. | macOS, Linux, Windows |
 | <span id="browser_dialog"></span>[`browser_dialog`](/cua-driver/reference/mcp-tools/pointer-cursor-and-browser#browser_dialog) | Inspect or resolve a page-owned JavaScript alert, confirm, prompt, or beforeunload dialog on one exactly-bound tab. | macOS, Linux, Windows |

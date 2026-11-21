@@ -243,8 +243,8 @@ export const MCP_CATEGORIES: Array<McpCategory & { tools: string[] }> = [
   {
     slug: 'browser-input',
     title: 'Browser input tools',
-    summary: 'Exact browser input over CDP: clicks, typing, pointer, dialogs, files and downloads',
-    tools: ['browser_click', 'browser_type', 'browser_select', 'browser_pointer', 'browser_dialog', 'browser_set_input_files', 'browser_download'],
+    summary: 'Exact browser input over CDP: clicks, typing, keys, pointer, dialogs, files and downloads',
+    tools: ['browser_click', 'browser_type', 'browser_press_key', 'browser_select', 'browser_pointer', 'browser_dialog', 'browser_set_input_files', 'browser_download'],
   },
   {
     slug: 'sessions',

@@ -175,6 +175,7 @@ fn assert_tools_list_schema_shape(mut d: RawDriver) {
         "browser_navigate",
         "browser_click",
         "browser_type",
+        "browser_press_key",
     ] {
         assert!(
             tools.iter().any(|tool| tool["name"] == name),
@@ -204,6 +205,7 @@ fn assert_tools_list_schema_shape(mut d: RawDriver) {
         ("browser_navigate", &["target_id", "tab_id", "url"][..]),
         ("browser_click", &["target_id", "tab_id"][..]),
         ("browser_type", &["target_id", "tab_id", "ref", "text"][..]),
+        ("browser_press_key", &["target_id", "tab_id", "key"][..]),
     ] {
         let tool = tools
             .iter()

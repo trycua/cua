@@ -656,6 +656,78 @@ fn incomplete_browser_typing_reports_the_counts() {
 }
 
 #[test]
+fn an_unpressed_browser_key_reads_the_page_before_pressing_again() {
+    let hint = hint_for(
+        "browser_press_key",
+        &seed(json!({"target_id": "t", "tab_id": "x"})),
+        false,
+        json!({"status": "refused", "refusal": {
+            "code": "browser_input_incomplete",
+            "message": "m",
+            "detail": {"pressed": false},
+        }}),
+    );
+    assert_eq!(
+        hint.hint,
+        "The key was not pressed. Read the page with get_browser_state, then press it again."
+    );
+}
+
+#[test]
+fn an_unacknowledged_browser_key_is_checked_before_pressing_again() {
+    let hint = hint_for(
+        "browser_press_key",
+        &seed(json!({"target_id": "t", "tab_id": "x"})),
+        false,
+        json!({"status": "refused", "refusal": {
+            "code": "browser_input_incomplete",
+            "message": "m",
+            "detail": {"pressed": "unknown", "delivery": "unknown"},
+        }}),
+    );
+    assert_eq!(
+        hint.hint,
+        "The key may have reached the page. Read the page with get_browser_state to see whether it took effect before pressing it again."
+    );
+}
+
+#[test]
+fn a_browser_key_blocked_by_a_dialog_resolves_it_first() {
+    let hint = hint_for(
+        "browser_press_key",
+        &seed(json!({"target_id": "t", "tab_id": "x"})),
+        false,
+        json!({"status": "refused", "refusal": {
+            "code": "browser_input_incomplete",
+            "message": "m",
+            "detail": {"pressed": false, "dialog": {"present": true}},
+        }}),
+    );
+    assert_eq!(
+        hint.hint,
+        "The key was not pressed and a page dialog is open. Resolve it with browser_dialog, then read the page with get_browser_state."
+    );
+}
+
+#[test]
+fn a_browser_key_of_unknown_delivery_behind_a_dialog_keeps_the_uncertainty() {
+    let hint = hint_for(
+        "browser_press_key",
+        &seed(json!({"target_id": "t", "tab_id": "x"})),
+        false,
+        json!({"status": "refused", "refusal": {
+            "code": "browser_input_incomplete",
+            "message": "m",
+            "detail": {"pressed": "unknown", "delivery": "unknown", "dialog": {"present": true}},
+        }}),
+    );
+    assert_eq!(
+        hint.hint,
+        "A page dialog is open and the key may have reached the page. Resolve the dialog with browser_dialog, then read the page with get_browser_state to see whether the key took effect before pressing it again."
+    );
+}
+
+#[test]
 fn unverifiable_actions_read_what_changed() {
     let seed = window_seed();
     let read_changes = json!({

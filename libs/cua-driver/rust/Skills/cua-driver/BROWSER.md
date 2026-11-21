@@ -24,7 +24,7 @@ list_windows or launch_app
 get_browser_state(pid, window_id, session?)               # bind
 get_browser_state(target_id, tab_id, session?,
                   snapshot_format=semantic_v2)            # snapshot
-browser_navigate / browser_click / browser_type / browser_pointer
+browser_navigate / browser_click / browser_type / browser_press_key / browser_pointer
 browser_dialog / browser_set_input_files / browser_download
 get_browser_state(target_id, tab_id, session?,
                   snapshot_format=semantic_v2)            # verify and refresh refs
@@ -462,6 +462,25 @@ The driver revalidates the binding and ref, verifies editability and focus
 ownership, and reports requested versus delivered characters. Snapshot again
 to verify application state rather than treating transport completion as the
 task result.
+
+### Keys and chords
+
+Use `browser_press_key` for one key or chord in a bound tab, such as
+`ctrl+a`, `ctrl+z`, `escape`, or `f5`. It sends the keys over CDP with the
+modifiers held, so it works when the browser window is behind another app,
+where native `press_key` and `hotkey` are refused or dropped:
+
+```text
+browser_press_key
+  '{"target_id":"<target>","tab_id":"<tab>","key":"a",
+    "modifiers":["ctrl"],"ref":"p4:2","session":"browser-run-1"}'
+```
+
+`key` and `modifiers` take the `press_key` vocabulary. A `ref` focuses that
+element first; without one the keys go to the page's current focus. Browser
+shortcuts fire too (`ctrl+w` closes the tab, `f5` reloads), so every press
+invalidates the tab's refs. Snapshot again before the next ref action. On
+macOS, Cmd+A, C, X, V, Z, and Shift+Cmd+Z run their editing command.
 
 ### Extended pointer actions
 

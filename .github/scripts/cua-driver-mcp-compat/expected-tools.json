@@ -14,6 +14,7 @@
     "browser_navigate",
     "browser_pointer",
     "browser_prepare",
+    "browser_press_key",
     "browser_select",
     "browser_set_input_files",
     "browser_type",

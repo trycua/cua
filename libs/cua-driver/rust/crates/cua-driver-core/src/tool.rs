@@ -669,7 +669,7 @@ fn normalize_key_args(tool_name: &str, args: &mut Value) {
         return;
     };
     match tool_name {
-        "press_key" => {
+        "press_key" | "browser_press_key" => {
             let Some(key) = arguments
                 .get("key")
                 .and_then(Value::as_str)
@@ -1085,6 +1085,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "browser_motion_policy" => &["browser.motion.policy"],
         "browser_click" => &["browser.input.click"],
         "browser_type" => &["browser.input.type"],
+        "browser_press_key" => &["browser.input.key"],
         "browser_select" => &["browser.input.select"],
         "browser_dialog" => &["browser.dialog"],
         "browser_set_input_files" => &["browser.input.files"],
@@ -7955,6 +7956,7 @@ mod capability_tests {
         "browser_motion_policy",
         "browser_click",
         "browser_type",
+        "browser_press_key",
         "browser_select",
         "browser_dialog",
         "browser_set_input_files",
@@ -8049,6 +8051,7 @@ mod capability_tests {
         "browser.input.click",
         "browser.input.type",
         "browser.input.select",
+        "browser.input.key",
         "browser.input.files",
         "browser.dialog",
         "browser.download",

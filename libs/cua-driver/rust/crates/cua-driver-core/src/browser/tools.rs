@@ -3703,10 +3703,10 @@ mod tests {
         BrowserEngine::new(Arc::new(MockPlatform::default()))
     }
 
-    /// Browser tools serialize on the engine's per-tab mutation gates and
-    /// never on the desktop lane, so no call can hold the desktop lane while
-    /// it waits for a browser gate. The exemption is the contract's, not an
-    /// adapter attestation, so it holds for every argument shape.
+    /// Browser tools never take the desktop lane, so no call can hold it
+    /// while it waits for a browser mutation gate. The exemption is the
+    /// contract's, not an adapter attestation, so it holds for every
+    /// argument shape.
     #[test]
     fn no_registered_browser_tool_takes_the_desktop_lane() {
         let mut registry = ToolRegistry::new();

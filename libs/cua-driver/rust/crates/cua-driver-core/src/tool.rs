@@ -129,14 +129,17 @@ impl Lane {
 ///
 /// The order is fixed so no two calls can wait on each other:
 ///
-/// 1. [`Lane::Pid`] first. It is try-only and refuses at once, so a call
-///    never waits while holding nothing but a pid.
-/// 2. [`Lane::Desktop`] last. It is the only lane that waits.
+/// 1. [`Lane::Pid`] first. Claiming it never waits for its holder: a busy
+///    pid is refused at once.
+/// 2. [`Lane::Desktop`] last. It is the only lane that waits, and a call may
+///    wait for it while holding a pid lane. That cannot deadlock, because
+///    no call ever waits for a pid lane.
 ///
-/// Browser tools never take either lane: they are not physical desktop
-/// actions, so [`requires_desktop_coordination`] is false for them, and
-/// they serialize per CDP tab on the browser engine's `MutationGates`
-/// instead. Nothing takes the desktop lane and then a browser gate.
+/// Browser tools take neither lane: they are not physical desktop actions,
+/// so [`requires_desktop_coordination`] is false for them. The browser
+/// operations that mutate a tab serialize on the browser engine's
+/// `MutationGates` instead. Nothing takes the desktop lane and then a
+/// browser gate.
 #[derive(Default)]
 struct InputAdmission {
     pid: Option<PidLane>,
@@ -7316,20 +7319,16 @@ resources:
     #[test]
     fn every_native_action_result_tool_takes_the_desktop_lane() {
         use super::is_physical_desktop_action;
-        for name in cua_driver_contract::ACTION_RESULT_TOOLS {
-            assert_eq!(
-                is_physical_desktop_action(name),
-                !name.starts_with("browser_"),
-                "{name}"
-            );
+        // Browser tools are exempt; the browser engine's registration test
+        // owns that contract.
+        for name in cua_driver_contract::ACTION_RESULT_TOOLS
+            .iter()
+            .filter(|name| !name.starts_with("browser_"))
+        {
+            assert!(is_physical_desktop_action(name), "{name}");
         }
         assert!(is_physical_desktop_action("bring_to_front"));
-        for name in [
-            "get_window_state",
-            "screenshot",
-            "launch_app",
-            "browser_click",
-        ] {
+        for name in ["get_window_state", "screenshot", "launch_app"] {
             assert!(!is_physical_desktop_action(name), "{name}");
         }
     }

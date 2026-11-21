@@ -192,23 +192,22 @@ fn spawn_daemon(home: &Path, args: &[&str]) -> Child {
 }
 
 #[cfg(unix)]
-fn wait_until_serving(daemon: &mut Child, home: &Path, status_args: &[&str]) {
+fn wait_until_serving(daemon: &mut Child, home: &Path, status_args: &[&str]) -> Result<(), String> {
     let deadline = Instant::now() + BOUND;
     loop {
         if let Ok(Some(status)) = daemon.try_wait() {
-            panic!(
+            return Err(format!(
                 "daemon exited before becoming ready: {status}. \
                  Set CUA_TEST_DRIVER_STDERR=1 to inherit daemon stderr."
-            );
+            ));
         }
         if run_status(home, status_args, PROBE_BOUND).is_some_and(|output| output.status.success())
         {
-            return;
+            return Ok(());
         }
-        assert!(
-            Instant::now() < deadline,
-            "daemon did not become ready within {BOUND:?}"
-        );
+        if Instant::now() >= deadline {
+            return Err(format!("daemon did not become ready within {BOUND:?}"));
+        }
         std::thread::sleep(Duration::from_millis(50));
     }
 }
@@ -230,9 +229,10 @@ fn status_reports_the_daemon_serving_each_socket() {
         home.path(),
         &["serve", "--no-overlay", "--no-permissions-gate"],
     );
-    wait_until_serving(&mut default_daemon, home.path(), &["status"]);
+    let ready = wait_until_serving(&mut default_daemon, home.path(), &["status"]);
     let default_pid = default_daemon.id().to_string();
     reaper.push(default_daemon);
+    ready.unwrap_or_else(|error| panic!("{error}"));
 
     let mut custom_daemon = spawn_daemon(
         home.path(),
@@ -244,13 +244,14 @@ fn status_reports_the_daemon_serving_each_socket() {
             "--no-permissions-gate",
         ],
     );
-    wait_until_serving(
+    let ready = wait_until_serving(
         &mut custom_daemon,
         home.path(),
         &["status", "--socket", &custom_socket],
     );
     let custom_pid = custom_daemon.id().to_string();
     reaper.push(custom_daemon);
+    ready.unwrap_or_else(|error| panic!("{error}"));
 
     assert_eq!(status_pid(home.path(), &["status"]), default_pid);
     assert_eq!(

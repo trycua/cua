@@ -2903,7 +2903,15 @@ mod tests {
 
         let ended = ended_sessions().lock().unwrap();
         let records = lifecycle_records().lock().unwrap();
-        let mut closed = closed_transports().lock().unwrap();
+        // Prune a copy: pruning the shared set past the grace would forget
+        // owners that tests running in parallel just closed.
+        let mut closed = closed_transports()
+            .lock()
+            .unwrap()
+            .clone()
+            .into_iter()
+            .filter(|(owner, _)| owner == idle || owner == labelled)
+            .collect::<HashMap<_, _>>();
         let now = Instant::now();
         forget_closed_owners(&ended, &records, &mut closed, now);
         assert!(closed.contains_key(idle) && closed.contains_key(labelled));
@@ -2913,7 +2921,7 @@ mod tests {
             closed.contains_key(labelled),
             "its tombstone still names it"
         );
-        drop((closed, records, ended));
+        drop((records, ended));
         forget_ended_sessions_with_prefix("test-grace-closed-owner-");
     }
 

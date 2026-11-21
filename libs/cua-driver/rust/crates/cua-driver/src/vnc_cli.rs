@@ -23,8 +23,13 @@ const USAGE: &str = "usage:
 
 The server defaults to $CUA_VNC_SERVER, port 5900. Credentials come only from
 the environment: CUA_VNC_USER and CUA_VNC_PASSWORD (a macOS account), or
-CUA_VNC_PASSWORD alone for a VNC password. Clicks and typing are logged to
-$CUA_VNC_LOG, default ~/.cache/cua-driver/vnc-approvals.log.";
+CUA_VNC_PASSWORD alone for a VNC password. Each click and typed variable is
+logged to $CUA_VNC_LOG, default ~/.cache/cua-driver/vnc-approvals.log, before
+it is sent; an unwritable log stops it.
+
+VNC encrypts only the Apple account credentials, not the session: screenshots
+and typed text cross the network in the clear. Reach a remote Mac through an
+SSH tunnel or a network you trust.";
 
 #[derive(Debug, PartialEq, Eq)]
 enum Action {
@@ -128,6 +133,12 @@ fn execute(invocation: Invocation) -> Result<(), String> {
         }
         _ => None,
     };
+    // Open the approval log before connecting, so an unwritable log fails
+    // before any input is sent.
+    let mut log = match invocation.action {
+        Action::Shot { .. } => None,
+        _ => Some(ApprovalLog::open()?),
+    };
     let mut client =
         RfbClient::connect(&server, &credentials, TIMEOUT).map_err(|e| e.to_string())?;
     match invocation.action {
@@ -144,14 +155,20 @@ fn execute(invocation: Invocation) -> Result<(), String> {
             );
         }
         Action::Click { x, y, label } => {
-            client.click(x, y).map_err(|e| e.to_string())?;
-            record(&format!("{server} click {x},{y} {label}"));
+            let log = log.as_mut().expect("opened above");
+            log.record(&format!("{server} click {x},{y} {label}"))?;
+            client
+                .click(x, y)
+                .map_err(|e| log.failed(&server, e.to_string()))?;
             println!("Clicked ({x}, {y}) on {server}: {label}");
         }
         Action::TypeEnv { name } => {
             let text = typed.expect("read above");
-            client.type_line(&text).map_err(|e| e.to_string())?;
-            record(&format!("{server} typed ${name} (value not logged)"));
+            let log = log.as_mut().expect("opened above");
+            log.record(&format!("{server} type ${name} (value not logged)"))?;
+            client
+                .type_line(&text)
+                .map_err(|e| log.failed(&server, e.to_string()))?;
             println!("Typed ${name} and Return on {server}.");
         }
     }
@@ -174,40 +191,65 @@ fn open_private(options: &mut std::fs::OpenOptions, path: &Path) -> std::io::Res
     let file = options.open(path)?;
     #[cfg(unix)]
     file.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+    #[cfg(windows)]
+    crate::extension_manager::windows_secure_handle(&file)
+        .map_err(|error| std::io::Error::other(format!("{error:#}")))?;
     Ok(file)
 }
 
-/// Append one line to the approval log. A log that cannot be written is
-/// reported but does not undo the action that already happened.
-fn record(entry: &str) {
-    let path = std::env::var_os("CUA_VNC_LOG")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .or_else(|| std::env::var_os("USERPROFILE"))
-                .map(|home| PathBuf::from(home).join(".cache/cua-driver/vnc-approvals.log"))
-        });
-    let Some(path) = path else {
-        eprintln!("warning: no home directory, so this approval was not logged");
-        return;
-    };
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
-    let line = format!("{} {entry}\n", crate::version_check::iso8601(now));
-    let written = path
-        .parent()
-        .map_or(Ok(()), std::fs::create_dir_all)
-        .and_then(|()| {
-            let mut options = std::fs::OpenOptions::new();
-            options.append(true).create(true);
-            open_private(&mut options, &path)?.write_all(line.as_bytes())
-        });
-    if let Err(error) = written {
-        eprintln!(
-            "warning: cannot write the approval log {}: {error}",
-            path.display()
-        );
+/// The append-only log of every click and typed variable, written before
+/// the input is sent.
+struct ApprovalLog {
+    path: PathBuf,
+    file: std::fs::File,
+}
+
+impl ApprovalLog {
+    fn open() -> Result<Self, String> {
+        let path = std::env::var_os("CUA_VNC_LOG")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .or_else(|| std::env::var_os("USERPROFILE"))
+                    .map(|home| PathBuf::from(home).join(".cache/cua-driver/vnc-approvals.log"))
+            })
+            .ok_or("no home directory for the approval log; set CUA_VNC_LOG")?;
+        Self::at(path)
+    }
+
+    fn at(path: PathBuf) -> Result<Self, String> {
+        let file = path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| {
+                let mut options = std::fs::OpenOptions::new();
+                options.append(true).create(true);
+                open_private(&mut options, &path)
+            })
+            .map_err(|error| format!("cannot open the approval log {}: {error}", path.display()))?;
+        Ok(Self { path, file })
+    }
+
+    fn record(&mut self, entry: &str) -> Result<(), String> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_secs());
+        let line = format!("{} {entry}\n", crate::version_check::iso8601(now));
+        self.file.write_all(line.as_bytes()).map_err(|error| {
+            format!(
+                "cannot write the approval log {}: {error}",
+                self.path.display()
+            )
+        })
+    }
+
+    /// Note that the input just logged did not go through, and return the
+    /// error to report.
+    fn failed(&mut self, server: &str, error: String) -> String {
+        if let Err(log_error) = self.record(&format!("{server} failed: {error}")) {
+            eprintln!("warning: {log_error}");
+        }
+        error
     }
 }
 
@@ -231,6 +273,46 @@ mod tests {
         let content = std::fs::read(&path).unwrap();
         std::fs::remove_file(&path).unwrap();
         assert_eq!((mode, content.as_slice()), (0o600, &b"new"[..]));
+    }
+
+    #[test]
+    fn approval_log_refuses_an_unwritable_path_and_appends_privately() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("file");
+        std::fs::write(&blocker, b"").unwrap();
+        let unwritable = blocker.join("vnc-approvals.log");
+        let error = ApprovalLog::at(unwritable.clone()).err().unwrap();
+        assert!(
+            error.starts_with(&format!(
+                "cannot open the approval log {}: ",
+                unwritable.display()
+            )),
+            "{error}"
+        );
+
+        let path = dir.path().join("logs/vnc-approvals.log");
+        let mut log = ApprovalLog::at(path.clone()).unwrap();
+        log.record("mac click 1,2 CuaDriver: Accessibility")
+            .unwrap();
+        assert_eq!(log.failed("mac", "refused".into()), "refused");
+        let lines = std::fs::read_to_string(&path).unwrap();
+        let entries: Vec<_> = lines
+            .lines()
+            .map(|line| line.split_once(' ').unwrap().1)
+            .collect();
+        assert_eq!(
+            entries,
+            [
+                "mac click 1,2 CuaDriver: Accessibility",
+                "mac failed: refused"
+            ]
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
     }
 
     #[test]

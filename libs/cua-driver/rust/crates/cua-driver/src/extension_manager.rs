@@ -4512,7 +4512,9 @@ fn windows_reject_reparse_directory(directory: &Dir) -> Result<()> {
 }
 
 #[cfg(windows)]
-fn windows_secure_handle<T: std::os::windows::io::AsRawHandle>(handle: &T) -> Result<()> {
+pub(crate) fn windows_secure_handle<T: std::os::windows::io::AsRawHandle>(
+    handle: &T,
+) -> Result<()> {
     windows_set_private_security(handle.as_raw_handle().cast())?;
     windows_verify_security(handle.as_raw_handle().cast())
 }

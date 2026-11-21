@@ -324,6 +324,7 @@ pub enum RefusalCode {
     ModifiedPointerUnavailable,
     WindowMinimized,
     ElementNotVisible,
+    AppUnresponsive,
     ForegroundUnavailable,
 }
 
@@ -352,6 +353,7 @@ impl RefusalCode {
             "modified_pointer_unavailable" => Some(Self::ModifiedPointerUnavailable),
             "window_minimized" => Some(Self::WindowMinimized),
             "element_not_visible" => Some(Self::ElementNotVisible),
+            "app_unresponsive" => Some(Self::AppUnresponsive),
             "foreground_unavailable" => Some(Self::ForegroundUnavailable),
             _ => None,
         }
@@ -2674,6 +2676,14 @@ mod tests {
             Some(RefusalCode::BackgroundUnavailable)
         );
         assert_eq!(RefusalCode::from_driver_code("background_timeout"), None);
+    }
+
+    #[test]
+    fn an_unresponsive_app_is_a_refusal_code() {
+        assert_eq!(
+            RefusalCode::from_driver_code("app_unresponsive"),
+            Some(RefusalCode::AppUnresponsive)
+        );
     }
 
     #[test]

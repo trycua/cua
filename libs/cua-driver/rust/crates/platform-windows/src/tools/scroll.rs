@@ -132,6 +132,9 @@ impl Tool for ScrollTool {
             Err(e) => return e,
         };
         let (elem_idx, hwnd_opt, admitted) = resolved.into_parts(args.opt_u64("window_id"));
+        if let Some(refusal) = super::impl_::refuse_if_unanswered(pid, &admitted, "scroll").await {
+            return refusal;
+        }
 
         // Resolve HWND: use window_id if given, else first window for pid.
         let hwnd = match hwnd_opt {
@@ -407,5 +410,41 @@ impl Tool for ScrollTool {
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod element_refusal_tests {
+    use super::ScrollTool;
+    use crate::tools::impl_::ToolState;
+    use cua_driver_core::tool::Tool;
+
+    #[tokio::test]
+    #[ignore = "needs a live UIA root (interactive desktop); drives the per-process gate"]
+    async fn an_element_scroll_refuses_while_its_app_holds_the_read_gate() {
+        let pid = u32::MAX - 5;
+        let state = ToolState::new(None);
+        let snapshot =
+            state
+                .snapshots
+                .publish(pid as i32, 0, crate::tools::impl_::live_uia_root_snapshot());
+        let tool = ScrollTool { state };
+        let release = crate::uia::windows_enum::hold_process_gate(pid);
+        let result = tool
+            .invoke(serde_json::json!({
+                "pid": pid,
+                "element_token": cua_driver_core::element_token::token_for(snapshot, 0),
+                "direction": "down",
+            }))
+            .await;
+        release.send(()).unwrap();
+        assert_eq!(
+            result
+                .structured_content
+                .as_ref()
+                .map(|value| value["code"].clone()),
+            Some(serde_json::json!("app_unresponsive")),
+            "{result:?}"
+        );
     }
 }

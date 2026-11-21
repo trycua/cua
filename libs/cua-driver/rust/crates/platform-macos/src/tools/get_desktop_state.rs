@@ -172,6 +172,7 @@ impl Tool for GetDesktopStateTool {
             "desktop screenshot {screenshot_width}x{screenshot_height} px \
              (screen {screen_width}x{screen_height} pts @ {scale_factor}x)"
         );
+        cua_driver_core::window_state_view::append_capture_id(&mut summary, &capture_id);
         cursor_overlay::capture_exclusion::append_summary_note(&mut summary, &overlay_capture);
         content.push(Content::text(summary));
 

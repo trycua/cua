@@ -3405,6 +3405,10 @@ fn run_existing_profile_setup_refusal(spec: &BrowserSpec) {
                         "window_id": fixture.window_id,
                         "session": session,
                         "strategy": {"kind": "existing_profile"},
+                        // The sentinel is in front on the same Space, so a
+                        // background request stops at background_unavailable
+                        // before the Brave setup refusal this case owns.
+                        "delivery_mode": "foreground",
                     }),
                 );
                 assert_eq!(

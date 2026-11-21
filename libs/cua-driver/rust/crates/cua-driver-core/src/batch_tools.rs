@@ -1004,9 +1004,7 @@ async fn run_step(
         }
         if result.is_error == Some(true) && matches!(attempt, StepAttempt::Original) {
             let refound = match &described {
-                Some(element) => {
-                    refind_described_target(locator, &window_spec, element, &args, &result).await
-                }
+                Some(element) => refind_described_target(locator, element, &args, &result).await,
                 None => None,
             };
             let refound = match refound {
@@ -1261,8 +1259,8 @@ async fn observe_after_settle(
     ended_on_action: bool,
 ) -> ToolResult {
     let deadline = Instant::now() + OBSERVE_SETTLE;
+    let mut result = registry.invoke(OBSERVE_TOOL, args.clone()).await;
     loop {
-        let result = registry.invoke(OBSERVE_TOOL, args.clone()).await;
         let state = result.structured_content.as_ref();
         let unchanged = result.is_error != Some(true)
             && state
@@ -1279,6 +1277,12 @@ async fn observe_after_settle(
             args["since"] = since;
         }
         tokio::time::sleep(OBSERVE_SETTLE_POLL).await;
+        // A re-read that does not finish by the deadline keeps the last one.
+        let left = deadline.saturating_duration_since(Instant::now());
+        match tokio::time::timeout(left, registry.invoke(OBSERVE_TOOL, args.clone())).await {
+            Ok(next) => result = next,
+            Err(_) => return result,
+        }
     }
 }
 
@@ -1614,10 +1618,10 @@ async fn refind_stale_target(
 
 /// Act again on a target the step described by role and name, after the
 /// window re-rendered between the find and the action: find it again the
-/// same way and return the arguments with its fresh token plus a note.
+/// same way in the window the first find resolved, and return the arguments
+/// with its fresh token plus a note.
 async fn refind_described_target(
     locator: &Locator<'_>,
-    window: &WindowSpec,
     element: &ElementSpec,
     args: &Value,
     result: &ToolResult,
@@ -1627,11 +1631,14 @@ async fn refind_described_target(
     {
         return None;
     }
-    let found = locator.find(window, element, REFIND_TIMEOUT).await.ok()?;
+    let pinned = WindowSpec {
+        pid: Some(args.get("pid")?.as_i64()?),
+        window_id: Some(args.get("window_id")?.as_u64()?),
+        ..Default::default()
+    };
+    let found = locator.find(&pinned, element, REFIND_TIMEOUT).await.ok()?;
     let mut retry = args.clone();
     let object = retry.as_object_mut()?;
-    object.insert("pid".into(), json!(found.window.pid));
-    object.insert("window_id".into(), json!(found.window.window_id));
     object.insert("element_token".into(), json!(found.token()?));
     Some((
         retry,

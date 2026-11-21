@@ -518,6 +518,9 @@ struct RerenderState {
     rerender_before_click: usize,
     /// Refuse the next click with this code.
     refuse_with: Option<&'static str>,
+    /// The app also shows window 8, behind 7, with the same rows; window 7
+    /// loses its rows once a click was tried.
+    second_window: bool,
     /// Every click's arguments, in order.
     sent: Vec<Value>,
     /// Refuse a live token's click unless it asks for the foreground, as a
@@ -539,10 +542,14 @@ impl Tool for Rerender {
             "get_window_state" => {
                 state.snapshot += 1;
                 let snapshot = format!("s{:08x}", state.snapshot);
+                let emptied = state.second_window
+                    && state.click_attempts > 0
+                    && args["window_id"].as_u64() == Some(7);
                 let elements: Vec<Value> = state
                     .rows
                     .iter()
                     .enumerate()
+                    .filter(|_| !emptied)
                     .map(|(index, (role, label))| {
                         json!({
                             "element_index": index + 1,
@@ -554,7 +561,7 @@ impl Tool for Rerender {
                     })
                     .collect();
                 ToolResult::text("read").with_structured(json!({
-                    "pid": 42, "window_id": 7, "snapshot_id": snapshot,
+                    "pid": 42, "window_id": args["window_id"].as_u64().unwrap_or(7), "snapshot_id": snapshot,
                     "elements": elements, "tree_markdown": "",
                 }))
             }
@@ -600,11 +607,20 @@ impl Tool for Rerender {
                 state.clicked.push(label.clone());
                 ToolResult::text(format!("clicked {label}"))
             }
-            "list_windows" => ToolResult::text("windows").with_structured(json!({"windows": [{
-                "pid": 42, "window_id": 7, "app_name": "Daymark", "title": "Daymark",
-                "z_index": 1, "is_on_screen": true,
-                "bounds": {"x": 0.0, "y": 0.0, "width": 800.0, "height": 600.0}
-            }]})),
+            "list_windows" => {
+                let window = |window_id: u64, z_index: u64| {
+                    json!({
+                        "pid": 42, "window_id": window_id, "app_name": "Daymark", "title": "Daymark",
+                        "z_index": z_index, "is_on_screen": true,
+                        "bounds": {"x": 0.0, "y": 0.0, "width": 800.0, "height": 600.0}
+                    })
+                };
+                let mut windows = vec![window(7, 1)];
+                if state.second_window {
+                    windows.push(window(8, 0));
+                }
+                ToolResult::text("windows").with_structured(json!({ "windows": windows }))
+            }
             _ => ToolResult::text("ok"),
         }
     }
@@ -784,6 +800,29 @@ async fn a_described_step_refused_after_a_rerender_is_found_again_and_run() {
 }
 
 #[tokio::test]
+async fn a_described_step_is_found_again_only_in_the_window_it_was_found_in() {
+    let (registry, state) = rerender_registry(vec![("AXButton", "Save")]);
+    {
+        let mut state = state.lock().unwrap();
+        state.refuse_with = Some("element_outside_target_window");
+        state.second_window = true;
+    }
+    let result = registry
+        .invoke(
+            super::super::RUN_STEPS_TOOL,
+            json!({"pid": 42, "steps": [{"click": {"role": "button", "name": "Save"}}]}),
+        )
+        .await;
+    assert_eq!(result.is_error, Some(true), "{}", text(&result));
+    assert!(
+        text(&result).contains("element_outside_target_window"),
+        "{}",
+        text(&result)
+    );
+    assert_eq!(state.lock().unwrap().click_attempts, 1);
+}
+
+#[tokio::test]
 async fn a_described_step_is_not_retried_for_other_refusals() {
     let (registry, state) = rerender_registry(vec![("AXButton", "Save")]);
     state.lock().unwrap().refuse_with = Some("off_space_or_ax_unresolved");
@@ -800,11 +839,12 @@ async fn a_described_step_is_not_retried_for_other_refusals() {
 }
 
 /// A window whose end-of-batch reads say "no change" `unchanged_reads`
-/// times, then show a change.
+/// times, then show a change. Every read after the first takes `slow`.
 struct LateApply {
     def: ToolDef,
     reads: Arc<Mutex<Vec<Value>>>,
     unchanged_reads: usize,
+    slow: std::time::Duration,
 }
 
 #[async_trait]
@@ -816,6 +856,10 @@ impl Tool for LateApply {
     async fn invoke(&self, args: Value) -> ToolResult {
         if self.def.name != "get_window_state" {
             return ToolResult::text(format!("{} done", self.def.name));
+        }
+        let earlier = self.reads.lock().unwrap().len();
+        if earlier > 0 {
+            tokio::time::sleep(self.slow).await;
         }
         let mut reads = self.reads.lock().unwrap();
         reads.push(args);
@@ -833,6 +877,13 @@ impl Tool for LateApply {
 }
 
 fn late_apply_registry(unchanged_reads: usize) -> (Arc<ToolRegistry>, Arc<Mutex<Vec<Value>>>) {
+    slow_late_apply_registry(unchanged_reads, std::time::Duration::ZERO)
+}
+
+fn slow_late_apply_registry(
+    unchanged_reads: usize,
+    slow: std::time::Duration,
+) -> (Arc<ToolRegistry>, Arc<Mutex<Vec<Value>>>) {
     let reads = Arc::new(Mutex::new(Vec::new()));
     let mut registry = ToolRegistry::new();
     for name in ["click", "get_window_state"] {
@@ -853,6 +904,7 @@ fn late_apply_registry(unchanged_reads: usize) -> (Arc<ToolRegistry>, Arc<Mutex<
             },
             reads: reads.clone(),
             unchanged_reads,
+            slow,
         }));
     }
     registry.register_session_tools();
@@ -905,6 +957,21 @@ async fn the_end_read_stops_retaking_after_its_cap() {
     );
     assert!(waited < std::time::Duration::from_millis(600), "{waited:?}");
     assert!(reads.lock().unwrap().len() > 1);
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn a_slow_end_re_read_does_not_hold_the_batch_past_its_cap() {
+    let (registry, _) = slow_late_apply_registry(usize::MAX, std::time::Duration::from_secs(1));
+    let started = std::time::Instant::now();
+    let result = click_and_observe(&registry).await;
+    let waited = started.elapsed();
+    assert!(
+        text(&result).contains("observation: no change since s00000100"),
+        "{}",
+        text(&result)
+    );
+    assert!(waited < std::time::Duration::from_millis(600), "{waited:?}");
 }
 
 #[cfg(not(target_os = "macos"))]

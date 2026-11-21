@@ -725,7 +725,18 @@ impl<'a> Api<'a> {
             // element again and act on it once more, within the find timeout.
             Err(refused) if target.is_some() && refused.code.as_deref() == Some(OUTSIDE_WINDOW) => {
                 let left = find_deadline.saturating_duration_since(Instant::now());
-                let Ok(found) = self.locator.find(&window, &element, left).await else {
+                if left.is_zero() {
+                    return Err(refused);
+                }
+                // Look again only in the window the first find resolved.
+                let pinned = WindowSpec {
+                    pid: args.get("pid").and_then(Value::as_i64),
+                    window_id: args.get("window_id").and_then(Value::as_u64),
+                    ..Default::default()
+                };
+                let Ok(Ok(found)) =
+                    tokio::time::timeout(left, self.locator.find(&pinned, &element, left)).await
+                else {
                     return Err(refused);
                 };
                 args.insert("pid".into(), json!(found.window.pid));

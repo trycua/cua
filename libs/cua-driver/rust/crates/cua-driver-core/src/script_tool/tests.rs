@@ -609,6 +609,16 @@ async fn a_described_action_refused_after_a_rerender_is_found_again_and_run() {
 }
 
 #[tokio::test]
+async fn a_described_action_with_no_find_time_left_is_not_retried() {
+    let harness = Harness::new();
+    let result = harness
+        .run("const app = await cua.getApp('Notes');\nawait app.click({role: 'button', name: 'Save'}, {outside_once: true, timeout_ms: 0});\nreturn 1;")
+        .await;
+    assert_eq!(result.is_error, Some(true), "{}", text(&result));
+    assert_eq!(harness.calls("click").len(), 1);
+}
+
+#[tokio::test]
 async fn an_action_by_token_refused_as_outside_the_window_is_not_retried() {
     let harness = Harness::new();
     let result = harness

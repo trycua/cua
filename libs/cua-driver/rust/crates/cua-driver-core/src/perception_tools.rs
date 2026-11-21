@@ -990,7 +990,9 @@ else:
             "{text}"
         );
         assert!(
-            text.contains("id=\"one\" kind=icon bounds=0,0 1x1 confidence=0.9 label=\"icon-class-4\""),
+            text.contains(
+                "id=\"one\" kind=icon bounds=0,0 1x1 confidence=0.9 label=\"icon-class-4\""
+            ),
             "{text}"
         );
         let output: ParseVisualRegionsOutput =

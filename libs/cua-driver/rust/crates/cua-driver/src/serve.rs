@@ -350,8 +350,13 @@ pub fn default_socket_path() -> String {
 /// The PID file `serve` writes: the explicit `--pid-file`, else the default
 /// file only when serving the default socket. The default file identifies the
 /// default daemon, so a daemon on another socket must not overwrite it.
+/// Paths compare by component, so `a/./b` and `a//b` name the default socket.
 pub fn pid_file_path_for(socket_path: &str, explicit: Option<String>) -> Option<String> {
-    explicit.or_else(|| (socket_path == default_socket_path()).then(default_pid_file_path))
+    explicit.or_else(|| {
+        let default_socket = default_socket_path();
+        (std::path::Path::new(socket_path) == std::path::Path::new(&default_socket))
+            .then(default_pid_file_path)
+    })
 }
 
 /// Returns the platform default PID file path.
@@ -4526,5 +4531,26 @@ mod session_boundary_tests {
         inject_browser_approvals("browser_download", &mut proxy_download, Some(session));
         active_proxy_sessions().lock().unwrap().remove(session);
         assert_eq!(proxy_download[MCP_HOST_DOWNLOAD_APPROVAL_ARG], true);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod pid_file_path_tests {
+    use super::{default_pid_file_path, default_socket_path, pid_file_path_for};
+
+    #[test]
+    fn only_the_default_socket_gets_the_default_pid_file() {
+        let default_socket = default_socket_path();
+        let (dir, name) = default_socket.rsplit_once('/').unwrap();
+        let respelled = format!("{dir}/.//{name}");
+        assert_eq!(
+            pid_file_path_for(&respelled, None),
+            Some(default_pid_file_path())
+        );
+        assert_eq!(pid_file_path_for("/tmp/custom.sock", None), None);
+        assert_eq!(
+            pid_file_path_for("/tmp/custom.sock", Some("/tmp/x.pid".into())),
+            Some("/tmp/x.pid".into())
+        );
     }
 }

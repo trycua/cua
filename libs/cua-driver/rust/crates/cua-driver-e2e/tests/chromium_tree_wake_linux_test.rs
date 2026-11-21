@@ -52,8 +52,7 @@ fn first_snapshot_after_launch(launch: usize) {
         electron.exists(),
         "the Electron fixture is not staged at {electron:?}"
     );
-    let mut driver = McpDriver::spawn_named(&format!("chromium-tree-wake-{launch}"))
-        .expect("start source-built Linux driver");
+    let mut driver = McpDriver::spawn_unrecorded().expect("start source-built Linux driver");
     let journal = FixtureJournal::start();
     let mut command = Command::new(&electron);
     command

@@ -20,7 +20,7 @@ use super::impl_::{
     overlay_snap_to_for, parse_mouse_button, press_x11_drag_start, resolve_cursor_key,
     screenshot_scale, spawn_blocking_bounded, spawn_isolated_hyprland,
     synthetic_pointer_is_dropped, unavailable_chromium_background,
-    unavailable_gtk_pointer_background, unavailable_wayland_focused_input_background,
+    unavailable_synthetic_pointer_background, unavailable_wayland_focused_input_background,
     unavailable_webkit_background, window_local_to_screen, CoordinateContext, PointerRoute,
     ToolState,
 };
@@ -324,7 +324,7 @@ impl Tool for DragTool {
             if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
                 return refusal;
             }
-            if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
+            if let Some(refusal) = unavailable_synthetic_pointer_background(pid, delivery) {
                 return refusal;
             }
             unavailable_wayland_focused_input_background(delivery, true)

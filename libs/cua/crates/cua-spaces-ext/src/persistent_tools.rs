@@ -33,6 +33,7 @@ pub(crate) const TOOLS: &[&str] = &[
     "notify_user",
     "notifications_list",
     "notifications_ack",
+    "notifications_delete",
     "computer_access_grant",
     "computer_access_revoke",
     "computer_access_list",
@@ -242,6 +243,11 @@ async fn call_inner(spaces: &Spaces, caller: &Caller, tool: &str, a: Value) -> R
         "notifications_ack" => {
             let a: i::NotificationsAck = crate::args(tool, a)?;
             Ok(ToolOutcome::json(&json!({"marked": p.feed().ack(&a.ids)?})))
+        }
+        "notifications_delete" => {
+            let a: i::NotificationsDelete = crate::args(tool, a)?;
+            let deleted = p.feed().delete(&a.ids, a.all.unwrap_or(false))?;
+            Ok(ToolOutcome::json(&json!({"deleted": deleted})))
         }
         "computer_access_grant" => {
             let a: i::ComputerAccessGrant = crate::args(tool, a)?;

@@ -615,7 +615,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() != 53713:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 21138:
+    if lib.uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 1379:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_agentsetup_connection_status_json() != 47692:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1282,6 +1282,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cua_sdk_checksum_method_spaces_notifications() != 10964:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_notifications_ack() != 64477:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_spaces_notifications_delete() != 26912:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_notify_user() != 48805:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -2629,6 +2631,8 @@ _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_connect_json.argtypes = (
     ctypes.c_int8,
     ctypes.c_int8,
     ctypes.c_int8,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_connect_json.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_connection_status_json.argtypes = (
@@ -4390,6 +4394,12 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spaces_notifications_ack.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_notifications_ack.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_notifications_delete.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.c_int8,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_notifications_delete.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_notify_user.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -6308,6 +6318,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_notifications.restype = ctypes.
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_notifications_ack.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_notifications_ack.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_notifications_delete.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_notifications_delete.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_notify_user.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_notify_user.restype = ctypes.c_uint16
@@ -31661,13 +31674,17 @@ class AgentSetupProtocol(typing.Protocol):
         `agents`. A server without a name gets the channel's.
 """
         raise NotImplementedError
-    async def connect_json(self, agents: typing.List[str],server: typing.Optional[AgentMcpServer],skills: bool,mcp: bool,sign_in: bool) -> str:
+    async def connect_json(self, agents: typing.List[str],server: typing.Optional[AgentMcpServer],skills: bool,mcp: bool,sign_in: bool,driver: typing.Optional[AgentMcpServer],driver_permissions_granted: typing.Optional[bool]) -> str:
         """
         Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
         (`server`, default this channel's cua), and with `sign_in` the
         agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
-        sign-in it already has, read from where Claude Code keeps it). JSON:
-        one result per agent.
+        sign-in it already has, read from where Claude Code keeps it). With
+        `driver`, the `cua-driver` entry the host app wants (the Cua Driver it
+        carries, by absolute path) is written too; `driver_permissions_granted`
+        says whether Screen Recording and Accessibility are on for it (None:
+        unknown). Each part asked for is reported on its own (`parts`), so
+        one can be retried by asking for it alone. JSON: one result per agent.
 """
         raise NotImplementedError
     def connection_status_json(self, expected: typing.Optional[AgentMcpServer],refresh: bool) -> str:
@@ -31827,13 +31844,17 @@ class AgentSetup(AgentSetupProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
-    async def connect_json(self, agents: typing.List[str],server: typing.Optional[AgentMcpServer],skills: bool,mcp: bool,sign_in: bool) -> str:
+    async def connect_json(self, agents: typing.List[str],server: typing.Optional[AgentMcpServer],skills: bool,mcp: bool,sign_in: bool,driver: typing.Optional[AgentMcpServer],driver_permissions_granted: typing.Optional[bool]) -> str:
         """
         Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
         (`server`, default this channel's cua), and with `sign_in` the
         agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
-        sign-in it already has, read from where Claude Code keeps it). JSON:
-        one result per agent.
+        sign-in it already has, read from where Claude Code keeps it). With
+        `driver`, the `cua-driver` entry the host app wants (the Cua Driver it
+        carries, by absolute path) is written too; `driver_permissions_granted`
+        says whether Screen Recording and Accessibility are on for it (None:
+        unknown). Each part asked for is reported on its own (`parts`), so
+        one can be retried by asking for it alone. JSON: one result per agent.
 """
 
         _UniffiFfiConverterSequenceString.check_lower(agents)
@@ -31845,6 +31866,10 @@ class AgentSetup(AgentSetupProtocol):
         _UniffiFfiConverterBoolean.check_lower(mcp)
 
         _UniffiFfiConverterBoolean.check_lower(sign_in)
+
+        _UniffiFfiConverterOptionalTypeAgentMcpServer.check_lower(driver)
+
+        _UniffiFfiConverterOptionalBoolean.check_lower(driver_permissions_granted)
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
             _UniffiFfiConverterSequenceString.lower(agents),
@@ -31852,6 +31877,8 @@ class AgentSetup(AgentSetupProtocol):
             _UniffiFfiConverterBoolean.lower(skills),
             _UniffiFfiConverterBoolean.lower(mcp),
             _UniffiFfiConverterBoolean.lower(sign_in),
+            _UniffiFfiConverterOptionalTypeAgentMcpServer.lower(driver),
+            _UniffiFfiConverterOptionalBoolean.lower(driver_permissions_granted),
         )
         _uniffi_lift_return = _UniffiFfiConverterString.lift
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
@@ -44559,6 +44586,12 @@ class SpacesProtocol(typing.Protocol):
         Marks notifications read (every one when `ids` is empty).
 """
         raise NotImplementedError
+    async def notifications_delete(self, ids: typing.List[str],all: bool) -> int:
+        """
+        Deletes notifications: these ids, or every one when `all` (an empty
+        `ids` without `all` deletes nothing). Returns how many were deleted.
+"""
+        raise NotImplementedError
     async def notify_user(self, title: str,body: typing.Optional[str],agent: typing.Optional[str]) -> str:
         """
         Posts a notification to the Cua app. Returns its id.
@@ -46115,6 +46148,30 @@ class Spaces(SpacesProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_spaces_notifications_ack(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_u64,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_u64,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_u64,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def notifications_delete(self, ids: typing.List[str],all: bool) -> int:
+        """
+        Deletes notifications: these ids, or every one when `all` (an empty
+        `ids` without `all` deletes nothing). Returns how many were deleted.
+"""
+
+        _UniffiFfiConverterSequenceString.check_lower(ids)
+
+        _UniffiFfiConverterBoolean.check_lower(all)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterSequenceString.lower(ids),
+            _UniffiFfiConverterBoolean.lower(all),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterUInt64.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_spaces_notifications_delete(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_u64,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_u64,
             _UniffiLib.ffi_cua_sdk_rust_future_free_u64,

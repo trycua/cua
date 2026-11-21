@@ -1393,6 +1393,17 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::NotificationsAck>(),
         Spec {
             category: Category::PersistentAgents,
+            result: "JSON: `deleted` (how many were removed).",
+            instructions: "Removes notifications for good, in every app that reads the feed. Pass `ids`, or `all: true` for the whole feed; an empty `ids` deletes nothing.",
+            capabilities: &["notifications.read"],
+            annotations: Annotations::mutating_idempotent(),
+            sdk_symbol: "spaces.notifications.delete(_:all:)",
+            rust_symbol: "notify::Feed::delete",
+            ..Spec::new("notifications_delete", "Delete notifications.")
+        }
+        .with::<i::NotificationsDelete>(),
+        Spec {
+            category: Category::PersistentAgents,
             result: "JSON: the grant: `id`, `agent`, `machine`, `created_ms`, `expires_ms`.",
             errors: &["not_confirmed"],
             instructions: "Lets one persistent agent use one of the user's computers (its computer-use tools, through the agent's bridge). Asks the user for presence (Touch ID or passphrase) first. Other agents of the account get nothing.",
@@ -2343,6 +2354,52 @@ mod tests {
     use super::*;
 
     #[test]
+    fn create_space_exposes_optional_resource_sizes() {
+        let create = tool("create_space").unwrap();
+        let resize = tool("resize_space").unwrap();
+        for field in ["cpus", "memory_mb"] {
+            let mut actual = create.input_schema["properties"][field].clone();
+            let mut expected = resize.input_schema["properties"][field].clone();
+            assert!(actual.is_object(), "create_space is missing {field}");
+            actual.as_object_mut().unwrap().remove("description");
+            expected.as_object_mut().unwrap().remove("description");
+            assert_eq!(actual, expected, "{field} uses the existing resource type");
+            assert!(
+                !create.input_schema["required"]
+                    .as_array()
+                    .is_some_and(|required| required.contains(&serde_json::json!(field))),
+                "{field} must remain optional"
+            );
+        }
+    }
+
+    #[test]
+    fn create_space_resource_sizes_parse_like_resize() {
+        let sizes: inputs::CreateSpace = serde_json::from_value(serde_json::json!({
+            "cpus": 1, "memory_mb": 1536
+        }))
+        .unwrap();
+        assert_eq!(sizes.cpus, Some(1));
+        assert_eq!(sizes.memory_mb, Some(1536));
+        let defaults: inputs::CreateSpace = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(defaults.cpus, None);
+        assert_eq!(defaults.memory_mb, None);
+        for field in ["cpus", "memory_mb"] {
+            for invalid in [
+                serde_json::json!(-1),
+                serde_json::json!(1.5),
+                serde_json::json!("1"),
+            ] {
+                let value = serde_json::json!({field: invalid});
+                assert!(
+                    serde_json::from_value::<inputs::CreateSpace>(value.clone()).is_err(),
+                    "{value}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn persistent_agent_create_carries_brief_and_standby() {
         let m: crate::inputs::PersistentAgentCreate = serde_json::from_value(serde_json::json!({
             "agent": "claude-code", "name": "ada", "space": "s",
@@ -2406,7 +2463,7 @@ mod tests {
 
     #[test]
     fn advertises_every_tool() {
-        assert_eq!(tools().len(), 122);
+        assert_eq!(tools().len(), 123);
     }
 
     #[test]

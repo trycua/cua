@@ -103,7 +103,7 @@ Opening a stream no longer lists every Space on every machine first (`SpacesConn
 - **While it has the keyboard:**
   - a small bar over the viewer's bottom edge (a hole in the video) says "Keys go to this Space. Press and release ⌃⌥ to stop." with a **Stop controlling** button;
   - every ⌘ chord (⌘Esc too) goes to the Space, because a local key monitor routes it to the view before the web view takes ⌘C and ⌘V (the view's `KeyCapture`, as in the Space window);
-  - on a Linux or Windows Space, ⌘ goes as Control: ⌘C arrives as Ctrl+C and ⌘⇧C as Ctrl+Shift+C. Sent as Command, the Space would get Super, and Super+C types "c". A macOS Space keeps ⌘. The Space window does the same, since both send through `LiveStreamSession`, and so does the HTML5 viewer (`metaAsControl`);
+  - on a Linux or Windows Space, ⌘ goes as Control: ⌘C arrives as Ctrl+C and ⌘⇧C as Ctrl+Shift+C. Sent as Command, the Space would get Super, and Super+C types "c". The right ⌘ held alone does go as Super, for the desktop's own shortcuts (Super+Return on Hyprland). A macOS Space keeps ⌘. The Space window does the same, since both send through `LiveStreamSession`, and so does the HTML5 viewer (`metaAsControl`);
   - plain Esc goes to the Space too. Remote apps need it.
 - **Giving it back:**
   - Control+Option pressed and released alone (⌃⌥T and other Control+Option chords still go to the Space);

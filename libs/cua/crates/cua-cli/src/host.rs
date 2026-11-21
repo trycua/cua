@@ -943,6 +943,41 @@ Examples:
     },
 }
 
+impl SpacesCmd {
+    /// Whether the command goes through the SDK handle (the daemon when one
+    /// runs), which shares the registry the daemon's Spaces runtime and
+    /// `cua mcp` use. `ls` and `default` have their own routes. No wildcard:
+    /// a new command has to pick a route here.
+    pub(crate) fn runs_through_sdk(&self) -> bool {
+        match self {
+            Self::Ls { .. } | Self::Default { .. } => false,
+            Self::Add { .. }
+            | Self::Create { .. }
+            | Self::Prewarm { .. }
+            | Self::Egress { .. }
+            | Self::Children { .. }
+            | Self::Budget { .. }
+            | Self::Orphans
+            | Self::Service(..)
+            | Self::Cancel { .. }
+            | Self::Gpus { .. }
+            | Self::Delete { .. }
+            | Self::Stop { .. }
+            | Self::Suspend { .. }
+            | Self::Resize { .. }
+            | Self::Start { .. }
+            | Self::Rm { .. }
+            | Self::Share { .. }
+            | Self::Unshare { .. }
+            | Self::Shares { .. }
+            | Self::RelayRegister { .. }
+            | Self::RelayUnregister { .. }
+            | Self::Rename { .. }
+            | Self::Set { .. } => true,
+        }
+    }
+}
+
 /// Checks a `cua spaces share` before it goes to a running daemon. The
 /// daemon confirms every share with user presence (Touch ID or the login
 /// password on this computer) and `--yes` cannot skip that. Without a
@@ -2610,6 +2645,9 @@ fn render(s: &HostStatus, out: &mut dyn Write) {
     if s.service.kind == "process" {
         hint_line(out, cua_host::service::PROCESS_RUNNER_NOTE);
     }
+    if let Some(w) = &s.service_warning {
+        hint_line(out, format!("  warning: {w}"));
+    }
     if s.service.kind == "app-helper" && s.legacy_service {
         hint_line(
             out,
@@ -3047,6 +3085,7 @@ pub async fn run_host_to(
                     let code =
                         setup_unchanged(&host, state, &want, pair.is_some(), json, out).await?;
                     warn_setup_runner(&host, requested_runner, detected, json, out, err)?;
+                    warn_setup_logon(&host, json, out, err)?;
                     return Ok(code);
                 }
             }
@@ -3075,6 +3114,7 @@ pub async fn run_host_to(
                 })?;
             emit(&s, json, out)?;
             warn_setup_runner(&host, requested_runner, detected, json, out, err)?;
+            warn_setup_logon(&host, json, out, err)?;
             if s.provide_spaces && !json {
                 line(
                     out,
@@ -3395,6 +3435,28 @@ fn warn_setup_runner(
         return Ok(());
     };
     if let Some(text) = cua_host::service::auto_fallback_warning(requested, &config.runner) {
+        hint_line(if json { err } else { out }, text);
+    }
+    Ok(())
+}
+
+/// Warns after `cua host setup` on Windows when the host starts from a logon
+/// task and the computer does not sign in by itself (a headless VM: the host
+/// would not come back after a restart). To `out`, or `err` with `--json`.
+fn warn_setup_logon(
+    host: &Host,
+    json: bool,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<(), CuaError> {
+    if !cfg!(windows) {
+        return Ok(());
+    }
+    let Some(config) = host.config().map_err(host_err)? else {
+        return Ok(());
+    };
+    let auto = cua_host::service::windows_auto_logon();
+    if let Some(text) = cua_host::service::windows_logon_warning(&config.runner, auto) {
         hint_line(if json { err } else { out }, text);
     }
     Ok(())
@@ -4621,6 +4683,27 @@ mod tests {
         assert!(desktop_line(false).starts_with("  desktop: not shared"));
     }
 
+    /// A headless computer whose service stops at logout is told so, with the
+    /// one command that fixes it, in `cua host setup` and `cua host status`.
+    #[test]
+    fn status_warns_when_the_service_stops_at_logout() {
+        let text = |warning: Option<String>| {
+            let s = HostStatus {
+                configured: true,
+                mode: Some("relay".into()),
+                service_warning: warning,
+                ..Default::default()
+            };
+            let mut out = Vec::new();
+            render(&s, &mut out);
+            String::from_utf8(out).unwrap()
+        };
+        assert!(!text(None).contains("warning:"), "{}", text(None));
+        let shown = text(Some(cua_host::service::linger_warning("ana")));
+        assert!(shown.contains("warning: systemd stops"), "{shown}");
+        assert!(shown.contains("sudo loginctl enable-linger ana"), "{shown}");
+    }
+
     #[test]
     fn spare_machines_and_spaces_on_them_parse() {
         match parse(&["setup", "--profile", "spare", "--max-spaces", "6"]) {
@@ -5326,6 +5409,22 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert!(parse_spaces(&["set"]).is_err());
+    }
+
+    /// #7589: `cua spaces set` and `cua spaces rename` fell through to the
+    /// registry-only route, which answers every command but `ls` with
+    /// "only 'cua spaces ls' runs over the registry directly".
+    #[test]
+    fn only_ls_and_default_skip_the_sdk() {
+        for args in [
+            &["set", "local:studio", "--clipboard", "viewing"][..],
+            &["rename", "local:studio", "design-review"],
+            &["rm", "local:studio"],
+        ] {
+            let cmd = parse_spaces(args).unwrap();
+            assert!(cmd.runs_through_sdk(), "{args:?}");
+        }
+        assert!(!parse_spaces(&["ls"]).unwrap().runs_through_sdk());
     }
 
     #[test]

@@ -775,9 +775,11 @@ export function createWebkitAdapter(win: HostWindow = globalThis.window as HostW
     "agents.configure": async ({ agents }) => list(await request("agents.configure", { agents: agents ?? null })) as AgentSetupRow[],
     "agents.signIn": async ({ agent }) => list(await request("agents.signIn", { agent })) as AgentSetupRow[],
     "agents.status": ({ refresh }) => request<ConnectionReport>("agents.status", { refresh: refresh ?? false }),
-    "agents.connect": async ({ agents, signIn, skills, mcp }) =>
+    "agents.connect": async ({ agents, signIn, skills, mcp, driver }) =>
       // No timeout: Claude Code's sign-in waits for its one browser approval.
-      list(await request("agents.connect", { agents, signIn, skills: skills ?? true, mcp: mcp ?? true }, null)) as ConnectResult[],
+      list(
+        await request("agents.connect", { agents, signIn, skills: skills ?? true, mcp: mcp ?? true, ...(driver ? { driver } : {}) }, null),
+      ) as ConnectResult[],
     "agents.disconnect": ({ agents, signIn, skills, mcp }) =>
       request<{ removed_sign_ins: string[] }>("agents.disconnect", {
         agents,
@@ -864,7 +866,7 @@ export function createWebkitAdapter(win: HostWindow = globalThis.window as HostW
       : unsupportedPresenceOps("webkit")),
     // Approving an agent's cloud: the daemon's person-only `cloud_approve`.
     ...cloudApproveWebkitOps(request),
-    // Windows' "Install Docker Desktop": a Mac sets up its runtimes itself.
+    // Windows' "Set up Linux support": a Mac sets up its runtimes itself.
     ...(electron
       ? { "spaces.fixRuntime": (args: OpArgs<"spaces.fixRuntime">) => request<null>("spaces.fixRuntime", { ...args }) }
       : unsupportedRuntimeFixOps("webkit")),

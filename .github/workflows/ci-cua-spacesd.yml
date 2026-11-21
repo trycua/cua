@@ -170,8 +170,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REUSE_MODE: ${{ vars.CI_REUSE_PR_RESULTS }}
-        # Floating inputs the jobs install: dtolnay/rust-toolchain@stable.
-        run: python3 .github/scripts/ci_reuse_pr_result.py run --stamp-job "cua-spacesd / changes" --float rust-stable
+        # Rust is pinned (dtolnay/rust-toolchain@1.97.1): no floating inputs.
+        run: python3 .github/scripts/ci_reuse_pr_result.py run --stamp-job "cua-spacesd / changes"
       - id: legs_test
         continue-on-error: true
         timeout-minutes: 1
@@ -214,7 +214,7 @@ jobs:
       # cua-proto (the cua.env.v1 contract) is generated at build time.
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: rustfmt, clippy
       - uses: ./.github/actions/rust-cache
@@ -225,7 +225,7 @@ jobs:
         uses: ./.github/actions/apt-install
         with:
           packages: >-
-            build-essential pkg-config perl libx11-dev libxkbcommon-dev libwayland-dev libdbus-1-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev libxrandr-dev libxi-dev libxtst-dev libxfixes-dev libxdamage-dev libudev-dev
+            build-essential pkg-config perl libx11-dev libxkbcommon-dev libwayland-dev libdbus-1-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev libxrandr-dev libxi-dev libxtst-dev libxfixes-dev libxdamage-dev libudev-dev x11-utils sway xwayland
       - name: Format
         run: cargo fmt --all --check
       - uses: ./.github/actions/nextest
@@ -238,6 +238,14 @@ jobs:
           cargo nextest run --workspace --locked --config-file "$GITHUB_WORKSPACE/.github/flaky/nextest.toml" --profile ci
         env:
           DYLD_FALLBACK_LIBRARY_PATH: /usr/lib/swift
+      # The X server of a GNOME or KDE Wayland session is a rootless Xwayland,
+      # whose root grabs black; a desktop stream on it must be refused (#5236).
+      - name: Rootless Xwayland desktop refusal
+        if: runner.os == 'Linux'
+        run: >-
+          ../../scripts/ci/linux/with-rootless-xwayland.sh
+          cargo test -p cua-spacesd-desktop --lib --locked -- --ignored --exact
+          linux_stream::tests::rootless_xwayland_desktop_is_refused_not_streamed_black
       - name: Doctests
         run: cargo test --workspace --doc --locked
         env:
@@ -291,6 +299,16 @@ jobs:
             echo "the driver workspace depends on the teleport sender (cua-teleport)" >&2
             exit 1
           fi
+      # The static musl release builds of cua-spacesd (CD: cua-spacesd) cannot
+      # compile jemalloc on aarch64: it belongs to the cua-relay binary only,
+      # behind cua-relay's `jemalloc` feature, which cua-spacesd turns off.
+      # CI does not build that target, so check the dependency graph.
+      - name: No jemalloc in cua-spacesd
+        run: |
+          if cargo tree --locked -p cua-spacesd --target all -e normal,build --prefix none | grep -E '^tikv-jemalloc'; then
+            echo "cua-spacesd depends on jemalloc, which does not build for aarch64-unknown-linux-musl (the static release asset); keep it behind cua-relay's default 'jemalloc' feature" >&2
+            exit 1
+          fi
       # The shared media crates and the clients (cua-media-client,
       # cua-viewer) live in libs/cua; the client/server dependency boundary
       # is checked by ci-cua-sdk.yml.
@@ -318,7 +336,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.97.1
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-spacesd -> target"

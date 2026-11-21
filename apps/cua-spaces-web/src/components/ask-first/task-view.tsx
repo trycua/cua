@@ -58,7 +58,7 @@ import {
   type TaskWhere,
 } from "@/lib/ask-first";
 import { t as tr, useT } from "@/i18n";
-import { createProgress, spaceState } from "@/lib/spaces";
+import { createLine, createProgress, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
 import { agentName, AppMark, TASK_AGENTS, WherePicker } from "./ask-box";
@@ -331,10 +331,11 @@ function Starting({ pending, space, name, onHost }: { pending: Space | undefined
           <div className="text-[13px] text-muted-foreground">
             {onHost
               ? t("home.task.own_files")
-              : (making?.transfer ??
-                (making
+              : making?.transfer
+                ? createLine(making)
+                : making
                   ? t("home.task.progress", { label: making.label, percent: Math.round(createProgress({ progress: making }) * 100) })
-                  : t("home.task.usually_under_a_minute")))}
+                  : t("home.task.usually_under_a_minute")}
           </div>
         </div>
       </div>

@@ -14,7 +14,6 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver-e2e/**"
       - "libs/cua-driver/rust/crates/cua-cursor-motion/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
-      - "libs/cua-driver/rust/crates/pip-preview/**"
       - "libs/cua-driver/rust/crates/platform-windows/**"
       - "libs/cua-driver/rust/crates/cua-driver-uia/**"
       - "libs/cua-driver/tests/fixtures/**"
@@ -33,7 +32,6 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver-e2e/**"
       - "libs/cua-driver/rust/crates/cua-cursor-motion/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
-      - "libs/cua-driver/rust/crates/pip-preview/**"
       - "libs/cua-driver/rust/crates/platform-windows/**"
       - "libs/cua-driver/rust/crates/cua-driver-uia/**"
       - "libs/cua-driver/tests/fixtures/**"
@@ -149,10 +147,18 @@ jobs:
           # clipboard round trip that would clobber a developer's clipboard.
           CUA_TEST_ALLOW_CLIPBOARD: "1"
         run: cargo test --locked -p platform-windows --lib
+      - name: Prove list_windows does not wait on a hung window
+        if: matrix.shard == 1 && steps.runner-session.outputs.session_id != '0'
+        working-directory: libs/cua-driver/rust
+        run: cargo test --locked -p platform-windows --lib win32::windows::hung_window_tests::list_windows_does_not_wait_on_a_hung_window -- --ignored --exact --nocapture
       - name: Run MCP proxy lifecycle regressions
         if: matrix.shard == 1
         working-directory: libs/cua-driver/rust
         run: "cargo test -p cua-driver --bin cua-driver proxy::tests:: --locked"
+      - name: Run daemon release regressions
+        if: matrix.shard == 1
+        working-directory: libs/cua-driver/rust
+        run: "cargo test -p cua-driver --bin cua-driver serve::pipe_release_tests:: --locked"
       - name: Run real MCP proxy recovery regression
         if: matrix.shard == 1
         working-directory: libs/cua-driver/rust

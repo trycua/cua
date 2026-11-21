@@ -27,6 +27,9 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
+#[cfg(target_os = "windows")]
+use cua_driver_core::daemon::named_pipe_exists;
+use cua_driver_core::daemon::{daemon_lock_path, probe_presence, DaemonPresence, ToolGate};
 pub use cua_driver_core::daemon::{
     is_daemon_listening, send_request, socket_path_for_namespace, DaemonRequest, DaemonResponse,
     ToolObservationOrigin,
@@ -470,21 +473,16 @@ async fn invoke_daemon_tool(
         if !is_session_lifecycle_tool(&tool_name)
             && sdk.is_session_ended(sid, req.session_id.as_deref())
         {
-            observe_daemon_error(observation, 1);
             // An unnamed call's lifecycle id is the transport session, which
             // is not a label the caller can pass back to start_session.
-            let recovery = if req.session_id.as_deref() == Some(sid.as_str()) {
-                "Call start_session without a session label to start a new unnamed session."
-                    .to_owned()
-            } else {
-                format!(
-                    "Call start_session with session '{sid}' to start it again, or use a new session label."
-                )
-            };
-            return DaemonResponse::err(
-                format!("session has ended; tool call '{tool_name}' was rejected. {recovery}"),
-                1,
-            );
+            let public_label = (req.session_id.as_deref() != Some(sid.as_str())).then_some(sid);
+            // The same tool result the in-process runtime returns, so every
+            // socket client can branch on the `session_ended` code.
+            let refusal = serde_json::to_value(cua_driver_core::tool::session_ended_refusal(
+                public_label.map(String::as_str),
+            ))
+            .expect("tool result is serializable");
+            return DaemonResponse::ok(observe_daemon_result(observation, None, refusal));
         }
     }
 
@@ -569,10 +567,23 @@ fn remove_owned_pid_file(pid_file_path: &str) {
     }
 }
 
+/// The one refusal for a launch that finds another daemon on its socket,
+/// whether that daemon answers or still holds the lock while it starts.
+fn already_running_message(socket_path: &str, pid: Option<u32>) -> String {
+    let pid_hint = pid.map(|pid| format!(" (pid {pid})")).unwrap_or_default();
+    format!(
+        "Cua Driver daemon is already running on {socket_path}{pid_hint}. Run `cua-driver stop` first."
+    )
+}
+
+/// How long a launch waits for the daemon lock. `stop` returns once the old
+/// daemon stops answering, a moment before it drops the lock, and a presence
+/// probe takes the lock for an instant.
+const DAEMON_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Take an exclusive lock on `lock_path`, retrying for up to `wait` while
 /// another daemon holds it. The OS drops the lock when the returned file
 /// closes or the process dies, so a crashed daemon never blocks a relaunch.
-#[cfg(any(target_os = "windows", test))]
 fn claim_daemon_lock(
     lock_path: &std::path::Path,
     socket_path: &str,
@@ -581,10 +592,11 @@ fn claim_daemon_lock(
     if let Some(dir) = lock_path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let lock = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).truncate(false).write(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let lock = options
         .open(lock_path)
         .map_err(|e| anyhow::anyhow!("open daemon lock {}: {e}", lock_path.display()))?;
     let deadline = std::time::Instant::now() + wait;
@@ -594,9 +606,9 @@ fn claim_daemon_lock(
             Err(std::fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
-            Err(std::fs::TryLockError::WouldBlock) => anyhow::bail!(
-                "Cua Driver daemon is already running on {socket_path}. Run `cua-driver stop` first."
-            ),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                anyhow::bail!("{}", already_running_message(socket_path, None))
+            }
             Err(std::fs::TryLockError::Error(e)) => {
                 anyhow::bail!("lock daemon {}: {e}", lock_path.display())
             }
@@ -641,32 +653,29 @@ fn secure_local_socket(socket_path: &str) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("secure local daemon socket {socket_path}: {e}"))
 }
 
-/// Take the standalone daemon's exclusive lock on `<socket>.lock`, then clear
-/// any stale socket. Without the lock, two launches that both pass the
-/// liveness probe unlink each other's socket and orphan a daemon. The kernel
-/// drops the lock when the returned file closes or the process dies.
+/// Take the standalone daemon's exclusive lock on `<socket>.lock`. Without
+/// the lock, two launches that both pass the liveness probe unlink each
+/// other's socket and orphan a daemon. The kernel drops the lock when the
+/// returned file closes or the process dies.
 #[cfg(unix)]
-fn claim_standalone_socket(socket_path: &str) -> anyhow::Result<std::fs::File> {
-    use std::os::unix::fs::OpenOptionsExt as _;
-    let lock_path = format!("{socket_path}.lock");
-    let lock = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .mode(0o600)
-        .open(&lock_path)
-        .map_err(|e| anyhow::anyhow!("open daemon lock {lock_path}: {e}"))?;
-    match lock.try_lock() {
-        Ok(()) => {}
-        Err(std::fs::TryLockError::WouldBlock) => anyhow::bail!(
-            "Cua Driver daemon is already running on {socket_path}. Run `cua-driver stop` first."
-        ),
-        Err(std::fs::TryLockError::Error(e)) => {
-            anyhow::bail!("lock daemon socket {lock_path}: {e}")
-        }
+fn claim_standalone_socket(
+    socket_path: &str,
+    wait: std::time::Duration,
+) -> anyhow::Result<std::fs::File> {
+    claim_daemon_lock(&daemon_lock_path(socket_path), socket_path, wait)
+}
+
+/// Remove the socket a dead daemon left at `socket_path`. Only the lock holder
+/// calls this, so no standalone daemon owns it. Anything that is not a socket
+/// stays, and so does a socket something still listens on.
+#[cfg(unix)]
+fn remove_stale_socket(socket_path: &str) {
+    use std::os::unix::fs::FileTypeExt as _;
+    if std::fs::symlink_metadata(socket_path).is_ok_and(|metadata| metadata.file_type().is_socket())
+        && !socket_accepts(socket_path)
+    {
+        let _ = std::fs::remove_file(socket_path);
     }
-    let _ = std::fs::remove_file(socket_path);
-    Ok(lock)
 }
 
 #[cfg(unix)]
@@ -675,7 +684,7 @@ fn prepare_embedded_socket_path(
     embedded: bool,
 ) -> anyhow::Result<Option<std::fs::File>> {
     if !embedded {
-        return claim_standalone_socket(socket_path).map(Some);
+        return claim_standalone_socket(socket_path, DAEMON_LOCK_WAIT).map(Some);
     }
     match std::fs::symlink_metadata(socket_path) {
         Ok(_) => anyhow::bail!(
@@ -683,6 +692,65 @@ fn prepare_embedded_socket_path(
         ),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error.into()),
+    }
+}
+
+/// Reserve `socket_path` for this process until the returned lock drops. A
+/// standalone daemon takes its lock; an embedded host already owns the name.
+fn claim_socket(socket_path: &str) -> anyhow::Result<Option<std::fs::File>> {
+    let embedded = cua_driver_core::embedded_mode();
+    // Embedded endpoints are host-owned. The daemon must never unlink an
+    // arbitrary pre-existing path between the host's safety check and bind.
+    #[cfg(unix)]
+    {
+        prepare_embedded_socket_path(socket_path, embedded)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // Standalone pipes accept extra instances under one name, so a second
+        // launch that passes the liveness probe would serve beside this one
+        // and overwrite its pid file. Embedded daemons reserve their
+        // host-chosen name with the first pipe instance instead.
+        if embedded {
+            return Ok(None);
+        }
+        claim_daemon_lock(
+            &daemon_lock_path(socket_path),
+            socket_path,
+            DAEMON_LOCK_WAIT,
+        )
+        .map(Some)
+    }
+    #[cfg(not(any(unix, target_os = "windows")))]
+    {
+        let _ = (socket_path, embedded);
+        Ok(None)
+    }
+}
+
+/// Run the daemon server on `socket_path` after claiming it.
+#[cfg(all(test, unix))]
+async fn run_serve(
+    sdk: std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
+    socket_path: &str,
+    pid_file_path: Option<&str>,
+) -> anyhow::Result<()> {
+    let socket_lock = claim_socket(socket_path)?;
+    serve_claimed_socket(sdk, socket_path, pid_file_path, socket_lock).await
+}
+
+/// Resolve once an update has replaced the executable this daemon runs.
+/// macOS checks the TCC grants of a daemon left running the old image against
+/// an install that is gone, so its permission gate never opens (#7461). The
+/// daemon exits instead; launchd or the next client launch starts the new one.
+#[cfg(target_os = "macos")]
+async fn wait_for_executable_replacement() {
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
+    loop {
+        interval.tick().await;
+        if platform_macos::running_image::was_replaced() {
+            return;
+        }
     }
 }
 
@@ -738,11 +806,10 @@ fn permissions_pending_response(
     DaemonResponse::err(message, 75)
 }
 
-fn daemon_metadata_response() -> DaemonResponse {
-    DaemonResponse::ok(
-        serde_json::to_value(cua_driver_core::daemon::current_daemon_metadata())
-            .expect("daemon metadata is serializable"),
-    )
+fn daemon_metadata_response(sdk: &crate::sdk_adapter::SdkAdapter) -> DaemonResponse {
+    let mut metadata = cua_driver_core::daemon::current_daemon_metadata();
+    metadata.permissions_pending = sdk.permissions_pending_result().is_some();
+    DaemonResponse::ok(serde_json::to_value(metadata).expect("daemon metadata is serializable"))
 }
 
 fn shutdown_response(request: &DaemonRequest) -> (DaemonResponse, bool) {
@@ -1018,15 +1085,18 @@ mod peer_authentication_tests {
     }
 }
 
-/// Run the daemon server. Binds `socket_path`, writes `pid_file_path`,
-/// accepts connections, and serves requests until `{"method":"shutdown"}`.
+/// Serve on a socket path [`claim_socket`] reserved. Binds `socket_path`,
+/// writes `pid_file_path`, accepts connections, and serves requests until
+/// `{"method":"shutdown"}`.
 ///
 /// This is `async` and must be called from a tokio runtime.
 #[cfg(unix)]
-pub async fn run_serve(
+async fn serve_claimed_socket(
     sdk: std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     socket_path: &str,
     pid_file_path: Option<&str>,
+    // Held until return so a racing launch cannot unlink this daemon's socket.
+    socket_lock: Option<std::fs::File>,
 ) -> anyhow::Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixListener;
@@ -1040,12 +1110,10 @@ pub async fn run_serve(
     if let Some(dir) = std::path::Path::new(socket_path).parent() {
         std::fs::create_dir_all(dir)?;
     }
-
-    let embedded = cua_driver_core::embedded_mode();
-    // Embedded endpoints are host-owned. The daemon must never unlink an
-    // arbitrary pre-existing path between the host's safety check and bind.
-    // Held until return so a racing launch cannot unlink this daemon's socket.
-    let _socket_lock = prepare_embedded_socket_path(socket_path, embedded)?;
+    // Only a standalone daemon holds a lock. An embedded host owns its path.
+    if socket_lock.is_some() {
+        remove_stale_socket(socket_path);
+    }
 
     let listener =
         UnixListener::bind(socket_path).map_err(|e| anyhow::anyhow!("bind {socket_path}: {e}"))?;
@@ -1076,6 +1144,17 @@ pub async fn run_serve(
         }
     };
     tokio::pin!(parent_liveness);
+    // An embedded host owns this process's lifetime, so only a standalone
+    // daemon steps aside for an updated install.
+    let executable_replaced = async {
+        #[cfg(target_os = "macos")]
+        if !cua_driver_core::embedded_mode() {
+            wait_for_executable_replacement().await;
+            return;
+        }
+        std::future::pending::<()>().await;
+    };
+    tokio::pin!(executable_replaced);
 
     // Idle-session and recording maintenance is owned by the SDK runtime so
     // direct embedded applications and daemon-backed clients behave alike.
@@ -1144,7 +1223,7 @@ pub async fn run_serve(
                                 return;
                             }
                             "metadata" => {
-                                let resp = daemon_metadata_response();
+                                let resp = daemon_metadata_response(&reg);
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
@@ -1480,6 +1559,12 @@ pub async fn run_serve(
                 eprintln!("Cua Driver embedded host closed its lifetime pipe; shutting down.");
                 break;
             }
+            _ = &mut executable_replaced => {
+                eprintln!(
+                    "Cua Driver was updated on disk; shutting down so the next launch runs the new install."
+                );
+                break;
+            }
         }
     }
 
@@ -1752,10 +1837,11 @@ struct SecurityAttributesRaw {
 }
 
 #[cfg(target_os = "windows")]
-pub async fn run_serve(
+async fn serve_claimed_socket(
     sdk: std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     socket_path: &str,
     pid_file_path: Option<&str>,
+    socket_lock: Option<std::fs::File>,
 ) -> anyhow::Result<()> {
     use std::os::windows::io::AsRawHandle as _;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -1777,20 +1863,6 @@ pub async fn run_serve(
     let sec_attrs_ptr: *mut std::ffi::c_void = match &security_attrs {
         Some((attrs, _sd_ptr)) => attrs as *const _ as *mut _,
         None => std::ptr::null_mut(),
-    };
-
-    // Standalone pipes accept extra instances under one name, so a second
-    // launch that passes the liveness probe would serve beside this one and
-    // overwrite its pid file. The lock lets only one daemon own the name.
-    // Embedded daemons already reserve their host-chosen name below.
-    let socket_lock = if embedded {
-        None
-    } else {
-        Some(claim_daemon_lock(
-            &named_pipe_lock_path(socket_path),
-            socket_path,
-            PIPE_LOCK_WAIT,
-        )?)
     };
 
     if let Some(pid_path) = pid_file_path {
@@ -1965,7 +2037,7 @@ pub async fn run_serve(
                                 return;
                             }
                             "metadata" => {
-                                let resp = daemon_metadata_response();
+                                let resp = daemon_metadata_response(&reg);
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
@@ -2288,28 +2360,6 @@ pub async fn run_serve(
     }
 }
 
-/// Per-user lock file for one pipe name. It lives under `%LOCALAPPDATA%`,
-/// which stays the same across a user's sessions where `%TEMP%` may not. The
-/// file name is a fixed-length digest of the uppercased name, because Windows
-/// compares pipe names case-insensitively and a name can outgrow a path
-/// component.
-#[cfg(target_os = "windows")]
-fn named_pipe_lock_path(socket_path: &str) -> std::path::PathBuf {
-    use sha2::Digest as _;
-    let base = std::env::var_os("LOCALAPPDATA")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    let digest = sha2::Sha256::digest(socket_path.to_uppercase().as_bytes());
-    base.join("cua-driver-pipe-locks")
-        .join(format!("{digest:x}.lock"))
-}
-
-/// How long a launch waits for a stopping daemon to release its pipe lock.
-/// `stop` returns once the listening instance is gone, a moment before the
-/// daemon drops the lock.
-#[cfg(target_os = "windows")]
-const PIPE_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
-
 /// Pause between attempts to replace a named-pipe instance that failed.
 #[cfg(target_os = "windows")]
 const PIPE_INSTANCE_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
@@ -2347,39 +2397,178 @@ mod named_pipe_authentication_tests {
     }
 }
 
+#[cfg(all(test, target_os = "windows"))]
+mod pipe_release_tests {
+    use super::{
+        claim_daemon_lock, daemon_lock_path, is_released, probe_presence, serving_daemon,
+        stop_daemon, DaemonPresence, StopOutcome,
+    };
+    use std::time::Duration;
+    use tokio::net::windows::named_pipe::ServerOptions;
+
+    async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        tokio::task::spawn_blocking(f).await.unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_daemon_whose_pipe_never_answers_has_not_released() {
+        let pipe = format!(
+            r"\\.\pipe\cua-driver-release-{}",
+            uuid::Uuid::new_v4().simple()
+        );
+        // One instance that never answers. The first probe connects to it and
+        // holds it waiting for a reply, so every later check finds it busy.
+        let instance = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&pipe)
+            .unwrap();
+
+        // An embedded daemon takes no lock.
+        let probe = pipe.clone();
+        assert_eq!(
+            blocking(move || probe_presence(&probe)).await,
+            DaemonPresence::Absent
+        );
+        let probe = pipe.clone();
+        assert!(!blocking(move || is_released(&probe)).await);
+        let probe = pipe.clone();
+        assert_eq!(blocking(move || serving_daemon(&probe)).await, Some(None));
+        let probe = pipe.clone();
+        assert_eq!(
+            blocking(move || stop_daemon(&probe, Duration::from_millis(300), Duration::ZERO))
+                .await
+                .unwrap(),
+            StopOutcome::StillStarting
+        );
+
+        let lock = claim_daemon_lock(&daemon_lock_path(&pipe), &pipe, Duration::ZERO).unwrap();
+        let probe = pipe.clone();
+        assert_eq!(
+            blocking(move || probe_presence(&probe)).await,
+            DaemonPresence::Starting {
+                lock_held: daemon_lock_path(&pipe)
+            }
+        );
+        let probe = pipe.clone();
+        assert!(!blocking(move || is_released(&probe)).await);
+
+        // An exiting daemon closes its pipe a moment before it drops its lock.
+        drop(instance);
+        let probe = pipe.clone();
+        assert!(
+            blocking(move || {
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                while !is_released(&probe) {
+                    if std::time::Instant::now() >= deadline {
+                        return false;
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                true
+            })
+            .await
+        );
+        let probe = pipe.clone();
+        assert_eq!(blocking(move || serving_daemon(&probe)).await, None);
+        drop(lock);
+    }
+}
+
 #[cfg(not(any(unix, target_os = "windows")))]
-pub async fn run_serve(
+async fn serve_claimed_socket(
     _sdk: std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     _socket_path: &str,
     _pid_file_path: Option<&str>,
+    _socket_lock: Option<std::fs::File>,
 ) -> anyhow::Result<()> {
     anyhow::bail!("cua-driver serve is not supported on this platform");
 }
 
 // ── CLI helpers ───────────────────────────────────────────────────────────────
 
-/// `cua-driver serve` implementation.
+/// Names the descriptor of the socket lock a disclaimed relaunch inherits
+/// from the `serve` process that claimed the socket.
+#[cfg(target_os = "macos")]
+pub const INHERITED_SOCKET_LOCK_FD_ENV: &str = "CUA_DRIVER_RS_INHERITED_SOCKET_LOCK_FD";
+
+/// Take over the socket lock the launching process passed down, if the named
+/// descriptor is this socket's lock file and its lock is ours to hold.
+#[cfg(target_os = "macos")]
+fn adopt_inherited_socket_lock(socket_path: &str) -> Option<std::fs::File> {
+    use std::os::fd::FromRawFd as _;
+    use std::os::unix::fs::MetadataExt as _;
+    let fd: libc::c_int = crate::env_vars::var(INHERITED_SOCKET_LOCK_FD_ENV)?
+        .parse()
+        .ok()?;
+    if fd < 0 {
+        return None;
+    }
+    let expected = std::fs::metadata(daemon_lock_path(socket_path)).ok()?;
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let stat = unsafe { stat.assume_init() };
+    if stat.st_dev as u64 != expected.dev() || stat.st_ino != expected.ino() {
+        return None;
+    }
+    // Close it on exec before anything else can spawn, so tools and helpers
+    // never inherit the lock.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } != 0 {
+        return None;
+    }
+    // SAFETY: the descriptor is open on the lock file, which nothing else in
+    // this process has opened yet.
+    let lock = unsafe { std::fs::File::from_raw_fd(fd) };
+    // Succeeds only while this open file already holds the lock or nobody does.
+    lock.try_lock().ok()?;
+    Some(lock)
+}
+
+/// The daemon a launch onto `socket_path` must not start beside, with the
+/// pid it reports when it answers. An endpoint that is still held counts too:
+/// an embedded daemon holds no lock and may answer late, and a launch would
+/// otherwise clear its Unix socket or open instances of its Windows pipe.
+fn serving_daemon(socket_path: &str) -> Option<Option<u32>> {
+    let presence = probe_presence(socket_path);
+    match presence {
+        DaemonPresence::Serving { pid, .. } => Some(Some(pid)),
+        _ if endpoint_still_held(socket_path, &presence) => Some(None),
+        _ => None,
+    }
+}
+
+/// Refuse a launch onto a socket another daemon serves, then claim the
+/// socket for this process. Exits on refusal.
+pub fn claim_socket_for_launch(socket_path: &str) -> Option<std::fs::File> {
+    #[cfg(target_os = "macos")]
+    if let Some(lock) = adopt_inherited_socket_lock(socket_path) {
+        return Some(lock);
+    }
+    if let Some(pid) = serving_daemon(socket_path) {
+        eprintln!("{}", already_running_message(socket_path, pid));
+        std::process::exit(1);
+    }
+    match claim_socket(socket_path) {
+        Ok(lock) => lock,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `cua-driver serve` implementation, on a socket [`claim_socket_for_launch`]
+/// claimed.
 pub fn run_serve_cmd(
     driver: std::sync::Arc<cua_driver_sdk::CuaDriver>,
     socket_path: &str,
     pid_file_path: Option<&str>,
+    socket_lock: Option<std::fs::File>,
 ) {
     let socket_path = socket_path.to_owned();
     let pid_file_path = pid_file_path.map(str::to_owned);
-
-    // Fail fast if another daemon is already running.
-    if is_daemon_listening(&socket_path) {
-        let pid_hint = pid_file_path
-            .as_deref()
-            .and_then(read_pid_file)
-            .map(|pid| format!(" (pid {pid})"))
-            .unwrap_or_default();
-        eprintln!(
-            "Cua Driver daemon is already running on {socket_path}{pid_hint}. \
-             Run `cua-driver stop` first."
-        );
-        std::process::exit(1);
-    }
 
     // Session-0 warning banner (Windows). The daemon runs fine in services
     // / SSH contexts for tools that don't touch the desktop, but every
@@ -2415,7 +2604,12 @@ pub fn run_serve_cmd(
             std::process::exit(1);
         }
     };
-    let result = rt.block_on(run_serve(sdk, &socket_path, pid_file_path.as_deref()));
+    let result = rt.block_on(serve_claimed_socket(
+        sdk,
+        &socket_path,
+        pid_file_path.as_deref(),
+        socket_lock,
+    ));
     rt.shutdown_timeout(std::time::Duration::from_secs(30));
     cua_driver_core::session_authorization::release_configured_registry_for_shutdown();
     cua_driver_core::session::release_process_state_for_shutdown();
@@ -2425,11 +2619,44 @@ pub fn run_serve_cmd(
     }
 }
 
-/// `cua-driver stop` implementation.
-pub fn run_stop_cmd(socket_path: &str) {
-    if !is_daemon_listening(socket_path) {
-        eprintln!("Cua Driver daemon is not running");
-        std::process::exit(1);
+/// How long `stop` waits for a starting daemon to answer before it gives up.
+const STOP_STARTING_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// How long `stop` keeps looking when it finds no daemon. A `serve` process
+/// that has just started takes a moment to reach its claim on the socket.
+const STOP_ABSENT_SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
+
+#[derive(Debug, PartialEq, Eq)]
+enum StopOutcome {
+    Stopped,
+    NotRunning(DaemonPresence),
+    StillStarting,
+}
+
+/// Ask the daemon on `socket_path` to shut down. A launch that holds the lock
+/// but does not answer yet is waited for, then stopped, so `stop` never says
+/// "not running" while a daemon is coming up.
+fn stop_daemon(
+    socket_path: &str,
+    starting_wait: std::time::Duration,
+    absent_settle: std::time::Duration,
+) -> anyhow::Result<StopOutcome> {
+    let started = std::time::Instant::now();
+    loop {
+        let waited = started.elapsed();
+        let presence = probe_presence(socket_path);
+        // A daemon that does not answer yet holds the lock or still holds
+        // its endpoint; an embedded daemon takes no lock.
+        let not_answering = matches!(presence, DaemonPresence::Starting { .. })
+            || endpoint_still_held(socket_path, &presence);
+        match presence {
+            DaemonPresence::Serving { .. } => break,
+            _ if not_answering && waited < starting_wait => {}
+            _ if not_answering => return Ok(StopOutcome::StillStarting),
+            DaemonPresence::Absent | DaemonPresence::Stale { .. } if waited < absent_settle => {}
+            presence => return Ok(StopOutcome::NotRunning(presence)),
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
 
     let req = DaemonRequest {
@@ -2440,11 +2667,98 @@ pub fn run_stop_cmd(socket_path: &str) {
         observation_origin: None,
         client_kind: None,
     };
-    match send_request(socket_path, &req) {
-        Ok(_) => wait_for_release(socket_path),
+    send_request(socket_path, &req)?;
+    Ok(StopOutcome::Stopped)
+}
+
+/// Whether a probe that found no daemon answering still sees its endpoint
+/// held: on Windows any instance of its pipe, free or busy; on Unix a socket
+/// that still accepts connections. An embedded daemon takes no lock, so this
+/// is the only sign of one that answers late.
+fn endpoint_still_held(socket_path: &str, presence: &DaemonPresence) -> bool {
+    let _ = socket_path;
+    match presence {
+        DaemonPresence::Serving { .. } => false,
+        #[cfg(unix)]
+        DaemonPresence::Stale { .. } => socket_accepts(socket_path),
+        #[cfg(target_os = "windows")]
+        _ => named_pipe_exists(socket_path),
+        #[cfg(not(target_os = "windows"))]
+        _ => false,
+    }
+}
+
+/// How often [`socket_accepts`] tries before it takes refusals as a dead
+/// listener, and how long it waits between tries.
+#[cfg(unix)]
+const SOCKET_PROBE_ATTEMPTS: u32 = 5;
+#[cfg(unix)]
+const SOCKET_PROBE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Whether something still listens on the Unix socket at `socket_path`. Only
+/// refusal on every try, or a missing path, counts as no listener: macOS also
+/// refuses while a live listener's accept queue is full, and any other error
+/// is no proof the listener is gone.
+#[cfg(unix)]
+fn socket_accepts(socket_path: &str) -> bool {
+    for attempt in 0..SOCKET_PROBE_ATTEMPTS {
+        match std::os::unix::net::UnixStream::connect(socket_path) {
+            Ok(_) => return true,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return false,
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
+            Err(_) => return true,
+        }
+        if attempt + 1 < SOCKET_PROBE_ATTEMPTS {
+            std::thread::sleep(SOCKET_PROBE_INTERVAL);
+        }
+    }
+    false
+}
+
+/// `cua-driver stop` implementation.
+pub fn run_stop_cmd(socket_path: &str) {
+    match stop_daemon(socket_path, STOP_STARTING_WAIT, STOP_ABSENT_SETTLE) {
+        Ok(StopOutcome::Stopped) => wait_for_release(socket_path),
+        Ok(StopOutcome::NotRunning(presence)) => {
+            report_not_serving(socket_path, presence);
+            std::process::exit(1);
+        }
+        Ok(StopOutcome::StillStarting) => {
+            eprintln!(
+                "Cua Driver daemon on {socket_path} is still starting after {}s; run `cua-driver stop` again",
+                STOP_STARTING_WAIT.as_secs()
+            );
+            std::process::exit(1);
+        }
         Err(e) => {
             eprintln!("stop: {e}");
             std::process::exit(1);
+        }
+    }
+}
+
+/// Whether the daemon has let go of `socket_path`: it no longer answers and
+/// no longer has its socket bound. An exiting daemon keeps its lock a moment
+/// after it removes its socket, so a held lock alone does not count. A
+/// named pipe vanishes with its last server, so on Windows the pipe decides:
+/// a daemon with any instance of its pipe left, free or busy, has not let go,
+/// whether or not it holds a lock and even when its reply to the probe is late.
+fn is_released(socket_path: &str) -> bool {
+    match probe_presence(socket_path) {
+        DaemonPresence::Serving { .. } => false,
+        #[cfg(unix)]
+        DaemonPresence::Starting { .. } => std::fs::symlink_metadata(socket_path).is_err(),
+        #[cfg(unix)]
+        DaemonPresence::Stale { .. } => !socket_accepts(socket_path),
+        #[cfg(unix)]
+        DaemonPresence::Absent => true,
+        #[cfg(target_os = "windows")]
+        DaemonPresence::Absent | DaemonPresence::Stale { .. } | DaemonPresence::Starting { .. } => {
+            !named_pipe_exists(socket_path)
+        }
+        #[cfg(not(any(unix, target_os = "windows")))]
+        DaemonPresence::Absent | DaemonPresence::Stale { .. } | DaemonPresence::Starting { .. } => {
+            true
         }
     }
 }
@@ -2453,13 +2767,7 @@ pub fn run_stop_cmd(socket_path: &str) {
 pub(crate) fn wait_for_release(socket_path: &str) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     loop {
-        // On Windows the pipe path isn't a filesystem file; probe liveness instead.
-        let gone = if std::path::Path::new(socket_path).exists() {
-            false
-        } else {
-            !is_daemon_listening(socket_path)
-        };
-        if gone {
+        if is_released(socket_path) {
             // Swift's `stop` exits silently on success (no stdout
             // line) — match that for byte-for-byte parity.
             return;
@@ -2474,7 +2782,8 @@ pub(crate) fn wait_for_release(socket_path: &str) {
 
 /// `cua-driver status` implementation.
 pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
-    if is_daemon_listening(socket_path) {
+    let presence = probe_presence(socket_path);
+    if let DaemonPresence::Serving { gate, .. } = presence {
         let request = DaemonRequest {
             method: "authorization_status".to_owned(),
             name: None,
@@ -2501,6 +2810,12 @@ pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
             println!("  pid: {pid}");
         } else {
             println!("  pid: unknown (no pid file)");
+        }
+        match gate {
+            ToolGate::Open => println!("  tool calls: open"),
+            ToolGate::PermissionsPending => println!(
+                "  tool calls: waiting for permissions (every tool call returns permissions_pending; run `cua-driver permissions grant`)"
+            ),
         }
         if let Ok(response) = response {
             if let Some(status) = response.result {
@@ -2564,8 +2879,46 @@ pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
             }
         }
     } else {
-        eprintln!("Cua Driver daemon is not running");
+        report_not_serving(socket_path, presence);
         std::process::exit(1);
+    }
+}
+
+/// Explain why nothing answers on `socket_path`.
+fn report_not_serving(socket_path: &str, presence: DaemonPresence) {
+    match &presence {
+        DaemonPresence::Starting { lock_held } => {
+            eprintln!("Cua Driver daemon is starting");
+            eprintln!("  socket: {socket_path}");
+            eprintln!("  lock held: {}", lock_held.display());
+        }
+        DaemonPresence::Stale { .. } if endpoint_still_held(socket_path, &presence) => {
+            eprintln!("Cua Driver daemon endpoint exists but is not answering");
+            eprintln!("  socket: {socket_path}");
+        }
+        DaemonPresence::Stale { socket_file } => {
+            eprintln!("Cua Driver daemon is not running");
+            eprintln!(
+                "  stale socket file: {} (the next launch clears it)",
+                socket_file.display()
+            );
+        }
+        DaemonPresence::Absent | DaemonPresence::Serving { .. } => {
+            if endpoint_still_held(socket_path, &presence) {
+                eprintln!("Cua Driver daemon endpoint exists but is not answering");
+                eprintln!("  socket: {socket_path}");
+                return;
+            }
+            eprintln!("Cua Driver daemon is not running");
+            #[cfg(unix)]
+            if std::fs::symlink_metadata(socket_path).is_ok_and(|metadata| {
+                !std::os::unix::fs::FileTypeExt::is_socket(&metadata.file_type())
+            }) {
+                eprintln!(
+                    "  {socket_path} exists and is not a socket; a launch cannot bind there until it is moved"
+                );
+            }
+        }
     }
 }
 
@@ -2733,7 +3086,7 @@ mod socket_tests {
 
     #[test]
     fn every_local_service_socket_is_forced_private() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
         let socket = directory.path().join("driver.sock");
         let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
         std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o770)).unwrap();
@@ -2747,23 +3100,41 @@ mod socket_tests {
 
     #[test]
     fn a_second_standalone_launch_cannot_take_a_held_socket() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
         let socket = directory.path().join("driver.sock");
         let socket = socket.to_str().unwrap();
-        let first = super::claim_standalone_socket(socket).unwrap();
+        let first = super::claim_standalone_socket(socket, std::time::Duration::ZERO).unwrap();
         let _listener = std::os::unix::net::UnixListener::bind(socket).unwrap();
 
-        let second = super::claim_standalone_socket(socket);
+        let second = super::claim_standalone_socket(socket, std::time::Duration::ZERO);
 
         assert!(second.unwrap_err().to_string().contains("already running"));
         assert!(std::path::Path::new(socket).exists());
         drop(first);
-        assert!(super::claim_standalone_socket(socket).is_ok());
+        assert!(super::claim_standalone_socket(socket, std::time::Duration::ZERO).is_ok());
+    }
+
+    #[test]
+    fn only_a_stale_socket_is_cleared_and_only_after_the_claim() {
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
+        let socket = directory.path().join("driver.sock");
+        let path = socket.to_str().unwrap();
+        drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
+
+        let lock = super::claim_standalone_socket(path, std::time::Duration::ZERO).unwrap();
+        assert!(socket.exists(), "claiming alone must not unlink");
+        super::remove_stale_socket(path);
+        assert!(!socket.exists());
+
+        std::fs::write(&socket, "not a socket").unwrap();
+        super::remove_stale_socket(path);
+        assert!(socket.exists());
+        drop(lock);
     }
 
     #[test]
     fn cleanup_preserves_a_replacement_socket() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
         let socket = directory.path().join("driver.sock");
         let first = std::os::unix::net::UnixListener::bind(&socket).unwrap();
         let first_identity = socket_identity(socket.to_str().unwrap()).unwrap();
@@ -2774,6 +3145,216 @@ mod socket_tests {
 
         assert!(socket.exists());
         drop(first);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod presence_tests {
+    use super::{
+        claim_daemon_lock, claim_socket, daemon_lock_path, is_released, probe_presence,
+        remove_stale_socket, run_serve, send_request, serve_claimed_socket, serving_daemon,
+        stop_daemon, DaemonPresence, DaemonRequest, StopOutcome, ToolGate,
+    };
+    use std::time::Duration;
+
+    fn unique_socket(tag: &str) -> String {
+        format!(
+            "/tmp/cua-driver-{tag}-{}-{}.sock",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        )
+    }
+
+    async fn presence(socket: &str) -> DaemonPresence {
+        let socket = socket.to_owned();
+        tokio::task::spawn_blocking(move || probe_presence(&socket))
+            .await
+            .unwrap()
+    }
+
+    async fn wait_until_serving(socket: &str) -> DaemonPresence {
+        for _ in 0..250 {
+            let presence = presence(socket).await;
+            if matches!(presence, DaemonPresence::Serving { .. }) {
+                return presence;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("daemon on {socket} never answered");
+    }
+
+    #[test]
+    fn a_dead_daemons_socket_reads_as_stale_and_released() {
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
+        let socket = directory.path().join("driver.sock");
+        let path = socket.to_str().unwrap();
+        assert_eq!(probe_presence(path), DaemonPresence::Absent);
+
+        std::fs::write(&socket, "not a socket").unwrap();
+        assert_eq!(probe_presence(path), DaemonPresence::Absent);
+        std::fs::remove_file(&socket).unwrap();
+
+        drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
+
+        assert_eq!(
+            probe_presence(path),
+            DaemonPresence::Stale {
+                socket_file: socket.clone()
+            }
+        );
+        assert!(is_released(path));
+        // The probe released the lock it tried, so a launch can take it.
+        let lock = claim_daemon_lock(&daemon_lock_path(path), path, Duration::ZERO).unwrap();
+        assert_eq!(
+            probe_presence(path),
+            DaemonPresence::Starting {
+                lock_held: daemon_lock_path(path)
+            }
+        );
+        assert!(!is_released(path));
+        drop(lock);
+    }
+
+    #[test]
+    fn a_listening_socket_that_never_answers_is_held_not_stale() {
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
+        let socket = directory.path().join("driver.sock");
+        let path = socket.to_str().unwrap();
+        // An embedded daemon takes no lock and may answer late.
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        assert!(matches!(probe_presence(path), DaemonPresence::Stale { .. }));
+        assert!(!is_released(path));
+        assert_eq!(serving_daemon(path), Some(None));
+        assert_eq!(
+            stop_daemon(path, Duration::from_millis(300), Duration::ZERO).unwrap(),
+            StopOutcome::StillStarting
+        );
+        remove_stale_socket(path);
+        assert!(
+            socket.exists(),
+            "a socket that still listens is never cleared"
+        );
+
+        drop(listener);
+        assert!(is_released(path));
+        assert_eq!(serving_daemon(path), None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_relaunch_adopts_only_the_lock_its_launcher_holds() {
+        use super::{adopt_inherited_socket_lock, INHERITED_SOCKET_LOCK_FD_ENV};
+        use std::os::fd::AsRawFd as _;
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
+        let socket = directory.path().join("driver.sock");
+        let path = socket.to_str().unwrap();
+        let held = claim_daemon_lock(&daemon_lock_path(path), path, Duration::ZERO).unwrap();
+        let mut env = crate::env_vars::Overrides::new();
+
+        // The same open file, as a relaunch inherits it.
+        let inherited = unsafe { libc::dup(held.as_raw_fd()) };
+        env.set(INHERITED_SOCKET_LOCK_FD_ENV, inherited.to_string());
+        assert!(adopt_inherited_socket_lock(path).is_some());
+
+        // Another open of the lock file, whose lock someone else holds.
+        let foreign = std::fs::File::open(daemon_lock_path(path)).unwrap();
+        let foreign_fd = unsafe { libc::dup(foreign.as_raw_fd()) };
+        env.set(INHERITED_SOCKET_LOCK_FD_ENV, foreign_fd.to_string());
+        assert!(adopt_inherited_socket_lock(path).is_none());
+
+        // A descriptor for some other file.
+        let other = tempfile::tempfile().unwrap();
+        env.set(INHERITED_SOCKET_LOCK_FD_ENV, other.as_raw_fd().to_string());
+        assert!(adopt_inherited_socket_lock(path).is_none());
+        drop(held);
+    }
+
+    /// Run `stop` against a launch that claims the socket after `claim_after`
+    /// and starts serving 300 ms after `stop` began. `stop` must wait for it,
+    /// stop it, and leave nothing behind.
+    async fn stop_a_launch(tag: &str, claim_after: Duration) {
+        let _guard = crate::test_runtime_lock().lock().await;
+        let (_driver, sdk, _calls) = crate::probe_sdk().await;
+        let socket = unique_socket(tag);
+        let stop = tokio::task::spawn_blocking({
+            let socket = socket.clone();
+            move || stop_daemon(&socket, Duration::from_secs(10), super::STOP_ABSENT_SETTLE)
+        });
+        tokio::time::sleep(claim_after).await;
+        let lock = claim_socket(&socket).unwrap();
+        assert!(matches!(
+            presence(&socket).await,
+            DaemonPresence::Starting { .. }
+        ));
+        tokio::time::sleep(Duration::from_millis(300).saturating_sub(claim_after)).await;
+        assert!(!stop.is_finished(), "stop gave up on a starting daemon");
+        let server = tokio::spawn({
+            let socket = socket.clone();
+            async move { serve_claimed_socket(sdk, &socket, None, lock).await }
+        });
+
+        assert_eq!(stop.await.unwrap().unwrap(), StopOutcome::Stopped);
+        tokio::time::timeout(Duration::from_secs(10), server)
+            .await
+            .expect("the daemon exits after stop")
+            .unwrap()
+            .unwrap();
+        assert_eq!(presence(&socket).await, DaemonPresence::Absent);
+        let _ = std::fs::remove_file(daemon_lock_path(&socket));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stop_waits_for_a_starting_daemon_and_stops_it() {
+        stop_a_launch("starting", Duration::ZERO).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stop_sees_a_launch_that_claims_the_socket_just_after_it_starts() {
+        stop_a_launch("claiming", Duration::from_millis(150)).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn presence_reports_a_permissions_pending_gate() {
+        let _guard = crate::test_runtime_lock().lock().await;
+        let (driver, sdk, _calls) = crate::probe_sdk().await;
+        let socket = unique_socket("gate");
+        driver.set_awaiting_permissions(true);
+        let server = tokio::spawn({
+            let socket = socket.clone();
+            async move { run_serve(sdk, &socket, None).await }
+        });
+
+        assert_eq!(
+            wait_until_serving(&socket).await,
+            DaemonPresence::Serving {
+                pid: std::process::id(),
+                gate: ToolGate::PermissionsPending,
+            }
+        );
+        driver.set_awaiting_permissions(false);
+        assert_eq!(
+            presence(&socket).await,
+            DaemonPresence::Serving {
+                pid: std::process::id(),
+                gate: ToolGate::Open,
+            }
+        );
+
+        let shutdown = DaemonRequest {
+            method: "shutdown".into(),
+            name: None,
+            args: None,
+            session_id: None,
+            observation_origin: None,
+            client_kind: None,
+        };
+        let socket_for_shutdown = socket.clone();
+        tokio::task::spawn_blocking(move || send_request(&socket_for_shutdown, &shutdown))
+            .await
+            .unwrap()
+            .unwrap();
+        server.await.unwrap().unwrap();
+        let _ = std::fs::remove_file(daemon_lock_path(&socket));
     }
 }
 
@@ -2832,6 +3413,20 @@ mod gate_tests {
             PROBE_INVOCATIONS.fetch_add(1, Ordering::SeqCst);
             ToolResult::text("probe ran")
         }
+    }
+
+    /// The `(code, message)` of a `session_ended`-style refusal: a daemon
+    /// `ok` envelope carrying the tool result the in-process runtime returns.
+    fn ended_refusal(resp: &cua_driver_core::daemon::DaemonResponse) -> Option<(&str, &str)> {
+        let result = resp.result.as_ref().filter(|_| resp.ok)?;
+        if result.get("isError") != Some(&Value::Bool(true)) {
+            return None;
+        }
+        let refusal = result.pointer("/structuredContent/refusal")?;
+        Some((
+            refusal.get("code")?.as_str()?,
+            refusal.get("message")?.as_str()?,
+        ))
     }
 
     fn call_req(sid: Option<&str>) -> DaemonRequest {
@@ -2962,14 +3557,13 @@ mod gate_tests {
                 .await
                 .unwrap()
                 .expect("ended call response");
-        assert!(
-            !resp.ok,
-            "ended-session call must be rejected loudly (not ok)"
-        );
-        assert!(
-            resp.error.as_deref().unwrap_or("").contains("has ended"),
-            "rejection must explain the session ended; got {:?}",
-            resp.error
+        assert_eq!(
+            ended_refusal(&resp),
+            Some((
+                "session_ended",
+                "this transport's unnamed session has ended; call start_session without a session label to start a new one",
+            )),
+            "ended-session call must be refused with the session_ended code; got {resp:?}"
         );
         assert_eq!(
             PROBE_INVOCATIONS.load(Ordering::SeqCst),
@@ -3038,9 +3632,10 @@ mod gate_tests {
                 .await
                 .unwrap()
                 .expect("bulk-revoked call response");
-        assert!(
-            !resp.ok,
-            "bulk-revoked session call must preserve the loud legacy transport refusal"
+        assert_eq!(
+            ended_refusal(&resp).map(|(code, _)| code),
+            Some("session_ended"),
+            "bulk-revoked session call must be refused as ended; got {resp:?}"
         );
         assert_eq!(
             PROBE_INVOCATIONS.load(Ordering::SeqCst),
@@ -3172,17 +3767,17 @@ mod gate_tests {
             &send("call", Some("end_session"), Some("done"), a).await
         ));
         let ended = send("call", Some("probe"), Some("done"), a).await;
-        assert!(
-            !ended.ok,
-            "an explicit end stays terminal for its live owner"
+        assert_eq!(
+            ended_refusal(&ended).map(|(code, _)| code),
+            Some("session_ended"),
+            "an explicit end stays terminal for its live owner: {ended:?}"
         );
-        assert!(ended.error.as_deref().unwrap_or("").contains("has ended"));
 
         // A's process exits: its control connection ends its transport.
         assert!(send("session_end", None, None, a).await.ok);
         let late = send("call", Some("probe"), Some("calc"), a).await;
         assert!(
-            !late.ok,
+            !ran(&late),
             "a late call from the closed transport stays refused"
         );
         assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 2);
@@ -3194,12 +3789,14 @@ mod gate_tests {
         // The label A ended explicitly stays refused for ordinary calls after
         // A closed, and any other transport may restart it with start_session.
         let still_ended = send("call", Some("probe"), Some("done"), b).await;
-        assert!(!still_ended.ok, "{:?}", still_ended.result);
-        assert!(still_ended
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("start_session"));
+        assert_eq!(
+            ended_refusal(&still_ended),
+            Some((
+                "session_ended",
+                "session 'done' has ended; call start_session with session 'done' to start it again, or use a new session label",
+            )),
+            "{still_ended:?}"
+        );
         assert!(ran(
             &send("call", Some("start_session"), Some("done"), b).await
         ));
@@ -3214,6 +3811,122 @@ mod gate_tests {
         assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 4);
 
         let _ = send("shutdown", None, None, a).await;
+        let _ = server.await;
+        let _ = std::fs::remove_file(&socket);
+    }
+
+    /// A label a live `cua-driver mcp` process started is refused to a
+    /// `cua-driver call` as held by another connection, not as ended, and
+    /// runs for the CLI once the MCP process has closed (#4724).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_live_label_held_by_another_transport_is_refused_as_owned_not_ended() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        PROBE_INVOCATIONS.store(0, Ordering::SeqCst);
+
+        let driver =
+            cua_driver_sdk::CuaDriver::create_for_host(cua_driver_sdk::DriverHostOptions {
+                cursor: cursor_overlay::CursorConfig {
+                    enabled: false,
+                    ..cursor_overlay::CursorConfig::default()
+                },
+                host_owns_permission_ux: false,
+                host_bundle_id: None,
+                claude_code_compatibility: false,
+                prepare_desktop_environment: false,
+                register_host_tools: Some(register_probe),
+                authorization_host: None,
+                activity_observer: None,
+            });
+        let sdk = crate::sdk_adapter::SdkAdapter::load(driver)
+            .await
+            .expect("SDK adapter");
+        let socket = format!(
+            "/tmp/cua-driver-owned-test-{}-{}.sock",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let socket_for_server = socket.clone();
+        let server = tokio::spawn(async move {
+            let _ = run_serve(sdk, &socket_for_server, None).await;
+        });
+        for _ in 0..100 {
+            if std::path::Path::new(&socket).exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        let send = |method: &str, name: Option<&str>, label: Option<&str>, transport: &str| {
+            let socket = socket.clone();
+            let request = DaemonRequest {
+                method: method.into(),
+                name: name.map(str::to_owned),
+                args: label.map(|label| serde_json::json!({ "session": label })),
+                session_id: Some(transport.to_owned()),
+                observation_origin: None,
+                client_kind: None,
+            };
+            async move {
+                tokio::task::spawn_blocking(move || send_request(&socket, &request))
+                    .await
+                    .unwrap()
+                    .expect("daemon response")
+            }
+        };
+        let refusal = |resp: &cua_driver_core::daemon::DaemonResponse| {
+            assert!(resp.ok, "{resp:?}");
+            let result = resp.result.clone().expect("tool result");
+            assert_eq!(result.get("isError"), Some(&Value::Bool(true)), "{result}");
+            result
+                .pointer("/structuredContent/refusal")
+                .cloned()
+                .unwrap_or_else(|| panic!("no refusal in {result}"))
+        };
+        // The transport ids `cua-driver mcp` and `cua-driver call` send.
+        let (mcp, cli) = ("mcp-owned-test-4724", "cli-owned-test-4724");
+
+        let started = send("call", Some("start_session"), Some("ra-transport"), mcp).await;
+        assert!(started.ok, "{started:?}");
+        assert!(
+            send("call", Some("probe"), Some("ra-transport"), mcp)
+                .await
+                .ok
+        );
+        assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 1);
+
+        let foreign = refusal(&send("call", Some("probe"), Some("ra-transport"), cli).await);
+        assert_eq!(
+            foreign,
+            serde_json::json!({
+                "code": "session_owned_by_other_transport",
+                "message": "session 'ra-transport' is live on another connection (mcp_stdio); make this call from that connection, or use a new session label here",
+                "owner_transport": "mcp_stdio",
+            })
+        );
+        assert_eq!(
+            PROBE_INVOCATIONS.load(Ordering::SeqCst),
+            1,
+            "the refused call must not run the tool"
+        );
+
+        // Once the MCP process closes, the CLI's next call starts the label.
+        assert!(send("session_end", None, None, mcp).await.ok);
+        let after = send("call", Some("probe"), Some("ra-transport"), cli).await;
+        assert!(after.ok, "{after:?}");
+        assert_ne!(
+            after
+                .result
+                .as_ref()
+                .and_then(|result| result.get("isError")),
+            Some(&Value::Bool(true)),
+            "{after:?}"
+        );
+        assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 2);
+
+        let _ = send("shutdown", None, None, cli).await;
         let _ = server.await;
         let _ = std::fs::remove_file(&socket);
     }
@@ -3346,9 +4059,15 @@ mod permission_gate_tests {
         );
 
         driver.set_awaiting_permissions(false);
-        for ((label, call), (code, text)) in refusals().into_iter().zip([
+        let [unknown, ended_session, failed_authorization] = refusals();
+        let ended_refused = send(ended_session.1).await;
+        assert!(ended_refused.ok, "{:?}", ended_refused.error);
+        assert_eq!(
+            ended_refused.result.as_ref().and_then(refusal_code),
+            Some("session_ended")
+        );
+        for ((label, call), (code, text)) in [unknown, failed_authorization].into_iter().zip([
             (64, "Unknown tool: no_such_tool"),
-            (1, "has ended"),
             (1, "own authorization process"),
         ]) {
             let refused = send(call).await;

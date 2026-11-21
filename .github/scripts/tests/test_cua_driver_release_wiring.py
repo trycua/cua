@@ -1141,8 +1141,8 @@ fi
         self.assertEqual(
             package["dependencies"],
             {
-                "@anthropic-ai/claude-code": "2.1.224",
-                "@modelcontextprotocol/sdk": "1.30.0",
+                "@anthropic-ai/claude-code": "2.1.322",
+                "@modelcontextprotocol/sdk": "1.32.2",
                 "@openai/codex": "0.146.1",
             },
         )
@@ -1152,10 +1152,10 @@ fi
         self.assertEqual(
             len(expected["baseTools"]), len(set(expected["baseTools"]))
         )
-        self.assertEqual(len(expected["baseTools"]), 62)
+        self.assertEqual(len(expected["baseTools"]), 61)
         self.assertEqual(
             expected["outputSchemaCountByPlatform"],
-            {"darwin": 35, "linux": 39, "win32": 35},
+            {"darwin": 33, "linux": 37, "win32": 33},
         )
         self.assertEqual(
             expected["platformTools"],

@@ -4,13 +4,12 @@
 //! Extras of the agent cursor.
 //!
 //! The default agent cursor is a plain arrow with a soft halo that levitates
-//! gently and points its tip along the path while it moves. Four saved settings in `~/.cua-driver/config.json`
-//! (`{"cursor": {"marks": true}}`) switch the extras:
+//! gently and points its tip along the path while it moves. It never draws
+//! an action mark: whatever the agent does (click, type, press keys, scroll,
+//! drag, ...), the cursor stays the plain arrow. Three saved settings in
+//! `~/.cua-driver/config.json` (`{"cursor": {"float": false}}`) switch the
+//! extras:
 //!
-//! - `cursor.marks`: the theme's action marks (observe arcs, click lines,
-//!   I-beam, key cap and the rest), including the navigate and click marks a
-//!   move or click used to start by itself, and the macOS focus rectangle
-//!   around a clicked element. Off: every theme paints its idle frame.
 //! - `cursor.float` (on by default): the float of the built-in theme, a slow
 //!   vertical bob at rest and a smaller lift while the cursor travels that
 //!   settles to exactly zero on arrival. The arrow stays upright. Off: the
@@ -30,6 +29,9 @@ use serde_json::{json, Map, Value};
 use std::path::Path;
 use std::sync::atomic::{AtomicU8, Ordering};
 
+/// Retired: action marks were removed and the cursor is always the plain
+/// arrow. The key is still accepted (and ignored) so old configs and
+/// callers do not error.
 pub const MARKS_KEY: &str = "cursor.marks";
 pub const FLOAT_KEY: &str = "cursor.float";
 pub const ROTATE_KEY: &str = "cursor.rotate";
@@ -77,7 +79,6 @@ impl RotateMode {
 /// is everything off.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CursorOptions {
-    pub marks: bool,
     pub float: bool,
     pub rotate: RotateMode,
     pub halo: bool,
@@ -93,7 +94,6 @@ impl CursorOptions {
     /// The built-in default: a plain arrow with a halo that floats and points
     /// along its path while it moves.
     pub const DEFAULT: Self = Self {
-        marks: false,
         float: true,
         rotate: RotateMode::Heading,
         halo: true,
@@ -101,7 +101,6 @@ impl CursorOptions {
 
     /// Every extra off: a plain arrow that is still at rest.
     pub const NONE: Self = Self {
-        marks: false,
         float: false,
         rotate: RotateMode::Off,
         halo: false,
@@ -109,13 +108,12 @@ impl CursorOptions {
 
     /// Every extra on.
     pub const ALL_ON: Self = Self {
-        marks: true,
         float: true,
         rotate: RotateMode::Heading,
         halo: true,
     };
 
-    const KEYS: [&'static str; 4] = [MARKS_KEY, FLOAT_KEY, ROTATE_KEY, HALO_KEY];
+    const KEYS: [&'static str; 3] = [FLOAT_KEY, ROTATE_KEY, HALO_KEY];
 
     fn field(key: &str) -> &str {
         key.trim_start_matches("cursor.")
@@ -125,7 +123,6 @@ impl CursorOptions {
     fn value_str(&self, key: &str) -> &'static str {
         let on_off = |flag: bool| if flag { "on" } else { "off" };
         match key {
-            MARKS_KEY => on_off(self.marks),
             FLOAT_KEY => on_off(self.float),
             HALO_KEY => on_off(self.halo),
             _ => self.rotate.as_str(),
@@ -135,7 +132,6 @@ impl CursorOptions {
     fn apply(&mut self, update: Update) {
         let default = Self::DEFAULT;
         match update {
-            Update::Marks(value) => self.marks = value.unwrap_or(default.marks),
             Update::Float(value) => self.float = value.unwrap_or(default.float),
             Update::Halo(value) => self.halo = value.unwrap_or(default.halo),
             Update::Rotate(value) => self.rotate = value.unwrap_or(default.rotate),
@@ -143,15 +139,11 @@ impl CursorOptions {
     }
 
     const fn to_u8(self) -> u8 {
-        self.marks as u8
-            | (self.float as u8) << 1
-            | self.rotate.to_bits() << 2
-            | (self.halo as u8) << 4
+        (self.float as u8) << 1 | self.rotate.to_bits() << 2 | (self.halo as u8) << 4
     }
 
     const fn from_u8(value: u8) -> Self {
         Self {
-            marks: value & 1 != 0,
             float: value & 2 != 0,
             rotate: RotateMode::from_bits((value >> 2) & 3),
             halo: value & 16 != 0,
@@ -164,7 +156,6 @@ impl CursorOptions {
             .iter()
             .map(|key| {
                 let value = match *key {
-                    MARKS_KEY => Value::Bool(self.marks),
                     FLOAT_KEY => Value::Bool(self.float),
                     HALO_KEY => Value::Bool(self.halo),
                     _ => Value::String(self.rotate.as_str().into()),
@@ -178,7 +169,6 @@ impl CursorOptions {
 /// One parsed write; `None` means the built-in default.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Update {
-    Marks(Option<bool>),
     Float(Option<bool>),
     Halo(Option<bool>),
     Rotate(Option<RotateMode>),
@@ -188,7 +178,7 @@ impl Update {
     /// What the config file stores for this write; `None` removes the key.
     fn saved(self) -> Option<Value> {
         match self {
-            Self::Marks(value) | Self::Float(value) | Self::Halo(value) => value.map(Value::Bool),
+            Self::Float(value) | Self::Halo(value) => value.map(Value::Bool),
             Self::Rotate(value) => value.map(|mode| Value::String(mode.as_str().into())),
         }
     }
@@ -227,7 +217,6 @@ pub fn parse_rotate(value: &Value) -> Result<Option<RotateMode>, String> {
 
 fn parse_update(key: &str, value: &Value) -> Result<Update, String> {
     Ok(match key {
-        MARKS_KEY => Update::Marks(parse_value(key, value)?),
         FLOAT_KEY => Update::Float(parse_value(key, value)?),
         HALO_KEY => Update::Halo(parse_value(key, value)?),
         _ => Update::Rotate(parse_rotate(value)?),
@@ -261,6 +250,10 @@ pub fn load_from(path: &Path) -> CursorOptions {
 /// is invalid. Returns the new options and the keys written.
 pub fn set_at(path: &Path, args: &Value) -> Result<(CursorOptions, Vec<&'static str>), String> {
     let mut updates = Vec::new();
+    // The retired key is validated like before and then ignored.
+    if let Some(value) = args.get(MARKS_KEY) {
+        parse_value(MARKS_KEY, value)?;
+    }
     for key in CursorOptions::KEYS {
         if let Some(value) = args.get(key) {
             updates.push((key, parse_update(key, value)?));
@@ -349,13 +342,14 @@ pub fn saved_config_json() -> Value {
     Value::Object(cursor)
 }
 
-/// Apply the `cursor.marks` / `cursor.float` / `cursor.rotate` /
-/// `cursor.halo` writes in a
+/// Apply the `cursor.float` / `cursor.rotate` / `cursor.halo` writes in a
 /// `set_config` call: validate, persist, and switch every cursor at once.
-/// Returns `key=value` for each key written.
+/// The retired `cursor.marks` is validated and ignored. Returns `key=value`
+/// for each key written.
 pub fn apply_config_args(args: &Value) -> Result<Vec<String>, String> {
     if !CursorOptions::KEYS
         .iter()
+        .chain(std::iter::once(&MARKS_KEY))
         .any(|key| args.get(*key).is_some())
     {
         return Ok(Vec::new());
@@ -378,7 +372,7 @@ pub fn config_schema_properties() -> Map<String, Value> {
         (
             MARKS_KEY,
             &on_off[..],
-            "Agent cursor action marks: the small cue next to the arrow for observe, click, type, keys, scroll, drag, apps, files, recording and system calls, plus the focus box around a clicked element on macOS. off (default): a plain arrow. Applies immediately to every cursor.",
+            "Retired and ignored: the agent cursor never draws action marks, so it is always a plain arrow whatever the agent does. Still accepted so existing configs and callers keep working.",
         ),
         (
             FLOAT_KEY,
@@ -428,7 +422,6 @@ mod tests {
     fn the_float_the_halo_and_heading_are_on_by_default() {
         let default = CursorOptions::default();
         assert!(default.float && default.halo);
-        assert!(!default.marks);
         assert_eq!(default.rotate, RotateMode::Heading);
         assert_eq!(default, CursorOptions::from_u8(2 | 8 | 16));
         assert_eq!(CursorOptions::NONE, CursorOptions::from_u8(0));
@@ -459,18 +452,15 @@ mod tests {
 
     #[test]
     fn round_trips_through_the_bit_packing() {
-        for marks in [false, true] {
-            for float in [false, true] {
-                for halo in [false, true] {
-                    for rotate in [RotateMode::Off, RotateMode::Lean, RotateMode::Heading] {
-                        let options = CursorOptions {
-                            marks,
-                            float,
-                            rotate,
-                            halo,
-                        };
-                        assert_eq!(CursorOptions::from_u8(options.to_u8()), options);
-                    }
+        for float in [false, true] {
+            for halo in [false, true] {
+                for rotate in [RotateMode::Off, RotateMode::Lean, RotateMode::Heading] {
+                    let options = CursorOptions {
+                        float,
+                        rotate,
+                        halo,
+                    };
+                    assert_eq!(CursorOptions::from_u8(options.to_u8()), options);
                 }
             }
         }
@@ -486,26 +476,35 @@ mod tests {
         )
         .unwrap();
 
-        let (options, keys) =
-            set_at(&path, &json!({"cursor.marks": "on", "cursor.float": true})).unwrap();
-        assert_eq!(keys, vec![MARKS_KEY, FLOAT_KEY]);
-        assert_eq!(
-            options,
-            CursorOptions {
-                marks: true,
-                ..CursorOptions::DEFAULT
-            }
-        );
+        let (options, keys) = set_at(&path, &json!({"cursor.float": "off"})).unwrap();
+        assert_eq!(keys, vec![FLOAT_KEY]);
+        assert!(!options.float);
         let saved: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(saved["max_image_dimension"], 1024);
         assert_eq!(saved["cursor"]["badges"], "verbose");
-        assert_eq!(saved["cursor"]["marks"], true);
+        assert_eq!(saved["cursor"]["float"], false);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
 
-        let (options, _) = set_at(&path, &json!({"cursor.marks": "default"})).unwrap();
-        assert!(!options.marks);
-        assert!(options.float);
-        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert!(saved["cursor"].get("marks").is_none());
+    #[test]
+    fn the_retired_marks_key_is_read_and_set_but_ignored() {
+        let path = temp_config("marks");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{"cursor": {"marks": true, "halo": false}}"#).unwrap();
+        // A saved marks-on preference loads without error and changes nothing.
+        assert_eq!(
+            load_from(&path),
+            CursorOptions {
+                halo: false,
+                ..CursorOptions::DEFAULT
+            }
+        );
+        assert!(!CursorOptions::DEFAULT.config_json().contains_key("marks"));
+        // Writing it is accepted, writes nothing, and a bad value still errors.
+        let (options, keys) = set_at(&path, &json!({"cursor.marks": "on"})).unwrap();
+        assert!(keys.is_empty());
+        assert!(!options.halo);
+        assert!(set_at(&path, &json!({"cursor.marks": "sometimes"})).is_err());
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 

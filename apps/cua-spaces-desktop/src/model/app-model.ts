@@ -180,6 +180,8 @@ export class AppModel {
   hosts: AppSpaceHost[] = [];
   /** Windows or Linux without a usable local runtime: why, and the fix New Space offers (null when one is ready). */
   runtimeAdvice: WindowsRuntimeAdvice | null = null;
+  /** Windows: the app's own engine is installed but waits for a restart, so local Spaces can't be made yet. */
+  private restartBlocksLocal = false;
   readonly windowsRuntime: WindowsRuntime | null;
   readonly linuxRuntime: LinuxRuntime | null;
   /** How long one read of the registry may take before a refresh gives up on it (s). */
@@ -699,27 +701,26 @@ export class AppModel {
   private async readRuntimeAdvice(runtimes: LocalRuntimes | null): Promise<void> {
     if (!runtimes) return;
     const w = this.windowsRuntime;
+    this.restartBlocksLocal = false;
     if (runtimes.ready.length > 0) {
+      // Only the app's own engine, and Windows still has to restart for it: it is not ready yet.
+      if (w && runtimes.ready.every((r) => r === "managed") && (await w.restartWanted().catch(() => false))) {
+        this.restartBlocksLocal = true;
+        this.runtimeAdvice = await w.advice().catch(() => null);
+        return;
+      }
       w?.settled();
       this.runtimeAdvice = null;
       return;
     }
-    // Windows: Cua Spaces runs its own engine in WSL 2; when the doctor says why it cannot
-    // (WSL 2 or virtualization off), that is the reason, not "install Docker Desktop".
+    // Windows: Cua Spaces runs its own engine in WSL 2 and never offers Docker Desktop.
+    // When the doctor says why it cannot, that is the reason; WSL 2 not set up is one
+    // click here (one Windows prompt), anything else (virtualization off, no disk) is
+    // the doctor's own words.
     const managed = runtimes.details.get("managed");
     if (process.platform === "win32" && managed && /wsl|virtual|not enough disk space/i.test(managed)) {
-      this.runtimeAdvice = {
-        reason: managed,
-        fix: /Windows feature|wsl --install/i.test(managed)
-          ? {
-              action: "open-windows-features",
-              label: "Open Windows Features",
-              note: "Turn on the listed features, then restart this PC and open Cua Spaces again.",
-              busy: false,
-              termsUrl: null,
-            }
-          : null,
-      };
+      const setUp = /not installed|Windows feature|wsl --install|Virtual Machine Platform/i.test(managed);
+      this.runtimeAdvice = setUp && w ? await w.advice().catch(() => ({ reason: managed, fix: null })) : { reason: managed, fix: null };
       return;
     }
     if (w) this.runtimeAdvice = await w.advice().catch(() => null);
@@ -731,7 +732,7 @@ export class AppModel {
     return this.runtimeAdvice?.fix ?? null;
   }
 
-  /** Runs a New Space fix ("Install Docker Desktop"); the page reads the options again to follow it. */
+  /** Runs a New Space fix ("Set up Linux support"); the page reads the options again to follow it. */
   fixRuntime(action: RuntimeFixAction): void {
     if (action === "restart-app") {
       if (!this.linuxRuntime) throw new Error("no runtime fix on this system");
@@ -748,7 +749,7 @@ export class AppModel {
   }
 
   private wizardEnv(runtimes: LocalRuntimes | null, storage: LocalStorage | null, gpus: AppGpuChoice[] | null): AppWizardEnv {
-    const backends = runtimes?.ready;
+    const backends = this.restartBlocksLocal ? [] : runtimes?.ready;
     const env: AppWizardEnv = {
       defaultLocation: this.settings.defaultLocation,
       localAvailable: backends ? backends.length > 0 : true,

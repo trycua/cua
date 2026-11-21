@@ -74,6 +74,20 @@ with the image until the guest changes them, so while VMs made from an image
 exist, removing the image gives back less than the size Hoy shows. Blocks a VM
 still uses stay in use. Remove the VM too (`hoy rm <vm>`) to get all of it back.
 
+## Keep images on another folder
+
+Images live in the image store, by default `~/Library/Application Support/hoy/images`.
+To use another folder, set `imageStore` in `~/Library/Application Support/hoy/hoyd.json`
+and restart Hoy's background service:
+
+```json skip="placeholder"
+{ "imageStore": "<folder for images>" }
+```
+
+`hoy image create` builds into whatever store the service uses. Keep the store on
+the same APFS volume as the Hoy home, so `hoy create` stays a clone and not a
+27 GiB copy.
+
 ## For scripts
 
 `--json` prints the same fields for both commands: `removed` (what was removed),

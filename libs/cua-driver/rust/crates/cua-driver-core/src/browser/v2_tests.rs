@@ -63,6 +63,10 @@ pub(super) struct FixtureState {
     oopif_sessions: u64,
     fail_key_down_after: Option<usize>,
     completed_key_pairs: usize,
+    /// The Enter `char` event fails after its `keyDown` landed.
+    fail_enter_char: bool,
+    /// The single-line field probe errors instead of answering.
+    single_line_probe_fails: bool,
     /// A synthetic `this.click()` opens a confirm() dialog: the mock emits
     /// `Page.javascriptDialogOpening` and never answers the call.
     click_opens_dialog: bool,
@@ -123,6 +127,10 @@ pub(super) struct FixtureState {
     /// Extra page targets living in the bound window, after T1 in the
     /// browser's `Target.getTargets` order.
     sibling_tabs: Vec<Value>,
+    /// Fail the read-only prepare probe without closing the WebSocket.
+    fail_get_targets: bool,
+    silent_get_targets: bool,
+    probe_reply_ready: Option<Arc<tokio::sync::Notify>>,
     /// Drop the primary tab target T1 from `Target.getTargets`.
     omit_primary_target: bool,
     /// Make `Browser.getWindowForTarget` for T1 answer this CDP error.
@@ -161,6 +169,9 @@ impl Default for FixtureState {
             windowless_targets: Vec::new(),
             sibling_tabs: Vec::new(),
             omit_primary_target: false,
+            fail_get_targets: false,
+            silent_get_targets: false,
+            probe_reply_ready: None,
             primary_window_error: None,
             dialog_open: false,
             page_enable_hangs: false,
@@ -171,6 +182,8 @@ impl Default for FixtureState {
             oopif_sessions: 0,
             fail_key_down_after: None,
             completed_key_pairs: 0,
+            fail_enter_char: false,
+            single_line_probe_fails: false,
             click_opens_dialog: false,
             dialog_vanished: false,
             trusted_click_opens_dialog: None,
@@ -544,6 +557,16 @@ fn fixture_handler(state: SharedState) -> MockHandler {
 
         match call.method.as_str() {
             "Target.getTargets" => {
+                if st.silent_get_targets {
+                    return MockReply::hang();
+                }
+                if st.fail_get_targets {
+                    let reply = MockReply::method_not_found("Target.getTargets");
+                    return match &st.probe_reply_ready {
+                        Some(ready) => reply.after_notification(ready.clone()),
+                        None => reply,
+                    };
+                }
                 let mut infos: Vec<Value> = Vec::new();
                 if !st.omit_primary_target {
                     infos.push(json!({
@@ -854,6 +877,13 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     MockReply::err(-32000, "No node with given id")
                 }
             }
+            "Input.dispatchKeyEvent"
+                if st.fail_enter_char
+                    && call.params["type"] == "char"
+                    && call.params["key"] == "Enter" =>
+            {
+                MockReply::err(-32000, "fixture Enter char failure")
+            }
             "Input.dispatchKeyEvent" => {
                 let event_type = call.params["type"].as_str().unwrap_or_default();
                 if event_type == "keyDown" && st.fail_key_down_after == Some(st.completed_key_pairs)
@@ -968,7 +998,11 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                         declaration.contains("!this.isContentEditable && this.tagName === 'INPUT'")
                     }) =>
             {
-                MockReply::ok(json!({ "result": { "value": !st.multiline_field } }))
+                if st.single_line_probe_fails {
+                    MockReply::err(-32000, "execution context destroyed")
+                } else {
+                    MockReply::ok(json!({ "result": { "value": !st.multiline_field } }))
+                }
             }
             "Runtime.callFunctionOn" => {
                 st.dom_click_focused = true;
@@ -1081,6 +1115,9 @@ async fn answer_or_stall(remaining: &AtomicUsize) {
 /// and which restores core asked for.
 #[derive(Default)]
 struct FixtureFocus {
+    accept_consent: bool,
+    consent_response_ready: Option<Arc<tokio::sync::Notify>>,
+    consent_attempts: StdMutex<Vec<u8>>,
     attach_activates_browser: bool,
     frontmost: StdMutex<Option<i64>>,
     restores: StdMutex<Vec<(i64, i64)>>,
@@ -1307,8 +1344,21 @@ impl BrowserPlatform for FixturePlatform {
 
     async fn handle_existing_profile_consent(
         &self,
-        _request: BrowserConsentRequest,
+        request: BrowserConsentRequest,
     ) -> Result<BrowserConsentOutcome, BrowserRefusal> {
+        if self.focus.accept_consent {
+            request.action.perform(|| {
+                self.focus
+                    .consent_attempts
+                    .lock()
+                    .unwrap()
+                    .push(request.attempt)
+            });
+            if let Some(ready) = &self.focus.consent_response_ready {
+                ready.notify_one();
+            }
+            return Ok(BrowserConsentOutcome::Accepted);
+        }
         if self.stall_consent {
             tokio::time::sleep(std::time::Duration::from_secs(10)).await;
             return Ok(BrowserConsentOutcome::NotPresent);
@@ -1424,11 +1474,13 @@ impl crate::consent::ProtectedConsentProvider for FixtureProtectedProvider {
 }
 
 async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedProvider>) {
-    protected_existing_profile_fixture_with(Default::default()).await
+    protected_existing_profile_fixture_with(Default::default(), Default::default(), false).await
 }
 
 async fn protected_existing_profile_fixture_with(
     stalls: Arc<FixtureStalls>,
+    focus: Arc<FixtureFocus>,
+    stall_consent: bool,
 ) -> (Fixture, Arc<FixtureProtectedProvider>) {
     let state = Arc::new(StdMutex::new(FixtureState::default()));
     let server = MockCdpServer::start(fixture_handler(state.clone())).await;
@@ -1447,9 +1499,9 @@ async fn protected_existing_profile_fixture_with(
             existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
             setup_invoked: setup_invoked.clone(),
             setup_aborted: Arc::new(AtomicBool::new(false)),
-            stall_consent: false,
+            stall_consent,
             stalls,
-            focus: Default::default(),
+            focus,
         }),
         Some(provider.clone()),
     );
@@ -1525,6 +1577,7 @@ async fn attach_fixture_with_space(
         restores: StdMutex::new(Vec::new()),
         browser_off_space,
         guards: StdMutex::new(Vec::new()),
+        ..Default::default()
     });
     let provider = Arc::new(FixtureProtectedProvider {
         consent_seen: AtomicBool::new(false),
@@ -1712,7 +1765,8 @@ async fn bind_existing_profile(engine: &Arc<BrowserEngine>, transport: &str) -> 
 async fn existing_profile_bind_refuses_when_the_endpoint_reproof_stalls() {
     const TRANSPORT: &str = "transport-v2-reproof-stall";
     let stalls = Arc::new(FixtureStalls::default());
-    let (f, _) = protected_existing_profile_fixture_with(stalls.clone()).await;
+    let (f, _) =
+        protected_existing_profile_fixture_with(stalls.clone(), Default::default(), false).await;
     prepare_existing_profile(&f.engine, TRANSPORT).await;
 
     stalls.reproofs.store(0, Ordering::SeqCst);
@@ -1895,6 +1949,228 @@ async fn cleanup_fails_after_session_end(
         0,
         "the retry succeeded"
     );
+}
+
+#[tokio::test]
+async fn failed_prepare_probe_releases_only_the_preparing_session() {
+    for with_peer in [false, true] {
+        let (f, _) = protected_existing_profile_fixture().await;
+        let prepare = |session: &'static str| {
+            let engine = f.engine.clone();
+            async move {
+                let result = BrowserPrepareTool::new(engine)
+                    .invoke(json!({
+                        "pid": 1,
+                        "window_id": 7,
+                        "session": session,
+                        "_transport_session_id": session,
+                        "strategy": { "kind": "existing_profile" }
+                    }))
+                    .await;
+                structured(&result).clone()
+            }
+        };
+        if with_peer {
+            let peer = prepare("prepare-probe-peer").await;
+            assert_eq!(peer["status"], "ok", "{peer}");
+        }
+        f.state.lock().unwrap().fail_get_targets = true;
+        let result = prepare("prepare-probe-failure").await;
+        assert_eq!(result["status"], "refused", "{result}");
+        assert_eq!(result["refusal"]["code"], "browser_reconnect_exhausted");
+        assert_eq!(result["refusal"]["detail"]["retried_after_consent"], false);
+        assert_eq!(f._server.accepted_connections(), 1);
+        assert!(f
+            .engine
+            .existing_profile_grant("prepare-probe-failure", Some("prepare-probe-failure"), 1)
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            f.engine
+                .pool
+                .shared_socket_holders(&f._server.ws_url())
+                .await,
+            with_peer.then_some(1),
+            "failure must release this holder without evicting a peer"
+        );
+
+        f.state.lock().unwrap().fail_get_targets = false;
+        let result = prepare("prepare-probe-recovery").await;
+        assert_eq!(result["status"], "ok", "{result}");
+        assert_eq!(
+            f._server.accepted_connections(),
+            if with_peer { 1 } else { 2 }
+        );
+        if with_peer {
+            let state = GetBrowserStateTool::new(f.engine.clone())
+                .invoke(json!({
+                    "pid": 1, "window_id": 7,
+                    "session": "prepare-probe-peer",
+                    "_transport_session_id": "prepare-probe-peer"
+                }))
+                .await;
+            assert_eq!(structured(&state)["status"], "ok", "{}", structured(&state));
+            crate::session::fire_session_end("prepare-probe-peer");
+        }
+        crate::session::fire_session_end("prepare-probe-recovery");
+    }
+}
+
+#[tokio::test]
+async fn silent_prepare_socket_is_refused_and_released() {
+    let (f, _) = protected_existing_profile_fixture().await;
+    f.state.lock().unwrap().silent_get_targets = true;
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        BrowserPrepareTool::new(f.engine.clone()).invoke(json!({
+            "pid": 1, "window_id": 7, "session": "prepare-silent",
+            "_transport_session_id": "prepare-silent",
+            "strategy": { "kind": "existing_profile" }
+        })),
+    )
+    .await
+    .expect("unavailable consent must settle without waiting for the CDP timeout");
+    let result = structured(&result);
+    assert_eq!(result["status"], "refused", "{result}");
+    assert_eq!(result["refusal"]["code"], "browser_route_unavailable");
+    assert!(f
+        .state
+        .lock()
+        .unwrap()
+        .calls
+        .iter()
+        .any(|(_, method, _)| method == "Target.getTargets"));
+    assert_eq!(
+        f.engine
+            .pool
+            .shared_socket_holders(&f._server.ws_url())
+            .await,
+        None
+    );
+    assert!(f
+        .engine
+        .existing_profile_grant("prepare-silent", Some("prepare-silent"), 1)
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn cancelled_prepare_probe_releases_only_its_socket_hold() {
+    for with_peer in [false, true] {
+        let (f, _) =
+            protected_existing_profile_fixture_with(Default::default(), Default::default(), true)
+                .await;
+        let url = f._server.ws_url();
+        let peer = if with_peer {
+            Some(f.engine.pool.claim_existing(&url, u64::MAX).await.unwrap())
+        } else {
+            None
+        };
+        f.state.lock().unwrap().silent_get_targets = true;
+        let engine = f.engine.clone();
+        let pending = tokio::spawn(async move {
+            BrowserPrepareTool::new(engine)
+                .invoke(json!({
+                    "pid": 1, "window_id": 7, "session": "prepare-cancelled-probe",
+                    "_transport_session_id": "prepare-cancelled-probe",
+                    "strategy": { "kind": "existing_profile" }
+                }))
+                .await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                assert!(!pending.is_finished(), "prepare must wait for a CDP reply");
+                if f.state
+                    .lock()
+                    .unwrap()
+                    .calls
+                    .iter()
+                    .any(|(_, method, _)| method == "Target.getTargets")
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the loopback server must observe the pending probe");
+        pending.abort();
+        assert!(pending.await.unwrap_err().is_cancelled());
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while f.engine.pool.shared_socket_holders(&url).await != with_peer.then_some(1) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("cancelling a pending probe must release its holder");
+        if let Some(peer) = peer {
+            let retained = f.engine.pool.get_existing(&url, u64::MAX).await.unwrap();
+            assert!(Arc::ptr_eq(&peer, &retained));
+            assert!(!retained.is_closed());
+            f.state.lock().unwrap().silent_get_targets = false;
+            retained
+                .call(None, "Target.getTargets", json!({}))
+                .await
+                .unwrap();
+            f.engine
+                .pool
+                .release_existing(&url, u64::MAX, super::cdp_ws::SharedSocketRelease::Close)
+                .await;
+        }
+        crate::session::fire_session_end("prepare-cancelled-probe");
+    }
+}
+
+#[tokio::test]
+async fn accepted_consent_retry_also_requires_a_successful_prepare_probe() {
+    let ready = Arc::new(tokio::sync::Notify::new());
+    let focus = Arc::new(FixtureFocus {
+        accept_consent: true,
+        consent_response_ready: Some(ready.clone()),
+        ..Default::default()
+    });
+    let (f, _) =
+        protected_existing_profile_fixture_with(Default::default(), focus.clone(), false).await;
+    {
+        let mut state = f.state.lock().unwrap();
+        state.fail_get_targets = true;
+        // Each probe can reply only after its consent action is observed.
+        // Both WebSocket handshakes themselves succeed.
+        state.probe_reply_ready = Some(ready);
+    }
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1, "window_id": 7, "session": "prepare-probe-retry",
+            "_transport_session_id": "prepare-probe-retry",
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let result = structured(&result);
+    assert_eq!(result["status"], "refused", "{result}");
+    assert_eq!(result["refusal"]["code"], "browser_reconnect_exhausted");
+    assert_eq!(result["refusal"]["detail"]["retried_after_consent"], true);
+    assert_eq!(result["refusal"]["detail"]["fresh_claim_failed"], true);
+    assert_eq!(
+        result["refusal"]["detail"]["displayed_consent_prompt"],
+        true
+    );
+    assert_eq!(*focus.consent_attempts.lock().unwrap(), vec![1, 2]);
+    assert_eq!(f._server.accepted_connections(), 2);
+    assert_eq!(
+        f.engine
+            .pool
+            .shared_socket_holders(&f._server.ws_url())
+            .await,
+        None
+    );
+    assert!(f
+        .engine
+        .existing_profile_grant("prepare-probe-retry", Some("prepare-probe-retry"), 1)
+        .await
+        .unwrap()
+        .is_none());
 }
 
 #[tokio::test]
@@ -5422,6 +5698,31 @@ async fn insert_text_trailing_newline_presses_enter_on_a_single_line_field() {
     assert!(events
         .iter()
         .all(|(sess, _)| sess.as_deref().unwrap().starts_with("tab-sess-")));
+
+    // An inactive tab drops key events without focus emulation, so the Enter
+    // must sit between enabling and disabling it.
+    let calls: Vec<(String, Value)> = f
+        .state
+        .lock()
+        .unwrap()
+        .calls
+        .iter()
+        .map(|(_, method, params)| (method.clone(), params.clone()))
+        .collect();
+    let emulation = |enabled: bool| {
+        calls
+            .iter()
+            .position(|(method, params)| {
+                method == "Emulation.setFocusEmulationEnabled" && params["enabled"] == enabled
+            })
+            .expect("focus emulation toggled")
+    };
+    let key_down = calls
+        .iter()
+        .position(|(method, _)| method == "Input.dispatchKeyEvent")
+        .unwrap();
+    assert!(emulation(true) < key_down, "{calls:?}");
+    assert!(key_down < emulation(false), "{calls:?}");
 }
 
 #[tokio::test]
@@ -5523,5 +5824,77 @@ async fn a_failed_enter_after_insert_text_is_reported_not_counted() {
     assert_eq!(refusal["detail"]["requested_chars"], 2);
     assert_eq!(refusal["detail"]["delivered_chars"], 2);
     assert_eq!(refusal["detail"]["enter_pressed"], false);
+    // The failed keyDown may still have reached the page.
+    assert_eq!(refusal["detail"]["enter_uncertain"], true, "{refusal}");
     assert_eq!(recorded_calls(&f, "Input.insertText").len(), 1);
+}
+
+#[tokio::test]
+async fn a_failed_cleanup_after_the_enter_does_not_say_the_enter_was_lost() {
+    let f = fixture_with(|state| state.focus_emulation_restore_fails = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "text": "hi\n", "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "refused", "{s}");
+    let refusal = &s["refusal"];
+    assert_eq!(refusal["code"], "browser_input_incomplete", "{refusal}");
+    assert_eq!(refusal["detail"]["enter_pressed"], true, "{refusal}");
+    let message = refusal["message"].as_str().unwrap_or_default();
+    assert!(message.contains("pressed Enter"), "{refusal}");
+    assert!(!message.contains("not delivered"), "{refusal}");
+}
+
+#[tokio::test]
+async fn an_enter_that_fails_partway_is_reported_as_uncertain() {
+    let f = fixture_with(|state| state.fail_enter_char = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "text": "hi\n", "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "refused", "{s}");
+    let refusal = &s["refusal"];
+    assert_eq!(refusal["code"], "browser_input_incomplete", "{refusal}");
+    assert_eq!(refusal["detail"]["enter_pressed"], false, "{refusal}");
+    assert_eq!(refusal["detail"]["enter_uncertain"], true, "{refusal}");
+    let message = refusal["message"].as_str().unwrap_or_default();
+    assert!(!message.contains("not delivered"), "{refusal}");
+    assert!(message.contains("may or may not"), "{refusal}");
+}
+
+#[tokio::test]
+async fn a_failed_single_line_probe_refuses_before_typing() {
+    let f = fixture_with(|state| state.single_line_probe_fails = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let input_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": input_ref,
+            "text": "hi\n", "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(
+        s["refusal"]["code"], "browser_input_trust_unavailable",
+        "{s}"
+    );
+    assert!(recorded_calls(&f, "Input.insertText").is_empty());
+    assert!(recorded_calls(&f, "Input.dispatchKeyEvent").is_empty());
 }

@@ -1,5 +1,89 @@
 # Changelog
 
+## [0.31.0](https://github.com/trycua/cua/compare/cua-sdk-v0.30.1...cua-sdk-v0.31.0) (2026-11-21)
+
+
+### Features
+
+* **cua-vmm:** Linux runtime in a Hyper-V VM on Windows without WSL 2 ([#8417](https://github.com/trycua/cua/issues/8417)) ([e1209b5](https://github.com/trycua/cua/commit/e1209b5ac48ac6ed9890871965b49150544e9b88))
+
+## [0.30.1](https://github.com/trycua/cua/compare/cua-sdk-v0.30.0...cua-sdk-v0.30.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-vmm:** pin runtime-gvisor 0.1.0-rc2 (the amd64 disk boots on Hyper-V) ([#8414](https://github.com/trycua/cua/issues/8414)) ([37123d2](https://github.com/trycua/cua/commit/37123d250f351fb03ea03c6adfb53ec7492f0237))
+
+## [0.30.0](https://github.com/trycua/cua/compare/cua-sdk-v0.29.4...cua-sdk-v0.30.0) (2026-11-20)
+
+
+### Features
+
+* **spaces:** send Super from the right ⌘ to Linux and Windows Spaces ([#8236](https://github.com/trycua/cua/issues/8236)) ([711bb76](https://github.com/trycua/cua/commit/711bb769f2a6162e723257b878d76a218877ebd2))
+
+## [0.29.4](https://github.com/trycua/cua/compare/cua-sdk-v0.29.3...cua-sdk-v0.29.4) (2026-11-20)
+
+
+### Bug Fixes
+
+* **cua-host:** set the Windows host up over SSH, and say when nothing will start it after a restart ([#8274](https://github.com/trycua/cua/issues/8274)) ([3770bdb](https://github.com/trycua/cua/commit/3770bdb67a2638b3b6f0b64c112e7f51ccb77312))
+
+## [0.29.3](https://github.com/trycua/cua/compare/cua-sdk-v0.29.2...cua-sdk-v0.29.3) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** python security bumps (Twisted, pypdf, filelock, virtualenv, litellm, transformers, pyasn1, GitPython, fsspec, joserfc, black, langgraph-sdk) ([#8312](https://github.com/trycua/cua/issues/8312)) ([ee59258](https://github.com/trycua/cua/commit/ee592588b4a6ff6fc8ea929a4354dcb62c64076f))
+
+## [0.29.2](https://github.com/trycua/cua/compare/cua-sdk-v0.29.1...cua-sdk-v0.29.2) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** js security bumps (52 Dependabot alerts) ([#8313](https://github.com/trycua/cua/issues/8313)) ([38d718e](https://github.com/trycua/cua/commit/38d718e66565ec7a4490ff9dd63caee39ff157a2))
+
+## [0.29.1](https://github.com/trycua/cua/compare/cua-sdk-v0.29.0...cua-sdk-v0.29.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** bump aiohttp to 3.14.5 (44 Dependabot alerts) ([#8309](https://github.com/trycua/cua/issues/8309)) ([006c897](https://github.com/trycua/cua/commit/006c897412aef0820e43a67beab8fe262a4a9886))
+
+## [0.29.0](https://github.com/trycua/cua/compare/cua-sdk-v0.28.6...cua-sdk-v0.29.0) (2026-11-20)
+
+
+### Features
+
+* **spaces:** stream direct Spaces over the advertised QUIC media endpoint ([#8083](https://github.com/trycua/cua/issues/8083)) ([ecde561](https://github.com/trycua/cua/commit/ecde5618f7d20cff7fb66a6c2ce0dba16a473c55))
+
+## [0.28.6](https://github.com/trycua/cua/compare/cua-sdk-v0.28.5...cua-sdk-v0.28.6) (2026-11-19)
+
+
+### Bug Fixes
+
+* **cua-vmm:** wait for a starting container engine, name and retry its failed pings ([#8241](https://github.com/trycua/cua/issues/8241)) ([fd4e019](https://github.com/trycua/cua/commit/fd4e01991b42350dc8cf0e807c9f211ada44e0bd))
+
+## [0.28.5](https://github.com/trycua/cua/compare/cua-sdk-v0.28.4...cua-sdk-v0.28.5) (2026-11-19)
+
+
+### Bug Fixes
+
+* **spaces:** deliver agent messages once ([#8218](https://github.com/trycua/cua/issues/8218)) ([a88ded9](https://github.com/trycua/cua/commit/a88ded951c5e66285bc788b75fddc1c1cdff5eb0))
+
+## [0.28.4](https://github.com/trycua/cua/compare/cua-sdk-v0.28.3...cua-sdk-v0.28.4) (2026-11-19)
+
+
+### Bug Fixes
+
+* **spaces:** send the Mac clipboard on paste in the native viewer ([#8145](https://github.com/trycua/cua/issues/8145)) ([54312cf](https://github.com/trycua/cua/commit/54312cfce862d13a57f0c28851bd399e261c8e70))
+
+## [0.28.3](https://github.com/trycua/cua/compare/cua-sdk-v0.28.2...cua-sdk-v0.28.3) (2026-11-18)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** probe hardware encoders off the GetCapabilities path ([#8161](https://github.com/trycua/cua/issues/8161)) ([9346cab](https://github.com/trycua/cua/commit/9346cabc2e0614a2ec9d9b629ab0db39b44db4bb))
+
 ## [0.28.2](https://github.com/trycua/cua/compare/cua-sdk-v0.28.1...cua-sdk-v0.28.2) (2026-11-17)
 
 

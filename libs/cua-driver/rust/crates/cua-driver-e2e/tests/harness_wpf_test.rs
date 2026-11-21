@@ -2372,11 +2372,31 @@ fn harness_wpf_invoke_menu_live_path() {
         Vec::new(),
         |pid, wid, driver| {
             focus_harness(driver, pid, wid);
+            // A WPF menu has no Win32 HMENU, so its items are reachable only
+            // by opening menus, which background delivery refuses (#6823).
+            let background = driver.call(
+                "invoke_menu",
+                serde_json::json!({
+                    "pid": pid, "window_id": wid,
+                    "path": ["Window", "Arrange", "Left"]
+                }),
+            );
+            assert_eq!(
+                background.structured()["code"],
+                "background_unavailable",
+                "{}",
+                background.raw
+            );
+            assert!(snapshot(driver, pid, wid)
+                .tree_text()
+                .contains("menu_action=none"));
+
             let refused = driver.call(
                 "invoke_menu",
                 serde_json::json!({
                     "pid": pid, "window_id": wid,
-                    "path": ["Window", "Arrange", "Missing"]
+                    "path": ["Window", "Arrange", "Missing"],
+                    "delivery_mode": "foreground"
                 }),
             );
             assert!(refused.is_error(), "missing menu path was accepted");
@@ -2403,7 +2423,8 @@ fn harness_wpf_invoke_menu_live_path() {
                 "invoke_menu",
                 serde_json::json!({
                     "pid": pid, "window_id": wid,
-                    "path": ["Window", "Arrange", "Left"]
+                    "path": ["Window", "Arrange", "Left"],
+                    "delivery_mode": "foreground"
                 }),
             );
             assert!(

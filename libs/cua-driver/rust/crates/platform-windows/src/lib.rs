@@ -124,6 +124,11 @@ mod browser_consent_ui;
 #[cfg(target_os = "windows")]
 mod browser_setup_ui;
 
+// Background `invoke_menu` through a window's HMENU; the path resolution is
+// pure so its unit tests run on any host.
+#[cfg(any(target_os = "windows", test))]
+mod menu_command;
+
 #[cfg(target_os = "windows")]
 pub mod uia;
 

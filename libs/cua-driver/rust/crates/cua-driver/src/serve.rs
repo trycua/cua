@@ -32,6 +32,8 @@ pub use cua_driver_core::daemon::{
     is_daemon_listening, send_request, socket_path_for_namespace, DaemonRequest, DaemonResponse,
     ToolObservationOrigin,
 };
+#[cfg(windows)]
+use cua_driver_core::daemon::{probe_endpoint, EndpointProbe};
 
 static ACTIVE_PROXY_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
@@ -2412,9 +2414,9 @@ mod pipe_release_tests {
             r"\\.\pipe\cua-driver-release-{}",
             uuid::Uuid::new_v4().simple()
         );
-        // Each of the four probes below holds one instance open waiting for
+        // Each of the six probes below holds one instance open waiting for
         // a reply, so keep one more free, as a serving daemon does.
-        let instances = (0..5)
+        let instances = (0..7)
             .map(|index| {
                 ServerOptions::new()
                     .first_pipe_instance(index == 0)
@@ -2663,7 +2665,7 @@ fn is_released(socket_path: &str) -> bool {
         DaemonPresence::Absent | DaemonPresence::Stale { .. } => true,
         #[cfg(not(unix))]
         DaemonPresence::Absent | DaemonPresence::Stale { .. } | DaemonPresence::Starting { .. } => {
-            !is_daemon_listening(socket_path)
+            probe_endpoint(socket_path) == EndpointProbe::Closed
         }
     }
 }

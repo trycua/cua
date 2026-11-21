@@ -173,41 +173,130 @@ pub fn socket_path_for_namespace(namespace: &str) -> String {
     }
 }
 
-/// Probe whether a daemon is listening on `socket_path`.
-///
-/// On Windows this uses `WaitNamedPipeW` without consuming a pipe instance.
-/// Unix probes with the protocol's read-only `list` request.
+/// What one read-only `list` request finds on a daemon endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndpointProbe {
+    /// A daemon answered `list` with `ok`.
+    Answers,
+    /// Something holds the endpoint but gave no `ok` answer in time.
+    Unanswered,
+    /// Nothing listens on the endpoint.
+    Closed,
+}
+
+/// Connect to `socket_path` and send the protocol's read-only `list`
+/// request, the same way on every OS.
+pub fn probe_endpoint(socket_path: &str) -> EndpointProbe {
+    match probe_exchange(socket_path, &read_only_request("list")) {
+        Ok(response) if response.ok => EndpointProbe::Answers,
+        Ok(_) | Err(ProbeFailure::Unanswered) => EndpointProbe::Unanswered,
+        Err(ProbeFailure::Closed) => EndpointProbe::Closed,
+    }
+}
+
+/// Whether a daemon answers on `socket_path`, by [`probe_endpoint`].
 pub fn is_daemon_listening(socket_path: &str) -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::ffi::OsStrExt;
+    probe_endpoint(socket_path) == EndpointProbe::Answers
+}
 
-        #[link(name = "kernel32")]
-        extern "system" {
-            fn WaitNamedPipeW(lp_named_pipe_name: *const u16, timeout_ms: u32) -> i32;
+fn read_only_request(method: &str) -> DaemonRequest {
+    DaemonRequest {
+        method: method.into(),
+        name: None,
+        args: None,
+        session_id: None,
+        observation_origin: None,
+        client_kind: None,
+    }
+}
+
+enum ProbeFailure {
+    Closed,
+    Unanswered,
+}
+
+/// Send one request with a single connect attempt and wait up to
+/// [`PRESENCE_REPLY_DEADLINE`] for the reply.
+#[cfg(unix)]
+fn probe_exchange(
+    socket_path: &str,
+    request: &DaemonRequest,
+) -> Result<DaemonResponse, ProbeFailure> {
+    let stream =
+        std::os::unix::net::UnixStream::connect(socket_path).map_err(|error| {
+            match error.kind() {
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused => {
+                    ProbeFailure::Closed
+                }
+                _ => ProbeFailure::Unanswered,
+            }
+        })?;
+    exchange_over(stream, request, PRESENCE_REPLY_DEADLINE).map_err(|_| ProbeFailure::Unanswered)
+}
+
+/// Send one request and wait up to [`PRESENCE_REPLY_DEADLINE`] for the reply.
+/// Only a pipe name with no server instance reads as closed; a busy or
+/// inaccessible pipe still has a server.
+#[cfg(windows)]
+fn probe_exchange(
+    socket_path: &str,
+    request: &DaemonRequest,
+) -> Result<DaemonResponse, ProbeFailure> {
+    use std::io::{BufRead, BufReader, Write};
+    use std::time::Instant;
+
+    const ERROR_PIPE_BUSY: i32 = 231;
+
+    let deadline = Instant::now() + PRESENCE_REPLY_DEADLINE;
+    let pipe = loop {
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(socket_path)
+        {
+            Ok(pipe) => break pipe,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(ProbeFailure::Closed);
+            }
+            Err(error)
+                if error.raw_os_error() == Some(ERROR_PIPE_BUSY) && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(_) => return Err(ProbeFailure::Unanswered),
         }
+    };
+    let line = serde_json::to_string(request).map_err(|_| ProbeFailure::Unanswered)? + "\n";
+    // The pipe client has no read timeout, so wait for it on a thread that is
+    // left behind if the daemon never answers.
+    let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let reply = (|| -> anyhow::Result<DaemonResponse> {
+            let mut writer = pipe.try_clone()?;
+            writer.write_all(line.as_bytes())?;
+            writer.flush()?;
+            let response_line = BufReader::new(pipe)
+                .lines()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("daemon closed connection without response"))??;
+            Ok(serde_json::from_str(&response_line)?)
+        })();
+        let _ = reply_tx.send(reply);
+    });
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    reply_rx
+        .recv_timeout(remaining)
+        .ok()
+        .and_then(Result::ok)
+        .ok_or(ProbeFailure::Unanswered)
+}
 
-        let wide: Vec<u16> = std::ffi::OsStr::new(socket_path)
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-        // NMPWAIT_NOWAIT == 1.
-        unsafe { WaitNamedPipeW(wide.as_ptr(), 1) != 0 }
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let request = DaemonRequest {
-            method: "list".into(),
-            name: None,
-            args: None,
-            session_id: None,
-            observation_origin: None,
-            client_kind: None,
-        };
-        send_request(socket_path, &request)
-            .ok()
-            .is_some_and(|response| response.ok)
-    }
+#[cfg(not(any(unix, windows)))]
+fn probe_exchange(
+    _socket_path: &str,
+    _request: &DaemonRequest,
+) -> Result<DaemonResponse, ProbeFailure> {
+    Err(ProbeFailure::Closed)
 }
 
 /// Whether a serving daemon runs tool calls yet.
@@ -298,32 +387,7 @@ pub fn probe_presence(socket_path: &str) -> DaemonPresence {
 }
 
 fn probe_metadata(socket_path: &str) -> Option<DaemonMetadata> {
-    let request = DaemonRequest {
-        method: "metadata".into(),
-        name: None,
-        args: None,
-        session_id: None,
-        observation_origin: None,
-        client_kind: None,
-    };
-    #[cfg(unix)]
-    let response = exchange(socket_path, &request, PRESENCE_REPLY_DEADLINE).ok()?;
-    #[cfg(not(unix))]
-    let response = {
-        // Opening a pipe that has no instance retries for seconds, so check
-        // for one first without consuming it.
-        if !is_daemon_listening(socket_path) {
-            return None;
-        }
-        // The pipe client has no read timeout, so wait for it on a thread
-        // that is left behind if the daemon never answers.
-        let (reply_tx, reply_rx) = std::sync::mpsc::channel();
-        let socket_path = socket_path.to_owned();
-        std::thread::spawn(move || {
-            let _ = reply_tx.send(send_request(&socket_path, &request));
-        });
-        reply_rx.recv_timeout(PRESENCE_REPLY_DEADLINE).ok()?.ok()?
-    };
+    let response = probe_exchange(socket_path, &read_only_request("metadata")).ok()?;
     if !response.ok {
         return None;
     }
@@ -354,23 +418,22 @@ pub const REPLY_DEADLINE: Duration = Duration::from_millis(crate::tool_schema::T
 /// slow accessibility walks and large screenshots are supported.
 #[cfg(unix)]
 pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
-    exchange(socket_path, request, REPLY_DEADLINE)
+    let stream = std::os::unix::net::UnixStream::connect(socket_path)
+        .map_err(|error| anyhow::anyhow!("connect to {socket_path}: {error}"))?;
+    exchange_over(stream, request, REPLY_DEADLINE)
 }
 
 #[cfg(unix)]
-fn exchange(
-    socket_path: &str,
+fn exchange_over(
+    mut stream: std::os::unix::net::UnixStream,
     request: &DaemonRequest,
     reply_deadline: Duration,
 ) -> anyhow::Result<DaemonResponse> {
     use std::io::Read;
-    use std::os::unix::net::UnixStream;
     use std::time::Instant;
 
     const READ_POLL: Duration = Duration::from_secs(10);
 
-    let mut stream = UnixStream::connect(socket_path)
-        .map_err(|error| anyhow::anyhow!("connect to {socket_path}: {error}"))?;
     // macOS rejects setsockopt with EINVAL once the peer has closed its end,
     // even when the peer's reply is still buffered for us to read. Treat that
     // as "peer already gone": the read below still drains buffered data and
@@ -561,5 +624,125 @@ mod tests {
         older.as_object_mut().unwrap().remove("permissions_pending");
         let metadata: super::DaemonMetadata = serde_json::from_value(older).unwrap();
         assert!(!metadata.permissions_pending);
+    }
+}
+
+#[cfg(all(test, any(unix, windows)))]
+mod probe_endpoint_tests {
+    use super::{probe_endpoint, DaemonRequest, DaemonResponse, EndpointProbe};
+    use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+
+    async fn probe(endpoint: String) -> EndpointProbe {
+        tokio::task::spawn_blocking(move || probe_endpoint(&endpoint))
+            .await
+            .unwrap()
+    }
+
+    /// Read one request and answer it, recording the method it asked for.
+    async fn answer(
+        connection: impl AsyncRead + AsyncWrite + Unpin,
+        response: DaemonResponse,
+    ) -> String {
+        let mut connection = BufReader::new(connection);
+        let mut line = String::new();
+        connection.read_line(&mut line).await.unwrap();
+        let request: DaemonRequest = serde_json::from_str(&line).unwrap();
+        let reply = serde_json::to_string(&response).unwrap() + "\n";
+        connection.write_all(reply.as_bytes()).await.unwrap();
+        request.method
+    }
+
+    #[cfg(unix)]
+    mod endpoint {
+        use tokio::net::{UnixListener, UnixStream};
+
+        pub struct Endpoint {
+            _dir: tempfile::TempDir,
+            pub path: String,
+        }
+
+        pub fn unused() -> Endpoint {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("d.sock").to_str().unwrap().to_owned();
+            Endpoint { _dir: dir, path }
+        }
+
+        /// A listener that accepts at the kernel and never reads.
+        pub fn listen(endpoint: &Endpoint) -> UnixListener {
+            UnixListener::bind(&endpoint.path).unwrap()
+        }
+
+        pub async fn accept(listener: UnixListener) -> UnixStream {
+            listener.accept().await.unwrap().0
+        }
+    }
+
+    #[cfg(windows)]
+    mod endpoint {
+        use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
+
+        pub struct Endpoint {
+            pub path: String,
+        }
+
+        pub fn unused() -> Endpoint {
+            Endpoint {
+                path: format!(
+                    r"\\.\pipe\cua-driver-probe-{}",
+                    uuid::Uuid::new_v4().simple()
+                ),
+            }
+        }
+
+        /// A pipe instance that accepts a client and never reads.
+        pub fn listen(endpoint: &Endpoint) -> NamedPipeServer {
+            ServerOptions::new()
+                .first_pipe_instance(true)
+                .create(&endpoint.path)
+                .unwrap()
+        }
+
+        pub async fn accept(server: NamedPipeServer) -> NamedPipeServer {
+            server.connect().await.unwrap();
+            server
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_endpoint_nothing_listens_on_reads_as_closed() {
+        let endpoint = endpoint::unused();
+        assert_eq!(probe(endpoint.path.clone()).await, EndpointProbe::Closed);
+
+        // A dead daemon's socket file is still closed.
+        drop(endpoint::listen(&endpoint));
+        assert_eq!(probe(endpoint.path.clone()).await, EndpointProbe::Closed);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_endpoint_that_never_answers_reads_as_unanswered() {
+        let endpoint = endpoint::unused();
+        let _listener = endpoint::listen(&endpoint);
+        assert_eq!(
+            probe(endpoint.path.clone()).await,
+            EndpointProbe::Unanswered
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn only_an_ok_answer_to_list_reads_as_answers() {
+        for (response, expected) in [
+            (
+                DaemonResponse::ok(serde_json::json!([])),
+                EndpointProbe::Answers,
+            ),
+            (DaemonResponse::err("refused", 1), EndpointProbe::Unanswered),
+        ] {
+            let endpoint = endpoint::unused();
+            let listener = endpoint::listen(&endpoint);
+            let probed = tokio::spawn(probe(endpoint.path.clone()));
+            let method = answer(endpoint::accept(listener).await, response).await;
+            assert_eq!(method, "list");
+            assert_eq!(probed.await.unwrap(), expected);
+        }
     }
 }

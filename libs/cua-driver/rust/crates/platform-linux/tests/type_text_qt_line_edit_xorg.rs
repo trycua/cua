@@ -6,8 +6,10 @@
 //! applies an accessibility write to a single-line field (a line edit or a
 //! spin box) as `setText`, which skips the validator. The background call
 //! must leave every field as it was and refuse; the foreground call types
-//! real keys, which the validator filters. A multi-line field still takes the
-//! background write. Runs on Xvfb + a window manager:
+//! real keys, which the validator filters. Background `set_value` leaves the
+//! line edit without the rejected text and never answers "confirmed". A
+//! multi-line field still takes the background write. Runs on Xvfb + a window
+//! manager:
 //!
 //! `DISPLAY=:0 cargo test -p platform-linux --test type_text_qt_line_edit_xorg -- --ignored --nocapture`
 
@@ -115,6 +117,25 @@ fn type_text_never_writes_past_a_qt_line_edit_validator() {
     eprintln!("background notes: {} state {after}", summary(&result));
     assert_ne!(result.is_error, Some(true), "{}", summary(&result));
     assert_eq!(after["notes"], "AB");
+
+    let number = token(&registry, &qt, "int-field");
+    let result = runtime().block_on(registry.invoke(
+        "set_value",
+        json!({"pid": qt.pid(), "window_id": qt.window, "element_token": number,
+               "value": "AB", "delivery_mode": "background"}),
+    ));
+    let after = qt.settled();
+    eprintln!(
+        "background set_value \"AB\": {} state {after}",
+        summary(&result)
+    );
+    assert_eq!(
+        after["number"], "",
+        "set_value put \"AB\" past the validator"
+    );
+    assert_eq!(after["other"], "", "the focused field took \"AB\"");
+    let effect = &result.structured_content.as_ref().unwrap()["effect"];
+    assert_ne!(effect, "confirmed", "{}", summary(&result));
 
     let number = token(&registry, &qt, "int-field");
     for (text, expected) in [("AB", ""), ("12", "12")] {

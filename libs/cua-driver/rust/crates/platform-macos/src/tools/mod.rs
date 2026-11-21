@@ -4,6 +4,7 @@
 //! MCP tool implementations for macOS.
 
 mod bring_to_front;
+mod calc_cell;
 mod capture_binding;
 mod click;
 mod clipboard;
@@ -144,7 +145,7 @@ mod pid_window_target_tests {
                 height: 480.0,
             },
             layer: 0,
-            z_index: 1,
+            z_index: Some(1),
             is_on_screen: true,
             current_space_id: None,
             on_current_space: None,
@@ -266,6 +267,9 @@ pub use check_permissions::{
     PERMISSIONS_HOST_REQUEST_ARG,
 };
 
+#[cfg(test)]
+pub(crate) use check_permissions::consent_evidence_store_for_identity;
+pub(crate) use check_permissions::driver_daemon_direct_capture_evidence_store;
 pub use cua_driver_core::snapshot_store::ZoomContext;
 pub(crate) use health_report::current_bundle_identifier as main_bundle_identifier;
 pub(crate) use health_report::sw_vers_product_version as macos_product_version;
@@ -337,6 +341,23 @@ pub(crate) fn element_disabled_error(
     ))
 }
 
+/// The `target_focus_unconfirmed` refusal for a dispatch error that is a
+/// [`crate::input::ax_actions::KeyFocusUnconfirmed`], or `None` for any other
+/// error.
+pub(crate) fn key_focus_unconfirmed_error(
+    error: &anyhow::Error,
+) -> Option<cua_driver_core::protocol::ToolResult> {
+    error.downcast_ref::<crate::input::ax_actions::KeyFocusUnconfirmed>()?;
+    Some(
+        cua_driver_core::protocol::ToolResult::error(error.to_string()).with_structured(
+            serde_json::json!({
+                "code": "target_focus_unconfirmed", "effect": "refused", "dispatched": false,
+                "message": error.to_string(),
+            }),
+        ),
+    )
+}
+
 fn disabled_refusal(
     pid: i32,
     window_id: u32,
@@ -360,6 +381,31 @@ fn disabled_refusal(
             serde_json::json!({ "recommended": "foreground", "reason": reason });
     }
     cua_driver_core::protocol::ToolResult::error(text).with_structured(structured)
+}
+
+/// Chromium and Electron renderers often discard a background PID-routed key
+/// event without any sign. No oracle tells that drop apart from a key that
+/// landed, so an unverifiable background key result for such an app names the
+/// foreground rung instead of leaving the caller to find the miss on screen.
+pub(super) const CHROMIUM_BACKGROUND_KEY_NOTE: &str =
+    "Chromium and Electron apps often drop background key events, so this one may not \
+     have arrived. If the window shows no change, retry with delivery_mode:\"foreground\" \
+     and window_id.";
+
+/// The `escalation` for an unverifiable key result: present only for a
+/// background post to a Chromium or Electron app, in the same shape as the
+/// Screen Sharing refusals.
+pub(super) fn chromium_background_key_escalation(
+    foreground: bool,
+    chromium_embedder: bool,
+) -> Option<serde_json::Value> {
+    (!foreground && chromium_embedder).then(|| {
+        serde_json::json!({
+            "recommended": "foreground",
+            "reason": CHROMIUM_BACKGROUND_KEY_NOTE,
+            "requires": ["window_id"]
+        })
+    })
 }
 
 /// Re-read `AXEnabled` on a token target and refuse a disabled one before any
@@ -482,28 +528,74 @@ async fn decide_background_window_action(
     action: cua_driver_core::background_input::BackgroundAction,
 ) -> Result<(), cua_driver_core::protocol::ToolResult> {
     use cua_driver_core::background_input::{
-        decide_background_input, BackgroundInputDecision, ExactWindowTarget,
+        BackgroundInputDecision, ElementAncestry, ExactWindowTarget,
     };
     let element_guard =
         element_ptr.map(|ptr| unsafe { crate::ax::snapshot::RetainedElement::retain(ptr) });
-    let facts = match tokio::task::spawn_blocking(move || {
+    let (facts, menu_open) = match tokio::task::spawn_blocking(move || {
         let element_ptr = element_guard.as_ref().map(|guard| guard.as_ptr());
-        crate::ax::exact_target::gather_background_facts(pid, window_id, element_ptr)
+        let facts = crate::ax::exact_target::gather_background_facts(pid, window_id, element_ptr);
+        // An unproven item of a Catalyst-style menu: is a menu of the app
+        // still on screen (so a refusal does not leave it open silently)?
+        let menu_open = facts.element == ElementAncestry::Unproven
+            && element_ptr.is_some_and(|ptr| unsafe {
+                crate::ax::exact_target::in_parentless_menu(
+                    ptr as crate::ax::bindings::AXUIElementRef,
+                )
+            })
+            && crate::windows::menu_window_ids(pid).is_some_and(|ids| !ids.is_empty());
+        (facts, menu_open)
     })
     .await
     {
-        Ok(facts) => facts,
+        Ok(gathered) => gathered,
         Err(error) => {
             return Err(cua_driver_core::protocol::ToolResult::error(format!(
                 "Could not gather exact-target facts for pid {pid} window {window_id}: {error}"
             )));
         }
     };
-    match decide_background_input(ExactWindowTarget { pid, window_id }, &facts, action) {
+    match decide_with_open_menu(
+        ExactWindowTarget { pid, window_id },
+        &facts,
+        action,
+        menu_open,
+    ) {
         BackgroundInputDecision::Execute { .. } => Ok(()),
         BackgroundInputDecision::Refuse(refusal) => {
             Err(background_refusal_result(pid, window_id, &refusal))
         }
+    }
+}
+
+/// [`decide_background_input`], plus a note when `menu_open` (the addressed
+/// item belongs to a menu that names no window, and a menu of the app is on
+/// screen): an `element_outside_target_window` refusal then says the menu is
+/// still open and recommends the foreground route that picks the item.
+/// Admission is unchanged.
+///
+/// [`decide_background_input`]: cua_driver_core::background_input::decide_background_input
+fn decide_with_open_menu(
+    target: cua_driver_core::background_input::ExactWindowTarget,
+    facts: &cua_driver_core::background_input::BackgroundTargetFacts,
+    action: cua_driver_core::background_input::BackgroundAction,
+    menu_open: bool,
+) -> cua_driver_core::background_input::BackgroundInputDecision {
+    use cua_driver_core::background_input::{
+        decide_background_input, refusal_codes, BackgroundInputDecision,
+    };
+    match decide_background_input(target, facts, action) {
+        BackgroundInputDecision::Refuse(mut refusal)
+            if menu_open && refusal.code == refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW =>
+        {
+            refusal.reason.push_str(
+                ". It is an item of a menu that names no window, and a menu of this app is \
+                 still on screen; click this item with delivery_mode \"foreground\" to pick it",
+            );
+            refusal.advice = Some("foreground");
+            BackgroundInputDecision::Refuse(refusal)
+        }
+        decision => decision,
     }
 }
 
@@ -532,7 +624,19 @@ pub(crate) fn key_scope(
 ) -> Result<Option<crate::input::skylight::WindowKeyScope>, String> {
     match window_id {
         Some(wid) if crate::input::skylight::is_focus_without_raise_available() => {
-            crate::input::skylight::enter_exact_window_key(pid as libc::pid_t, wid).map(Some)
+            // GTK 3 on Quartz routes keys through the window of the event
+            // only while `NSApp` is active, so its app is told it is active
+            // (without being raised) before its window is made key.
+            let activation = (crate::input::pointer_toolkit::detect(pid)
+                == Some(crate::input::pointer_toolkit::PointerReadingToolkit::GdkQuartz))
+            .then(|| crate::input::appkit_activation::ActivationLease::acquire(pid, wid))
+            .transpose()?;
+            let mut scope =
+                crate::input::skylight::enter_exact_window_key(pid as libc::pid_t, wid)?;
+            if let Some(lease) = activation {
+                scope.hold_activation(lease);
+            }
+            Ok(Some(scope))
         }
         _ => Ok(None),
     }
@@ -731,14 +835,13 @@ pub(crate) async fn focus_by_pixel(
     if focus.is_error != Some(true) {
         // AXFocused is non-destructive: unlike a second real click, it keeps a
         // Cmd+A selection intact before a follow-up type_text or Cmd+V.
-        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
         // A background focus-click is `effect:"unverifiable"` by construction:
         // it cannot prove the renderer moved its first responder. Returning on
         // "it didn't error" therefore skipped the real-click fallback below
         // whenever the click was a silent no-op — advancing on transport
         // success alone, which is exactly what the ladder forbids. Confirm the
         // focus actually moved before claiming this rung worked.
-        if !foreground || pixel_focus_landed(pid, window_id, x, y).await {
+        if await_pixel_focus(pid, window_id, x, y).await || !foreground {
             return Ok(());
         }
     } else if !foreground {
@@ -774,9 +877,29 @@ pub(crate) async fn focus_by_pixel(
             "focus pixel-click at ({x:.0},{y:.0}) failed."
         )));
     }
-    // Brief settle so the renderer registers focus before the keystrokes.
-    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    // Let the renderer register focus before the keystrokes.
+    await_pixel_focus(pid, window_id, x, y).await;
     Ok(())
+}
+
+/// Longest a pixel focus-click waits for the focused element to cover its
+/// point before the keystrokes go out.
+const PX_FOCUS_SETTLE: std::time::Duration = std::time::Duration::from_millis(120);
+const PX_FOCUS_POLL: std::time::Duration = std::time::Duration::from_millis(10);
+
+/// Wait up to [`PX_FOCUS_SETTLE`] for the focus-click to land on the point;
+/// whether it did.
+async fn await_pixel_focus(pid: i32, window_id: Option<u32>, x: f64, y: f64) -> bool {
+    let deadline = std::time::Instant::now() + PX_FOCUS_SETTLE;
+    loop {
+        tokio::time::sleep(PX_FOCUS_POLL).await;
+        if pixel_focus_landed(pid, window_id, x, y).await {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+    }
 }
 
 /// Confirm that a focus pixel-click actually moved the application's focused
@@ -796,11 +919,12 @@ async fn pixel_focus_landed(pid: i32, window_id: Option<u32>, x: f64, y: f64) ->
     focused_element_holds_point(pid, window_id, x, y, false).await
 }
 
-/// Whether the application's focused element covers the window-local pixel
-/// `(x, y)` of `window_id`. With `require_window`, the focused element must
-/// also belong to that exact window, so focus held by a same-process sibling
-/// window that overlaps the point never counts as the requested target.
-/// Unprovable answers are `false`.
+/// Whether the application's focused element holds keyboard focus at the
+/// window-local pixel `(x, y)` of `window_id` (see [`focus_holds_pixel`]).
+/// With `require_window`, the focused and hit-tested elements must also belong
+/// to that exact window, so focus held by a same-process sibling window that
+/// overlaps the point never counts as the requested target. Unprovable answers
+/// are `false`.
 async fn focused_element_holds_point(
     pid: i32,
     window_id: Option<u32>,
@@ -808,6 +932,7 @@ async fn focused_element_holds_point(
     y: f64,
     require_window: bool,
 ) -> bool {
+    use core_foundation::base::{CFRelease, CFTypeRef};
     let Some(wid) = window_id else {
         return false;
     };
@@ -817,22 +942,70 @@ async fn focused_element_holds_point(
         };
         let (screen_x, screen_y, _, _) = frame.to_screen(x, y);
         unsafe {
+            let in_window = |element| {
+                !require_window
+                    || crate::ax::exact_target::element_window_id(element)
+                        .is_some_and(|window| window.is(wid))
+            };
             let Some(focused) = crate::ax::bindings::focused_element_of_pid(pid) else {
                 return false;
             };
-            let rect = crate::ax::bindings::element_screen_rect(focused);
-            let in_window = !require_window
-                || crate::ax::exact_target::element_window_id(focused)
-                    .is_some_and(|window| window.is(wid));
-            core_foundation::base::CFRelease(focused as core_foundation::base::CFTypeRef);
-            let Some(rect) = rect else {
+            if !in_window(focused) {
+                CFRelease(focused as CFTypeRef);
                 return false;
+            }
+            let hit = crate::ax::bindings::element_at_screen_position(pid, screen_x, screen_y);
+            let hit_in_window = hit.is_some_and(in_window);
+            let evidence = PixelFocusEvidence {
+                focused_covers_point: crate::ax::bindings::element_screen_rect(focused)
+                    .is_some_and(|rect| point_within_rect(rect, screen_x, screen_y)),
+                focused_within_hit: hit_in_window
+                    && hit.is_some_and(|hit| {
+                        crate::fast_path_guard::is_self_or_ancestor(focused, hit)
+                    }),
+                focused_is_text_input: crate::ax::bindings::copy_string_attr(focused, "AXRole")
+                    .is_some_and(|role| type_text::is_text_input_role(&role)),
+                hit_reports_focus: hit_in_window
+                    && hit.is_some_and(|hit| {
+                        crate::ax::bindings::copy_bool_attr(hit, "AXFocused") == Some(true)
+                    }),
             };
-            in_window && point_within_rect(rect, screen_x, screen_y)
+            if let Some(hit) = hit {
+                CFRelease(hit as CFTypeRef);
+            }
+            CFRelease(focused as CFTypeRef);
+            focus_holds_pixel(evidence)
         }
     })
     .await
     .unwrap_or(false)
+}
+
+/// What the accessibility tree says about keyboard focus at a pixel.
+#[derive(Clone, Copy, Debug)]
+struct PixelFocusEvidence {
+    /// The application's focused element's rect contains the point.
+    focused_covers_point: bool,
+    /// The focused element is the element hit-tested at the point, or inside
+    /// it (Chromium's omnibox hit-tests to an enclosing `AXGroup`).
+    focused_within_hit: bool,
+    /// The focused element has a text input role.
+    focused_is_text_input: bool,
+    /// The element hit-tested at the point reports `AXFocused` itself.
+    hit_reports_focus: bool,
+}
+
+/// Keyboard focus holds a pixel when the field there has it. A focused element
+/// whose rect merely encloses the point is not enough: Firefox reports its page
+/// document as focused while an input inside it is not, and keys sent then
+/// reach the document instead of the input (#5384). So the focused element must
+/// also be the hit-tested element (or inside it), or itself be a text input
+/// (whose hit-test can return one of its own text runs). The hit-tested
+/// element reporting `AXFocused` is enough on its own.
+fn focus_holds_pixel(evidence: PixelFocusEvidence) -> bool {
+    evidence.hit_reports_focus
+        || (evidence.focused_covers_point
+            && (evidence.focused_within_hit || evidence.focused_is_text_input))
 }
 
 /// Whether `[x, y, width, height]` (screen coordinates, top-left origin)
@@ -1003,6 +1176,8 @@ pub struct ToolState {
     pub snapshots: Arc<Snapshots>,
     pub cursor_registry: Arc<CursorRegistry>,
     pub(crate) capture_bindings: Arc<capture_binding::MacCaptureBindings>,
+    /// The runtime registry's fast-path guard store.
+    pub(crate) guard_store: Arc<cua_driver_core::fast_path::store::GuardStore>,
     /// Global, disk-persisted config — the base layer and the only one the
     /// anonymous session / CLI writes.
     pub config: Arc<std::sync::RwLock<DriverConfig>>,
@@ -1037,16 +1212,18 @@ impl ToolState {
         host_owns_permission_ux: bool,
         host_bundle_id: Option<String>,
     ) -> Self {
-        Self::new_with_capture_service(
+        Self::new_with_runtime_services(
             Arc::new(cua_driver_core::capture_runtime::CaptureService::default()),
+            Arc::new(cua_driver_core::fast_path::store::GuardStore::new()),
             cursor_overlay_available,
             host_owns_permission_ux,
             host_bundle_id,
         )
     }
 
-    fn new_with_capture_service(
+    fn new_with_runtime_services(
         capture_service: Arc<cua_driver_core::capture_runtime::CaptureService>,
+        guard_store: Arc<cua_driver_core::fast_path::store::GuardStore>,
         cursor_overlay_available: bool,
         host_owns_permission_ux: bool,
         host_bundle_id: Option<String>,
@@ -1055,6 +1232,7 @@ impl ToolState {
             snapshots: Arc::new(Snapshots::new()),
             cursor_registry: Arc::new(CursorRegistry::new()),
             capture_bindings: Arc::new(capture_binding::MacCaptureBindings::new(capture_service)),
+            guard_store,
             // Load persisted config from ~/.cua-driver/config.json so that
             // `cua-driver config set` changes carry over into MCP sessions.
             config: Arc::new(std::sync::RwLock::new(load_driver_config())),
@@ -1152,8 +1330,9 @@ pub fn register_all(
     host_owns_permission_ux: bool,
     host_bundle_id: Option<String>,
 ) {
-    let state = Arc::new(ToolState::new_with_capture_service(
+    let state = Arc::new(ToolState::new_with_runtime_services(
         registry.capture_service(),
+        registry.guard_store(),
         cursor_overlay_available,
         host_owns_permission_ux,
         host_bundle_id,
@@ -1384,6 +1563,89 @@ pub fn register_all(
 }
 
 #[cfg(test)]
+mod open_menu_refusal_tests {
+    use super::{background_refusal_result, decide_with_open_menu};
+    use cua_driver_core::background_input::{
+        decide_background_input, BackgroundAction, BackgroundInputDecision, BackgroundTargetFacts,
+        ElementAncestry, ExactWindowTarget, WindowServerOwnership,
+    };
+
+    const TARGET: ExactWindowTarget = ExactWindowTarget {
+        pid: 42,
+        window_id: 7,
+    };
+    const ACTIONS: [BackgroundAction; 4] = [
+        BackgroundAction::AxSemantic,
+        BackgroundAction::WindowPointer,
+        BackgroundAction::InsertText,
+        BackgroundAction::GenericKey,
+    ];
+
+    fn facts(element: ElementAncestry, screen_locked: bool) -> BackgroundTargetFacts {
+        BackgroundTargetFacts {
+            window_server: WindowServerOwnership::SamePid,
+            ax_window_present: true,
+            target_minimized: Some(false),
+            app_hidden: Some(false),
+            competing_keyboard_destinations: 0,
+            element,
+            screen_locked,
+        }
+    }
+
+    #[test]
+    fn an_open_parentless_menu_recommends_foreground() {
+        let decision = decide_with_open_menu(
+            TARGET,
+            &facts(ElementAncestry::Unproven, false),
+            BackgroundAction::AxSemantic,
+            true,
+        );
+        let BackgroundInputDecision::Refuse(refusal) = decision else {
+            panic!("an unproven element must stay refused, got {decision:?}");
+        };
+        let result = background_refusal_result(42, 7, &refusal);
+        let structured = result.structured_content.expect("structured refusal");
+        assert_eq!(structured["code"], "element_outside_target_window");
+        assert_eq!(structured["effect"], "refused");
+        assert_eq!(structured["escalation"]["recommended"], "foreground");
+        let reason = structured["reason"].as_str().unwrap();
+        assert!(reason.contains("take a fresh get_window_state snapshot"));
+        assert!(reason.contains("a menu of this app is still on screen"));
+        assert!(reason.contains("delivery_mode \"foreground\""));
+    }
+
+    #[test]
+    fn admission_and_other_refusals_are_unchanged() {
+        for element in [
+            ElementAncestry::NotAddressed,
+            ElementAncestry::ProvenDescendant,
+            ElementAncestry::ProvenSemanticOnly,
+            ElementAncestry::OutsideTargetWindow,
+            ElementAncestry::Unproven,
+        ] {
+            for screen_locked in [false, true] {
+                let facts = facts(element, screen_locked);
+                for action in ACTIONS {
+                    let plain = decide_background_input(TARGET, &facts, action);
+                    let closed = decide_with_open_menu(TARGET, &facts, action, false);
+                    assert_eq!(closed, plain, "{element:?} {action:?}");
+                    let open = decide_with_open_menu(TARGET, &facts, action, true);
+                    assert_eq!(
+                        open.is_execute(),
+                        plain.is_execute(),
+                        "{element:?} {action:?}"
+                    );
+                    if screen_locked {
+                        assert_eq!(open, plain, "screen_locked keeps its refusal");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod registry_surface_tests {
     use super::*;
 
@@ -1600,7 +1862,60 @@ mod cursor_overlay_facility_tests {
 // binary has no CoreGraphics linkage.
 #[cfg(test)]
 mod pixel_focus_readback_tests {
-    use super::point_within_rect;
+    use super::{focus_holds_pixel, point_within_rect, PixelFocusEvidence};
+
+    #[test]
+    fn a_focused_container_around_the_point_does_not_hold_it() {
+        // Firefox (#5384): the page document has focus and its rect encloses
+        // the input at the point, but the input itself is not focused. Typing
+        // there would reach the document, not the field.
+        assert!(!focus_holds_pixel(PixelFocusEvidence {
+            focused_covers_point: true,
+            focused_within_hit: false,
+            focused_is_text_input: false,
+            hit_reports_focus: false,
+        }));
+    }
+
+    #[test]
+    fn the_field_at_the_point_holds_it() {
+        let field = PixelFocusEvidence {
+            focused_covers_point: true,
+            focused_within_hit: true,
+            focused_is_text_input: true,
+            hit_reports_focus: false,
+        };
+        assert!(focus_holds_pixel(field));
+        // Chromium's omnibox: the hit-test returns an enclosing group.
+        assert!(focus_holds_pixel(PixelFocusEvidence {
+            focused_is_text_input: false,
+            ..field
+        }));
+        // A text field whose hit-test returns one of its own text runs.
+        assert!(focus_holds_pixel(PixelFocusEvidence {
+            focused_within_hit: false,
+            ..field
+        }));
+        // Background web content (Tauri): AXFocusedUIElement does not name
+        // the DOM control, but the control reports AXFocused.
+        assert!(focus_holds_pixel(PixelFocusEvidence {
+            focused_covers_point: false,
+            focused_within_hit: false,
+            focused_is_text_input: false,
+            hit_reports_focus: true,
+        }));
+    }
+
+    #[test]
+    fn focus_elsewhere_does_not_hold_the_point() {
+        // WhatsApp: focus stayed on the transcript above the clicked composer.
+        assert!(!focus_holds_pixel(PixelFocusEvidence {
+            focused_covers_point: false,
+            focused_within_hit: false,
+            focused_is_text_input: true,
+            hit_reports_focus: false,
+        }));
+    }
 
     #[test]
     fn confirms_a_point_inside_the_focused_element() {

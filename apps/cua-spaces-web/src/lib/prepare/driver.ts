@@ -66,6 +66,7 @@ const text = (e: unknown) => (e instanceof Error ? e.message : String(e));
 export class PrepareDriver {
   private s: PrepareState | null;
   private listeners = new Set<() => void>();
+  private generation = 0;
   private creating = false;
   private attaching = false;
   private readonly inflight = new Set<string>();
@@ -176,11 +177,23 @@ export class PrepareDriver {
     });
   }
 
-  /** The list of Spaces changed: a ready home that is gone is made again. */
+  /** A delete or cancelled create stops warming before the host removes the Space. */
+  removeHome(id: string): void {
+    const s = this.s;
+    if (!s?.wanted || ![s.homeSpaceId, s.pendingId, `local:home-${s.harness}`].includes(id)) return;
+    this.generation++;
+    this.creating = false;
+    this.attaching = false;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.dispatch({ type: "homeGone", nowMs: this.env.now() });
+  }
+
+  /** The list of Spaces changed: a removed home stays removed. */
   checkHome(): void {
     const s = this.s;
-    if (!s?.wanted || !s.homeSpaceId || !s.readyMs) return;
-    if (this.env.homeExists(s.homeSpaceId) === false) this.dispatch({ type: "homeGone", nowMs: this.env.now() });
+    if (!s?.wanted || !s.homeSpaceId) return;
+    if (this.env.homeExists(s.homeSpaceId) === false) this.removeHome(s.homeSpaceId);
   }
 
   /** About once a second while something waits: time passes. */
@@ -217,6 +230,7 @@ export class PrepareDriver {
   private async create(): Promise<void> {
     if (this.creating) return;
     this.creating = true;
+    const generation = this.generation;
     try {
       const s = this.s!;
       const found = this.env.findHome(s.harness);
@@ -224,33 +238,38 @@ export class PrepareDriver {
         // A create that outlived the app (the host keeps running it): follow it, never start a second one.
         if (found.creating) await this.env.followCreate(found.id);
         else if (!found.running) await this.env.startHome(found.id);
-        this.dispatch({ type: "homeReady", nowMs: this.env.now(), spaceId: found.id });
+        if (generation === this.generation) this.dispatch({ type: "homeReady", nowMs: this.env.now(), spaceId: found.id });
         return;
       }
       const id = await this.env.createHome({ harness: s.harness, pendingId: s.pendingId ?? this.env.newPendingId() });
-      this.dispatch({ type: "homeReady", nowMs: this.env.now(), spaceId: id });
+      if (generation === this.generation) this.dispatch({ type: "homeReady", nowMs: this.env.now(), spaceId: id });
     } catch (e) {
       const message = text(e);
-      this.dispatch({ type: "failed", nowMs: this.env.now(), message, network: isNetworkFailure(message) || !this.env.online() });
+      if (generation === this.generation)
+        this.dispatch({ type: "failed", nowMs: this.env.now(), message, network: isNetworkFailure(message) || !this.env.online() });
     } finally {
-      this.creating = false;
+      if (generation === this.generation) this.creating = false;
     }
   }
 
   private async attach(): Promise<void> {
     if (this.attaching) return;
     this.attaching = true;
+    const generation = this.generation;
     try {
       const s = this.s!;
       const first = s.messages.find((m) => m.state !== "delivered");
       await this.env.attachAgent({ spaceId: s.homeSpaceId!, harness: s.harness, model: first?.model ?? null });
-      this.dispatch({ type: "agentReady", nowMs: this.env.now() });
-      this.watchReplies();
+      if (generation === this.generation) {
+        this.dispatch({ type: "agentReady", nowMs: this.env.now() });
+        this.watchReplies();
+      }
     } catch (e) {
       const message = text(e);
-      this.dispatch({ type: "failed", nowMs: this.env.now(), message, network: isNetworkFailure(message) || !this.env.online() });
+      if (generation === this.generation)
+        this.dispatch({ type: "failed", nowMs: this.env.now(), message, network: isNetworkFailure(message) || !this.env.online() });
     } finally {
-      this.attaching = false;
+      if (generation === this.generation) this.attaching = false;
     }
   }
 

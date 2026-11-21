@@ -1,0 +1,131 @@
+---
+title: Troubleshooting
+description: 'Check your Mac and Hoy with hoy doctor and hoy health, find the logs, and fix the errors people hit most.'
+---
+
+## Check first
+
+```bash skip="no-runner"
+hoy doctor
+hoy health
+```
+
+- `hoy doctor` checks the Mac: chip, macOS version, Hypervisor support, free
+  disk, macOS VM slots in use, the Hoy system extension (`limit-service`), its
+  Full Disk Access (`full-disk-access`), the background service (`daemon`) and the
+  Hoy login item, Local Network access (`local-network`), how each running VM is
+  reached (`guest:<vm>`) and the Hoy components. It prints a fix under each
+  problem and exits 5 if a check failed. Before the first image, "no image store"
+  is expected.
+- `hoy health` checks the running system: the background service, your
+  VMs, the macOS VMs it counts, the extension's state (`limit_service`) and the
+  image store. It also lists VMs that need
+  `hoy reidentify` (see [Snapshots, restore and fork](/hoy/guides/snapshots-restore-fork#identity-of-every-vm)).
+  Add `--json` for all of it.
+
+When you ask for help, include the output of `hoy --version` and `hoy doctor`.
+
+## Logs
+
+| What | Where |
+|---|---|
+| Background service | The `logs` folder in `~/Library/Application Support/hoy` |
+| Hoy system extension | The macOS unified log, see below |
+| One VM | `hoy logs <vm>` |
+| Console output of a VM | `hoy logs <vm> --kind console --follow` |
+
+`hoy logs --kind` also takes `engine`, `events`, `vmm` and `models`, among
+others.
+
+To read the extension's log:
+
+```bash skip="no-runner"
+log show --last 1h --predicate 'subsystem == "com.trycua.hoy.es"'
+```
+
+## Exit codes
+
+Every `hoy` command uses the same codes.
+
+| Code | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | Internal error |
+| 2 | Wrong usage, for example `hoy rm` without `--yes` on a VM that has snapshots, in a script |
+| 3 | Not found |
+| 4 | Wrong state, for example `hoy ssh` on a stopped VM |
+| 5 | Refused: the macOS VM limit, the extension is not on, or not enough resources |
+| 6 | Timeout |
+| 7 | Engine failure |
+
+`hoy exec` exits with the command's own exit code. Use `--json` and read
+`exit_code` to tell it from a Hoy error.
+
+## Common errors
+
+**`hoy start` says macOS VMs need the Hoy system extension (exit 5).** With
+`--json` the reason is `limit_service_inactive`. Turn on the two switches in
+[Install](/hoy/guides/install#approve-the-hoy-system-extension) (Endpoint
+Security Extensions: **Hoy**, at the bottom of the page under By Category and
+the **(i)** button; Full Disk Access: **Hoy** on macOS 27,
+**com.trycua.hoy.es.systemextension** on macOS 26). On a cloud Mac with no
+desktop login, see
+[Installing on a headless or cloud Mac](/hoy/guides/install#installing-on-a-headless-or-cloud-mac). Then run `hoy doctor` and start again.
+If the `full-disk-access` line fails, the Full Disk Access
+switch is still off (`limit-service` is ok then, the extension is approved): once you turn it on, the extension activates on its own
+within a few seconds. If it says the extension is "not installed", run the installer
+again from an administrator account. If it says it is "a different version from
+this hoy", run the installer of this release again. No new approval is needed.
+
+**A third VM will not start (exit 5).** A Mac runs two macOS VMs at a time,
+counting other tools too. The message names each VM it counted and ends with
+`Stop one first, for example:  hoy stop demo`. With `--json` the reason is
+`macos_vm_limit`. Stop one, then start the new one. See
+[Limits](/hoy/concepts/two-vm-limit).
+
+**`hoy` cannot reach the service.** Run `hoy health` and `hoy doctor`. The service runs
+as Hoy's login item in your desktop login session, so log in at the desktop. In
+System Settings > General > Login Items & Extensions, check that **Hoy** is on
+under Allow in the Background. `"/Applications/Hoy.app/Contents/MacOS/Hoy"
+--agent-status` shows what macOS has registered.
+
+**`hoy start` says macOS is blocking Hoy from reaching your VMs.** This only
+happens for a VM from an image made by an earlier Hoy, whose guest agent is older
+than version 3 (`hoy doctor` lists such VMs). VMs from new images never trigger
+the Local Network prompt. Turn on Hoy's background service in System Settings > Privacy &
+Security > Local Network. Making a new image with `hoy image create` avoids it.
+
+**macOS blocks Hoy after a manual download.** If you installed from a file you
+downloaded yourself, run `xattr -cr .` in the unpacked folder and try again. The
+install command does not need this.
+
+**The installer says the token expired or was revoked.** Sign in at
+[hoy.cua.ai](https://hoy.cua.ai), renew it, and run the new command.
+
+**A VM shares its image's identity.** VMs made before Hoy 0.17 do. `hoy health`
+lists them. Run `hoy reidentify <vm>` on the stopped VM.
+
+**`hoy create` refuses an image (exit 4).** The image did not pass its tests.
+Run `hoy images` to see its state, or build it again with `hoy image create`.
+
+**`hoy image create` fails.** The output names the step. Run the same command
+again: the restore image you downloaded is reused. Check that you have 64 GiB
+free (40 GiB once the restore image is downloaded).
+
+**The disk is full, or `hoy doctor` says free disk is low.** Run
+`hoy images prune --dry-run` to see which images you can remove (add
+`--restore-images` for the downloaded Apple restore images), then run it again
+without `--dry-run`. See [Free disk space](/hoy/guides/free-disk-space).
+
+**Clipboard does not work in an older VM.** Run `hoy clipboard install <vm>`.
+See [Clipboard sharing](/hoy/guides/clipboard-sharing).
+
+## Known limits
+
+See [Limits](/hoy/concepts/two-vm-limit#other-known-limits). In short: two macOS
+VMs per Mac, desktop images only, GPU acceleration is experimental, and Apple Account,
+iCloud and App Store sign-in do not work in a VM.
+
+To update Hoy, see [Update and rollback](/hoy/guides/update-and-rollback).
+
+Still stuck? See [Getting help](/hoy/guides/getting-help) to report a bug on GitHub.

@@ -117,16 +117,17 @@ public final class LocalNetworkGate {
 
     /// Makes macOS ask (a connect while access is undecided) and waits for
     /// the answer: allowed as soon as a connect goes out; otherwise what a
-    /// connect finds once the prompt is gone (or never came).
+    /// connect finds once the prompt is gone (or never came). A prompt
+    /// already on screen counts: an earlier connect (at launch, say) may
+    /// have made macOS ask before the explanation did.
     func waitForAnswer() async -> AppLocalNetworkAccess {
-        let before = probe.promptsShowing()
         let start = Date()
         var appeared = false
         while true {
             let access = await probe.access()
             if access == .allowed { return access }
             let elapsed = Date().timeIntervalSince(start)
-            if probe.promptsShowing() > before {
+            if probe.promptsShowing() > 0 {
                 appeared = true
             } else if appeared || elapsed >= promptAppears {
                 return access

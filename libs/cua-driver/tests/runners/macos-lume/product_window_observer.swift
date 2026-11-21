@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 // Read-only, permission-free WindowServer/NSWorkspace observer for the focused
 // product-window regression. No AX calls, activation, or input synthesis.
 import AppKit

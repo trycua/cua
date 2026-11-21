@@ -19,9 +19,10 @@
 //!   `~/.cua/sandboxes/<name>.json`)
 //!
 //! Without them the tests are skipped. The only effects are inside the guest:
-//! a Dock click, a pointer move, and ⌘W on the Finder window the click
-//! opened. Use a fresh Space with no Finder window open, and run them one at
-//! a time (`-- --test-threads=1`).
+//! a Dock click, a pointer move, ⌘W on the Finder window the click opened,
+//! and a TextEdit document under `/tmp` that is double-clicked, copied from
+//! (the clipboard is overwritten) and closed. Use a fresh Space with no
+//! Finder window open, and run them one at a time (`-- --test-threads=1`).
 
 use cua_media_protocol::{
     InputKeyState, InputModifier, InputPointerButton, InputPointerPhase, InteractiveInputEvent,
@@ -248,6 +249,156 @@ async fn e2e_macos_desktop_stream_click_on_the_dock_opens_finder() {
         changed * 100.0
     );
     assert!(closed <= before, "⌘W closed it ({after} -> {closed})");
+}
+
+/// A viewer's double-click selects a word. The wire carries no click count,
+/// so the Space counts the presses itself and stamps the count on each one;
+/// without that, TextEdit sees two single clicks. A single click at the same
+/// spot selects nothing, so the clipboard after ⌘C tells the two apart.
+#[tokio::test]
+async fn e2e_macos_desktop_stream_double_click_selects_a_word() {
+    let (_reg, _spaces, space) = connect(require_target!()).await;
+
+    // A plain-text document of one repeated word: a double-click anywhere in
+    // the text selects it. The clipboard starts as a sentinel so a stale copy
+    // cannot pass. TextEdit is quit first so its only window is this
+    // document (window titles are not relied on: a Space without the Screen
+    // Recording grant reports none). No AppleScript (it raises an Automation
+    // consent prompt); `open` and `pkill` need none.
+    let path = "/tmp/cua-e2e-double-click.txt";
+    bash(
+        &space,
+        &format!(
+            "pkill -x TextEdit; \
+             yes 'cuaword cuaword cuaword cuaword cuaword cuaword' | head -200 > {path}; \
+             printf sentinel | pbcopy; open -a TextEdit {path}"
+        ),
+    )
+    .await;
+    let window = textedit_window(&space).await;
+    let display = space
+        .displays()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|d| d.primary)
+        .expect("a primary display");
+    // The window's middle, in the primary display's logical points, as the
+    // stream's normalized coordinates (the desktop stream is the primary
+    // display, whose origin is the global origin).
+    let [wx, wy, ww, wh] = window.bounds;
+    let x = (wx + ww / 2.0) / (f64::from(display.width_px) / display.scale_factor);
+    let y = (wy + wh * 0.6) / (f64::from(display.height_px) / display.scale_factor);
+    assert!(
+        (0.0..1.0).contains(&x) && (0.0..1.0).contains(&y),
+        "the TextEdit window is on the primary display: {:?}",
+        window.bounds
+    );
+
+    let (events, session) = open_desktop(&space, pb::SessionPolicy::AllowActivation).await;
+    let click = |session: &StreamSession| {
+        session
+            .send_input(vec![pointer(
+                InputPointerPhase::Down,
+                Some(InputPointerButton::Left),
+                x,
+                y,
+            )])
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(60));
+        session
+            .send_input(vec![pointer(
+                InputPointerPhase::Up,
+                Some(InputPointerButton::Left),
+                x,
+                y,
+            )])
+            .unwrap();
+    };
+    let copy = |session: &StreamSession| {
+        let key = |state| InteractiveInputEvent::Key {
+            key: "c".into(),
+            state,
+            modifiers: vec![InputModifier::Command],
+            repeat: false,
+        };
+        session
+            .send_input(vec![key(InputKeyState::Down), key(InputKeyState::Up)])
+            .unwrap();
+    };
+
+    // One click: a caret, nothing selected, nothing copied.
+    session
+        .send_input(vec![pointer(InputPointerPhase::Move, None, x, y)])
+        .unwrap();
+    click(&session);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    copy(&session);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let after_single = bash(&space, "pbpaste").await;
+
+    // Well past the double-click interval, so the next press starts over.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    click(&session);
+    std::thread::sleep(Duration::from_millis(80));
+    click(&session);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    copy(&session);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let after_double = bash(&space, "pbpaste").await;
+
+    session.close().await.unwrap();
+    bash(&space, &format!("pkill -x TextEdit; rm -f {path}")).await;
+
+    let acks = events.acks.lock().unwrap().clone();
+    assert!(
+        !acks
+            .iter()
+            .any(|a| a["payload"]["delivered"] == false || a["type"] == "error"),
+        "input was not delivered: {acks:#?}"
+    );
+    assert_eq!(
+        after_single.trim(),
+        "sentinel",
+        "a single click selects nothing"
+    );
+    assert_eq!(
+        after_double.trim(),
+        "cuaword",
+        "a double-click selects the word"
+    );
+}
+
+/// Run a shell command in the Space and return its stdout.
+async fn bash(space: &Space, command: &str) -> String {
+    let out = space.bash(command, Duration::from_secs(20)).await.unwrap();
+    assert_eq!(out.exit_code, Some(0), "{command}: {}", out.stderr);
+    out.stdout
+}
+
+/// TextEdit's on-screen window (the focused one when it has several),
+/// within 15 s of opening a document.
+async fn textedit_window(space: &Space) -> cua_spaces::stream::WindowTarget {
+    let mut seen = Vec::new();
+    for _ in 0..150 {
+        seen = space.windows(Some("TextEdit")).await.unwrap_or_default();
+        let on_screen = seen.iter().filter(|w| w.on_screen);
+        if let Some(window) = on_screen
+            .clone()
+            .find(|w| w.focused)
+            .or_else(|| on_screen.clone().next())
+        {
+            // Let the document finish laying out before it is clicked.
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            return window.clone();
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let seen: Vec<_> = seen
+        .iter()
+        .map(|w| (w.title.as_str(), w.on_screen, w.focused, w.bounds))
+        .collect();
+    panic!("TextEdit showed no window within 15 s; its windows: {seen:?}");
 }
 
 /// The SwiftUI viewer sends its batches as raw text in the v1 envelope; the

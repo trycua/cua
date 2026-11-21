@@ -227,12 +227,11 @@ fn status_reports_the_daemon_serving_each_socket() {
     let state_dir = home.path().join("Library/Caches/cua-driver");
     #[cfg(not(target_os = "macos"))]
     let state_dir = home.path().join(".cache/cua-driver");
-    // Name the default socket through a symlinked directory: the daemon must
-    // recognise the endpoint it binds, not the spelling of its path.
+    // Serve the default endpoint through a symlink: the daemon must recognise
+    // the endpoint it binds, not the spelling of its path.
     std::fs::create_dir_all(&state_dir).unwrap();
-    let state_link = home.path().join("state-link");
-    std::os::unix::fs::symlink(&state_dir, &state_link).unwrap();
-    let default_socket = state_link.join("cua-driver.sock").display().to_string();
+    let default_socket = state_dir.join("real.sock").display().to_string();
+    std::os::unix::fs::symlink("real.sock", state_dir.join("cua-driver.sock")).unwrap();
     let mut reaper = ChildReaper::new();
 
     let mut default_daemon = spawn_daemon(

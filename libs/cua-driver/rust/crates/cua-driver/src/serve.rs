@@ -1145,10 +1145,18 @@ async fn serve_claimed_socket(
 
     eprintln!("Cua Driver daemon listening on {socket_path}");
 
-    // Compare the bound socket itself, not the spelling of its path.
-    let pid_file_path = pid_file.and_then(|pid_file| {
-        pid_file.path(|| socket_identity(&default_socket_path()).is_ok_and(|id| id == bound_socket))
-    });
+    // Compare the bound socket itself, not the spelling of its path. Follow a
+    // symlinked default socket: clients reach whatever it points at.
+    let serves_default_endpoint = || {
+        use std::os::unix::fs::MetadataExt as _;
+        std::fs::metadata(default_socket_path()).is_ok_and(|metadata| {
+            SocketIdentity {
+                device: metadata.dev(),
+                inode: metadata.ino(),
+            } == bound_socket
+        })
+    };
+    let pid_file_path = pid_file.and_then(|pid_file| pid_file.path(serves_default_endpoint));
     if let Some(pid_path) = &pid_file_path {
         if let Some(dir) = std::path::Path::new(pid_path).parent() {
             let _ = std::fs::create_dir_all(dir);

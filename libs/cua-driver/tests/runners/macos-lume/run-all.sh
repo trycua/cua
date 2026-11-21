@@ -43,6 +43,7 @@ RETRYABLE_LANES=(
   swiftui-harness_swiftui_counter_background
   swiftui-harness_swiftui_set_value_background
   swiftui-harness_swiftui_popover_foreground
+  swiftui-harness_swiftui_menu_button_background
   swiftui-harness_swiftui_verify_state
 )
 

@@ -113,6 +113,13 @@ public enum StreamError: Error, CustomStringConvertible, Sendable {
 
 public enum InputModifier: String, Codable, Sendable {
     case command, shift, option, control, function
+    /// Command that always reaches the guest as Command: Super on a Linux or
+    /// Windows guest, where `command` goes as Control
+    /// (`InputEncoder.commandAsControl`). Sent as `command`.
+    case superKey = "super"
+
+    /// The name on the wire.
+    public var wireName: String { self == .superKey ? InputModifier.command.rawValue : rawValue }
 }
 
 public enum PointerButton: String, Codable, Sendable {
@@ -144,11 +151,11 @@ public enum InteractiveInputEvent: Sendable {
             return ["kind": "text_commit", "text": text]
         case let .key(key, down, modifiers, repeatKey):
             return ["kind": "key", "key": key, "state": down ? "down" : "up",
-                    "modifiers": modifiers.map(\.rawValue), "repeat": repeatKey]
+                    "modifiers": modifiers.map(\.wireName), "repeat": repeatKey]
         case let .pointer(phase, button, x, y, modifiers):
             var event: [String: Any] = ["kind": "pointer", "phase": phase.rawValue,
                                         "x_normalized": x, "y_normalized": y,
-                                        "modifiers": modifiers.map(\.rawValue)]
+                                        "modifiers": modifiers.map(\.wireName)]
             event["button"] = button?.rawValue as Any? ?? NSNull()
             return event
         case let .scroll(x, y, dx, dy, phase, momentum, precise):
@@ -156,6 +163,12 @@ public enum InteractiveInputEvent: Sendable {
                     "delta_x": dx, "delta_y": dy, "phase": phase.rawValue,
                     "momentum_phase": momentum.rawValue, "precise": precise]
         }
+    }
+
+    /// A key event with the right ⌘ held alone (`InputModifier.superKey`).
+    public var hasSuperKey: Bool {
+        if case let .key(_, _, modifiers, _) = self { return modifiers.contains(.superKey) }
+        return false
     }
 
     /// Whether this event's coordinates satisfy the server's validator. A batch

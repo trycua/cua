@@ -445,6 +445,46 @@ describe("MediaSession in the Electron shell (hardware decode, keys, scrolls, ti
     });
   });
 
+  it("sends the right command held alone as Super to a Linux or Windows guest", async () => {
+    const { socket, canvas } = start({ metaAsControl: true, wholeCommandChords: true });
+    handshake(socket);
+    const key = (type: string, init: KeyboardEventInit) => canvas.dispatchEvent(new KeyboardEvent(type, init));
+    key("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
+    key("keydown", { key: "Enter", code: "Enter", metaKey: true });
+    key("keyup", { key: "Meta", code: "MetaRight", metaKey: false });
+    key("keydown", { key: "Meta", code: "MetaLeft", metaKey: true });
+    key("keydown", { key: "c", code: "KeyC", metaKey: true });
+    key("keyup", { key: "Meta", code: "MetaLeft", metaKey: false });
+    await Promise.resolve();
+    const events = socket.of("interactive_input").flatMap((m) => m.payload!.events as Array<Record<string, unknown>>);
+    expect(events).toEqual([
+      { kind: "key", key: "meta", state: "down", modifiers: ["command"], repeat: false },
+      { kind: "key", key: "enter", state: "down", modifiers: ["command"], repeat: false },
+      { kind: "key", key: "enter", state: "up", modifiers: ["command"], repeat: false },
+      { kind: "key", key: "meta", state: "up", modifiers: [], repeat: false },
+      { kind: "key", key: "control", state: "down", modifiers: ["control"], repeat: false },
+      { kind: "key", key: "c", state: "down", modifiers: ["control"], repeat: false },
+      { kind: "key", key: "c", state: "up", modifiers: ["control"], repeat: false },
+      { kind: "key", key: "control", state: "up", modifiers: [], repeat: false },
+    ]);
+  });
+
+  it("forgets the held command keys when the canvas loses focus", async () => {
+    const { socket, canvas } = start({ metaAsControl: true });
+    handshake(socket);
+    const key = (type: string, init: KeyboardEventInit) => canvas.dispatchEvent(new KeyboardEvent(type, init));
+    key("keydown", { key: "Meta", code: "MetaLeft", metaKey: true });
+    canvas.dispatchEvent(new FocusEvent("blur"));
+    key("keydown", { key: "Meta", code: "MetaRight", metaKey: true });
+    key("keydown", { key: "Enter", code: "Enter", metaKey: true });
+    await Promise.resolve();
+    const events = socket.of("interactive_input").flatMap((m) => m.payload!.events as Array<Record<string, unknown>>);
+    expect(events.slice(-2)).toEqual([
+      { kind: "key", key: "meta", state: "down", modifiers: ["command"], repeat: false },
+      { kind: "key", key: "enter", state: "down", modifiers: ["command"], repeat: false },
+    ]);
+  });
+
   it("sends a ⌘ chord whole from a Mac, whose key-up Chromium never fires", async () => {
     const { socket, canvas } = start({ wholeCommandChords: true });
     handshake(socket);

@@ -78,7 +78,7 @@ fn a_failed_focus_out_never_hides_a_write_that_was_sent() {
         let written = write_with_synthetic_focus(|| Ok(()), || write, failing_focus_out)
             .expect("the FocusOut error is kept beside the write, not returned");
         assert!(written.focus_out.is_some());
-        synthetic_focus_write_result(written, DeliveryMode::Background, || {
+        synthetic_focus_write_result(written, DeliveryMode::BackgroundPreferred, || {
             ToolResult::text("Typed 5 character(s) (via AT-SPI with focus workaround).")
                 .with_structured(type_text_structured("ax", 5, false))
         })

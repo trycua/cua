@@ -370,6 +370,18 @@ impl McpDriver {
     /// background posture have been established. The settle interval gives
     /// the video backend time to encode a visible baseline before dispatch.
     pub fn start_behavior_recording(&mut self) {
+        self.start_behavior_recording_with(true);
+    }
+
+    /// [`Self::start_behavior_recording`] without the per-turn accessibility
+    /// walks, for a fixture that publishes no accessibility tree. The
+    /// trajectory declares it, so the validator accepts turns whose state is
+    /// classified `state_capture_disabled`.
+    pub fn start_behavior_recording_without_accessibility_tree(&mut self) {
+        self.start_behavior_recording_with(false);
+    }
+
+    fn start_behavior_recording_with(&mut self, include_accessibility_tree: bool) {
         let Some(output_dir) = self.recording_dir.clone() else {
             return;
         };
@@ -380,7 +392,8 @@ impl McpDriver {
             "start_recording",
             serde_json::json!({
                 "output_dir": output_dir.to_string_lossy(),
-                "record_video": true
+                "record_video": true,
+                "include_accessibility_tree": include_accessibility_tree
             }),
         );
         let video_active = response.structured()["video_active"]
@@ -395,6 +408,9 @@ impl McpDriver {
             );
         }
         self.behavior_video = BehaviorVideo::Recording(Instant::now());
+        if !include_accessibility_tree {
+            declare_accessibility_tree_disabled(&output_dir);
+        }
         update_behavior_video_status(&output_dir, "started");
         std::thread::sleep(Duration::from_millis(300));
         mark_behavior_video_baseline_ready(&output_dir);
@@ -626,6 +642,21 @@ fn update_behavior_video_status(output_dir: &std::path::Path, status: &str) {
     if let Some(field) = timestamp_field {
         manifest["behavior_video"][field] = Value::from(unix_ms());
     }
+    let _ = std::fs::write(
+        path,
+        serde_json::to_vec_pretty(&manifest).unwrap_or_default(),
+    );
+}
+
+fn declare_accessibility_tree_disabled(output_dir: &std::path::Path) {
+    let path = output_dir.join("trajectory.json");
+    let Ok(bytes) = std::fs::read(&path) else {
+        return;
+    };
+    let Ok(mut manifest) = serde_json::from_slice::<Value>(&bytes) else {
+        return;
+    };
+    manifest["accessibility_tree"] = Value::String("disabled".to_owned());
     let _ = std::fs::write(
         path,
         serde_json::to_vec_pretty(&manifest).unwrap_or_default(),

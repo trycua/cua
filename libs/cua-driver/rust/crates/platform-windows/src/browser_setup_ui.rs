@@ -377,17 +377,26 @@ fn exact_active_tab_close_button(nodes: &[UiaNode]) -> Result<Option<usize>, Bro
     }
 }
 
-fn close_active_tab(hwnd: u64) -> Result<(), BrowserRefusal> {
+/// Closes the active tab only when that same snapshot proves it is the exact
+/// setup page. `Ok(false)` means the page was no longer proven.
+fn close_proven_setup_tab(
+    hwnd: u64,
+    descriptor: &BrowserSetupDescriptor,
+) -> Result<bool, BrowserRefusal> {
     let nodes = native_nodes(hwnd)?;
-    let close = exact_active_tab_close_button(&nodes).and_then(|button| {
-        let button = button.ok_or_else(|| {
-            BrowserRefusal::new(
-                BrowserRefusalCode::BrowserWrongTargetRefused,
-                "the selected native tab exposed no close action",
-            )
-        })?;
-        unsafe { default_action(button, "selected tab close button") }
-    });
+    let close = if setup_page_proven(&nodes, descriptor) {
+        exact_active_tab_close_button(&nodes).and_then(|button| {
+            let button = button.ok_or_else(|| {
+                BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "the selected native tab exposed no close action",
+                )
+            })?;
+            unsafe { default_action(button, "selected tab close button") }.map(|()| true)
+        })
+    } else {
+        Ok(false)
+    };
     release_nodes(&nodes);
     close
 }
@@ -466,6 +475,7 @@ impl SetupUiHandle {
                 "enabled_remote_debugging": enabled_remote_debugging,
                 "foregrounded_window": false,
                 "injected_global_input": false,
+                "input_may_be_unread": false,
                 "restored_remote_debugging": restored_remote_debugging,
             },
             "cause": cause,
@@ -476,20 +486,16 @@ impl SetupUiHandle {
         if !self.opened_setup_page {
             return Ok(None);
         }
-        let proven = native_nodes(self.hwnd).is_ok_and(|nodes| {
-            let proven = setup_page_proven(&nodes, self.descriptor);
-            release_nodes(&nodes);
-            proven
-        });
-        if !proven {
-            let error = BrowserRefusal::new(
-                BrowserRefusalCode::BrowserWrongTargetRefused,
-                "the temporary setup page was no longer exact before cleanup",
-            );
-            return Err(self.abort(error));
-        }
-        if let Err(error) = close_active_tab(self.hwnd) {
-            return Err(self.abort(error));
+        match close_proven_setup_tab(self.hwnd, self.descriptor) {
+            Ok(true) => {}
+            Ok(false) => {
+                let error = BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "the temporary setup page was no longer exact before cleanup",
+                );
+                return Err(self.abort(error));
+            }
+            Err(error) => return Err(self.abort(error)),
         }
         self.opened_setup_page = false;
         Ok(Some(true))
@@ -503,15 +509,7 @@ impl SetupUiHandle {
         if !self.opened_setup_page {
             return None;
         }
-        let proven = native_nodes(self.hwnd).is_ok_and(|nodes| {
-            let proven = setup_page_proven(&nodes, self.descriptor);
-            release_nodes(&nodes);
-            proven
-        });
-        if !proven {
-            return Some(false);
-        }
-        Some(close_active_tab(self.hwnd).is_ok())
+        Some(close_proven_setup_tab(self.hwnd, self.descriptor).unwrap_or(false))
     }
 }
 

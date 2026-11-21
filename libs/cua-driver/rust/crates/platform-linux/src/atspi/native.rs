@@ -9369,13 +9369,12 @@ mod budget_tests {
             tokio::time::sleep(Duration::from_secs(5)).await;
             Ok::<(), ()>(())
         });
+        let joiner = once_per(pid, Some(&root));
         let waiter = OP_DEADLINE.scope(
             tokio::time::Instant::now() + Duration::from_millis(400),
             async {
-                let joined = within_half_budget(
-                    once_per(pid, Some(&root)).get_or_try_init(|| async { Ok::<(), ()>(()) }),
-                )
-                .await;
+                let joined =
+                    within_half_budget(joiner.get_or_try_init(|| async { Ok::<(), ()>(()) })).await;
                 (joined.is_none(), remaining_budget())
             },
         );

@@ -103,9 +103,13 @@ jobs:
       - name: Install Linux desktop dependencies
         if: runner.os == 'Linux'
         shell: bash
+        # A hung apt mirror once burned the whole 60 min job budget here
+        # (cd-rust-cua-driver rebuild of 0.39.0). Fail fast and retry.
+        timeout-minutes: 12
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          apt_opts=(-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+          sudo apt-get "${apt_opts[@]}" update
+          sudo apt-get "${apt_opts[@]}" install -y --no-install-recommends \
             xvfb dbus-x11 at-spi2-core openbox picom libgtk-3-dev clang pkg-config \
             libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev \
             libx11-dev libxi-dev libxtst-dev libxext-dev libssl-dev \

@@ -1379,6 +1379,11 @@ fn cgevent_type_verified(
             if !appends_prefix(before, after.as_deref(), text, done) {
                 return Ok((false, None));
             }
+            // The first batch already went out, so lost focus reports the
+            // partial delivery instead of a refusal.
+            if confirm_key_focus().is_err() {
+                return Ok(outcome);
+            }
             let tail: String = text.chars().skip(done).collect();
             crate::input::keyboard::type_text_with_delay(pid, &tail, RETYPE_TAIL_DELAY_MS)?;
             let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;

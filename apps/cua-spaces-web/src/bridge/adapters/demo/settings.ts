@@ -466,5 +466,13 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
       feed = feed.map((n) => (ids.includes(n.id) ? { ...n, read: true } : n));
       return null;
     },
+    "notifications.delete": ({ ids }) => {
+      feed = feed.filter((n) => !ids.includes(n.id));
+      return null;
+    },
+    "notifications.deleteAll": () => {
+      feed = [];
+      return null;
+    },
   };
 }

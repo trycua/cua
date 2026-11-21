@@ -6,8 +6,8 @@ use core_foundation::base::CFRelease;
 use cua_driver_contract::PressKeyInput;
 use cua_driver_core::{
     action_record::{
-        ActionEffect, ActionEvidence, ActionExecutionRecord, ActionTransport, ActualDelivery,
-        EvidenceKind, RequestedDelivery,
+        ActionEffect, ActionEscalation, ActionEvidence, ActionExecutionRecord, ActionTransport,
+        ActualDelivery, EscalationKind, EvidenceKind, RequestedDelivery,
     },
     protocol::ToolResult,
     tool::{Tool, ToolDef},
@@ -112,19 +112,46 @@ fn dispatch_with_ax_oracle(
     let before = element_ptr.and_then(|ptr| read_ax_key_state(pid, window_id, ptr));
     let result = dispatch();
     // Native controls normally publish their new value/selection on the next
-    // run-loop turn. Keep this bounded and reuse the exact retained element so
-    // a focus move cannot become false confirmation from a different control.
-    if before.is_some() {
-        std::thread::sleep(std::time::Duration::from_millis(60));
-    }
-    let after = element_ptr.and_then(|ptr| read_ax_key_state(pid, window_id, ptr));
+    // run-loop turn. Read the exact retained element until it changes, so a
+    // focus move cannot become false confirmation from a different control,
+    // and give up after the bound.
+    let changed = match (&before, element_ptr) {
+        (Some(before), Some(ptr)) => poll_until(AX_ORACLE_WAIT, AX_ORACLE_POLL, || {
+            read_ax_key_state(pid, window_id, ptr)
+                .is_some_and(|after| ax_state_changed(before, &after))
+        }),
+        _ => false,
+    };
     if owns_element {
         if let Some(ptr) = element_ptr {
             unsafe { CFRelease(ptr as _) };
         }
     }
     result?;
-    Ok(matches!((before, after), (Some(before), Some(after)) if ax_state_changed(&before, &after)))
+    Ok(changed)
+}
+
+/// Longest the oracle waits for the element to publish the key's effect.
+const AX_ORACLE_WAIT: std::time::Duration = std::time::Duration::from_millis(60);
+/// Interval between the oracle's reads of the element.
+const AX_ORACLE_POLL: std::time::Duration = std::time::Duration::from_millis(5);
+
+/// Read `done` every `poll` until it holds or `wait` passes; whether it held.
+fn poll_until(
+    wait: std::time::Duration,
+    poll: std::time::Duration,
+    mut done: impl FnMut() -> bool,
+) -> bool {
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        std::thread::sleep(poll.min(deadline.saturating_duration_since(std::time::Instant::now())));
+        if done() {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+    }
 }
 
 fn ax_state_changed(before: &AxKeyState, after: &AxKeyState) -> bool {
@@ -132,7 +159,29 @@ fn ax_state_changed(before: &AxKeyState, after: &AxKeyState) -> bool {
         || matches!((before.selected, after.selected), (Some(before), Some(after)) if before != after)
 }
 
-fn action_record(confirmed: bool, foreground: bool) -> ActionExecutionRecord {
+/// The legacy payload of a delivered key, with the foreground escalation when an
+/// unverifiable background key went to a Chromium or Electron app.
+fn delivered_structured(confirmed: bool, foreground: bool, chromium_embedder: bool) -> Value {
+    let mut structured = serde_json::json!({
+        "path": if foreground { "key_events_fg" } else { "key_events" },
+        "verified": confirmed,
+        "effect": if confirmed { "confirmed" } else { "unverifiable" },
+    });
+    if !confirmed {
+        if let Some(escalation) =
+            super::chromium_background_key_escalation(foreground, chromium_embedder)
+        {
+            structured["escalation"] = escalation;
+        }
+    }
+    structured
+}
+
+fn action_record(
+    confirmed: bool,
+    foreground: bool,
+    chromium_embedder: bool,
+) -> ActionExecutionRecord {
     let effect = if confirmed {
         ActionEffect::Confirmed
     } else {
@@ -170,45 +219,22 @@ fn action_record(confirmed: bool, foreground: bool) -> ActionExecutionRecord {
                 "the key events were constructed and the PID-routed post was attempted".into()
             },
         });
-    }
-    record.build().expect("press_key record is valid")
-}
-
-#[derive(Debug, thiserror::Error)]
-#[error("the addressed element did not acquire keyboard focus; no key was dispatched")]
-struct KeyFocusUnconfirmed;
-
-fn with_confirmed_key_focus<T>(
-    target: Option<usize>,
-    mut focus: impl FnMut(usize) -> anyhow::Result<()>,
-    mut is_focused: impl FnMut(usize) -> bool,
-    dispatch: impl FnOnce() -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
-    if let Some(target) = target {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
-        loop {
-            focus(target)?;
-            if is_focused(target) {
-                break;
-            }
-            if std::time::Instant::now() >= deadline {
-                return Err(KeyFocusUnconfirmed.into());
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+        if super::chromium_background_key_escalation(foreground, chromium_embedder).is_some() {
+            record = record.escalation(ActionEscalation {
+                kind: EscalationKind::RetryWithForegroundDelivery,
+                detail: Some(super::CHROMIUM_BACKGROUND_KEY_NOTE.into()),
+            });
         }
     }
-    dispatch()
+    record.build().expect("press_key record is valid")
 }
 
 fn delivery_failed(error: anyhow::Error) -> ToolResult {
     if let Some(refusal) = crate::security_prompt::tool_result(&error) {
         return refusal;
     }
-    if error.is::<KeyFocusUnconfirmed>() {
-        return ToolResult::error(error.to_string()).with_structured(serde_json::json!({
-            "code": "target_focus_unconfirmed", "effect": "refused", "dispatched": false,
-            "message": error.to_string(),
-        }));
+    if let Some(refusal) = super::key_focus_unconfirmed_error(&error) {
+        return refusal;
     }
     let message = format!("press_key delivery failed: {error}");
     ToolResult::error(&message).with_structured(serde_json::json!({
@@ -477,7 +503,7 @@ impl Tool for PressKeyTool {
                                 wid,
                                 || {
                                     // Activation may replace the first responder; confirm inside the HID guard.
-                                    with_confirmed_key_focus(
+                                    crate::input::ax_actions::with_confirmed_key_focus(
                                         pre_focus_ptr,
                                         crate::input::ax_actions::focus_element,
                                         |target| {
@@ -497,7 +523,7 @@ impl Tool for PressKeyTool {
                     }
                     // background (default): auth-envelope post, no raise.
                     dispatch_with_ax_oracle(pid, window_id, pre_focus_ptr, || {
-                        with_confirmed_key_focus(
+                        crate::input::ax_actions::with_confirmed_key_focus(
                             pre_focus_ptr,
                             crate::input::ax_actions::focus_element,
                             |target| {
@@ -530,18 +556,30 @@ impl Tool for PressKeyTool {
                 } else {
                     ""
                 };
-                let mut structured = serde_json::json!({
-                    "path": if fg { "key_events_fg" } else { "key_events" },
-                    "verified": confirmed,
-                    "effect": if confirmed { "confirmed" } else { "unverifiable" },
-                });
+                let chromium_embedder = !fg
+                    && !confirmed
+                    && tokio::task::spawn_blocking(move || {
+                        super::type_text::is_chromium_embedder(pid)
+                    })
+                    .await
+                    .unwrap_or(false);
+                let mut structured = delivered_structured(confirmed, fg, chromium_embedder);
+                let note = if structured.get("escalation").is_some() {
+                    format!(" {}", super::CHROMIUM_BACKGROUND_KEY_NOTE)
+                } else {
+                    String::new()
+                };
                 changes.add_window_identity(&mut structured);
                 ToolResult::text(format!(
-                    "✅ Pressed {display_key} on pid {pid}{label}.{}",
+                    "✅ Pressed {display_key} on pid {pid}{label}.{note}{}",
                     changes.result_suffix()
                 ))
                 .with_structured(structured)
-                .with_action_record(action_record(confirmed, fg))
+                .with_action_record(action_record(
+                    confirmed,
+                    fg,
+                    chromium_embedder,
+                ))
             }
             PressKeyDeliveryOutcome::Failed(error) => delivery_failed(error),
         }
@@ -553,10 +591,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_oracle_returns_on_the_first_changed_read() {
+        let mut reads = 0;
+        assert!(poll_until(
+            std::time::Duration::from_secs(5),
+            AX_ORACLE_POLL,
+            || {
+                reads += 1;
+                reads == 2
+            }
+        ));
+        assert_eq!(reads, 2, "no read after the change");
+    }
+
+    #[test]
+    fn the_oracle_gives_up_at_its_bound() {
+        let started = std::time::Instant::now();
+        assert!(!poll_until(AX_ORACLE_WAIT, AX_ORACLE_POLL, || false));
+        assert!(started.elapsed() >= AX_ORACLE_WAIT);
+    }
+
+    #[test]
     fn targeted_key_requires_focus_readback_before_dispatch() {
         use std::cell::RefCell;
         let events = RefCell::new(Vec::new());
-        let result = with_confirmed_key_focus(
+        let result = crate::input::ax_actions::with_confirmed_key_focus(
             Some(42),
             |target| {
                 events.borrow_mut().push(("focus", target));
@@ -592,7 +651,7 @@ mod tests {
         use std::cell::RefCell;
         let events = RefCell::new(Vec::new());
         let mut checks = 0;
-        with_confirmed_key_focus(
+        crate::input::ax_actions::with_confirmed_key_focus(
             Some(42),
             |target| {
                 events.borrow_mut().push(("focus", target));
@@ -626,7 +685,7 @@ mod tests {
         use std::cell::Cell;
         let sent = Cell::new(0);
         for target in [Some(42), None] {
-            with_confirmed_key_focus(
+            crate::input::ax_actions::with_confirmed_key_focus(
                 target,
                 |_| Ok(()),
                 |_| true,
@@ -638,14 +697,14 @@ mod tests {
             .unwrap();
         }
         assert_eq!(sent.get(), 2);
-        let failed = with_confirmed_key_focus(
+        let failed = crate::input::ax_actions::with_confirmed_key_focus(
             Some(42),
             |_| anyhow::bail!("focus unavailable"),
             |_| panic!("must not confirm failed focus"),
             || -> anyhow::Result<()> { panic!("must not dispatch") },
         );
         assert_eq!(failed.unwrap_err().to_string(), "focus unavailable");
-        with_confirmed_key_focus(
+        crate::input::ax_actions::with_confirmed_key_focus(
             None,
             |_| panic!("window key has no element"),
             |_| panic!("window key has no element"),
@@ -670,7 +729,7 @@ mod tests {
 
     #[test]
     fn accepted_without_oracle_has_no_escalation_but_ax_change_confirms() {
-        let unverifiable = action_record(false, false).public_result().unwrap();
+        let unverifiable = action_record(false, false, false).public_result().unwrap();
         assert_eq!(
             unverifiable.effect,
             cua_driver_contract::ActionEffect::Unverifiable
@@ -681,13 +740,72 @@ mod tests {
         );
         assert!(unverifiable.escalation.is_none());
 
-        let confirmed = action_record(true, false).public_result().unwrap();
+        let confirmed = action_record(true, false, false).public_result().unwrap();
         assert_eq!(
             confirmed.effect,
             cua_driver_contract::ActionEffect::Confirmed
         );
         assert_eq!(confirmed.evidence.unwrap().len(), 1);
         assert!(confirmed.escalation.is_none());
+    }
+
+    #[test]
+    fn a_background_key_to_a_chromium_app_recommends_foreground() {
+        assert_eq!(
+            delivered_structured(false, false, true),
+            serde_json::json!({
+                "path": "key_events",
+                "verified": false,
+                "effect": "unverifiable",
+                "escalation": {
+                    "recommended": "foreground",
+                    "reason": super::super::CHROMIUM_BACKGROUND_KEY_NOTE,
+                    "requires": ["window_id"]
+                }
+            })
+        );
+        let public = action_record(false, false, true).public_result().unwrap();
+        assert_eq!(
+            public.effect,
+            cua_driver_contract::ActionEffect::Unverifiable
+        );
+        assert_eq!(
+            public.escalation.unwrap().target,
+            cua_driver_contract::ActionEscalationTarget::Foreground
+        );
+    }
+
+    #[test]
+    fn other_key_results_carry_no_escalation() {
+        for (confirmed, foreground, chromium_embedder, expected) in [
+            (
+                false,
+                false,
+                false,
+                serde_json::json!({"path": "key_events", "verified": false, "effect": "unverifiable"}),
+            ),
+            (
+                false,
+                true,
+                true,
+                serde_json::json!({"path": "key_events_fg", "verified": false, "effect": "unverifiable"}),
+            ),
+            (
+                true,
+                false,
+                true,
+                serde_json::json!({"path": "key_events", "verified": true, "effect": "confirmed"}),
+            ),
+        ] {
+            assert_eq!(
+                delivered_structured(confirmed, foreground, chromium_embedder),
+                expected
+            );
+            let public = action_record(confirmed, foreground, chromium_embedder)
+                .public_result()
+                .unwrap();
+            assert!(public.escalation.is_none());
+        }
     }
 
     #[test]

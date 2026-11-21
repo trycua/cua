@@ -105,7 +105,7 @@ cua sandbox create [OPTIONS] [IMAGE] [-- <COMMAND>...]
 | <span id="cua-sandbox-create--install"></span>`--install` | string |  |  | Install these into the sandbox once it is up: harness ids (`claude-code`) or installables (`blender`, `vscode`, `node`), pinned and checksum-verified (`cua agent ensure` later does the same). Repeatable. |
 | <span id="cua-sandbox-create--cpu"></span>`--cpu` | integer |  |  | vCPUs. Alias: `--cpus`. |
 | <span id="cua-sandbox-create--memory"></span>`--memory` | string |  |  | Memory, e.g. 8GB or 4096MB (a bare number is GB). |
-| <span id="cua-sandbox-create--network"></span>`--network` | `default` \| `none` |  |  | Guest network: `default` (outbound network, like a Docker container) or `none` (no egress; published ports still work). `none` needs a local QEMU VM; containers and Lume reject it. |
+| <span id="cua-sandbox-create--network"></span>`--network` | `default` \| `none` |  |  | Guest network: `default` (outbound network, like a Docker container) or `none` (no egress; published ports still work). `none` runs on a local QEMU VM, and on a container under the default Secure network mode; containers reject it in legacy mode, and Lume rejects it. |
 | <span id="cua-sandbox-create--disk"></span>`--disk` | string |  |  | Disk size (accepted; the image decides today). |
 | <span id="cua-sandbox-create--port"></span>`--port` | string |  |  | Expose a guest port: NAME=PORT (a named service) or PORT (repeatable). Alias: `--service`. |
 | <span id="cua-sandbox-create--wait"></span>`--wait` | string |  |  | Wait until ready: tcp:SERVICE, http:SERVICE/path, a guest port (tcp:PORT, http:PORT/path), or `desktop` (the desktop session takes input: display, window manager and cua-driver) (repeatable). Alias: `--wait-for`. |

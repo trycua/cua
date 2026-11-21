@@ -129,6 +129,33 @@ fn config_file() -> PathBuf {
     host::cua_home().join("config.toml")
 }
 
+/// `runtime.windows_backend` now: `CUA_RUNTIME_WINDOWS_BACKEND`, else the
+/// config file's `[runtime] windows_backend`. Which engine the built-in Linux
+/// runtime on Windows uses (`auto`, `wsl` or `hyperv`); read by
+/// [`crate::managed::hyperv::Backend`].
+pub fn windows_backend_word() -> Option<String> {
+    windows_backend_word_in(&config_file())
+}
+
+/// [`windows_backend_word`] with the config file at `config`.
+pub fn windows_backend_word_in(config: &Path) -> Option<String> {
+    std::env::var("CUA_RUNTIME_WINDOWS_BACKEND")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| {
+            let doc = std::fs::read_to_string(config)
+                .ok()?
+                .parse::<toml_edit::DocumentMut>()
+                .ok()?;
+            doc.get("runtime")?
+                .get("windows_backend")?
+                .as_str()
+                .map(str::to_string)
+        })
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
 /// `runtime.<kind>` now (auto when unset or unreadable).
 pub fn source(kind: RuntimeKind) -> KindSource {
     source_in(kind, &config_file())
@@ -633,6 +660,22 @@ mod tests {
             Some(PathBuf::from("/opt/homebrew/bin/podman"))
         );
         assert_eq!(custom_path_in(RuntimeKind::Vm, &config), None);
+    }
+
+    /// The Windows engine setting: the config file's `windows_backend`.
+    #[test]
+    fn the_windows_backend_setting_reads_the_config() {
+        let d = tempfile::tempdir().unwrap();
+        let config = d.path().join("config.toml");
+        assert_eq!(windows_backend_word_in(&config), None);
+        std::fs::write(&config, "[runtime]\nwindows_backend = \" hyperv \"\n").unwrap();
+        if std::env::var_os("CUA_RUNTIME_WINDOWS_BACKEND").is_none() {
+            assert_eq!(windows_backend_word_in(&config).as_deref(), Some("hyperv"));
+        }
+        std::fs::write(&config, "[runtime]\nwindows_backend = \"\"\n").unwrap();
+        if std::env::var_os("CUA_RUNTIME_WINDOWS_BACKEND").is_none() {
+            assert_eq!(windows_backend_word_in(&config), None);
+        }
     }
 
     /// A fake Docker: what it is and its version; a script that is not one;

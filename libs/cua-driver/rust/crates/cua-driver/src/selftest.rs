@@ -530,7 +530,6 @@ impl Backend for DaemonBackend {
         crate::cli::launch_daemon_and_wait(
             &self.socket,
             30,
-            false,
             &[],
             crate::history_runtime::preview_admitted_preference(),
         )

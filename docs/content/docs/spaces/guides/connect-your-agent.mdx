@@ -22,11 +22,12 @@ desktop and share a Space whenever you ask.
 
 On first run, **Pick your agent** lists the agents found on this computer,
 most used first: Hermes, Claude Code, Codex, Cursor, then the rest. Each row
-names the settings file Cua changes. Press **Connect** on each agent you want:
-the app adds the Cua skills and MCP server to that agent's settings. Nothing is
-connected until you press it. If an agent was already open, close it and open
-it again. Connecting none is fine: connect agents later in **Settings,
-Connections**.
+names the settings file Cua changes. Every agent found starts
+ticked. Untick any you do not want, then press **Continue**: the app adds the
+Cua skills and MCP server to the settings of each ticked agent. Nothing is
+changed before you press **Continue**. If an agent was already open, close it
+and open it again. Connecting none is fine: untick every agent or press
+**Choose later**, then connect agents later in **Settings, Connections**.
 
 ### Per computer
 
@@ -183,9 +184,12 @@ lists the tools it gets.
 
 ## What your agent can do
 
-The cua MCP server gives an agent 33 Spaces tools plus sandbox and computer
-tools. For the computer the agent runs on, use [Cua Driver](/cua-driver/quickstart)
-instead. The main ones:
+By default the cua MCP server gives an agent every Spaces tool except the few
+that are for a person only, plus sandbox, computer, skills and other tools.
+[MCP tools](/cua-cli/reference/mcp-tools) lists each one with the permission
+that gates it, and [Limit what an agent can do](#limit-what-an-agent-can-do)
+narrows the set. For the computer the agent runs on, use
+[Cua Driver](/cua-driver/quickstart) instead. The main ones:
 
 ```text output
 list_spaces / create_space {reuse}  -> pick, reuse or create a Space

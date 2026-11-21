@@ -866,6 +866,10 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         ))
     }
 
+    fn managed_extension_policy(&self, executable: &str) -> Option<String> {
+        super::managed_policy::managed_extension_policy(executable)
+    }
+
     fn security_prompt_open(&self) -> bool {
         crate::security_prompt::security_prompt_on_screen()
     }
@@ -985,16 +989,21 @@ impl BrowserPlatform for MacOsBrowserPlatform {
     }
 
     async fn classify_browser(&self, pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
-        let (app, fallback_name, fallback_bundle_id) = tokio::task::spawn_blocking(move || {
-            let app = crate::apps::list_running_apps()
-                .into_iter()
-                .find(|app| i64::from(app.pid) == pid);
-            let fallback_name = crate::apps::get_app_name_for_pid(pid as i32);
-            let fallback_bundle_id = crate::apps::bundle_id_for_pid(pid as i32);
-            (app, fallback_name, fallback_bundle_id)
-        })
-        .await
-        .unwrap_or((None, None, None));
+        let (app, fallback_name, fallback_bundle_id, electron_app) =
+            tokio::task::spawn_blocking(move || {
+                let app = crate::apps::list_running_apps()
+                    .into_iter()
+                    .find(|app| i64::from(app.pid) == pid);
+                let fallback_name = crate::apps::get_app_name_for_pid(pid as i32);
+                let fallback_bundle_id = crate::apps::bundle_id_for_pid(pid as i32);
+                // Electron apps ship under their own name and bundle id
+                // (Obsidian is md.obsidian), so the bundled Electron Framework
+                // is what identifies them.
+                let electron_app = super::ElectronJs::is_electron(pid as i32);
+                (app, fallback_name, fallback_bundle_id, electron_app)
+            })
+            .await
+            .unwrap_or((None, None, None, false));
         let name = app
             .as_ref()
             .map(|app| app.name.as_str())
@@ -1005,10 +1014,14 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             .and_then(|app| app.bundle_id.as_deref())
             .or(fallback_bundle_id.as_deref())
             .unwrap_or("");
-        let chromium = is_chromium(name, bundle_id);
+        let chromium = electron_app || is_chromium(name, bundle_id);
         let webkit = bundle_id == "com.apple.Safari" || name.eq_ignore_ascii_case("Safari");
         let gecko = is_firefox(&format!("{name} {bundle_id}"));
-        let product_kind = browser_product(name, bundle_id);
+        let product_kind = if electron_app {
+            BrowserProduct::Electron
+        } else {
+            browser_product(name, bundle_id)
+        };
         let helper = name.to_ascii_lowercase().contains("helper")
             || bundle_id.to_ascii_lowercase().contains(".helper")
             || process_arguments(pid).ok().is_some_and(|args| {
@@ -1451,6 +1464,24 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         })
     }
 
+    async fn dismiss_abandoned_existing_profile_consent(
+        &self,
+        pid: i64,
+        window_id: u64,
+    ) -> Result<bool, BrowserRefusal> {
+        let (Ok(pid), Ok(window_id)) = (i32::try_from(pid), u32::try_from(window_id)) else {
+            return Ok(false);
+        };
+        tokio::task::spawn_blocking(move || super::consent_ui::dismiss(pid, window_id))
+            .await
+            .unwrap_or_else(|join_error| {
+                Err(BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not close the abandoned browser consent prompt: {join_error}"),
+                ))
+            })
+    }
+
     async fn handle_existing_profile_consent(
         &self,
         request: BrowserConsentRequest,
@@ -1792,7 +1823,7 @@ mod tests {
                 height: 780.0,
             },
             layer: 0,
-            z_index: 0,
+            z_index: Some(0),
             is_on_screen: true,
             current_space_id: None,
             on_current_space: Some(true),

@@ -5,6 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -79,20 +80,125 @@ pub fn with_runtime_scope<T>(scope: String, action: impl FnOnce() -> T) -> T {
 /// input call, so a waiting call never outlasts its own budget behind it.
 const STALE_LANE_WAIT: Duration = Duration::from_secs(12);
 
+/// What a call's input is serialized on: the process-wide desktop, or text
+/// input to one process. Each refuses with `input_busy` and its own `lane`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Lane {
+    Desktop,
+    Pid(i64),
+}
+
+impl Lane {
+    /// The pid lane a call needs: `type_text` to one process. Desktop-scoped
+    /// text input has no stable process identity and takes only the desktop.
+    fn for_text_input(tool_name: &str, args: &Value) -> Option<Self> {
+        if tool_name != "type_text" {
+            return None;
+        }
+        args.get("pid")
+            .and_then(Value::as_i64)
+            .filter(|pid| *pid > 0)
+            .map(Lane::Pid)
+    }
+
+    fn busy_refusal(self) -> ToolResult {
+        let (message, lane) = match self {
+            Lane::Desktop => (
+                "a previous call's input is still finishing: its call ended, but its worker still holds the desktop; retry once it has stopped".to_owned(),
+                serde_json::json!({"kind": "desktop"}),
+            ),
+            Lane::Pid(pid) => (
+                format!("text input is already active for pid {pid}"),
+                serde_json::json!({"kind": "pid", "pid": pid}),
+            ),
+        };
+        ToolResult::error(message.clone()).with_structured(serde_json::json!({
+            "status": "refused",
+            "refusal": {
+                "code": "input_busy",
+                "message": message,
+                "lane": lane,
+            }
+        }))
+    }
+}
+
+/// A call's admission to the input lanes it needs. It is taken after
+/// consent, so a call still being authorized holds no lane, and released
+/// as one once the call's physical action returns.
+#[derive(Default)]
+struct InputAdmission {
+    pid: Option<PidLane>,
+    desktop: Option<DesktopCall>,
+}
+
+impl InputAdmission {
+    /// Admit the call to `lane`. A pid lane refuses at once while other text
+    /// input to that process runs. The desktop lane waits its turn, and
+    /// refuses only behind a worker that outlived its call.
+    async fn admit(&mut self, lane: Lane) -> Result<(), ToolResult> {
+        match lane {
+            Lane::Pid(pid) => self.pid = Some(PidLane::claim(pid)?),
+            Lane::Desktop => self.desktop = Some(DesktopCall::acquire().await?),
+        }
+        Ok(())
+    }
+}
+
+fn active_text_input_pids() -> &'static Mutex<HashSet<i64>> {
+    static ACTIVE: OnceLock<Mutex<HashSet<i64>>> = OnceLock::new();
+    ACTIVE.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Text input to one process, released on drop.
+#[derive(Debug)]
+struct PidLane(i64);
+
+impl PidLane {
+    fn claim(pid: i64) -> Result<Self, ToolResult> {
+        let mut active = active_text_input_pids()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !active.insert(pid) {
+            return Err(Lane::Pid(pid).busy_refusal());
+        }
+        Ok(Self(pid))
+    }
+}
+
+impl Drop for PidLane {
+    fn drop(&mut self) {
+        active_text_input_pids()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&self.0);
+    }
+}
+
 /// The process-wide physical input lane: one desktop action at a time.
 struct DesktopLane {
     lock: Arc<tokio::sync::Mutex<()>>,
-    holder: Arc<Mutex<LaneHolder>>,
+    state: Arc<Mutex<LaneState>>,
+    generations: AtomicU64,
     stale_wait: Duration,
 }
 
-/// Which hold of the lane is current, and when its call ended while a
-/// worker still held the lane. A mark belongs to its holder's generation,
-/// so it never applies to the holder after it.
-#[derive(Default)]
-struct LaneHolder {
-    generation: u64,
-    stale_since: Option<tokio::time::Instant>,
+/// Who holds the desktop lane. Only [`DesktopLane::acquire`], the drop of
+/// the call's [`DesktopCall`] and the drop of the hold's last
+/// [`DesktopLease`] change it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LaneState {
+    Free,
+    /// The call that took hold `gen` is still running.
+    Held {
+        gen: u64,
+    },
+    /// Hold `gen`'s call ended at `since`, but a worker it started, or
+    /// cleanup that worker handed off, still holds a lease.
+    Orphaned {
+        gen: u64,
+        since: tokio::time::Instant,
+    },
 }
 
 fn desktop_lane() -> &'static DesktopLane {
@@ -100,8 +206,8 @@ fn desktop_lane() -> &'static DesktopLane {
     LANE.get_or_init(|| DesktopLane::new(STALE_LANE_WAIT))
 }
 
-fn lock_holder(holder: &Mutex<LaneHolder>) -> std::sync::MutexGuard<'_, LaneHolder> {
-    holder
+fn lock_state(state: &Mutex<LaneState>) -> std::sync::MutexGuard<'_, LaneState> {
+    state
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
@@ -110,7 +216,8 @@ impl DesktopLane {
     fn new(stale_wait: Duration) -> Self {
         Self {
             lock: Arc::new(tokio::sync::Mutex::new(())),
-            holder: Arc::new(Mutex::new(LaneHolder::default())),
+            state: Arc::new(Mutex::new(LaneState::Free)),
+            generations: AtomicU64::new(0),
             stale_wait,
         }
     }
@@ -130,17 +237,13 @@ impl DesktopLane {
                 let wait = self.lock.clone().lock_owned();
                 tokio::pin!(wait);
                 loop {
-                    // Read the holder on every pass, the first one before any
+                    // Read the state on every pass, the first one before any
                     // wait included: a stale worker seen earlier may have
                     // stopped, and its successor be a call still running.
-                    let stale_since = lock_holder(&self.holder).stale_since;
-                    if stale_since
-                        .is_some_and(|since| tokio::time::Instant::now() >= since + self.stale_wait)
-                    {
-                        return Err(protected_refusal(
-                            "input_busy",
-                            "a previous call's input is still finishing: its call ended, but its worker still holds the desktop; retry once it has stopped",
-                        ));
+                    if let LaneState::Orphaned { since, .. } = *lock_state(&self.state) {
+                        if tokio::time::Instant::now() >= since + self.stale_wait {
+                            return Err(Lane::Desktop.busy_refusal());
+                        }
                     }
                     tokio::select! {
                         guard = &mut wait => break guard,
@@ -149,33 +252,37 @@ impl DesktopLane {
                 }
             }
         };
-        let generation = {
-            let mut holder = lock_holder(&self.holder);
-            holder.generation += 1;
-            holder.stale_since = None;
-            holder.generation
-        };
-        Ok(DesktopCall(DesktopLease(Arc::new(HeldLane {
-            holder: self.holder.clone(),
-            generation,
+        let gen = self.generations.fetch_add(1, Ordering::Relaxed) + 1;
+        *lock_state(&self.state) = LaneState::Held { gen };
+        Ok(DesktopCall(Some(DesktopLease(Arc::new(HeldLane {
+            state: self.state.clone(),
+            gen,
             _guard: guard,
-        }))))
+        })))))
+    }
+
+    #[cfg(test)]
+    fn state(&self) -> LaneState {
+        *lock_state(&self.state)
     }
 }
 
 struct HeldLane {
-    holder: Arc<Mutex<LaneHolder>>,
-    generation: u64,
+    state: Arc<Mutex<LaneState>>,
+    gen: u64,
     _guard: tokio::sync::OwnedMutexGuard<()>,
 }
 
 impl Drop for HeldLane {
     fn drop(&mut self) {
-        // Runs before `_guard` unlocks the lane for the next holder.
-        let mut holder = lock_holder(&self.holder);
-        if holder.generation == self.generation {
-            holder.stale_since = None;
-        }
+        // Runs before `_guard` unlocks the lane for the next holder, so the
+        // state is still this hold's.
+        let mut state = lock_state(&self.state);
+        debug_assert!(matches!(
+            *state,
+            LaneState::Held { gen } | LaneState::Orphaned { gen, .. } if gen == self.gen
+        ));
+        *state = LaneState::Free;
     }
 }
 
@@ -195,8 +302,8 @@ impl DesktopLease {
 }
 
 /// The dispatching call's own hold on the desktop lane. Dropping it while a
-/// worker still holds a [`DesktopLease`] clone marks that worker stale.
-pub struct DesktopCall(DesktopLease);
+/// worker still holds a [`DesktopLease`] clone orphans the hold.
+pub struct DesktopCall(Option<DesktopLease>);
 
 impl DesktopCall {
     /// Wait for the process-wide input lane, or refuse with `input_busy`
@@ -208,65 +315,32 @@ impl DesktopCall {
     /// Run `action` as the desktop action holding this lane, so that
     /// [`DesktopLease::current`] returns it.
     pub async fn scope<F: std::future::Future>(&self, action: F) -> F::Output {
-        DESKTOP_LEASE.scope(self.0.clone(), action).await
+        let lease = self
+            .0
+            .clone()
+            .expect("a call holds its lease until it drops");
+        DESKTOP_LEASE.scope(lease, action).await
     }
 }
 
 impl Drop for DesktopCall {
     fn drop(&mut self) {
-        let held = &self.0 .0;
-        // Checked under the holder lock that the last clone's drop takes,
-        // so a worker stopping now cannot leave its mark behind.
-        let mut holder = lock_holder(&held.holder);
-        if holder.generation == held.generation && Arc::strong_count(held) > 1 {
-            holder.stale_since = Some(tokio::time::Instant::now());
+        let Some(DesktopLease(held)) = self.0.take() else {
+            return;
+        };
+        let (state, gen) = (held.state.clone(), held.gen);
+        // If this was the hold's last lease, the lane is free now, and a
+        // successor may already hold it. If it was not, a worker still holds
+        // the lane, unless it stopped since: then its drop freed it.
+        drop(held);
+        let mut state = lock_state(&state);
+        if matches!(*state, LaneState::Held { gen: current } if current == gen) {
+            *state = LaneState::Orphaned {
+                gen,
+                since: tokio::time::Instant::now(),
+            };
         }
     }
-}
-
-fn active_text_input_pids() -> &'static Mutex<HashSet<i64>> {
-    static ACTIVE: OnceLock<Mutex<HashSet<i64>>> = OnceLock::new();
-    ACTIVE.get_or_init(|| Mutex::new(HashSet::new()))
-}
-
-#[derive(Debug)]
-struct TextInputAdmission {
-    pid: i64,
-}
-
-impl Drop for TextInputAdmission {
-    fn drop(&mut self) {
-        active_text_input_pids()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(&self.pid);
-    }
-}
-
-fn try_admit_text_input(
-    tool_name: &str,
-    args: &Value,
-) -> Result<Option<TextInputAdmission>, ToolResult> {
-    if tool_name != "type_text" {
-        return Ok(None);
-    }
-    let Some(pid) = args
-        .get("pid")
-        .and_then(Value::as_i64)
-        .filter(|pid| *pid > 0)
-    else {
-        // Desktop-scoped input has no stable process identity. It continues to
-        // use the process-wide physical action coordinator below.
-        return Ok(None);
-    };
-    let mut active = active_text_input_pids()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if !active.insert(pid) {
-        let message = format!("text input is already active for pid {pid}");
-        return Err(protected_refusal("input_busy", &message));
-    }
-    Ok(Some(TextInputAdmission { pid }))
 }
 
 pub use cua_driver_contract::{CAPABILITY_VERSION, TOOLS_LIST_SCHEMA_VERSION};
@@ -317,10 +391,9 @@ impl ToolDef {
         // Tools that most often need a guide point at `get_guide`, so an agent
         // that never reads the skill still learns where the guidance lives.
         let deprecation = crate::deprecation::lookup(&self.name);
-        let description = lead_on_own_line(&self.description);
         let description = match crate::guide::description_hint(&self.name) {
-            Some(hint) => format!("{description} {hint}"),
-            None => description,
+            Some(hint) => format!("{} {hint}", self.description),
+            None => self.description.clone(),
         };
         let description = match deprecation {
             Some(entry) => format!("{} {description}", entry.description_prefix()),
@@ -765,37 +838,6 @@ fn normalize_zoom_args(tool_name: &str, args: &mut Value) {
             arguments.insert(second.to_owned(), serde_json::json!(start + size));
         }
     }
-}
-
-/// `description` with its first sentence on a line of its own. Clients that
-/// show one line per tool (tool search results, `list-tools`) then show that
-/// sentence instead of the whole first paragraph. Only the space after the
-/// sentence becomes a line break; no text is added or removed.
-pub fn lead_on_own_line(description: &str) -> String {
-    let first_line = description.split('\n').next().unwrap_or_default();
-    let mut in_code = false;
-    let mut depth = 0u32;
-    let mut previous = None;
-    for (i, ch) in first_line.char_indices() {
-        match ch {
-            '`' => in_code = !in_code,
-            '(' | '[' | '{' if !in_code => depth += 1,
-            ')' | ']' | '}' if !in_code => depth = depth.saturating_sub(1),
-            ' ' if !in_code
-                && depth == 0
-                && matches!(previous, Some('.' | '?' | '!'))
-                && !first_line[..i].ends_with("e.g.")
-                && !first_line[..i].ends_with("i.e.") =>
-            {
-                let mut out = description.to_owned();
-                out.replace_range(i..i + 1, "\n");
-                return out;
-            }
-            _ => {}
-        }
-        previous = Some(ch);
-    }
-    description.to_owned()
 }
 
 pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -> Value {
@@ -1367,6 +1409,9 @@ pub struct ToolRegistry {
     _recording_state_readers: Vec<crate::session::RecordingStateReaderRegistration>,
     runtime_cleanups: Vec<RuntimeCleanup>,
     capture_service: Arc<crate::capture_runtime::CaptureService>,
+    /// Fast-path read-time state, owned by this runtime and cleared per
+    /// session when that session ends.
+    guard_store: Arc<crate::fast_path::store::GuardStore>,
     /// Runtime-owned protected-consent broker shared by every resource
     /// adapter. Keeping it at the canonical dispatch boundary prevents
     /// browser, desktop, and file adapters from growing independent provider
@@ -1377,11 +1422,21 @@ pub struct ToolRegistry {
     /// How a batch learns which window an `element_token` belongs to; set by
     /// the platform that owns the snapshot store.
     token_window_resolver: Option<TokenWindowResolver>,
+    /// How a capability-manifest check learns which process a window really
+    /// belongs to; set by a platform whose windows can be hosted by another
+    /// process.
+    window_identity_resolver: Option<WindowIdentityResolver>,
 }
 
 /// Call arguments (carrying an `element_token`) -> the `(pid, window_id)` of
 /// the live snapshot that token names, or `None` when it is stale or unknown.
 pub type TokenWindowResolver = Arc<dyn Fn(&Value) -> Option<(i32, u64)> + Send + Sync + 'static>;
+
+/// The `(pid, window_id)` of a window -> the pid of the app it hosts, when the
+/// owning process is a shared host rather than the app (a Windows packaged
+/// app's frame is owned by `ApplicationFrameHost.exe`). `None` keeps the
+/// owning pid as the window's identity.
+pub type WindowIdentityResolver = Arc<dyn Fn(i64, u64) -> Option<i64> + Send + Sync + 'static>;
 
 impl ToolRegistry {
     pub fn new() -> Self {
@@ -1403,6 +1458,8 @@ impl ToolRegistry {
         let weak_grants = Arc::downgrade(&protected_resource_grants);
         let weak_ownership = Arc::downgrade(&protected_resource_ownership);
         let weak_captures = Arc::downgrade(&capture_service);
+        let guard_store = Arc::new(crate::fast_path::store::GuardStore::new());
+        let weak_guard_store = Arc::downgrade(&guard_store);
         let session_end_hook =
             crate::session::register_scoped_session_end_hook(move |session_id| {
                 crate::agent_cursor::forget_input_origin(session_id);
@@ -1417,6 +1474,9 @@ impl ToolRegistry {
                 }
                 if let Some(captures) = weak_captures.upgrade() {
                     captures.retire_session_id(session_id);
+                }
+                if let Some(guard_store) = weak_guard_store.upgrade() {
+                    guard_store.retire_session(session_id);
                 }
                 let Some(grants) = weak_grants.upgrade() else {
                     return;
@@ -1454,10 +1514,12 @@ impl ToolRegistry {
             _recording_state_readers: vec![recording_state_reader],
             runtime_cleanups: Vec::new(),
             capture_service,
+            guard_store,
             approval_broker,
             protected_resource_grants,
             protected_resource_ownership,
             token_window_resolver: None,
+            window_identity_resolver: None,
         }
     }
 
@@ -1465,6 +1527,12 @@ impl ToolRegistry {
     /// window, so `run_steps` can take the window to observe from a token.
     pub fn set_token_window_resolver(&mut self, resolver: TokenWindowResolver) {
         self.token_window_resolver = Some(resolver);
+    }
+
+    /// Install the resolver that maps a hosted window to the app it hosts, so
+    /// a manifest app grant matches the app rather than its shared host.
+    pub fn set_window_identity_resolver(&mut self, resolver: WindowIdentityResolver) {
+        self.window_identity_resolver = Some(resolver);
     }
 
     /// The `(pid, window_id)` a live `element_token` in `args` names.
@@ -1484,6 +1552,11 @@ impl ToolRegistry {
     /// Return the immutable-capture service owned by this runtime registry.
     pub fn capture_service(&self) -> Arc<crate::capture_runtime::CaptureService> {
         self.capture_service.clone()
+    }
+
+    /// Return the fast-path guard store owned by this runtime registry.
+    pub fn guard_store(&self) -> Arc<crate::fast_path::store::GuardStore> {
+        self.guard_store.clone()
     }
 
     pub fn protected_resource_grants(&self) -> Arc<crate::consent::ProtectedResourceGrants> {
@@ -1524,6 +1597,12 @@ impl ToolRegistry {
     }
 
     async fn enrich_application_resource(&self, resource: &mut Value, pid: i64) {
+        let pid = resource
+            .get("window_id")
+            .and_then(Value::as_u64)
+            .zip(self.window_identity_resolver.as_ref())
+            .and_then(|(window_id, resolve)| resolve(pid, window_id))
+            .unwrap_or(pid);
         if let Some(fingerprint) = self.attest_process_fingerprint(pid).await {
             resource["fingerprint"] = serde_json::to_value(fingerprint).unwrap_or(Value::Null);
         }
@@ -1969,7 +2048,7 @@ impl ToolRegistry {
             Ok(crate::post_action_wait::PostActionWait::Default)
         };
         let delta_target = (!in_batch && crate::fast_path::wire::returns_delta(tool))
-            .then(|| crate::fast_path::wire::delta_target(&args))
+            .then(|| crate::fast_path::wire::delta_target(&args, &self.guard_store))
             .flatten();
         let mut result = match wait {
             Ok(wait) => {
@@ -2127,7 +2206,7 @@ impl ToolRegistry {
                 .get("_transport_session_id")
                 .and_then(Value::as_str)
                 .unwrap_or(session);
-            // An unnamed session reclaimed by the idle sweep, or a label its
+            // A session its owner lost to the idle sweep, or a label its
             // closed owner transport released without `end_session`, is
             // recreated at lifecycle admission below; every other ended
             // episode refuses with the recovery that actually applies to its
@@ -2154,20 +2233,6 @@ impl ToolRegistry {
             restore_public_runtime_result(&mut result, &runtime_prefix);
             return result;
         }
-
-        // A queued text mutation can become stale while another agent is
-        // typing into the same process. Refuse that overlap before consent,
-        // cursor, recording, or platform focus behavior can begin. The guard
-        // is process-global so independent registries cannot interleave text
-        // through separate platform workers, and RAII releases it on task
-        // cancellation as well as normal completion.
-        let _text_input_admission = match try_admit_text_input(resolved_name, &public_args) {
-            Ok(admission) => admission,
-            Err(mut refusal) => {
-                restore_public_runtime_result(&mut refusal, &runtime_prefix);
-                return refusal;
-            }
-        };
 
         let active_adapters =
             crate::authorization::enforcement_adapters_for_call(resolved_name, &public_args);
@@ -2479,6 +2544,21 @@ impl ToolRegistry {
             }
         }
 
+        // A queued text mutation can become stale while another agent is
+        // typing into the same process. Refuse that overlap before cursor,
+        // recording, or platform focus behavior can begin, but only after
+        // consent, so a call still being authorized holds no lane. The lanes
+        // are process-global so independent registries cannot interleave
+        // input through separate platform workers, and RAII releases them on
+        // task cancellation as well as normal completion.
+        let mut input_admission = InputAdmission::default();
+        if let Some(lane) = Lane::for_text_input(resolved_name, &public_args) {
+            if let Err(mut refusal) = input_admission.admit(lane).await {
+                restore_public_runtime_result(&mut refusal, &runtime_prefix);
+                return refusal;
+            }
+        }
+
         if let Err(error) = context.commit_authorized_dispatch() {
             return permission_denied_result(error);
         }
@@ -2518,8 +2598,11 @@ impl ToolRegistry {
                 };
                 match admitted {
                     Ok(guard) => Some(guard),
-                    Err(message) => {
-                        return protected_refusal("session_ended", message);
+                    Err(crate::session::DispatchRefusal::OwnedByOtherTransport(holder)) => {
+                        return session_owned_by_other_transport_refusal(public_label, holder);
+                    }
+                    Err(refusal) => {
+                        return protected_refusal("session_ended", refusal.message());
                     }
                 }
             } else {
@@ -2554,17 +2637,14 @@ impl ToolRegistry {
                     | "end_session"
             );
         let private_consent_turn = is_existing_profile_prepare(resolved_name, &args);
-        let (desktop_call, lane_refusal) = if requires_desktop_coordination(
+        let lane_refusal = if requires_desktop_coordination(
             resolved_name,
             &args,
             tool.has_independent_input_lane(&args),
         ) {
-            match DesktopCall::acquire().await {
-                Ok(call) => (Some(call), None),
-                Err(refusal) => (None, Some(refusal)),
-            }
+            input_admission.admit(Lane::Desktop).await.err()
         } else {
-            (None, None)
+            None
         };
         let pending_turn = should_record
             .then(|| {
@@ -2612,7 +2692,7 @@ impl ToolRegistry {
         let invoke = tool.invoke(args.clone());
         let mut result =
             crate::recording::scope_dispatch_click_capture(pending_turn.as_ref(), async {
-                match (&desktop_call, lane_refusal) {
+                match (&input_admission.desktop, lane_refusal) {
                     (_, Some(refusal)) => refusal,
                     (Some(call), None) => call.scope(invoke).await,
                     (None, None) => invoke.await,
@@ -2634,10 +2714,6 @@ impl ToolRegistry {
             _ => {}
         }
         drop(lifecycle_dispatch);
-        // The platform worker has exited, so another text operation for this
-        // pid may now start even while result projection and evidence capture
-        // finish for the completed call.
-        drop(_text_input_admission);
         if result.action_record.is_none() {
             if let Some(structured) = result.structured_content.as_ref() {
                 result.action_record = crate::action_record::ActionExecutionRecord::from_legacy(
@@ -2675,11 +2751,11 @@ impl ToolRegistry {
         }
         crate::cursor_events::end_tool(cursor_event);
         // Coordinate the physical action itself, not post-action evidence
-        // capture or result shaping. Keeping the global desktop lock through
+        // capture or result shaping. Keeping the input lanes through
         // recording screenshots would unnecessarily block an unrelated
         // runtime after the input side effect has already completed. A
         // platform worker still running keeps its own clone of the lease.
-        drop(desktop_call);
+        drop(input_admission);
         restore_public_runtime_result(&mut result, &runtime_prefix);
         // Preserve the producer's private summary for recording/replay before
         // the public ActionResult projection deliberately replaces legacy
@@ -3778,6 +3854,7 @@ fn publish_action_result(result: &mut ToolResult) -> Result<(), String> {
     let mut public = action
         .public_result()
         .map_err(|error| format!("invalid internal execution record: {error:?}"))?;
+    lead_text_with_effect(&mut result.content, public.effect);
     // Some MCP clients (Claude Code among them) hand the model only
     // `structuredContent` when it is present and drop the text blocks. The
     // producer's text is the only place the resolved points, the element hit,
@@ -3798,6 +3875,30 @@ fn publish_action_result(result: &mut ToolResult) -> Result<(), String> {
     // raw content.
     result.structured_content = Some(structured);
     Ok(())
+}
+
+/// Platform tools open their text with a success glyph once input is
+/// delivered, before the dispatch seam knows whether anything changed. A
+/// text-only client reads that glyph as a confirmed outcome (#4723), so a
+/// result whose `effect` is not `confirmed` swaps it for words saying what is
+/// known.
+fn lead_text_with_effect(content: &mut [Content], effect: cua_driver_contract::ActionEffect) {
+    use cua_driver_contract::ActionEffect;
+    const SUCCESS_GLYPH: &str = "✅";
+    let lead = match effect {
+        ActionEffect::Confirmed => return,
+        ActionEffect::Unverifiable => "Sent, effect not verified:",
+        ActionEffect::SuspectedNoop => "Sent, but probably had no effect:",
+        ActionEffect::Partial => "Partly done:",
+        ActionEffect::Refused => "Refused:",
+    };
+    for content in content {
+        if let Content::Text { text, .. } = content {
+            if let Some(rest) = text.strip_prefix(SUCCESS_GLYPH) {
+                *text = format!("{lead} {}", rest.trim_start());
+            }
+        }
+    }
 }
 
 fn restore_public_runtime_result(result: &mut ToolResult, runtime_prefix: &str) {
@@ -3852,8 +3953,8 @@ fn restore_public_runtime_value(value: &mut Value, runtime_prefix: &str) -> bool
 mod runtime_isolation_tests {
     use super::{
         canonical_proposed_path, namespace_runtime_args, publish_action_result,
-        restore_public_runtime_result, try_admit_text_input, DesktopCall, DesktopLane,
-        DesktopLease, TrustedInvocationEvidence, DISPATCH_RUNTIME_SCOPE,
+        restore_public_runtime_result, DesktopCall, DesktopLane, DesktopLease, InputAdmission,
+        Lane, LaneState, TrustedInvocationEvidence, DISPATCH_RUNTIME_SCOPE,
     };
     use crate::{
         authorization::PermissionMode,
@@ -4014,8 +4115,18 @@ mod runtime_isolation_tests {
         async fn invoke(&self, args: serde_json::Value) -> crate::protocol::ToolResult {
             self.hits.fetch_add(1, Ordering::SeqCst);
             self.last_args.lock().unwrap().replace(args.clone());
-            crate::protocol::ToolResult::text("file operation ran")
-                .with_structured(serde_json::json!({"received": args}))
+            let result = crate::protocol::ToolResult::text("file operation ran")
+                .with_structured(serde_json::json!({"received": args}));
+            // Like the real producers, a move_cursor attaches its own record.
+            if self.def.name == "move_cursor" {
+                return result.with_action_record(
+                    crate::action_record::ActionExecutionRecord::cursor_move(
+                        crate::action_record::ActionTransport::MacosCgEventHid,
+                        &args,
+                    ),
+                );
+            }
+            result
         }
     }
 
@@ -4566,6 +4677,92 @@ resources:
         assert_ne!(result.is_error, Some(true));
     }
 
+    /// A `list_apps` stand-in: a shared window host with no identity and the
+    /// packaged app it hosts.
+    struct HostedAppsProbe;
+
+    #[async_trait::async_trait]
+    impl super::Tool for HostedAppsProbe {
+        fn def(&self) -> &super::ToolDef {
+            static DEF: std::sync::OnceLock<super::ToolDef> = std::sync::OnceLock::new();
+            DEF.get_or_init(|| super::ToolDef {
+                name: "list_apps".into(),
+                description: "test app list".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: true,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            })
+        }
+
+        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+            crate::protocol::ToolResult::text("apps").with_structured(serde_json::json!({
+                "apps": [
+                    {"pid": 100, "bundle_id": null, "launch_path": null},
+                    {"pid": 200, "bundle_id": "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"},
+                ]
+            }))
+        }
+    }
+
+    #[cfg(feature = "yaml")]
+    #[tokio::test]
+    async fn bounded_window_grant_matches_the_app_its_shared_host_frames() {
+        const MANIFEST: &str = r#"
+version: 3
+expires_after: 1h
+idle_timeout: 30m
+allow:
+  tools: [get_window_state]
+resources:
+  apps:
+    - bundle_id: Microsoft.WindowsCalculator_8wekyb3d8bbwe!App
+      launch: false
+      windows: all
+"#;
+        for (resolves_host, frame, expected_allowed) in
+            [(false, 7, false), (true, 7, true), (true, 8, false)]
+        {
+            let hits = Arc::new(AtomicUsize::new(0));
+            let mut registry = super::ToolRegistry::new();
+            registry.register(Box::new(ObservationProbe {
+                hits: hits.clone(),
+                def: super::ToolDef {
+                    name: "get_window_state".into(),
+                    description: "test observation".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    read_only: true,
+                    destructive: false,
+                    idempotent: true,
+                    open_world: false,
+                },
+            }));
+            registry.register(Box::new(HostedAppsProbe));
+            if resolves_host {
+                // Host pid 100's frame 7 hosts app pid 200; its frame 8 hosts
+                // nothing the platform can attribute.
+                registry.set_window_identity_resolver(Arc::new(|pid, window_id| {
+                    (pid == 100 && window_id == 7).then_some(200)
+                }));
+            }
+            let result = registry
+                .invoke_with_context(
+                    "get_window_state",
+                    serde_json::json!({"pid": 100, "window_id": frame, "session": "review"}),
+                    bounded_context(MANIFEST),
+                )
+                .await;
+
+            assert_eq!(
+                result.is_error != Some(true),
+                expected_allowed,
+                "resolver {resolves_host}, frame {frame}: {result:?}"
+            );
+            assert_eq!(hits.load(Ordering::SeqCst), usize::from(expected_allowed));
+        }
+    }
+
     #[cfg(feature = "yaml")]
     #[tokio::test]
     async fn capability_manifest_typed_resources_narrow_standard_and_unrestricted() {
@@ -4729,7 +4926,7 @@ resources:
     }
 
     #[tokio::test]
-    async fn idle_reclaimed_unnamed_session_recreates_and_ended_sessions_name_a_working_recovery() {
+    async fn idle_reclaimed_sessions_recreate_and_ended_sessions_name_a_working_recovery() {
         let hits = Arc::new(AtomicUsize::new(0));
         let mut registry = super::ToolRegistry::new_with_protected_consent_provider(None);
         registry.register(Box::new(ObservationProbe {
@@ -4778,11 +4975,24 @@ resources:
             2
         );
 
-        // The unnamed session comes back on its next call.
+        // Both come back on their next ordinary call.
         assert_ne!(call(serde_json::json!({})).await.is_error, Some(true));
-        assert_eq!(hits.load(Ordering::SeqCst), 3);
+        assert_ne!(
+            call(serde_json::json!({"session": "named"})).await.is_error,
+            Some(true)
+        );
+        assert_eq!(hits.load(Ordering::SeqCst), 4);
 
-        // A named session stays refused, and the named recovery works.
+        // A label ended with end_session stays refused, and the named
+        // recovery works.
+        let ended = registry
+            .invoke_with_context(
+                "end_session",
+                serde_json::json!({"session": "named"}),
+                context.clone(),
+            )
+            .await;
+        assert_ne!(ended.is_error, Some(true), "{ended:?}");
         let named = call(serde_json::json!({"session": "named"})).await;
         assert_eq!(
             refusal(&named),
@@ -4822,7 +5032,7 @@ resources:
             .await;
         assert_ne!(restarted.is_error, Some(true), "{restarted:?}");
         assert_ne!(call(serde_json::json!({})).await.is_error, Some(true));
-        assert_eq!(hits.load(Ordering::SeqCst), 5);
+        assert_eq!(hits.load(Ordering::SeqCst), 6);
 
         crate::session::revoke_sessions_with_prefix(&prefix);
         crate::session::forget_ended_sessions_with_prefix(&prefix);
@@ -6676,6 +6886,39 @@ resources:
         assert_eq!(hits.load(Ordering::SeqCst), 1);
     }
 
+    #[test]
+    fn guard_state_belongs_to_its_runtime_and_ends_with_its_session() {
+        use crate::fast_path::{pixel::GrayImage, store::ReadImage, window::WindowFingerprint};
+        let image = |snapshot_id| ReadImage {
+            snapshot_id,
+            image: GrayImage::filled(2, 2, 0),
+            window: WindowFingerprint {
+                window_id: 7,
+                pid: 42,
+                frame: crate::fast_path::Rect::new(0.0, 0.0, 10.0, 10.0),
+                scale: 1.0,
+            },
+        };
+        let context = standard_context();
+        let ended = context.runtime_session_key("guard-ended");
+        let kept = context.runtime_session_key("guard-kept");
+        let first = super::ToolRegistry::new();
+        let second = super::ToolRegistry::new();
+        first.guard_store().put_image(Some(&ended), 42, image(1));
+        first.guard_store().put_image(Some(&kept), 42, image(2));
+        assert!(second.guard_store().image(Some(&ended), 42, 7).is_none());
+
+        crate::session::fire_session_end(&ended);
+        assert!(first.guard_store().image(Some(&ended), 42, 7).is_none());
+        assert_eq!(
+            first
+                .guard_store()
+                .image(Some(&kept), 42, 7)
+                .map(|read| read.snapshot_id),
+            Some(2)
+        );
+    }
+
     #[tokio::test]
     async fn canonical_dispatch_replaces_legacy_action_payload_with_the_closed_outcome() {
         let hits = Arc::new(AtomicUsize::new(0));
@@ -6750,6 +6993,96 @@ resources:
         cua_driver_contract::validate_success_output("click", structured)
             .expect("the projected action must satisfy the public contract");
         assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    fn published_click(text: &str, legacy: serde_json::Value) -> crate::protocol::ToolResult {
+        published_action("click", text, legacy)
+    }
+
+    fn published_action(
+        tool: &str,
+        text: &str,
+        legacy: serde_json::Value,
+    ) -> crate::protocol::ToolResult {
+        let mut result = crate::protocol::ToolResult::text(text).with_structured(legacy.clone());
+        result.action_record = crate::action_record::ActionExecutionRecord::from_legacy(
+            tool,
+            &serde_json::json!({"pid": 42, "window_id": 7}),
+            &legacy,
+        );
+        publish_action_result(&mut result).expect("action should project");
+        result
+    }
+
+    fn first_text(result: &crate::protocol::ToolResult) -> &str {
+        result
+            .content
+            .iter()
+            .find_map(|content| match content {
+                Content::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .expect("result has text")
+    }
+
+    #[test]
+    fn unverifiable_action_text_drops_the_success_glyph() {
+        let result = published_click(
+            "✅ Performed AXPress on [2] AXButton \"\".",
+            serde_json::json!({"path": "ax", "verified": false, "effect": "unverifiable"}),
+        );
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["effect"], "unverifiable");
+        let text = first_text(&result);
+        assert_eq!(
+            text,
+            "Sent, effect not verified: Performed AXPress on [2] AXButton \"\"."
+        );
+        assert_eq!(structured["summary"].as_str(), Some(text));
+    }
+
+    #[test]
+    fn suspected_noop_and_partial_action_text_drop_the_success_glyph() {
+        for (tool, effect, lead) in [
+            (
+                "click",
+                "suspected_noop",
+                "Sent, but probably had no effect: ",
+            ),
+            ("type_text", "partial", "Partly done: "),
+        ] {
+            let result = published_action(
+                tool,
+                "✅ Posted input to pid 42.",
+                serde_json::json!({"path": "ax", "effect": effect, "delivered_chars": 3}),
+            );
+            assert_eq!(
+                result.structured_content.as_ref().unwrap()["effect"],
+                effect
+            );
+            assert_eq!(
+                first_text(&result),
+                format!("{lead}Posted input to pid 42.")
+            );
+        }
+    }
+
+    #[test]
+    fn confirmed_action_text_keeps_the_success_glyph() {
+        let result = published_click(
+            "✅ Selected nearest AXRow for [2] AXCell \"a\"; confirmed AXSelected=true.",
+            serde_json::json!({
+                "path": "ax",
+                "verified": true,
+                "effect": "confirmed",
+                "evidence": [{"kind": "accessibility_readback"}],
+            }),
+        );
+        assert_eq!(
+            result.structured_content.as_ref().unwrap()["effect"],
+            "confirmed"
+        );
+        assert!(first_text(&result).starts_with("✅ Selected nearest AXRow"));
     }
 
     #[test]
@@ -6866,10 +7199,50 @@ resources:
         let Err(refusal) = next else {
             panic!("the lane was handed out while the stale worker still holds it");
         };
-        assert_eq!(
-            refusal.structured_content.as_ref().unwrap()["refusal"]["code"],
-            "input_busy"
+        let refusal = &refusal.structured_content.as_ref().unwrap()["refusal"];
+        assert_eq!(refusal["code"], "input_busy");
+        assert_eq!(refusal["lane"], serde_json::json!({"kind": "desktop"}));
+    }
+
+    #[tokio::test]
+    async fn a_call_whose_input_has_stopped_frees_the_lane_without_orphaning_it() {
+        let lane = DesktopLane::new(Duration::from_secs(12));
+        assert_eq!(lane.state(), LaneState::Free);
+        let call = lane.acquire().await.unwrap();
+        let LaneState::Held { gen } = lane.state() else {
+            panic!("an acquired lane is held: {:?}", lane.state());
+        };
+        // A worker that stops before its call returns leaves nothing behind.
+        drop(call.scope(async { DesktopLease::current().unwrap() }).await);
+        assert_eq!(lane.state(), LaneState::Held { gen });
+        drop(call);
+        assert_eq!(lane.state(), LaneState::Free);
+        drop(lane.acquire().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_worker_that_outlives_its_call_orphans_the_hold_until_it_stops() {
+        let lane = DesktopLane::new(Duration::from_secs(12));
+        let call = lane.acquire().await.unwrap();
+        let LaneState::Held { gen } = lane.state() else {
+            panic!("an acquired lane is held: {:?}", lane.state());
+        };
+        let worker = call.scope(async { DesktopLease::current().unwrap() }).await;
+        // A cleanup the worker hands off holds the same hold.
+        let cleanup = worker.clone();
+        drop(call);
+        assert!(
+            matches!(lane.state(), LaneState::Orphaned { gen: orphaned, .. } if orphaned == gen),
+            "{:?}",
+            lane.state()
         );
+        drop(worker);
+        assert!(matches!(lane.state(), LaneState::Orphaned { .. }));
+        drop(cleanup);
+        assert_eq!(lane.state(), LaneState::Free);
+        let next = lane.acquire().await.unwrap();
+        assert_eq!(lane.state(), LaneState::Held { gen: gen + 1 });
+        drop(next);
     }
 
     #[tokio::test(start_paused = true)]
@@ -6978,36 +7351,169 @@ resources:
         ));
     }
 
-    #[test]
-    fn overlapping_text_input_for_one_pid_fails_fast_and_releases_after_completion() {
+    #[tokio::test]
+    async fn overlapping_text_input_for_one_pid_fails_fast_and_releases_after_completion() {
         let pid = 8_675_410;
-        let first = try_admit_text_input("type_text", &serde_json::json!({"pid": pid}))
-            .expect("first text operation should be admitted")
-            .expect("pid-scoped text operation should receive a guard");
-
-        let refusal = try_admit_text_input("type_text", &serde_json::json!({"pid": pid}))
-            .expect_err("overlapping text operation should fail fast");
-        assert_eq!(refusal.is_error, Some(true));
+        let text_input = |pid: i64| {
+            Lane::for_text_input("type_text", &serde_json::json!({"pid": pid}))
+                .expect("pid-scoped text input takes a pid lane")
+        };
+        assert_eq!(text_input(pid), Lane::Pid(pid));
         assert_eq!(
-            refusal
-                .structured_content
-                .as_ref()
-                .and_then(|value| value.pointer("/refusal/code"))
-                .and_then(serde_json::Value::as_str),
-            Some("input_busy")
+            Lane::for_text_input("type_text", &serde_json::json!({"pid": 0})),
+            None
+        );
+        assert_eq!(
+            Lane::for_text_input("press_key", &serde_json::json!({"pid": pid})),
+            None
         );
 
-        let other_pid = try_admit_text_input("type_text", &serde_json::json!({"pid": pid + 1}))
-            .expect("a different pid should have an independent input lane")
-            .expect("pid-scoped text operation should receive a guard");
+        let mut first = InputAdmission::default();
+        first.admit(text_input(pid)).await.unwrap();
+
+        let refusal = InputAdmission::default()
+            .admit(text_input(pid))
+            .await
+            .expect_err("overlapping text operation should fail fast");
+        assert_eq!(refusal.is_error, Some(true));
+        let refusal = &refusal.structured_content.as_ref().unwrap()["refusal"];
+        assert_eq!(refusal["code"], "input_busy");
+        assert_eq!(
+            refusal["lane"],
+            serde_json::json!({"kind": "pid", "pid": pid})
+        );
+
+        let mut other_pid = InputAdmission::default();
+        other_pid
+            .admit(text_input(pid + 1))
+            .await
+            .expect("a different pid should have an independent input lane");
         drop(other_pid);
         drop(first);
 
-        assert!(
-            try_admit_text_input("type_text", &serde_json::json!({"pid": pid}))
-                .expect("completed text operation should release its pid")
-                .is_some()
+        InputAdmission::default()
+            .admit(text_input(pid))
+            .await
+            .expect("completed text operation should release its pid");
+    }
+
+    /// Holds `list_apps`, which manifest enrichment of an input resource
+    /// calls during authorization, until the test releases it.
+    #[cfg(feature = "yaml")]
+    struct ParkedListApps {
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+        def: super::ToolDef,
+    }
+
+    #[cfg(feature = "yaml")]
+    #[async_trait::async_trait]
+    impl super::Tool for ParkedListApps {
+        fn def(&self) -> &super::ToolDef {
+            &self.def
+        }
+
+        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+            self.entered.notify_one();
+            self.release.notified().await;
+            crate::protocol::ToolResult::text("no apps")
+                .with_structured(serde_json::json!({"apps": []}))
+        }
+    }
+
+    #[cfg(feature = "yaml")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_call_still_being_authorized_holds_no_input_lane() {
+        let pid = 8_675_430;
+        let hits = Arc::new(AtomicUsize::new(0));
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(ObservationProbe {
+            hits: hits.clone(),
+            def: super::ToolDef {
+                name: "type_text".into(),
+                description: "test text input".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        registry.register(Box::new(ParkedListApps {
+            entered: entered.clone(),
+            release: release.clone(),
+            def: super::ToolDef {
+                name: "list_apps".into(),
+                description: "test app list".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: true,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+        let manifest = manifest_context(
+            PermissionMode::Standard,
+            &format!(
+                r#"
+version: 3
+expires_after: 1h
+idle_timeout: 30m
+allow:
+  tools: [type_text]
+resources:
+  desktop:
+    windows:
+      - pid: {pid}
+        window_id: 7
+"#
+            ),
         );
+        let args = |session: &str| serde_json::json!({"pid": pid, "window_id": 7, "text": "a", "session": session});
+
+        let parked = tokio::spawn({
+            let registry = registry.clone();
+            let args = args("lane-after-consent-parked");
+            async move {
+                registry
+                    .invoke_with_context("type_text", args, manifest)
+                    .await
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(10), entered.notified())
+            .await
+            .expect("the first call reaches authorization");
+
+        // Text input to the same pid, which also takes the desktop lane,
+        // runs while the first call is still being authorized.
+        let other = tokio::time::timeout(
+            Duration::from_secs(10),
+            registry.invoke_with_context(
+                "type_text",
+                args("lane-after-consent-other"),
+                standard_context(),
+            ),
+        )
+        .await
+        .expect("a call being authorized must not hold the desktop lane");
+        assert_ne!(other.is_error, Some(true), "{:?}", other.structured_content);
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        release.notify_one();
+        let parked = tokio::time::timeout(Duration::from_secs(10), parked)
+            .await
+            .expect("the authorized call finishes")
+            .unwrap();
+        assert_ne!(
+            parked.is_error,
+            Some(true),
+            "{:?}",
+            parked.structured_content
+        );
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
     }
 
     #[test]
@@ -7165,6 +7671,36 @@ pub fn session_ended_refusal(public_label: Option<&str>) -> ToolResult {
         None => "this transport's unnamed session has ended; call start_session without a session label to start a new one".to_owned(),
     };
     protected_refusal("session_ended", &message)
+}
+
+/// The refusal for a call on a session that is live but held by another
+/// transport, such as a label a `cua-driver mcp` process started and a
+/// `cua-driver call` then names. The session has not ended, so the
+/// `session_ended` recovery (`start_session` with the same label) would be
+/// refused too.
+fn session_owned_by_other_transport_refusal(
+    public_label: Option<&str>,
+    holder: crate::session::SessionTransport,
+) -> ToolResult {
+    let holder = holder.as_str();
+    let message = match public_label {
+        Some(label) => format!(
+            "session '{label}' is live on another connection ({holder}); make this call from that connection, or use a new session label here"
+        ),
+        None => format!(
+            "this session is live on another connection ({holder}); make this call from that connection"
+        ),
+    };
+    let mut result = protected_refusal("session_owned_by_other_transport", &message);
+    if let Some(refusal) = result
+        .structured_content
+        .as_mut()
+        .and_then(|structured| structured.get_mut("refusal"))
+        .and_then(Value::as_object_mut)
+    {
+        refusal.insert("owner_transport".to_owned(), Value::from(holder));
+    }
+    result
 }
 
 fn protected_refusal(code: &str, message: &str) -> ToolResult {
@@ -7677,43 +8213,6 @@ mod capability_tests {
                 "tool {name:?} accepts element_token but is missing the \
                  accessibility.element_tokens capability claim — add it \
                  in default_capabilities_for()"
-            );
-        }
-    }
-
-    #[test]
-    fn listed_description_puts_its_first_sentence_on_its_own_line() {
-        let mut def = dummy_def("zoom");
-        def.description = "Click a target pid. Prefer `element_token` (from get_window_state). \
-             Use pixels (x, y. z) e.g. for canvases.\n\nMore detail."
-            .into();
-        let listed = def.to_list_entry()["description"]
-            .as_str()
-            .unwrap()
-            .to_owned();
-        assert_eq!(
-            listed,
-            "Click a target pid.\nPrefer `element_token` (from get_window_state). \
-             Use pixels (x, y. z) e.g. for canvases.\n\nMore detail."
-        );
-        assert_eq!(
-            listed.replace('\n', " "),
-            def.description.replace('\n', " ")
-        );
-
-        for (text, lead) in [
-            (
-                "Press a key — e.g. `[\"cmd\", \"c\"]`. Then more.",
-                "Press a key — e.g. `[\"cmd\", \"c\"]`.",
-            ),
-            ("Read `a. b` first. Then more.", "Read `a. b` first."),
-            ("One sentence only.", "One sentence only."),
-            ("Header line:\n- item. More", "Header line:"),
-        ] {
-            assert_eq!(
-                lead_on_own_line(text).split('\n').next(),
-                Some(lead),
-                "{text}"
             );
         }
     }

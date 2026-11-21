@@ -84,15 +84,15 @@ where
     };
 
     let (tx, rx) = mpsc::channel();
-    let cancelled = permit.timeout_flag();
+    let deadline = permit.deadline();
     let worker_cancelled = permit.timeout_flag();
     let spawn = thread::Builder::new()
         .name(format!("cua-uia-{stage}"))
-        .spawn(move || {
+        .spawn(crate::dpi::owned_thread(move || {
             let _permit = permit;
             let result = f(worker_cancelled);
             let _ = tx.send(result);
-        });
+        }));
 
     if let Err(e) = spawn {
         // The unspawned closure, and with it the permit, is already dropped,
@@ -104,7 +104,7 @@ where
     match rx.recv_timeout(timeout) {
         Ok(result) => Ok(result),
         Err(mpsc::RecvTimeoutError::Timeout) => {
-            cancelled.store(true, Ordering::Release);
+            deadline.expire();
             tracing::warn!(
                 target: "uia_windows_enum",
                 "UIA {stage} exceeded {}ms; falling back to {fallback}; no other UIA worker will start until this provider call returns",

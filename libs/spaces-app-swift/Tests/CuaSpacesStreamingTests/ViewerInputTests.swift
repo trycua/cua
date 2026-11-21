@@ -54,6 +54,8 @@ private final class RecordingProvider: SpaceStreamSourceProviding, @unchecked Se
         return media
     }
 
+    /// Whether the guest takes ⌘ as Control (a Linux or Windows Space).
+    var commandAsControl = false
     /// Whether the Space's clipboard setting lets a paste send the clipboard.
     var sendsClipboard = true
     /// How long the clipboard takes to reach the Space.
@@ -222,6 +224,30 @@ private func pointerEvents(in text: String) -> [[String: Any]] {
         #expect(OfflineStreamSourceProvider().commandAsControl == false)
     }
 
+    /// The right ⌘ held alone goes to a Linux or Windows guest as Super
+    /// (`command` on the wire) while the left ⌘ still goes as Control, so
+    /// a Super-driven desktop such as Hyprland can be used from a Mac.
+    @Test func rightCommandGoesAsSuperToALinuxGuest() {
+        let left = NSEvent.ModifierFlags(rawValue: NSEvent.ModifierFlags.command.rawValue | 0x08)
+        let right = NSEvent.ModifierFlags(rawValue: NSEvent.ModifierFlags.command.rawValue | 0x10)
+        let both = NSEvent.ModifierFlags(rawValue: NSEvent.ModifierFlags.command.rawValue | 0x18)
+        #expect(InputEncoder.modifiers(from: left) == [.command])
+        #expect(InputEncoder.modifiers(from: right) == [.superKey])
+        #expect(InputEncoder.modifiers(from: both) == [.command])
+        #expect(InputEncoder.modifiers(from: .command) == [.command])
+
+        let enter = InputEncoder.keyEvents(name: "enter", characters: "\r", modifiers: [.superKey],
+                                           down: true, isRepeat: false)
+        let q = InputEncoder.keyEvents(name: "q", characters: "q", modifiers: [.superKey],
+                                       down: true, isRepeat: false)
+        let mapped = InputEncoder.commandAsControl(enter + q)
+        #expect(mapped.count == 2)
+        for event in mapped {
+            #expect(event.json["modifiers"] as? [String] == ["command"])
+        }
+        if case let .key(key, _, _, _) = mapped[1] { #expect(key == "q") } else { Issue.record("\(mapped)") }
+    }
+
     /// The stream view is the hit-test target inside the app's grouped Form
     /// (no SwiftUI container swallows the click) and takes the first mouse,
     /// so a click on an inactive window reaches the Space too.
@@ -383,6 +409,30 @@ private func pointerEvents(in text: String) -> [[String: Any]] {
         #expect(provider.framesAtClipboard == [0], "the clipboard reached the Space before any key")
         #expect(typed(in: provider.media.sent) == [["v", "v"], ["text:x"]])
         await session.stop()
+    }
+
+    /// The right ⌘+V is Super+V on a Linux or Windows Space, the desktop's
+    /// own shortcut: it goes as keys, with no clipboard. A Space that keeps
+    /// ⌘ still pastes from it.
+    @Test func theRightCommandVPastesOnlyWhereCommandStaysCommand() async throws {
+        let superV: [InteractiveInputEvent] = [.key(key: "v", down: true, modifiers: [.superKey], repeatKey: false)]
+        let provider = RecordingProvider()
+        provider.commandAsControl = true
+        let session = LiveStreamSession(provider: provider)
+        await session.start()
+        session.paste(superV, text: "copied on the Mac")
+        await eventually("the chord") { provider.media.sent.count == 1 }
+        #expect(provider.clipboards.isEmpty)
+        #expect(typed(in: provider.media.sent) == [["v"]])
+        await session.stop()
+
+        let mac = RecordingProvider()
+        let macSession = LiveStreamSession(provider: mac)
+        await macSession.start()
+        macSession.paste(superV, text: "copied on the Mac")
+        await eventually("the paste") { mac.media.sent.count == 1 }
+        #expect(mac.clipboards == ["copied on the Mac"])
+        await macSession.stop()
     }
 
     /// A Mac clipboard with no text still goes first, as empty text, so the

@@ -69,7 +69,9 @@ pub struct AXNode {
     /// Kept separate from `title` so `_find_calc_button("2")` can find
     /// Calculator buttons where AXTitle="" but AXDescription="2".
     pub description: Option<String>,
-    /// Raw AXPlaceholderValue, kept separate from the value it may also label.
+    /// Raw AXPlaceholderValue, the hint an empty field shows. Never the
+    /// value; shown as `placeholder="..."` in the bracketed metadata while
+    /// the field is empty.
     pub placeholder: Option<String>,
     /// Raw AXSubrole, kept separate from the element's role.
     pub subrole: Option<String>,
@@ -140,8 +142,8 @@ struct IdentityAttrs {
 
 /// When an app refuses the batched read, each attribute is a synchronous AX
 /// request against the walk's time budget. Display-only rows never reach the
-/// public `elements` array, so they read AXPlaceholderValue only as the
-/// empty-AXValue fallback and skip AXSubrole.
+/// public `elements` array, so they read AXPlaceholderValue only as the hint
+/// of an empty field and skip AXSubrole.
 fn read_identity_attrs(
     is_actionable: bool,
     value_is_empty: bool,
@@ -176,6 +178,19 @@ fn role_supports_value_addressing(role: &str) -> bool {
 
 fn is_addressable(actions_present: bool, value_settable: bool) -> bool {
     actions_present || value_settable
+}
+
+/// The hint an empty field shows: AXPlaceholderValue, trimmed, only while
+/// the field has no value. It is never the value itself, so an empty field
+/// reads as empty, not as its placeholder (#3786).
+pub(crate) fn shown_placeholder(node: &AXNode) -> Option<&str> {
+    if node.value.as_deref().is_some_and(|v| !v.trim().is_empty()) {
+        return None;
+    }
+    node.placeholder
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
 }
 
 pub struct TreeWalkResult {
@@ -767,14 +782,22 @@ unsafe fn walk_element(
     };
     let is_actionable = is_addressable(!advertised.is_empty(), value_settable);
     let identity = read_identity_attrs(is_actionable, value.is_none(), |attr| attrs.string(attr));
-    let value = value.or_else(|| identity.placeholder.clone());
+    // An empty field with a hint is still worth a row; the hint stays out of
+    // `value` (#3786).
+    let has_hint = value.is_none()
+        && identity
+            .placeholder
+            .as_deref()
+            .is_some_and(|p| !p.trim().is_empty());
 
     let visible_title = title.as_deref().unwrap_or("").trim().to_owned();
     let visible_description = description.as_deref().unwrap_or("").trim().to_owned();
     let visible_value = value.as_deref().unwrap_or("").trim().to_owned();
 
-    let has_content =
-        !visible_title.is_empty() || !visible_description.is_empty() || !visible_value.is_empty();
+    let has_content = !visible_title.is_empty()
+        || !visible_description.is_empty()
+        || !visible_value.is_empty()
+        || has_hint;
 
     if !keeps_row(&role, is_actionable, has_content, help.is_some()) {
         let (child_depth, child_walk_depth) = if is_layout_container(&role) {
@@ -1116,6 +1139,9 @@ fn format_node_line(node: &AXNode) -> String {
         }
         if let Some(h) = &node.help {
             attrs.push(format!("help=\"{}\"", h));
+        }
+        if let Some(p) = shown_placeholder(node) {
+            attrs.push(format!("placeholder=\"{}\"", p));
         }
         if node.enabled == Some(false) {
             attrs.push("enabled=false".to_owned());
@@ -1484,6 +1510,60 @@ mod tests {
         }
     }
 
+    fn text_field(value: Option<&str>, placeholder: Option<&str>) -> AXNode {
+        AXNode {
+            element_index: Some(3),
+            role: "AXTextField".into(),
+            title: None,
+            value: value.map(str::to_owned),
+            description: None,
+            placeholder: placeholder.map(str::to_owned),
+            subrole: None,
+            identifier: Some("txt-input".into()),
+            help: None,
+            actions: vec!["AXConfirm".into()],
+            element_ptr: 0,
+            depth: 1,
+            parent_element_index: None,
+            frame: None,
+            value_state: None,
+            value_description: None,
+            min_value: None,
+            max_value: None,
+            enabled: Some(true),
+            selected: None,
+            in_web_content: false,
+        }
+    }
+
+    #[test]
+    fn an_empty_field_shows_its_placeholder_apart_from_the_value() {
+        // #3786: the hint never stands in for the value, so an empty field
+        // reads as empty instead of as its placeholder.
+        for empty in [None, Some(""), Some(" "), Some("\n")] {
+            let field = text_field(empty, Some(" Type here…\n"));
+            assert_eq!(shown_placeholder(&field), Some("Type here…"), "{empty:?}");
+        }
+        assert_eq!(shown_placeholder(&text_field(None, Some("  "))), None);
+        assert_eq!(
+            shown_placeholder(&text_field(Some("hello"), Some("Type here…"))),
+            None,
+            "a filled field shows its value, not its hint"
+        );
+    }
+
+    #[test]
+    fn placeholder_renders_as_metadata_not_as_the_value() {
+        assert_eq!(
+            format_node_line(&text_field(None, Some("Type here…"))),
+            "- [3] AXTextField [id=txt-input placeholder=\"Type here…\" actions=[confirm]]"
+        );
+        assert_eq!(
+            format_node_line(&text_field(Some("hello"), Some("Type here…"))),
+            "- [3] AXTextField = \"hello\" [id=txt-input actions=[confirm]]"
+        );
+    }
+
     #[test]
     fn control_state_reads_are_gated_by_actionability() {
         let reads = Cell::new(0);
@@ -1518,7 +1598,7 @@ mod tests {
     }
 
     #[test]
-    fn display_only_nodes_skip_identity_reads_unless_placeholder_is_the_value() {
+    fn display_only_nodes_skip_identity_reads_unless_the_value_is_empty() {
         let (reads, identity) = identity_reads(false, false);
         assert!(reads.is_empty(), "display row with a value read {reads:?}");
         assert_eq!(identity, IdentityAttrs::default());

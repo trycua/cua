@@ -5,6 +5,9 @@ Every rebase force-pushes the branch, and every force-push restarts the
 release PR's whole check suite. Rebase only when it is needed:
 
 * the branch no longer merges cleanly into main, or
+* the branch itself rewrote another component's version in the shared
+  .release-please-manifest.json (a Release Please run on a stale snapshot does
+  this; git merges it cleanly, so only a replay's reconcile step repairs it), or
 * commits that touch this component's paths (or the shared release tooling)
   landed on main after the branch's merge base, so the changelog and
   generated files could be stale.
@@ -53,6 +56,28 @@ def component_paths(config: dict, branch: str) -> list[str]:
     ]
 
 
+def foreign_manifest_edits(config: dict, branch: str, merge_base: str, head: str) -> list[str]:
+    """Manifest entries this branch changed although another component owns them."""
+
+    component = branch[len(COMPONENT_PREFIX) :]
+    owned = {
+        path
+        for path, package in config.get("packages", {}).items()
+        if package.get("component") == component
+    }
+
+    def load(ref: str) -> dict:
+        shown = git("show", f"{ref}:.release-please-manifest.json", check=False)
+        return json.loads(shown.stdout) if shown.returncode == 0 else {}
+
+    before, after = load(merge_base), load(head)
+    return sorted(
+        path
+        for path in before.keys() | after.keys()
+        if path not in owned and before.get(path) != after.get(path)
+    )
+
+
 def decide(config: dict, branch: str, base: str, head: str) -> tuple[str, str]:
     paths = component_paths(config, branch)
     if not paths:
@@ -64,6 +89,9 @@ def decide(config: dict, branch: str, base: str, head: str) -> tuple[str, str]:
         return "rebase", "branch conflicts with main"
 
     merge_base = git("merge-base", base, head).stdout.strip()
+    foreign = foreign_manifest_edits(config, branch, merge_base, head)
+    if foreign:
+        return "rebase", f"branch rewrote the manifest version of {', '.join(foreign)}"
     changed = git(
         "diff", "--name-only", merge_base, base, "--", *paths, *SHARED_PATHS
     ).stdout.split()

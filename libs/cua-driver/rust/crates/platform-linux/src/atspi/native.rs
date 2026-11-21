@@ -1509,6 +1509,9 @@ async fn collect_visited_bounded_opts<'a>(
     max_depth: Option<usize>,
     walk_closed_menus: bool,
 ) -> Result<Option<Collected<'a>>> {
+    if still_unresponsive(pid) {
+        return Ok(Some(unresponsive_collected()));
+    }
     let ResolvedApp {
         app,
         children: probed,
@@ -1564,15 +1567,24 @@ async fn collect_visited_bounded_opts<'a>(
         // modal-grabbed app. Report it as unresponsive rather than as an
         // application without windows — the caller can retry later.
         dlog!("application for pid {pid} did not answer GetChildren");
-        return Ok(Some(Collected {
-            visited: Vec::new(),
-            scoped_frame: None,
-            truncation: Some(Truncation {
-                reason: "app_unresponsive",
-                visited: 0,
-                pending: 0,
-            }),
-        }));
+        let bus = app.inner().destination().to_string();
+        let path = app.inner().path().to_string();
+        mark_unresponsive_until(pid, async move {
+            if let Ok(conn) = shared_connection().await {
+                let _ = tokio::time::timeout(
+                    OP_TIMEOUT,
+                    conn.connection().call_method(
+                        Some(bus.as_str()),
+                        path.as_str(),
+                        Some("org.a11y.atspi.Accessible"),
+                        "GetState",
+                        &(),
+                    ),
+                )
+                .await;
+            }
+        });
+        return Ok(Some(unresponsive_collected()));
     }
 
     // Resolve which seed is the caller's window before walking, from the same
@@ -2560,6 +2572,43 @@ fn is_indexable_capabilities(
 }
 
 // ── Public (sync) entry points ───────────────────────────────────────────────
+
+fn unresponsive_pids() -> &'static Mutex<HashSet<u32>> {
+    static PIDS: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
+    PIDS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn unresponsive_collected<'a>() -> Collected<'a> {
+    Collected {
+        visited: Vec::new(),
+        scoped_frame: None,
+        truncation: Some(Truncation {
+            reason: "app_unresponsive",
+            visited: 0,
+            pending: 0,
+        }),
+    }
+}
+
+/// Mark `pid` unresponsive until `probe` ends. A probe that ends without a
+/// reply also clears the mark, so a walk after an app resumes reads it again
+/// instead of reporting a stale `app_unresponsive`.
+fn mark_unresponsive_until(
+    pid: u32,
+    probe: impl std::future::Future<Output = ()> + Send + 'static,
+) {
+    if !unresponsive_pids().lock().unwrap().insert(pid) {
+        return;
+    }
+    runtime().spawn(async move {
+        probe.await;
+        unresponsive_pids().lock().unwrap().remove(&pid);
+    });
+}
+
+fn still_unresponsive(pid: u32) -> bool {
+    unresponsive_pids().lock().unwrap().contains(&pid)
+}
 
 fn first_application_walk(pid: u32) -> bool {
     static PIDS: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
@@ -9995,5 +10044,29 @@ mod editable_insert_length_tests {
         // GTK reads bytes (8) and Qt UTF-16 units (5): either guess breaks one.
         assert_eq!(editable_insert_length(None, "ñ🙂ab"), None);
         assert_eq!(editable_insert_length(None, "abc"), Some(3));
+    }
+}
+
+#[cfg(test)]
+mod unresponsive_tests {
+    use super::{mark_unresponsive_until, still_unresponsive};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_pid_stays_unresponsive_only_while_its_probe_is_pending() {
+        let pid = u32::MAX;
+        let (end_probe, probe_ended) = tokio::sync::oneshot::channel::<()>();
+        mark_unresponsive_until(pid, async move {
+            let _ = probe_ended.await;
+        });
+        mark_unresponsive_until(pid, std::future::ready(()));
+        assert!(still_unresponsive(pid));
+
+        end_probe.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while still_unresponsive(pid) {
+            assert!(Instant::now() < deadline, "the mark outlived its probe");
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 }

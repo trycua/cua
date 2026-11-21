@@ -702,7 +702,7 @@ fn focused_role_and_window(
     // skips the read instead.
     let remaining = || {
         let left = deadline.saturating_duration_since(std::time::Instant::now());
-        (!left.is_zero()).then(|| left.as_secs_f32())
+        (!left.is_zero()).then_some(left.as_secs_f32())
     };
     unsafe {
         let Some(timeout) = remaining() else {
@@ -724,6 +724,17 @@ fn focused_role_and_window(
         };
         AXUIElementSetMessagingTimeout(element, timeout);
         let role = copy_string_attr(element, "AXRole");
+        // Only a text field can be an inline editor, so no other role spends
+        // the window lookup's request.
+        if role.as_deref() != Some("AXTextField") {
+            CFRelease(element as CFTypeRef);
+            return (role, None);
+        }
+        let Some(timeout) = remaining() else {
+            CFRelease(element as CFTypeRef);
+            return (role, None);
+        };
+        AXUIElementSetMessagingTimeout(element, timeout);
         let window = ax_get_window_id(element);
         CFRelease(element as CFTypeRef);
         (role, window)

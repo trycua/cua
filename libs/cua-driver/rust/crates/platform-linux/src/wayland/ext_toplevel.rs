@@ -2,6 +2,11 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 //! Generic staging `ext-foreign-toplevel-list-v1` window enumeration.
+//!
+//! Each window_id stands for one toplevel `identifier`, which the protocol
+//! keeps unique and stable across clients. [`identifier_for`] maps it back,
+//! so [`super::ext_screencopy::screenshot_toplevel`] can copy that exact
+//! toplevel on a connection of its own.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -24,6 +29,12 @@ use crate::x11::WindowInfo;
 const EXT_ID_NAMESPACE_START: u32 = 0xF000_0000;
 const EXT_ID_NAMESPACE_END: u32 = 0xFFFF_FFFE;
 
+/// Globals a per-toplevel copy needs besides the list itself.
+const TOPLEVEL_CAPTURE_GLOBALS: [&str; 2] = [
+    "ext_foreign_toplevel_image_capture_source_manager_v1",
+    "ext_image_copy_capture_manager_v1",
+];
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct ToplevelRecord {
     identifier: String,
@@ -41,6 +52,7 @@ struct PendingRecord {
 #[derive(Default)]
 struct State {
     manager: Option<ExtForeignToplevelListV1>,
+    capture_globals: [bool; TOPLEVEL_CAPTURE_GLOBALS.len()],
     pending: HashMap<u32, PendingRecord>,
     toplevels: HashMap<u32, ToplevelRecord>,
 }
@@ -67,6 +79,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                     qh,
                     (),
                 ));
+            } else if let Some(index) = TOPLEVEL_CAPTURE_GLOBALS
+                .iter()
+                .position(|global| *global == interface)
+            {
+                state.capture_globals[index] = true;
             }
         }
     }
@@ -170,6 +187,10 @@ impl IdRegistry {
         self.by_id.insert(id, identifier.to_owned());
         Ok(u64::from(id))
     }
+
+    fn identifier(&self, id: u64) -> Option<String> {
+        self.by_id.get(&u32::try_from(id).ok()?).cloned()
+    }
 }
 
 fn id_registry() -> &'static Mutex<IdRegistry> {
@@ -184,8 +205,23 @@ fn stable_id(identifier: &str) -> anyhow::Result<u64> {
         .id_for(identifier)
 }
 
+/// The ext toplevel `identifier` a window_id from this module stands for.
+pub fn identifier_for(id: u64) -> Option<String> {
+    id_registry().lock().ok()?.identifier(id)
+}
+
 /// Enumerate ext toplevels and enrich them with AT-SPI pid and geometry data.
 pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
+    enumerate(false).map(|windows| windows.unwrap_or_default())
+}
+
+/// [`list_windows`], or `None` when the compositor cannot copy a toplevel
+/// through `ext_foreign_toplevel_image_capture_source_manager_v1`.
+pub fn list_capturable_windows() -> anyhow::Result<Option<Vec<WindowInfo>>> {
+    enumerate(true)
+}
+
+fn enumerate(require_capture: bool) -> anyhow::Result<Option<Vec<WindowInfo>>> {
     let conn = Connection::connect_to_env()?;
     let mut queue = conn.new_event_queue::<State>();
     let qh = queue.handle();
@@ -195,6 +231,9 @@ pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
     queue.roundtrip(&mut state)?;
     if state.manager.is_none() {
         anyhow::bail!("compositor does not expose ext_foreign_toplevel_list_v1");
+    }
+    if require_capture && !state.capture_globals.iter().all(|advertised| *advertised) {
+        return Ok(None);
     }
     for _ in 0..3 {
         queue.roundtrip(&mut state)?;
@@ -209,29 +248,68 @@ pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
         native.push((stable_id(&record.identifier)?, record));
     }
     native.sort_unstable_by_key(|(id, _)| *id);
-    Ok(merge_atspi_records(
+    Ok(Some(merge_atspi_records(
         native,
         crate::atspi::list_windows(None),
-    ))
+        require_capture,
+    )))
 }
 
+/// Pair ext records with AT-SPI windows for pid and geometry. A capturable
+/// listing pairs only unambiguous matches: its window_id yields that
+/// toplevel's own pixels, so a pid guessed from a repeated title or app_id
+/// would bind them to another application's accessibility tree.
 fn merge_atspi_records(
     native: Vec<(u64, ToplevelRecord)>,
     atspi: Vec<WindowInfo>,
+    unambiguous: bool,
 ) -> Vec<WindowInfo> {
     let mut claimed = vec![false; atspi.len()];
     let mut out = Vec::with_capacity(native.len() + atspi.len());
+    let unique_title: Vec<bool> = native
+        .iter()
+        .map(|(_, record)| {
+            native
+                .iter()
+                .filter(|(_, other)| other.title == record.title)
+                .count()
+                == 1
+        })
+        .collect();
+    let unique_app_id: Vec<bool> = native
+        .iter()
+        .map(|(_, record)| {
+            native
+                .iter()
+                .filter(|(_, other)| other.app_id == record.app_id)
+                .count()
+                == 1
+        })
+        .collect();
 
-    for (id, record) in native {
-        let exact_title = atspi.iter().enumerate().find_map(|(index, window)| {
-            (!claimed[index] && !record.title.is_empty() && window.title == record.title)
-                .then_some(index)
-        });
-        let matching_atspi = exact_title.or_else(|| {
-            unique_match(&atspi, &claimed, |window| {
-                !record.app_id.is_empty() && window.app_name == record.app_id
-            })
-        });
+    for (position, (id, record)) in native.into_iter().enumerate() {
+        let title_matches =
+            |window: &WindowInfo| !record.title.is_empty() && window.title == record.title;
+        let app_id_matches =
+            |window: &WindowInfo| !record.app_id.is_empty() && window.app_name == record.app_id;
+        let matching_atspi = if unambiguous {
+            unique_title[position]
+                .then(|| sole_match(&atspi, &claimed, title_matches))
+                .flatten()
+                .or_else(|| {
+                    unique_app_id[position]
+                        .then(|| sole_match(&atspi, &claimed, app_id_matches))
+                        .flatten()
+                })
+        } else {
+            atspi
+                .iter()
+                .enumerate()
+                .find_map(|(index, window)| {
+                    (!claimed[index] && title_matches(window)).then_some(index)
+                })
+                .or_else(|| unique_match(&atspi, &claimed, app_id_matches))
+        };
 
         let mut window = WindowInfo {
             xid: id,
@@ -287,6 +365,17 @@ fn unique_match(
     matches.next().is_none().then_some(index)
 }
 
+/// The one window of all `windows`, claimed or not, that `predicate`
+/// accepts, provided no earlier record claimed it.
+fn sole_match(
+    windows: &[WindowInfo],
+    claimed: &[bool],
+    predicate: impl Fn(&WindowInfo) -> bool,
+) -> Option<usize> {
+    let index = unique_match(windows, &vec![false; windows.len()], predicate)?;
+    (!claimed[index]).then_some(index)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -338,6 +427,15 @@ mod tests {
     }
 
     #[test]
+    fn id_registry_maps_issued_ids_back_to_their_identifier() {
+        let mut registry = IdRegistry::default();
+        let id = registry.id_for("opaque-a").unwrap();
+        assert_eq!(registry.identifier(id).as_deref(), Some("opaque-a"));
+        assert_eq!(registry.identifier(id + 1), None);
+        assert_eq!(registry.identifier(u64::from(u32::MAX) + 1), None);
+    }
+
+    #[test]
     fn merge_recovers_metadata_and_preserves_unmatched_records() {
         let native = vec![
             (
@@ -360,6 +458,7 @@ mod tests {
                 atspi(12, 202, "Different title", "org.viewer", 30),
                 atspi(13, 303, "AT-SPI only", "org.extra", 50),
             ],
+            false,
         );
 
         assert_eq!(merged.len(), 4);
@@ -383,6 +482,7 @@ mod tests {
                 atspi(11, 101, "One", "org.same", 10),
                 atspi(12, 202, "Two", "org.same", 30),
             ],
+            false,
         );
         assert_eq!(merged.len(), 3);
         assert_eq!(merged[0].pid, None);
@@ -407,10 +507,86 @@ mod tests {
                 atspi(11, 101, "Document", "first", 10),
                 atspi(12, 202, "Document", "second", 30),
             ],
+            false,
         );
         assert_eq!(merged.len(), 2);
         assert_eq!(merged[0].pid, Some(101));
         assert_eq!(merged[1].pid, Some(202));
+    }
+
+    #[test]
+    fn capturable_merge_refuses_repeated_titles_and_app_ids() {
+        let merged = merge_atspi_records(
+            vec![
+                (
+                    u64::from(EXT_ID_NAMESPACE_START),
+                    record("a", "Document", "org.first"),
+                ),
+                (
+                    u64::from(EXT_ID_NAMESPACE_START + 1),
+                    record("b", "Document", "org.second"),
+                ),
+                (
+                    u64::from(EXT_ID_NAMESPACE_START + 2),
+                    record("c", "", "org.same"),
+                ),
+                (
+                    u64::from(EXT_ID_NAMESPACE_START + 3),
+                    record("d", "", "org.same"),
+                ),
+                (
+                    u64::from(EXT_ID_NAMESPACE_START + 4),
+                    record("e", "Unique", "org.unique"),
+                ),
+            ],
+            vec![
+                atspi(11, 101, "Document", "first", 10),
+                atspi(13, 303, "Other", "org.same", 50),
+                atspi(14, 404, "Unique", "org.unique", 70),
+            ],
+            true,
+        );
+
+        let pids: Vec<_> = merged[..5].iter().map(|window| window.pid).collect();
+        assert_eq!(pids, [None, None, None, None, Some(404)]);
+        assert_eq!(merged[4].x, 70);
+        assert_eq!(merged.len(), 7);
+    }
+
+    #[test]
+    fn capturable_merge_counts_windows_an_earlier_record_claimed() {
+        let merged = merge_atspi_records(
+            vec![
+                (
+                    u64::from(EXT_ID_NAMESPACE_START),
+                    record("a", "Untitled", "org.editor"),
+                ),
+                (
+                    u64::from(EXT_ID_NAMESPACE_START + 1),
+                    record("b", "Shared", "org.other"),
+                ),
+                (
+                    u64::from(EXT_ID_NAMESPACE_START + 2),
+                    record("c", "Viewer A", "org.c"),
+                ),
+                (
+                    u64::from(EXT_ID_NAMESPACE_START + 3),
+                    record("d", "Unlisted", "org.viewer"),
+                ),
+            ],
+            vec![
+                atspi(11, 101, "Shared", "org.editor", 10),
+                atspi(12, 202, "Shared", "org.unrelated", 30),
+                atspi(13, 303, "Viewer A", "org.viewer", 50),
+                atspi(14, 404, "Viewer B", "org.viewer", 70),
+            ],
+            true,
+        );
+
+        // `a` claims 11 by app_id, yet `b`'s title still matches two AT-SPI
+        // windows; `c` claims 13 by title, yet `d`'s app_id still matches two.
+        let pids: Vec<_> = merged[..4].iter().map(|window| window.pid).collect();
+        assert_eq!(pids, [Some(101), None, Some(303), None]);
     }
 
     #[test]

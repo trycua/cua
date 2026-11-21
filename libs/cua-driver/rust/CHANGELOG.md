@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.56.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.0...cua-driver-rs-v0.56.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-driver:** refuse a zoom made against a screenshot frame a refresh replaced ([#8415](https://github.com/trycua/cua/issues/8415)) ([314cdaa](https://github.com/trycua/cua/commit/314cdaa49cae49d6faebaab73426b05c17150926))
+
 ## [0.56.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.55.5...cua-driver-rs-v0.56.0) (2026-11-20)
 
 

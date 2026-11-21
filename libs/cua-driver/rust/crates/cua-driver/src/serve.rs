@@ -27,6 +27,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
+#[cfg(target_os = "windows")]
+use cua_driver_core::daemon::named_pipe_exists;
 use cua_driver_core::daemon::{daemon_lock_path, probe_presence, DaemonPresence, ToolGate};
 pub use cua_driver_core::daemon::{
     is_daemon_listening, send_request, socket_path_for_namespace, DaemonRequest, DaemonResponse,
@@ -2395,54 +2397,70 @@ mod named_pipe_authentication_tests {
 
 #[cfg(all(test, target_os = "windows"))]
 mod pipe_release_tests {
-    use super::{claim_daemon_lock, daemon_lock_path, is_released, probe_presence, DaemonPresence};
+    use super::{
+        claim_daemon_lock, daemon_lock_path, is_released, probe_presence, serving_daemon,
+        DaemonPresence,
+    };
     use std::time::Duration;
     use tokio::net::windows::named_pipe::ServerOptions;
 
-    async fn probe_twice(pipe: &str) -> (DaemonPresence, bool) {
-        let pipe = pipe.to_owned();
-        tokio::task::spawn_blocking(move || (probe_presence(&pipe), is_released(&pipe)))
-            .await
-            .unwrap()
+    async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        tokio::task::spawn_blocking(f).await.unwrap()
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_daemon_whose_pipe_listens_without_answering_has_not_released() {
+    async fn a_daemon_whose_pipe_never_answers_has_not_released() {
         let pipe = format!(
             r"\\.\pipe\cua-driver-release-{}",
             uuid::Uuid::new_v4().simple()
         );
-        // Each of the four probes below holds one instance open waiting for
-        // a reply, so keep one more free, as a serving daemon does.
-        let instances = (0..5)
-            .map(|index| {
-                ServerOptions::new()
-                    .first_pipe_instance(index == 0)
-                    .create(&pipe)
-                    .unwrap()
-            })
-            .collect::<Vec<_>>();
+        // One instance that never answers. The first probe connects to it and
+        // holds it waiting for a reply, so every later check finds it busy.
+        let instance = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&pipe)
+            .unwrap();
 
         // An embedded daemon takes no lock.
-        assert_eq!(probe_twice(&pipe).await, (DaemonPresence::Absent, false));
+        let probe = pipe.clone();
+        assert_eq!(
+            blocking(move || probe_presence(&probe)).await,
+            DaemonPresence::Absent
+        );
+        let probe = pipe.clone();
+        assert!(!blocking(move || is_released(&probe)).await);
+        let probe = pipe.clone();
+        assert_eq!(blocking(move || serving_daemon(&probe)).await, Some(None));
 
         let lock = claim_daemon_lock(&daemon_lock_path(&pipe), &pipe, Duration::ZERO).unwrap();
+        let probe = pipe.clone();
         assert_eq!(
-            probe_twice(&pipe).await,
-            (
-                DaemonPresence::Starting {
-                    lock_held: daemon_lock_path(&pipe)
-                },
-                false
-            )
+            blocking(move || probe_presence(&probe)).await,
+            DaemonPresence::Starting {
+                lock_held: daemon_lock_path(&pipe)
+            }
         );
+        let probe = pipe.clone();
+        assert!(!blocking(move || is_released(&probe)).await);
 
         // An exiting daemon closes its pipe a moment before it drops its lock.
-        drop(instances);
+        drop(instance);
         let probe = pipe.clone();
-        assert!(tokio::task::spawn_blocking(move || is_released(&probe))
+        assert!(
+            blocking(move || {
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                while !is_released(&probe) {
+                    if std::time::Instant::now() >= deadline {
+                        return false;
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                true
+            })
             .await
-            .unwrap());
+        );
+        let probe = pipe.clone();
+        assert_eq!(blocking(move || serving_daemon(&probe)).await, None);
         drop(lock);
     }
 }
@@ -2499,6 +2517,21 @@ fn adopt_inherited_socket_lock(socket_path: &str) -> Option<std::fs::File> {
     Some(lock)
 }
 
+/// The daemon a launch onto `socket_path` must not start beside, with the
+/// pid it reports when it answers. On Windows any instance of its pipe counts:
+/// an embedded daemon holds no lock and may answer late, and a second server
+/// could otherwise open instances under the same name.
+fn serving_daemon(socket_path: &str) -> Option<Option<u32>> {
+    if let DaemonPresence::Serving { pid, .. } = probe_presence(socket_path) {
+        return Some(Some(pid));
+    }
+    #[cfg(target_os = "windows")]
+    if named_pipe_exists(socket_path) {
+        return Some(None);
+    }
+    None
+}
+
 /// Refuse a launch onto a socket another daemon serves, then claim the
 /// socket for this process. Exits on refusal.
 pub fn claim_socket_for_launch(socket_path: &str) -> Option<std::fs::File> {
@@ -2506,8 +2539,8 @@ pub fn claim_socket_for_launch(socket_path: &str) -> Option<std::fs::File> {
     if let Some(lock) = adopt_inherited_socket_lock(socket_path) {
         return Some(lock);
     }
-    if let DaemonPresence::Serving { pid, .. } = probe_presence(socket_path) {
-        eprintln!("{}", already_running_message(socket_path, Some(pid)));
+    if let Some(pid) = serving_daemon(socket_path) {
+        eprintln!("{}", already_running_message(socket_path, pid));
         std::process::exit(1);
     }
     match claim_socket(socket_path) {
@@ -2652,8 +2685,8 @@ pub fn run_stop_cmd(socket_path: &str) {
 /// no longer has its socket bound. An exiting daemon keeps its lock a moment
 /// after it removes its socket, so a held lock alone does not count. A
 /// named pipe vanishes with its last server, so on Windows the pipe decides:
-/// a daemon whose pipe still listens has not let go, whether or not it holds
-/// a lock and even when its reply to the probe is late.
+/// a daemon with any instance of its pipe left, free or busy, has not let go,
+/// whether or not it holds a lock and even when its reply to the probe is late.
 fn is_released(socket_path: &str) -> bool {
     match probe_presence(socket_path) {
         DaemonPresence::Serving { .. } => false,
@@ -2661,9 +2694,13 @@ fn is_released(socket_path: &str) -> bool {
         DaemonPresence::Starting { .. } => std::fs::symlink_metadata(socket_path).is_err(),
         #[cfg(unix)]
         DaemonPresence::Absent | DaemonPresence::Stale { .. } => true,
-        #[cfg(not(unix))]
+        #[cfg(target_os = "windows")]
         DaemonPresence::Absent | DaemonPresence::Stale { .. } | DaemonPresence::Starting { .. } => {
-            !is_daemon_listening(socket_path)
+            !named_pipe_exists(socket_path)
+        }
+        #[cfg(not(any(unix, target_os = "windows")))]
+        DaemonPresence::Absent | DaemonPresence::Stale { .. } | DaemonPresence::Starting { .. } => {
+            true
         }
     }
 }

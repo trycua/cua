@@ -180,19 +180,7 @@ pub fn socket_path_for_namespace(namespace: &str) -> String {
 pub fn is_daemon_listening(socket_path: &str) -> bool {
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::ffi::OsStrExt;
-
-        #[link(name = "kernel32")]
-        extern "system" {
-            fn WaitNamedPipeW(lp_named_pipe_name: *const u16, timeout_ms: u32) -> i32;
-        }
-
-        let wide: Vec<u16> = std::ffi::OsStr::new(socket_path)
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-        // NMPWAIT_NOWAIT == 1.
-        unsafe { WaitNamedPipeW(wide.as_ptr(), 1) != 0 }
+        wait_named_pipe(socket_path).is_ok()
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -207,6 +195,41 @@ pub fn is_daemon_listening(socket_path: &str) -> bool {
         send_request(socket_path, &request)
             .ok()
             .is_some_and(|response| response.ok)
+    }
+}
+
+/// Whether any instance of the named pipe `socket_path` exists, free or busy.
+/// A named pipe vanishes with its last server instance, so this stays true
+/// while a daemon still holds its pipe, even when every instance is taken.
+#[cfg(target_os = "windows")]
+pub fn named_pipe_exists(socket_path: &str) -> bool {
+    const ERROR_FILE_NOT_FOUND: i32 = 2;
+    match wait_named_pipe(socket_path) {
+        Ok(()) => true,
+        Err(error) => error.raw_os_error() != Some(ERROR_FILE_NOT_FOUND),
+    }
+}
+
+/// `WaitNamedPipeW` without waiting: `Ok` when an instance is free to
+/// connect, without consuming it.
+#[cfg(target_os = "windows")]
+fn wait_named_pipe(socket_path: &str) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn WaitNamedPipeW(lp_named_pipe_name: *const u16, timeout_ms: u32) -> i32;
+    }
+
+    let wide: Vec<u16> = std::ffi::OsStr::new(socket_path)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    // NMPWAIT_NOWAIT == 1.
+    if unsafe { WaitNamedPipeW(wide.as_ptr(), 1) } != 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
     }
 }
 

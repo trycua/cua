@@ -30,6 +30,7 @@ use serde_json::Value;
 use std::sync::Arc;
 
 use crate::apps;
+use crate::ax::batch::{copy_string_attrs, AttributeBatch};
 use crate::ax::bindings::{
     copy_action_names, copy_bool_attr, copy_children, copy_element_attr, copy_string_attr,
     element_at_screen_position, element_screen_rect, kAXErrorSuccess, AXUIElementPerformAction,
@@ -118,10 +119,12 @@ fn nearest_selectable_container_center(element_ptr: usize) -> Option<(f64, f64)>
     let mut owns_current = false;
 
     for _ in 0..8 {
-        let role = unsafe { copy_string_attr(current, "AXRole") }.unwrap_or_default();
-        if matches!(role.as_str(), "AXRow" | "AXCell" | "AXListItem" | "AXImage")
-            && unsafe { copy_bool_attr(current, "AXSelected") }.is_some()
-        {
+        let attrs = unsafe { AttributeBatch::read(current, ["AXRole", "AXSelected"]) };
+        let role = unsafe { attrs.string("AXRole") }.unwrap_or_default();
+        let selectable = matches!(role.as_str(), "AXRow" | "AXCell" | "AXListItem" | "AXImage")
+            && unsafe { attrs.bool("AXSelected") }.is_some();
+        drop(attrs);
+        if selectable {
             let center = unsafe { element_screen_rect(current) }
                 .map(|rect| (rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0));
             if owns_current {
@@ -2165,8 +2168,9 @@ fn perform_ax_click(
         crate::input::ax_actions::ensure_ax_action_enabled(element_ptr, ax_action)?;
     }
 
-    let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
-    let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
+    let [role, title] = unsafe { copy_string_attrs(element, ["AXRole", "AXTitle"]) };
+    let role = role.unwrap_or_default();
+    let title = title.unwrap_or_default();
 
     // A click on an AppKit collection item is frequently represented by a
     // label child or row that does not advertise AXPress. Prefer a bounded,
@@ -2387,8 +2391,9 @@ fn perform_ax_click(
             let options: Vec<String> = children
                 .iter()
                 .filter_map(|&child| {
-                    let t = unsafe { copy_string_attr(child, "AXTitle") }.unwrap_or_default();
-                    let v = unsafe { copy_string_attr(child, "AXValue") }.unwrap_or_default();
+                    let [t, v] = unsafe { copy_string_attrs(child, ["AXTitle", "AXValue"]) };
+                    let t = t.unwrap_or_default();
+                    let v = v.unwrap_or_default();
                     if t.is_empty() && v.is_empty() {
                         return None;
                     }

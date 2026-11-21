@@ -24,6 +24,7 @@ use serde_json::Value;
 use std::sync::Arc;
 
 use crate::apps;
+use crate::ax::batch::{copy_string_attrs, AttributeBatch};
 use crate::ax::bindings::{
     copy_bool_attr, copy_children, copy_number_attr, copy_string_attr, copy_url_attr,
     kAXErrorSuccess, perform_action, set_number_attr, set_string_attr, AXUIElementRef,
@@ -470,11 +471,12 @@ const FILE_NAME_NEEDS_RENAME: &str = "file_name_needs_rename";
 /// icon views): a text field that names a file and is not being edited.
 /// Finder's inline rename editor is focused, so it stays writable.
 unsafe fn file_name_cell(element: AXUIElementRef) -> bool {
-    copy_string_attr(element, "AXRole").as_deref() == Some("AXTextField")
+    let attrs = AttributeBatch::read(element, ["AXRole", "AXFilename", "AXURL", "AXFocused"]);
+    attrs.string("AXRole").as_deref() == Some("AXTextField")
         && is_file_name_cell(
-            copy_string_attr(element, "AXFilename").as_deref(),
-            copy_url_attr(element).as_deref(),
-            copy_bool_attr(element, "AXFocused"),
+            attrs.string("AXFilename").as_deref(),
+            attrs.url().as_deref(),
+            attrs.bool("AXFocused"),
         )
 }
 
@@ -488,11 +490,12 @@ fn is_file_name_cell(filename: Option<&str>, url: Option<&str>, focused: Option<
 /// window. It names no file through AXFilename or AXURL, so `file_name_cell`
 /// misses it, yet an AXValue write there renames nothing either.
 unsafe fn get_info_name_field(pid: i32, element: AXUIElementRef) -> bool {
+    let attrs = AttributeBatch::read(element, ["AXRole", "AXIdentifier", "AXFocused"]);
     is_get_info_name_field(
         crate::apps::bundle_id_for_pid(pid).as_deref(),
-        copy_string_attr(element, "AXRole").as_deref(),
-        copy_string_attr(element, "AXIdentifier").as_deref(),
-        copy_bool_attr(element, "AXFocused"),
+        attrs.string("AXRole").as_deref(),
+        attrs.string("AXIdentifier").as_deref(),
+        attrs.bool("AXFocused"),
     )
 }
 
@@ -678,10 +681,11 @@ fn set_value_blocking(
 ) -> anyhow::Result<SetValueOutcome> {
     let element = element_ptr as AXUIElementRef;
 
-    let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
+    let [role, title] = unsafe { copy_string_attrs(element, ["AXRole", "AXTitle"]) };
+    let role = role.unwrap_or_default();
 
     if role == "AXPopUpButton" {
-        let element_title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
+        let element_title = title.unwrap_or_default();
         // Menu-item selection, not an AXValue write — no read-back to report.
         select_popup_option(
             element,
@@ -726,7 +730,8 @@ fn set_value_blocking(
         };
         if err == kAXErrorSuccess {
             unsafe { crate::ax::enablement::flush_pending_web_updates_for_element(pid, element) };
-            let mut after = unsafe { copy_string_attr(element, "AXValue") };
+            let [after, subrole] = unsafe { copy_string_attrs(element, ["AXValue", "AXSubrole"]) };
+            let mut after = after;
             let (mut verified, mut changed) = classify_write(
                 before.as_deref(),
                 after.as_deref(),
@@ -735,8 +740,7 @@ fn set_value_blocking(
             );
             // Some apps apply the write a moment later; give it a short
             // settle before calling it not applied.
-            let secure = unsafe { copy_string_attr(element, "AXSubrole") }.as_deref()
-                == Some("AXSecureTextField");
+            let secure = subrole.as_deref() == Some("AXSecureTextField");
             for _ in 0..NOT_APPLIED_REREADS {
                 if secure || !write_not_applied(verified, changed) {
                     break;
@@ -1086,14 +1090,20 @@ fn release_options(options: &[PopupOption]) {
 fn popup_options(popup: AXUIElementRef) -> Vec<PopupOption> {
     let mut options = Vec::new();
     for child in unsafe { copy_children(popup) } {
-        let role = unsafe { copy_string_attr(child, "AXRole") }.unwrap_or_default();
+        let [role, title, value] =
+            unsafe { copy_string_attrs(child, ["AXRole", "AXTitle", "AXValue"]) };
+        let role = role.unwrap_or_default();
         if role == "AXMenu" {
             for item in unsafe { copy_children(child) } {
                 options.push(describe_option(item));
             }
             unsafe { CFRelease(child as _) };
         } else {
-            options.push(describe_option(child));
+            options.push(PopupOption {
+                element: child,
+                title: title.unwrap_or_default(),
+                value: value.unwrap_or_default(),
+            });
         }
     }
     options.retain(|option| !(option.title.is_empty() && option.value.is_empty()));
@@ -1101,10 +1111,11 @@ fn popup_options(popup: AXUIElementRef) -> Vec<PopupOption> {
 }
 
 fn describe_option(element: AXUIElementRef) -> PopupOption {
+    let [title, value] = unsafe { copy_string_attrs(element, ["AXTitle", "AXValue"]) };
     PopupOption {
         element,
-        title: unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default(),
-        value: unsafe { copy_string_attr(element, "AXValue") }.unwrap_or_default(),
+        title: title.unwrap_or_default(),
+        value: value.unwrap_or_default(),
     }
 }
 
@@ -1202,8 +1213,9 @@ pub(super) fn chromium_select_open_refusal(
     element_index: Option<usize>,
     element: AXUIElementRef,
 ) -> cua_driver_core::protocol::ToolResult {
-    let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
-    let current = unsafe { copy_string_attr(element, "AXValue") }.unwrap_or_default();
+    let [title, current] = unsafe { copy_string_attrs(element, ["AXTitle", "AXValue"]) };
+    let title = title.unwrap_or_default();
+    let current = current.unwrap_or_default();
     let target = match element_index {
         Some(index) => format!("[{index}] AXPopUpButton \"{title}\""),
         None => format!("the AXPopUpButton \"{title}\" at that point"),

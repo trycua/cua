@@ -21,6 +21,7 @@ use std::{
     time::Duration,
 };
 
+use crate::ax::batch::AttributeBatch;
 use crate::ax::bindings::{
     ax_get_window_id, copy_action_names, copy_ax_windows, copy_ax_windows_including,
     copy_bool_attr, copy_children, copy_element_attr, copy_string_attr, kAXErrorSuccess,
@@ -617,9 +618,11 @@ struct PressedItem {
 /// Whether a menu item's key equivalent is plain Command-S, the Save
 /// shortcut in every language.
 unsafe fn item_is_save(item: AXUIElementRef) -> bool {
-    copy_string_attr(item, "AXMenuItemCmdChar").is_some_and(|ch| ch.eq_ignore_ascii_case("s"))
-        && crate::ax::bindings::copy_number_attr(item, "AXMenuItemCmdModifiers").unwrap_or(0.0)
-            == 0.0
+    let attrs = AttributeBatch::read(item, ["AXMenuItemCmdChar", "AXMenuItemCmdModifiers"]);
+    attrs
+        .string("AXMenuItemCmdChar")
+        .is_some_and(|ch| ch.eq_ignore_ascii_case("s"))
+        && attrs.number("AXMenuItemCmdModifiers").unwrap_or(0.0) == 0.0
 }
 
 /// How long a disabled item gets to enable after its window becomes key, and

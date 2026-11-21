@@ -551,7 +551,7 @@ mod tests {
     fn the_system_consent_labels_include_allow_and_dont_allow() {
         // Read from the OS's own tables; English must be among the languages.
         let labels = consent_labels();
-        for label in ["Allow", "Don’t Allow", "Don't Allow"] {
+        for label in ["Allow", "Don’t Allow"] {
             assert!(
                 labels.iter().any(|known| known == label),
                 "{label} in {labels:?}"

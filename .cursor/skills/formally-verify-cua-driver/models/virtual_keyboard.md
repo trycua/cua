@@ -2,7 +2,7 @@
 
 One session's uinput keyboard on the X11 virtual master keyboard route
 (`path=mpx_uinput`). `Keyboard`, `Delivery` and `plugged_keyboard` in
-`src/input/mpx_keyboard.rs` own it. `virtual_keyboard.tla` is the model, and
+`platform-linux/src/input/mpx_keyboard.rs` own it. `virtual_keyboard.tla` is the model, and
 this chart is drawn from it.
 
 ```mermaid
@@ -53,5 +53,5 @@ TLC checks these on `virtual_keyboard.cfg`, and all hold.
 `virtual_keyboard_before.cfg` turns off the three rules of the code that
 keep them: unplug when keys stay unread, fail the plug-in when the warm-up
 key stays unread, and turn off the server's key repeat. All four then break.
-`tests/virtual_keyboard_xorg.rs` replays one path for each of the three on
+`platform-linux/tests/virtual_keyboard_xorg.rs` replays one path for each of the three on
 a real Xorg.

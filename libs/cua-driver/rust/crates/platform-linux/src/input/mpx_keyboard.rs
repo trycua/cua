@@ -43,8 +43,9 @@ const UNCONFIRMED_STEPS: usize = 8;
 /// slave device. A session has a keyboard exactly while it is in
 /// [`uinput_keyboards`]: [`plugged_keyboard`] adds it once it is warm, and
 /// [`unplug_keyboard`] removes it. Closing the device makes the kernel
-/// discard whatever the server has not read. `models/virtual_keyboard.md`
-/// charts the lifecycle.
+/// discard whatever the server has not read. The
+/// formally-verify-cua-driver skill's `models/virtual_keyboard.md` charts
+/// the lifecycle.
 struct Keyboard {
     device: Mutex<VirtualDevice>,
     slave_id: i32,

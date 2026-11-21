@@ -2,8 +2,8 @@
 \* Copyright (c) 2026 Cua AI, Inc.
 ---- MODULE virtual_keyboard ----
 \* One session's uinput keyboard on the X11 virtual master keyboard route:
-\* Keyboard, Delivery and plugged_keyboard in src/input/mpx_keyboard.rs, and
-\* BorrowedKeycodes in src/input/mod.rs. virtual_keyboard.md draws it.
+\* Keyboard, Delivery and plugged_keyboard in platform-linux/src/input/mpx_keyboard.rs,
+\* and BorrowedKeycodes in platform-linux/src/input/mod.rs. virtual_keyboard.md draws it.
 \*
 \* A call writes key transitions (press, release, press, ...) to the device.
 \* The X server's input thread reads them later, and can stall at any time

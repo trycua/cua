@@ -1236,8 +1236,8 @@ fn wayland_window_crop(xid: u64) -> anyhow::Result<WaylandWindowCrop> {
 /// Copy the toplevel an ext-foreign-toplevel-list window_id names, or `None`
 /// when the window was not listed through that protocol.
 fn ext_toplevel_capture(xid: u64) -> Option<anyhow::Result<Vec<u8>>> {
-    let identifier = ext_toplevel::capture_identifier(xid)?;
-    Some(identifier.and_then(|identifier| ext_screencopy::screenshot_toplevel(&identifier)))
+    let identifier = ext_toplevel::identifier_for(xid)?;
+    Some(ext_screencopy::screenshot_toplevel(&identifier))
 }
 
 fn screenshot_window_bytes_with_dispatch(

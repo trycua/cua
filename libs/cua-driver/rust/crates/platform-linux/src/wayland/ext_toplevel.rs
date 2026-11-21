@@ -4,11 +4,11 @@
 //! Generic staging `ext-foreign-toplevel-list-v1` window enumeration.
 //!
 //! Each window_id stands for one toplevel `identifier`, which the protocol
-//! keeps unique and stable across clients. [`capture_identifier`] maps it
-//! back, so [`super::ext_screencopy::screenshot_toplevel`] can copy that exact
+//! keeps unique and stable across clients. [`identifier_for`] maps it back,
+//! so [`super::ext_screencopy::screenshot_toplevel`] can copy that exact
 //! toplevel on a connection of its own.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use wayland_client::{
@@ -23,11 +23,22 @@ use wayland_protocols::ext::foreign_toplevel_list::v1::client::{
 
 use crate::x11::WindowInfo;
 
-/// Synthetic ext-toplevel IDs must survive the existing `window_id as u32`
-/// element-token paths. Keep them in a high, nonzero u32 namespace and reserve
-/// `u32::MAX` as an exhaustion sentinel rather than emitting it.
+/// Synthetic ext-toplevel IDs are a registry slot under [`EXT_ID_HIGH_BITS`].
+/// Slots stay in a high, nonzero u32 range, so a `window_id as u32` X11 path
+/// still sees an id no X server issues, and `u32::MAX` is reserved as an
+/// exhaustion sentinel rather than emitted.
 const EXT_ID_NAMESPACE_START: u32 = 0xF000_0000;
 const EXT_ID_NAMESPACE_END: u32 = 0xFFFF_FFFE;
+
+/// Lifts every ext window_id above the AT-SPI ids (`pid << 16 | ordinal`, so
+/// below 2^48 for any u32 pid), which share a listing with ext windows. Capture
+/// copies the ext toplevel an id names, so the two id spaces must not meet.
+/// The result stays below 2^53 for JSON clients.
+const EXT_ID_HIGH_BITS: u64 = 1 << 48;
+
+fn window_id(slot: u32) -> u64 {
+    EXT_ID_HIGH_BITS | u64::from(slot)
+}
 
 /// Globals a per-toplevel copy needs besides the list itself.
 const TOPLEVEL_CAPTURE_GLOBALS: [&str; 2] = [
@@ -165,12 +176,10 @@ impl Default for IdRegistry {
 }
 
 impl IdRegistry {
-    /// The id for `identifier`. A new one skips `reserved`, the ids AT-SPI
-    /// windows hold, so a listing never gives one window_id to two windows.
-    fn id_for(&mut self, identifier: &str, reserved: &HashSet<u64>) -> anyhow::Result<u64> {
+    fn id_for(&mut self, identifier: &str) -> anyhow::Result<u64> {
         if let Some(id) = self.by_identifier.get(identifier) {
             if self.by_id.get(id).is_some_and(|known| known == identifier) {
-                return Ok(u64::from(*id));
+                return Ok(window_id(*id));
             }
             anyhow::bail!("ext toplevel id registry collision for identifier {identifier:?}");
         }
@@ -178,7 +187,7 @@ impl IdRegistry {
         let mut id = self
             .next
             .ok_or_else(|| anyhow::anyhow!("ext toplevel numeric id space exhausted"))?;
-        while self.by_id.contains_key(&id) || reserved.contains(&u64::from(id)) {
+        while self.by_id.contains_key(&id) {
             id = id
                 .checked_add(1)
                 .filter(|candidate| *candidate <= EXT_ID_NAMESPACE_END)
@@ -187,11 +196,12 @@ impl IdRegistry {
         self.next = (id < EXT_ID_NAMESPACE_END).then_some(id + 1);
         self.by_identifier.insert(identifier.to_owned(), id);
         self.by_id.insert(id, identifier.to_owned());
-        Ok(u64::from(id))
+        Ok(window_id(id))
     }
 
     fn identifier(&self, id: u64) -> Option<String> {
-        self.by_id.get(&u32::try_from(id).ok()?).cloned()
+        let slot = u32::try_from(id.checked_sub(EXT_ID_HIGH_BITS)?).ok()?;
+        self.by_id.get(&slot).cloned()
     }
 }
 
@@ -200,36 +210,16 @@ fn id_registry() -> &'static Mutex<IdRegistry> {
     REGISTRY.get_or_init(|| Mutex::new(IdRegistry::default()))
 }
 
-fn stable_id(identifier: &str, reserved: &HashSet<u64>) -> anyhow::Result<u64> {
+fn stable_id(identifier: &str) -> anyhow::Result<u64> {
     id_registry()
         .lock()
         .map_err(|_| anyhow::anyhow!("ext toplevel id registry lock poisoned"))?
-        .id_for(identifier, reserved)
+        .id_for(identifier)
 }
 
-/// The ext toplevel `identifier` a capture of window `id` copies, or `None`
-/// when this module did not issue `id`. An AT-SPI window whose pid appeared
-/// after the id was issued can hold the same number, and listing fallbacks
-/// may return that window, so the capture is refused rather than hand it
-/// the toplevel's pixels.
-pub fn capture_identifier(id: u64) -> Option<anyhow::Result<String>> {
-    let identifier = id_registry().lock().ok()?.identifier(id)?;
-    Some(unshared_identifier(
-        id,
-        identifier,
-        &crate::atspi::list_windows(None),
-    ))
-}
-
-fn unshared_identifier(
-    id: u64,
-    identifier: String,
-    atspi: &[WindowInfo],
-) -> anyhow::Result<String> {
-    if atspi.iter().any(|window| window.xid == id) {
-        anyhow::bail!("an AT-SPI window holds the same window_id as ext toplevel {identifier:?}");
-    }
-    Ok(identifier)
+/// The ext toplevel `identifier` a window_id from this module stands for.
+pub fn identifier_for(id: u64) -> Option<String> {
+    id_registry().lock().ok()?.identifier(id)
 }
 
 /// Enumerate ext toplevels and enrich them with AT-SPI pid and geometry data.
@@ -261,29 +251,26 @@ fn enumerate(require_capture: bool) -> anyhow::Result<Option<Vec<WindowInfo>>> {
         queue.roundtrip(&mut state)?;
     }
 
-    let atspi = crate::atspi::list_windows(None);
-    let reserved: HashSet<u64> = atspi.iter().map(|window| window.xid).collect();
     let mut native = Vec::with_capacity(state.toplevels.len());
     for record in state.toplevels.into_values() {
         if record.identifier.is_empty() {
             tracing::warn!("ignoring ext toplevel whose done batch had no identifier");
             continue;
         }
-        native.push((stable_id(&record.identifier, &reserved)?, record));
+        native.push((stable_id(&record.identifier)?, record));
     }
     native.sort_unstable_by_key(|(id, _)| *id);
-    Ok(Some(merge_atspi_records(native, atspi, require_capture)))
+    Ok(Some(merge_atspi_records(
+        native,
+        crate::atspi::list_windows(None),
+        require_capture,
+    )))
 }
 
 /// Pair ext records with AT-SPI windows for pid and geometry. A capturable
 /// listing pairs only unambiguous matches: its window_id yields that
 /// toplevel's own pixels, so a pid guessed from a repeated title or app_id
 /// would bind them to another application's accessibility tree.
-///
-/// An unpaired AT-SPI window whose id an ext record already holds (its pid
-/// appeared after that id was issued) is left out: capture resolves a
-/// window_id to the ext toplevel, so listing both would hand that
-/// toplevel's pixels to the AT-SPI window.
 fn merge_atspi_records(
     native: Vec<(u64, ToplevelRecord)>,
     atspi: Vec<WindowInfo>,
@@ -291,7 +278,6 @@ fn merge_atspi_records(
 ) -> Vec<WindowInfo> {
     let mut claimed = vec![false; atspi.len()];
     let mut out = Vec::with_capacity(native.len() + atspi.len());
-    let ext_ids: HashSet<u64> = native.iter().map(|(id, _)| *id).collect();
     let unique_title: Vec<bool> = native
         .iter()
         .map(|(_, record)| {
@@ -369,9 +355,12 @@ fn merge_atspi_records(
         out.push(window);
     }
 
-    out.extend(atspi.into_iter().enumerate().filter_map(|(index, window)| {
-        (!claimed[index] && !ext_ids.contains(&window.xid)).then_some(window)
-    }));
+    out.extend(
+        atspi
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, window)| (!claimed[index]).then_some(window)),
+    );
     out
 }
 
@@ -429,21 +418,21 @@ mod tests {
     #[test]
     fn id_registry_is_stable_and_bijective() {
         let mut registry = IdRegistry::default();
-        let first = registry.id_for("opaque-a", &HashSet::new()).unwrap();
-        let second = registry.id_for("opaque-b", &HashSet::new()).unwrap();
-        assert_eq!(registry.id_for("opaque-a", &HashSet::new()).unwrap(), first);
+        let first = registry.id_for("opaque-a").unwrap();
+        let second = registry.id_for("opaque-b").unwrap();
+        assert_eq!(registry.id_for("opaque-a").unwrap(), first);
         assert_ne!(first, second);
         assert_eq!(
             registry
                 .by_id
-                .get(&u32::try_from(first).unwrap())
+                .get(&u32::try_from(first - EXT_ID_HIGH_BITS).unwrap())
                 .map(String::as_str),
             Some("opaque-a")
         );
         assert_eq!(
             registry
                 .by_id
-                .get(&u32::try_from(second).unwrap())
+                .get(&u32::try_from(second - EXT_ID_HIGH_BITS).unwrap())
                 .map(String::as_str),
             Some("opaque-b")
         );
@@ -452,25 +441,26 @@ mod tests {
     #[test]
     fn id_registry_maps_issued_ids_back_to_their_identifier() {
         let mut registry = IdRegistry::default();
-        let id = registry.id_for("opaque-a", &HashSet::new()).unwrap();
+        let id = registry.id_for("opaque-a").unwrap();
         assert_eq!(registry.identifier(id).as_deref(), Some("opaque-a"));
         assert_eq!(registry.identifier(id + 1), None);
-        assert_eq!(registry.identifier(u64::from(u32::MAX) + 1), None);
+        assert_eq!(registry.identifier(id - EXT_ID_HIGH_BITS), None);
+        assert_eq!(registry.identifier(u64::MAX), None);
     }
 
     #[test]
     fn merge_recovers_metadata_and_preserves_unmatched_records() {
         let native = vec![
             (
-                u64::from(EXT_ID_NAMESPACE_START),
+                window_id(EXT_ID_NAMESPACE_START),
                 record("a", "Editor", "org.editor"),
             ),
             (
-                u64::from(EXT_ID_NAMESPACE_START + 1),
+                window_id(EXT_ID_NAMESPACE_START + 1),
                 record("b", "Other", "org.viewer"),
             ),
             (
-                u64::from(EXT_ID_NAMESPACE_START + 2),
+                window_id(EXT_ID_NAMESPACE_START + 2),
                 record("c", "Native only", "org.native"),
             ),
         ];
@@ -487,7 +477,7 @@ mod tests {
         assert_eq!(merged.len(), 4);
         assert_eq!(
             (merged[0].xid, merged[0].pid, merged[0].x),
-            (u64::from(EXT_ID_NAMESPACE_START), Some(101), 10)
+            (window_id(EXT_ID_NAMESPACE_START), Some(101), 10)
         );
         assert_eq!(merged[1].pid, Some(202));
         assert_eq!(merged[2].pid, None);
@@ -498,7 +488,7 @@ mod tests {
     fn merge_does_not_guess_ambiguous_app_ids() {
         let merged = merge_atspi_records(
             vec![(
-                u64::from(EXT_ID_NAMESPACE_START),
+                window_id(EXT_ID_NAMESPACE_START),
                 record("a", "", "org.same"),
             )],
             vec![
@@ -518,11 +508,11 @@ mod tests {
         let merged = merge_atspi_records(
             vec![
                 (
-                    u64::from(EXT_ID_NAMESPACE_START),
+                    window_id(EXT_ID_NAMESPACE_START),
                     record("a", "Document", ""),
                 ),
                 (
-                    u64::from(EXT_ID_NAMESPACE_START + 1),
+                    window_id(EXT_ID_NAMESPACE_START + 1),
                     record("b", "Document", ""),
                 ),
             ],
@@ -542,23 +532,23 @@ mod tests {
         let merged = merge_atspi_records(
             vec![
                 (
-                    u64::from(EXT_ID_NAMESPACE_START),
+                    window_id(EXT_ID_NAMESPACE_START),
                     record("a", "Document", "org.first"),
                 ),
                 (
-                    u64::from(EXT_ID_NAMESPACE_START + 1),
+                    window_id(EXT_ID_NAMESPACE_START + 1),
                     record("b", "Document", "org.second"),
                 ),
                 (
-                    u64::from(EXT_ID_NAMESPACE_START + 2),
+                    window_id(EXT_ID_NAMESPACE_START + 2),
                     record("c", "", "org.same"),
                 ),
                 (
-                    u64::from(EXT_ID_NAMESPACE_START + 3),
+                    window_id(EXT_ID_NAMESPACE_START + 3),
                     record("d", "", "org.same"),
                 ),
                 (
-                    u64::from(EXT_ID_NAMESPACE_START + 4),
+                    window_id(EXT_ID_NAMESPACE_START + 4),
                     record("e", "Unique", "org.unique"),
                 ),
             ],
@@ -581,19 +571,19 @@ mod tests {
         let merged = merge_atspi_records(
             vec![
                 (
-                    u64::from(EXT_ID_NAMESPACE_START),
+                    window_id(EXT_ID_NAMESPACE_START),
                     record("a", "Untitled", "org.editor"),
                 ),
                 (
-                    u64::from(EXT_ID_NAMESPACE_START + 1),
+                    window_id(EXT_ID_NAMESPACE_START + 1),
                     record("b", "Shared", "org.other"),
                 ),
                 (
-                    u64::from(EXT_ID_NAMESPACE_START + 2),
+                    window_id(EXT_ID_NAMESPACE_START + 2),
                     record("c", "Viewer A", "org.c"),
                 ),
                 (
-                    u64::from(EXT_ID_NAMESPACE_START + 3),
+                    window_id(EXT_ID_NAMESPACE_START + 3),
                     record("d", "Unlisted", "org.viewer"),
                 ),
             ],
@@ -613,58 +603,17 @@ mod tests {
     }
 
     #[test]
-    fn id_registry_skips_ids_atspi_windows_hold() {
-        let atspi_id = crate::atspi::native::accessibility_window_id(0xF000, 0);
-        assert_eq!(atspi_id, u64::from(EXT_ID_NAMESPACE_START));
+    fn ext_ids_sit_above_every_atspi_window_id() {
         let mut registry = IdRegistry::default();
+        let first = registry.id_for("opaque-a").unwrap();
+        let highest_atspi = crate::atspi::native::accessibility_window_id(u32::MAX, 0xFFFF);
+        assert!(first > highest_atspi);
         assert_eq!(
-            registry
-                .id_for("opaque-a", &HashSet::from([atspi_id]))
-                .unwrap(),
-            atspi_id + 1
+            registry.identifier(crate::atspi::native::accessibility_window_id(0xF000, 0)),
+            None
         );
-    }
-
-    #[test]
-    fn capture_refuses_an_id_an_atspi_window_also_holds() {
-        let id = crate::atspi::native::accessibility_window_id(0xF000, 0);
-        let error = unshared_identifier(
-            id,
-            "opaque-a".to_owned(),
-            &[atspi(id, 0xF000, "Unrelated", "org.unrelated", 10)],
-        )
-        .unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "an AT-SPI window holds the same window_id as ext toplevel \"opaque-a\""
-        );
-        assert_eq!(
-            unshared_identifier(
-                id,
-                "opaque-a".to_owned(),
-                &[atspi(12, 202, "Other", "org.other", 10)],
-            )
-            .unwrap(),
-            "opaque-a"
-        );
-    }
-
-    #[test]
-    fn merge_leaves_out_atspi_windows_whose_id_an_ext_record_holds() {
-        let id = crate::atspi::native::accessibility_window_id(0xF000, 0);
-        let merged = merge_atspi_records(
-            vec![(id, record("a", "Editor", "org.editor"))],
-            vec![
-                atspi(id, 0xF000, "Unrelated", "org.unrelated", 10),
-                atspi(12, 202, "AT-SPI only", "org.extra", 30),
-            ],
-            true,
-        );
-        let rows: Vec<_> = merged
-            .iter()
-            .map(|window| (window.xid, window.pid))
-            .collect();
-        assert_eq!(rows, [(id, None), (12, Some(202))]);
+        assert!(first < 1 << 53);
+        assert_eq!(first as u32, EXT_ID_NAMESPACE_START);
     }
 
     #[test]
@@ -674,15 +623,15 @@ mod tests {
             .by_id
             .insert(EXT_ID_NAMESPACE_START, "already-used".to_owned());
         assert_eq!(
-            registry.id_for("next", &HashSet::new()).unwrap(),
-            u64::from(EXT_ID_NAMESPACE_START + 1)
+            registry.id_for("next").unwrap(),
+            window_id(EXT_ID_NAMESPACE_START + 1)
         );
 
         registry.next = Some(EXT_ID_NAMESPACE_END);
         assert_eq!(
-            registry.id_for("last", &HashSet::new()).unwrap(),
-            u64::from(EXT_ID_NAMESPACE_END)
+            registry.id_for("last").unwrap(),
+            window_id(EXT_ID_NAMESPACE_END)
         );
-        assert!(registry.id_for("exhausted", &HashSet::new()).is_err());
+        assert!(registry.id_for("exhausted").is_err());
     }
 }

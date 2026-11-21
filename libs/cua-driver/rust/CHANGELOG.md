@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.56.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.3...cua-driver-rs-v0.56.4) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-driver:** restore macOS web type_text keys and unhide reopened apps ([#8434](https://github.com/trycua/cua/issues/8434)) ([ebe3d86](https://github.com/trycua/cua/commit/ebe3d867784de608adee2def1930313a8a449e80))
+
+## [0.56.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.2...cua-driver-rs-v0.56.3) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep fast-path guard state per runtime and session ([#8416](https://github.com/trycua/cua/issues/8416)) ([b7f3630](https://github.com/trycua/cua/commit/b7f363051d5ab4c17d3bae54d6c9bc5b93848172))
+
 ## [0.56.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.1...cua-driver-rs-v0.56.2) (2026-11-21)
 
 

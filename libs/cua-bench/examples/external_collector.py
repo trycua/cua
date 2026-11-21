@@ -51,7 +51,9 @@ def emit_events() -> None:
                         "payload": payload,
                     },
                 },
-                ensure_ascii=False,
+                # ASCII JSON is valid UTF-8 regardless of the producer's locale.
+                # json.loads restores the original Unicode payload in the parent.
+                ensure_ascii=True,
             ),
             flush=True,
         )

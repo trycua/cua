@@ -1,4 +1,10 @@
 {
   "title": "Guides",
-  "pages": ["benchmarks", "write-a-task", "adapter-benchmarks", "record-external-events"]
+  "pages": [
+    "benchmarks",
+    "write-a-task",
+    "adapter-benchmarks",
+    "record-external-events",
+    "experimental-live-traces"
+  ]
 }

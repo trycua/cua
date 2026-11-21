@@ -5,7 +5,6 @@ import atexit
 import sys
 from importlib import metadata as _metadata
 
-from .commands._help import examples
 from .commands import (
     agent,
     dataset,
@@ -19,6 +18,7 @@ from .commands import (
     task,
     trace,
 )
+from .commands._help import examples
 
 # Telemetry imports
 try:
@@ -127,6 +127,16 @@ def build_parser() -> argparse.ArgumentParser:
     # Shared arguments for task and dataset subcommands
     def add_common_run_args(parser):
         """Agent, target and output arguments shared by task and dataset."""
+        parser.add_argument(
+            "--live-trace",
+            action="store_true",
+            help="Also write a live trace bundle for each episode",
+        )
+        parser.add_argument(
+            "--trace-only",
+            action="store_true",
+            help="Write only a disk trace bundle; disable legacy dataset and ATIF exports",
+        )
         parser.add_argument("--agent", help="Agent to use for evaluation (e.g., cua-agent)")
         parser.add_argument(
             "--agent-import-path",
@@ -386,6 +396,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--trace-out",
         dest="trace_out",
         help="Record a trace and save it as a dataset to this path on exit",
+    )
+    interact_parser.add_argument(
+        "--trace-bundle",
+        help="Write a live trace bundle to a new directory (view with cb trace view --follow)",
     )
     interact_parser.add_argument(
         "--view", action="store_true", help="Open the trace viewer when done"

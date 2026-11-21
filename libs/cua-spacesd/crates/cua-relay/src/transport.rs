@@ -55,6 +55,7 @@ pub(super) async fn connect(
                 Some(after) if response.status() == StatusCode::SERVICE_UNAVAILABLE => {
                     SessionEnd::Throttled(after)
                 }
+                _ if response.status() == StatusCode::UNAUTHORIZED => SessionEnd::Unauthorized,
                 _ => SessionEnd::Refused(format!("HTTP {}", response.status())),
             },
             tungstenite::Error::Tls(_) => lost("origin TLS failed"),

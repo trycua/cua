@@ -13,6 +13,6 @@
     "@trycua/cua": "file:../../../libs/cua/typescript"
   },
   "devDependencies": {
-    "playwright": "1.63.0"
+    "playwright": "1.65.1"
   }
 }

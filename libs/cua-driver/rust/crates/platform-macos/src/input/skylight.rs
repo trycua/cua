@@ -141,6 +141,16 @@ pub struct WindowKeyScope {
     /// The app's on-screen windows before priming, front to back.
     order_before: Vec<u32>,
     primed: KeyPrime,
+    /// Held for apps that route keys only while AppKit-active (GTK 3); it
+    /// drops after key is handed back.
+    activation: Option<crate::input::appkit_activation::ActivationLease>,
+}
+
+impl WindowKeyScope {
+    /// Keep `lease` for as long as this scope holds the window key.
+    pub fn hold_activation(&mut self, lease: crate::input::appkit_activation::ActivationLease) {
+        self.activation = Some(lease);
+    }
 }
 
 /// The window key goes back to. Normally the previous key window. LibreOffice
@@ -357,6 +367,7 @@ pub fn enter_exact_window_key(pid: pid_t, target_wid: u32) -> Result<WindowKeySc
         previous,
         order_before,
         primed,
+        activation: None,
     })
 }
 
@@ -1571,6 +1582,8 @@ pub fn with_foreground_hid_activation(
         if prev_ok {
             unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
         }
+        // The raise above may still have covered the agent cursor's overlay.
+        crate::cursor::overlay::request_repin();
         anyhow::bail!(
             "exact target window did not become focused for foreground HID delivery{}",
             focus_failure_hint(target_pid, target_wid)
@@ -1583,6 +1596,8 @@ pub fn with_foreground_hid_activation(
     if prev_ok {
         unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
     }
+    // The raise put the target window over the agent cursor's overlay.
+    crate::cursor::overlay::request_repin();
 
     result
 }

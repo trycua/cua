@@ -16,6 +16,7 @@
 //   slider         — Slider drives drag / set_value (slider_value=)
 //   checkable_controls — Toggle(.checkbox) (agreed=)
 //   context_menu   — Button + .contextMenu (Cut/Copy/Paste → menu_action=)
+//   menu_button    — Menu, an AXMenuButton (New Item/New Note → menu_create=)
 //   scroll_target  — ScrollView with a tall body and offset label
 //   popover        — sheet/popover (SwiftUI's analogue of XAML Popup)
 //   exit           — Button terminates the app
@@ -44,6 +45,9 @@ let kCheckboxAID = "chk-agree"
 let kCheckStateAID = "lbl-chk-state"
 let kContextButtonAID = "btn-context"
 let kMenuActionAID = "lbl-menu-action"
+let kMenuButtonAID = "menu-create"
+let kMenuItemAID = "menu-create-item"
+let kMenuCreateAID = "lbl-menu-create"
 let kScrollerAID = "scroll-tall"
 let kScrollOffsetAID = "lbl-scroll-offset"
 let kScrollTopMarker = "SCROLL_TOP_MARKER_v1"
@@ -95,6 +99,7 @@ struct HarnessRootView: View {
     @State private var sliderValue = 0.0
     @State private var agreed = false
     @State private var menuAction = "none"
+    @State private var menuCreate = "none"
     @State private var scrollOffset = 0
 
     private func recordClick(_ action: String) {
@@ -185,6 +190,22 @@ struct HarnessRootView: View {
                     Text("menu_action=\(menuAction)")
                         .font(.system(.body, design: .monospaced))
                         .accessibilityIdentifier(kMenuActionAID)
+                }
+
+                // menu_button — a SwiftUI Menu (AXMenuButton). Pressing it opens
+                // a menu SwiftUI publishes into the window's AX tree.
+                section("menu_button")
+                HStack(spacing: 12) {
+                    Menu("Create") {
+                        Button("New Item") { menuCreate = "New Item" }
+                            .accessibilityIdentifier(kMenuItemAID)
+                        Button("New Note") { menuCreate = "New Note" }
+                    }
+                    .accessibilityIdentifier(kMenuButtonAID)
+                    .frame(width: 120)
+                    Text("menu_create=\(menuCreate)")
+                        .font(.system(.body, design: .monospaced))
+                        .accessibilityIdentifier(kMenuCreateAID)
                 }
 
                 // scroll_target — tall ScrollView; offset tracked via GeometryReader.

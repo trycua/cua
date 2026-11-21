@@ -136,6 +136,7 @@ $tests = @(
     "standalone_browser_stale_ref",
     "standalone_browser_trust_gated_dom_click",
     "standalone_browser_trusted_click",
+    "standalone_browser_trusted_click_covered_ref",
     "standalone_browser_upload",
     "standalone_browser_window_collision"
 )

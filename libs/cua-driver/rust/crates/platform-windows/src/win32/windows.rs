@@ -22,8 +22,9 @@
 
 use std::collections::HashSet;
 use std::sync::Mutex;
+use windows::core::BOOL;
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT, TRUE};
+use windows::Win32::Foundation::{HWND, LPARAM, RECT, TRUE};
 use windows::Win32::Graphics::Dwm::{
     DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
 };
@@ -89,8 +90,7 @@ fn merge_top_level_windows(
 fn top_level_handles() -> Vec<u64> {
     let mut handles = Vec::new();
     let mut after = HWND::default();
-    while let Ok(next) =
-        unsafe { FindWindowExW(HWND::default(), after, PCWSTR::null(), PCWSTR::null()) }
+    while let Ok(next) = unsafe { FindWindowExW(None, Some(after), PCWSTR::null(), PCWSTR::null()) }
     {
         if next.0.is_null() {
             break;
@@ -179,7 +179,7 @@ fn exact_window_from_probe(
 /// Return the native owner of one exact HWND without enumerating Win32 or UIA.
 pub(crate) fn window_owner_pid(hwnd: u64) -> Option<u32> {
     let hwnd = HWND(hwnd as *mut _);
-    if hwnd.0.is_null() || !unsafe { IsWindow(hwnd) }.as_bool() {
+    if hwnd.0.is_null() || !unsafe { IsWindow(Some(hwnd)) }.as_bool() {
         return None;
     }
     let mut pid = 0;
@@ -191,21 +191,33 @@ pub(crate) fn window_owner_pid(hwnd: u64) -> Option<u32> {
 struct PostActionForegroundRelation {
     exact_match: bool,
     target_identity_live: bool,
-    target_gone: bool,
+    target_dismissed: bool,
     actual_live: bool,
     actual_visible: bool,
     same_pid: bool,
     ownership_reaches_target: bool,
     actual_is_prior_owner: bool,
+    click_dismissed_unowned_target: bool,
 }
 
 fn post_action_foreground_allowed(relation: PostActionForegroundRelation) -> bool {
-    relation.actual_live
-        && relation.actual_visible
-        && relation.same_pid
-        && ((relation.target_identity_live
-            && (relation.exact_match || relation.ownership_reaches_target))
-            || (relation.target_gone && relation.actual_is_prior_owner))
+    relation.click_dismissed_unowned_target
+        || (relation.actual_live
+            && relation.actual_visible
+            && relation.same_pid
+            && ((relation.target_identity_live
+                && (relation.exact_match || relation.ownership_reaches_target))
+                || (relation.target_dismissed && relation.actual_is_prior_owner)))
+}
+
+/// A dismissed target is destroyed, or, after a click, is the same window and
+/// now hidden: a common dialog hides itself on OK or Save and is destroyed only
+/// later.
+fn target_dismissed(current_pid: Option<u32>, snapshot_pid: u32, hidden: bool) -> bool {
+    match current_pid {
+        None => true,
+        Some(pid) => pid == snapshot_pid && hidden,
+    }
 }
 
 fn owner_chain_reaches_target(
@@ -263,6 +275,24 @@ pub(crate) fn foreground_matches_target_or_owned_window(
     target: ForegroundTarget,
     actual: u64,
 ) -> bool {
+    foreground_matches(target, actual, false)
+}
+
+/// [`foreground_matches_target_or_owned_window`] after a click, which may also
+/// dismiss the owned modal by hiding it. A click that destroys or hides an
+/// unowned target leaves no owner for the foreground to return to, so Windows
+/// may activate any window; the dismissal is the click's observed effect.
+pub(crate) fn foreground_after_click_matches(target: ForegroundTarget, actual: u64) -> bool {
+    foreground_matches(target, actual, true)
+}
+
+/// Whether `hwnd` is destroyed or hidden.
+pub(crate) fn window_closed_or_hidden(hwnd: u64) -> bool {
+    let native = HWND(hwnd as *mut _);
+    !unsafe { IsWindow(Some(native)) }.as_bool() || !unsafe { IsWindowVisible(native) }.as_bool()
+}
+
+fn foreground_matches(target: ForegroundTarget, actual: u64, after_click: bool) -> bool {
     let current_target_pid = window_owner_pid(target.hwnd);
     let actual_pid = window_owner_pid(actual);
     let actual_hwnd = HWND(actual as *mut _);
@@ -275,15 +305,22 @@ pub(crate) fn foreground_matches_target_or_owned_window(
             (!owner.0.is_null()).then_some(owner.0 as usize as u64)
         });
 
+    let target_dismissed = target_dismissed(
+        current_target_pid,
+        target.pid,
+        after_click && !unsafe { IsWindowVisible(HWND(target.hwnd as *mut _)) }.as_bool(),
+    );
+
     post_action_foreground_allowed(PostActionForegroundRelation {
         exact_match: target.hwnd == actual,
         target_identity_live: current_target_pid == Some(target.pid),
-        target_gone: current_target_pid.is_none(),
+        target_dismissed,
         actual_live: actual_pid.is_some(),
         actual_visible,
         same_pid: actual_pid == Some(target.pid),
         ownership_reaches_target,
         actual_is_prior_owner: target.owner == Some(actual),
+        click_dismissed_unowned_target: after_click && target_dismissed && target.owner.is_none(),
     })
 }
 
@@ -508,7 +545,7 @@ pub fn resolve_uwp_host_window(app_pid: u32) -> Option<WindowInfo> {
             found: false,
         };
         let _ = EnumChildWindows(
-            hwnd,
+            Some(hwnd),
             Some(child_cb),
             LPARAM(&mut child_scan as *mut ChildScan as isize),
         );
@@ -572,7 +609,9 @@ pub fn resolve_uwp_host_window(app_pid: u32) -> Option<WindowInfo> {
 /// need for attribution.
 pub fn resolve_uwp_app_pid(host_pid: u32, frame_hwnd: u64) -> Option<u32> {
     let frame = HWND(frame_hwnd as *mut _);
-    if unsafe { IsWindow(frame) }.0 == 0 || window_class_name(frame) != "ApplicationFrameWindow" {
+    if unsafe { IsWindow(Some(frame)) }.0 == 0
+        || window_class_name(frame) != "ApplicationFrameWindow"
+    {
         return None;
     }
 
@@ -607,7 +646,7 @@ pub fn resolve_uwp_app_pid(host_pid: u32, frame_hwnd: u64) -> Option<u32> {
     };
     unsafe {
         let _ = EnumChildWindows(
-            frame,
+            Some(frame),
             Some(child_cb),
             LPARAM(&mut scan as *mut ChildScan as isize),
         );
@@ -615,12 +654,31 @@ pub fn resolve_uwp_app_pid(host_pid: u32, frame_hwnd: u64) -> Option<u32> {
     scan.app_pid
 }
 
+/// The packaged app a frame hosts, for capability-manifest identity.
+///
+/// Only the system's own `ApplicationFrameHost.exe` is trusted to host apps,
+/// so another process cannot borrow an app's identity by giving its own
+/// window the frame class and reparenting that app's window under it.
+pub(crate) fn hosted_app_pid(host_pid: u32, frame_hwnd: u64) -> Option<u32> {
+    let host = crate::history::process_executable_path(host_pid)?;
+    let trusted = crate::browser_platform::system_directory_path()
+        .ok()?
+        .join("ApplicationFrameHost.exe");
+    if !host
+        .to_string_lossy()
+        .eq_ignore_ascii_case(&trusted.to_string_lossy())
+    {
+        return None;
+    }
+    resolve_uwp_app_pid(host_pid, frame_hwnd)
+}
+
 #[cfg(test)]
 mod exact_window_tests {
     use super::{
         exact_window_from_probe, lookup_window_for_pid_with, merge_top_level_windows,
-        owner_chain_reaches_target, post_action_foreground_allowed, PidWindowLookup,
-        PostActionForegroundRelation, WindowInfo,
+        owner_chain_reaches_target, post_action_foreground_allowed, target_dismissed,
+        PidWindowLookup, PostActionForegroundRelation, WindowInfo,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -712,12 +770,13 @@ mod exact_window_tests {
         PostActionForegroundRelation {
             exact_match,
             target_identity_live: true,
-            target_gone: false,
+            target_dismissed: false,
             actual_live: true,
             actual_visible: true,
             same_pid,
             ownership_reaches_target,
             actual_is_prior_owner: false,
+            click_dismissed_unowned_target: false,
         }
     }
 
@@ -754,7 +813,7 @@ mod exact_window_tests {
     fn dismissed_owned_modal_may_return_to_its_snapshotted_owner_only() {
         let mut dismissed = relation(false, true, false);
         dismissed.target_identity_live = false;
-        dismissed.target_gone = true;
+        dismissed.target_dismissed = true;
         dismissed.actual_is_prior_owner = true;
         assert!(post_action_foreground_allowed(dismissed));
 
@@ -764,6 +823,26 @@ mod exact_window_tests {
         dismissed.actual_is_prior_owner = true;
         dismissed.same_pid = false;
         assert!(!post_action_foreground_allowed(dismissed));
+    }
+
+    #[test]
+    fn click_that_dismisses_an_unowned_target_accepts_any_foreground() {
+        let mut closed = relation(false, false, false);
+        closed.target_identity_live = false;
+        closed.target_dismissed = true;
+        closed.actual_live = false;
+        closed.actual_visible = false;
+        assert!(!post_action_foreground_allowed(closed));
+        closed.click_dismissed_unowned_target = true;
+        assert!(post_action_foreground_allowed(closed));
+    }
+
+    #[test]
+    fn destroyed_or_hidden_same_target_counts_as_dismissed() {
+        assert!(target_dismissed(None, 42, false));
+        assert!(target_dismissed(Some(42), 42, true));
+        assert!(!target_dismissed(Some(42), 42, false));
+        assert!(!target_dismissed(Some(43), 42, true));
     }
 
     #[test]
@@ -836,7 +915,7 @@ mod hung_window_tests {
                 300,
                 None,
                 None,
-                instance,
+                Some(instance.into()),
                 None,
             )
             .expect("create hung window");

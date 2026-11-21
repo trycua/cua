@@ -57,6 +57,25 @@ pub enum VmmError {
     #[error("invalid request: {0}")]
     Invalid(String),
 
+    /// The backend refused the request's arguments (Lume's own check of a
+    /// pull's arguments): unlike [`VmmError::Invalid`], it fails the same
+    /// way on every host, so no other machine is tried.
+    #[error("{0}")]
+    Refused(String),
+
+    /// Lume pulls by tag, and `tag` named `got` at the pull, not `want`,
+    /// the digest the base is named for. Whether that is the caller's to
+    /// fix depends on where `want` came from: a digest the user pinned is
+    /// refused, one the create resolved moments earlier is a race a retry
+    /// wins. `note` says what became of the pulled base.
+    #[error("{tag} named {got} when Lume pulled it, not {want}{note}")]
+    DigestMoved {
+        tag: String,
+        want: String,
+        got: String,
+        note: String,
+    },
+
     /// The instance did not become ready (running + probes) in time.
     #[error("sandbox '{name}' was not ready after {secs}s: {detail}")]
     Timeout {

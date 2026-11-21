@@ -91,6 +91,19 @@ export class NotificationsModel {
     await this.poll();
   }
 
+  /** Deletes these entries for good (every app that reads the feed loses them). */
+  async deleteEntries(ids: string[]): Promise<void> {
+    if (!ids.length) return;
+    await this.call("notifications_delete", { ids });
+    await this.poll();
+  }
+
+  /** Deletes every entry. */
+  async deleteAll(): Promise<void> {
+    await this.call("notifications_delete", { ids: [], all: true });
+    await this.poll();
+  }
+
   /** The Space entry `id` is about, if any (the daemon's `space`). */
   spaceOf(id: string): string | null {
     return this.spaces.get(id) ?? null;

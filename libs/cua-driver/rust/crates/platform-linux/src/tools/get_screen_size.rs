@@ -58,10 +58,10 @@ impl Tool for GetScreenSizeTool {
                 return Ok((frame.width, frame.height, frame.scale, Some(monitors)));
             }
             if crate::wayland::is_wayland() {
-                // KWin: its logical layout, the frame desktop capture and
-                // input use. The scale is the largest output's, like the frame
-                // get_desktop_state reports.
-                if let Some((frame, monitors)) = crate::wayland::kwin_layout::screen_report()? {
+                // KWin and Mutter: the logical layout, the frame desktop
+                // capture and input use. The scale is the largest output's,
+                // like the frame get_desktop_state reports.
+                if let Some((frame, monitors)) = crate::wayland::logical_layout::screen_report()? {
                     return Ok((frame.width, frame.height, frame.scale, Some(monitors)));
                 }
             }

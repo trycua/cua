@@ -110,7 +110,7 @@
         },
         {
           "path": "apps/rillwatch-cases/package-lock.json",
-          "sha256": "e0f4828cc0b932d4df4e05eeefaee0edae9224f117558c736b26104d83222464"
+          "sha256": "037aba23f7a9d19630a2220b6bbf1aeea2d1c852c7ac9d28515366803d694e89"
         },
         {
           "path": "apps/rillwatch-cases/renderer/index.html",
@@ -146,7 +146,7 @@
         },
         {
           "path": "apps/margin-lantern-manual/package-lock.json",
-          "sha256": "cfb9e0d519c95d25e5dcd4394e2012788e7c91c7dd9ba671468ff3546b622a18"
+          "sha256": "b1c199f35bdbaa763b2a3ec425728c15529c92785bbb9c9324d50bcb978242a0"
         },
         {
           "path": "apps/margin-lantern-manual/renderer/index.html",

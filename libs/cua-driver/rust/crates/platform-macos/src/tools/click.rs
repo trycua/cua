@@ -11,6 +11,8 @@
 //!   - AXTextField / AXTextArea inside web content (AXWebArea): wait for DOM focus
 //!     (event driven, capped at 800 ms by `CUA_DRIVER_WEBKIT_SETTLE_MS`). Native text inputs return without it.
 //!   - AXPopUpButton: appends the list of available options and redirects to set_value.
+//!   - AXMenuButton / AXPopUpButton with no menu in the tree: waits (up to 1 s)
+//!     until the menu the press opens is, so the next snapshot sees it.
 //!   - Advertised-action warning if the element didn't list the requested action.
 //!
 //! * **Pixel path** (`x`, `y`): synthesises CGEvent mouse clicks and posts them to
@@ -40,6 +42,29 @@ use cua_driver_core::security_prompt::PromptInput;
 
 use super::pixel_route::PixelClickRoute;
 use super::ToolState;
+
+#[derive(Debug)]
+struct ObservedIdentityChanged;
+impl std::fmt::Display for ObservedIdentityChanged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(cua_driver_core::element_token::STALE_TOKEN_ERROR)
+    }
+}
+impl std::error::Error for ObservedIdentityChanged {}
+
+fn ensure_observed_identity(element: &crate::ax::snapshot::RetainedElement) -> anyhow::Result<()> {
+    if !element.observed_identity_is_current() {
+        anyhow::bail!(ObservedIdentityChanged);
+    }
+    Ok(())
+}
+
+fn identity_refusal() -> ToolResult {
+    let message = cua_driver_core::element_token::STALE_TOKEN_ERROR;
+    ToolResult::error(message).with_structured(serde_json::json!({
+        "status": "refused", "refusal": { "code": "stale_element_token", "message": message }
+    }))
+}
 
 pub struct ClickTool {
     state: Arc<ToolState>,
@@ -136,6 +161,91 @@ const SELECTION_READBACK_TIMEOUT: std::time::Duration = std::time::Duration::fro
 const SELECTION_READBACK_POLL: std::time::Duration = std::time::Duration::from_millis(25);
 const SELECTION_READBACK_SETTLE: std::time::Duration = std::time::Duration::from_millis(200);
 const SELECTION_READBACK_STABILITY: std::time::Duration = std::time::Duration::from_millis(250);
+/// How long a menu-opening press waits for its menu to reach the AX tree.
+const MENU_OPEN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1000);
+/// The longest one AX read of the menu wait may block an unresponsive app.
+const MENU_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Whether `ax_action` on `role` opens a menu that belongs to the element: a
+/// SwiftUI `Menu` (AXMenuButton) or an AppKit popup button publishes it beside
+/// or under the control. A menu bar item keeps its menu in the tree while
+/// closed, and a context menu (AXShowMenu on any other role) belongs to no
+/// element, so neither is waited for.
+fn opens_menu(ax_action: &str, role: &str) -> bool {
+    matches!(ax_action, "AXPress" | "AXShowMenu")
+        && matches!(role, "AXMenuButton" | "AXPopUpButton")
+}
+
+/// Whether `shows_menu` reports a menu before `timeout` (#6082). Returns as
+/// soon as it does; a press that opens nothing costs the full timeout.
+/// `shows_menu` gets the deadline and must not read past it.
+fn menu_appeared(
+    mut shows_menu: impl FnMut(std::time::Instant) -> bool,
+    timeout: std::time::Duration,
+    poll: std::time::Duration,
+) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if shows_menu(deadline) {
+            return true;
+        }
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return false;
+        }
+        std::thread::sleep(poll.min(left));
+    }
+}
+
+/// Whether an AXMenu holding at least one item is among `element`'s children
+/// or its siblings. SwiftUI publishes a `Menu`'s open menu in both places;
+/// AppKit puts it under the popup button or menu bar item. Each read is
+/// capped at `MENU_READ_TIMEOUT` and none starts after `deadline`, so an app
+/// that stops answering cannot hold the caller past it.
+unsafe fn menu_beside(element: AXUIElementRef, deadline: std::time::Instant) -> bool {
+    use crate::ax::bindings::AXUIElementSetMessagingTimeout;
+    let left = || deadline.saturating_duration_since(std::time::Instant::now());
+    // Caps `node`'s next read at what is left of the budget; false, and no
+    // read, once none is.
+    let bound = |node: AXUIElementRef| {
+        let budget = left();
+        !budget.is_zero()
+            && unsafe {
+                AXUIElementSetMessagingTimeout(node, budget.min(MENU_READ_TIMEOUT).as_secs_f32())
+            } == kAXErrorSuccess
+            && !left().is_zero()
+    };
+    let mut nodes = Vec::new();
+    if bound(element) {
+        nodes = copy_children(element);
+        if bound(element) {
+            if let Some(parent) = copy_element_attr(element, "AXParent") {
+                if bound(parent) {
+                    nodes.extend(copy_children(parent));
+                }
+                CFRelease(parent as CFTypeRef);
+            }
+        }
+    }
+    // The element is the snapshot's; give it the walker's bound back.
+    let _ = AXUIElementSetMessagingTimeout(element, crate::ax::tree::AX_MESSAGING_TIMEOUT_SECONDS);
+    let mut found = false;
+    for node in nodes {
+        if !found
+            && bound(node)
+            && copy_string_attr(node, "AXRole").as_deref() == Some("AXMenu")
+            && bound(node)
+        {
+            let items = copy_children(node);
+            found = !items.is_empty();
+            for item in items {
+                CFRelease(item as CFTypeRef);
+            }
+        }
+        CFRelease(node as CFTypeRef);
+    }
+    found
+}
 
 /// AXPress on a radio button or checkbox that advertises it: a press whose
 /// effect the control's own AXValue shows.
@@ -162,6 +272,72 @@ fn press_error_may_have_acted(err: crate::ax::bindings::AXError) -> bool {
 /// turning off was another radio's press).
 fn toggle_press_shows(role: &str, before: &str, now: &str) -> bool {
     now != before && (role != "AXRadioButton" || now == "1")
+}
+
+/// Finder's AXOpen on a folder icon navigates the window, destroying the icon,
+/// and returns -25205 although it ran. Count that error only when, before
+/// `timeout`, the element no longer exists and the window title moved away
+/// from `before`; return the new title.
+fn replaced_element_title(
+    err: crate::ax::bindings::AXError,
+    before: &str,
+    mut element_gone: impl FnMut() -> bool,
+    mut window_title: impl FnMut() -> Option<String>,
+    timeout: std::time::Duration,
+    poll: std::time::Duration,
+) -> Option<String> {
+    if err != crate::ax::bindings::kAXErrorAttributeUnsupported {
+        return None;
+    }
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if element_gone() {
+            if let Some(now) = window_title().filter(|now| now != before) {
+                return Some(now);
+            }
+        }
+        std::thread::sleep(poll.min(deadline.saturating_duration_since(std::time::Instant::now())));
+    }
+    None
+}
+
+/// The element's window and its title, read right before an AXOpen.
+/// `element` must be a valid (retained) `AXUIElementRef`.
+pub(super) unsafe fn window_before_open(
+    element: AXUIElementRef,
+) -> Option<(crate::ax::snapshot::RetainedElement, String)> {
+    let window = copy_element_attr(element, "AXWindow")?;
+    let retained = crate::ax::snapshot::RetainedElement::retain(window as usize);
+    // Short reads, here and in the poll after the action.
+    let _ = crate::ax::bindings::AXUIElementSetMessagingTimeout(window, 0.1);
+    let title = copy_string_attr(window, "AXTitle");
+    CFRelease(window as CFTypeRef);
+    Some((retained, title?))
+}
+
+/// After AXOpen on `element` returned `err`: the window's new title when the
+/// open replaced its own element (see `replaced_element_title`).
+pub(super) unsafe fn replaced_by_open(
+    element: AXUIElementRef,
+    err: crate::ax::bindings::AXError,
+    window: &crate::ax::snapshot::RetainedElement,
+    before: &str,
+) -> Option<String> {
+    use crate::ax::bindings::AXUIElementSetMessagingTimeout;
+    let window = window.as_ptr() as AXUIElementRef;
+    // Short reads keep the poll near its 800 ms budget; the element then gets
+    // the walker's bound back.
+    let _ = AXUIElementSetMessagingTimeout(element, 0.1);
+    let now = replaced_element_title(
+        err,
+        before,
+        || crate::ax::bindings::element_destroyed(element),
+        || copy_string_attr(window, "AXTitle"),
+        std::time::Duration::from_millis(800),
+        std::time::Duration::from_millis(50),
+    );
+    let _ = AXUIElementSetMessagingTimeout(element, crate::ax::tree::AX_MESSAGING_TIMEOUT_SECONDS);
+    now
 }
 
 /// The value `read` returns when, before `timeout`, it satisfies `shows` and
@@ -326,7 +502,7 @@ fn def() -> &'static ToolDef {
             - element_token: AX action path. Tokens are scoped to (pid, window_id) and stale once the window is snapshotted again.\n\
             - x, y: window-local pixels of the get_window_state screenshot, sent as CGEvent mouse events. Needs a visible window. `modifier` takes cmd/shift/option/ctrl.\n\
             \n\
-            `button` defaults to left; on the AX path \"right\" maps to AXShowMenu and \"middle\" falls back to a pixel click at the element center. `action`: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui; an element listing showalternateui reveals its hover-only controls with show_alternate_ui, in the background and without the pointer. `from_zoom:true` translates zoom-image pixels after a `zoom` call. Pressing a popup button opens its menu and leaves it open until an item is chosen or it is dismissed; in the background the user's front window keeps key focus meanwhile. To choose an option in one call use `set_value`. In the background a web `<select>` (Chrome, Electron) is not opened, because its menu would raise the browser window: the click is refused with `select_menu_would_raise_window`; use `set_value`.".into(),
+            `button` defaults to left; on the AX path \"right\" maps to AXShowMenu and \"middle\" falls back to a pixel click at the element center. `action`: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui; an element listing showalternateui reveals its hover-only controls with show_alternate_ui, in the background and without the pointer. `from_zoom:true` translates zoom-image pixels after a `zoom` call. Pressing a popup button opens its menu and leaves it open until an item is chosen or it is dismissed; in the background the user's front window keeps key focus meanwhile. A press on a menu button or popup button returns once its menu is in the accessibility tree (waiting up to 1 s), so the next get_window_state lists the items. To choose an option in one call use `set_value`. In the background a web `<select>` (Chrome, Electron) is not opened, because its menu would raise the browser window: the click is refused with `select_menu_would_raise_window`; use `set_value`.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             // `pid` is conditionally required — needed for window/element clicks
@@ -336,14 +512,14 @@ fn def() -> &'static ToolDef {
             // cua_driver_core::tool_schema.)
             "required": [],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it." },
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "pid":           { "type": "integer", "description": "Target process ID. Optional with element_token (it carries the pid)." },
                 "window_id":     { "type": "integer", "description": "Target window ID. Omit with element_token." },
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "capture_id": { "type": "string", "description": "Optional capture ID from get_window_state or get_desktop_state. With x,y it is consumed atomically; stale or mismatched captures are refused." },
                 "x":             { "type": "number",  "description": "X in screenshot pixels (get_window_state PNG, or get_desktop_state PNG for a desktop target)." },
                 "y":             { "type": "number",  "description": "Y in screenshot pixels from the image selected by target." },
-                "action":        { "type": "string",  "description": "AX action: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui. show_alternate_ui reveals hover-only controls on an element that lists it, without the pointer." },
+                "action":        { "type": "string",  "description": "AX action: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui; or an element's published custom_actions name or raw envelope. show_alternate_ui reveals hover-only controls on an element that lists it, without the pointer." },
                 "button":        {
                     "type": "string",
                     "enum": ["left", "right", "middle"],
@@ -561,7 +737,25 @@ impl ClickTool {
             .opt_f64("y")
             .or_else(|| args.opt_i64("y").map(|i| i as f64));
         let action = args.str_or("action", "press");
-        if let Err(error) = validate_click_action(&action, element_guard.is_some()) {
+        // Only a non-standard name needs the element's live action list, and
+        // that AX read blocks until the target answers, so it runs off the
+        // async worker.
+        let element_actions = match &element_guard {
+            Some(guard) if crate::input::ax_actions::map_action(&action).is_err() => {
+                let guard = guard.clone();
+                match tokio::task::spawn_blocking(move || unsafe {
+                    copy_action_names(guard.as_ptr() as AXUIElementRef)
+                })
+                .await
+                {
+                    Ok(names) => Some(names),
+                    Err(e) => return ToolResult::error(format!("task error: {e}")),
+                }
+            }
+            Some(_) => Some(Vec::new()),
+            None => None,
+        };
+        if let Err(error) = validate_click_action(&action, element_actions.as_deref()) {
             return ToolResult::error(format!("click: {error}"));
         }
         // Surface 5: optional `button` arg, default "left" preserves legacy behaviour.
@@ -636,8 +830,22 @@ impl ClickTool {
                 None
             };
 
+            let identity_guard = element_guard.clone();
+            let identity_current =
+                tokio::task::spawn_blocking(move || identity_guard.observed_identity_is_current())
+                    .await
+                    .unwrap_or(false);
+            if !identity_current {
+                let message = cua_driver_core::element_token::STALE_TOKEN_ERROR;
+                return ToolResult::error(message).with_structured(serde_json::json!({
+                    "status": "refused",
+                    "refusal": { "code": "stale_element_token", "message": message }
+                }));
+            }
+
             // Fast path: check the cached element against what the agent saw.
             match crate::fast_path_guard::guard_element(
+                &self.state.guard_store,
                 "click",
                 pid,
                 wid,
@@ -777,6 +985,7 @@ impl ClickTool {
                             pid as libc::pid_t,
                             wid,
                             || {
+                                ensure_observed_identity(&middle_guard)?;
                                 ensure_enabled()?;
                                 crate::input::mouse::click_at_xy_desktop_with_modifiers_preserving_cursor(
                                     prompt, cx, cy, 1, "middle", &m,
@@ -788,12 +997,14 @@ impl ClickTool {
                             pid as libc::pid_t,
                             wid,
                             || {
+                                ensure_observed_identity(&middle_guard)?;
                                 ensure_enabled()?;
                                 routed_middle_click()
                             },
                         )
                         .map(|_| ())
                     } else {
+                        ensure_observed_identity(&middle_guard)?;
                         ensure_enabled()?;
                         routed_middle_click()
                     }
@@ -805,6 +1016,7 @@ impl ClickTool {
                          (background CGEvent; not driver-verified — confirm via screenshot)."
                     ))
                     .with_structured(serde_json::json!({ "path": "cgevent", "verified": false, "effect": "unverifiable" })),
+                    Ok(Err(e)) if e.downcast_ref::<ObservedIdentityChanged>().is_some() => identity_refusal(),
                     Ok(Err(e)) => crate::security_prompt::tool_result(&e)
                         .or_else(|| super::element_disabled_error(pid, wid, &e, foreground))
                         .unwrap_or_else(|| ToolResult::error(format!("Middle-click failed: {e}"))),
@@ -908,6 +1120,7 @@ impl ClickTool {
             let selection_modifiers = modifiers.clone();
             let settle_guard = element_guard.clone();
             let prompt = PromptInput::from_args(&args);
+            let watch_page = watches_page_after_press();
             let result = focus_guard::with_focus_suppressed(
                 if foreground { None } else { Some(pid) },
                 prior_front,
@@ -919,6 +1132,7 @@ impl ClickTool {
                             let mut outcome = None;
                             let has_modifiers = !selection_modifiers.is_empty();
                             let action = || {
+                                ensure_observed_identity(&element_guard)?;
                                 outcome = Some(perform_ax_click(
                                     (element_ptr, idx),
                                     (pid, wid),
@@ -926,7 +1140,12 @@ impl ClickTool {
                                     &ck,
                                     selection_pixel,
                                     &selection_modifiers,
-                                    (foreground, prompt),
+                                    AxDelivery {
+                                        foreground,
+                                        prompt,
+                                        watch_page: false,
+                                        wait_for_menu: watch_page,
+                                    },
                                 )?);
                                 std::thread::sleep(std::time::Duration::from_millis(150));
                                 Ok(())
@@ -950,6 +1169,7 @@ impl ClickTool {
                             })?;
                             Ok((outcome, fronted))
                         } else {
+                            ensure_observed_identity(&element_guard)?;
                             perform_ax_click(
                                 (element_ptr, idx),
                                 (pid, wid),
@@ -957,10 +1177,19 @@ impl ClickTool {
                                 &ck,
                                 selection_pixel,
                                 &selection_modifiers,
-                                (false, prompt),
+                                AxDelivery {
+                                    foreground: false,
+                                    prompt,
+                                    watch_page,
+                                    wait_for_menu: watch_page,
+                                },
                             )
                             .map(|outcome| (outcome, false))
                         }
+                        .map(|(outcome, fronted)| {
+                            let suspicion = outcome.noop_suspicion();
+                            (outcome, suspicion, fronted)
+                        })
                     })
                     .await
                 },
@@ -973,13 +1202,14 @@ impl ClickTool {
 
             match result {
                 Ok(Ok((
-                    (
-                        mut msg,
+                    AxClickOutcome {
+                        summary: mut msg,
                         needs_webkit_delay,
-                        suspected_noop,
                         selection_verified,
                         selection_via_pixel,
-                    ),
+                        ..
+                    },
+                    suspicion,
                     fronted,
                 ))) => {
                     // For text inputs in web content, wait for the page to move
@@ -997,6 +1227,11 @@ impl ClickTool {
                             .await;
                         }
                     }
+                    if suspicion == Some(NoopSuspicion::BackgroundWebUnchanged)
+                        && changes.new_windows.is_empty()
+                    {
+                        msg.push_str(BACKGROUND_WEB_NOOP_NOTE);
+                    }
                     msg.push_str(&changes.result_suffix());
                     let path = if selection_via_pixel {
                         if fronted {
@@ -1010,8 +1245,11 @@ impl ClickTool {
                         "ax"
                     };
                     let structured =
-                        ax_click_structured(path, selection_verified, suspected_noop, &changes);
+                        ax_click_structured(path, selection_verified, suspicion, &changes);
                     ToolResult::text(msg).with_structured(structured)
+                }
+                Ok(Err(e)) if e.downcast_ref::<ObservedIdentityChanged>().is_some() => {
+                    identity_refusal()
                 }
                 Ok(Err(e)) => match e.downcast_ref::<crate::input::ax_actions::ElementDisabled>() {
                     Some(disabled) => {
@@ -1192,6 +1430,8 @@ impl ClickTool {
             // point, before the cursor moves (so hover cannot change the crop).
             let (screen_x, screen_y, win_local_x, win_local_y) = if let Some(wid) = window_id {
                 match crate::fast_path_guard::guard_pixel(
+                    self.state.guard_store.clone(),
+                    args.opt_str("_session_id"),
                     "click",
                     pid,
                     wid,
@@ -1274,9 +1514,10 @@ impl ClickTool {
                     && modifiers.is_empty()
             }) {
                 let focus_only = action == "focus";
+                let watch_page = watches_page_after_press();
                 let ax_result = tokio::task::spawn_blocking(move || unsafe {
                     let Some(element) = element_at_screen_position(pid, screen_x, screen_y) else {
-                        return Ok::<bool, anyhow::Error>(false);
+                        return Ok::<Option<bool>, anyhow::Error>(None);
                     };
                     // The pid-scoped hit-test can resolve an element from a
                     // same-process sibling overlapping the requested point.
@@ -1287,36 +1528,55 @@ impl ClickTool {
                         .is_some_and(|window| window.is(hit_test_wid))
                     {
                         CFRelease(element as _);
-                        return Ok(false);
+                        return Ok(None);
                     }
                     // An element that does not advertise AXPress can still
                     // accept it as a no-op. On a toolkit that drops routed
-                    // mouse events (LibreOffice's Calc cells) that no-op used
-                    // to come back as a pressed click; fall through so the
-                    // pixel route refuses instead.
+                    // mouse events (LibreOffice's Calc cells) or only takes
+                    // them while active (GTK 3) that no-op used to come back
+                    // as a pressed click; fall through to the pixel route.
                     if !focus_only
                         && !crate::ax::bindings::copy_action_names(element)
                             .iter()
                             .any(|action| action == "AXPress")
-                        && crate::input::pointer_toolkit::detect(pid)
-                            == Some(crate::input::pointer_toolkit::PointerReadingToolkit::Vcl)
+                        && matches!(
+                            crate::input::pointer_toolkit::detect(pid),
+                            Some(
+                                crate::input::pointer_toolkit::PointerReadingToolkit::Vcl
+                                    | crate::input::pointer_toolkit::PointerReadingToolkit::GdkQuartz
+                            )
+                        )
                     {
                         CFRelease(element as _);
-                        return Ok(false);
+                        return Ok(None);
                     }
+                    // `Some(unchanged)`: delivered, and whether the page of a
+                    // web press stayed the same.
                     let delivered = if focus_only {
-                        crate::input::ax_actions::focus_element(element as usize).is_ok()
+                        crate::input::ax_actions::focus_element(element as usize)
+                            .is_ok()
+                            .then_some(false)
                     } else {
+                        let page = watch_page
+                            .then(|| crate::ax::web_effect::PageProbe::before_press(pid, element))
+                            .flatten();
+                        let pressed_at = std::time::Instant::now();
                         let press = core_foundation::string::CFString::new("AXPress");
-                        AXUIElementPerformAction(element, press.as_concrete_TypeRef())
-                            == kAXErrorSuccess
+                        (AXUIElementPerformAction(element, press.as_concrete_TypeRef())
+                            == kAXErrorSuccess)
+                            .then(|| {
+                                page.is_some_and(|page| {
+                                    page.settle(pressed_at)
+                                        == crate::ax::web_effect::PageChange::Unchanged
+                                })
+                            })
                     };
                     CFRelease(element as _);
                     Ok(delivered)
                 })
                 .await;
                 match ax_result {
-                    Ok(Ok(true)) => {
+                    Ok(Ok(Some(unchanged))) => {
                         crate::cursor::overlay::send_command(
                             cursor_key.clone(),
                             cursor_overlay::OverlayCommand::ClickPulse {
@@ -1325,16 +1585,20 @@ impl ClickTool {
                             },
                         );
                         let label = if focus_only { "focused" } else { "pressed" };
-                        return ToolResult::text(format!(
-                            "✅ PX hit-test {label} the background element via AX."
-                        ))
-                        .with_structured(serde_json::json!({
-                            "path": "ax",
-                            "verified": false,
-                            "effect": "unverifiable"
-                        }));
+                        let suspicion = unchanged.then_some(NoopSuspicion::BackgroundWebUnchanged);
+                        let mut text =
+                            format!("✅ PX hit-test {label} the background element via AX.");
+                        if unchanged {
+                            text.push_str(BACKGROUND_WEB_NOOP_NOTE);
+                        }
+                        return ToolResult::text(text).with_structured(ax_click_structured(
+                            "ax",
+                            false,
+                            suspicion,
+                            &crate::window_change_detector::Changes::no_change(),
+                        ));
                     }
-                    Ok(Ok(false)) if focus_only => {
+                    Ok(Ok(None)) if focus_only => {
                         return ToolResult::error(
                             "Background PX focus is unavailable at the requested point.".to_owned(),
                         )
@@ -1356,13 +1620,36 @@ impl ClickTool {
             // requested foreground click without a window id still degrades to
             // background, matching the existing contract and result label.
             let fg = delivery_mode.is_foreground() && window_id.is_some();
+            // The AX hit-test above presses a popup's own element when AX puts
+            // it in this window (Chrome's omnibox rows). A routed event cannot.
+            if let Some(wid) = window_id.filter(|_| !fg) {
+                if let Err(refusal) =
+                    super::refuse_point_under_own_popup(pid, wid, screen_x, screen_y).await
+                {
+                    return refusal;
+                }
+            }
             // Background delivery cannot satisfy a toolkit that reads the
             // hardware pointer; refuse before any activation or dispatch.
-            let route = match super::pixel_route::resolve(pid, fg, window_id, "mouse_click").await {
-                Ok(route) => route,
-                Err(refusal) => return refusal,
+            let gesture = if button_str == "left" && modifiers.is_empty() {
+                super::pixel_route::PointerGesture::LeftClick
+            } else {
+                super::pixel_route::PointerGesture::Other
             };
-            let activation_policy = pixel_activation_policy(&button_str, fg, window_id.is_some());
+            let route =
+                match super::pixel_route::resolve(pid, fg, window_id, "mouse_click", gesture).await
+                {
+                    Ok(route) => route,
+                    Err(refusal) => return refusal,
+                };
+            // The AppKit-activated route replaces the SkyLight focus prologue:
+            // the app is made active in its own eyes, and the suppression
+            // lease still undoes any activation the click provokes.
+            let activation_policy = if route == PixelClickRoute::BackgroundAppKitActivated {
+                PixelActivationPolicy::SuppressTarget
+            } else {
+                pixel_activation_policy(&button_str, fg, window_id.is_some())
+            };
 
             // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
             // A pixel click can land on a "Sign In" button that opens a sheet
@@ -1473,6 +1760,28 @@ impl ClickTool {
                     tokio::task::spawn_blocking(move || {
                         let do_click = move || -> anyhow::Result<()> {
                             let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
+                            if let (PixelClickRoute::BackgroundAppKitActivated, Some(wid)) =
+                                (route, window_id)
+                            {
+                                let height = crate::windows::window_bounds_by_id(wid)
+                                    .map(|bounds| bounds.height)
+                                    .ok_or_else(|| {
+                                        anyhow::anyhow!("window {wid} has no frame to click in")
+                                    })?;
+                                let _lease =
+                                    crate::input::appkit_activation::ActivationLease::acquire(
+                                        pid, wid,
+                                    )
+                                    .map_err(|reason| anyhow::anyhow!(reason))?;
+                                return crate::input::appkit_activation::click(
+                                    pid,
+                                    wid,
+                                    (screen_x, screen_y),
+                                    (win_local_x, win_local_y),
+                                    height,
+                                    count,
+                                );
+                            }
                             if route == PixelClickRoute::ForegroundHid {
                                 // Warp the hardware pointer to the mapped global
                                 // point and post at the HID tap. The pointer stays
@@ -1604,17 +1913,79 @@ impl ClickTool {
 
 // ── AX click implementation (blocking) ───────────────────────────────────────
 
-/// Returns `(summary_text, needs_webkit_delay, suspected_noop,
-/// selection_verified, selection_via_pixel)`.
-///
-/// `suspected_noop` is true when the element did not advertise the action we
-/// dispatched — AXUIElementPerformAction returns success regardless, so this is
-/// the driver's only signal that the press likely did nothing. The caller turns
-/// it into `effect: "suspected_noop"` + an escalation hint so the agent crosses
-/// to the vision/pixel path instead of trusting a hollow success.
-///
+/// Why the driver suspects an AX press did nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NoopSuspicion {
+    /// The element does not advertise the action, and
+    /// `AXUIElementPerformAction` returns success regardless.
+    UnadvertisedAction,
+    /// A background press on web content left the browser window unchanged
+    /// through the settle window. Pages that act only for a focused document
+    /// (`document.hasFocus()`) ignore it; foreground delivery reaches them
+    /// (#4243).
+    BackgroundWebUnchanged,
+}
+
+/// How [`perform_ax_click`] delivers the action. `watch_page` reads a web
+/// element's browser window before a background press so the caller can tell
+/// whether the page reacted.
+struct AxDelivery {
+    foreground: bool,
+    prompt: PromptInput,
+    watch_page: bool,
+    /// Wait for the menu a menu-opening press opens; off with
+    /// `post_action_wait:"none"`.
+    wait_for_menu: bool,
+}
+
+/// What a dispatched AX click did, as far as the driver can tell.
+struct AxClickOutcome {
+    summary: String,
+    needs_webkit_delay: bool,
+    /// Set when the element did not advertise the action.
+    unadvertised: bool,
+    selection_verified: bool,
+    selection_via_pixel: bool,
+    /// The browser window of a background web press, read just before it.
+    page: Option<crate::ax::web_effect::PageProbe>,
+    pressed_at: std::time::Instant,
+}
+
+impl AxClickOutcome {
+    fn verified(summary: String, selection_via_pixel: bool) -> Self {
+        Self {
+            summary,
+            needs_webkit_delay: false,
+            unadvertised: false,
+            selection_verified: true,
+            selection_via_pixel,
+            page: None,
+            pressed_at: std::time::Instant::now(),
+        }
+    }
+
+    /// Watch the page of a background web press (blocking), and name the
+    /// suspected no-op, if any.
+    fn noop_suspicion(&self) -> Option<NoopSuspicion> {
+        if self.selection_verified {
+            return None;
+        }
+        if self.unadvertised {
+            return Some(NoopSuspicion::UnadvertisedAction);
+        }
+        let page = self.page.as_ref()?;
+        (page.settle(self.pressed_at) == crate::ax::web_effect::PageChange::Unchanged)
+            .then_some(NoopSuspicion::BackgroundWebUnchanged)
+    }
+}
+
 /// `element` is the cached AX element pointer and its snapshot index; `window`
 /// is the target (pid, window_id).
+///
+/// `unadvertised` in the outcome is set when the element did not advertise
+/// the action we dispatched: AXUIElementPerformAction returns success
+/// regardless. A background press on web content also carries a read of its
+/// browser window, so the caller can tell whether the page reacted.
 /// Whether a background AXPress needs its window to be the app's key window.
 ///
 /// A toolbar or format-bar control in a native app sends its action to the
@@ -1766,13 +2137,22 @@ fn perform_ax_click(
     cursor_key: &str,
     selection_pixel: Option<SelectionPixelTarget>,
     modifiers: &[String],
-    delivery: (bool, PromptInput),
-) -> anyhow::Result<(String, bool, bool, bool, bool)> {
+    delivery: AxDelivery,
+) -> anyhow::Result<AxClickOutcome> {
     let (element_ptr, idx) = element;
     let (pid, window_id) = window;
-    let (foreground, prompt) = delivery;
-    let ax_action = crate::input::ax_actions::map_action(action_str)?;
+    let AxDelivery {
+        foreground,
+        prompt,
+        watch_page,
+        wait_for_menu,
+    } = delivery;
     let element = element_ptr as AXUIElementRef;
+
+    // Capture advertised actions BEFORE dispatching so we can detect silent no-ops
+    // (AX returns success even when the element doesn't advertise the action).
+    let advertised = unsafe { copy_action_names(element) };
+    let ax_action = crate::ax::actions::wire_name(&advertised, action_str)?;
 
     // Check the live value immediately before dispatch. Foreground assist can
     // enable menu items that were disabled in the cached snapshot, while a
@@ -1788,10 +2168,6 @@ fn perform_ax_click(
         crate::input::ax_actions::ensure_ax_action_enabled(element_ptr, ax_action)?;
     }
 
-    // Capture advertised actions BEFORE dispatching so we can detect silent no-ops
-    // (AX returns success even when the element doesn't advertise the action).
-    let advertised = unsafe { copy_action_names(element) };
-
     let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
     let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
 
@@ -1804,14 +2180,11 @@ fn perform_ax_click(
             if let Some(selected_role) =
                 crate::input::ax_actions::select_nearest_container(element_ptr)
             {
-                return Ok((
+                return Ok(AxClickOutcome::verified(
                     format!(
                         "✅ Selected nearest {selected_role} for [{idx}] {role} \"{title}\"; \
                          confirmed AXSelected=true."
                     ),
-                    false,
-                    false,
-                    true,
                     false,
                 ));
             }
@@ -1877,16 +2250,13 @@ fn perform_ax_click(
                                     stable_peers_preserved,
                                 )
                             {
-                                return Ok((
+                                return Ok(AxClickOutcome::verified(
                                     format!(
                                         "✅ Selected nearest {selected_role} for [{idx}] {role} \
                                          \"{title}\"; AX selection write was unavailable, so a \
                                          coordinate click was delivered and confirmed by stable \
                                          AXSelected read-back."
                                     ),
-                                    false,
-                                    false,
-                                    true,
                                     true,
                                 ));
                             }
@@ -1919,11 +2289,40 @@ fn perform_ax_click(
     let toggle_before = is_toggle_press(ax_action, &role, &advertised)
         .then(read_value)
         .flatten();
+    let window_before = (ax_action == "AXOpen" && advertised.iter().any(|a| a == "AXOpen"))
+        .then(|| unsafe { window_before_open(element) })
+        .flatten();
     if !foreground {
         prime_key_window_for_background_press(pid, window_id, ax_action);
     }
+    let page = (watch_page && !foreground && ax_action == "AXPress")
+        .then(|| unsafe { crate::ax::web_effect::PageProbe::before_press(pid, element) })
+        .flatten();
+    // A control that already shows a menu gives the wait nothing to see.
+    let menu_wait = wait_for_menu && opens_menu(ax_action, &role) && {
+        let deadline = std::time::Instant::now() + MENU_OPEN_TIMEOUT;
+        unsafe { !menu_beside(element, deadline) }
+    };
+    let pressed_at = std::time::Instant::now();
     let err = unsafe { crate::ax::bindings::perform_action(element, ax_action) };
     if err != crate::ax::bindings::kAXErrorSuccess {
+        if let Some((now, before)) = window_before.as_ref().and_then(|(window, before)| {
+            unsafe { replaced_by_open(element, err, window, before) }.map(|now| (now, before))
+        }) {
+            return Ok(AxClickOutcome {
+                summary: format!(
+                    "✅ Performed AXOpen on [{idx}] {role} \"{title}\"; the element no longer \
+                     exists and the window title is now \"{now}\" (was \"{before}\"), although \
+                     the app returned AX error {err}. Take a fresh snapshot before acting again."
+                ),
+                needs_webkit_delay: false,
+                unadvertised: false,
+                selection_verified: false,
+                selection_via_pixel: false,
+                page: None,
+                pressed_at,
+            });
+        }
         // Checked before the row-selection fallback, which writes AXSelected
         // on an ancestor: a toggle whose press landed needs no other write.
         if let Some(before) = toggle_before.filter(|_| press_error_may_have_acted(err)) {
@@ -1934,15 +2333,12 @@ fn perform_ax_click(
                 SELECTION_READBACK_POLL,
                 SELECTION_READBACK_STABILITY,
             ) {
-                return Ok((
+                return Ok(AxClickOutcome::verified(
                     format!(
                         "✅ Performed {ax_action} on [{idx}] {role} \"{title}\"; AXValue is now \
                          {now} (was {before}) on two reads, although the app returned AX error \
                          {err}."
                     ),
-                    false,
-                    false,
-                    true,
                     false,
                 ));
             }
@@ -1954,14 +2350,11 @@ fn perform_ax_click(
             if let Some(selected_role) =
                 crate::input::ax_actions::select_nearest_container(element_ptr)
             {
-                return Ok((
+                return Ok(AxClickOutcome::verified(
                     format!(
                         "✅ Selected nearest {selected_role} for [{idx}] {role} \"{title}\" \
                          after AXPress returned {err}; confirmed AXSelected=true."
                     ),
-                    false,
-                    false,
-                    true,
                     false,
                 ));
             }
@@ -1970,6 +2363,25 @@ fn perform_ax_click(
     }
 
     let mut summary = format!("✅ Performed {ax_action} on [{idx}] {role} \"{title}\".");
+
+    // The app publishes the menu after the press returns; wait so a snapshot
+    // taken right after this call finds its items.
+    let menu_opened = menu_wait.then(|| {
+        menu_appeared(
+            |deadline| unsafe { menu_beside(element, deadline) },
+            MENU_OPEN_TIMEOUT,
+            SELECTION_READBACK_POLL,
+        )
+    });
+    match menu_opened {
+        Some(true) => summary.push_str(" Its menu is open in the accessibility tree."),
+        Some(false) => summary.push_str(&format!(
+            "\n⚠️ No open menu appeared in the accessibility tree within {} ms; take a fresh \
+             snapshot before choosing an item.",
+            MENU_OPEN_TIMEOUT.as_millis()
+        )),
+        None => {}
+    }
 
     // AXPopUpButton: list available options, redirect to set_value.
     if role == "AXPopUpButton" {
@@ -2012,8 +2424,8 @@ fn perform_ax_click(
 
     // Advertised-action warning: non-fatal but surfaces likely no-ops. Also the
     // machine-readable `suspected_noop` signal returned to the caller.
-    let suspected_noop = !advertised.contains(&ax_action.to_string());
-    if suspected_noop {
+    let unadvertised = !advertised.contains(&ax_action.to_string());
+    if unadvertised {
         let adv_list = if advertised.is_empty() {
             "none".into()
         } else {
@@ -2043,10 +2455,15 @@ fn perform_ax_click(
             cursor_overlay::OverlayCommand::ClickPulse { x: cx, y: cy },
         );
     }
-    let _ = pid;
-    let _ = window_id; // used by caller context
-
-    Ok((summary, needs_webkit_delay, suspected_noop, false, false))
+    Ok(AxClickOutcome {
+        summary,
+        needs_webkit_delay,
+        unadvertised,
+        selection_verified: menu_opened == Some(true),
+        selection_via_pixel: false,
+        page,
+        pressed_at,
+    })
 }
 
 #[cfg(test)]
@@ -2149,11 +2566,26 @@ mod selection_fallback_tests {
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
+/// Whether this call waits to see the page react to a background web press.
+/// `post_action_wait:"none"` asks the action to return without waiting, so the
+/// press is reported `unverifiable` instead.
+fn watches_page_after_press() -> bool {
+    cua_driver_core::post_action_wait::current()
+        != cua_driver_core::post_action_wait::PostActionWait::None
+}
+
+/// Text added to a background web press whose page did not change.
+const BACKGROUND_WEB_NOOP_NOTE: &str = "\n⚠️ The page did not change after this background press. \
+     Some web controls act only for a focused page. Check the window before retrying; if it \
+     did not react, retry with delivery_mode:\"foreground\".";
+
 /// Structured result of a dispatched AX click. AXPerformAction returning
 /// success does not confirm the on-screen effect, so `verified` stays false
 /// without a read-back and the tri-state `effect` is the signal:
-///   * suspected_noop: the element didn't advertise the action and this
-///     press opened no window, so it likely did nothing; escalate to pixel.
+///   * suspected_noop: the driver has evidence the press did nothing (see
+///     [`NoopSuspicion`]) and it opened no window. The escalation names the
+///     rung that reaches the control: a pixel click for an unadvertised
+///     action, foreground delivery for an unchanged background web page.
 ///   * unverifiable: dispatched fine, the caller verifies via screenshot.
 ///
 /// A window the previous action's detached tail saw says nothing about this
@@ -2161,16 +2593,16 @@ mod selection_fallback_tests {
 fn ax_click_structured(
     path: &str,
     selection_verified: bool,
-    suspected_noop: bool,
+    suspicion: Option<NoopSuspicion>,
     changes: &crate::window_change_detector::Changes,
 ) -> Value {
-    let suspected_noop = !selection_verified && suspected_noop && changes.new_windows.is_empty();
+    let suspicion = suspicion.filter(|_| !selection_verified && changes.new_windows.is_empty());
     let mut structured = serde_json::json!({
         "path": path,
         "verified": selection_verified,
         "effect": if selection_verified {
             "confirmed"
-        } else if suspected_noop {
+        } else if suspicion.is_some() {
             "suspected_noop"
         } else {
             "unverifiable"
@@ -2180,28 +2612,48 @@ fn ax_click_structured(
     if selection_verified {
         structured["evidence"] = serde_json::json!([{ "kind": "accessibility_readback" }]);
     }
-    if suspected_noop {
-        structured["escalation"] = serde_json::json!({
-            "recommended": "px",
-            "reason": "element does not advertise this action — the \
-                       AX press likely no-op'd. Do an element px \
-                       action: click by pixel (x,y) off the \
-                       screenshot from get_window_state."
-        });
+    match suspicion {
+        Some(NoopSuspicion::UnadvertisedAction) => {
+            structured["escalation"] = serde_json::json!({
+                "recommended": "px",
+                "reason": "element does not advertise this action — the \
+                           AX press likely no-op'd. Do an element px \
+                           action: click by pixel (x,y) off the \
+                           screenshot from get_window_state."
+            });
+        }
+        Some(NoopSuspicion::BackgroundWebUnchanged) => {
+            structured["escalation"] = serde_json::json!({
+                "recommended": "foreground",
+                "reason": "the page did not change within the settle window after \
+                           the background press; controls that act only for a focused \
+                           page ignore it. Check the window first: a press with no \
+                           visible effect (a copy, a slow request) can still have \
+                           acted. If it did not, retry with delivery_mode:\"foreground\" \
+                           if the user allows the window to come forward."
+            });
+        }
+        None => {}
     }
     structured
 }
 
 /// Check `click`'s `action` before any dispatch. Element clicks take the
-/// AX action names `map_action` knows. A pixel click also takes `focus`: the
-/// background focus rung that pixel `type_text`, `press_key` and `scroll`
-/// use to put the keyboard focus on a point (`focus_by_pixel`). It sets
-/// AXFocused on the element under the point instead of pressing it.
-fn validate_click_action(action: &str, element_target: bool) -> anyhow::Result<()> {
-    if !element_target && action == "focus" {
-        return Ok(());
+/// AX action names `map_action` knows, or a custom action the element
+/// advertises, by its `custom_actions` name or raw envelope. A pixel click
+/// also takes `focus`: the background focus rung that pixel `type_text`,
+/// `press_key` and `scroll` use to put the keyboard focus on a point
+/// (`focus_by_pixel`). It sets AXFocused on the element under the point
+/// instead of pressing it.
+fn validate_click_action(action: &str, element_actions: Option<&[String]>) -> anyhow::Result<()> {
+    let known = crate::input::ax_actions::map_action(action).map(|_| ());
+    match element_actions {
+        None if action == "focus" => Ok(()),
+        Some(advertised) if known.is_err() => {
+            crate::ax::actions::wire_name(advertised, action).map(|_| ())
+        }
+        _ => known,
     }
-    crate::input::ax_actions::map_action(action).map(|_| ())
 }
 
 #[cfg(test)]
@@ -2212,11 +2664,16 @@ mod tests {
     /// started refusing: background pixel typing into Electron depended on it.
     #[test]
     fn pixel_click_accepts_the_internal_focus_action() {
-        assert!(validate_click_action("focus", false).is_ok());
-        assert!(validate_click_action("press", false).is_ok());
-        assert!(validate_click_action("show_alternate_ui", true).is_ok());
-        assert!(validate_click_action("focus", true).is_err());
-        assert!(validate_click_action("hover", false).is_err());
+        let pixel = None;
+        let element = Some(&[][..]);
+        assert!(validate_click_action("focus", pixel).is_ok());
+        assert!(validate_click_action("press", pixel).is_ok());
+        assert!(validate_click_action("show_alternate_ui", element).is_ok());
+        assert!(validate_click_action("focus", element).is_err());
+        assert!(validate_click_action("hover", element).is_err());
+        assert!(validate_click_action("hover", pixel).is_err());
+        let paste = ["Name:Paste\nTarget:0x0\nSelector:(null)".to_owned()];
+        assert!(validate_click_action("Paste", Some(&paste[..])).is_ok());
     }
 
     fn window(window_id: u32) -> crate::window_change_detector::WindowEvent {
@@ -2228,6 +2685,8 @@ mod tests {
         }
     }
 
+    const UNADVERTISED: Option<NoopSuspicion> = Some(NoopSuspicion::UnadvertisedAction);
+
     /// A late window from the previous action must not turn this press's
     /// suspected no-op into `unverifiable` and drop the pixel escalation.
     #[test]
@@ -2237,7 +2696,7 @@ mod tests {
             earlier_new_windows: vec![window(7)],
             ..Changes::no_change()
         };
-        let r = ax_click_structured("ax", false, true, &earlier_only);
+        let r = ax_click_structured("ax", false, UNADVERTISED, &earlier_only);
         assert_eq!(r["effect"], "suspected_noop");
         assert_eq!(r["escalation"]["recommended"], "px");
         assert!(r.get("new_windows").is_none());
@@ -2247,22 +2706,120 @@ mod tests {
             new_windows: vec![window(8)],
             ..Changes::no_change()
         };
-        let r = ax_click_structured("ax", false, true, &opened_now);
+        let r = ax_click_structured("ax", false, UNADVERTISED, &opened_now);
         assert_eq!(r["effect"], "unverifiable");
         assert!(r.get("escalation").is_none());
         assert_eq!(r["new_windows"][0]["window_id"], 8);
         assert!(r.get("earlier_new_windows").is_none());
 
-        let r = ax_click_structured("ax", false, true, &Changes::no_change());
+        let r = ax_click_structured("ax", false, UNADVERTISED, &Changes::no_change());
         assert_eq!(r["effect"], "suspected_noop");
         assert!(r.get("new_windows").is_none());
-        let r = ax_click_structured("ax", false, false, &Changes::no_change());
+        let r = ax_click_structured("ax", false, None, &Changes::no_change());
         assert_eq!(r["effect"], "unverifiable");
         assert!(r.get("escalation").is_none());
-        let r = ax_click_structured("cgevent", true, true, &opened_now);
+        let r = ax_click_structured("cgevent", true, UNADVERTISED, &opened_now);
         assert_eq!(r["effect"], "confirmed");
         assert_eq!(r["evidence"][0]["kind"], "accessibility_readback");
         assert!(r.get("escalation").is_none());
+    }
+
+    /// #4243: a background press on web content that left the page unchanged
+    /// is a suspected no-op that points at foreground delivery, the rung that
+    /// reaches focus-gated controls. A window it opened lifts the suspicion.
+    #[test]
+    fn unchanged_background_web_press_escalates_to_foreground() {
+        use crate::window_change_detector::Changes;
+        let web = Some(NoopSuspicion::BackgroundWebUnchanged);
+        let r = ax_click_structured("ax", false, web, &Changes::no_change());
+        assert_eq!(r["effect"], "suspected_noop");
+        assert_eq!(r["escalation"]["recommended"], "foreground");
+        assert!(r["escalation"]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("delivery_mode:\"foreground\"")));
+
+        let opened_now = Changes {
+            new_windows: vec![window(9)],
+            ..Changes::no_change()
+        };
+        let r = ax_click_structured("ax", false, web, &opened_now);
+        assert_eq!(r["effect"], "unverifiable");
+        assert!(r.get("escalation").is_none());
+    }
+
+    /// #6082: only a press or show-menu on a control that owns its menu waits.
+    #[test]
+    fn only_menu_owning_controls_wait_for_their_menu() {
+        for role in ["AXMenuButton", "AXPopUpButton"] {
+            assert!(opens_menu("AXPress", role), "{role}");
+            assert!(opens_menu("AXShowMenu", role), "{role}");
+            assert!(!opens_menu("AXConfirm", role), "{role}");
+        }
+        assert!(!opens_menu("AXPress", "AXMenuBarItem"));
+        assert!(!opens_menu("AXPress", "AXButton"));
+        assert!(!opens_menu("AXShowMenu", "AXButton"));
+    }
+
+    /// #6082: the wait ends at the first read that shows a menu, and a press
+    /// that opens none gives up at the timeout without failing.
+    #[test]
+    fn menu_wait_returns_once_a_menu_appears() {
+        let poll = std::time::Duration::from_millis(1);
+        let mut reads = 0;
+        assert!(menu_appeared(
+            |_| {
+                reads += 1;
+                reads >= 3
+            },
+            std::time::Duration::from_secs(5),
+            poll,
+        ));
+        assert_eq!(reads, 3);
+
+        let started = std::time::Instant::now();
+        let timeout = std::time::Duration::from_millis(30);
+        assert!(!menu_appeared(|_| false, timeout, poll));
+        assert!(started.elapsed() >= timeout);
+    }
+
+    /// #6082: the wait hands every read its deadline and never sleeps past
+    /// it, so a long poll interval cannot stretch the bound.
+    #[test]
+    fn menu_wait_stays_within_its_deadline() {
+        let timeout = std::time::Duration::from_millis(30);
+        let started = std::time::Instant::now();
+        let mut deadlines = Vec::new();
+        assert!(!menu_appeared(
+            |deadline| {
+                deadlines.push(deadline);
+                false
+            },
+            timeout,
+            std::time::Duration::from_secs(5),
+        ));
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        assert!(deadlines.windows(2).all(|d| d[0] == d[1]));
+    }
+
+    /// A press the driver confirmed, or one it has no evidence against, never
+    /// reads as a no-op.
+    #[test]
+    fn noop_suspicion_needs_evidence() {
+        let outcome = |unadvertised, selection_verified| AxClickOutcome {
+            summary: String::new(),
+            needs_webkit_delay: false,
+            unadvertised,
+            selection_verified,
+            selection_via_pixel: false,
+            page: None,
+            pressed_at: std::time::Instant::now(),
+        };
+        assert_eq!(outcome(false, false).noop_suspicion(), None);
+        assert_eq!(
+            outcome(true, false).noop_suspicion(),
+            Some(NoopSuspicion::UnadvertisedAction)
+        );
+        assert_eq!(outcome(true, true).noop_suspicion(), None);
     }
 
     /// #3835: Finder's toolbar view switcher applies an AXPress and returns
@@ -2309,6 +2866,56 @@ mod tests {
             "a radio turning off was another radio's press"
         );
         assert!(!toggle_press_shows("AXRadioButton", "1", "1"));
+    }
+
+    /// Finder's AXOpen on a folder: -25205, the icon is destroyed and the
+    /// window title moves to the folder. Anything less keeps the error.
+    #[test]
+    fn an_erroring_open_counts_only_when_its_element_is_gone_and_the_window_changed() {
+        use crate::ax::bindings::{
+            kAXErrorAttributeUnsupported, kAXErrorFailure, kAXErrorInvalidUIElement,
+            kAXErrorSuccess,
+        };
+        let ms = std::time::Duration::from_millis;
+        let run = |err, gone_after: usize, after: &str, timeout| {
+            let mut reads = 0;
+            replaced_element_title(
+                err,
+                "findme",
+                || {
+                    reads += 1;
+                    reads > gone_after
+                },
+                || Some(after.to_string()),
+                timeout,
+                ms(1),
+            )
+        };
+        assert_eq!(
+            run(kAXErrorAttributeUnsupported, 3, "old", ms(5_000)),
+            Some("old".to_string())
+        );
+        // The element is still there: a real failure.
+        assert_eq!(
+            run(kAXErrorAttributeUnsupported, usize::MAX, "old", ms(30)),
+            None
+        );
+        // Gone, but the window did not change.
+        assert_eq!(run(kAXErrorAttributeUnsupported, 0, "findme", ms(30)), None);
+        // Other errors, including a stale handle's, are never reinterpreted.
+        for err in [kAXErrorInvalidUIElement, kAXErrorFailure, kAXErrorSuccess] {
+            assert_eq!(
+                replaced_element_title(
+                    err,
+                    "findme",
+                    || panic!("probed after {err}"),
+                    || panic!("probed after {err}"),
+                    ms(30),
+                    ms(1),
+                ),
+                None
+            );
+        }
     }
 
     /// An erroring toggle press counts only when the value shows the press

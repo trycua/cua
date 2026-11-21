@@ -702,10 +702,36 @@ pub fn reattach() {
     }
 }
 
-/// Serves the engine's pipe from this process until it ends: every
-/// connection is a `socat` in the distribution against Docker's socket.
-/// Another process already serving it is fine.
+/// The command run for each client of the pipe: it speaks to Docker's socket
+/// on its stdin and stdout (a `socat` in the WSL distribution, or an `ssh`
+/// into the Hyper-V VM, [`super::hyperv`]).
+pub type Dial = Arc<dyn Fn() -> tokio::process::Command + Send + Sync>;
+
+/// [`serve_pipe_with`] for this home's WSL distribution.
 pub fn serve_pipe() -> Result<()> {
+    serve_pipe_with(wsl_dial(distro()))
+}
+
+/// Every client of the pipe is a `socat` in `distro` against Docker's socket.
+pub fn wsl_dial(distro: String) -> Dial {
+    Arc::new(move || {
+        let mut c = tokio::process::Command::new("wsl.exe");
+        c.args(exec_args(
+            &distro,
+            &["socat", "-", &format!("UNIX-CONNECT:{GUEST_SOCKET}")],
+        ));
+        c.env("WSL_UTF8", "1");
+        #[cfg(windows)]
+        c.creation_flags(CREATE_NO_WINDOW);
+        c
+    })
+}
+
+/// Serves the engine's pipe from this process until it ends: every
+/// connection runs `dial`'s command against Docker's socket. Another process
+/// already serving it is fine.
+#[cfg_attr(not(windows), allow(unused_variables))]
+pub fn serve_pipe_with(dial: Dial) -> Result<()> {
     #[cfg(windows)]
     {
         use tokio::net::windows::named_pipe::ServerOptions;
@@ -728,7 +754,6 @@ pub fn serve_pipe() -> Result<()> {
                 )));
             }
         };
-        let distro = distro();
         *slot = Some(tokio::spawn(async move {
             let mut server = first;
             loop {
@@ -746,7 +771,7 @@ pub fn serve_pipe() -> Result<()> {
                         break;
                     }
                 };
-                tokio::spawn(bridge(client, distro.clone()));
+                tokio::spawn(bridge(client, dial()));
             }
         }));
         Ok(())
@@ -768,12 +793,14 @@ const MAX_BRIDGES: usize = 96;
 /// How long a bridge lets Docker finish its reply after the client went away (a
 /// named pipe has no half-close, so a client that left wants nothing more; the
 /// daemon opens ten of these a second, and each lives this long).
-#[cfg(windows)]
 const CLOSE_GRACE: std::time::Duration = std::time::Duration::from_millis(200);
 
 /// One client of the pipe to Docker's socket.
 #[cfg(windows)]
-async fn bridge(client: tokio::net::windows::named_pipe::NamedPipeServer, distro: String) {
+async fn bridge(
+    client: tokio::net::windows::named_pipe::NamedPipeServer,
+    command: tokio::process::Command,
+) {
     static LIMIT: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(MAX_BRIDGES);
     let Ok(Ok(_slot)) =
         tokio::time::timeout(std::time::Duration::from_secs(10), LIMIT.acquire()).await
@@ -781,14 +808,7 @@ async fn bridge(client: tokio::net::windows::named_pipe::NamedPipeServer, distro
         tracing::warn!("the Linux runtime's pipe has {MAX_BRIDGES} connections open; refusing one");
         return;
     };
-    let mut c = tokio::process::Command::new("wsl.exe");
-    c.args(exec_args(
-        &distro,
-        &["socat", "-", &format!("UNIX-CONNECT:{GUEST_SOCKET}")],
-    ))
-    .env("WSL_UTF8", "1")
-    .creation_flags(CREATE_NO_WINDOW);
-    bridge_with(client, c).await;
+    bridge_with(client, command).await;
 }
 
 /// Runs `command` (it speaks to Docker's socket on its stdin and stdout) for
@@ -796,8 +816,7 @@ async fn bridge(client: tokio::net::windows::named_pipe::NamedPipeServer, distro
 /// the end of its stdin on to the program in the distribution, so a client that
 /// went away must not leave it running: that leaked one `wsl.exe` per
 /// connection.
-#[cfg(windows)]
-async fn bridge_with<C>(client: C, mut command: tokio::process::Command)
+pub(crate) async fn bridge_with<C>(client: C, mut command: tokio::process::Command)
 where
     C: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin,
 {

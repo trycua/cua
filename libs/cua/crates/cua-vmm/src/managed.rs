@@ -53,6 +53,9 @@ use std::path::{Path, PathBuf};
 #[path = "managed_wsl.rs"]
 pub mod wsl;
 
+#[path = "managed_hyperv.rs"]
+pub mod hyperv;
+
 use crate::error::{Result, VmmError};
 use crate::host;
 
@@ -86,18 +89,18 @@ pub const LIMA_VERSION: &str = "2.2.0";
 /// The runtime disk's repository and pinned tag.
 pub const DISK_REPOSITORY: &str = "trycua/runtime-gvisor";
 /// The pinned tag (for people; the digests below are what is checked).
-pub const DISK_TAG: &str = "0.1.0-rc1";
+pub const DISK_TAG: &str = "0.1.0-rc2";
 /// gVisor release baked into the disk.
 pub const GVISOR_VERSION: &str = "20260921.0";
 
 /// The arm64 disk layer's digest (sha256 of the `.raw.gz`) and size.
 pub const DISK_SHA256_ARM64: &str =
-    "0fa448f22f97dc54416cff056ae82d3bb194ec8ec58dd0983440eaecb2921fa0";
-pub const DISK_SIZE_ARM64: u64 = 424_641_499;
+    "3c59ae07834ec0eba8a4d975ba1e6a988cbc50317d28c18dc4b718f7342a3ae2";
+pub const DISK_SIZE_ARM64: u64 = 424_645_618;
 /// The amd64 disk layer's digest and size.
 pub const DISK_SHA256_AMD64: &str =
-    "3f2b0446e7694417a0956c786c7de76a083fe9e3ad0794879a99d3b69044bd4a";
-pub const DISK_SIZE_AMD64: u64 = 457_760_272;
+    "1505fd0d14e86fc5a211dd18779a4541e95952b32ecef6ef88256d9c3547b254";
+pub const DISK_SIZE_AMD64: u64 = 467_981_723;
 
 /// One pinned download.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -308,7 +311,7 @@ fn instance_dir() -> PathBuf {
 /// The VM was created (it may be stopped).
 pub fn exists() -> bool {
     if cfg!(windows) {
-        return wsl::provisioned();
+        return wsl::provisioned() || hyperv::provisioned();
     }
     instance_dir().join("lima.yaml").is_file()
 }
@@ -332,7 +335,15 @@ pub fn running() -> bool {
     #[cfg(windows)]
     {
         if !wsl::pipe_exists() {
-            wsl::reattach();
+            if hyperv::provisioned() {
+                hyperv::reattach();
+                // A short-lived command (cua sb ls, cua sb exec) has no later
+                // call to find the pipe: wait for the reattach it just started
+                // (a PowerShell look at the VM, a few seconds).
+                wait_for_pipe(std::time::Duration::from_secs(25));
+            } else {
+                wsl::reattach();
+            }
         }
         wsl::pipe_exists()
     }
@@ -344,6 +355,26 @@ pub fn running() -> bool {
     {
         false
     }
+}
+
+/// Polls for the engine's pipe up to `limit`, on a multi-thread runtime only (the
+/// reattach runs as a task of the same runtime: a current-thread one would never
+/// let it run while this waits).
+#[cfg(windows)]
+fn wait_for_pipe(limit: std::time::Duration) {
+    use tokio::runtime::{Handle, RuntimeFlavor};
+    let Ok(rt) = Handle::try_current() else {
+        return;
+    };
+    if rt.runtime_flavor() != RuntimeFlavor::MultiThread {
+        return;
+    }
+    tokio::task::block_in_place(|| {
+        let end = std::time::Instant::now() + limit;
+        while !wsl::pipe_exists() && std::time::Instant::now() < end {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+    });
 }
 
 /// What the idle check finds in the runtime VM ([`idle_verdict`]).
@@ -935,8 +966,12 @@ async fn ensure_windows() -> Result<String> {
                 .fraction(f),
         )
     };
-    step("checking WSL", 0.0);
-    let registered = match wsl::probe(&w).await {
+    step("checking the Windows runtime", 0.0);
+    let wsl_probe = wsl::probe(&w).await;
+    if windows_engine(&wsl_probe).await? == hyperv::Backend::Hyperv {
+        return ensure_windows_hyperv(&step).await;
+    }
+    let registered = match wsl_probe {
         wsl::Probe::Unavailable(why) => {
             return Err(VmmError::other(format!(
                 "the built-in Linux runtime cannot run here: {why}"
@@ -989,6 +1024,71 @@ async fn ensure_windows() -> Result<String> {
     if let Some(note) = wsl::low_space_note(&root()) {
         tracing::warn!("{note}");
     }
+    Ok(endpoint())
+}
+
+/// Which engine the Windows runtime uses now ([`hyperv::Backend::Wsl`] or
+/// [`hyperv::Backend::Hyperv`], never `Auto`): the setting when it names one;
+/// otherwise the one this home already set up, else WSL 2 when it works, else
+/// Hyper-V when it does (Windows Server has no WSL 2), else WSL 2 (whose
+/// reason is the one the person is told).
+#[cfg(feature = "lume")]
+async fn windows_engine(wsl_probe: &wsl::Probe) -> Result<hyperv::Backend> {
+    use hyperv::Backend;
+    Ok(match Backend::current() {
+        Backend::Wsl => Backend::Wsl,
+        Backend::Hyperv => match hyperv::probe().await {
+            hyperv::Probe::Unavailable(why) => {
+                return Err(VmmError::other(format!(
+                    "the built-in Linux runtime is set to Hyper-V and cannot run here: {why}"
+                )));
+            }
+            hyperv::Probe::Available { .. } => Backend::Hyperv,
+        },
+        Backend::Auto => {
+            if hyperv::provisioned() {
+                Backend::Hyperv
+            } else if wsl::provisioned() || matches!(wsl_probe, wsl::Probe::Available { .. }) {
+                Backend::Wsl
+            } else if matches!(hyperv::probe().await, hyperv::Probe::Available { .. }) {
+                Backend::Hyperv
+            } else {
+                Backend::Wsl
+            }
+        }
+    })
+}
+
+/// [`ensure_windows`] on Hyper-V: this home's VM is made when it is not
+/// ([`hyperv::provision`]), started, and its pipe served.
+#[cfg(feature = "lume")]
+async fn ensure_windows_hyperv(step: &(dyn Fn(&str, f64) + Send + Sync)) -> Result<String> {
+    if let hyperv::Probe::Unavailable(why) = hyperv::probe().await {
+        return Err(VmmError::other(format!(
+            "the built-in Linux runtime cannot run here: {why}"
+        )));
+    }
+    if !hyperv::provisioned() {
+        let started = std::time::Instant::now();
+        std::fs::create_dir_all(root())?;
+        hyperv::provision(step).await?;
+        tracing::info!(
+            secs = started.elapsed().as_secs_f64(),
+            "built-in Linux runtime (Hyper-V) is set up"
+        );
+    }
+    hyperv::start_engine(step).await?;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !wsl::pipe_exists() {
+        if tokio::time::Instant::now() > deadline {
+            return Err(VmmError::other(
+                "the built-in Linux runtime's engine is up but its pipe did not open",
+            ));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let _ = std::fs::remove_file(stopped_names_file());
+    *WINDOWS_VERIFIED.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
     Ok(endpoint())
 }
 
@@ -1207,6 +1307,9 @@ pub async fn stop(names: &[String]) -> Result<()> {
         std::fs::write(stopped_names_file(), serde_json::to_vec(names)?)?;
         wsl::stop_serving();
         *WINDOWS_VERIFIED.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        if hyperv::provisioned() {
+            return hyperv::stop().await;
+        }
         wsl::terminate(&wsl::WslExe, &wsl::distro()).await;
         return Ok(());
     }
@@ -1228,8 +1331,11 @@ pub async fn remove() -> Result<()> {
     if cfg!(windows) {
         wsl::stop_serving();
         *WINDOWS_VERIFIED.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        // This home's distribution only; the user's own are never named.
+        // This home's distribution and VM only; the user's own are never named.
         wsl::unregister(&wsl::WslExe, &wsl::distro()).await;
+        if let Err(e) = hyperv::remove().await {
+            tracing::warn!("removing the built-in Linux runtime's Hyper-V VM: {e}");
+        }
     }
     if let Some(tools) = installed_tools()
         && exists()

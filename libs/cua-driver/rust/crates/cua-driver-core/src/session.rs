@@ -90,6 +90,17 @@ pub enum SessionTransport {
     McpHttp,
 }
 
+impl SessionTransport {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Cli => "cli",
+            Self::Daemon => "daemon",
+            Self::McpStdio => "mcp_stdio",
+            Self::McpHttp => "mcp_http",
+        }
+    }
+}
+
 /// Closed entry-surface category for one explicit session episode. This is
 /// deliberately independent from transport: Python and TypeScript SDKs both
 /// use the direct daemon transport, while MCP can use stdio or HTTP.
@@ -376,6 +387,30 @@ pub struct LifecycleSessionSnapshot {
     pub expires_in: Duration,
 }
 
+/// Why [`begin_session_dispatch`] did not admit a call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DispatchRefusal {
+    /// The lifecycle episode has ended and this call may not start a new one.
+    Ended,
+    /// The ended episode's cleanup has not finished yet.
+    CleanupIncomplete,
+    /// The episode is live and held by another transport, of this kind.
+    OwnedByOtherTransport(SessionTransport),
+    /// The episode is waiting for in-flight calls before it ends.
+    Ending,
+}
+
+impl DispatchRefusal {
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::Ended => "session has ended",
+            Self::CleanupIncomplete => "session cleanup is incomplete; retry the call",
+            Self::OwnedByOtherTransport(_) => "session is not available to this transport",
+            Self::Ending => "session is ending",
+        }
+    }
+}
+
 /// RAII protection for one admitted session-requiring dispatch. Idle eviction
 /// cannot end the session while this guard is alive. Dropping it refreshes the
 /// idle clock at platform-dispatch completion and completes any end that raced
@@ -421,7 +456,7 @@ pub fn begin_session_dispatch(
     implicit: bool,
     transport: SessionTransport,
     client_kind: SessionClientKind,
-) -> Result<SessionDispatchGuard, &'static str> {
+) -> Result<SessionDispatchGuard, DispatchRefusal> {
     begin_session_dispatch_inner(
         session_id,
         public_label,
@@ -442,7 +477,7 @@ pub fn begin_session_dispatch_with_ttl(
     transport: SessionTransport,
     client_kind: SessionClientKind,
     idle_ttl: Duration,
-) -> Result<SessionDispatchGuard, &'static str> {
+) -> Result<SessionDispatchGuard, DispatchRefusal> {
     begin_session_dispatch_inner(
         session_id,
         public_label,
@@ -463,11 +498,11 @@ fn begin_session_dispatch_inner(
     transport: SessionTransport,
     client_kind: SessionClientKind,
     idle_ttl: Option<Duration>,
-) -> Result<SessionDispatchGuard, &'static str> {
+) -> Result<SessionDispatchGuard, DispatchRefusal> {
     if !is_trackable(session_id) {
-        return Err("session has ended");
+        return Err(DispatchRefusal::Ended);
     }
-    // An unnamed transport session reclaimed by the idle sweep starts a new
+    // A session reclaimed by the idle sweep, named or unnamed, starts a new
     // lifecycle episode on its owner's next call instead of refusing every
     // later call, and so does a label whose owner transport has closed, for
     // any other transport, unless the label was ended with `end_session`. Its
@@ -475,7 +510,7 @@ fn begin_session_dispatch_inner(
     // and recordings from the ended episode stay retired.
     let recreate = recreates_on_next_call(session_id, owner_transport);
     if recreate && !retry_session_cleanup(session_id).complete {
-        return Err("session cleanup is incomplete; retry the call");
+        return Err(DispatchRefusal::CleanupIncomplete);
     }
     let now = Instant::now();
     let recreated = {
@@ -488,16 +523,16 @@ fn begin_session_dispatch_inner(
         let recreated = ended.contains_key(session_id);
         if recreated
             && !(recreate
-                && ((idle_ended.get(session_id) == Some(&IdleRevival::NextCall)
+                && ((idle_ended.contains(session_id)
                     && ended
                         .get(session_id)
                         .is_some_and(|owner| owner.as_deref() == Some(owner_transport)))
                     || released_to_next_call(&ended, session_id, owner_transport)))
         {
-            return Err("session has ended");
+            return Err(DispatchRefusal::Ended);
         }
         if recreated && cleanup_pending(session_id) {
-            return Err("session cleanup is incomplete; retry the call");
+            return Err(DispatchRefusal::CleanupIncomplete);
         }
         let mut records = lifecycle_records().lock().unwrap();
         let record = records
@@ -516,10 +551,10 @@ fn begin_session_dispatch_inner(
                 pending_explicit_end: false,
             });
         if record.owner_transport != owner_transport {
-            return Err("session is not available to this transport");
+            return Err(DispatchRefusal::OwnedByOtherTransport(record.transport));
         }
         if record.pending_end.is_some() {
-            return Err("session is ending");
+            return Err(DispatchRefusal::Ending);
         }
         if idle_ttl.is_some() {
             record.idle_ttl = idle_ttl;
@@ -1030,26 +1065,18 @@ fn capture_modality_for(tool_name: &str, args: &serde_json::Value) -> Option<Cap
 /// A tombstone also refuses later calls on its id, so a stray late action
 /// cannot recreate session-owned state. A `start_session` from the owner
 /// transport lifts it, and so does the owner's next call after the idle sweep
-/// reclaimed its own unnamed session. Once the owner transport has closed,
+/// reclaimed the session. Once the owner transport has closed,
 /// its labels are free: another transport's next call starts a fresh episode,
 /// except on a label ended with `end_session`, which stays refused until a
 /// `start_session` from any transport.
 static ENDED_SESSIONS: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
 /// Tombstoned sessions whose episode ended only because the idle sweep
-/// reclaimed it. They are dormant: a later explicit, transport or revoke end
-/// makes the end terminal and runs cleanup again with that reason. Mutated
-/// only while holding the `ENDED_SESSIONS` lock, and meaningful only while the
-/// matching tombstone exists.
-static IDLE_ENDED_SESSIONS: OnceLock<Mutex<HashMap<String, IdleRevival>>> = OnceLock::new();
-
-/// How a dormant session comes back.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum IdleRevival {
-    /// The transport's own unnamed session: its next call recreates it.
-    NextCall,
-    /// Only an explicit `start_session` by its owner revives it.
-    StartSession,
-}
+/// reclaimed it. They are dormant: the owner transport's next call recreates
+/// them, and a later explicit, transport or revoke end makes the end terminal
+/// and runs cleanup again with that reason. Mutated only while holding the
+/// `ENDED_SESSIONS` lock, and meaningful only while the matching tombstone
+/// exists.
+static IDLE_ENDED_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 /// Tombstoned sessions ended with `end_session` (the tool or an operator
 /// revocation) rather than by their transport closing or the idle sweep.
 /// Such a label stays refused for ordinary calls until a `start_session`,
@@ -1090,8 +1117,8 @@ fn ended_sessions() -> &'static Mutex<HashMap<String, Option<String>>> {
     ENDED_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn idle_ended_sessions() -> &'static Mutex<HashMap<String, IdleRevival>> {
-    IDLE_ENDED_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+fn idle_ended_sessions() -> &'static Mutex<HashSet<String>> {
+    IDLE_ENDED_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
 fn explicitly_ended_sessions() -> &'static Mutex<HashSet<String>> {
@@ -1199,7 +1226,7 @@ fn dormant_sessions(keep: impl Fn(&str, Option<&str>) -> bool) -> Vec<String> {
     idle_ended_sessions()
         .lock()
         .unwrap()
-        .keys()
+        .iter()
         .filter(|id| keep(id, ended.get(*id).and_then(Option::as_deref)))
         .cloned()
         .collect()
@@ -1515,20 +1542,16 @@ fn mark_session_ended(
         if explicit {
             explicitly_ended.insert(session_id.to_owned());
         }
-        if reason != SessionEndReason::IdleTimeout && idle_ended.remove(session_id).is_some() {
+        if reason != SessionEndReason::IdleTimeout && idle_ended.remove(session_id) {
             EndTransition::TerminalAfterIdle
         } else {
             EndTransition::Repeat
         }
     } else {
-        // Only the transport's own unnamed session, reclaimed for inactivity,
-        // is recreated on its next call. Named sessions keep the resurrection
-        // guard until an explicit start_session, except that a label not
-        // ended with end_session is released to other transports once its
-        // owner transport closes.
-        let next_call = record
-            .as_ref()
-            .is_some_and(|record| record.implicit && record.owner_transport == session_id);
+        // A session reclaimed for inactivity is recreated on its owner's next
+        // call. Any other end keeps the resurrection guard until an explicit
+        // start_session, except that a label not ended with end_session is
+        // released to other transports once its owner transport closes.
         ended.insert(
             session_id.to_owned(),
             owner_transport
@@ -1536,12 +1559,7 @@ fn mark_session_ended(
                 .or(record.map(|record| record.owner_transport)),
         );
         if reason == SessionEndReason::IdleTimeout {
-            let revival = if next_call {
-                IdleRevival::NextCall
-            } else {
-                IdleRevival::StartSession
-            };
-            idle_ended.insert(session_id.to_owned(), revival);
+            idle_ended.insert(session_id.to_owned());
         } else {
             idle_ended.remove(session_id);
         }
@@ -1751,7 +1769,7 @@ pub fn forget_ended_sessions_with_prefix(prefix: &str) -> usize {
     idle_ended_sessions()
         .lock()
         .unwrap()
-        .retain(|session, _| !session.starts_with(prefix));
+        .retain(|session| !session.starts_with(prefix));
     explicitly_ended_sessions()
         .lock()
         .unwrap()
@@ -1777,8 +1795,9 @@ pub fn is_session_ended(session_id: &str) -> bool {
 }
 
 /// Whether `owner_transport`'s next session-requiring call recreates the
-/// ended lifecycle id instead of being refused: the transport's own unnamed
-/// session reclaimed only by the idle sweep, or, for any other transport, a
+/// ended lifecycle id instead of being refused: a session of that transport,
+/// named or unnamed, reclaimed only by the idle sweep, or, for any other
+/// transport, a
 /// label whose owner transport has since closed and that was not ended with
 /// `end_session`. Every other ended id returns `false`, including a label
 /// ended with `end_session` (only `start_session` claims it) and every call
@@ -1788,13 +1807,10 @@ pub fn recreates_on_next_call(session_id: &str, owner_transport: &str) -> bool {
     if released_to_next_call(&ended, session_id, owner_transport) {
         return true;
     }
-    if session_id != owner_transport {
-        return false;
-    }
     ended
         .get(session_id)
         .is_some_and(|owner| owner.as_deref() == Some(owner_transport))
-        && idle_ended_sessions().lock().unwrap().get(session_id) == Some(&IdleRevival::NextCall)
+        && idle_ended_sessions().lock().unwrap().contains(session_id)
 }
 
 /// Whether termination has been requested for a runtime-private lifecycle.
@@ -2108,7 +2124,7 @@ mod tests {
     }
 
     /// One completed session-requiring call by the session's own transport.
-    fn use_session(session_id: &str) -> Result<(), &'static str> {
+    fn use_session(session_id: &str) -> Result<(), DispatchRefusal> {
         begin_session_dispatch(
             session_id,
             None,
@@ -2136,6 +2152,7 @@ mod tests {
         let args = serde_json::json!({"session": "test-session"});
         for tool_name in [
             "browser_navigate",
+            "browser_motion_policy",
             "browser_click",
             "browser_type",
             "browser_set_input_files",
@@ -2491,10 +2508,18 @@ mod tests {
         // While A is live its labels stay its own, including the one it ended.
         assert_eq!(
             begin(label, owner_b).err(),
-            Some("session is not available to this transport")
+            Some(DispatchRefusal::OwnedByOtherTransport(
+                SessionTransport::McpStdio
+            ))
         );
-        assert_eq!(begin(ended_label, owner_b).err(), Some("session has ended"));
-        assert_eq!(begin(ended_label, owner_a).err(), Some("session has ended"));
+        assert_eq!(
+            begin(ended_label, owner_b).err(),
+            Some(DispatchRefusal::Ended)
+        );
+        assert_eq!(
+            begin(ended_label, owner_a).err(),
+            Some(DispatchRefusal::Ended)
+        );
         assert_eq!(
             start(ended_label, owner_b),
             Err("session is not available to this transport")
@@ -2509,8 +2534,8 @@ mod tests {
         // A late call from the closed transport resurrects nothing, and its
         // own unnamed id is never released.
         assert!(!recreates_on_next_call(label, owner_a));
-        assert_eq!(begin(label, owner_a).err(), Some("session has ended"));
-        assert_eq!(begin(owner_a, owner_b).err(), Some("session has ended"));
+        assert_eq!(begin(label, owner_a).err(), Some(DispatchRefusal::Ended));
+        assert_eq!(begin(owner_a, owner_b).err(), Some(DispatchRefusal::Ended));
         assert_eq!(
             start(ended_label, owner_a),
             Err("session is not available to this transport"),
@@ -2531,7 +2556,7 @@ mod tests {
         // but any other transport may now restart it with start_session.
         for ended in [ended_label, pending_label] {
             assert!(!recreates_on_next_call(ended, owner_b));
-            assert_eq!(begin(ended, owner_b).err(), Some("session has ended"));
+            assert_eq!(begin(ended, owner_b).err(), Some(DispatchRefusal::Ended));
             assert!(is_session_ended(ended));
         }
         assert_eq!(start(ended_label, owner_b), Ok(true));
@@ -2541,10 +2566,12 @@ mod tests {
         // The new owner holds them like any live transport.
         assert_eq!(
             begin(label, owner_c).err(),
-            Some("session is not available to this transport")
+            Some(DispatchRefusal::OwnedByOtherTransport(
+                SessionTransport::McpStdio
+            ))
         );
         assert!(end_session_for_owner(label, owner_b));
-        assert_eq!(begin(label, owner_c).err(), Some("session has ended"));
+        assert_eq!(begin(label, owner_c).err(), Some(DispatchRefusal::Ended));
         assert_eq!(
             end_sessions_for_owner(owner_b, SessionEndReason::ProcessExit),
             2
@@ -2774,11 +2801,13 @@ mod tests {
         // Forgetting A loosens nothing: its own unnamed id and its late calls
         // stay refused.
         assert!(is_session_ended(owner_a));
-        assert_eq!(begin(owner_a, owner_b).err(), Some("session has ended"));
-        assert_eq!(begin(owner_a, owner_a).err(), Some("session has ended"));
+        assert_eq!(begin(owner_a, owner_b).err(), Some(DispatchRefusal::Ended));
+        assert_eq!(begin(owner_a, owner_a).err(), Some(DispatchRefusal::Ended));
         assert_eq!(
             begin(label, owner_a).err(),
-            Some("session is not available to this transport")
+            Some(DispatchRefusal::OwnedByOtherTransport(
+                SessionTransport::McpStdio
+            ))
         );
         assert_eq!(
             end_sessions_for_owner(owner_b, SessionEndReason::ProcessExit),
@@ -2953,7 +2982,7 @@ mod tests {
     }
 
     #[test]
-    fn only_the_owners_unnamed_session_is_recreated_after_an_idle_end() {
+    fn only_the_owner_recreates_an_idle_ended_session_on_its_next_call() {
         let pid = std::process::id();
         let implicit = format!("idle-recreate-implicit-{pid}");
         let named = format!("idle-recreate-named-{pid}");
@@ -2996,22 +3025,38 @@ mod tests {
             std::slice::from_ref(&named)
         );
 
-        // A named episode keeps its resurrection guard.
+        // Another transport cannot claim the named label or the unnamed id.
+        assert!(!recreates_on_next_call(&named, "another-transport"));
+        assert_eq!(
+            begin(&named, Some("named"), "another-transport").err(),
+            Some(DispatchRefusal::Ended)
+        );
+        // The label's owner gets it back on its next ordinary call.
+        assert!(recreates_on_next_call(&named, &named_owner));
+        let guard = begin(&named, Some("named"), &named_owner).expect("named recreated");
+        assert!(!is_session_ended(&named));
+        assert!(
+            session_snapshot(&named, &named_owner, DEFAULT_SESSION_IDLE_TTL)
+                .is_some_and(|snapshot| snapshot.public_label.as_deref() == Some("named"))
+        );
+        drop(guard);
+        // An explicit end of the label stays terminal until start_session.
+        end_session(&named);
         assert!(!recreates_on_next_call(&named, &named_owner));
         assert_eq!(
             begin(&named, Some("named"), &named_owner).err(),
-            Some("session has ended")
+            Some(DispatchRefusal::Ended)
         );
         // Another transport cannot claim the unnamed id.
         assert_eq!(
             begin(&implicit, None, "another-transport").err(),
-            Some("session has ended")
+            Some(DispatchRefusal::Ended)
         );
         // Unfinished cleanup is retried by the call and blocks recreation.
         assert!(recreates_on_next_call(&implicit, &implicit));
         assert_eq!(
             begin(&implicit, None, &implicit).err(),
-            Some("session cleanup is incomplete; retry the call")
+            Some(DispatchRefusal::CleanupIncomplete)
         );
         let guard = begin(&implicit, None, &implicit).expect("recreated after cleanup");
         assert!(!is_session_ended(&implicit));
@@ -3026,7 +3071,7 @@ mod tests {
         assert!(!recreates_on_next_call(&implicit, &implicit));
         assert_eq!(
             begin(&implicit, None, &implicit).err(),
-            Some("session has ended")
+            Some(DispatchRefusal::Ended)
         );
         assert!(revive_session(&implicit));
         assert!(revive_session(&named));

@@ -302,9 +302,9 @@ Python exposes the same objects:
   by default.
 - **Read why a start failed.** Set `captureStderr` (`capture_stderr`) in the
   same options. After a failed start, `lastDiagnostics()`
-  (`last_diagnostics()`) returns the last 65,536 bytes of daemon stderr, the
-  exit code, and whether the tail was truncated. The text is raw stderr, so
-  keep it out of telemetry.
+  (`last_diagnostics()`) returns up to the last 65,536 bytes of daemon stderr,
+  the exit code when there is one, and whether the tail was truncated. The text
+  is raw stderr, so keep it out of telemetry.
 - **Check it.** Call `check_permissions`; on macOS embedded mode returns
   `source.attribution: "host"` and never raises its own prompts. Call
   `health_report` with `{"include":["bundle_identity"]}` to confirm the parent

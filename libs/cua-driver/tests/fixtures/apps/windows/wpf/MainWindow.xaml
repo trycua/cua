@@ -287,6 +287,15 @@ Multi-line. Deterministic. Used for OCR + AX value comparisons.
                             Click="OnOpenMessageBoxClick"/>
                 </GroupBox>
 
+                <!-- Untitled modal dialog: modal like the MessageBox, but its
+                     HWND has no title, so get_window_state cannot address it. -->
+                <GroupBox Header="untitled_dialog" Padding="10" Margin="0,0,0,12">
+                    <Button x:Name="BtnOpenUntitledDialog"
+                            AutomationProperties.AutomationId="btn-open-untitled-dialog"
+                            Content="Open Untitled Dialog" Width="180" HorizontalAlignment="Left"
+                            Click="OnOpenUntitledDialogClick"/>
+                </GroupBox>
+
                 <!-- Owned popup -->
                 <GroupBox Header="owned_popup" Padding="10" Margin="0,0,0,12">
                     <Button x:Name="BtnOpenOwned"

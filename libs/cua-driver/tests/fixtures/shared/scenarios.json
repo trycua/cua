@@ -39,6 +39,14 @@
     "expected_dialog_title": "Harness MessageBox"
    },
    {
+    "id": "untitled_dialog",
+    "kind": "modal_untitled_dialog",
+    "description": "Window.ShowDialog with an empty title. Tests that a modal HWND get_window_state cannot address is reported as unobservable, never named in next_call.",
+    "controls": {
+     "open_button_aid": "btn-open-untitled-dialog"
+    }
+   },
+   {
     "id": "bottom_strip",
     "kind": "save_cancel_strip",
     "description": "Bottom button strip (Save/Cancel) mimicking LO Document Recovery. Tests GetWindowRect-vs-GetClientRect capture boundary (previously cropped the strip).",

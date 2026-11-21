@@ -2697,12 +2697,13 @@ const SOCKET_PROBE_INTERVAL: std::time::Duration = std::time::Duration::from_mil
 
 /// Whether something still listens on the Unix socket at `socket_path`. Only
 /// refusal on every try, or a missing path, counts as no listener: macOS also
-/// refuses while a live listener's accept queue is full, and any other error
-/// is no proof the listener is gone.
+/// refuses while a live listener's accept queue is full, and any other error,
+/// such as a full queue on Linux, is no proof the listener is gone. No try
+/// waits on the listener.
 #[cfg(unix)]
 fn socket_accepts(socket_path: &str) -> bool {
     for attempt in 0..SOCKET_PROBE_ATTEMPTS {
-        match std::os::unix::net::UnixStream::connect(socket_path) {
+        match cua_driver_core::daemon::try_connect_unix(socket_path) {
             Ok(_) => return true,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return false,
             Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
@@ -3238,6 +3239,74 @@ mod presence_tests {
         drop(listener);
         assert!(is_released(path));
         assert_eq!(serving_daemon(path), None);
+    }
+
+    /// A Unix listener with a backlog of zero, so one pending connection
+    /// fills its accept queue.
+    #[cfg(target_os = "linux")]
+    fn listen_with_no_backlog(socket: &std::path::Path) -> std::os::fd::OwnedFd {
+        use std::os::fd::FromRawFd as _;
+        use std::os::unix::ffi::OsStrExt as _;
+        let path = socket.as_os_str().as_bytes();
+        unsafe {
+            let raw = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
+            assert!(raw >= 0, "socket: {}", std::io::Error::last_os_error());
+            let listener = std::os::fd::OwnedFd::from_raw_fd(raw);
+            let mut address: libc::sockaddr_un = std::mem::zeroed();
+            address.sun_family = libc::AF_UNIX as libc::sa_family_t;
+            for (slot, byte) in address.sun_path.iter_mut().zip(path) {
+                *slot = libc::c_char::from_ne_bytes([*byte]);
+            }
+            let length = std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
+            assert_eq!(
+                libc::bind(raw, (&address as *const libc::sockaddr_un).cast(), length),
+                0,
+                "bind: {}",
+                std::io::Error::last_os_error()
+            );
+            assert_eq!(libc::listen(raw, 0), 0);
+            listener
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_listener_with_a_full_accept_queue_is_held_and_never_blocks_a_probe() {
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
+        let socket = directory.path().join("driver.sock");
+        let path = socket.to_str().unwrap();
+        let listener = listen_with_no_backlog(&socket);
+        let mut pending = Vec::new();
+        let full = loop {
+            match cua_driver_core::daemon::try_connect_unix(path) {
+                Ok(stream) => pending.push(stream),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break true,
+                Err(error) => panic!("connect: {error}"),
+            }
+            if pending.len() > 16 {
+                break false;
+            }
+        };
+        assert!(full, "the accept queue never filled");
+
+        let started = std::time::Instant::now();
+        assert!(matches!(probe_presence(path), DaemonPresence::Stale { .. }));
+        assert!(!is_released(path));
+        assert_eq!(serving_daemon(path), Some(None));
+        remove_stale_socket(path);
+        assert!(
+            socket.exists(),
+            "a socket that still listens is never cleared"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(15),
+            "probing a full accept queue took {:?}",
+            started.elapsed()
+        );
+
+        drop(pending);
+        drop(listener);
+        assert!(is_released(path));
     }
 
     #[cfg(target_os = "macos")]

@@ -33,7 +33,6 @@ pub struct DaemonLaunchState {
     pub no_permissions_gate: bool,
     #[serde(default)]
     pub no_automation_prompts: bool,
-    pub claude_code_compat: bool,
     pub grants: Vec<String>,
 }
 
@@ -53,7 +52,6 @@ pub fn configure_daemon_launch_state(
     approve_capability_manifest: bool,
     no_permissions_gate: bool,
     no_automation_prompts: bool,
-    claude_code_compat: bool,
     grants: &[String],
 ) {
     let state = DAEMON_LAUNCH_STATE.get_or_init(|| Mutex::new(DaemonLaunchState::default()));
@@ -64,7 +62,6 @@ pub fn configure_daemon_launch_state(
         approve_capability_manifest,
         no_permissions_gate,
         no_automation_prompts,
-        claude_code_compat,
         grants: grants.to_vec(),
     };
 }

@@ -60,7 +60,7 @@ It also puts `~/.local/bin` on your `PATH` for new terminals. It writes
 and `~/.bash_profile` (or `~/.profile` if you have no `~/.bash_profile`). Open a
 new terminal window afterwards, or run `. ~/.local/hoy/env` in the current one.
 
-Options go after `sh -s --`:
+Options go after `bash -s --`:
 
 ```bash skip="host-install"
 curl -fsSL https://hoy.cua.ai/install.sh | HOY_TOKEN=... bash -s -- --version <version>
@@ -109,8 +109,8 @@ and two one-time switches finish the job:
    ![System Settings, Endpoint Security Extensions: Hoy, with its switch off, ready to turn on](/img/hoy/install-endpoint-security-switch.png)
 
 3. In System Settings > Privacy & Security > Full Disk Access, turn on the Hoy
-   entry (administrator password). On macOS 27 the list shows it as **Hoy**.
-   On macOS 26 this page lists it by its file name,
+   entry (administrator password). Depending on the macOS version, the list
+   shows it as **Hoy** or by its file name,
    **com.trycua.hoy.es.systemextension**. Either way it is the Hoy system
    extension. macOS requires Full
    Disk Access of every Endpoint Security extension. It applies to the extension
@@ -252,7 +252,7 @@ validated. Two setups exist:
 | Doctor line | What you do | When | Why |
 |---|---|---|---|
 | `limit-service` | Scroll to the bottom of Login Items & Extensions, click the **(i)** next to Endpoint Security Extensions (under By Category), and turn on **Hoy** | Right after the install | Approves the Hoy system extension, which keeps the Mac within Apple's limit of two macOS VMs |
-| `full-disk-access` | Turn on **Hoy** (macOS 27) or **com.trycua.hoy.es.systemextension** (macOS 26) under Full Disk Access | Right after the line above | macOS requires it of every Endpoint Security extension. The extension turns on by itself a few seconds later |
+| `full-disk-access` | Turn on **Hoy** (or **com.trycua.hoy.es.systemextension**, depending on the macOS version) under Full Disk Access | Right after the line above | macOS requires it of every Endpoint Security extension. The extension turns on by itself a few seconds later |
 | `daemon` | Nothing, unless doctor says Hoy's login item is off: then turn on **Hoy** under Allow in the Background | At install | Hoy's background service owns your VMs. It starts at login |
 | `local-network` | Click **Allow** if macOS asks to let Hoy's background service find devices on local networks. If you chose Don't Allow, turn on Hoy's background service under Privacy & Security > Local Network | The first time you start a VM made from an **older** image (made by a Hoy before this release). Never for new images | Older images are reached at the VM's private network address, which macOS counts as the local network. macOS asks once and never again, so Don't Allow looks like a VM that never answers. Making a new image with `hoy image create` avoids it for good |
 | `guest:<vm>` | Nothing | Each running VM | Shows how Hoy reaches that VM: over its internal channel, or at its network address (the case that needs Local Network) |

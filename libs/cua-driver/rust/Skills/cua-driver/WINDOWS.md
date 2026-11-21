@@ -64,9 +64,13 @@ PostMessage** (UWP Calculator, Win11 Notepad, WinUI3 apps, etc.). cua-driver
 turns the pixel coord into a UIA Invoke at that point and delivers
 through the accessibility channel: no flash, no focus steal. Only
 escalate to `delivery_mode:"foreground"` when you actually see a
-`background_unavailable` structured error. Retry only that action with
-`delivery_mode:"foreground"`; cua-driver briefly activates the target, delivers
-the input, and restores the previous foreground.
+`background_unavailable` structured error. A UIA pixel click returns that
+error with `effect:"unverifiable"` when the provider is busy, timed out or
+unavailable. Busy means this click was skipped; an invocation already sent to
+the provider can still take effect after the result (see
+[Refusals and hints](WORKFLOW.md#refusals-and-hints)). Read the target again,
+then follow the normal flow below: retry in the foreground only when the user
+authorized visible control and evidence rules out a duplicate.
 
 Empirical: pixel-clicks via `delivery_mode:"background"` against the UWP
 Calculator on Win11 (Number-pad buttons + operators) consistently
@@ -99,9 +103,9 @@ macOS / X11, where a background pixel click can still land in the background.)
 
 The normal flow when an agent gets that error:
 
-1. Confirm the user authorized visible control, then reissue only the refused action with `delivery_mode:"foreground"`.
-2. cua-driver activates the target, delivers through SendInput, and restores
-   the previous foreground.
+1. Read the target again. Reissue just the refused action with `delivery_mode:"foreground"`, and only when the user authorized visible control and evidence rules out a duplicate.
+2. cua-driver activates the target, delivers through SendInput, and attempts
+   to restore the previous foreground.
 3. Continue with `delivery_mode:"background"` for later actions unless they
    are also refused.
 

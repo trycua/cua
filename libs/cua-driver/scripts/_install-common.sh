@@ -50,7 +50,7 @@
 # found the way the CLI finds it. A test keeps the two lists equal.
 CUA_DRIVER_VALUE_FLAGS=" --cursor-theme --cursor-reduced-motion --glide-ms --dwell-ms \
 --idle-hide-ms --screenshot-out-file --client --socket \
---permission-mode --grant --session-policy --capability-manifest \
+--permission-mode --grant --capability-manifest \
 --pid-file --expected-pid --type --host-bundle-id --pid --strategy \
 --window-id --session --profile-mode --profile-name --archive \
 --image --capture --experimental-pip-geometry --style --timing \

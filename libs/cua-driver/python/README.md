@@ -49,7 +49,9 @@ from cua_driver import (
 async def main() -> None:
     driver = CuaDriver.create()
     await driver.start_session(
-        StartSessionInput(session="demo", capture_scope=None, cursor_theme=None)
+        StartSessionInput(
+            session="demo", capture_scope=None, cursor_theme=None, cursor_motion=None
+        )
     )
     try:
         await driver.set_agent_cursor_theme(

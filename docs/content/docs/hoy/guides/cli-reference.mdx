@@ -1,0 +1,232 @@
+---
+title: CLI reference
+description: 'Every hoy command and flag, grouped by task: images, VMs, snapshots, import, clipboard and sound, GPU acceleration, health, updates, data switches and exit codes.'
+---
+
+```text output
+hoy [--home DIR] [--json] <command> [args]
+```
+
+`--home DIR` uses another Hoy home instead of `~/Library/Application Support/hoy`.
+`--json` makes any command print JSON for scripts. Run `hoy` with no arguments
+to print the built-in help, and `hoy --version` (or `hoy version`, `-V`) for the
+Hoy and VMM versions.
+
+## Images
+
+A VM is made from an image: a macOS install that was set up once and is stored
+read-only. You make images on your own Mac from Apple's restore image.
+
+| Command | What it does |
+|---|---|
+| `hoy image create [NAME]` | Make a macOS image on this Mac from Apple's restore image, set it up unattended (user, auto-login, ssh, guest agent), store it and smoke-test it; a pass makes it the image a plain `--image NAME` picks. |
+| `hoy images` (or `hoy images ls`) | List the images in the image store. |
+| `hoy images inspect <ref>` | Show an image's manifest, test state and smoke results. |
+| `hoy images verify <ref>` | Re-hash every file against the image digest. |
+| `hoy images rm <ref> [--yes]` | Remove an image to free its disk space: `<name>` removes every version, `<name>:<version>` or `sha256:<digest>` removes one. Asks first at a terminal. Exits 4 if the image is being built, being cloned or leased. |
+| `hoy images prune [--yes] [--dry-run] [--restore-images]` | Remove failed and never-tested images and tested versions that have a newer tested version. Each name's default (newest tested) version stays. `--restore-images` also removes cached Apple restore images and leftover build folders. `--dry-run` lists what would go. |
+
+`hoy image create` flags:
+
+| Flag | Meaning |
+|---|---|
+| `--ipsw latest\|URL\|PATH` | The restore image. Default: the newest one this Mac supports, downloaded from Apple. |
+| `--sha256 HEX` | Refuse a restore image whose SHA-256 differs. |
+| `--disk-gib N` | The image's disk size. Default 100 (sparse). |
+| `--cpu N` | CPU count of VMs made from the image. Default 4. |
+| `--memory 8G` | Memory of VMs made from the image. Default 8G. |
+| `--user NAME` | The guest user. Default `hoy`. |
+| `--ssh-key PATH` | Use this ssh key instead of making one for this Mac. |
+| `--no-smoke` | Skip the smoke test. |
+| `--keep-work` | Keep the build's working files. |
+| `--no-disk-check` | Skip the free-disk check. |
+
+`NAME` defaults to `macos-<version>`. A name of the form `macos-<version>` builds
+exactly that version (known: 26.5.2, 27.2 and 27.2.1) or fails. Other versions
+need `--ipsw`. A first build takes about 15 to 25 minutes plus the 20 to 26 GB
+download from Apple, and needs about 64 GiB free (40 GiB once the restore image
+is downloaded). Hoy checks this before it downloads anything.
+
+`hoy images rm` and `hoy images prune` ask before they remove anything when you
+are at a terminal. `--yes` (`-y`) skips the question. Without a terminal, or with
+`--json`, they need `--yes` (exit 2). VMs made from a removed image keep working.
+See [Free disk space](/hoy/guides/free-disk-space).
+
+An image reference (`REF`) is a `name` (the newest version of it that passed its
+test), `name:version`, `sha256:<hex>` or a hex prefix. A name with no tested
+version is an error that says so; give `name:version` with `--force` to use an
+image that has not passed. `hoy images` shows a TESTED column and marks the
+version a plain name picks as `default`.
+
+## Create and run VMs
+
+| Command | What it does |
+|---|---|
+| `hoy create <name> --image REF [flags]` | Create a VM. The image is verified against its digest, then APFS-cloned. |
+| `hoy start <vm> [flags]` | Start a VM. |
+| `hoy stop <vm> [--force] [--timeout S]` | Ordered stop: flush, guest shutdown, hard stop after the timeout. |
+| `hoy restart <vm> [--timeout S]` | Reboot the guest from inside and wait until it is back. |
+| `hoy rm <vm>` | Delete a VM and its disk. The image stays. |
+| `hoy ps` (also `ls`, `list`) | List VMs. |
+| `hoy inspect <vm>` | Show one VM in detail. |
+| `hoy exec <vm> [--timeout S] -- CMD...` | Run a command in the guest and exit with its exit code. |
+| `hoy ssh <vm> [--timeout S] [-- CMD...]` | ssh into the guest with the VM's own address, user and key. No command: a login shell. A starting VM is waited for (default 60 s). A stopped VM is an error (exit 4). |
+| `hoy vnc <vm> [--show-password] [--no-open] [--timeout S]` | Open a running VM's desktop in Screen Sharing. |
+| `hoy logs <vm> [--kind KIND] [--follow]` | Show a VM's logs. |
+| `hoy clone <vm> <new-name> [flags]` | APFS clone of a stopped VM, with a new identity. |
+| `hoy reidentify <vm> [--keep-mac]` | Give a stopped VM a new identity. |
+
+`hoy create` flags:
+
+| Flag | Meaning |
+|---|---|
+| `--image REF` | The image to clone. An image that has not passed its test needs `--force`. |
+| `--force` | Allow an image that has not passed its test. |
+| `--verify full` | Verify the whole image against its digest. |
+| `--cpu N` | CPU count. |
+| `--memory 8G` | Memory. |
+| `--disk 150G` | Grow the VM's disk to this size (M, G or T). Sparse, so no space is used until the guest writes. Never shrinks. At most 2T. |
+| `--graphics`, `--no-graphics` | Give the VM a display, or not. |
+| `--vnc` | A VNC console on `<vm-dir>/vnc.sock` (a Unix socket, mode 0600, no TCP port), password in `<vm-dir>/vnc.passwd`. Implies `--graphics`. `hoy inspect` names both. |
+| `--window` | The same as `--vnc`. It only makes the VM ready for `hoy start <vm> --window`. |
+| `--profile headless\|none` | The runner profile applied at each boot. Default: the image's. `headless` needs a guest ssh key. |
+| `--audio off\|out` | Sound output. Default off. |
+| `--macos-guest 27` | The guest macOS version. |
+| `--ssh-user U`, `--ssh-key PATH` | The ssh user and key `hoy ssh` and `hoy exec` use. |
+| `--restart no\|always` | Whether Hoy restarts the VM after it exits. |
+| `--stop-timeout S` | How long an ordered stop waits before forcing. |
+| `--engine hoy-native` | The engine. This is the default. |
+| `--gpu-acceleration auto\|renderer\|shim\|off` | GPU acceleration for local AI models in the VM. Experimental, `off` by default. See [GPU acceleration](#gpu-acceleration-experimental). |
+
+Every VM gets its own identity: a new MAC address and ECID at create, and on its
+first boot its own host name and ssh host keys. The new key is pinned in
+`<vm-dir>/known_hosts`, and `hoy ssh`, `hoy exec` and Hoy's background service check it.
+
+`hoy start` flags:
+
+| Flag | Meaning |
+|---|---|
+| `--wait ready\|running` | Return when ssh answers (`ready`) or when the VM is running (`running`). |
+| `--timeout S` | Give up after S seconds. |
+| `--queue-timeout S` | Give up after S seconds in a shared Mac's lock queue. A `hoy stop` cancels a queued start. |
+| `--window` | Then open the VM's desktop, as `hoy vnc` does. Needs a VM created with `--vnc` or `--window`. |
+
+`hoy start` is refused with exit code 5 when two macOS VMs already run on the
+Mac, or when the [Hoy system extension](/hoy/guides/install#approve-the-hoy-system-extension)
+is not on. See [Limits](/hoy/concepts/two-vm-limit).
+
+`hoy logs --kind` takes `engine`, `console`, `events`, `vmm` and `models`, among
+others.
+
+`hoy vnc` opens a bridge on 127.0.0.1 (a random port, this Mac only, one viewer
+at a time) to the VM's VNC console, then opens `vnc://127.0.0.1:PORT`. It copies
+the password to the clipboard (cleared again when the bridge closes) and prints
+it only with `--show-password`. `--no-open` prints the port and opens nothing.
+It runs in the foreground: press Ctrl-C or close the viewer to end it.
+
+`hoy clone` takes `--cpu`, `--memory`, `--disk` and `--restart`, as `create`
+does. `hoy reidentify` is for VMs made before Hoy 0.17, which share the identity
+of their image (`hoy health` lists them): a new ECID and MAC now, new names and
+ssh host keys at the next start. `--keep-mac` keeps the MAC address.
+
+## Snapshots
+
+| Command | What it does |
+|---|---|
+| `hoy snapshot <vm> [--name NAME] [--stop]` | Checkpoint a running VM (memory, devices, disks). The VM keeps running, or stops in order with `--stop`. Default name: the UTC time. Prints timings. |
+| `hoy snapshots [<vm>]` | List snapshots, of all VMs or one. |
+| `hoy snapshot rm <vm> <name>` | Delete a snapshot. |
+| `hoy restore <vm> [--snapshot NAME] [--ssh-timeout S]` | A stopped VM resumes from its newest (or named) snapshot. |
+| `hoy fork <vm> <new-name> [--snapshot NAME] [--ssh-timeout S] [--restart no\|always]` | A new VM that resumes from the snapshot. The source may be running. It counts toward the 2-VM limit. |
+
+See [Snapshots and restore](/hoy/guides/snapshots-restore-fork).
+
+## Import
+
+```text output
+hoy import tart|utm|lume <name-or-path> [--name VM] [--engine hoy-native] [--move] [--force]
+    [--cpu N] [--memory 8G] [--disk 150G] [--macos-guest 26|27] [--ssh-user U] [--ssh-key PATH] [--vnc]
+```
+
+Brings a macOS VM from Tart, Lume or UTM into Hoy. See
+[Import VMs from Tart, UTM and Lume](/hoy/guides/import).
+
+## Clipboard and sound
+
+| Command | What it does |
+|---|---|
+| `hoy set <vm> --clipboard off\|host-to-vm\|vm-to-host\|both` | Which directions the clipboard is shared between the Mac and the VM. Default `both`. |
+| `hoy set <vm> --clipboard-vm-to-vm on\|off` | Share between VMs. Default off. Needs `on` for both VMs. |
+| `hoy set <vm> --audio off\|out` | Sound output. Needs a stopped VM and takes effect at the next start. `out` plays through the Mac's default output. A headless VM gets no sound device. Microphone input is not available. |
+| `hoy clipboard install <vm>` | Copy the clipboard agent into a running guest and load it. |
+
+See [Clipboard sharing](/hoy/guides/clipboard-sharing). Clipboard changes apply
+at once to a running VM.
+
+## GPU acceleration (experimental)
+
+`hoy create --gpu-acceleration` is experimental and off by default. It lets
+local AI models in the guest (with the GPU guest package installed) run on the
+host Mac's GPU. The modes are `auto`, `renderer`, `shim` and `off`. `auto` gives
+each program the fastest way to the GPU that works for it. `renderer` and `shim`
+force one way. `hoy set <vm> --gpu-acceleration MODE` changes a stopped VM.
+
+The renderer is a per-VM program that Hoy starts with the VM, restarts if it
+crashes and stops with it. A VM cannot be snapshotted while a program in it has
+a renderer session open (exit 5); restore and fork work. `hoy inspect` shows the
+state of the renderer, `hoy doctor` has a `gpu-acceleration` line and
+`hoy logs <vm> --kind models` shows its log. VMs created without the flag are
+unchanged. Step by step, with measured speed and limits:
+[Run local models on the GPU](/hoy/guides/gpu-acceleration).
+
+## Health and diagnostics
+
+| Command | What it does |
+|---|---|
+| `hoy doctor [--facts FILE]` | Preflight: chip, macOS, Hypervisor, free disk, macOS VM slots, the Hoy system extension, the Hoy login item, license and VMM. Prints a fix for each problem. Exit 5 if a check failed. |
+| `hoy health` | Daemon status, VMs, the host's macOS VM count and what counts, the extension's state and the image store. |
+| `hoy metrics` | Prometheus text metrics. |
+| `hoy invariant` | Reconcile, then check `hoy ps` against the process table and VM locks. Exit 1 on any mismatch. |
+| `hoy license install <file>` | Store the optional license key. |
+| `hoy license status` | Show the limit in force. |
+
+## Updates
+
+| Command | What it does |
+|---|---|
+| `hoy update` | Install the newest release offered to you. |
+| `hoy update --check` | Only ask. |
+| `hoy update --rollback` | Switch back to the previous release. |
+
+See [Update and rollback](/hoy/guides/update-and-rollback).
+
+## Data switches
+
+| Command | What it does |
+|---|---|
+| `hoy config [show]` | Show the data switches, where each setting comes from, and the sender. |
+| `hoy config get <switch>` | Print `on` or `off`. |
+| `hoy config set <switch> on\|off` | Set a switch. |
+| `hoy config preview <switch>` | Print the exact request the next usage report (or the latest crash report) would send. Sends nothing. |
+
+The switches are `crash-reports`, `usage-data`, `update-check` and
+`auto-update`. The first two are stored in `<home>/privacy.json`, and the
+environment variables `HOY_CRASH_REPORTS` and `HOY_USAGE_DATA` win over the file.
+`HOY_UPDATE_CHECK` and `HOY_AUTO_UPDATE` do the same for the other two.
+See [Data collection](/hoy/guides/data-collection).
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | Internal error |
+| 2 | Wrong usage |
+| 3 | Not found |
+| 4 | Wrong state, for example `hoy ssh` on a stopped VM |
+| 5 | Refused: the macOS VM limit, the extension is not on, or not enough resources |
+| 6 | Timeout |
+| 7 | Engine failure |
+
+`hoy exec` exits with the command's own exit code. Use `--json` and read
+`exit_code` to tell it from a Hoy error.

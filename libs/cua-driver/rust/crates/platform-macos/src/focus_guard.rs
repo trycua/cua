@@ -91,6 +91,22 @@ where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = R>,
 {
+    suppressed(target_pid, prior_frontmost, origin, false, f).await
+}
+
+/// [`with_focus_suppressed`]. `no_wildcard` says no snapshot's wildcard
+/// lease covers the time after `f`, so an armed lease always settles.
+async fn suppressed<F, Fut, R>(
+    target_pid: Option<i32>,
+    prior_frontmost: Option<i32>,
+    origin: &'static str,
+    no_wildcard: bool,
+    f: F,
+) -> R
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = R>,
+{
     // Decide whether to arm a targeted lease. Three conditions must hold:
     //   1. We have a known target pid (Some).
     //   2. We have a prior frontmost to restore to (Some).
@@ -132,9 +148,8 @@ where
     // The snapshot's wildcard lease reverts a late reflex activation for the
     // rest of its observation deadline. A host that shortened that deadline
     // below the settle still gets the settle.
-    let wildcard_covers =
-        crate::window_change_detector::host_observation_bounds().timeout >= REFLEX_SETTLE;
-    if _lease.is_some() && !wildcard_covers {
+    let wildcard_deadline = crate::window_change_detector::host_observation_bounds().timeout;
+    if settles(_lease.is_some(), no_wildcard, wildcard_deadline) {
         tokio::time::sleep(REFLEX_SETTLE).await;
     }
 
@@ -146,6 +161,13 @@ where
 /// else covers a late reflex activation. Matches Swift's 50ms sleep in
 /// `FocusGuard.withFocusSuppressed`.
 const REFLEX_SETTLE: Duration = Duration::from_millis(50);
+
+/// Whether an armed lease waits [`REFLEX_SETTLE`] before it drops: when no
+/// wildcard lease runs after the action, or the host deadline is too short
+/// to cover the settle.
+fn settles(armed: bool, no_wildcard: bool, wildcard_deadline: Duration) -> bool {
+    armed && (no_wildcard || wildcard_deadline < REFLEX_SETTLE)
+}
 
 /// Convenience wrapper that captures the current frontmost via
 /// `apps::frontmost_pid()` at call time. Use when the caller doesn't
@@ -167,10 +189,25 @@ where
 {
     let prior = apps::frontmost_pid();
     // No snapshot here, so no wildcard lease covers the time after `f`.
-    with_focus_suppressed(target_pid, prior, origin, || async move {
-        let result = f().await;
-        tokio::time::sleep(REFLEX_SETTLE).await;
-        result
-    })
-    .await
+    suppressed(target_pid, prior, origin, true, f).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unarmed_call_never_settles() {
+        assert!(!settles(false, true, Duration::ZERO));
+        assert!(!settles(false, false, Duration::ZERO));
+    }
+
+    #[test]
+    fn an_armed_call_settles_only_without_wildcard_cover() {
+        let full = Duration::from_millis(1000);
+        assert!(!settles(true, false, full));
+        assert!(settles(true, false, Duration::from_millis(20)));
+        assert!(settles(true, true, full));
+        assert!(settles(true, true, Duration::from_millis(20)));
+    }
 }

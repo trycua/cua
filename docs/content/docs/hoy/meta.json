@@ -1,0 +1,11 @@
+{
+  "title": "Hoy",
+  "root": true,
+  "pages": [
+    "index",
+    "quickstart",
+    "concepts/two-vm-limit",
+    "concepts/apple-account",
+    "guides"
+  ]
+}

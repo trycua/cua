@@ -112,19 +112,46 @@ fn dispatch_with_ax_oracle(
     let before = element_ptr.and_then(|ptr| read_ax_key_state(pid, window_id, ptr));
     let result = dispatch();
     // Native controls normally publish their new value/selection on the next
-    // run-loop turn. Keep this bounded and reuse the exact retained element so
-    // a focus move cannot become false confirmation from a different control.
-    if before.is_some() {
-        std::thread::sleep(std::time::Duration::from_millis(60));
-    }
-    let after = element_ptr.and_then(|ptr| read_ax_key_state(pid, window_id, ptr));
+    // run-loop turn. Read the exact retained element until it changes, so a
+    // focus move cannot become false confirmation from a different control,
+    // and give up after the bound.
+    let changed = match (&before, element_ptr) {
+        (Some(before), Some(ptr)) => poll_until(AX_ORACLE_WAIT, AX_ORACLE_POLL, || {
+            read_ax_key_state(pid, window_id, ptr)
+                .is_some_and(|after| ax_state_changed(before, &after))
+        }),
+        _ => false,
+    };
     if owns_element {
         if let Some(ptr) = element_ptr {
             unsafe { CFRelease(ptr as _) };
         }
     }
     result?;
-    Ok(matches!((before, after), (Some(before), Some(after)) if ax_state_changed(&before, &after)))
+    Ok(changed)
+}
+
+/// Longest the oracle waits for the element to publish the key's effect.
+const AX_ORACLE_WAIT: std::time::Duration = std::time::Duration::from_millis(60);
+/// Interval between the oracle's reads of the element.
+const AX_ORACLE_POLL: std::time::Duration = std::time::Duration::from_millis(5);
+
+/// Read `done` every `poll` until it holds or `wait` passes; whether it held.
+fn poll_until(
+    wait: std::time::Duration,
+    poll: std::time::Duration,
+    mut done: impl FnMut() -> bool,
+) -> bool {
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        std::thread::sleep(poll.min(deadline.saturating_duration_since(std::time::Instant::now())));
+        if done() {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+    }
 }
 
 fn ax_state_changed(before: &AxKeyState, after: &AxKeyState) -> bool {
@@ -174,41 +201,12 @@ fn action_record(confirmed: bool, foreground: bool) -> ActionExecutionRecord {
     record.build().expect("press_key record is valid")
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("the addressed element did not acquire keyboard focus; no key was dispatched")]
-struct KeyFocusUnconfirmed;
-
-fn with_confirmed_key_focus<T>(
-    target: Option<usize>,
-    mut focus: impl FnMut(usize) -> anyhow::Result<()>,
-    mut is_focused: impl FnMut(usize) -> bool,
-    dispatch: impl FnOnce() -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
-    if let Some(target) = target {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
-        loop {
-            focus(target)?;
-            if is_focused(target) {
-                break;
-            }
-            if std::time::Instant::now() >= deadline {
-                return Err(KeyFocusUnconfirmed.into());
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-    }
-    dispatch()
-}
-
 fn delivery_failed(error: anyhow::Error) -> ToolResult {
     if let Some(refusal) = crate::security_prompt::tool_result(&error) {
         return refusal;
     }
-    if error.is::<KeyFocusUnconfirmed>() {
-        return ToolResult::error(error.to_string()).with_structured(serde_json::json!({
-            "code": "target_focus_unconfirmed", "effect": "refused", "dispatched": false,
-            "message": error.to_string(),
-        }));
+    if let Some(refusal) = super::key_focus_unconfirmed_error(&error) {
+        return refusal;
     }
     let message = format!("press_key delivery failed: {error}");
     ToolResult::error(&message).with_structured(serde_json::json!({
@@ -230,7 +228,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["key"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it." },
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "pid": { "type": "integer", "description": "Target process ID." },
                 "key": { "type": "string", "description": "Key name." },
                 "modifiers": {
@@ -273,6 +271,7 @@ impl Tool for PressKeyTool {
             let key = input.key;
             let modifiers = input.modifiers.unwrap_or_default();
             let key_for_input = key.clone();
+            super::cursor_tools::position_desktop_keyboard_cursor(&self.state, &args).await;
             let prompt = PromptInput::from_args(&args);
             let result = tokio::task::spawn_blocking(move || {
                 let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
@@ -476,7 +475,7 @@ impl Tool for PressKeyTool {
                                 wid,
                                 || {
                                     // Activation may replace the first responder; confirm inside the HID guard.
-                                    with_confirmed_key_focus(
+                                    crate::input::ax_actions::with_confirmed_key_focus(
                                         pre_focus_ptr,
                                         crate::input::ax_actions::focus_element,
                                         |target| {
@@ -496,7 +495,7 @@ impl Tool for PressKeyTool {
                     }
                     // background (default): auth-envelope post, no raise.
                     dispatch_with_ax_oracle(pid, window_id, pre_focus_ptr, || {
-                        with_confirmed_key_focus(
+                        crate::input::ax_actions::with_confirmed_key_focus(
                             pre_focus_ptr,
                             crate::input::ax_actions::focus_element,
                             |target| {
@@ -552,10 +551,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_oracle_returns_on_the_first_changed_read() {
+        let mut reads = 0;
+        assert!(poll_until(
+            std::time::Duration::from_secs(5),
+            AX_ORACLE_POLL,
+            || {
+                reads += 1;
+                reads == 2
+            }
+        ));
+        assert_eq!(reads, 2, "no read after the change");
+    }
+
+    #[test]
+    fn the_oracle_gives_up_at_its_bound() {
+        let started = std::time::Instant::now();
+        assert!(!poll_until(AX_ORACLE_WAIT, AX_ORACLE_POLL, || false));
+        assert!(started.elapsed() >= AX_ORACLE_WAIT);
+    }
+
+    #[test]
     fn targeted_key_requires_focus_readback_before_dispatch() {
         use std::cell::RefCell;
         let events = RefCell::new(Vec::new());
-        let result = with_confirmed_key_focus(
+        let result = crate::input::ax_actions::with_confirmed_key_focus(
             Some(42),
             |target| {
                 events.borrow_mut().push(("focus", target));
@@ -591,7 +611,7 @@ mod tests {
         use std::cell::RefCell;
         let events = RefCell::new(Vec::new());
         let mut checks = 0;
-        with_confirmed_key_focus(
+        crate::input::ax_actions::with_confirmed_key_focus(
             Some(42),
             |target| {
                 events.borrow_mut().push(("focus", target));
@@ -625,7 +645,7 @@ mod tests {
         use std::cell::Cell;
         let sent = Cell::new(0);
         for target in [Some(42), None] {
-            with_confirmed_key_focus(
+            crate::input::ax_actions::with_confirmed_key_focus(
                 target,
                 |_| Ok(()),
                 |_| true,
@@ -637,14 +657,14 @@ mod tests {
             .unwrap();
         }
         assert_eq!(sent.get(), 2);
-        let failed = with_confirmed_key_focus(
+        let failed = crate::input::ax_actions::with_confirmed_key_focus(
             Some(42),
             |_| anyhow::bail!("focus unavailable"),
             |_| panic!("must not confirm failed focus"),
             || -> anyhow::Result<()> { panic!("must not dispatch") },
         );
         assert_eq!(failed.unwrap_err().to_string(), "focus unavailable");
-        with_confirmed_key_focus(
+        crate::input::ax_actions::with_confirmed_key_focus(
             None,
             |_| panic!("window key has no element"),
             |_| panic!("window key has no element"),

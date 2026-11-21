@@ -125,6 +125,43 @@ pub fn refuse_frontmost_keys(input: PromptInput) -> Result<(), PromptProtected> 
     refuse_pid(input, pid).map_err(|_| Owner::of(pid).refusal())
 }
 
+/// The processes that draw keychain and password prompts: SecurityAgent
+/// ("… wants to use your confidential information stored in … in your
+/// keychain", administrator password sheets) and LocalAuthentication's Touch
+/// ID / password panel. Bundle id and executable name; either one matches.
+const KEYCHAIN_PROMPT_OWNERS: &[(&str, &str)] = &[
+    ("com.apple.SecurityAgent", "SecurityAgent"),
+    ("com.apple.LocalAuthentication.UIAgent", "coreautha"),
+];
+
+fn is_keychain_prompt_owner(bundle_id: Option<&str>, process_name: Option<&str>) -> bool {
+    KEYCHAIN_PROMPT_OWNERS
+        .iter()
+        .any(|(bundle, name)| bundle_id == Some(*bundle) || process_name == Some(*name))
+}
+
+/// Whether a keychain or password prompt is on screen. A browser that reads
+/// a keychain secret waits on such a prompt, and each further launch queues
+/// another, so isolated browser launches stop while one is open. Other
+/// prompts (privacy consent, Gatekeeper) do not hold a launch up and do not
+/// count. Only looks: nothing here answers, dismisses or types into a prompt.
+pub fn security_prompt_on_screen() -> bool {
+    #[cfg(test)]
+    if fixture::shown().is_some() {
+        return true;
+    }
+    let mut seen = std::collections::HashSet::new();
+    crate::windows::on_screen_windows_any_layer()
+        .into_iter()
+        .filter(|window| seen.insert(window.pid))
+        .any(|window| {
+            is_keychain_prompt_owner(
+                crate::apps::bundle_id_for_pid(window.pid).as_deref(),
+                process_name(window.pid).as_deref(),
+            )
+        })
+}
+
 struct Owner {
     kind: PromptOwner,
     name: String,
@@ -466,6 +503,43 @@ pub(crate) mod fixture {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_keychain_and_password_prompts_hold_up_browser_launches() {
+        assert!(is_keychain_prompt_owner(
+            Some("com.apple.SecurityAgent"),
+            None
+        ));
+        assert!(is_keychain_prompt_owner(None, Some("SecurityAgent")));
+        assert!(is_keychain_prompt_owner(None, Some("coreautha")));
+        for (bundle, name) in [
+            (
+                "com.apple.accessibility.universalAccessAuthWarn",
+                "universalAccessAuthWarn",
+            ),
+            ("com.apple.coreservices.uiagent", "CoreServicesUIAgent"),
+            ("com.apple.UserNotificationCenter", "UserNotificationCenter"),
+            ("com.google.Chrome", "Google Chrome"),
+        ] {
+            assert!(
+                !is_keychain_prompt_owner(Some(bundle), Some(name)),
+                "{name}"
+            );
+        }
+        // Every keychain prompt owner is also a prompt that input never reaches.
+        for (bundle, name) in KEYCHAIN_PROMPT_OWNERS {
+            assert_eq!(
+                security_prompt::macos_prompt_owner(Some(bundle), Some(name)),
+                PromptOwner::Always
+            );
+        }
+    }
+
+    #[test]
+    fn a_shown_prompt_is_reported_to_browser_launches() {
+        let _shown = fixture::PromptShown::start();
+        assert!(security_prompt_on_screen());
+    }
 
     #[test]
     fn this_process_is_not_a_prompt() {

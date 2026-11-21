@@ -361,12 +361,13 @@ impl Default for DriverConfig {
 /// invocations — matching the macOS daemon's startup load. See #2008.
 pub fn load_driver_config() -> DriverConfig {
     let mut cfg = DriverConfig::default();
-    if let Some(v) =
-        pip_preview::read_config_value("capture_mode").and_then(|v| v.as_str().map(str::to_owned))
+    if let Some(v) = cua_driver_core::config_file::read_config_value("capture_mode")
+        .and_then(|v| v.as_str().map(str::to_owned))
     {
         cfg.capture_mode = v;
     }
-    if let Some(v) = pip_preview::read_config_value("max_image_dimension").and_then(|v| v.as_u64())
+    if let Some(v) = cua_driver_core::config_file::read_config_value("max_image_dimension")
+        .and_then(|v| v.as_u64())
     {
         if let Ok(v32) = u32::try_from(v) {
             cfg.max_image_dimension = v32;
@@ -1015,6 +1016,47 @@ pub(crate) async fn prove_token_element(
     token_element_for(tool, xid, *element_index, element.clone(), proof).map(Some)
 }
 
+/// Re-read the token element's AT-SPI state and refuse a disabled one before
+/// any cursor or input work, as macOS does (`element_disabled`). The snapshot's
+/// `enabled` can be stale. An object that cannot be read is left to the
+/// tool's own stale-token handling.
+pub(crate) async fn refuse_if_disabled(
+    pid: u32,
+    resolved: &cua_driver_core::element_token::ResolvedElement<
+        crate::atspi::snapshot::CachedElement,
+    >,
+    tool: &str,
+) -> Option<ToolResult> {
+    let cua_driver_core::element_token::ResolvedElement::Element {
+        window_id, element, ..
+    } = resolved
+    else {
+        return None;
+    };
+    let (window_id, observed) = (*window_id, element.clone());
+    let enabled =
+        tokio::task::spawn_blocking(move || crate::atspi::element_enabled_observed(&observed))
+            .await
+            .ok()?
+            .ok()?;
+    (enabled == Some(false)).then(|| element_disabled_refusal(pid, window_id, tool))
+}
+
+pub(crate) fn element_disabled_refusal(pid: u32, window_id: u64, tool: &str) -> ToolResult {
+    ToolResult::error(format!(
+        "refusing {tool}: the target reports it is not enabled (AT-SPI state has neither \
+         Enabled nor Sensitive), so the app would ignore it. Nothing was sent. Snapshot \
+         again and act once the element reports enabled"
+    ))
+    .with_structured(json!({
+        "code": "element_disabled",
+        "effect": "refused",
+        "pid": pid,
+        "window_id": window_id,
+        "action": tool,
+    }))
+}
+
 pub(crate) fn token_element_for(
     tool: &str,
     xid: u64,
@@ -1373,6 +1415,92 @@ fn any_typing_delay_gives_a_budget() {
     let longest = paced_typing_budget(3, u64::MAX);
     assert!(longest >= std::time::Duration::from_millis(u64::MAX));
     crate::input::action::Action::new(longest);
+}
+
+/// The result for AT-SPI input that was sent and whose effect is unknown: an
+/// error with `effect: unverifiable` and `delivery.mode: unknown`. It has no
+/// `background_unavailable` code and no foreground escalation, so neither the
+/// caller nor `run_steps` sends the input a second time.
+pub(crate) fn atspi_outcome_unknown(
+    summary: String,
+    transport: cua_driver_core::action_record::ActionTransport,
+    delivery: crate::input::delivery::DeliveryMode,
+    detail: Option<String>,
+) -> ToolResult {
+    use cua_driver_core::action_record::{
+        ActionEffect, ActionExecutionRecord, ActualDelivery, RequestedDelivery,
+    };
+    let requested = if delivery.is_foreground() {
+        RequestedDelivery::Foreground
+    } else {
+        RequestedDelivery::Background
+    };
+    let mut record =
+        ActionExecutionRecord::builder(ActionEffect::Unverifiable, transport, requested)
+            .actual_delivery(ActualDelivery::Unknown);
+    if let Some(detail) = detail {
+        record = record.detail(detail);
+    }
+    let record = record
+        .build()
+        .expect("uncertain semantic activation has no delivered count or replay");
+    let public = serde_json::to_value(record.public_result().unwrap()).unwrap();
+    ToolResult::error(summary)
+        .with_structured(public)
+        .with_action_record(record)
+}
+
+/// [`atspi_outcome_unknown`] for a `doAction` that failed after it was sent
+/// ([`crate::atspi::InputMayHaveLanded`]).
+pub(crate) fn atspi_click_outcome_unknown(
+    target: &str,
+    delivery: crate::input::delivery::DeliveryMode,
+    error: &anyhow::Error,
+) -> ToolResult {
+    atspi_outcome_unknown(
+        format!(
+            "click: the AT-SPI action for {target} was sent, but {error}; whether it took \
+             effect is unknown. Refresh state (get_window_state or a screenshot) before \
+             clicking again."
+        ),
+        cua_driver_core::action_record::ActionTransport::LinuxAtSpiAction,
+        delivery,
+        Some(error.to_string()),
+    )
+}
+
+/// [`atspi_outcome_unknown`] for an `EditableText` write that failed after it
+/// was sent ([`crate::atspi::InputMayHaveLanded`]).
+pub(crate) fn atspi_text_outcome_unknown(
+    delivery: crate::input::delivery::DeliveryMode,
+    error: &anyhow::Error,
+) -> ToolResult {
+    atspi_outcome_unknown(
+        format!(
+            "type_text: the AT-SPI text write was sent, but {error}; whether the text \
+             landed is unknown. Read the field back (get_window_state) before typing again."
+        ),
+        cua_driver_core::action_record::ActionTransport::LinuxAtSpiValue,
+        delivery,
+        Some(error.to_string()),
+    )
+}
+
+/// Report a cleanup step that failed after the input was sent, without
+/// changing the input's own outcome: a sentence appended to the text and a
+/// `warning` field.
+pub(crate) fn with_cleanup_warning(mut result: ToolResult, warning: Option<String>) -> ToolResult {
+    let Some(warning) = warning else {
+        return result;
+    };
+    if let Some(cua_driver_core::protocol::Content::Text { text, .. }) = result.content.first_mut()
+    {
+        text.push_str(&format!(" Warning: {warning}."));
+    }
+    if let Some(Value::Object(structured)) = result.structured_content.as_mut() {
+        structured.insert("warning".into(), json!(warning));
+    }
+    result
 }
 
 /// Map an input-path error to a tool error, attaching the structured
@@ -1936,6 +2064,176 @@ pub(crate) fn unavailable_gtk_keyboard_background(
     .then(|| background_keyboard_refusal(atspi_up()))
 }
 
+pub(crate) fn maps_indicate_qt(maps: &str) -> bool {
+    maps.contains("libQt5Gui") || maps.contains("libQt6Gui")
+}
+
+fn is_qt_process(pid: u32) -> bool {
+    fs::read_to_string(format!("/proc/{pid}/maps"))
+        .map(|maps| maps_indicate_qt(&maps))
+        .unwrap_or(false)
+}
+
+/// A modifier that turns a key into a shortcut chord. Shift alone only
+/// changes the character, so it is not one.
+fn is_shortcut_modifier(key: &str) -> bool {
+    is_modifier(key) && !key.eq_ignore_ascii_case("shift")
+}
+
+/// Qt matches `QShortcut` / `QAction` shortcuts only in its active window
+/// (`Qt::WindowShortcut` checks `QApplication::activeWindow()`). Synthetic
+/// `XSendEvent` keys reach an inactive Qt window and fire nothing, so on a
+/// host without the agent's own XI2 master keyboard (Xvfb, Xtigervnc, no
+/// writable `/dev/uinput`) a background chord to an inactive Qt window
+/// answered "Pressed" while nothing happened (trycua/cua#7370). The agent
+/// keyboard's focus does make Qt run the shortcut, so that route is kept.
+pub(crate) fn qt_shortcut_background_must_refuse(
+    foreground: bool,
+    agent_keyboard: bool,
+    qt: bool,
+    target_is_active: Option<bool>,
+    modifiers: &[String],
+) -> bool {
+    !foreground
+        && !agent_keyboard
+        && qt
+        && modifiers.iter().any(|key| is_shortcut_modifier(key))
+        && target_is_active != Some(true)
+}
+
+fn qt_shortcut_synthetic_is_lost(pid: u32, xid: u64, modifiers: &[String]) -> bool {
+    !crate::wayland::is_wayland()
+        && qt_shortcut_background_must_refuse(
+            false,
+            false,
+            is_qt_process(pid),
+            crate::x11::active_window().map(|active| active == xid),
+            modifiers,
+        )
+}
+
+pub(crate) fn unavailable_qt_shortcut_background(
+    pid: u32,
+    xid: u64,
+    modifiers: &[String],
+    delivery: crate::input::delivery::DeliveryMode,
+) -> Option<ToolResult> {
+    (!delivery.is_foreground()
+        && !crate::input::real_keyboard_input_available()
+        && qt_shortcut_synthetic_is_lost(pid, xid, modifiers))
+    .then(|| {
+        crate::input::delivery::background_unavailable_error(
+            crate::input::delivery::BackgroundUnavailable::QtInactiveWindowShortcut,
+        )
+    })
+}
+
+#[cfg(test)]
+mod qt_shortcut_tests {
+    use super::*;
+
+    fn mods(keys: &[&str]) -> Vec<String> {
+        keys.iter().map(|key| key.to_string()).collect()
+    }
+
+    #[test]
+    fn a_chord_to_an_inactive_qt_window_is_refused() {
+        // trycua/cua#7370: ctrl+m to an inactive Qt window answered "Pressed"
+        // while the QAction never fired.
+        assert!(qt_shortcut_background_must_refuse(
+            false,
+            false,
+            true,
+            Some(false),
+            &mods(&["ctrl"])
+        ));
+        for modifier in ["alt", "super", "Control", "meta"] {
+            assert!(
+                qt_shortcut_background_must_refuse(
+                    false,
+                    false,
+                    true,
+                    Some(false),
+                    &mods(&[modifier])
+                ),
+                "{modifier}"
+            );
+        }
+        // An active-window state the server cannot report is not a pass.
+        assert!(qt_shortcut_background_must_refuse(
+            false,
+            false,
+            true,
+            None,
+            &mods(&["ctrl"])
+        ));
+    }
+
+    #[test]
+    fn active_qt_windows_plain_keys_and_other_toolkits_keep_their_route() {
+        // The active Qt window matches its shortcuts (the reporter's control).
+        assert!(!qt_shortcut_background_must_refuse(
+            false,
+            false,
+            true,
+            Some(true),
+            &mods(&["ctrl"])
+        ));
+        // Shift only changes the character; plain keys go to the focus widget.
+        assert!(!qt_shortcut_background_must_refuse(
+            false,
+            false,
+            true,
+            Some(false),
+            &mods(&["shift"])
+        ));
+        assert!(!qt_shortcut_background_must_refuse(
+            false,
+            false,
+            true,
+            Some(false),
+            &[]
+        ));
+        // Foreground activates the window first; other toolkits are not Qt.
+        assert!(!qt_shortcut_background_must_refuse(
+            true,
+            false,
+            true,
+            Some(false),
+            &mods(&["ctrl"])
+        ));
+        assert!(!qt_shortcut_background_must_refuse(
+            false,
+            false,
+            false,
+            Some(false),
+            &mods(&["ctrl"])
+        ));
+        // The agent's own XI2 master keyboard focus makes Qt run the shortcut
+        // in an inactive window (measured on GNOME Xorg, Qt 6.4).
+        assert!(!qt_shortcut_background_must_refuse(
+            false,
+            true,
+            true,
+            Some(false),
+            &mods(&["ctrl"])
+        ));
+    }
+
+    #[test]
+    fn qt_is_recognised_from_its_gui_library() {
+        assert!(maps_indicate_qt(
+            "7f /usr/lib/x86_64-linux-gnu/libQt5Gui.so.5.15.13\n"
+        ));
+        assert!(maps_indicate_qt(
+            "7f /usr/lib/x86_64-linux-gnu/libQt6Gui.so.6.6.2\n"
+        ));
+        assert!(!maps_indicate_qt(
+            "7f /usr/lib/x86_64-linux-gnu/libgtk-3.so.0\n"
+        ));
+    }
+}
+
 /// Outcome of one background/foreground keyboard delivery on X11, funnelled
 /// through `spawn_blocking`'s success type so the tool can report the route.
 pub(crate) enum KeyRoute {
@@ -2037,6 +2335,12 @@ pub(crate) fn background_key_route(
             {
                 return Err(error.context("virtual master keyboard delivery failed"));
             }
+            Err(error) if qt_shortcut_synthetic_is_lost(pid, xid, &owned_modifiers(modifiers)) => {
+                return Err(error.context(
+                    "virtual master keyboard delivery failed, and Qt drops a synthetic \
+                     shortcut sent to a window that is not active",
+                ));
+            }
             Err(error) => tracing::warn!("MPX keyboard fell back to XSendEvent: {error}"),
         }
     }
@@ -2053,6 +2357,10 @@ pub(crate) fn background_key_route(
         None => crate::input::send_key(xid, key, modifiers),
     }
     .map(|()| KeyRoute::Synthetic)
+}
+
+fn owned_modifiers(modifiers: &[&str]) -> Vec<String> {
+    modifiers.iter().map(|key| key.to_string()).collect()
 }
 
 const GRAB_FOCUS_FAILURE_PREFIX: &str = "grab_focus_failed";
@@ -2197,19 +2505,61 @@ pub(crate) fn key_route_result(action: &str, route: KeyRoute, mode_label: &str) 
     }
 }
 
-pub(crate) fn unavailable_gtk_pointer_background(
+/// Background pointer input (wheel, right / double click, drag) to a toolkit
+/// that discards synthetic `XSendEvent` pointer events (GTK, Qt, LibreOffice
+/// VCL) needs the agent's own XI2 master pointer. When this X server cannot
+/// hot-add it (Xvfb, Xtigervnc, no writable `/dev/uinput`), the only route
+/// left would report success while the toolkit drops the event, so refuse.
+/// Qt is the case trycua/cua#7369 caught: with XI 2.1 it reads the wheel only
+/// from XI2 scroll valuators and ignores core Button4/5 entirely.
+pub(crate) fn unavailable_synthetic_pointer_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    (!delivery.is_foreground()
-        && is_gtk_process(pid)
-        && !crate::wayland::is_inject_mode()
-        && !crate::input::real_pointer_input_available())
+    synthetic_pointer_background_must_refuse(
+        delivery.is_foreground(),
+        crate::wayland::is_inject_mode() || crate::input::real_pointer_input_available(),
+        synthetic_pointer_is_dropped(pid),
+    )
     .then(|| {
         crate::input::delivery::background_unavailable_error(
-            crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+            crate::input::delivery::BackgroundUnavailable::SyntheticPointerDropped,
         )
     })
+}
+
+pub(crate) fn synthetic_pointer_background_must_refuse(
+    foreground: bool,
+    real_pointer_route: bool,
+    drops_synthetic_pointer: bool,
+) -> bool {
+    !foreground && !real_pointer_route && drops_synthetic_pointer
+}
+
+#[cfg(test)]
+mod synthetic_pointer_tests {
+    use super::*;
+
+    #[test]
+    fn qt_and_vcl_wheel_needs_the_agent_pointer_like_gtk() {
+        // trycua/cua#7369: Qt (XI 2.1) reads the wheel from XI2 scroll
+        // valuators and ignores synthetic Button4/5. Without the agent's own
+        // pointer device every background wheel to it would be a silent no-op.
+        for maps in [
+            "7f /usr/lib/libQt5Gui.so.5\n",
+            "7f /usr/lib/libQt6Gui.so.6\n",
+            "7f /usr/lib/libgtk-3.so.0\n",
+            "7f /opt/libreoffice/program/libmergedlo.so\n",
+        ] {
+            assert!(maps_indicate_synthetic_pointer_dropped(maps), "{maps}");
+        }
+        assert!(synthetic_pointer_background_must_refuse(false, false, true));
+        assert!(!synthetic_pointer_background_must_refuse(false, true, true));
+        assert!(!synthetic_pointer_background_must_refuse(true, false, true));
+        assert!(!synthetic_pointer_background_must_refuse(
+            false, false, false
+        ));
+    }
 }
 
 pub(crate) fn unavailable_wayland_focused_input_background(
@@ -3084,15 +3434,28 @@ pub(crate) fn hyprland_input_result(result: anyhow::Result<Value>, foreground: b
         "background_unavailable"
     };
     match result {
-        Ok(value) if value["ok"] == true => ToolResult::text(
-            "Dispatched exact-target Hyprland input; application effect is unverifiable.",
-        )
-        .with_action_record(
-            record(ActionEffect::Unverifiable)
-                .actual_delivery(actual)
-                .build()
-                .expect("isolated input record is valid"),
-        ),
+        Ok(value) if value["ok"] == true => {
+            let outcome = record(ActionEffect::Unverifiable).actual_delivery(actual);
+            if value["admission"] == "user" {
+                let detail = "Admitted by the user's hyprland-apps.txt, not qualified by Cua.";
+                ToolResult::text(format!(
+                    "Dispatched exact-target Hyprland input; application effect is unverifiable. \
+                     {detail}"
+                ))
+                .with_structured(json!({"ok": true, "admission": "user"}))
+                .with_action_record(
+                    outcome
+                        .detail(detail)
+                        .build()
+                        .expect("isolated input record is valid"),
+                )
+            } else {
+                ToolResult::text(
+                    "Dispatched exact-target Hyprland input; application effect is unverifiable.",
+                )
+                .with_action_record(outcome.build().expect("isolated input record is valid"))
+            }
+        }
         Ok(mut value) => {
             if foreground && value["code"] == "foreground_partial_unknown" {
                 return hyprland_input_result(
@@ -3143,12 +3506,13 @@ pub(crate) fn hyprland_input_result(result: anyhow::Result<Value>, foreground: b
                 .as_u64()
                 .and_then(|count| u32::try_from(count).ok())
                 .filter(|count| *count > 0);
-            let outcome = if value["effect"] == "partial"
-                && delivered.is_some_and(|count| foreground || count == 1)
-            {
+            // Keys or wheel packets the compositor acknowledged before the
+            // stop stay reported, so a caller does not read them as unsent.
+            let partial = delivered.filter(|_| value["effect"] == "partial");
+            let outcome = if let Some(count) = partial {
                 record(ActionEffect::Partial)
                     .actual_delivery(actual)
-                    .delivered_count(delivered.unwrap())
+                    .delivered_count(count)
             } else {
                 value["effect"] = json!("refused");
                 value
@@ -3252,7 +3616,7 @@ pub(crate) fn spawn_isolated_hyprland(
         snapshot.transport,
         snapshot.client_kind,
     )
-    .map_err(isolated_hyprland_refusal)?;
+    .map_err(|refusal| isolated_hyprland_refusal(refusal.message()))?;
     let (guard, cancellation) = crate::wayland::hyprland_input::ActionCancellation::invocation();
     let dispatch = tokio::task::spawn_blocking(move || {
         let _lifecycle = lifecycle;
@@ -3505,6 +3869,33 @@ fn persistent_wayland_pointer_coordinates_include_window_origin() {
 
 #[cfg(test)]
 #[test]
+fn nested_inject_focus_point_maps_screenshot_pixels_or_refuses() {
+    let state = ToolState::new();
+    let args = json!({ "pid": 41, "window_id": 9, "x": 387.0, "y": 133.5 });
+    let refusal = nested_inject_focus_point(&state, &args, 41, 9, (387.0, 133.5))
+        .expect_err("a point read off no screenshot must not be clicked");
+    assert_eq!(
+        refusal.structured_content.as_ref().unwrap()["code"],
+        "screenshot_context_missing"
+    );
+
+    // A screenshot downscaled to half the window's size: its pixels are
+    // doubled into the window-local frame the compositor clicks in.
+    state.snapshots.publish_capture_for_session(
+        41,
+        9,
+        crate::atspi::snapshot::AtspiSnapshot::from_nodes(&[]),
+        None,
+        Some(2.0),
+    );
+    assert_eq!(
+        nested_inject_focus_point(&state, &args, 41, 9, (387.0, 133.5)).unwrap(),
+        (774.0, 267.0)
+    );
+}
+
+#[cfg(test)]
+#[test]
 fn session_end_releases_only_its_hold_before_discarding_state() {
     let state = ToolState::new();
     let session_id = "ending-session";
@@ -3605,6 +3996,29 @@ fn failed_session_end_release_remains_retryable_and_bounded() {
 
 #[cfg(test)]
 #[test]
+fn a_user_admitted_dispatch_says_the_user_qualified_it() {
+    let user = isolated_hyprland_result(Ok(json!({"ok": true, "admission": "user"})));
+    assert_eq!(user.is_error, None);
+    assert_eq!(
+        user.structured_content.as_ref().unwrap()["admission"],
+        "user"
+    );
+    assert!(serde_json::to_string(&user.content)
+        .unwrap()
+        .contains("not qualified by Cua"));
+    assert!(user
+        .action_record
+        .unwrap()
+        .detail
+        .unwrap()
+        .contains("hyprland-apps.txt"));
+    let driver = isolated_hyprland_result(Ok(json!({"ok": true})));
+    assert!(driver.structured_content.is_none());
+    assert!(driver.action_record.unwrap().detail.is_none());
+}
+
+#[cfg(test)]
+#[test]
 fn background_client_refusals_name_the_alternatives() {
     for code in ["client_not_bound", "client_xwayland", "client_unattested"] {
         let result = isolated_hyprland_result(Ok(json!({"ok":false,"code":code,"detail":code})));
@@ -3676,6 +4090,26 @@ fn isolated_hyprland_refused_partial_and_unknown_outcomes_stay_distinct() {
     let public = partial.action_record.unwrap().public_result().unwrap();
     assert_eq!(public.effect, cua_driver_contract::ActionEffect::Partial);
     assert_eq!(public.delivery.unwrap().delivered_count, Some(1));
+
+    // Text interrupted after three keys: those keys landed, so the result is
+    // partial with its count, never a refusal that reads as "nothing sent".
+    let typed = isolated_hyprland_result(Ok(json!({
+        "ok": false, "code": "text_interrupted", "detail": "lane lost",
+        "effect": "partial", "delivery": {"mode": "background", "delivered_count": 3}
+    })));
+    let content = typed.structured_content.as_ref().unwrap();
+    assert_eq!(content["effect"], "partial");
+    assert_eq!(content["delivery"]["delivered_count"], 3);
+    assert!(content.get("escalation").is_none());
+    let public = typed.action_record.unwrap().public_result().unwrap();
+    public.validate_invariants().unwrap();
+    assert_eq!(public.effect, cua_driver_contract::ActionEffect::Partial);
+    let delivery = public.delivery.unwrap();
+    assert_eq!(
+        delivery.mode,
+        cua_driver_contract::ActionDeliveryMode::Background
+    );
+    assert_eq!(delivery.delivered_count, Some(3));
 
     let unknown = isolated_hyprland_result(Err(anyhow::anyhow!("connection lost")));
     let public = unknown.action_record.unwrap().public_result().unwrap();
@@ -4009,6 +4443,145 @@ pub(crate) async fn desktop_input_space() -> anyhow::Result<crate::wayland::Desk
     })
     .await
     .map_err(|error| anyhow::anyhow!("task error: {error}"))?
+}
+
+pub(crate) async fn prepare_desktop_click_cursor(
+    layer_shell: bool,
+    wayland_arrival: impl std::future::Future<Output = anyhow::Result<()>>,
+    best_effort_reveal: impl std::future::Future<Output = ()>,
+) -> anyhow::Result<()> {
+    if layer_shell {
+        wayland_arrival.await
+    } else {
+        best_effort_reveal.await;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod desktop_click_arrival_tests {
+    use super::prepare_desktop_click_cursor;
+    use std::cell::Cell;
+
+    #[tokio::test]
+    async fn click_tool_delivers_when_wayland_overlay_probe_cannot_connect() {
+        const CHILD: &str = "CUA_TEST_UNAVAILABLE_CLICK_OVERLAY";
+        if std::env::var_os(CHILD).is_none() {
+            // Isolate process-wide Wayland environment and the cached probe from
+            // other tests. A nonexistent socket reproduces available() == false.
+            let directory = tempfile::tempdir().unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "tools::impl_::desktop_click_arrival_tests::click_tool_delivers_when_wayland_overlay_probe_cannot_connect",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env(crate::wayland::ENABLE_WAYLAND_ENV, "1")
+                .env("WAYLAND_DISPLAY", directory.path().join("missing-compositor"))
+                .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
+                .env_remove("NIRI_SOCKET")
+                .env_remove("CUA_INJECT_SOCKET")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            return;
+        }
+        assert!(crate::wayland::is_wayland());
+        assert!(!crate::wayland::overlay::available());
+        crate::wayland::overlay::set_config(cursor_overlay::CursorConfig::default());
+        let reveals = Cell::new(0);
+        let clicks = Cell::new(0);
+        prepare_desktop_click_cursor(
+            crate::overlay::wayland_overlay_backend()
+                == crate::overlay::WaylandOverlayBackend::LayerShell,
+            async { panic!("unavailable layer-shell must not gate clicks") },
+            async { reveals.set(reveals.get() + 1) },
+        )
+        .await
+        .unwrap();
+        clicks.set(clicks.get() + 1);
+        assert_eq!(reveals.get(), 1);
+        assert_eq!(clicks.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn layer_shell_arrival_failure_refuses_click_without_fallback() {
+        let overlay_available = false;
+        let arrival_attempts = Cell::new(0);
+        let native_clicks = Cell::new(0);
+        let x11_reveals = Cell::new(0);
+        let result: anyhow::Result<()> = async {
+            prepare_desktop_click_cursor(
+                true,
+                async {
+                    arrival_attempts.set(arrival_attempts.get() + 1);
+                    anyhow::ensure!(overlay_available, "Wayland arrival renderer unavailable");
+                    Ok(())
+                },
+                async { x11_reveals.set(x11_reveals.get() + 1) },
+            )
+            .await?;
+            native_clicks.set(native_clicks.get() + 1);
+            Ok(())
+        }
+        .await;
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Wayland arrival renderer unavailable"
+        );
+        assert_eq!(arrival_attempts.get(), 1);
+        assert_eq!(native_clicks.get(), 0);
+        assert_eq!(x11_reveals.get(), 0);
+    }
+
+    #[tokio::test]
+    async fn layer_shell_click_waits_for_arrival_before_one_delivery() {
+        let (ack, arrived) = tokio::sync::oneshot::channel();
+        let native_clicks = Cell::new(0);
+        let arrival_authorized = Cell::new(false);
+        let action = async {
+            prepare_desktop_click_cursor(
+                true,
+                async {
+                    arrived.await?;
+                    arrival_authorized.set(true);
+                    Ok(())
+                },
+                async { panic!("native Wayland must never use X11 reveal") },
+            )
+            .await?;
+            assert!(arrival_authorized.get());
+            native_clicks.set(native_clicks.get() + 1);
+            Ok::<(), anyhow::Error>(())
+        };
+        tokio::pin!(action);
+        tokio::select! {
+            result = &mut action => panic!("click completed before arrival: {result:?}"),
+            _ = tokio::task::yield_now() => {}
+        }
+        assert_eq!(native_clicks.get(), 0);
+        ack.send(()).unwrap();
+        action.await.unwrap();
+        assert_eq!(native_clicks.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn x11_keeps_best_effort_reveal_without_wayland_arrival() {
+        let reveals = Cell::new(0);
+        prepare_desktop_click_cursor(
+            false,
+            async { panic!("X11 must not require a Wayland compositor") },
+            async { reveals.set(reveals.get() + 1) },
+        )
+        .await
+        .unwrap();
+        assert_eq!(reveals.get(), 1);
+    }
 }
 
 /// Keep the logical cursor position in sync with every visibly targeted
@@ -4396,10 +4969,36 @@ pub(crate) async fn focus_by_pixel(
     Ok(())
 }
 
+/// Map a keyboard tool's PX focus point into the window-local frame the
+/// nested compositor clicks in, as the pointer tools map theirs. Screenshot
+/// pixels need this session's screenshot of the window, so a point read off
+/// no screenshot is refused instead of clicking an arbitrary spot.
+pub(crate) fn nested_inject_focus_point(
+    state: &ToolState,
+    args: &Value,
+    pid: u32,
+    window_id: u64,
+    (x, y): (f64, f64),
+) -> Result<(f64, f64), ToolResult> {
+    if desktop_frame_requested(args) {
+        return desktop_to_window_local(window_id, x, y)
+            .map_err(|error| desktop_frame_unmapped(window_id, error));
+    }
+    if args.bool_or("from_zoom", false) {
+        return state
+            .zoom_context(args, pid, Some(window_id))
+            .map(|context| context.zoom_to_window(x, y));
+    }
+    screenshot_scale(state, args, pid, Some(window_id)).map(|scale| (x * scale, y * scale))
+}
+
 /// Establish widget-local focus inside a nested-compositor target without
 /// changing the compositor's focused toplevel. AX uses Component.GrabFocus;
-/// PX sends a private per-surface left click at the requested local point.
+/// PX sends a private per-surface left click at the requested point, mapped
+/// by [`nested_inject_focus_point`].
 pub(crate) async fn focus_nested_inject_target(
+    state: &ToolState,
+    args: &Value,
     pid: u32,
     window_id: u64,
     element: Option<crate::atspi::TokenElement>,
@@ -4419,7 +5018,8 @@ pub(crate) async fn focus_nested_inject_target(
             Err(error) => Err(ToolResult::error(format!("Task error: {error}"))),
         };
     }
-    if let Some((x, y)) = pixel {
+    if let Some(pixel) = pixel {
+        let (x, y) = nested_inject_focus_point(state, args, pid, window_id, pixel)?;
         return match tokio::task::spawn_blocking(move || {
             crate::wayland::inject_click(pid, window_id, x, y, 1, 1)
         })
@@ -4549,6 +5149,10 @@ pub fn build_registry_with_provider(
 ) -> ToolRegistry {
     let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
     let state = ToolState::new_with_capture_service(r.capture_service());
+    {
+        let state = state.clone();
+        r.set_token_window_resolver(Arc::new(move |args| state.snapshots.window_for_token(args)));
+    }
     crate::recording_hooks::install();
     if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
         let recording_state = Arc::downgrade(&state);

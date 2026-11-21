@@ -266,12 +266,16 @@ with `0`.
 
 ### Steps inside `run_steps` and `run_script` (macOS)
 
-The agent cursor's glide to the target (600 ms or more with the default
-`steady` timing) is most of a macOS action's latency, and a window wait asked
-for with `post_action_wait: "report"` adds up to 300 ms. A call that is one step
-of a `run_steps` batch or a `run_script` program is followed at once by another
-step, so the driver shortens both for it: the step waits at most 120 ms for the
-cursor to arrive and 100 ms for a window change (on Linux X11 too). The cursor keeps gliding and the watch keeps running
+Two waits make up most of a macOS action's latency: the agent cursor's glide to
+the target and, when asked for with `post_action_wait: "report"`, up to 300 ms of
+the window watch above. The default `steady` timing (like `relaxed` and `calm`)
+stretches a short hop to its floor so a person can follow it, but the action does
+not wait for the stretch: it goes ahead when the same move under `native` timing
+would have arrived, and the cursor finishes its glide during the action. A call
+that is one step of a `run_steps` batch or a `run_script` program is followed at
+once by another step, so the driver shortens both for it: the step waits at most
+120 ms for the cursor to arrive and 100 ms for a window change (on Linux X11 too).
+The cursor keeps gliding and the watch keeps running
 detached, as above, so a window that opens late is still reported on the next
 action's result. The last step of a `run_steps` batch, and every direct call,
 keep the full waits, so the batch's final result still reports what it left
@@ -310,13 +314,18 @@ Each action that watches for window changes (`click`, `double_click`,
   (800 ms) on Linux X11, where a Qt file dialog that maps after 300 to 600 ms
   then still confirms the action. Use it when the next decision depends on
   this result naming the window the action opened.
-- `"none"` returns as soon as the input is delivered. The result ends with
-  `Window changes not observed: post_action_wait "none" returned without
-  waiting.` instead of reporting no change. On macOS the watch still runs
+- `"none"` returns as soon as the input is delivered. On macOS the result
+  ends with `Window changes not observed: post_action_wait "none" returned
+  without waiting.` instead of reporting no change, and the watch still runs
   detached for its whole deadline and keeps the focus-steal lease, so focus
   protection is unchanged and a window that opens is reported on the next
   action's result. On Linux X11 a foreground action then reports no
   window-change evidence.
+
+The driver admits one desktop action at a time, across every client of the
+process. An action holds that admission only until its result returns, never
+through the detached watch, so the next action from any client starts without
+waiting for the previous action's watch.
 
 Windows does not advertise `post_action_wait`, and its action schemas refuse it
 as an unknown argument (`invalid_arguments`): the Windows adapter does not wait

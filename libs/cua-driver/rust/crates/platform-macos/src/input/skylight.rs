@@ -1570,7 +1570,7 @@ pub fn with_foreground_hid_activation(
     // focus; a key sent then goes to that field, which is part of the target.
     let focused_window_id =
         crate::ax::bindings::focused_window_id_of_pid(target_pid).or_else(|| {
-            crate::ax::bindings::inline_editor_open(target_pid, target_wid)
+            crate::ax::bindings::inline_editor_open(target_pid, target_wid, INLINE_EDIT_WAIT)
                 .then(|| crate::ax::exact_target::AxWindowId::window(target_wid))
         });
     if preserves_exact_existing_focus(prev_ok, prev_psn, target_psn, focused_window_id, target_wid)
@@ -1615,7 +1615,7 @@ pub fn with_foreground_hid_activation(
         && keeps_front_for_inline_edit(
             ends_inline_edit_when_deactivated(target_pid),
             INLINE_EDIT_WAIT,
-            || crate::ax::bindings::inline_editor_open(target_pid, target_wid),
+            |budget| crate::ax::bindings::inline_editor_open(target_pid, target_wid, budget),
         );
     if prev_ok && !keeps_front {
         unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
@@ -1641,28 +1641,31 @@ fn ends_inline_edit_when_deactivated(pid: libc::pid_t) -> bool {
 /// it lost the front, so the driver leaves it in front.
 pub fn inline_edit_holds_front(pid: libc::pid_t, window_id: u32) -> bool {
     ends_inline_edit_when_deactivated(pid)
-        && crate::ax::bindings::inline_editor_open(pid, window_id)
+        && crate::ax::bindings::inline_editor_open(pid, window_id, INLINE_EDIT_WAIT)
 }
 
 /// Whether a foreground action that succeeded must leave its target in front:
 /// the app ends inline edits when deactivated and one is open within `wait`.
+/// Each probe gets only the time left of `wait`.
 fn keeps_front_for_inline_edit(
     ends_edit_when_deactivated: bool,
     wait: std::time::Duration,
-    mut editor_open: impl FnMut() -> bool,
+    mut editor_open: impl FnMut(std::time::Duration) -> bool,
 ) -> bool {
     if !ends_edit_when_deactivated {
         return false;
     }
     let deadline = std::time::Instant::now() + wait;
     loop {
-        if editor_open() {
-            return true;
-        }
-        if std::time::Instant::now() >= deadline {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
             return false;
         }
-        std::thread::sleep(ACTIVATION_POLL_INTERVAL);
+        if editor_open(remaining) {
+            return true;
+        }
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        std::thread::sleep(ACTIVATION_POLL_INTERVAL.min(left));
     }
 }
 
@@ -1761,7 +1764,7 @@ mod tests {
         assert!(keeps_front_for_inline_edit(
             true,
             std::time::Duration::from_secs(5),
-            || {
+            |_| {
                 reads += 1;
                 reads == 3
             }
@@ -1773,12 +1776,32 @@ mod tests {
     fn the_front_goes_back_without_an_inline_edit() {
         let started = std::time::Instant::now();
         let wait = std::time::Duration::from_millis(30);
-        assert!(!keeps_front_for_inline_edit(true, wait, || false));
+        assert!(!keeps_front_for_inline_edit(true, wait, |_| false));
         assert!(started.elapsed() >= wait);
         // An app that keeps its edits when deactivated is never polled.
-        assert!(!keeps_front_for_inline_edit(false, wait, || panic!(
+        assert!(!keeps_front_for_inline_edit(false, wait, |_| panic!(
             "polled"
         )));
+    }
+
+    #[test]
+    fn each_inline_edit_probe_gets_only_the_time_left() {
+        let wait = std::time::Duration::from_millis(200);
+        let started = std::time::Instant::now();
+        let mut previous_end = std::time::Duration::ZERO;
+        let mut probes = 0;
+        assert!(!keeps_front_for_inline_edit(true, wait, |budget| {
+            // The budget was taken after the previous probe ended.
+            assert!(
+                previous_end + budget <= wait,
+                "probe {probes} got {budget:?} after {previous_end:?}"
+            );
+            probes += 1;
+            std::thread::sleep(std::time::Duration::from_millis(25));
+            previous_end = started.elapsed();
+            false
+        }));
+        assert!(probes >= 2);
     }
 
     #[test]

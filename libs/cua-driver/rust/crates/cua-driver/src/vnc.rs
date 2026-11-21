@@ -279,7 +279,8 @@ impl<S: Read + Write> RfbClient<S> {
         })
     }
 
-    pub fn size(&self) -> (u16, u16) {
+    #[cfg(test)]
+    fn size(&self) -> (u16, u16) {
         (self.width, self.height)
     }
 

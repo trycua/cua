@@ -175,6 +175,7 @@ fn status_reports_the_pid_stored_in_the_file_named_by_pid_file() {
     );
 }
 
+#[cfg(unix)]
 fn spawn_daemon(home: &Path, args: &[&str]) -> Child {
     let mut serve = driver(home, args);
     // Serve in this process instead of a disclaimed macOS child, so the
@@ -190,6 +191,7 @@ fn spawn_daemon(home: &Path, args: &[&str]) -> Child {
     spawn_in_job(&mut serve).expect("spawn source-built daemon")
 }
 
+#[cfg(unix)]
 fn wait_until_serving(daemon: &mut Child, home: &Path, status_args: &[&str]) {
     let deadline = Instant::now() + BOUND;
     loop {

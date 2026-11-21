@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Shared contract for read-only accessibility surfaces without native window identity.
 
 use async_trait::async_trait;

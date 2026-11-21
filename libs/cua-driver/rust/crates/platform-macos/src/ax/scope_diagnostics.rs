@@ -65,7 +65,8 @@ pub struct AttrRead {
     pub value_type: Option<String>,
     /// Entries in the array value, before any filtering.
     pub raw_count: Option<usize>,
-    /// Array entries that are AX elements.
+    /// Array entries that are AX elements, or those seen before the deadline
+    /// when the report is `partial`.
     pub element_count: Option<usize>,
 }
 
@@ -257,13 +258,27 @@ pub fn probe(pid: i32, window_id: u32) -> ScopeDiagnostics {
 
         // The arrays own their elements until they drop at the end of this
         // scope, so the union borrows them without retaining each one.
+        let ax_type = AXUIElementGetTypeID();
         let mut union: Vec<(AXUIElementRef, Vec<&'static str>)> = Vec::new();
         let mut by_hash: HashMap<CFHashCode, Vec<usize>> = HashMap::new();
-        'lists: for (source, list) in [("ax_children", &children), ("ax_windows", &windows)] {
-            for element in list.iter().flat_map(ax_elements) {
+        'lists: for (source, list, read) in [
+            ("ax_children", &children, &mut report.ax_children),
+            ("ax_windows", &windows, &mut report.ax_windows),
+        ] {
+            let (Some(list), Some(read)) = (list, read.as_mut()) else {
+                continue;
+            };
+            read.element_count = Some(0);
+            for item in list.iter() {
                 if !budget.allows() {
                     break 'lists;
                 }
+                let item = *item;
+                if CFGetTypeID(item) != ax_type {
+                    continue;
+                }
+                *read.element_count.get_or_insert(0) += 1;
+                let element = item as AXUIElementRef;
                 let bucket = by_hash.entry(CFHash(element as CFTypeRef)).or_default();
                 match bucket
                     .iter()
@@ -328,18 +343,8 @@ fn type_name(value: CFTypeRef) -> String {
     }
 }
 
-/// The entries of `array` that are AX elements, borrowed from it.
-fn ax_elements(array: &CFArray<CFTypeRef>) -> impl Iterator<Item = AXUIElementRef> + '_ {
-    let ax_type = unsafe { AXUIElementGetTypeID() };
-    array
-        .iter()
-        .map(|item| *item)
-        .filter(move |item| unsafe { CFGetTypeID(*item) } == ax_type)
-        .map(|item| item as AXUIElementRef)
-}
-
 /// Copy an array-valued attribute, keeping its native outcome and, when the
-/// value is an array, the array itself.
+/// value is an array, the array itself. The caller fills `element_count`.
 unsafe fn copy_list(element: AXUIElementRef, attr: &str) -> (AttrRead, Option<CFArray<CFTypeRef>>) {
     let (err, value) = copy_value(element, attr);
     if err != kAXErrorSuccess {
@@ -360,7 +365,6 @@ unsafe fn copy_list(element: AXUIElementRef, attr: &str) -> (AttrRead, Option<CF
     }
     let array = CFArray::<CFTypeRef>::wrap_under_create_rule(value as _);
     read.raw_count = Some(array.len() as usize);
-    read.element_count = Some(ax_elements(&array).count());
     (read, Some(array))
 }
 

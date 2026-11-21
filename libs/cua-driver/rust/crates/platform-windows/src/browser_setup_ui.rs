@@ -804,10 +804,13 @@ pub fn disable(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cua_driver_core::browser::{existing_profile_setup_descriptor, BrowserProduct};
+    use cua_driver_core::browser::{
+        existing_profile_setup_descriptor, BrowserProduct, SetupPlatform,
+    };
 
     fn descriptor() -> &'static BrowserSetupDescriptor {
-        existing_profile_setup_descriptor(BrowserProduct::GoogleChrome).unwrap()
+        existing_profile_setup_descriptor(BrowserProduct::GoogleChrome, SetupPlatform::Windows)
+            .unwrap()
     }
 
     fn node(control_type: &str, name: &str, value: Option<&str>, actions: &[&str]) -> UiaNode {
@@ -1231,7 +1234,11 @@ mod tests {
 
     #[test]
     fn edge_153_cleanup_uses_native_chrome_without_reading_the_page_renderer() {
-        let edge = existing_profile_setup_descriptor(BrowserProduct::MicrosoftEdge).unwrap();
+        let edge = existing_profile_setup_descriptor(
+            BrowserProduct::MicrosoftEdge,
+            SetupPlatform::Windows,
+        )
+        .unwrap();
         let fixture = edge_153_native_chrome("127.0.0.1:58963/fixture", "cua-driver Web Harness");
         assert!(
             !needs_setup_page_renderer(&fixture, edge),

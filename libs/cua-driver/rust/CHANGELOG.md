@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.56.8](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.7...cua-driver-rs-v0.56.8) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-driver:** press a real Enter for a trailing newline in browser_type ([#7732](https://github.com/trycua/cua/issues/7732)) ([6e883fc](https://github.com/trycua/cua/commit/6e883fcaeb108fbe2e7690ffeb11ecdeb7e98b2d))
+* **cua-driver:** re-pin the macOS agent cursor overlay when the active app changes ([#8478](https://github.com/trycua/cua/issues/8478)) ([ba06efa](https://github.com/trycua/cua/commit/ba06efa4a56bb5da99a39e17b97f9f12cca1254c))
+* **cua-driver:** report the PID of the daemon serving the selected socket ([#7626](https://github.com/trycua/cua/issues/7626)) ([daf0908](https://github.com/trycua/cua/commit/daf0908c3c60536727c3c74e883d9d7e8a66fc5d))
+
 ## [0.56.7](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.6...cua-driver-rs-v0.56.7) (2026-11-21)
 
 

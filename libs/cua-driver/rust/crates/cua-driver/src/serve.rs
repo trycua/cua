@@ -2418,12 +2418,23 @@ mod pipe_release_tests {
         tokio::task::spawn_blocking(f).await.unwrap()
     }
 
+    /// Removes a test pipe's lock file from `%LOCALAPPDATA%` once the test
+    /// ends. Declared before the lock, so it drops after the lock closes.
+    struct RemoveLockFile(std::path::PathBuf);
+
+    impl Drop for RemoveLockFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn a_daemon_whose_pipe_never_answers_has_not_released() {
         let pipe = format!(
             r"\\.\pipe\cua-driver-release-{}",
             uuid::Uuid::new_v4().simple()
         );
+        let _lock_file = RemoveLockFile(daemon_lock_path(&pipe));
         // One instance that never answers. The first probe connects to it and
         // holds it waiting for a reply, so every later check finds it busy.
         let instance = ServerOptions::new()
@@ -2489,6 +2500,7 @@ mod pipe_release_tests {
             r"\\.\pipe\cua-driver-late-{}",
             uuid::Uuid::new_v4().simple()
         );
+        let _lock_file = RemoveLockFile(daemon_lock_path(&pipe));
         // The launch found nothing and claimed its lock; a lockless embedded
         // daemon then takes the name before the launch binds.
         let lock = claim_daemon_lock(&daemon_lock_path(&pipe), &pipe, Duration::ZERO).unwrap();

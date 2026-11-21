@@ -244,6 +244,11 @@ pub struct ExistingProfileSetupRequest {
     pub window_id: u64,
     /// Product identity attested immediately before approval-bound setup.
     pub browser: BrowserProduct,
+    /// Registry-admitted private lifecycle identity, never a public JSON field.
+    pub session: String,
+    pub transport_session: Option<String>,
+    /// Exact process instance attested before approval-bound setup.
+    pub fingerprint: ProcessFingerprint,
 }
 
 /// Declared user-visible effects of one bounded existing-profile setup.
@@ -595,6 +600,18 @@ pub trait BrowserPlatform: Send + Sync {
         ))
     }
 
+    /// Held across an existing-profile endpoint claim and its consent. A
+    /// platform whose compositor may hand focus to a browser-owned prompt can
+    /// capture the person's focus here and hand it back when the guard drops.
+    /// Capturing must not deliver input or change focus. Default: no guard.
+    fn existing_profile_consent_focus_guard(
+        &self,
+        _pid: i64,
+        _window_id: u64,
+    ) -> Option<Box<dyn Send>> {
+        None
+    }
+
     /// Current identity fingerprint for `pid`. Used to detect pid reuse
     /// between binding and mutation.
     async fn process_fingerprint(&self, pid: i64) -> Result<ProcessFingerprint, BrowserRefusal>;
@@ -681,6 +698,10 @@ mod tests {
                     "discover_spawned_endpoint",
                     "the spawned browser owns its listener; launcher handoff is Windows-only",
                 ),
+                (
+                    "existing_profile_consent_focus_guard",
+                    "not implemented: only Hyprland's focus-on-activate is known to hand the consent prompt focus",
+                ),
             ],
         ),
         (
@@ -709,6 +730,10 @@ mod tests {
                 (
                     "restore_frontmost_app",
                     "not implemented: a foreground attachment leaves the browser in front",
+                ),
+                (
+                    "existing_profile_consent_focus_guard",
+                    "not implemented: only Hyprland's focus-on-activate is known to hand the consent prompt focus",
                 ),
             ],
         ),

@@ -58,6 +58,7 @@ unsigned ime_guard_installs = 0, ime_guard_removals = 0;
 bool install_ime_popup_guard(void*) { ++ime_guard_installs; return true; }
 void remove_ime_popup_guard() { ++ime_guard_removals; }
 bool ime_popup_guard_active() { return ime_guard_installs > ime_guard_removals; }
+void InputExperiment::refresh_input_watch() {}
 }
 
 int main() {

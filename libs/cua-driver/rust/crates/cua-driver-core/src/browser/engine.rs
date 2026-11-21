@@ -734,6 +734,9 @@ impl BrowserEngine {
                                     pid: grant.pid,
                                     window_id: grant.window_id,
                                     browser: grant.browser_product,
+                                    fingerprint: grant.fingerprint.clone(),
+                                    session: grant.public_session.clone(),
+                                    transport_session: Some(grant.transport_session.clone()),
                                 });
                             }
                             if let Some(protected) = grant.protected_consent.as_ref() {
@@ -814,6 +817,9 @@ impl BrowserEngine {
                         pid: grant.pid,
                         window_id: grant.window_id,
                         browser: grant.browser_product,
+                        fingerprint: grant.fingerprint.clone(),
+                        session: grant.public_session.clone(),
+                        transport_session: Some(grant.transport_session.clone()),
                     };
                     if self
                         .platform
@@ -861,6 +867,9 @@ impl BrowserEngine {
                     pid: grant.pid,
                     window_id: grant.window_id,
                     browser: grant.browser_product,
+                    fingerprint: grant.fingerprint.clone(),
+                    session: grant.public_session.clone(),
+                    transport_session: Some(grant.transport_session.clone()),
                 };
                 if self
                     .platform

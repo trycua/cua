@@ -293,99 +293,32 @@ mod imp {
     }
 }
 
-#[cfg(test)]
+// The cross-platform contract is owned by tests/serve_owner_pid_test.rs. These
+// cover the Linux polling fallback, which a kernel with pidfd never reaches.
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
-    fn spawn_lasting(seconds: u32) -> std::process::Child {
-        let mut command = if cfg!(windows) {
-            let mut ping = std::process::Command::new("ping");
-            ping.args(["-n", &(seconds + 1).to_string(), "127.0.0.1"]);
-            ping
-        } else {
-            let mut sleep = std::process::Command::new("sleep");
-            sleep.arg(seconds.to_string());
-            sleep
-        };
-        command
-            .stdout(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn child")
-    }
-
-    #[test]
-    fn the_wait_returns_once_the_owner_exits() {
-        let mut child = spawn_lasting(1);
-        let owner = super::imp::Owner::open(child.id()).expect("open a running child");
-        let waiter = std::thread::spawn(move || owner.wait());
-        std::thread::sleep(std::time::Duration::from_millis(300));
-        assert!(
-            !waiter.is_finished(),
-            "the wait returned while the owner ran"
-        );
-        child.wait().expect("child exits");
-        waiter.join().expect("the wait returns");
-    }
-
-    /// Blocks until `child` exits, leaving it unreaped.
-    fn wait_without_reaping(child: &std::process::Child) {
-        #[cfg(unix)]
-        {
-            // SAFETY: an all-zero siginfo_t is a valid out buffer.
-            let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-            // SAFETY: WNOWAIT leaves the child waitable for `Child::wait`.
-            let waited = unsafe {
-                libc::waitid(
-                    libc::P_PID,
-                    child.id() as libc::id_t,
-                    &mut info,
-                    libc::WEXITED | libc::WNOWAIT,
-                )
-            };
-            assert_eq!(waited, 0, "waitid: {}", std::io::Error::last_os_error());
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::io::AsRawHandle as _;
-            use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0};
-            use windows::Win32::System::Threading::{WaitForSingleObject, INFINITE};
-            // SAFETY: `child` owns this live process handle for the whole call.
-            let waited = unsafe { WaitForSingleObject(HANDLE(child.as_raw_handle()), INFINITE) };
-            assert_eq!(waited, WAIT_OBJECT_0);
-        }
-    }
-
-    #[test]
-    fn an_owner_that_exited_but_is_not_reaped_is_refused() {
-        let mut child = spawn_lasting(0);
-        wait_without_reaping(&child);
-        let opened = super::imp::Owner::open(child.id());
-        child.wait().expect("reap the child");
-        let error = opened.err().expect("an exited owner was accepted");
-        assert_eq!(error.kind(), std::io::ErrorKind::NotFound, "{error}");
-    }
-
-    #[cfg(target_os = "linux")]
     #[test]
     fn the_polling_fallback_counts_an_unreaped_owner_as_gone() {
-        let mut child = spawn_lasting(0);
-        wait_without_reaping(&child);
+        let mut child = std::process::Command::new("true")
+            .spawn()
+            .expect("spawn child");
+        // SAFETY: an all-zero siginfo_t is a valid out buffer.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        // SAFETY: WNOWAIT waits for the exit and leaves the child unreaped.
+        let waited = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                child.id() as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOWAIT,
+            )
+        };
+        assert_eq!(waited, 0, "waitid: {}", std::io::Error::last_os_error());
         let alive = super::imp::alive(child.id() as libc::pid_t);
         child.wait().expect("reap the child");
         assert!(!alive, "a zombie owner counted as alive");
     }
 
-    #[test]
-    fn a_pid_whose_process_is_gone_is_refused() {
-        let mut child = spawn_lasting(0);
-        let pid = child.id();
-        child.wait().expect("child exits");
-        drop(child);
-        let error = super::imp::Owner::open(pid)
-            .err()
-            .expect("a gone owner was accepted");
-        assert_eq!(error.kind(), std::io::ErrorKind::NotFound, "{error}");
-    }
-
-    #[cfg(target_os = "linux")]
     #[test]
     fn the_polling_fallback_reads_exit_from_the_whole_thread_group() {
         let stat = |state: &str, threads: u32| {

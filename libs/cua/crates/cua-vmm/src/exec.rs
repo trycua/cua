@@ -166,15 +166,35 @@ pub(crate) fn tail(s: &str, max: usize) -> String {
     }
 }
 
-/// OpenSSH-based [`GuestExec`]. Uses the system `ssh` client so it honours the
-/// user's ssh config/agent and needs no extra crypto dependencies.
-#[derive(Clone, Debug)]
+/// OpenSSH-based [`GuestExec`]. Uses the system `ssh` client so it needs no
+/// extra crypto dependencies; a key login honours the user's ssh
+/// config/agent, a password login ([`SshExec::password`]) reads no config.
+#[derive(Clone)]
 pub struct SshExec {
     pub host: String,
     pub port: u16,
     pub user: String,
     pub private_key: Option<PathBuf>,
+    /// Password login instead of keys, for images that only allow one
+    /// (a macOS Lume guest's `lume`/`lume`). Ignored when `private_key` is
+    /// set. Handed to `ssh` through a private `SSH_ASKPASS` helper
+    /// ([`Askpass`]), never on its command line or in its environment, and
+    /// with the user's ssh config ignored (`-F /dev/null`).
+    pub password: Option<String>,
     pub connect_timeout: Duration,
+}
+
+impl std::fmt::Debug for SshExec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SshExec")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("user", &self.user)
+            .field("private_key", &self.private_key)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .field("connect_timeout", &self.connect_timeout)
+            .finish()
+    }
 }
 
 impl SshExec {
@@ -184,6 +204,7 @@ impl SshExec {
             port,
             user: user.into(),
             private_key: None,
+            password: None,
             connect_timeout: Duration::from_secs(10),
         }
     }
@@ -193,10 +214,25 @@ impl SshExec {
         self
     }
 
+    /// Log in with `password` ([`SshExec::password`]).
+    pub fn password(mut self, password: impl Into<String>) -> Self {
+        self.password = Some(password.into());
+        self
+    }
+
+    /// The password this login uses: none when a key is set.
+    fn login_password(&self) -> Option<&str> {
+        match self.private_key {
+            Some(_) => None,
+            None => self.password.as_deref(),
+        }
+    }
+
     /// Build from an [`crate::SshEndpoint`].
     pub fn from_endpoint(ep: &crate::types::SshEndpoint) -> Self {
         let mut s = Self::new(ep.host.clone(), ep.port, ep.user.clone());
         s.private_key = ep.private_key.clone();
+        s.password = ep.password.clone();
         s
     }
 
@@ -212,12 +248,40 @@ impl SshExec {
             "-o".into(),
             "LogLevel=ERROR".into(),
             "-o".into(),
-            "BatchMode=yes".into(),
-            "-o".into(),
             format!("ConnectTimeout={}", self.connect_timeout.as_secs().max(1)),
             "-o".into(),
             "ServerAliveInterval=15".into(),
         ];
+        if self.login_password().is_some() {
+            // `BatchMode=yes` would refuse the password prompt the askpass
+            // helper answers; one try, and keys never offered instead. The
+            // methods are switched on explicitly (a hardened ssh config may
+            // turn them off for every host), and a shared connection is
+            // never reused: loopback forward ports are recycled. No ssh
+            // config is read at all: a `Host *` block could still send the
+            // password elsewhere (`ProxyCommand`, `HostName`). A rejected
+            // password makes `ssh` try keyboard-interactive and ask the
+            // helper again; it has deleted itself, so that second ask fails
+            // with an `ssh_askpass` exec error naming only its path.
+            args.push("-F".into());
+            args.push("/dev/null".into());
+            for o in [
+                "BatchMode=no",
+                "PubkeyAuthentication=no",
+                "PasswordAuthentication=yes",
+                "KbdInteractiveAuthentication=yes",
+                "PreferredAuthentications=password,keyboard-interactive",
+                "NumberOfPasswordPrompts=1",
+                "ControlMaster=no",
+                "ControlPath=none",
+            ] {
+                args.push("-o".into());
+                args.push(o.into());
+            }
+        } else {
+            args.push("-o".into());
+            args.push("BatchMode=yes".into());
+        }
         if let Some(k) = &self.private_key {
             args.push("-o".into());
             args.push("IdentitiesOnly=yes".into());
@@ -252,7 +316,7 @@ impl SshExec {
 }
 
 impl SshExec {
-    fn argv(&self, req: &ExecRequest) -> Vec<String> {
+    pub(crate) fn argv(&self, req: &ExecRequest) -> Vec<String> {
         let mut argv = self.ssh_args();
         argv.push("--".into());
         argv.push(format!("/bin/sh -c {}", shell_quote(&remote_script(req))));
@@ -274,7 +338,10 @@ pub(crate) fn remote_script(req: &ExecRequest) -> String {
 impl GuestExec for SshExec {
     async fn exec(&self, req: ExecRequest) -> Result<ExecOutput> {
         let argv = self.argv(&req);
-        run_with_stdin("ssh", &argv, req.stdin.as_deref(), req.timeout).await
+        // Kept alive until `ssh` exits: dropping it deletes the helper.
+        let askpass = self.login_password().map(Askpass::new).transpose()?;
+        let env = askpass.as_ref().map(Askpass::env).unwrap_or_default();
+        run_with_stdin_env("ssh", &argv, &env, req.stdin.as_deref(), req.timeout).await
     }
 
     async fn exec_streaming(
@@ -283,7 +350,72 @@ impl GuestExec for SshExec {
         sink: tokio::sync::mpsc::Sender<ExecChunk>,
     ) -> Result<i64> {
         let argv = self.argv(&req);
-        run_streaming("ssh", &argv, req.stdin.as_deref(), req.timeout, sink).await
+        let askpass = self.login_password().map(Askpass::new).transpose()?;
+        let env = askpass.as_ref().map(Askpass::env).unwrap_or_default();
+        run_streaming_env("ssh", &argv, &env, req.stdin.as_deref(), req.timeout, sink).await
+    }
+}
+
+/// An `SSH_ASKPASS` helper that answers `ssh`'s password prompt, so a
+/// password login needs no terminal: a script in a fresh private (`0700`)
+/// temporary directory, with the password inside it rather than in an
+/// environment variable or argument. The script deletes itself when `ssh`
+/// runs it (a password login asks once: `NumberOfPasswordPrompts=1`), so once
+/// `ssh` has read the password it is on disk no longer, even if this process
+/// is then killed; dropping the helper deletes the directory, so only a
+/// process killed before `ssh` reached the prompt (sshd still booting) can
+/// leave one behind.
+struct Askpass {
+    dir: tempfile::TempDir,
+}
+
+impl Askpass {
+    const SCRIPT: &'static str = "askpass";
+
+    fn new(password: &str) -> Result<Self> {
+        let mut builder = tempfile::Builder::new();
+        builder.prefix("cua-askpass-");
+        // A directory defaults to 0o777 less the umask (usually 0o755).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            builder.permissions(std::fs::Permissions::from_mode(0o700));
+        }
+        let dir = builder.tempdir()?;
+        // `/bin/rm` by path: `ssh` may run the helper with a bare PATH.
+        let script = format!(
+            "#!/bin/sh\n/bin/rm -f -- \"$0\"\nprintf '%s\\n' {}\n",
+            shell_quote(password)
+        );
+        let mut open = std::fs::OpenOptions::new();
+        open.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            open.mode(0o700);
+        }
+        use std::io::Write as _;
+        let path = dir.path().join(Self::SCRIPT);
+        open.open(&path)?.write_all(script.as_bytes())?;
+        // `mode` above is masked by the umask; ssh needs the execute bit.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))?;
+        }
+        Ok(Self { dir })
+    }
+
+    /// What `ssh` needs to use the helper. `force` (OpenSSH 8.4+) asks it
+    /// even without a display and with a terminal attached.
+    fn env(&self) -> Vec<(String, String)> {
+        vec![
+            (
+                "SSH_ASKPASS".into(),
+                self.dir.path().join(Self::SCRIPT).display().to_string(),
+            ),
+            ("SSH_ASKPASS_REQUIRE".into(), "force".into()),
+        ]
     }
 }
 
@@ -330,10 +462,12 @@ impl GuestExec for PrefixExec {
 fn spawn_host(
     program: &str,
     args: &[String],
+    env: &[(String, String)],
     stdin: Option<&[u8]>,
 ) -> Result<tokio::process::Child> {
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(args)
+        .envs(env.iter().map(|(k, v)| (k, v)))
         .stdin(if stdin.is_some() {
             Stdio::piped()
         } else {
@@ -394,7 +528,19 @@ pub(crate) async fn run_streaming(
     timeout: Option<Duration>,
     sink: tokio::sync::mpsc::Sender<ExecChunk>,
 ) -> Result<i64> {
-    let mut child = spawn_host(program, args, stdin)?;
+    run_streaming_env(program, args, &[], stdin, timeout, sink).await
+}
+
+/// [`run_streaming`] with `env` added to the program's environment.
+async fn run_streaming_env(
+    program: &str,
+    args: &[String],
+    env: &[(String, String)],
+    stdin: Option<&[u8]>,
+    timeout: Option<Duration>,
+    sink: tokio::sync::mpsc::Sender<ExecChunk>,
+) -> Result<i64> {
+    let mut child = spawn_host(program, args, env, stdin)?;
     let out = child.stdout.take().expect("stdout piped");
     let err = child.stderr.take().expect("stderr piped");
     let mut pumps = tokio::spawn({
@@ -439,7 +585,18 @@ pub(crate) async fn run_with_stdin(
     stdin: Option<&[u8]>,
     timeout: Option<Duration>,
 ) -> Result<ExecOutput> {
-    let child = spawn_host(program, args, stdin)?;
+    run_with_stdin_env(program, args, &[], stdin, timeout).await
+}
+
+/// [`run_with_stdin`] with `env` added to the program's environment.
+async fn run_with_stdin_env(
+    program: &str,
+    args: &[String],
+    env: &[(String, String)],
+    stdin: Option<&[u8]>,
+    timeout: Option<Duration>,
+) -> Result<ExecOutput> {
+    let child = spawn_host(program, args, env, stdin)?;
     let fut = child.wait_with_output();
     let out = match timeout {
         Some(t) => tokio::time::timeout(t, fut)
@@ -475,6 +632,97 @@ mod tests {
         assert!(a.windows(2).any(|w| w == ["-i", "/tmp/k"]));
         assert!(a.contains(&"StrictHostKeyChecking=no".to_string()));
         assert_eq!(a.last().unwrap(), "debian@127.0.0.1");
+        assert!(a.contains(&"BatchMode=yes".to_string()));
+        // A key login keeps the user's ssh config (agent, jump hosts).
+        assert!(!a.contains(&"-F".to_string()), "{a:?}");
+    }
+
+    #[test]
+    fn a_password_login_lets_askpass_answer_and_offers_no_keys() {
+        let a = SshExec::new("127.0.0.1", 50022, "lume")
+            .password("s3cret-pw")
+            .ssh_args();
+        assert!(!a.contains(&"BatchMode=yes".to_string()));
+        for o in [
+            "BatchMode=no",
+            "PubkeyAuthentication=no",
+            // Over a config that turns password logins off for every host.
+            "PasswordAuthentication=yes",
+            "KbdInteractiveAuthentication=yes",
+            "NumberOfPasswordPrompts=1",
+            "ControlPath=none",
+        ] {
+            assert!(a.contains(&o.to_string()), "{o} missing from {a:?}");
+        }
+        // The user's ssh config is never read for a password login.
+        assert!(a.windows(2).any(|w| w == ["-F", "/dev/null"]), "{a:?}");
+        assert!(!a.iter().any(|x| x.contains("s3cret-pw")), "{a:?}");
+        assert_eq!(a.last().unwrap(), "lume@127.0.0.1");
+        // A key wins over a password: the login stays non-interactive.
+        let s = SshExec::new("127.0.0.1", 2222, "debian")
+            .key("/tmp/k")
+            .password("pw");
+        assert!(s.login_password().is_none());
+        assert!(s.ssh_args().contains(&"BatchMode=yes".to_string()));
+        assert!(!s.ssh_args().contains(&"-F".to_string()));
+        let debug = format!("{s:?}");
+        assert!(
+            debug.contains("<redacted>") && !debug.contains("\"pw\""),
+            "{debug}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_askpass_helper_prints_the_password_privately_and_is_removed() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let pw = "it's a \"pass\" $word";
+        let askpass = Askpass::new(pw).unwrap();
+        let env = askpass.env();
+        assert!(env.contains(&("SSH_ASKPASS_REQUIRE".into(), "force".into())));
+        let script = std::path::PathBuf::from(&env[0].1);
+        let mode = std::fs::metadata(&script).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
+        let dir_mode = std::fs::metadata(script.parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(dir_mode & 0o077, 0, "helper dir is readable by others");
+        let dir = script.parent().unwrap().to_path_buf();
+        let out = std::process::Command::new(&script)
+            .env_clear()
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), format!("{pw}\n"));
+        // Read once, then gone: the password is not left on disk while the
+        // login runs, nor if this process dies before the drop below.
+        assert!(!script.exists(), "the helper outlived its one read");
+        assert!(dir.exists());
+        drop(askpass);
+        assert!(!dir.exists());
+    }
+
+    #[tokio::test]
+    async fn the_extra_environment_reaches_the_program() {
+        let env = [("SSH_ASKPASS_REQUIRE".to_string(), "force".to_string())];
+        let script = vec![
+            "-c".to_string(),
+            "printf %s \"$SSH_ASKPASS_REQUIRE\"".into(),
+        ];
+        let out = run_with_stdin_env("/bin/sh", &script, &env, None, None)
+            .await
+            .unwrap();
+        assert_eq!(out.stdout_str(), "force");
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let code = run_streaming_env("/bin/sh", &script, &env, None, None, tx)
+            .await
+            .unwrap();
+        assert_eq!(code, 0);
+        let mut got = Vec::new();
+        while let Some(ExecChunk::Stdout(b)) = rx.recv().await {
+            got.extend(b);
+        }
+        assert_eq!(got, b"force");
     }
 
     #[tokio::test]

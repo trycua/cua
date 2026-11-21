@@ -19,11 +19,12 @@ use std::time::Duration;
 use cua_driver_core::single_flight::SingleFlight;
 
 use anyhow::{bail, Context};
-use windows::core::{Interface, BSTR};
+use windows::core::Interface;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
+use windows::Win32::System::Variant::VT_BSTR;
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
     IUIAutomationTogglePattern, TreeScope_Children, TreeScope_Subtree,
@@ -665,10 +666,8 @@ fn read_current_bstr(
 ) -> Option<String> {
     unsafe {
         let variant = element.GetCurrentPropertyValue(property_id).ok()?;
-        if variant.as_raw().Anonymous.Anonymous.vt == 8 {
-            let bstr = BSTR::from_raw(variant.as_raw().Anonymous.Anonymous.Anonymous.bstrVal);
-            let s = bstr.to_string();
-            std::mem::forget(bstr);
+        if variant.vt() == VT_BSTR {
+            let s = variant.Anonymous.Anonymous.Anonymous.bstrVal.to_string();
             let trimmed = s.trim();
             if trimmed.is_empty() {
                 None

@@ -238,7 +238,7 @@ pub fn session_disconnected() -> bool {
         let mut buffer = PWSTR::null();
         let mut bytes = 0u32;
         if WTSQuerySessionInformationW(
-            WTS_CURRENT_SERVER_HANDLE,
+            Some(WTS_CURRENT_SERVER_HANDLE),
             WTS_CURRENT_SESSION,
             WTSConnectState,
             &mut buffer,

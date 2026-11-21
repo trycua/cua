@@ -306,24 +306,16 @@ fn probe_metadata(socket_path: &str) -> Option<DaemonMetadata> {
         observation_origin: None,
         client_kind: None,
     };
-    #[cfg(unix)]
+    // Opening a pipe that has no instance retries for seconds, so check for
+    // one first without consuming it.
+    #[cfg(windows)]
+    if !is_daemon_listening(socket_path) {
+        return None;
+    }
+    #[cfg(any(unix, windows))]
     let response = exchange(socket_path, &request, PRESENCE_REPLY_DEADLINE).ok()?;
-    #[cfg(not(unix))]
-    let response = {
-        // Opening a pipe that has no instance retries for seconds, so check
-        // for one first without consuming it.
-        if !is_daemon_listening(socket_path) {
-            return None;
-        }
-        // The pipe client has no read timeout, so wait for it on a thread
-        // that is left behind if the daemon never answers.
-        let (reply_tx, reply_rx) = std::sync::mpsc::channel();
-        let socket_path = socket_path.to_owned();
-        std::thread::spawn(move || {
-            let _ = reply_tx.send(send_request(&socket_path, &request));
-        });
-        reply_rx.recv_timeout(PRESENCE_REPLY_DEADLINE).ok()?.ok()?
-    };
+    #[cfg(not(any(unix, windows)))]
+    let response = send_request(socket_path, &request).ok()?;
     if !response.ok {
         return None;
     }
@@ -350,27 +342,33 @@ pub const REPLY_DEADLINE: Duration = Duration::from_millis(crate::tool_schema::T
 
 /// Send one newline-delimited request and read one response.
 ///
-/// Unix reads and writes retry transient timeouts until [`REPLY_DEADLINE`] so
-/// slow accessibility walks and large screenshots are supported.
-#[cfg(unix)]
+/// Reads and writes retry transient timeouts until [`REPLY_DEADLINE`] so slow
+/// accessibility walks and large screenshots are supported.
+#[cfg(any(unix, windows))]
 pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
     exchange(socket_path, request, REPLY_DEADLINE)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn exchange(
     socket_path: &str,
     request: &DaemonRequest,
     reply_deadline: Duration,
 ) -> anyhow::Result<DaemonResponse> {
     use std::io::Read;
-    use std::os::unix::net::UnixStream;
     use std::time::Instant;
 
     const READ_POLL: Duration = Duration::from_secs(10);
 
-    let mut stream = UnixStream::connect(socket_path)
+    #[cfg(unix)]
+    let mut stream = std::os::unix::net::UnixStream::connect(socket_path)
         .map_err(|error| anyhow::anyhow!("connect to {socket_path}: {error}"))?;
+    #[cfg(windows)]
+    let mut stream = crate::pipe_stream::PipeStream::connect(
+        socket_path,
+        reply_deadline.min(crate::pipe_stream::OPEN_RETRY),
+    )
+    .map_err(|error| anyhow::anyhow!("connect to named pipe {socket_path}: {error}"))?;
     // macOS rejects setsockopt with EINVAL once the peer has closed its end,
     // even when the peer's reply is still buffered for us to read. Treat that
     // as "peer already gone": the read below still drains buffered data and
@@ -418,7 +416,7 @@ fn exchange(
     Ok(serde_json::from_str(&response_line)?)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn set_timeout_unless_peer_closed(result: std::io::Result<()>) -> std::io::Result<()> {
     match result {
         Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => Ok(()),
@@ -426,42 +424,9 @@ fn set_timeout_unless_peer_closed(result: std::io::Result<()>) -> std::io::Resul
     }
 }
 
-#[cfg(not(unix))]
-pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
-    #[cfg(target_os = "windows")]
-    {
-        use std::io::{BufRead, BufReader, Write};
-        use std::time::Duration;
-
-        let deadline = std::time::Instant::now() + Duration::from_secs(3);
-        let pipe = loop {
-            match std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(socket_path)
-            {
-                Ok(pipe) => break pipe,
-                Err(_) if std::time::Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(50));
-                }
-                Err(error) => anyhow::bail!("connect to named pipe {socket_path}: {error}"),
-            }
-        };
-
-        let mut writer = pipe.try_clone()?;
-        writer.write_all((serde_json::to_string(request)? + "\n").as_bytes())?;
-        writer.flush()?;
-
-        let response_line = BufReader::new(pipe)
-            .lines()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("daemon closed connection without response"))??;
-        Ok(serde_json::from_str(&response_line)?)
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        anyhow::bail!("daemon client not supported on this platform (socket path: {socket_path})");
-    }
+#[cfg(not(any(unix, windows)))]
+pub fn send_request(socket_path: &str, _request: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
+    anyhow::bail!("daemon client not supported on this platform (socket path: {socket_path})");
 }
 
 #[cfg(test)]
@@ -561,5 +526,50 @@ mod tests {
         older.as_object_mut().unwrap().remove("permissions_pending");
         let metadata: super::DaemonMetadata = serde_json::from_value(older).unwrap();
         assert!(!metadata.permissions_pending);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_stalled_pipe_daemon_times_out_at_the_reply_deadline() {
+        use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
+        use tokio::net::windows::named_pipe::ServerOptions;
+
+        let name = format!(r"\\.\pipe\cua-driver-stalled-reply-{}", std::process::id());
+        let server = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&name)
+            .unwrap();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+        let served = tokio::spawn(async move {
+            server.connect().await.unwrap();
+            let mut server = BufReader::new(server);
+            let mut request = String::new();
+            server.read_line(&mut request).await.unwrap();
+            assert!(request.starts_with("{\"method\":\"metadata\""), "{request}");
+            server.get_mut().write_all(b"{\"ok\":").await.unwrap();
+            release_rx.await.unwrap();
+        });
+
+        let reply_deadline = Duration::from_millis(300);
+        let error = tokio::task::spawn_blocking(move || {
+            let request = DaemonRequest {
+                method: "metadata".into(),
+                name: None,
+                args: None,
+                session_id: None,
+                observation_origin: None,
+                client_kind: None,
+            };
+            super::exchange(&name, &request, reply_deadline).unwrap_err()
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            error.to_string(),
+            "timed out after 300ms waiting for daemon response (received 6 bytes so far); \
+             the daemon may still be running the request"
+        );
+        release_tx.send(()).unwrap();
+        served.await.unwrap();
     }
 }

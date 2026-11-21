@@ -102,6 +102,8 @@ pub mod mcp_result;
 pub mod page;
 pub mod perception_client;
 pub mod perception_tools;
+#[cfg(windows)]
+pub mod pipe_stream;
 pub mod pointer_shape;
 pub mod policy;
 pub mod post_action_wait;

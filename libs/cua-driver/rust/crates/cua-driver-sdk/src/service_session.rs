@@ -7,14 +7,14 @@
 //! is never returned as a bearer value and cannot move to another connection.
 
 use crate::{DriverError, TrustedSessionOptions};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use cua_driver_core::daemon::REPLY_DEADLINE;
 use cua_driver_core::daemon::{DaemonClientKind, DaemonRequest, DaemonResponse};
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::time::Instant;
 
 const RESUME_REGISTRATION_RETRIES: usize = 20;
@@ -22,8 +22,8 @@ const RESUME_REGISTRATION_DELAY: Duration = Duration::from_millis(10);
 
 #[cfg(unix)]
 type ServiceStream = std::os::unix::net::UnixStream;
-#[cfg(target_os = "windows")]
-type ServiceStream = std::fs::File;
+#[cfg(windows)]
+type ServiceStream = cua_driver_core::pipe_stream::PipeStream;
 
 struct ServiceConnection {
     reader: BufReader<ServiceStream>,
@@ -288,7 +288,7 @@ impl Drop for ServiceSessionClient {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn write_request(writer: &mut impl Write, request: &DaemonRequest) -> std::io::Result<()> {
     let mut frame = serde_json::to_vec(request).map_err(std::io::Error::other)?;
     frame.push(b'\n');
@@ -299,16 +299,17 @@ fn write_request(writer: &mut impl Write, request: &DaemonRequest) -> std::io::R
     )
 }
 
-#[cfg(target_os = "windows")]
-fn write_request(writer: &mut impl Write, request: &DaemonRequest) -> std::io::Result<()> {
-    serde_json::to_writer(&mut *writer, request).map_err(std::io::Error::other)?;
-    writer.write_all(b"\n")?;
-    writer.flush()
+#[cfg(any(unix, windows))]
+fn read_response_line(reader: &mut BufReader<ServiceStream>) -> std::io::Result<Option<String>> {
+    read_response_line_within(reader, REPLY_DEADLINE)
 }
 
-#[cfg(unix)]
-fn read_response_line(reader: &mut BufReader<ServiceStream>) -> std::io::Result<Option<String>> {
-    let deadline = Instant::now() + REPLY_DEADLINE;
+#[cfg(any(unix, windows))]
+fn read_response_line_within(
+    reader: &mut BufReader<ServiceStream>,
+    reply_deadline: Duration,
+) -> std::io::Result<Option<String>> {
+    let deadline = Instant::now() + reply_deadline;
     let mut bytes = Vec::new();
     loop {
         match reader.read_until(b'\n', &mut bytes) {
@@ -328,21 +329,12 @@ fn read_response_line(reader: &mut BufReader<ServiceStream>) -> std::io::Result<
                 if Instant::now() >= deadline {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::TimedOut,
-                        format!("timed out after {REPLY_DEADLINE:?} waiting for trusted service response"),
+                        format!("timed out after {reply_deadline:?} waiting for trusted service response"),
                     ));
                 }
             }
             Err(error) => return Err(error),
         }
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn read_response_line(reader: &mut BufReader<ServiceStream>) -> std::io::Result<Option<String>> {
-    let mut line = String::new();
-    match reader.read_line(&mut line)? {
-        0 => Ok(None),
-        _ => Ok(Some(line)),
     }
 }
 
@@ -364,30 +356,26 @@ fn connect(socket_path: &str) -> Result<ServiceStream, DriverError> {
     Ok(stream)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn connect(socket_path: &str) -> Result<ServiceStream, DriverError> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-    loop {
-        match std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(socket_path)
-        {
-            Ok(pipe) => return Ok(pipe),
-            Err(_) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            Err(error) => {
-                return Err(DriverError::Transport {
-                    socket_path: socket_path.to_owned(),
-                    reason: format!("connect trusted service named pipe: {error}"),
-                });
-            }
-        }
-    }
+    let transport = |reason: String| DriverError::Transport {
+        socket_path: socket_path.to_owned(),
+        reason,
+    };
+    let mut stream = ServiceStream::connect(socket_path, cua_driver_core::pipe_stream::OPEN_RETRY)
+        .map_err(|error| transport(format!("connect trusted service named pipe: {error}")))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .and_then(|()| stream.set_write_timeout(Some(Duration::from_secs(5))))
+        .map_err(|error| {
+            transport(format!(
+                "configure trusted service session timeout: {error}"
+            ))
+        })?;
+    Ok(stream)
 }
 
-#[cfg(not(any(unix, target_os = "windows")))]
+#[cfg(not(any(unix, windows)))]
 fn connect(socket_path: &str) -> Result<ServiceStream, DriverError> {
     Err(DriverError::Transport {
         socket_path: socket_path.to_owned(),
@@ -624,5 +612,66 @@ mod tests {
             .unwrap();
         assert_eq!(result["content"][0]["text"], "completed");
         server.join().unwrap();
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+    use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
+    use tokio::net::windows::named_pipe::ServerOptions;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_stalled_service_reply_times_out_at_the_reply_deadline() {
+        let name = format!(
+            r"\\.\pipe\cua-driver-stalled-service-{}",
+            std::process::id()
+        );
+        let server = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&name)
+            .unwrap();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+        let served = tokio::spawn(async move {
+            server.connect().await.unwrap();
+            let mut server = tokio::io::BufReader::new(server);
+            let mut request = String::new();
+            server.read_line(&mut request).await.unwrap();
+            let request: DaemonRequest = serde_json::from_str(&request).unwrap();
+            assert_eq!(request.method, "trusted_session_call");
+            server.get_mut().write_all(b"{\"ok\":").await.unwrap();
+            release_rx.await.unwrap();
+        });
+
+        let error = tokio::task::spawn_blocking(move || {
+            let mut stream = connect(&name).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_millis(50)))
+                .unwrap();
+            let mut writer = stream.try_clone().unwrap();
+            write_request(
+                &mut writer,
+                &DaemonRequest {
+                    method: "trusted_session_call".into(),
+                    name: Some("health_report".into()),
+                    args: None,
+                    session_id: None,
+                    observation_origin: None,
+                    client_kind: None,
+                },
+            )
+            .unwrap();
+            read_response_line_within(&mut BufReader::new(stream), Duration::from_millis(300))
+                .unwrap_err()
+        })
+        .await
+        .unwrap();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert_eq!(
+            error.to_string(),
+            "timed out after 300ms waiting for trusted service response"
+        );
+        release_tx.send(()).unwrap();
+        served.await.unwrap();
     }
 }

@@ -128,21 +128,40 @@ pub async fn guest_manifest(
     guest: &SpacesdClient,
     dir: &str,
 ) -> Result<BTreeMap<String, FileState>> {
+    let out = sh(guest, &manifest_script(dir), Duration::from_secs(300)).await?;
+    Ok(parse_manifest(&out))
+}
+
+fn manifest_script(dir: &str) -> String {
     let prune = PRUNE
         .iter()
         .map(|p| format!("-name {}", quote(p)))
         .collect::<Vec<_>>()
         .join(" -o ");
-    // One pass for sizes, one batched sha256sum: two processes, not two
-    // per file. Paths with a newline are skipped (sha256sum escapes them).
+    // Both listings batch their arguments; BSD find/stat and shasum are
+    // available on macOS, GNU stat and sha256sum on Linux. find -exec ... +
+    // also avoids invoking a hash tool on stdin for an empty home.
     let find = format!("find . \\( {prune} \\) -prune -o -type f");
-    let script = format!(
-        "[ -d {d} ] || exit 0; cd {d} && {find} -printf '%s\\t%p\\n' && echo {RS} && \
-         {find} -print0 | xargs -0 -r sha256sum",
+    format!(
+        r#"[ -d {d} ] || exit 0
+cd {d} || exit
+if stat -c '%s' . >/dev/null 2>&1; then
+    {find} -exec stat -c "$(printf '%s\t%s' '%s' '%n')" {{}} +
+else
+    {find} -exec stat -f '%z%t%N' {{}} +
+fi || exit
+echo {RS}
+if command -v sha256sum >/dev/null 2>&1; then
+    {find} -exec sha256sum {{}} +
+else
+    {find} -exec shasum -a 256 {{}} +
+fi"#,
         d = quote(dir),
-    );
-    let out = sh(guest, &script, Duration::from_secs(300)).await?;
-    let text = String::from_utf8_lossy(&out);
+    )
+}
+
+fn parse_manifest(out: &[u8]) -> BTreeMap<String, FileState> {
+    let text = String::from_utf8_lossy(out);
     let (sizes, hashes) = text.split_once(RS).unwrap_or((&text, ""));
     let mut size_of = std::collections::HashMap::new();
     for line in sizes.lines() {
@@ -176,7 +195,7 @@ pub async fn guest_manifest(
             },
         );
     }
-    Ok(m)
+    m
 }
 
 /// Pulls the drive's copy of `name`'s home into `dir` in the guest.
@@ -355,3 +374,7 @@ pub async fn save(
         ..Default::default()
     })
 }
+
+#[cfg(all(test, unix))]
+#[path = "home_tests.rs"]
+mod tests;

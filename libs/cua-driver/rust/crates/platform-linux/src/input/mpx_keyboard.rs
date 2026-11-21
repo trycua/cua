@@ -6,10 +6,10 @@
 //!
 //! X11 has exactly one *core* keyboard focus, which is why XTest (real input,
 //! but always to the core focus) cannot type into a background window, and
-//! why the toolkits that ignore `send_event` (GTK, LibreOffice VCL, Qt,
-//! Chromium) drop the XSendEvent alternative. MPX lifts the single-focus
-//! limit: every master keyboard carries its own focus window
-//! (`XISetFocus`), and key events from a slave attached to that master are
+//! why the toolkits that ignore `send_event` (GTK, LibreOffice VCL, Chromium;
+//! Qt for a shortcut to an inactive window) drop the XSendEvent alternative.
+//! MPX lifts the single-focus limit: every master keyboard carries its own
+//! focus window (`XISetFocus`), and key events from a slave attached to that master are
 //! delivered — as real, non-synthetic XI2 *and* core events — to that master's
 //! focus, while the user's core keyboard, its focus and the pointer stay
 //! untouched. XTEST slaves cannot be re-attached to another master, so the

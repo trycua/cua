@@ -62,14 +62,17 @@ fn fixture() {
 }
 
 fn fixture_client(mode: &str, requests: &std::path::Path) -> Arc<PrivateWorkerClient> {
-    let mut child = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "worker::shutdown_tests::fixture", "--nocapture"])
-        .env("CUA_SHUTDOWN_TEST_FIXTURE", mode)
-        .env("CUA_SHUTDOWN_TEST_REQUESTS", requests)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
+    let mut child = ManagedChild::builder()
+        .reap_on_drop()
+        .spawn(
+            Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "worker::shutdown_tests::fixture", "--nocapture"])
+                .env("CUA_SHUTDOWN_TEST_FIXTURE", mode)
+                .env("CUA_SHUTDOWN_TEST_REQUESTS", requests)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit()),
+        )
         .unwrap();
     let stdin = child.stdin.take().unwrap();
     let mut stdout = BufReader::new(child.stdout.take().unwrap());

@@ -112,6 +112,11 @@ public protocol SpaceStreamSourceProviding: AnyObject, Sendable {
     /// Linux or Windows guest, where Command arrives as Super (⌘C would be
     /// Super+C, which types "c"). Known once a session opened.
     var commandAsControl: Bool { get }
+
+    /// Puts this Mac's clipboard `text` on the Space before a paste reaches
+    /// it, when the Space's clipboard setting lets a viewer send it. False:
+    /// nothing was sent.
+    func sendClipboard(_ text: String) async throws -> Bool
 }
 
 extension SpaceStreamSourceProviding {
@@ -121,6 +126,9 @@ extension SpaceStreamSourceProviding {
 
     /// Providers that don't know the guest send ⌘ as it is.
     public var commandAsControl: Bool { false }
+
+    /// Providers with no clipboard on the other side send nothing.
+    public func sendClipboard(_ text: String) async throws -> Bool { false }
 
     /// Providers that choose their own policy ignore the requested one.
     public func openSession(_ source: StreamSource, policy: String, frames: FrameSink,

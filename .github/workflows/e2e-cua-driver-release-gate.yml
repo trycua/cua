@@ -11,17 +11,18 @@ name: "E2E: Cua Driver release gate"
 #            - a manual dispatch,
 #            - and the stable tag run in cd-rust-cua-driver.yml, which reruns
 #              every lane on the exact release commit and blocks publishing.
-#   quick  The PR lane. The core paths on each OS, on the Electron harness:
-#          the shared Windows lane, the shared Linux lane and the shared hosted
-#          macOS lane (click, type, scroll, drag, focus and background input),
+#   quick  The PR lane. The core paths on each OS, on the Electron harness (hosted macOS adds WKWebView):
+#          the shared Windows lane, the shared Linux lane and the hosted macOS
+#          shared lane (click, type, scroll, drag, focus and background input)
+#          plus its native lane (launch_app, focus, installed apps),
 #          plus the Linux verification-skill proof that E2E: Rust Linux
 #          interactive already runs on PRs. The Tauri, WebView2, WPF, WinUI3
 #          and GTK harnesses, the capture and installer lanes and the standalone
 #          browser lanes wait for the full run after merge.
 #
 # A PR gets the quick lane when the `e2e-gate` label is present or it touches the
-# gated paths (.github/scripts/cua_driver_e2e_gate_paths.py: cursor overlay,
-# focus, background input, browser routing, the harness). release-please PRs
+# gated paths (.github/scripts/cua_driver_e2e_gate_paths.py: any driver crate,
+# test app, build input, fixture or this gate; docs and changelogs are excluded). release-please PRs
 # skip the lanes unless labelled.
 #
 # A full run that fails on main alerts (workflow-failure-alerts.yml, Alertmanager)

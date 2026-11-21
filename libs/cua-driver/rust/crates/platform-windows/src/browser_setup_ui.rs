@@ -428,9 +428,6 @@ pub struct SetupUiHandle {
     descriptor: &'static BrowserSetupDescriptor,
     pub opened_setup_page: bool,
     pub enabled_remote_debugging: bool,
-    pub focused_setup_address_field: bool,
-    pub foregrounded_window: bool,
-    pub injected_global_input: bool,
     enable_attempted: bool,
 }
 
@@ -458,9 +455,6 @@ impl SetupUiHandle {
         let enabled_remote_debugging = self.enabled_remote_debugging;
         let restored_remote_debugging = self.rollback_remote_debugging();
         let opened_setup_page = self.opened_setup_page;
-        let focused_setup_address_field = self.focused_setup_address_field;
-        let foregrounded_window = self.foregrounded_window;
-        let injected_global_input = self.injected_global_input;
         let closed_setup_page = self.close_setup_page().unwrap_or(false);
         let mut error = error;
         let cause = error.detail.take();
@@ -468,10 +462,10 @@ impl SetupUiHandle {
             "setup_side_effects": {
                 "opened_setup_page": opened_setup_page,
                 "closed_setup_page": closed_setup_page,
-                "focused_setup_address_field": focused_setup_address_field,
+                "focused_setup_address_field": false,
                 "enabled_remote_debugging": enabled_remote_debugging,
-                "foregrounded_window": foregrounded_window,
-                "injected_global_input": injected_global_input,
+                "foregrounded_window": false,
+                "injected_global_input": false,
                 "restored_remote_debugging": restored_remote_debugging,
             },
             "cause": cause,
@@ -586,9 +580,6 @@ fn set_remote_debugging(
             descriptor,
             opened_setup_page: false,
             enabled_remote_debugging: false,
-            focused_setup_address_field: false,
-            foregrounded_window: false,
-            injected_global_input: false,
             enable_attempted: false,
         },
         Ok(None) => {
@@ -600,9 +591,6 @@ fn set_remote_debugging(
                 descriptor,
                 opened_setup_page: false,
                 enabled_remote_debugging: false,
-                focused_setup_address_field: false,
-                foregrounded_window: false,
-                injected_global_input: false,
                 enable_attempted: false,
             };
             let tab_tree = match native_nodes(hwnd) {

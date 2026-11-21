@@ -2405,9 +2405,6 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         let opened_setup_page = handle.opened_setup_page;
         let enabled_remote_debugging = handle.enabled_remote_debugging;
         let setup_was_already_enabled = !enabled_remote_debugging;
-        let focused_setup_address_field = handle.focused_setup_address_field;
-        let foregrounded_window = handle.foregrounded_window;
-        let injected_global_input = handle.injected_global_input;
 
         let deadline = std::time::Instant::now() + Duration::from_secs(6);
         // Chrome and Edge can expose /json/version a few milliseconds before
@@ -2533,9 +2530,9 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             closed_setup_page: false,
             enabled_remote_debugging,
             used_bounded_pixel_fallback: false,
-            focused_setup_address_field,
-            foregrounded_window,
-            injected_global_input,
+            focused_setup_address_field: false,
+            foregrounded_window: false,
+            injected_global_input: false,
             endpoint: Some(endpoint),
         })
     }

@@ -472,9 +472,10 @@ fn resolve_owning_window<E>(
 /// still passes the ownership checks while the sheet is modal over it (issue
 /// #4697). This walks `AXParent` from the element and reports a block when a
 /// window or sheet on the way has an `AXSheet` child the element is not
-/// inside. A parentless `AXMenu` ends the walk clear. Which window the element belongs to is the exact-target gate's
-/// question, not this one. `None` means a role, parent or child list could not
-/// be read; callers refuse.
+/// inside. An `AXMenu` that answers `AXParent` as absent ends the walk clear;
+/// a failed read of it does not. Which window the element belongs to is the
+/// exact-target gate's question, not this one. `None` means a role, parent or
+/// child list could not be read; callers refuse.
 ///
 /// # Safety
 ///
@@ -484,6 +485,7 @@ pub unsafe fn element_blocked_by_sheet(element: AXUIElementRef) -> Option<bool> 
         RetainedElement::retain(element as usize),
         role_of,
         parent_of,
+        is_absent,
         |element| unsafe {
             let children =
                 super::bindings::copy_children_checked(element.as_ptr() as AXUIElementRef).ok()?;
@@ -510,6 +512,7 @@ fn blocked_by_sheet<E>(
     start: E,
     role: impl Fn(&E) -> Option<String>,
     parent: impl Fn(&E) -> Option<E>,
+    absent: impl Fn(&E, &str) -> bool,
     children: impl Fn(&E) -> Option<Vec<E>>,
     same: impl Fn(&E, &E) -> bool,
 ) -> Option<bool> {
@@ -530,7 +533,7 @@ fn blocked_by_sheet<E>(
         let Some(next) = parent(current) else {
             // A context or Catalyst menu has no parent and draws above every
             // window, so no sheet can cover it.
-            return (current_role == "AXMenu").then_some(false);
+            return (current_role == "AXMenu" && absent(current, "AXParent")).then_some(false);
         };
         if ancestry.iter().any(|a| same(a, &next)) {
             return None;
@@ -960,10 +963,19 @@ mod tests {
     type SheetNode = (&'static str, Option<usize>);
 
     fn blocked(tree: &[SheetNode], start: usize) -> Option<bool> {
+        blocked_with_absent_parent(tree, start, |&i| tree[i].1.is_none())
+    }
+
+    fn blocked_with_absent_parent(
+        tree: &[SheetNode],
+        start: usize,
+        parent_absent: impl Fn(&usize) -> bool,
+    ) -> Option<bool> {
         super::blocked_by_sheet(
             start,
             |&i| (tree[i].0 != "?").then(|| tree[i].0.to_owned()),
             |&i| tree[i].1,
+            |i, attr| attr == "AXParent" && parent_absent(i),
             |&i| Some((0..tree.len()).filter(|&c| tree[c].1 == Some(i)).collect()),
             |a, b| a == b,
         )
@@ -1028,6 +1040,9 @@ mod tests {
         assert_eq!(blocked(&orphan, 0), None);
         let cycle = [("AXGroup", Some(1)), ("AXGroup", Some(0))];
         assert_eq!(blocked(&cycle, 0), None);
+        // A menu whose AXParent read failed may belong to the blocked window.
+        let menu = [("AXMenu", None), ("AXMenuItem", Some(0))];
+        assert_eq!(blocked_with_absent_parent(&menu, 1, |_| false), None);
     }
 
     #[test]

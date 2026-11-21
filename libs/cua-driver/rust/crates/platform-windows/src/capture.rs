@@ -644,9 +644,7 @@ pub fn screenshot_window(hwnd: u64) -> Result<(String, u32, u32)> {
 unsafe fn screenshot_via_dxgi_duplication(
     hwnd: HWND,
 ) -> Option<(Vec<u8>, i32, i32, FrameGeometry)> {
-    use cursor_overlay::capture_exclusion::{
-        capture_excluding_overlays, AgentOverlayCaptureStatus, ResidualCheck,
-    };
+    use cursor_overlay::capture_exclusion::{capture_excluding_overlays, ResidualCheck};
 
     if !window_shown_opaque(hwnd) {
         return None;
@@ -677,23 +675,17 @@ unsafe fn screenshot_via_dxgi_duplication(
     if !fits_monitor || window_above_overlaps(hwnd, frame) {
         return None;
     }
-    let captured = capture_excluding_overlays(&crate::overlay::CaptureExcluder, |_| {
+    let captured = capture_excluding_overlays(&crate::overlay::CaptureExcluder, |hidden| {
+        // No overlay was hidden although one exists: exclusion is unsupported,
+        // so the frame would show the overlay over the target.
+        if hidden.is_none() && crate::overlay::overlay_window_exists() {
+            bail!("the agent cursor overlay could not be excluded");
+        }
         crate::dxgi_duplication::capture_output_covered_by(window_rect)
             .map(|captured| (captured, ResidualCheck::Clean))
     });
     let captured = match captured {
-        Ok((captured, overlay)) if overlay.status != AgentOverlayCaptureStatus::NotExcluded => {
-            captured
-        }
-        Ok((_, overlay)) => {
-            tracing::debug!(
-                target: "cua-driver",
-                "screenshot: DXGI Desktop Duplication fast path skipped: agent cursor \
-                 overlay not excluded: {:?}",
-                overlay.reason
-            );
-            return None;
-        }
+        Ok((captured, _)) => captured,
         Err(error) => {
             tracing::debug!(
                 target: "cua-driver",
@@ -737,27 +729,37 @@ unsafe fn screenshot_via_dxgi_duplication(
 /// samples, so walk the whole z-order above the target instead. Windows of
 /// this process (the agent cursor overlay, excluded from the capture) do not
 /// count; a window whose cloak state cannot be read counts as visible. The
-/// z-order can change during the walk, so a window seen twice ends it as
-/// overlapping.
+/// z-order can change during the walk, so a window seen twice, or a step that
+/// fails rather than reaching the top, ends it as overlapping.
 unsafe fn window_above_overlaps(target: HWND, frame: FrameGeometry) -> bool {
-    use windows::Win32::Foundation::RECT;
+    use windows::Win32::Foundation::{SetLastError, RECT, WIN32_ERROR};
     use windows::Win32::System::Threading::GetCurrentProcessId;
     use windows::Win32::UI::WindowsAndMessaging::{
         GetAncestor, GetWindow, GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
         GA_ROOT, GW_HWNDPREV,
     };
 
+    // `None` at the top of the z-order; `Some(None)` when the step failed.
+    let above = |window: HWND| -> Option<Option<HWND>> {
+        SetLastError(WIN32_ERROR(0));
+        match GetWindow(window, GW_HWNDPREV) {
+            Ok(next) if !next.0.is_null() => Some(Some(next)),
+            Ok(_) => None,
+            Err(error) if error.code().is_ok() => None,
+            Err(_) => Some(None),
+        }
+    };
     let own_pid = GetCurrentProcessId();
     let mut seen = std::collections::HashSet::new();
-    let mut above = GetWindow(GetAncestor(target, GA_ROOT), GW_HWNDPREV);
-    while let Ok(window) = above {
-        if window.0.is_null() {
-            break;
-        }
+    let mut next = above(GetAncestor(target, GA_ROOT));
+    while let Some(step) = next {
+        let Some(window) = step else {
+            return true;
+        };
         if !seen.insert(window.0 as isize) {
             return true;
         }
-        above = GetWindow(window, GW_HWNDPREV);
+        next = above(window);
         if !IsWindowVisible(window).as_bool() || IsIconic(window).as_bool() {
             continue;
         }
@@ -782,9 +784,10 @@ unsafe fn window_above_overlaps(target: HWND, frame: FrameGeometry) -> bool {
 /// Whether the monitor shows `window`'s own pixels across its whole frame.
 ///
 /// A hidden or cloaked window keeps its bounds while the monitor shows
-/// something else there. A layered window, a window with a custom region, or
-/// one without a redirection bitmap (a DirectComposition surface) can be
-/// partly transparent, so the monitor shows what lies behind it.
+/// something else there. A layered window, a window with a custom region, one
+/// without a redirection bitmap (a DirectComposition surface), or one whose
+/// corners DWM may round can be partly transparent, so the monitor shows what
+/// lies behind it.
 unsafe fn window_shown_opaque(window: HWND) -> bool {
     use windows::Win32::Foundation::RECT;
     use windows::Win32::Graphics::Gdi::{GetWindowRgnBox, RGN_ERROR};
@@ -800,6 +803,38 @@ unsafe fn window_shown_opaque(window: HWND) -> bool {
         && cloaked(window) == Some(false)
         && (GetWindowLongPtrW(window, GWL_EXSTYLE) & see_through) == 0
         && GetWindowRgnBox(window, &mut region) == RGN_ERROR
+        && !corners_may_round(window)
+}
+
+/// Whether DWM may round `window`'s corners. Windows 11 rounds framed windows
+/// that are not maximized unless they opt out, and any window that opts in.
+/// Earlier versions reject the corner preference and round nothing, but a
+/// framed window still counts as rounded there, which only costs a fallback.
+unsafe fn corners_may_round(window: HWND) -> bool {
+    use windows::Win32::Graphics::Dwm::{
+        DwmGetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DEFAULT, DWMWCP_DONOTROUND,
+        DWM_WINDOW_CORNER_PREFERENCE,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, IsZoomed, GWL_STYLE, WS_CAPTION, WS_THICKFRAME,
+    };
+
+    let mut preference = DWMWCP_DEFAULT;
+    let preference = DwmGetWindowAttribute(
+        window,
+        DWMWA_WINDOW_CORNER_PREFERENCE,
+        &mut preference as *mut DWM_WINDOW_CORNER_PREFERENCE as *mut _,
+        std::mem::size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
+    )
+    .map(|_| preference)
+    .unwrap_or(DWMWCP_DEFAULT);
+    let framed =
+        (GetWindowLongPtrW(window, GWL_STYLE) & (WS_CAPTION.0 | WS_THICKFRAME.0) as isize) != 0;
+    match preference {
+        DWMWCP_DEFAULT => framed && !IsZoomed(window).as_bool(),
+        DWMWCP_DONOTROUND => false,
+        _ => true,
+    }
 }
 
 /// DWM's cloak state for `window`, or `None` when it cannot be read.

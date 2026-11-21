@@ -40,6 +40,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use windows::core::Interface;
+use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
@@ -47,7 +48,8 @@ use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationScrollItemPattern,
     IUIAutomationScrollPattern, ScrollAmount_LargeDecrement, ScrollAmount_LargeIncrement,
     ScrollAmount_NoAmount, ScrollAmount_SmallDecrement, ScrollAmount_SmallIncrement,
-    UIA_ScrollItemPatternId, UIA_ScrollPatternId,
+    TreeScope_Subtree, UIA_ControlTypePropertyId, UIA_DocumentControlTypeId,
+    UIA_IsScrollPatternAvailablePropertyId, UIA_ScrollItemPatternId, UIA_ScrollPatternId,
 };
 
 /// Return UIA's live IsOffscreen state for a retained element pointer.
@@ -126,53 +128,6 @@ pub unsafe fn scroll_into_view_and_recenter(
     // Don't Release the cache's ref - the RetainedElement guard owns it.
     std::mem::forget(elem);
     result
-}
-
-/// Scroll a cached UIA scroll container in the requested direction.
-///
-/// WebView2/Tauri content can expose a real `ScrollPattern` even though its
-/// top-level host HWND ignores `WM_VSCROLL`. Keeping this on the UIA channel
-/// makes indexed background scrolls reach that container without activating
-/// the host window.
-///
-/// # Safety
-///
-/// `element_ptr` must be a live `IUIAutomationElement` pointer that the caller
-/// retains for the duration of the call.
-pub unsafe fn scroll_element(
-    element_ptr: usize,
-    direction: &str,
-    amount: u32,
-) -> anyhow::Result<()> {
-    if element_ptr == 0 {
-        anyhow::bail!("cached UIA scroll element is null");
-    }
-    let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-    let elem: IUIAutomationElement = IUIAutomationElement::from_raw(element_ptr as *mut _);
-    let pattern = elem
-        .GetCurrentPattern(UIA_ScrollPatternId)
-        .map_err(|e| anyhow::anyhow!("UIA ScrollPattern unavailable: {e}"))?;
-    let scroll = pattern
-        .cast::<IUIAutomationScrollPattern>()
-        .map_err(|e| anyhow::anyhow!("UIA ScrollPattern cast failed: {e}"))?;
-    let vertical = match direction {
-        "up" => ScrollAmount_LargeDecrement,
-        "down" => ScrollAmount_LargeIncrement,
-        "left" => ScrollAmount_LargeDecrement,
-        "right" => ScrollAmount_LargeIncrement,
-        other => anyhow::bail!("unknown scroll direction {other:?}"),
-    };
-    let horizontal = matches!(direction, "left" | "right");
-    for _ in 0..amount.max(1) {
-        let result = if horizontal {
-            scroll.Scroll(vertical, ScrollAmount_NoAmount)
-        } else {
-            scroll.Scroll(ScrollAmount_NoAmount, vertical)
-        };
-        result.map_err(|e| anyhow::anyhow!("UIA scroll failed: {e}"))?;
-    }
-    std::mem::forget(elem);
-    Ok(())
 }
 
 /// Strategy 1: `ScrollItemPattern::ScrollIntoView` on the element itself.
@@ -266,4 +221,110 @@ unsafe fn scroll_ancestors_into_view(
 
     let rect = elem.CurrentBoundingRectangle().ok()?;
     Some(((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2))
+}
+
+/// Scroll a window in the background through UI Automation.
+///
+/// The container is the element behind `element_ptr` or its nearest ancestor
+/// that scrolls along the requested axis. Without an element it is the
+/// window's web `Document` (Chromium, Electron, WebView2), or else the first
+/// element in the window that scrolls along that axis.
+///
+/// This is the background route for Chromium frames, which drop the
+/// `WM_VSCROLL` / `WM_HSCROLL` messages and background wheel events. Like
+/// the other UIA routes it goes over the accessibility channel, not the input
+/// queue, so it neither activates the window nor reaches whatever window the
+/// user brings forward meanwhile.
+///
+/// # Safety
+///
+/// `element_ptr`, when present, must be a live `IUIAutomationElement` pointer
+/// held alive by the caller's `RetainedElement` guard.
+pub unsafe fn scroll_window(
+    hwnd: u64,
+    element_ptr: Option<usize>,
+    direction: &str,
+    amount: u32,
+    page: bool,
+) -> anyhow::Result<()> {
+    let horizontal = match direction {
+        "up" | "down" => false,
+        "left" | "right" => true,
+        other => anyhow::bail!("unknown scroll direction {other:?}"),
+    };
+    let step = match (direction, page) {
+        ("up" | "left", true) => ScrollAmount_LargeDecrement,
+        ("up" | "left", false) => ScrollAmount_SmallDecrement,
+        (_, true) => ScrollAmount_LargeIncrement,
+        (_, false) => ScrollAmount_SmallIncrement,
+    };
+    let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+    let automation: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+        .map_err(|e| anyhow::anyhow!("UIA init failed: {e}"))?;
+    let scrolls = |elem: &IUIAutomationElement| -> Option<IUIAutomationScrollPattern> {
+        let pattern = elem.GetCurrentPattern(UIA_ScrollPatternId).ok()?;
+        let scroll = pattern.cast::<IUIAutomationScrollPattern>().ok()?;
+        let along = if horizontal {
+            scroll.CurrentHorizontallyScrollable()
+        } else {
+            scroll.CurrentVerticallyScrollable()
+        };
+        along.ok()?.as_bool().then_some(scroll)
+    };
+    let walker = automation
+        .ControlViewWalker()
+        .map_err(|e| anyhow::anyhow!("UIA walker unavailable: {e}"))?;
+    let up_from = |start: IUIAutomationElement| -> Option<IUIAutomationScrollPattern> {
+        let mut current = start;
+        for _ in 0..16 {
+            if let Some(scroll) = scrolls(&current) {
+                return Some(scroll);
+            }
+            current = walker.GetParentElement(&current).ok()?;
+        }
+        None
+    };
+    let container = match element_ptr {
+        Some(ptr) if ptr != 0 => {
+            let elem = IUIAutomationElement::from_raw(ptr as *mut _);
+            let found = up_from(elem.clone());
+            // The caller's RetainedElement guard owns this reference.
+            std::mem::forget(elem);
+            found
+        }
+        _ => {
+            let root = automation
+                .ElementFromHandle(HWND(hwnd as *mut _))
+                .map_err(|e| anyhow::anyhow!("ElementFromHandle failed: {e}"))?;
+            let document = automation
+                .CreatePropertyCondition(
+                    UIA_ControlTypePropertyId,
+                    &UIA_DocumentControlTypeId.0.into(),
+                )
+                .and_then(|condition| root.FindFirst(TreeScope_Subtree, &condition))
+                .ok()
+                .and_then(up_from);
+            document.or_else(|| {
+                let condition = automation
+                    .CreatePropertyCondition(UIA_IsScrollPatternAvailablePropertyId, &true.into())
+                    .ok()?;
+                let all = root.FindAll(TreeScope_Subtree, &condition).ok()?;
+                (0..all.Length().ok()?).find_map(|i| scrolls(&all.GetElement(i).ok()?))
+            })
+        }
+    };
+    let Some(scroll) = container else {
+        anyhow::bail!("no element in this window scrolls {direction} through UI Automation");
+    };
+    for _ in 0..amount.max(1) {
+        let result = crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || {
+            if horizontal {
+                scroll.Scroll(step, ScrollAmount_NoAmount)
+            } else {
+                scroll.Scroll(ScrollAmount_NoAmount, step)
+            }
+        });
+        result.map_err(|e| anyhow::anyhow!("UIA scroll failed: {e}"))?;
+    }
+    Ok(())
 }

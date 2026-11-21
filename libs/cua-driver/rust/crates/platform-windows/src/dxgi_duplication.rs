@@ -198,6 +198,8 @@ unsafe fn acquire_frame(
         match duplication.AcquireNextFrame(ACQUIRE_STEP_TIMEOUT_MS, &mut frame_info, &mut resource)
         {
             Ok(()) => {
+                // Every return below must release this frame back to the output.
+                let frame = AcquiredFrame { duplication };
                 // A freshly created duplication delivers an initial
                 // placeholder frame: no present time, no accumulated updates,
                 // and an unpainted (all-zero) desktop image. Skip it and wait
@@ -205,7 +207,7 @@ unsafe fn acquire_frame(
                 // screenshot; a desktop that never presents falls through to
                 // the existing capture ladder.
                 if frame_info.LastPresentTime == 0 {
-                    drop(AcquiredFrame { duplication });
+                    drop(frame);
                     if Instant::now() >= deadline {
                         bail!(
                             "DXGI duplication: no presented desktop frame within \
@@ -224,7 +226,7 @@ unsafe fn acquire_frame(
                 if desc.Width == 0 || desc.Height == 0 {
                     bail!("DXGI duplication: acquired an empty desktop texture");
                 }
-                return Ok((AcquiredFrame { duplication }, texture, desc));
+                return Ok((frame, texture, desc));
             }
             Err(error) if error.code() == DXGI_ERROR_WAIT_TIMEOUT => {
                 if Instant::now() >= deadline {

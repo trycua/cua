@@ -9,9 +9,11 @@
 //! place. This reads the layout into the [`DesktopFrame`] Hyprland and niri
 //! publish, so capture and input share one frame, whatever the layout's origin.
 
+use std::time::{Duration, Instant};
+
 use anyhow::Context as _;
 use wayland_client::{
-    protocol::{wl_output, wl_registry},
+    protocol::{wl_callback, wl_output, wl_registry},
     Connection, Dispatch, QueueHandle,
 };
 use wayland_protocols::xdg::xdg_output::zv1::client::{
@@ -201,6 +203,10 @@ impl Dispatch<ZxdgOutputV1, usize> for Report {
         }
     }
 }
+
+wayland_client::delegate_dispatch!(
+    Report: [wl_callback::WlCallback: super::Answered] => super::Answered
+);
 
 /// Whether a global is one of KWin's output globals. Matched by prefix because
 /// the names change between releases: 6.8 replaced `kde_output_device_v2` with
@@ -406,20 +412,51 @@ pub(crate) fn screen_report() -> anyhow::Result<Option<(DesktopFrame, serde_json
     Ok(Some((frame, serde_json::Value::Array(monitors))))
 }
 
+/// How long a layout probe may wait across both Wayland roundtrips.
+const QUERY_TIMEOUT: Duration = Duration::from_secs(1);
+
 const UNASKED: &str =
     "the Wayland compositor could not be asked whether it is KWin or GNOME Mutter";
 
 fn query() -> anyhow::Result<Option<(Compositor, Vec<OutputRect>)>> {
+    let deadline = crate::interaction::operation_deadline(QUERY_TIMEOUT);
     let connection = Connection::connect_to_env().context(UNASKED)?;
-    query_on(&connection)
+    query_on(&connection, deadline)
 }
 
-fn query_on(connection: &Connection) -> anyhow::Result<Option<(Compositor, Vec<OutputRect>)>> {
+fn roundtrip(
+    compositor: &'static str,
+    connection: &Connection,
+    queue: &mut wayland_client::EventQueue<Report>,
+    report: &mut Report,
+    deadline: Instant,
+    context: impl FnOnce() -> String,
+) -> anyhow::Result<()> {
+    super::bounded_roundtrip_for(compositor, connection, queue, report, deadline).map_err(|error| {
+        if error.is::<super::RoundTripTimedOut>() {
+            error
+        } else {
+            error.context(context())
+        }
+    })
+}
+
+fn query_on(
+    connection: &Connection,
+    deadline: Instant,
+) -> anyhow::Result<Option<(Compositor, Vec<OutputRect>)>> {
     let mut queue = connection.new_event_queue::<Report>();
     let qh = queue.handle();
     connection.display().get_registry(&qh, ());
     let mut report = Report::default();
-    queue.roundtrip(&mut report).context(UNASKED)?;
+    roundtrip(
+        "the compositor",
+        connection,
+        &mut queue,
+        &mut report,
+        deadline,
+        || UNASKED.to_owned(),
+    )?;
     let Some(compositor) = report.announced.compositor() else {
         return Ok(None);
     };
@@ -432,9 +469,9 @@ fn query_on(connection: &Connection) -> anyhow::Result<Option<(Compositor, Vec<O
         let xdg = manager.get_xdg_output(&report.outputs[index].0, &qh, index);
         report.outputs[index].1 = Some(xdg);
     }
-    queue
-        .roundtrip(&mut report)
-        .with_context(|| format!("{name}'s output layout could not be read"))?;
+    roundtrip(name, connection, &mut queue, &mut report, deadline, || {
+        format!("{name}'s output layout could not be read")
+    })?;
     Ok(Some((
         compositor,
         report.outputs.into_iter().map(|o| o.2).collect(),
@@ -684,6 +721,8 @@ mod tests {
         /// Hang up instead of answering this sync: 1 before the client has
         /// the globals, 2 once it has them.
         hang_up_at_sync: Option<u32>,
+        /// Hold the socket open without answering this sync.
+        silent_at_sync: Option<u32>,
     }
 
     fn message(object: u32, opcode: u16, args: &[u8]) -> Vec<u8> {
@@ -740,6 +779,9 @@ mod tests {
                     if script.hang_up_at_sync == Some(syncs) {
                         return;
                     }
+                    if script.silent_at_sync == Some(syncs) {
+                        continue;
+                    }
                     pending.extend(message(word(&request, 2), 0, &0u32.to_ne_bytes()));
                     if stream.write_all(&pending).is_err() {
                         return;
@@ -777,10 +819,17 @@ mod tests {
     }
 
     fn query_script(script: Script) -> anyhow::Result<Option<(Compositor, Vec<OutputRect>)>> {
+        query_script_within(script, QUERY_TIMEOUT)
+    }
+
+    fn query_script_within(
+        script: Script,
+        timeout: Duration,
+    ) -> anyhow::Result<Option<(Compositor, Vec<OutputRect>)>> {
         let (client, server) = UnixStream::pair().unwrap();
         let compositor = std::thread::spawn(move || serve(server, script));
         let connection = Connection::from_backend(Backend::connect(client).unwrap());
-        let result = query_on(&connection);
+        let result = query_on(&connection, Instant::now() + timeout);
         drop(connection);
         compositor.join().unwrap();
         result
@@ -910,5 +959,47 @@ mod tests {
         })
         .unwrap_err();
         assert_eq!(error.to_string(), UNASKED);
+    }
+
+    #[test]
+    fn a_silent_compositor_fails_at_the_deadline_naming_the_compositor() {
+        for (globals, silent_at_sync, expected) in [
+            (
+                KWIN_GLOBALS.as_slice(),
+                2,
+                "KWin did not answer a Wayland round trip in time",
+            ),
+            (
+                MUTTER_GLOBALS.as_slice(),
+                2,
+                "GNOME Mutter did not answer a Wayland round trip in time",
+            ),
+            (
+                KWIN_GLOBALS.as_slice(),
+                1,
+                "the compositor did not answer a Wayland round trip in time",
+            ),
+        ] {
+            let globals = globals.to_vec();
+            let (tx, rx) = std::sync::mpsc::channel();
+            let worker = std::thread::spawn(move || {
+                let result = query_script_within(
+                    Script {
+                        globals,
+                        silent_at_sync: Some(silent_at_sync),
+                        ..Script::default()
+                    },
+                    Duration::from_millis(100),
+                );
+                let _ = tx.send(result);
+            });
+            let error = rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("query_on blocked past its deadline on a silent compositor")
+                .unwrap_err();
+            worker.join().unwrap();
+            assert!(error.is::<super::super::RoundTripTimedOut>(), "{error:#}");
+            assert_eq!(error.to_string(), expected);
+        }
     }
 }

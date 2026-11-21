@@ -672,6 +672,21 @@ enum UnlandedAxWrite {
     MayHaveLanded,
 }
 
+/// Whether `bundle_id` is a Gecko browser, the one engine documented to accept
+/// an `AXSelectedText` write and apply it before its `AXValue` shows it (#5383).
+/// Chromium, Electron, Tauri and WebKit web views that leave `AXValue`
+/// unchanged did not take the write, so their text still goes out as keys.
+fn applies_write_before_axvalue_updates(bundle_id: &str) -> bool {
+    const GECKO_BUNDLE_IDS: &[&str] = &[
+        "app.zen-browser.zen",
+        "net.waterfox.waterfox",
+        "one.ablaze.floorp",
+        "io.gitlab.librewolf-community",
+        "org.torproject.torbrowser",
+    ];
+    bundle_id.starts_with("org.mozilla.") || GECKO_BUNDLE_IDS.contains(&bundle_id)
+}
+
 /// `progress` is `None` when the write was refused. `unchanged_web_readback`
 /// is an unchanged read-back from inside an `AXWebArea`.
 fn after_unlanded_ax_write(
@@ -1841,7 +1856,10 @@ fn type_text_in_key_window(
         // there cannot prove that zero characters landed, so blind retry is
         // unsafe even though no synthesis has run yet.
         let unchanged_web_readback = ax_progress == Some(TypedProgress::Unchanged)
-            && target_in_web_area(pid, Some((element as usize, idx_opt)), window_id);
+            && target_in_web_area(pid, Some((element as usize, idx_opt)), window_id)
+            && crate::apps::bundle_id_for_pid(pid)
+                .as_deref()
+                .is_some_and(applies_write_before_axvalue_updates);
         // An AX insert bypasses NSTextView's edit model, so a document is
         // not marked edited and would never save the new text (DS-07).
         let document = if ax_progress == Some(TypedProgress::Complete) {
@@ -2404,6 +2422,25 @@ mod tests {
         assert_eq!(indeterminate["synthesized_chars"], 0);
         assert_eq!(indeterminate["retryable"], false);
         assert_eq!(indeterminate["escalation"]["recommended"], "verify_state");
+    }
+
+    #[test]
+    fn only_gecko_browsers_are_trusted_to_apply_a_write_late() {
+        for gecko in [
+            "org.mozilla.firefox",
+            "org.mozilla.nightly",
+            "app.zen-browser.zen",
+        ] {
+            assert!(applies_write_before_axvalue_updates(gecko), "{gecko}");
+        }
+        for other in [
+            "com.google.Chrome",
+            "com.apple.Safari",
+            "com.github.Electron",
+            "com.trycua.harness.tauri",
+        ] {
+            assert!(!applies_write_before_axvalue_updates(other), "{other}");
+        }
     }
 
     #[test]

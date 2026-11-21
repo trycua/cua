@@ -2761,11 +2761,22 @@ fn daemon_start_hint(socket_path: &str) -> String {
             let absolute = std::path::absolute(socket_path)
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_else(|_| socket_path.to_owned());
-            format!(
-                "Start it with: open -n -g {} --args serve --socket {}",
-                shell_argument(&crate::bundle::app_bundle_path()),
-                shell_argument(&absolute)
-            )
+            let app = shell_argument(&crate::bundle::app_bundle_path());
+            // `sockaddr_un.sun_path` holds 104 bytes on macOS, NUL included.
+            const MAX_SOCKET_PATH: usize = 103;
+            if absolute.len() > MAX_SOCKET_PATH {
+                format!(
+                    "{} is longer than the {MAX_SOCKET_PATH} bytes macOS allows for a socket path. \
+                     Start it with: open -n -g {app} --args serve --socket <shorter absolute path>, \
+                     then pass the same --socket here.",
+                    shell_argument(&absolute)
+                )
+            } else {
+                format!(
+                    "Start it with: open -n -g {app} --args serve --socket {}",
+                    shell_argument(&absolute)
+                )
+            }
         };
     }
     if default_socket {
@@ -6993,14 +7004,18 @@ mod tests {
                     crate::bundle::app_bundle_path()
                 )
             );
+            // Either form names the socket by its absolute path.
             let relative_hint = daemon_start_hint("rel/cua-test.sock");
             let expected = std::env::current_dir().unwrap().join("rel/cua-test.sock");
             assert!(
-                relative_hint.ends_with(&format!(
-                    "--socket {}",
-                    shell_argument(&expected.to_string_lossy())
-                )),
+                relative_hint.contains(&shell_argument(&expected.to_string_lossy())),
                 "{relative_hint}"
+            );
+            let long_hint = daemon_start_hint(&"s".repeat(100));
+            assert!(
+                long_hint.contains("longer than the 103 bytes")
+                    && long_hint.contains("--socket <shorter absolute path>"),
+                "{long_hint}"
             );
         }
         #[cfg(not(target_os = "macos"))]

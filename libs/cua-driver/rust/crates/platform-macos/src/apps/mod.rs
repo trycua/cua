@@ -1135,6 +1135,34 @@ pub(crate) fn bundle_name_for_pid(pid: i32) -> Option<String> {
     read_app_plist(std::path::Path::new(&plist)).map(|info| info.name)
 }
 
+/// The names `pid`'s bundle has before localization: its `.app` file name and
+/// the display, bundle and executable names in its Info.plist. WindowServer
+/// names a window's owner in the system language (`计算器` on a Chinese Mac),
+/// while these stay the names `list_apps` and `launch_app` report
+/// (`Calculator`). Empty when the process is not in an app bundle.
+pub(crate) fn bundle_names_for_pid(pid: i32) -> Vec<String> {
+    path_of_pid(pid)
+        .and_then(|path| bundle_root_of_executable(&path).map(bundle_names_at))
+        .unwrap_or_default()
+}
+
+fn bundle_names_at(app_path: &str) -> Vec<String> {
+    let app_path = std::path::Path::new(app_path);
+    let mut names: Vec<String> = app_path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .into_iter()
+        .collect();
+    if let Some(info) = read_bundle_plist(&app_path.join("Contents/Info.plist")) {
+        for key in ["CFBundleDisplayName", "CFBundleName", "CFBundleExecutable"] {
+            names.extend(plist_string(&info, key));
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    names.retain(|name| seen.insert(name.clone()));
+    names
+}
+
 /// `argv[0]` of `pid` from `KERN_PROCARGS2`, or `None` when the kernel does
 /// not return the process's arguments to this user.
 fn process_argv0(pid: i32) -> Option<String> {
@@ -1219,7 +1247,10 @@ pub fn format_app_list(apps: &[AppInfo]) -> String {
 
 #[cfg(test)]
 mod plist_tests {
-    use super::{bundle_id_for_app_path, is_background_bundle, read_app_plist, read_bundle_plist};
+    use super::{
+        bundle_id_for_app_path, bundle_names_at, is_background_bundle, read_app_plist,
+        read_bundle_plist,
+    };
     use core_foundation::{
         base::TCFType,
         propertylist::{create_data, kCFPropertyListBinaryFormat_v1_0},
@@ -1291,6 +1322,26 @@ mod plist_tests {
         let app = read_app_plist(&path).unwrap();
         assert_eq!(app.bundle_id.as_deref(), Some("com.changed"));
         assert_eq!(app.name, "Fixture");
+    }
+
+    #[test]
+    fn bundle_names_are_the_unlocalized_file_plist_and_executable_names() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = write_plist(
+            temp.path(),
+            "<dict><key>CFBundleIdentifier</key><string>com.apple.calculator</string>\
+             <key>CFBundleName</key><string>Calculator</string>\
+             <key>CFBundleExecutable</key><string>CalculatorBin</string></dict>",
+        );
+        let app = path.parent().unwrap().parent().unwrap();
+        assert_eq!(
+            bundle_names_at(app.to_str().unwrap()),
+            ["Fixture", "Calculator", "CalculatorBin"]
+        );
+        assert_eq!(
+            bundle_names_at(temp.path().join("Missing.app").to_str().unwrap()),
+            ["Missing"]
+        );
     }
 
     #[test]

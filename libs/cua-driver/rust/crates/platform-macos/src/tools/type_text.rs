@@ -21,7 +21,7 @@
 //! report success while the shell sees nothing. We go straight to
 //! CGEvent key-event synthesis (`path: "key_events"`).
 //!
-//! Use `type_text_chars` when you explicitly need per-character pacing
+//! Pass `delay_ms` when you explicitly need per-character pacing
 //! (e.g., to trigger live-search debounce handlers).
 
 use async_trait::async_trait;

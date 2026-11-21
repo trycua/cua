@@ -410,7 +410,6 @@ use super::{
     set_value::SetValueTool,
     set_window_frame::SetWindowFrameTool,
     type_text::TypeTextTool,
-    type_text_chars::TypeTextCharsTool,
     zoom::ZoomTool,
 };
 
@@ -1480,16 +1479,8 @@ pub fn build_registry_with_provider(
     r.register(Box::new(ZoomTool {
         state: state.clone(),
     }));
-    // `type_text_chars` is intentionally NOT registered — Swift treats it
-    // as a deprecated alias for `type_text` resolved at invoke time in
-    // mcp-server's `ToolRegistry::invoke`. Keeping it out of the registry
-    // means it doesn't show up in `tools/list` either, matching Swift's
-    // ToolRegistry.swift (`type_text_chars` not in `handlers`).
-    let _: &TypeTextCharsTool = &TypeTextCharsTool {
-        _state: state.clone(),
-    }; // touch struct so it stays in this crate for now
-       // Cross-platform `page` tool definition lives in mcp-server; Windows plugs
-       // in its UIA TextPattern + FindAll backend.
+    // Cross-platform `page` tool definition lives in mcp-server; Windows plugs
+    // in its UIA TextPattern + FindAll backend.
     r.register(Box::new(cua_driver_core::page::PageTool::new(
         std::sync::Arc::new(super::page::WindowsPageBackend::new()),
     )));

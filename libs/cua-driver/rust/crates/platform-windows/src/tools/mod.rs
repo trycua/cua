@@ -4,7 +4,8 @@
 //! Windows tool implementations.
 //!
 //! On Windows, delegates to real win32/uia/input/capture implementations.
-//! On other platforms, returns "not implemented" stubs so the crate still compiles.
+//! On other platforms, builds the contract-only registry from
+//! `cua_driver_core::unsupported_platform` so the crate still compiles.
 
 use cua_driver_core::tool::ToolRegistry;
 
@@ -68,12 +69,7 @@ mod set_window_frame;
 #[cfg(target_os = "windows")]
 mod type_text;
 #[cfg(target_os = "windows")]
-mod type_text_chars;
-#[cfg(target_os = "windows")]
 mod zoom;
-
-#[cfg(not(target_os = "windows"))]
-mod stubs;
 
 pub fn build_registry(compat: bool) -> ToolRegistry {
     build_registry_with_provider(compat, None)
@@ -90,6 +86,9 @@ pub fn build_registry_with_provider(
     {
         let _ = compat;
         let _ = provider;
-        stubs::build_registry()
+        cua_driver_core::unsupported_platform::registry(
+            cua_driver_contract::Platform::Windows,
+            "Windows",
+        )
     }
 }

@@ -43,7 +43,6 @@ mod page;
 mod pixel_route;
 pub(crate) mod px_frame;
 mod set_config;
-mod type_text_chars;
 mod zoom;
 
 use cua_driver_core::{
@@ -1535,15 +1534,6 @@ pub fn register_all(
     registry.register(Box::new(zoom::ZoomTool {
         state: state.clone(),
     }));
-    // `type_text_chars` is intentionally NOT registered — Swift treats it as
-    // a deprecated alias for `type_text` resolved at invoke time in
-    // mcp-server's `ToolRegistry::invoke`. Keeping it out of the registry
-    // means it doesn't show up in `tools/list` either, matching Swift's
-    // ToolRegistry.swift (`type_text_chars` not in `handlers`) and the
-    // platform-windows::build_registry which uses the same convention.
-    // Touch the struct so it stays in this crate for the alias resolver.
-    let _: &type_text_chars::TypeTextCharsTool =
-        &type_text_chars::TypeTextCharsTool::new(state.clone());
     // Cross-platform `page` tool definition lives in mcp-server; macOS plugs in
     // its Apple-Events / CDP / AX-tree backend here.
     registry.register(Box::new(cua_driver_core::page::PageTool::new(Arc::new(
@@ -1753,11 +1743,6 @@ mod security_prompt_target_tests {
                 "type_text",
                 Box::new(type_text::TypeTextTool::new(state.clone())),
                 serde_json::json!({"pid": pid, "window_id": 1, "text": "x"}),
-            ),
-            (
-                "type_text_chars",
-                Box::new(type_text_chars::TypeTextCharsTool::new(state.clone())),
-                serde_json::json!({"pid": pid, "text": "x"}),
             ),
             (
                 "press_key",

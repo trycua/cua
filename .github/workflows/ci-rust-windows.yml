@@ -155,6 +155,10 @@ jobs:
         if: matrix.shard == 1
         working-directory: libs/cua-driver/rust
         run: "cargo test -p cua-driver --bin cua-driver proxy::tests:: --locked"
+      - name: Run daemon release regressions
+        if: matrix.shard == 1
+        working-directory: libs/cua-driver/rust
+        run: "cargo test -p cua-driver --bin cua-driver serve::pipe_release_tests:: --locked"
       - name: Run real MCP proxy recovery regression
         if: matrix.shard == 1
         working-directory: libs/cua-driver/rust

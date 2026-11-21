@@ -53,7 +53,6 @@ use super::{
     set_value::SetValueTool,
     set_window_frame::SetWindowFrameTool,
     type_text::TypeTextTool,
-    type_text_chars::TypeTextCharsTool,
     zoom::ZoomTool,
 };
 
@@ -1395,26 +1394,6 @@ fn niri_typing_outlasts_the_keyboard_deadline() {
         );
         assert_eq!(typing_budget(chars, false), foreground_budget(chars));
     }
-}
-
-/// [`foreground_budget`] for `chars` characters with `delay_ms` between them.
-/// The delay comes from the caller unbounded.
-pub(crate) fn paced_typing_budget(chars: usize, delay_ms: u64) -> std::time::Duration {
-    foreground_budget(chars)
-        + std::time::Duration::from_millis(delay_ms.saturating_mul(chars as u64))
-}
-
-#[cfg(test)]
-#[test]
-fn any_typing_delay_gives_a_budget() {
-    assert_eq!(
-        paced_typing_budget(2, 30),
-        foreground_budget(2) + std::time::Duration::from_millis(60)
-    );
-    // Sizing the call must not panic, however long the caller's delay.
-    let longest = paced_typing_budget(3, u64::MAX);
-    assert!(longest >= std::time::Duration::from_millis(u64::MAX));
-    crate::input::action::Action::new(longest);
 }
 
 /// The result for AT-SPI input that was sent and whose effect is unknown: an
@@ -5420,9 +5399,6 @@ pub fn build_registry_with_provider(
     r.register(Box::new(ZoomTool {
         state: state.clone(),
     }));
-    // `type_text_chars` is a deprecated invoke-time alias for `type_text`.
-    // Keep it out of tools/list, matching the macOS and Windows registries.
-    let _: &TypeTextCharsTool = &TypeTextCharsTool;
     // Cross-platform `page` tool definition lives in mcp-server; Linux plugs
     // in its AT-SPI + CDP backend here.
     r.register(Box::new(cua_driver_core::page::PageTool::new(Arc::new(

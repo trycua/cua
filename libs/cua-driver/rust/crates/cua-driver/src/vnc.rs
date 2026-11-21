@@ -489,7 +489,9 @@ fn choose_security(offered: &[u8], credentials: &Credentials) -> Result<u8> {
     if offered.contains(&30) && has_user && has_password {
         return Ok(30);
     }
-    if offered.contains(&2) && has_password {
+    // With a user name, the password is a macOS account's: never feed it to
+    // the weak DES challenge of a plain VNC password.
+    if offered.contains(&2) && has_password && !has_user {
         return Ok(2);
     }
     if offered.contains(&1) {
@@ -497,6 +499,8 @@ fn choose_security(offered: &[u8], credentials: &Credentials) -> Result<u8> {
     }
     let hint = if offered.contains(&30) {
         "set CUA_VNC_USER and CUA_VNC_PASSWORD to a macOS account on that Mac"
+    } else if offered.contains(&2) && has_user {
+        "the server takes only a VNC password, so it is not sent your macOS account password; unset CUA_VNC_USER and set CUA_VNC_PASSWORD to the VNC password"
     } else if offered.contains(&2) {
         "set CUA_VNC_PASSWORD to the server's VNC password"
     } else {
@@ -886,6 +890,30 @@ mod tests {
             RfbError::UnsupportedSecurity {
                 offered: vec![30, 33, 36, 35],
                 hint: "set CUA_VNC_USER and CUA_VNC_PASSWORD to a macOS account on that Mac",
+            }
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn an_account_password_is_never_sent_as_a_vnc_password() {
+        let (address, server) = serve(|stream| {
+            stream.write_all(b"RFB 003.008\n").unwrap();
+            read_n(stream, 12);
+            stream.write_all(&[1, 2]).unwrap();
+        });
+        let error = RfbClient::connect(
+            &address,
+            &credentials(Some("admin"), Some("hunter2")),
+            Duration::from_secs(5),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            error,
+            RfbError::UnsupportedSecurity {
+                offered: vec![2],
+                hint: "the server takes only a VNC password, so it is not sent your macOS account password; unset CUA_VNC_USER and set CUA_VNC_PASSWORD to the VNC password",
             }
         );
         server.join().unwrap();

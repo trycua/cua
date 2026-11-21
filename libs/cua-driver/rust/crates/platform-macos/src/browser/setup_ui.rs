@@ -24,6 +24,13 @@ use crate::ax::tree::{
     walk_native_chrome_bounded, walk_tree, AXNode, TreeWalkResult, DEFAULT_MAX_ELEMENTS,
 };
 
+/// How long one setup step waits for the browser's accessibility tree to
+/// show its effect (a new tab, an omnibox suggestion, a checkbox rollback).
+/// Each wait polls and returns as soon as the change appears, so this only
+/// bounds slow browsers: with ~40 tabs open, Brave took about 2.8 s to expose
+/// a new tab, past the previous 2 s limit.
+const SETUP_UI_UPDATE_TIMEOUT: Duration = Duration::from_secs(8);
+
 fn field_equals(node: &AXNode, expected: &str) -> bool {
     [
         node.title.as_deref(),
@@ -1142,7 +1149,7 @@ impl SetupUiHandle {
         ) {
             return true;
         }
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + SETUP_UI_UPDATE_TIMEOUT;
         let mut pressed_rollback = false;
         let mut trusted_fallback_attempted = false;
         loop {
@@ -1451,7 +1458,7 @@ fn set_remote_debugging(
                     ),
                 ));
             }
-            let deadline = Instant::now() + Duration::from_secs(2);
+            let deadline = Instant::now() + SETUP_UI_UPDATE_TIMEOUT;
             let (created, close_button) = loop {
                 let created = walk_tree(pid, Some(window_id), None);
                 match new_tab_close_button(&initial.nodes, &created.nodes, descriptor) {
@@ -1624,7 +1631,7 @@ fn set_remote_debugging(
             if confirmed || typed_in_background {
                 unsafe { CFRelease(omnibox as CFTypeRef) };
             } else {
-                let deadline = Instant::now() + Duration::from_secs(2);
+                let deadline = Instant::now() + SETUP_UI_UPDATE_TIMEOUT;
                 let suggestion = loop {
                     let popup = walk_tree(pid, Some(window_id), None);
                     match exact_omnibox_suggestion(&popup.nodes, descriptor) {
@@ -2034,6 +2041,16 @@ mod tests {
 
     fn chrome() -> &'static BrowserSetupDescriptor {
         existing_profile_setup_descriptor(BrowserProduct::GoogleChrome).unwrap()
+    }
+
+    #[test]
+    fn setup_ui_step_wait_covers_slow_browsers_and_stays_under_the_ready_timeout() {
+        // Brave with ~40 tabs took ~2.8 s to expose a new tab in the AX tree.
+        assert!(SETUP_UI_UPDATE_TIMEOUT >= Duration::from_secs(5));
+        assert!(
+            SETUP_UI_UPDATE_TIMEOUT
+                <= cua_driver_core::browser::EXISTING_PROFILE_SETUP_READY_TIMEOUT
+        );
     }
 
     fn node(role: &str, title: Option<&str>, value: Option<&str>, actions: &[&str]) -> AXNode {

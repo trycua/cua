@@ -1176,6 +1176,7 @@ fn cursor_is_externally_visible(state: &RenderState) -> bool {
     state.core.cfg.enabled
         && state.core.visible
         && state.core.placed
+        && !state.core.pinned_target_off_workspace
         && finite_position(state.core.pos)
         && state.core.idle_alpha >= 0.004
 }
@@ -1893,6 +1894,13 @@ mod tests {
         map.cursors.get_mut("sessA").unwrap().core.placed = true;
 
         map.cursors.get_mut("sessA").unwrap().core.cfg.enabled = false;
+        assert!(!cursor_is_externally_visible(&map.cursors["sessA"]));
+        map.cursors.get_mut("sessA").unwrap().core.cfg.enabled = true;
+        assert!(cursor_is_externally_visible(&map.cursors["sessA"]));
+
+        // Pinned to a window on another Space, the cursor paints nothing.
+        let core = &mut map.cursors.get_mut("sessA").unwrap().core;
+        core.pinned_target_off_workspace = true;
         assert!(!cursor_is_externally_visible(&map.cursors["sessA"]));
     }
 

@@ -32,7 +32,7 @@ pub use cua_driver_core::daemon::{
     is_daemon_listening, send_request, socket_path_for_namespace, DaemonRequest, DaemonResponse,
     ToolObservationOrigin,
 };
-#[cfg(windows)]
+#[cfg(not(unix))]
 use cua_driver_core::daemon::{probe_endpoint, EndpointProbe};
 
 static ACTIVE_PROXY_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
@@ -2403,9 +2403,14 @@ mod pipe_release_tests {
 
     async fn probe_twice(pipe: &str) -> (DaemonPresence, bool) {
         let pipe = pipe.to_owned();
-        tokio::task::spawn_blocking(move || (probe_presence(&pipe), is_released(&pipe)))
-            .await
-            .unwrap()
+        tokio::task::spawn_blocking(move || {
+            (
+                probe_presence(&pipe),
+                is_released(&pipe, Duration::from_secs(2)),
+            )
+        })
+        .await
+        .unwrap()
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2414,9 +2419,9 @@ mod pipe_release_tests {
             r"\\.\pipe\cua-driver-release-{}",
             uuid::Uuid::new_v4().simple()
         );
-        // Each of the six probes below holds one instance open waiting for
-        // a reply, so keep one more free, as a serving daemon does.
-        let instances = (0..7)
+        // Each of the four probes below takes one instance, so keep one more
+        // free, as a serving daemon does.
+        let instances = (0..5)
             .map(|index| {
                 ServerOptions::new()
                     .first_pipe_instance(index == 0)
@@ -2442,9 +2447,11 @@ mod pipe_release_tests {
         // An exiting daemon closes its pipe a moment before it drops its lock.
         drop(instances);
         let probe = pipe.clone();
-        assert!(tokio::task::spawn_blocking(move || is_released(&probe))
-            .await
-            .unwrap());
+        assert!(
+            tokio::task::spawn_blocking(move || is_released(&probe, Duration::from_secs(2)))
+                .await
+                .unwrap()
+        );
         drop(lock);
     }
 }
@@ -2652,29 +2659,34 @@ pub fn run_stop_cmd(socket_path: &str) {
 
 /// Whether the daemon has let go of `socket_path`: it no longer answers and
 /// no longer has its socket bound. An exiting daemon keeps its lock a moment
-/// after it removes its socket, so a held lock alone does not count. A
-/// named pipe vanishes with its last server, so on Windows the pipe decides:
-/// a daemon whose pipe still listens has not let go, whether or not it holds
-/// a lock and even when its reply to the probe is late.
-fn is_released(socket_path: &str) -> bool {
+/// after it removes its socket, so a held lock alone does not count.
+#[cfg(unix)]
+fn is_released(socket_path: &str, _budget: std::time::Duration) -> bool {
     match probe_presence(socket_path) {
         DaemonPresence::Serving { .. } => false,
-        #[cfg(unix)]
         DaemonPresence::Starting { .. } => std::fs::symlink_metadata(socket_path).is_err(),
-        #[cfg(unix)]
         DaemonPresence::Absent | DaemonPresence::Stale { .. } => true,
-        #[cfg(not(unix))]
-        DaemonPresence::Absent | DaemonPresence::Stale { .. } | DaemonPresence::Starting { .. } => {
-            probe_endpoint(socket_path) == EndpointProbe::Closed
-        }
     }
+}
+
+/// Whether the daemon has let go of `socket_path`. A named pipe vanishes
+/// with its last server, so the pipe decides: a daemon whose pipe still
+/// listens has not let go, whether or not it holds a lock and even when its
+/// reply to the probe is late. The probe waits for a reply no longer than
+/// `budget`.
+#[cfg(not(unix))]
+fn is_released(socket_path: &str, budget: std::time::Duration) -> bool {
+    probe_endpoint(socket_path, budget) == EndpointProbe::Closed
 }
 
 /// Poll until the daemon stops responding (up to 2 seconds); exit 1 otherwise.
 pub(crate) fn wait_for_release(socket_path: &str) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     loop {
-        if is_released(socket_path) {
+        if is_released(
+            socket_path,
+            deadline.saturating_duration_since(std::time::Instant::now()),
+        ) {
             // Swift's `stop` exits silently on success (no stdout
             // line) — match that for byte-for-byte parity.
             return;
@@ -3100,7 +3112,7 @@ mod presence_tests {
                 socket_file: socket.clone()
             }
         );
-        assert!(is_released(path));
+        assert!(is_released(path, Duration::from_secs(2)));
         // The probe released the lock it tried, so a launch can take it.
         let lock = claim_daemon_lock(&daemon_lock_path(path), path, Duration::ZERO).unwrap();
         assert_eq!(
@@ -3109,7 +3121,7 @@ mod presence_tests {
                 lock_held: daemon_lock_path(path)
             }
         );
-        assert!(!is_released(path));
+        assert!(!is_released(path, Duration::from_secs(2)));
         drop(lock);
     }
 

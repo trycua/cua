@@ -185,18 +185,20 @@ pub enum EndpointProbe {
 }
 
 /// Connect to `socket_path` and send the protocol's read-only `list`
-/// request, the same way on every OS.
-pub fn probe_endpoint(socket_path: &str) -> EndpointProbe {
-    match probe_exchange(socket_path, &read_only_request("list")) {
+/// request, the same way on every OS, waiting up to `reply_within` for the
+/// answer. The connection is closed before this returns, answered or not.
+pub fn probe_endpoint(socket_path: &str, reply_within: Duration) -> EndpointProbe {
+    match probe_exchange(socket_path, &read_only_request("list"), reply_within) {
         Ok(response) if response.ok => EndpointProbe::Answers,
         Ok(_) | Err(ProbeFailure::Unanswered) => EndpointProbe::Unanswered,
         Err(ProbeFailure::Closed) => EndpointProbe::Closed,
     }
 }
 
-/// Whether a daemon answers on `socket_path`, by [`probe_endpoint`].
+/// Whether a daemon answers on `socket_path` within
+/// [`PRESENCE_REPLY_DEADLINE`], by [`probe_endpoint`].
 pub fn is_daemon_listening(socket_path: &str) -> bool {
-    probe_endpoint(socket_path) == EndpointProbe::Answers
+    probe_endpoint(socket_path, PRESENCE_REPLY_DEADLINE) == EndpointProbe::Answers
 }
 
 fn read_only_request(method: &str) -> DaemonRequest {
@@ -216,11 +218,12 @@ enum ProbeFailure {
 }
 
 /// Send one request with a single connect attempt and wait up to
-/// [`PRESENCE_REPLY_DEADLINE`] for the reply.
+/// `reply_within` for the reply.
 #[cfg(unix)]
 fn probe_exchange(
     socket_path: &str,
     request: &DaemonRequest,
+    reply_within: Duration,
 ) -> Result<DaemonResponse, ProbeFailure> {
     let stream =
         std::os::unix::net::UnixStream::connect(socket_path).map_err(|error| {
@@ -231,27 +234,34 @@ fn probe_exchange(
                 _ => ProbeFailure::Unanswered,
             }
         })?;
-    exchange_over(stream, request, PRESENCE_REPLY_DEADLINE).map_err(|_| ProbeFailure::Unanswered)
+    exchange_over(stream, request, reply_within).map_err(|_| ProbeFailure::Unanswered)
 }
 
-/// Send one request and wait up to [`PRESENCE_REPLY_DEADLINE`] for the reply.
-/// Only a pipe name with no server instance reads as closed; a busy or
-/// inaccessible pipe still has a server.
+/// Send one request and wait up to `reply_within` for the reply. Only a pipe
+/// name with no server instance reads as closed; a busy or inaccessible pipe
+/// still has a server. The pipe is opened for overlapped I/O so a late reply
+/// is cancelled and the instance handed back when the wait ends.
 #[cfg(windows)]
 fn probe_exchange(
     socket_path: &str,
     request: &DaemonRequest,
+    reply_within: Duration,
 ) -> Result<DaemonResponse, ProbeFailure> {
-    use std::io::{BufRead, BufReader, Write};
+    use std::os::windows::fs::OpenOptionsExt as _;
+    use std::os::windows::io::AsRawHandle as _;
     use std::time::Instant;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::System::Threading::CreateEventW;
 
     const ERROR_PIPE_BUSY: i32 = 231;
+    const FILE_FLAG_OVERLAPPED: u32 = 0x4000_0000;
 
-    let deadline = Instant::now() + PRESENCE_REPLY_DEADLINE;
+    let deadline = Instant::now() + reply_within;
     let pipe = loop {
         match std::fs::OpenOptions::new()
             .read(true)
             .write(true)
+            .custom_flags(FILE_FLAG_OVERLAPPED)
             .open(socket_path)
         {
             Ok(pipe) => break pipe,
@@ -267,34 +277,104 @@ fn probe_exchange(
         }
     };
     let line = serde_json::to_string(request).map_err(|_| ProbeFailure::Unanswered)? + "\n";
-    // The pipe client has no read timeout, so wait for it on a thread that is
-    // left behind if the daemon never answers.
-    let (reply_tx, reply_rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let reply = (|| -> anyhow::Result<DaemonResponse> {
-            let mut writer = pipe.try_clone()?;
-            writer.write_all(line.as_bytes())?;
-            writer.flush()?;
-            let response_line = BufReader::new(pipe)
-                .lines()
-                .next()
-                .ok_or_else(|| anyhow::anyhow!("daemon closed connection without response"))??;
-            Ok(serde_json::from_str(&response_line)?)
-        })();
-        let _ = reply_tx.send(reply);
-    });
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    reply_rx
-        .recv_timeout(remaining)
-        .ok()
-        .and_then(Result::ok)
-        .ok_or(ProbeFailure::Unanswered)
+    let handle = HANDLE(pipe.as_raw_handle());
+    // SAFETY: an unnamed manual-reset event, closed below.
+    let event =
+        unsafe { CreateEventW(None, true, false, None) }.map_err(|_| ProbeFailure::Unanswered)?;
+    let reply = exchange_overlapped(handle, event, line.as_bytes(), deadline);
+    // SAFETY: no transfer is pending on `event` once the exchange returns.
+    unsafe {
+        let _ = CloseHandle(event);
+    }
+    drop(pipe);
+    reply.ok_or(ProbeFailure::Unanswered)
+}
+
+/// Write `line` and read one reply line on the overlapped pipe `pipe`.
+#[cfg(windows)]
+fn exchange_overlapped(
+    pipe: windows::Win32::Foundation::HANDLE,
+    event: windows::Win32::Foundation::HANDLE,
+    line: &[u8],
+    deadline: std::time::Instant,
+) -> Option<DaemonResponse> {
+    use windows::Win32::Storage::FileSystem::{ReadFile, WriteFile};
+
+    let mut written = 0;
+    while written < line.len() {
+        let pending = &line[written..];
+        // SAFETY: `pending` and the OVERLAPPED outlive the transfer, which
+        // `overlapped_transfer` finishes or cancels before returning.
+        let sent = overlapped_transfer(pipe, event, deadline, |overlapped| unsafe {
+            WriteFile(pipe, Some(pending), None, Some(overlapped))
+        })?;
+        if sent == 0 {
+            return None;
+        }
+        written += sent as usize;
+    }
+
+    let mut buffer = Vec::with_capacity(4096);
+    let mut chunk = [0_u8; 4096];
+    loop {
+        if let Some(newline) = buffer.iter().position(|&byte| byte == b'\n') {
+            return serde_json::from_slice(&buffer[..newline]).ok();
+        }
+        // SAFETY: as for the write above.
+        let read = overlapped_transfer(pipe, event, deadline, |overlapped| unsafe {
+            ReadFile(pipe, Some(&mut chunk), None, Some(overlapped))
+        })?;
+        if read == 0 {
+            return None;
+        }
+        buffer.extend_from_slice(&chunk[..read as usize]);
+    }
+}
+
+/// Start one overlapped transfer and wait for it until `deadline`. A transfer
+/// still pending then is cancelled, and it has always finished by the time
+/// this returns, so its buffer may be reused or freed.
+#[cfg(windows)]
+fn overlapped_transfer(
+    pipe: windows::Win32::Foundation::HANDLE,
+    event: windows::Win32::Foundation::HANDLE,
+    deadline: std::time::Instant,
+    start: impl FnOnce(*mut windows::Win32::System::IO::OVERLAPPED) -> windows::core::Result<()>,
+) -> Option<u32> {
+    use windows::Win32::Foundation::{ERROR_IO_PENDING, WAIT_OBJECT_0};
+    use windows::Win32::System::Threading::WaitForSingleObject;
+    use windows::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
+
+    let mut overlapped = OVERLAPPED {
+        hEvent: event,
+        ..Default::default()
+    };
+    if let Err(error) = start(&mut overlapped) {
+        if error.code() != ERROR_IO_PENDING.to_hresult() {
+            return None;
+        }
+    }
+    let wait_ms = deadline
+        .saturating_duration_since(std::time::Instant::now())
+        .as_millis()
+        .min(u128::from(u32::MAX - 1)) as u32;
+    let mut transferred = 0;
+    // SAFETY: `overlapped` stays in place until GetOverlappedResult has
+    // waited for the transfer to finish, cancelled or not.
+    unsafe {
+        if WaitForSingleObject(event, wait_ms) != WAIT_OBJECT_0 {
+            let _ = CancelIoEx(pipe, Some(&overlapped));
+        }
+        GetOverlappedResult(pipe, &overlapped, &mut transferred, true).ok()?;
+    }
+    Some(transferred)
 }
 
 #[cfg(not(any(unix, windows)))]
 fn probe_exchange(
     _socket_path: &str,
     _request: &DaemonRequest,
+    _reply_within: Duration,
 ) -> Result<DaemonResponse, ProbeFailure> {
     Err(ProbeFailure::Closed)
 }
@@ -387,7 +467,12 @@ pub fn probe_presence(socket_path: &str) -> DaemonPresence {
 }
 
 fn probe_metadata(socket_path: &str) -> Option<DaemonMetadata> {
-    let response = probe_exchange(socket_path, &read_only_request("metadata")).ok()?;
+    let response = probe_exchange(
+        socket_path,
+        &read_only_request("metadata"),
+        PRESENCE_REPLY_DEADLINE,
+    )
+    .ok()?;
     if !response.ok {
         return None;
     }
@@ -629,11 +714,16 @@ mod tests {
 
 #[cfg(all(test, any(unix, windows)))]
 mod probe_endpoint_tests {
-    use super::{probe_endpoint, DaemonRequest, DaemonResponse, EndpointProbe};
-    use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+    use super::{
+        probe_endpoint, DaemonRequest, DaemonResponse, EndpointProbe, PRESENCE_REPLY_DEADLINE,
+    };
+    use std::time::Duration;
+    use tokio::io::{
+        AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
+    };
 
     async fn probe(endpoint: String) -> EndpointProbe {
-        tokio::task::spawn_blocking(move || probe_endpoint(&endpoint))
+        tokio::task::spawn_blocking(move || probe_endpoint(&endpoint, PRESENCE_REPLY_DEADLINE))
             .await
             .unwrap()
     }
@@ -726,6 +816,25 @@ mod probe_endpoint_tests {
             probe(endpoint.path.clone()).await,
             EndpointProbe::Unanswered
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_unanswered_probe_closes_its_connection() {
+        let endpoint = endpoint::unused();
+        let listener = endpoint::listen(&endpoint);
+        let probed = tokio::spawn(probe(endpoint.path.clone()));
+        let mut connection = BufReader::new(endpoint::accept(listener).await);
+        let mut request = String::new();
+        connection.read_line(&mut request).await.unwrap();
+        assert_eq!(probed.await.unwrap(), EndpointProbe::Unanswered);
+
+        // The probe gave the connection back instead of leaving a read
+        // pending on it, so the server sees it close.
+        let mut rest = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), connection.read_to_end(&mut rest))
+            .await
+            .expect("the probe kept its connection open after giving up")
+            .ok();
     }
 
     #[tokio::test(flavor = "multi_thread")]

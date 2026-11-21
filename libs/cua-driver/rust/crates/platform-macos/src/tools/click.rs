@@ -845,6 +845,7 @@ impl ClickTool {
 
             // Fast path: check the cached element against what the agent saw.
             match crate::fast_path_guard::guard_element(
+                &self.state.guard_store,
                 "click",
                 pid,
                 wid,
@@ -1429,6 +1430,8 @@ impl ClickTool {
             // point, before the cursor moves (so hover cannot change the crop).
             let (screen_x, screen_y, win_local_x, win_local_y) = if let Some(wid) = window_id {
                 match crate::fast_path_guard::guard_pixel(
+                    self.state.guard_store.clone(),
+                    args.opt_str("_session_id"),
                     "click",
                     pid,
                     wid,

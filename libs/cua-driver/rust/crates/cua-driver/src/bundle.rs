@@ -198,11 +198,14 @@ mod tests {
         defaults.remove("CUA_DRIVER_RS_HOME");
         defaults.remove("XDG_STATE_HOME");
         let local_app_data = home.join("AppData").join("Local");
-        let base = if cfg!(windows) {
-            local_app_data.to_str().unwrap().to_owned()
+        // The daemon formats its strings from the variable as given, which
+        // for the testkit's `HOME` ends in a separator.
+        let base_variable = if cfg!(windows) {
+            "LOCALAPPDATA"
         } else {
-            home.to_str().unwrap().to_owned()
+            "HOME"
         };
+        let base = isolated[base_variable].to_str().unwrap().to_owned();
         let state_root = if cfg!(target_os = "macos") {
             home.join("Library").join("Application Support")
         } else if cfg!(windows) {

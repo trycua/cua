@@ -58,7 +58,7 @@ pub struct AppPaths {
 impl AppPaths {
     /// Resolve every location for `namespace` from the process environment.
     pub fn for_namespace(namespace: &str) -> Self {
-        Self::from_env(namespace, &|name| std::env::var_os(name))
+        Self::from_env(namespace, &process_env)
     }
 
     /// Resolve every location for `namespace`, reading variables through
@@ -100,8 +100,12 @@ impl AppPaths {
     /// The lock a daemon holds on an arbitrary `socket` path, such as one
     /// given with `--socket`.
     pub fn pipe_lock_for(socket: &str) -> PathBuf {
-        pipe_lock(socket, &|name| std::env::var_os(name))
+        pipe_lock(socket, &process_env)
     }
+}
+
+fn process_env(name: &str) -> Option<OsString> {
+    std::env::var_os(name)
 }
 
 /// A variable as UTF-8, the way `std::env::var(..).ok()` reads it.

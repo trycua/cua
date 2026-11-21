@@ -34,8 +34,22 @@ use crate::uia::UiaNode;
 
 fn release_nodes(nodes: &[UiaNode]) {
     for node in nodes.iter().filter(|node| node.element_ptr != 0) {
-        unsafe { drop(IUIAutomationElement::from_raw(node.element_ptr as *mut _)) };
+        release_element(node.element_ptr);
     }
+}
+
+fn release_element(element_ptr: usize) {
+    unsafe { drop(IUIAutomationElement::from_raw(element_ptr as *mut _)) };
+}
+
+/// Takes a reference of its own on a walked element, so it outlives the walk.
+fn retain_element(element_ptr: usize) -> usize {
+    let element = unsafe { IUIAutomationElement::from_raw(element_ptr as *mut _) };
+    let retained = element.clone();
+    std::mem::forget(element);
+    let ptr = retained.as_raw() as usize;
+    std::mem::forget(retained);
+    ptr
 }
 
 /// Browser chrome only: tab strip, toolbar, omnibox, and the active tab's
@@ -323,31 +337,15 @@ fn confirm_setup_navigation(hwnd: u64) -> Result<(), BrowserRefusal> {
     })
 }
 
-/// The one native close action inside the one selected tab, matched structurally.
-fn exact_active_tab_close_button(nodes: &[UiaNode]) -> Result<Option<usize>, BrowserRefusal> {
+/// The one native close action inside the last native tab, which is where the
+/// native new-tab action puts the tab it opens.
+fn exact_new_tab_close_button(nodes: &[UiaNode]) -> Result<Option<usize>, BrowserRefusal> {
     let has_rect = |node: &UiaNode| node.rect.is_some_and(|(l, t, r, b)| l < r && t < b);
-    let mut selected = Vec::new();
-    for (index, node) in nodes.iter().enumerate() {
-        if !node.in_web_content
-            && node.control_type == "TabItem"
-            && node.selected == Some(true)
-            && has_rect(node)
-            && !selected
-                .iter()
-                .any(|seen: &usize| nodes[*seen].rect == node.rect)
-        {
-            selected.push(index);
-        }
-    }
-    let tab_index = match selected.as_slice() {
-        [] => return Ok(None),
-        [index] => *index,
-        _ => {
-            return Err(BrowserRefusal::new(
-                BrowserRefusalCode::BrowserWrongTargetRefused,
-                "the native tab strip exposed more than one selected tab",
-            ))
-        }
+    let Some(tab_index) = nodes
+        .iter()
+        .rposition(|node| !node.in_web_content && node.control_type == "TabItem" && has_rect(node))
+    else {
+        return Ok(None);
     };
     let depth = nodes[tab_index].depth;
     let mut buttons = Vec::new();
@@ -372,33 +370,32 @@ fn exact_active_tab_close_button(nodes: &[UiaNode]) -> Result<Option<usize>, Bro
         [button] => Ok(Some(button.element_ptr)),
         _ => Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
-            "the selected native tab exposed more than one close action",
+            "the new native tab exposed more than one close action",
         )),
     }
 }
 
-/// Closes the active tab only when that same snapshot proves it is the exact
-/// setup page. `Ok(false)` means the page was no longer proven.
+/// Closes the tab setup opened, through the close action it retained for that
+/// tab, once the active page is still the exact setup page. `Ok(false)` means
+/// the page was no longer proven.
 fn close_proven_setup_tab(
     hwnd: u64,
     descriptor: &BrowserSetupDescriptor,
+    setup_tab_close: usize,
 ) -> Result<bool, BrowserRefusal> {
     let nodes = native_nodes(hwnd)?;
-    let close = if setup_page_proven(&nodes, descriptor) {
-        exact_active_tab_close_button(&nodes).and_then(|button| {
-            let button = button.ok_or_else(|| {
-                BrowserRefusal::new(
-                    BrowserRefusalCode::BrowserWrongTargetRefused,
-                    "the selected native tab exposed no close action",
-                )
-            })?;
-            unsafe { default_action(button, "selected tab close button") }.map(|()| true)
-        })
-    } else {
-        Ok(false)
-    };
+    let proven = setup_page_proven(&nodes, descriptor);
     release_nodes(&nodes);
-    close
+    if !proven {
+        return Ok(false);
+    }
+    if setup_tab_close == 0 {
+        return Err(BrowserRefusal::new(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "setup holds no close action for the tab it opened",
+        ));
+    }
+    unsafe { default_action(setup_tab_close, "setup tab close button") }.map(|()| true)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -438,6 +435,17 @@ pub struct SetupUiHandle {
     pub opened_setup_page: bool,
     pub enabled_remote_debugging: bool,
     enable_attempted: bool,
+    /// A retained `IUIAutomationElement` for the close action of the tab setup
+    /// opened, or 0. Cleanup closes that tab and no other.
+    setup_tab_close: usize,
+}
+
+impl Drop for SetupUiHandle {
+    fn drop(&mut self) {
+        if self.setup_tab_close != 0 {
+            release_element(self.setup_tab_close);
+        }
+    }
 }
 
 impl SetupUiHandle {
@@ -486,7 +494,7 @@ impl SetupUiHandle {
         if !self.opened_setup_page {
             return Ok(None);
         }
-        match close_proven_setup_tab(self.hwnd, self.descriptor) {
+        match close_proven_setup_tab(self.hwnd, self.descriptor, self.setup_tab_close) {
             Ok(true) => {}
             Ok(false) => {
                 let error = BrowserRefusal::new(
@@ -509,7 +517,10 @@ impl SetupUiHandle {
         if !self.opened_setup_page {
             return None;
         }
-        Some(close_proven_setup_tab(self.hwnd, self.descriptor).unwrap_or(false))
+        Some(
+            close_proven_setup_tab(self.hwnd, self.descriptor, self.setup_tab_close)
+                .unwrap_or(false),
+        )
     }
 }
 
@@ -579,6 +590,7 @@ fn set_remote_debugging(
             opened_setup_page: false,
             enabled_remote_debugging: false,
             enable_attempted: false,
+            setup_tab_close: 0,
         },
         Ok(None) => {
             release_nodes(&initial);
@@ -590,6 +602,7 @@ fn set_remote_debugging(
                 opened_setup_page: false,
                 enabled_remote_debugging: false,
                 enable_attempted: false,
+                setup_tab_close: 0,
             };
             let tab_tree = match native_nodes(hwnd) {
                 Ok(nodes) => nodes,
@@ -638,6 +651,20 @@ fn set_remote_debugging(
                 }
                 std::thread::sleep(Duration::from_millis(100));
             };
+            match exact_new_tab_close_button(&created) {
+                Ok(Some(close)) => handle.setup_tab_close = retain_element(close),
+                Ok(None) => {
+                    release_nodes(&created);
+                    return Err(handle.abort(BrowserRefusal::new(
+                        BrowserRefusalCode::BrowserWrongTargetRefused,
+                        "the new native tab exposed no close action",
+                    )));
+                }
+                Err(error) => {
+                    release_nodes(&created);
+                    return Err(handle.abort(error));
+                }
+            }
             let omnibox = match unique_native_actionable(&created, "Edit", "set_value") {
                 Ok(Some(element)) => element,
                 Ok(None) => {
@@ -1212,23 +1239,31 @@ mod tests {
     }
 
     #[test]
-    fn setup_tab_close_is_the_selected_tabs_own_close_action() {
+    fn setup_tab_close_is_the_new_tabs_own_close_action() {
         let mut nodes = edge_153_native_chrome("edge://inspect/#remote-debugging", "Inspect");
-        assert_eq!(exact_active_tab_close_button(&nodes).unwrap(), None);
-
         let tab = nodes
             .iter()
             .position(|node| node.control_type == "TabItem")
             .unwrap();
-        nodes[tab].selected = Some(true);
-        assert_eq!(exact_active_tab_close_button(&nodes).unwrap(), Some(14));
+        assert_eq!(exact_new_tab_close_button(&nodes).unwrap(), Some(14));
 
-        let mut second = nodes[tab..=tab + 1].to_vec();
-        second[0].rect = Some((340, 40, 596, 81));
-        second[1].rect = Some((564, 52, 580, 68));
-        nodes.splice(tab + 2..tab + 2, second);
+        // The native new-tab action appends its tab, so the last tab's close
+        // action is the one setup keeps, whichever tab is selected.
+        nodes[tab].selected = Some(true);
+        let mut opened = nodes[tab..=tab + 1].to_vec();
+        opened[0].selected = Some(false);
+        opened[0].rect = Some((340, 40, 596, 81));
+        opened[1].rect = Some((564, 52, 580, 68));
+        opened[1].element_ptr = 16;
+        nodes.splice(tab + 2..tab + 2, opened.clone());
+        assert_eq!(exact_new_tab_close_button(&nodes).unwrap(), Some(16));
+
+        let mut second_button = opened[1].clone();
+        second_button.rect = Some((540, 52, 556, 68));
+        second_button.element_ptr = 17;
+        nodes.insert(tab + 4, second_button);
         assert_eq!(
-            exact_active_tab_close_button(&nodes).unwrap_err().code,
+            exact_new_tab_close_button(&nodes).unwrap_err().code,
             BrowserRefusalCode::BrowserWrongTargetRefused
         );
     }

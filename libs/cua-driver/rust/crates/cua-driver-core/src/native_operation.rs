@@ -47,6 +47,11 @@ impl NativeOperation {
         cancelled
     }
 
+    /// Whether a cancel was accepted before native work started.
+    pub fn is_cancelled(&self) -> bool {
+        self.state.load(Ordering::Acquire) == 2
+    }
+
     pub async fn cancelled(&self) {
         loop {
             let changed = self.changed.notified();

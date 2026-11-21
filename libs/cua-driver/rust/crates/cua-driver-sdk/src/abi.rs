@@ -607,6 +607,13 @@ fn start_invoke_completion(
     )
 }
 
+fn cancelled_failure() -> AbiFailure {
+    AbiFailure::new(
+        CuaDriverStatus::Cancelled,
+        "Cua Driver operation was cancelled",
+    )
+}
+
 fn spawn_completion<F>(
     executor: tokio::runtime::Handle,
     future: F,
@@ -626,17 +633,10 @@ where
         // unwind through either the callback or the exported C function.
         let mut work = tokio::spawn(NATIVE_OPERATION.scope(state.clone(), future));
         let completed = tokio::select! {
-            // An accepted cancel means no native work started, so it outranks
-            // a result that became ready at the same time.
-            biased;
-            _ = state.cancelled() => {
-                work.abort();
-                Err(AbiFailure::new(
-                    CuaDriverStatus::Cancelled,
-                    "Cua Driver operation was cancelled",
-                ))
-            }
             joined = &mut work => match joined {
+                // An accepted cancel means no native work started, so it
+                // outranks a result the worker finished with afterwards.
+                _ if state.is_cancelled() => Err(cancelled_failure()),
                 Ok(result) => result,
                 Err(error) if error.is_panic() => Err(AbiFailure::new(
                     CuaDriverStatus::Panic,
@@ -647,6 +647,10 @@ where
                     format!("native Cua Driver task failed: {error}"),
                 )),
             },
+            _ = state.cancelled() => {
+                work.abort();
+                Err(cancelled_failure())
+            }
         };
         let (status, result, error) = match completed {
             Ok(result) => (
@@ -1974,7 +1978,7 @@ mod tests {
 
     #[tokio::test]
     async fn accepted_cancellation_wins_over_a_result_ready_at_the_same_time() {
-        for _ in 0..50 {
+        for _ in 0..500 {
             let (sender, receiver) = oneshot::channel();
             let context = Box::into_raw(Box::new(CallbackContext { sender })).cast::<c_void>();
             let mut operation = spawn_completion(

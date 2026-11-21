@@ -666,11 +666,13 @@ fn claim_standalone_socket(
 }
 
 /// Remove the socket a dead daemon left at `socket_path`. Only the lock holder
-/// calls this, so no live daemon owns it. Anything that is not a socket stays.
+/// calls this, so no standalone daemon owns it. Anything that is not a socket
+/// stays, and so does a socket something still listens on.
 #[cfg(unix)]
 fn remove_stale_socket(socket_path: &str) {
     use std::os::unix::fs::FileTypeExt as _;
     if std::fs::symlink_metadata(socket_path).is_ok_and(|metadata| metadata.file_type().is_socket())
+        && !socket_accepts(socket_path)
     {
         let _ = std::fs::remove_file(socket_path);
     }
@@ -2525,18 +2527,16 @@ fn adopt_inherited_socket_lock(socket_path: &str) -> Option<std::fs::File> {
 }
 
 /// The daemon a launch onto `socket_path` must not start beside, with the
-/// pid it reports when it answers. On Windows any instance of its pipe counts:
-/// an embedded daemon holds no lock and may answer late, and a second server
-/// could otherwise open instances under the same name.
+/// pid it reports when it answers. An endpoint that is still held counts too:
+/// an embedded daemon holds no lock and may answer late, and a launch would
+/// otherwise clear its Unix socket or open instances of its Windows pipe.
 fn serving_daemon(socket_path: &str) -> Option<Option<u32>> {
-    if let DaemonPresence::Serving { pid, .. } = probe_presence(socket_path) {
-        return Some(Some(pid));
+    let presence = probe_presence(socket_path);
+    match presence {
+        DaemonPresence::Serving { pid, .. } => Some(Some(pid)),
+        _ if endpoint_still_held(socket_path, &presence) => Some(None),
+        _ => None,
     }
-    #[cfg(target_os = "windows")]
-    if named_pipe_exists(socket_path) {
-        return Some(None);
-    }
-    None
 }
 
 /// Refuse a launch onto a socket another daemon serves, then claim the
@@ -2645,10 +2645,10 @@ fn stop_daemon(
     loop {
         let waited = started.elapsed();
         let presence = probe_presence(socket_path);
-        // A daemon that does not answer yet holds the lock, or on Windows
-        // still has its pipe; an embedded daemon takes no lock.
+        // A daemon that does not answer yet holds the lock or still holds
+        // its endpoint; an embedded daemon takes no lock.
         let not_answering = matches!(presence, DaemonPresence::Starting { .. })
-            || pipe_still_held(socket_path, &presence);
+            || endpoint_still_held(socket_path, &presence);
         match presence {
             DaemonPresence::Serving { .. } => break,
             _ if not_answering && waited < starting_wait => {}
@@ -2671,18 +2671,28 @@ fn stop_daemon(
     Ok(StopOutcome::Stopped)
 }
 
-/// Whether a probe that found no daemon answering still sees its Windows
-/// pipe, free or busy. Unix has no such endpoint without an answer.
-fn pipe_still_held(socket_path: &str, presence: &DaemonPresence) -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        matches!(presence, DaemonPresence::Absent) && named_pipe_exists(socket_path)
+/// Whether a probe that found no daemon answering still sees its endpoint
+/// held: on Windows any instance of its pipe, free or busy; on Unix a socket
+/// that still accepts connections. An embedded daemon takes no lock, so this
+/// is the only sign of one that answers late.
+fn endpoint_still_held(socket_path: &str, presence: &DaemonPresence) -> bool {
+    let _ = socket_path;
+    match presence {
+        DaemonPresence::Serving { .. } => false,
+        #[cfg(unix)]
+        DaemonPresence::Stale { .. } => socket_accepts(socket_path),
+        #[cfg(target_os = "windows")]
+        _ => named_pipe_exists(socket_path),
+        #[cfg(not(target_os = "windows"))]
+        _ => false,
     }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = (socket_path, presence);
-        false
-    }
+}
+
+/// Whether something still listens on the Unix socket at `socket_path`. A
+/// dead daemon's socket refuses connections.
+#[cfg(unix)]
+fn socket_accepts(socket_path: &str) -> bool {
+    std::os::unix::net::UnixStream::connect(socket_path).is_ok()
 }
 
 /// `cua-driver stop` implementation.
@@ -2719,7 +2729,9 @@ fn is_released(socket_path: &str) -> bool {
         #[cfg(unix)]
         DaemonPresence::Starting { .. } => std::fs::symlink_metadata(socket_path).is_err(),
         #[cfg(unix)]
-        DaemonPresence::Absent | DaemonPresence::Stale { .. } => true,
+        DaemonPresence::Stale { .. } => !socket_accepts(socket_path),
+        #[cfg(unix)]
+        DaemonPresence::Absent => true,
         #[cfg(target_os = "windows")]
         DaemonPresence::Absent | DaemonPresence::Stale { .. } | DaemonPresence::Starting { .. } => {
             !named_pipe_exists(socket_path)
@@ -2860,6 +2872,10 @@ fn report_not_serving(socket_path: &str, presence: DaemonPresence) {
             eprintln!("  socket: {socket_path}");
             eprintln!("  lock held: {}", lock_held.display());
         }
+        DaemonPresence::Stale { .. } if endpoint_still_held(socket_path, &presence) => {
+            eprintln!("Cua Driver daemon endpoint exists but is not answering");
+            eprintln!("  socket: {socket_path}");
+        }
         DaemonPresence::Stale { socket_file } => {
             eprintln!("Cua Driver daemon is not running");
             eprintln!(
@@ -2868,7 +2884,7 @@ fn report_not_serving(socket_path: &str, presence: DaemonPresence) {
             );
         }
         DaemonPresence::Absent | DaemonPresence::Serving { .. } => {
-            if pipe_still_held(socket_path, &presence) {
+            if endpoint_still_held(socket_path, &presence) {
                 eprintln!("Cua Driver daemon endpoint exists but is not answering");
                 eprintln!("  socket: {socket_path}");
                 return;
@@ -3115,9 +3131,9 @@ mod socket_tests {
 #[cfg(all(test, unix))]
 mod presence_tests {
     use super::{
-        claim_daemon_lock, claim_socket, daemon_lock_path, is_released, probe_presence, run_serve,
-        send_request, serve_claimed_socket, stop_daemon, DaemonPresence, DaemonRequest,
-        StopOutcome, ToolGate,
+        claim_daemon_lock, claim_socket, daemon_lock_path, is_released, probe_presence,
+        remove_stale_socket, run_serve, send_request, serve_claimed_socket, serving_daemon,
+        stop_daemon, DaemonPresence, DaemonRequest, StopOutcome, ToolGate,
     };
     use std::time::Duration;
 
@@ -3177,6 +3193,31 @@ mod presence_tests {
         );
         assert!(!is_released(path));
         drop(lock);
+    }
+
+    #[test]
+    fn a_listening_socket_that_never_answers_is_held_not_stale() {
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
+        let socket = directory.path().join("driver.sock");
+        let path = socket.to_str().unwrap();
+        // An embedded daemon takes no lock and may answer late.
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        assert!(matches!(probe_presence(path), DaemonPresence::Stale { .. }));
+        assert!(!is_released(path));
+        assert_eq!(serving_daemon(path), Some(None));
+        assert_eq!(
+            stop_daemon(path, Duration::from_millis(300), Duration::ZERO).unwrap(),
+            StopOutcome::StillStarting
+        );
+        remove_stale_socket(path);
+        assert!(
+            socket.exists(),
+            "a socket that still listens is never cleared"
+        );
+
+        drop(listener);
+        assert!(is_released(path));
+        assert_eq!(serving_daemon(path), None);
     }
 
     #[cfg(target_os = "macos")]

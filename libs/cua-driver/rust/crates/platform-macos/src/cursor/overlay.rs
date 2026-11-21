@@ -177,6 +177,16 @@ fn install_activation_repin_observer() {
     }
 }
 
+/// Serialises tests that read or clear the process-wide repin request.
+#[cfg(test)]
+pub(crate) static REPIN_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+/// Read and clear the pending repin request.
+#[cfg(test)]
+pub(crate) fn take_repin_request() -> bool {
+    REPIN_REQUESTED.swap(false, Ordering::AcqRel)
+}
+
 /// Whether the render loop re-orders the overlay above `pinned` this frame.
 fn should_repin(
     pinned: Option<u64>,
@@ -1576,6 +1586,7 @@ mod tests {
     /// an overlay that has no pin target.
     #[test]
     fn another_apps_activation_requests_a_repin_and_our_own_does_not() {
+        let _serial = REPIN_TEST_LOCK.lock().unwrap();
         REPIN_REQUESTED.store(false, Ordering::Release);
         repin_on_application_activation(100, 100);
         assert!(!REPIN_REQUESTED.load(Ordering::Acquire));

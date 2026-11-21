@@ -1021,6 +1021,20 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(
 // `cua_driver_core::image_utils::*` so all three platform crates call the
 // same code. See `CUA_DRIVER_RS_DEDUP_AUDIT.md` for the full audit.
 
+/// Whether the foreground window is not minimized and covers `rect`.
+unsafe fn foreground_covers(rect: windows::Win32::Foundation::RECT) -> bool {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect, IsIconic};
+
+    let foreground = GetForegroundWindow();
+    if foreground.0.is_null() || IsIconic(foreground).as_bool() {
+        return false;
+    }
+    let mut window = RECT::default();
+    GetWindowRect(foreground, &mut window).is_ok()
+        && crate::dxgi_duplication::rect_covers(window, rect)
+}
+
 /// Capture the primary display (full screen), returning raw PNG bytes.
 pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
     unsafe {
@@ -1036,16 +1050,21 @@ pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
         }
         // Fullscreen flip-model Direct3D content is scanned out without
         // passing through DWM's redirection surface, so the GDI BitBlt below
-        // can return a stale desktop image. Prefer the real display image via
-        // DXGI Desktop Duplication and keep BitBlt as the fallback.
+        // can return a stale desktop image. When a foreground window covers
+        // the primary monitor, prefer the real display image via DXGI Desktop
+        // Duplication and keep BitBlt as the fallback. Only then: a fresh
+        // duplication waits for the next present, which an idle desktop may
+        // never send.
         let primary_rect = bounds_rect((0, 0, w, h));
-        if let Ok(captured) = crate::dxgi_duplication::capture_output_covered_by(primary_rect) {
-            if captured.width as i32 == w && captured.height as i32 == h {
-                return cua_driver_core::image_utils::encode_bgra_to_png(
-                    &captured.bgra,
-                    captured.width,
-                    captured.height,
-                );
+        if foreground_covers(primary_rect) {
+            if let Ok(captured) = crate::dxgi_duplication::capture_output_covered_by(primary_rect) {
+                if captured.width as i32 == w && captured.height as i32 == h {
+                    return cua_driver_core::image_utils::encode_bgra_to_png(
+                        &captured.bgra,
+                        captured.width,
+                        captured.height,
+                    );
+                }
             }
         }
         let screen_dc = GetDC(HWND::default());

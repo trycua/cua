@@ -657,8 +657,11 @@ impl Plan {
         // focus, a window never captured) gets that window read at the end
         // even without `observe`, so the caller can act without another read.
         let mut recovery: Option<Recovery> = None;
+        // Whether the last step that ran was an action that succeeded.
+        let mut ended_on_action = false;
 
         for (index, step) in self.steps.into_iter().enumerate() {
+            let acts = step.action.is_some();
             if index > 0 && !self.delay.is_zero() {
                 tokio::time::sleep(self.delay).await;
             }
@@ -704,6 +707,7 @@ impl Plan {
                     last_window = Some(window.clone());
                 }
             }
+            ended_on_action = acts && outcome.ok;
             lines.push(outcome.line);
             reports.push(outcome.report);
             if !outcome.ok {
@@ -767,7 +771,7 @@ impl Plan {
         if let Some(mut args) = observe {
             let filled = fill_observed_window(&mut args, last_window.as_ref());
             let result = if filled {
-                registry.invoke(OBSERVE_TOOL, args).await
+                observe_after_settle(registry, args, ended_on_action).await
             } else {
                 ToolResult::error("no window to observe: no step resolved one")
             };
@@ -912,12 +916,12 @@ async fn run_step(
         } else {
             window
         };
-        if !element.is_empty() {
-            let element = ElementSpec {
-                action: Some(tool),
-                ..element
-            };
-            match locator.find(&window_spec, &element, find_timeout).await {
+        let described = (!element.is_empty()).then_some(ElementSpec {
+            action: Some(tool),
+            ..element
+        });
+        if let Some(element) = &described {
+            match locator.find(&window_spec, element, find_timeout).await {
                 Ok(found) => {
                     let object = args.as_object_mut().expect("object");
                     object.insert("pid".into(), json!(found.window.pid));
@@ -999,7 +1003,15 @@ async fn run_step(
             }
         }
         if result.is_error == Some(true) && matches!(attempt, StepAttempt::Original) {
-            if let Some((retry, note)) = refind_stale_target(locator, &args, &result).await {
+            let refound = match &described {
+                Some(element) => refind_described_target(locator, element, &args, &result).await,
+                None => None,
+            };
+            let refound = match refound {
+                Some(refound) => Some(refound),
+                None => refind_stale_target(locator, &args, &result).await,
+            };
+            if let Some((retry, note)) = refound {
                 report["refound"] = json!(note);
                 result = registry.invoke(tool, retry.clone()).await;
                 attempt = StepAttempt::Refound { args: retry, note };
@@ -1228,6 +1240,51 @@ fn fill_observed_window(args: &mut Value, last: Option<&Window>) -> bool {
         .entry("window_id")
         .or_insert_with(|| json!(window.window_id));
     true
+}
+
+/// Longest the end-of-batch observation re-reads a window that shows no
+/// change after the last action, on platforms whose actions return at
+/// delivery.
+const OBSERVE_SETTLE: Duration = Duration::from_millis(300);
+/// Pause between those re-reads.
+const OBSERVE_SETTLE_POLL: Duration = Duration::from_millis(50);
+
+/// The end-of-batch read. macOS actions return at delivery, so the app may
+/// not have applied the last one yet: a read that says nothing changed is
+/// taken again until it shows a change, starting no re-read after
+/// [`OBSERVE_SETTLE`]. A read
+/// that shows a change, or one after a read or a failed step, returns as is.
+async fn observe_after_settle(
+    registry: &ToolRegistry,
+    mut args: Value,
+    ended_on_action: bool,
+) -> ToolResult {
+    let deadline = Instant::now() + OBSERVE_SETTLE;
+    let mut result = registry.invoke(OBSERVE_TOOL, args.clone()).await;
+    loop {
+        let state = result.structured_content.as_ref();
+        let unchanged = result.is_error != Some(true)
+            && state
+                .and_then(|state| state.get("since_status"))
+                .and_then(Value::as_str)
+                == Some("no_change");
+        if !(cfg!(target_os = "macos") && ended_on_action && unchanged)
+            || Instant::now() + OBSERVE_SETTLE_POLL >= deadline
+        {
+            return result;
+        }
+        // Diff the next read against the same baseline, not this read.
+        if let Some(since) = state.and_then(|state| state.get("since")).cloned() {
+            args["since"] = since;
+        }
+        tokio::time::sleep(OBSERVE_SETTLE_POLL).await;
+        if Instant::now() >= deadline {
+            return result;
+        }
+        // Let a started read finish: it replaces the window's snapshot, so an
+        // earlier result would hand back retired tokens.
+        result = registry.invoke(OBSERVE_TOOL, args.clone()).await;
+    }
 }
 
 /// One line saying what the end-of-batch read found.
@@ -1473,15 +1530,20 @@ fn nothing_was_delivered(structured: &Value) -> bool {
     refused && structured.get("delivery").is_none()
 }
 
-/// Whether an action failed because its element target died: the element
-/// was re-rendered or its snapshot was replaced.
-fn stale_element(result: &ToolResult) -> bool {
-    let code = result.structured_content.as_ref().and_then(|value| {
+/// The structured refusal code of a failed action, if any.
+fn refusal_code(result: &ToolResult) -> Option<&str> {
+    result.structured_content.as_ref().and_then(|value| {
         value
             .get("code")
             .or_else(|| value.pointer("/refusal/code"))
             .and_then(Value::as_str)
-    });
+    })
+}
+
+/// Whether an action failed because its element target died: the element
+/// was re-rendered or its snapshot was replaced.
+fn stale_element(result: &ToolResult) -> bool {
+    let code = refusal_code(result);
     if matches!(
         code,
         Some("element_outside_target_window" | "stale_element_token")
@@ -1550,6 +1612,40 @@ async fn refind_stale_target(
         retry,
         format!(
             "element {token} went stale (the window changed); found the same {role} \"{label}\" again as {}",
+            found.describe()
+        ),
+    ))
+}
+
+/// Act again on a target the step described by role and name, after the
+/// window re-rendered between the find and the action: find it again the
+/// same way in the window the first find resolved, and return the arguments
+/// with its fresh token plus a note.
+async fn refind_described_target(
+    locator: &Locator<'_>,
+    element: &ElementSpec,
+    args: &Value,
+    result: &ToolResult,
+) -> Option<(Value, String)> {
+    if refusal_code(result)
+        != Some(crate::background_input::refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW)
+    {
+        return None;
+    }
+    let pinned = WindowSpec {
+        pid: Some(args.get("pid")?.as_i64()?),
+        window_id: Some(args.get("window_id")?.as_u64()?),
+        ..Default::default()
+    };
+    let found = locator.find(&pinned, element, REFIND_TIMEOUT).await.ok()?;
+    let mut retry = args.clone();
+    let object = retry.as_object_mut()?;
+    object.insert("element_token".into(), json!(found.token()?));
+    Some((
+        retry,
+        format!(
+            "the window changed before the action, so {} was found again as {}",
+            element.describe(),
             found.describe()
         ),
     ))

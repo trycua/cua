@@ -15,7 +15,11 @@ SPACESD_ENV = "CUA_SPACESD_STATIC"
 
 
 def binary() -> Path | None:
-    """Path of the `cua` executable the `cua-cli` wheel installs, if any."""
+    """Path of the `cua` executable the `cua-cli` wheel provides, if any.
+
+    The PyPI `cua-cli` wheel is thin: its first use downloads the signed CLI
+    of the same release and checks its SHA-256 (cua_cli.fetch), which can
+    raise cua_cli.FetchError."""
     try:
         import cua_cli
     except ImportError:
@@ -43,8 +47,29 @@ def install_hint() -> str:
     )
 
 
+def fetch_failed(err: Exception) -> str:
+    return (
+        f"cua: {err}\n"
+        "Retry when online, point CUA_CLI_DOWNLOAD_BASE at a mirror of the release "
+        "archives, or set CUA_CLI_BINARY to a cua binary "
+        "(https://cua.ai/install.sh installs one without Python).\n"
+    )
+
+
+def _fetch_error() -> type[Exception]:
+    try:
+        from cua_cli import FetchError
+    except ImportError:  # no cua-cli, or one with the binary inside
+        return RuntimeError
+    return FetchError
+
+
 def main() -> int:
-    exe = binary()
+    try:
+        exe = binary()
+    except _fetch_error() as err:
+        sys.stderr.write(fetch_failed(err))
+        return 1
     if exe is None:
         sys.stderr.write(install_hint())
         return 127

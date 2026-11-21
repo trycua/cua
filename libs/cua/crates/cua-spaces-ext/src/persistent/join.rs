@@ -627,6 +627,7 @@ impl Persistent {
                 notify: false,
                 saved_ms: 0,
                 last_error: None,
+                home_offline: false,
                 notified_error: None,
                 sessions: 1,
                 policy: super::Policy {

@@ -46,6 +46,7 @@ import { StreamSurface } from "@/components/space-detail/stream-surface";
 import { SpaceHeader } from "@/components/space-detail/space-header";
 import { SpaceCall } from "@/components/space-thread/space-call";
 import { ThisMacCall } from "@/components/space-detail/this-mac-desktop";
+import { useComputerActions } from "@/components/computers/computer-actions";
 import { StateLabel } from "@/components/state-dot";
 import { PageTip } from "@/components/tips";
 import { creatingThread } from "@/components/space-thread/queued";
@@ -116,6 +117,7 @@ function SpaceDetailPage() {
     dismissCreate,
     retryCreate,
     canRetryCreate,
+    chooseWindowsIsoAndRetry,
     createdId,
     createReport,
     sendCreateReport,
@@ -159,6 +161,8 @@ function SpaceDetailPage() {
   const access = thisMachine?.accessNotice ?? null;
   const devices = useDevices();
   const { detail, stream, windowsUnsupported, windowsLoaded, pip, query, setQuery, agents, copy } = useSpaceDetail(space, hostArch, { access });
+  // A computer's own desktop page also manages the computer: its page, and Remove.
+  const computer = useComputerActions(space?.id ?? spaceId);
   // Call view or thread view, remembered per Space.
   const [layout, setLayout] = useSpaceLayout(space?.id ?? "");
   const volumeError = useSpaceVolumeError(space, space ? spaceState(space) === "running" : false);
@@ -281,6 +285,12 @@ function SpaceDetailPage() {
   // It failed the same way twice: the core's fix for that cause (copy a
   // command, open the help page, or the details) instead of Try again.
   const createFix = space.progress?.fix;
+  const fixLink = createFix?.linkUrl
+    ? () =>
+        void Promise.resolve(openExternal(createFix.linkUrl!)).catch((e: unknown) =>
+          toast(t("computers.page.open_page_failed"), { description: message(e), type: "error" }),
+        )
+    : undefined;
   const fix = createFix
     ? () =>
         void runCreateFix(createFix, {
@@ -290,6 +300,13 @@ function SpaceDetailPage() {
           },
           openExternal: (url) => openExternal(url),
           details: openReport,
+          // The create runs again with that file: this page follows the new row.
+          chooseWindowsIso: async () => {
+            const chosen = await chooseWindowsIsoAndRetry(space.id);
+            if (!chosen) return;
+            toast(t("computers.page.using_iso", { name: chosen.name }), { description: t("computers.page.using_iso_detail"), type: "success" });
+            await navigate({ to: "/spaces/$spaceId", params: { spaceId: chosen.next }, replace: true });
+          },
         }).catch((e: unknown) => toast(t("computers.page.fix_failed"), { description: message(e), type: "error" }))
     : undefined;
   // Picture in picture where the host has panels; its own window where it doesn't.
@@ -404,7 +421,7 @@ function SpaceDetailPage() {
       onAccessAction={enroll}
       className={className}
     >
-      {preparePanel ?? surfaceState(space, pending, turnOn, start, dismiss, retry, openReport, fix) ?? poppedOutState}
+      {preparePanel ?? surfaceState(space, pending, turnOn, start, dismiss, retry, openReport, fix, fixLink) ?? poppedOutState}
     </StreamSurface>
   );
   // The classic page's sections under the desktop. With the thread they open from Details, More.
@@ -531,9 +548,20 @@ function SpaceDetailPage() {
           identity={session?.signedIn ? (session.account.identity ?? null) : null}
           facts={detail.facts}
           more={sections}
-          header={<SpaceHeader back={<BackLink inline parent={parentRef} />} os={space.os} title={detail.title} place={place} childOf={parentRef} />}
+          header={
+            <SpaceHeader
+              back={<BackLink inline parent={parentRef} />}
+              os={space.os}
+              title={detail.title}
+              place={place}
+              childOf={parentRef}
+              computerSettings={computer?.settings}
+              removeComputer={computer?.remove}
+            />
+          }
         />
         {dialogs}
+        {computer?.dialogs}
       </>
     );
   }
@@ -588,7 +616,11 @@ function SpaceDetailPage() {
                     ? { label: shareAction.label, help: shareAction.help ?? undefined, enabled: shareAction.enabled, onClick: share }
                     : undefined
               }
-              remove={!creating && canDelete(space) ? { label: detail.deleteLabel, enabled: true, onClick: () => setConfirm("delete") } : undefined}
+              remove={
+                !creating && !computer && canDelete(space) ? { label: detail.deleteLabel, enabled: true, onClick: () => setConfirm("delete") } : undefined
+              }
+              computerSettings={computer?.settings}
+              removeComputer={computer?.remove}
               dismiss={state === "failed" ? { label: t("computers.account.remove"), enabled: true, onClick: dismiss } : undefined}
             />
           }
@@ -627,6 +659,7 @@ function SpaceDetailPage() {
           owner={sharedOwner}
         />
         {dialogs}
+        {computer?.dialogs}
       </>
     );
   }
@@ -741,10 +774,11 @@ function surfaceState(
   onRetry?: () => void,
   onReport?: () => void,
   onFix?: () => void,
+  onFixLink?: () => void,
 ): ReactNode {
   const state = spaceState(space);
   if (state === "failed") {
-    // The same failure twice: its fix replaces a plain Try again.
+    // The same failure twice: its fix replaces a plain Try again (unless the fix is a step to do first).
     const fix = space.progress?.fix;
     return (
       <>
@@ -762,8 +796,16 @@ function surfaceState(
             <Button data-create-fix-button="" onClick={onFix}>
               {fix.label}
             </Button>
-          ) : onRetry ? (
-            <Button onClick={onRetry}>{tr("computers.page.try_again")}</Button>
+          ) : null}
+          {fix?.linkLabel && onFixLink ? (
+            <Button variant="outline" data-create-fix-link="" onClick={onFixLink}>
+              {fix.linkLabel}
+            </Button>
+          ) : null}
+          {onRetry && (!fix || fix.keepRetry) ? (
+            <Button variant={fix ? "outline" : "default"} onClick={onRetry}>
+              {tr("computers.page.try_again")}
+            </Button>
           ) : null}
           <Button variant="outline" onClick={onDismiss}>
             {tr("computers.page.remove_from_list")}

@@ -214,11 +214,16 @@ def test_spaces_prereleases_never_become_latest_or_move_canonical_feeds() -> Non
 def test_sdk_registries_publish_only_from_trycua_cua() -> None:
     wf = workflow("cd-cua-sdk.yml")
     assert wf["env"]["CANONICAL"] == "${{ github.repository == 'trycua/cua' }}"
-    pypi = step("cd-cua-sdk.yml", "publish", "Publish wheels to PyPI")["run"]
-    # The first upload is PyPI (cua-cli wheels before cua, see the wheel list).
-    upload = pypi.index("twine upload --skip-existing")
-    assert pypi.rindex('if [ "$CANONICAL" = true ]; then', 0, upload) >= 0
-    assert "test.pypi.org" in pypi
+    # PyPI uploads happen only in pypi-promote.yml; staging may use TestPyPI.
+    assert "twine upload" not in step("cd-cua-sdk.yml", "publish", "Check the cua wheels")["run"]
+    testpypi = step("cd-cua-sdk.yml", "publish", "Upload to TestPyPI")
+    assert testpypi["if"] == "env.CANONICAL != 'true'"
+    assert "--repository-url https://test.pypi.org/legacy/" in testpypi["run"]
+    # PyPI's cua-cli is the thin wheel built from the release's CLI archives.
+    attach = step("cd-cua-sdk.yml", "publish", "Attach artifacts")["run"]
+    assert "cli/build_thin_wheel.py" in attach
+    assert attach.index("build_thin_wheel.py") < attach.index("cosign sign-blob")
+    assert "cua-cli $VERSION is on PyPI: keeping the release's CLI archives" in attach
     npm = step("cd-cua-sdk.yml", "publish", "Publish npm packages")["run"]
     assert "flags+=(--dry-run)" in npm
     assert "flags+=(--tag next)" in npm
@@ -250,7 +255,8 @@ def test_driver_packages_publish_only_from_trycua_cua() -> None:
     source = text("cd-py-cua-driver.yml")
     assert workflow("cd-py-cua-driver.yml")["env"]["CANONICAL"] == "${{ github.repository == 'trycua/cua' }}"
     assert source.count("--access public --dry-run") == 2
-    assert 'if [ "$CANONICAL" = true ]; then\n            python -m twine upload' in source
+    # PyPI: only pypi-promote.yml uploads (test_pypi_promote.py).
+    assert "twine upload" not in source
 
 
 @pytest.mark.parametrize("name", ("cd-image-linux.yml", "cd-image-omarchy.yml", "cd-image-macos.yml"))
@@ -311,3 +317,26 @@ def test_spacesd_releases_never_become_latest() -> None:
     # took it on 5 Nov 2026.
     publish = step("cd-cua-spacesd.yml", "release", "Upload to the GitHub release")["run"]
     assert "FLAGS=(--draft=false --latest=false)" in publish
+
+
+def test_sdk_publish_sparse_checkout_does_not_wipe_the_workspace():
+    # A sparse re-checkout into the workspace removed scripts/install and the
+    # downloaded release-artifacts.json, so "Update the rolling installer
+    # manifest" failed on stamp_installers.py in every release 7-10 Nov 2026.
+    steps = workflow("cd-cua-sdk.yml")["jobs"]["publish"]["steps"]
+    names = [s.get("name", "") for s in steps]
+    feed = names.index("Update the rolling installer manifest (cua-install-latest)")
+    for step in steps[:feed]:
+        with_ = step.get("with") or {}
+        if str(step.get("uses", "")).startswith("actions/checkout") and "sparse-checkout" in with_:
+            assert with_.get("path"), "sparse checkout before the installer feed must use its own path"
+    run = next(s["run"] for s in steps if s.get("name") == "Keep Latest on Cua Spaces")
+    assert "latest-guard/.github/scripts/pin_latest_release.py" in run
+
+
+def test_driver_installer_bump_pr_queue_has_no_delete_branch():
+    # `gh pr merge --delete-branch` is refused when the merge queue is on, so
+    # the post-publish installer bump failed five times in a row.
+    run = text("cd-rust-cua-driver.yml")
+    assert "--auto --squash --delete-branch" not in run
+    assert 'gh pr merge "$PR_URL" --auto --squash' in run

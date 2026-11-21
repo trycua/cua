@@ -135,17 +135,21 @@ export const METHODS = [
   "notifications.list",
   "notifications.markAllRead",
   "notifications.markRead",
+  "notifications.delete",
+  "notifications.deleteAll",
   "telemetry.track",
   "telemetry.linkNotice",
   "telemetry.acknowledgeLinkNotice",
   "crashReporting.config",
   "spaces.usage",
+  "spaces.reach",
   "spaces.windows",
   "stream.pip",
   "spaces.thumbnail",
   "spaces.chooseFiles",
   "spaces.droppedFiles",
   "spaces.sendFiles",
+  "windows.chooseIso",
   "host.setUp",
   "host.joinWithCode",
   "host.action",
@@ -229,7 +233,7 @@ export const METHODS = [
 
 /** A live desktop's media ticket for the page's WebCodecs player,
  * presence over the page's video (the SwiftUI app draws it natively), and
- * New Space's runtime fix on Windows ("Install Docker Desktop"). */
+ * New Space's runtime fix on Windows ("Set up Linux support"). */
 export const ELECTRON_METHODS = ["spaces.openStream", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime"] as const;
 
 export type Method = (typeof METHODS)[number] | (typeof ELECTRON_METHODS)[number];

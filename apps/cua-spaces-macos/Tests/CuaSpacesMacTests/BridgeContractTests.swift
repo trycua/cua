@@ -319,9 +319,10 @@ struct BridgeContractTests {
             ("devices.revokePairingCode", ["id": "pc_fixture1"]),
             ("storage.get", [:]), ("storage.run", ["request": ["kind": "clear-cache"]]),
             ("notifications.list", [:]), ("notifications.markRead", ["ids": ["n1"]]), ("notifications.markAllRead", [:]),
+            ("notifications.delete", ["ids": ["n1"]]), ("notifications.deleteAll", [:]),
             ("telemetry.track", ["signals": [["type": "step", "step": "app_launched", "ok": true]]]),
             ("telemetry.linkNotice", [:]), ("telemetry.acknowledgeLinkNotice", [:]), ("crashReporting.config", [:]),
-            ("spaces.usage", ["spaceId": space]), ("spaces.windows", ["spaceId": space]),
+            ("spaces.usage", ["spaceId": space]), ("spaces.reach", ["spaceId": space]), ("spaces.windows", ["spaceId": space]),
             ("spaces.thumbnail", ["spaceId": space]),
             ("spaces.droppedFiles", ["names": ["notes.txt"]]), ("spaces.chooseFiles", [:]),
             ("spaces.sendFiles", ["spaceId": space, "paths": ["/tmp/cua-contract-notes.txt"]]),
@@ -361,6 +362,7 @@ struct BridgeContractTests {
         "spaces.add": "needs a running cua-spacesd at the address",
         "host.setUp": "installs the host service", "host.action": "changes the host service", "host.limits": "changes the host settings (HostBridgeTests covers hostLimitsChangeThroughTheHostModel)",
         "host.openSettings": "opens System Settings",
+        "windows.chooseIso": "opens a file picker; WebUIHostTests covers it",
         "host.joinWithCode": "runs the bundled cua; JoinWithCodeTests covers the arguments and bad args",
         "agents.events": "needs the daemon's agent_events; WebUIHostTests checks it is unsupported without it",
         "agents.start": "starts a coding agent through the daemon; WebUIHostTests checks it is unsupported without it",
@@ -501,7 +503,7 @@ struct BridgeContractTests {
         let open = AppOpenWindow(windowId: 41, appId: "", appName: "Slack", windowTitle: "general", supported: true,
                                  bundlePath: "/Applications/Slack.app")
         let remote = AppRemoteWindow(id: "w-1", appName: "Firefox", title: "Mozilla Firefox", visible: true, appId: "firefox",
-                                     targetEpoch: 3, widthPx: 1280, heightPx: nil, pid: nil)
+                                     targetEpoch: 3, widthPx: 1280, heightPx: nil, pid: nil, origin: nil)
         let png = WebUIBridge.dataURL(Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A]))
         return try [
             ("teleport.catalog", [BridgeValue.encode(entry)]),
@@ -643,10 +645,14 @@ enum JSONShape {
 struct BridgeValueFixTests {
     @Test("a fix action crosses the bridge in the case the core reads")
     func fixActionIsKebabCase() {
-        let fix = AppCreateFix(text: "Docker is not running.", label: "Copy command", action: .copyCommand, value: "open -a Docker")
+        let fix = AppCreateFix(text: "Docker is not running.", label: "Copy command", action: .copyCommand, value: "open -a Docker", keepRetry: false, linkLabel: nil, linkUrl: nil)
         let out = BridgeValue.encode(fix) as? [String: Any]
         #expect(out?["action"] as? String == "copy-command")
-        let url = AppCreateFix(text: "t", label: "l", action: .openUrl, value: "https://cua.ai")
+        let url = AppCreateFix(text: "t", label: "l", action: .openUrl, value: "https://cua.ai", keepRetry: false, linkLabel: nil, linkUrl: nil)
         #expect((BridgeValue.encode(url) as? [String: Any])?["action"] as? String == "open-url")
+        let iso = AppCreateFix(text: "t", label: "Choose Windows ISO...", action: .chooseWindowsIso, value: nil, keepRetry: true, linkLabel: "Download", linkUrl: "https://www.microsoft.com/software-download/windows11")
+        let encoded = BridgeValue.encode(iso) as? [String: Any]
+        #expect(encoded?["action"] as? String == "choose-windows-iso")
+        #expect(encoded?["keepRetry"] as? Bool == true)
     }
 }

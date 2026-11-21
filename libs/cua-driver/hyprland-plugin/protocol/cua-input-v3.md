@@ -46,15 +46,18 @@ its original seat names.
 The request sequence for every Driver-admitted action is:
 
 1. Send `HELLO` once per connection. The response is
-   `{"ok":true,"protocol":3,"epoch":"<epoch>","foreground_target":true}`
-   for a production plugin implementing the foreground extension. Driver must
-   require that explicit capability before using the foreground route.
+   `{"ok":true,"protocol":3,"epoch":"<epoch>","foreground_target":true,"hover":true}`
+   for a production plugin implementing the foreground extension and `HOVER`.
+   Driver must require each explicit capability before using it: the
+   foreground route needs `foreground_target`, and `HOVER` needs `hover`.
+   Plugins older than `HOVER` omit the field.
 2. Send `CLAIM`. The response is `{"ok":true,"lane":0}` or lane `1`.
 3. For background input, send `TARGET <pid> <hex-address> <capability>`.
    For foreground input, send
    `FOREGROUND_TARGET <pid> <hex-address> <capability>`. The capability is exactly
-   one of `1` (click), `2` (key), `4` (scroll), or `8` (drag); foreground selection
-   also permits `16` (activate). Combined masks refuse.
+   one of `1` (click), `2` (key), `4` (scroll), `8` (drag), or `32` (hover);
+   foreground selection also permits `16` (activate) and refuses `32`, and
+   background selection refuses `16`. Combined masks refuse.
    The response includes `ok`, `target`, `revision`, `width`, and `height`.
 4. Send the one matching bounded operation using that token and revision.
    A subsequent action requires fresh route-specific target selection, even on
@@ -84,6 +87,7 @@ The complete operation requests are:
 | `KEY <sequence> <target> <revision> <key> <modifiers>` | Evdev key 1-247 except lock keys 58, 69, and 70. Modifier bits: shift=1, ctrl=2, alt=4, super=8. |
 | `SCROLL <sequence> <target> <revision> <x> <y> <axis> <value>` | Axis 0=vertical, 1=horizontal; nonzero value in [-1000,1000]. |
 | `DRAG <sequence> <target> <revision> <x1> <y1> <x2> <y2> <duration_ms>` | Left button; duration 50-2000 ms; the grant must cover the duration plus 50 ms. |
+| `HOVER <sequence> <target> <revision> <x> <y>` | Capability 32; background bindings only. Pointer enter and motion on the lane's agent seat, no button. |
 
 Coordinates are finite logical surface-local values, with `0 <= x < width`
 and `0 <= y < height`. Subsurface hits refuse. Sequence numbers increase
@@ -98,6 +102,11 @@ remaining technical authority. A drag keeps its bounded lifetime while
 running; consuming its grant does not permit another action. A dispatch without
 fresh authority returns `action_not_admitted`. Malformed or refused requests
 never imply application rollback.
+
+`HOVER` is how Driver shows a background app the pointer without moving the
+user's pointer: hover styles, hover-only controls and tooltips react to the
+agent seat's pointer, which stays at that point as the passive focus described
+below.
 
 Background pointer focus has a separate lifetime. After a successful background pointer operation,
 the lane keeps passive pointer focus on that exact live surface. This internal
@@ -270,7 +279,10 @@ Driver expands bounded ASCII text into complete key operations under the exact
 US keymap. The protocol adds no text or IME stream. Background application
 qualification is unchanged by this foreground extension.
 
-Build against the exact Hyprland 0.56.2 ABI with `CUA_HYPRLAND_INPUT=ON`.
+Build against an exact supported Hyprland ABI (0.56.2 or 0.57.x) with
+`CUA_HYPRLAND_INPUT=ON`. CMake probes the installed headers for the 0.57
+`CWindow::backend()` window API and the earlier one and selects the matching
+window and layer accessors.
 This option defaults to `OFF` and is mutually exclusive with
 `CUA_HYPRLAND_TEST_INPUT`. The production build does not link an external
 signer or OpenSSL. `CUA_HYPRLAND_INPUT_TRACE=ON` adds test instrumentation for

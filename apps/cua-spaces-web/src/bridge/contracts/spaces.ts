@@ -67,6 +67,8 @@ export type Runtime = "auto" | "gvisor" | "runc" | "qemu" | "lume" | "firecracke
 export interface Space {
   id: string;
   name: string;
+  /** The host marks it hidden (label `cua.hidden`): the home warming for Home's prompt box, until a person writes into it. No list, count or tree shows it. */
+  hidden?: boolean;
   os: SpaceOs;
   status: SpaceStatus;
   /** Short human status detail, e.g. "Agent testing". */
@@ -213,8 +215,15 @@ export interface CreateFix {
   label: string;
   /** Copy `value` (a Terminal command), open `value` (a help page), or
    * open the failed create's details. */
-  action: "copy-command" | "open-url" | "details";
+  action: "copy-command" | "open-url" | "details" | "choose-windows-iso";
   value?: string;
+  /** A second button beside the first: it opens `linkUrl` (Microsoft's
+   * download page, beside "Choose Windows ISO…"). */
+  linkLabel?: string;
+  linkUrl?: string;
+  /** Keep Try again beside the button: the fix is something to do first
+   * (download a file), then the same create is tried again. */
+  keepRetry?: boolean;
 }
 
 export type RegionId = "us-east" | "us-central" | "eu-west";
@@ -244,6 +253,8 @@ export interface SpaceRow {
   /** `container`, `vm` or `microvm`, and the guest's CPU architecture, when known. */
   kind?: SpaceKind;
   arch?: string;
+  /** Label `cua.hidden`: the home warming for Home's prompt box (the SDK's `SpaceInfo.hidden`). */
+  hidden?: boolean;
   reachable: boolean;
   error?: string;
   /** For a Space one of your machines provides: that machine's relay id and name. */

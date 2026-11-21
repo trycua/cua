@@ -13,6 +13,7 @@ import { containerHome } from "@/lib/agent-home/container";
 import { grantsFor, homeGrantsArg, homeMentionsArg } from "@/lib/agent-home/grants";
 import { homeForRequest, rememberHome } from "@/lib/agent-home/home-space";
 import { petName } from "@/lib/pet-name";
+import { hostStatusWhenOnline } from "@/lib/this-mac-target";
 import { parseMentions } from "@/lib/agent-home/mentions";
 import { homeBrief, homePrompt } from "@/lib/agent-home/prompt";
 import type { AskRepo } from "@/lib/ask-first-repo";
@@ -22,12 +23,16 @@ import {
   askTask,
   HOST_NOT_SHARED,
   hostSpaceId,
+  isUnreachableError,
+  onAnotherComputer,
   postToSpaceThread,
   retryTarget,
   taskTarget,
+  unreachableError,
   updateAskTask,
   whereOs,
   type AskTask,
+  type TaskComputer,
   type TaskTarget,
   type TaskWhere,
 } from "@/lib/ask-first";
@@ -37,6 +42,24 @@ export const withRepo = (prompt: string, repo?: { url: string } | null) => (repo
 
 /** Task and Space pairs whose thread already has the task's job. */
 const posted = new Set<string>();
+
+/** Where a job goes instead when its computer can't be reached: the next computer the pool picks, or null. */
+export type MoveJob = (unreachable: readonly string[]) => { where: TaskWhere; computer: TaskComputer } | null;
+
+/** How Home's "Run something" starts a job: on one computer, staying on Home, moving it when that computer can't be reached. */
+export interface StartOptions {
+  /** Open the job's page (the default); Home's grid stays where it is and shows the job on its computer's card. */
+  open?: boolean;
+  /** The computer the job is placed on. */
+  computer?: TaskComputer;
+  /** The computer picked first, which couldn't take it. */
+  movedFrom?: TaskComputer;
+  /** Called when the start fails because its computer can't be reached. */
+  move?: MoveJob;
+}
+
+/** Each task's way to move, while its start is in flight. */
+const movers = new Map<string, { move: MoveJob; tried: string[] }>();
 
 /**
  * Starts a task: records it, opens its conversation at once, makes the
@@ -55,7 +78,7 @@ const posted = new Set<string>();
  * unless the person said where, and the Spaces it makes appear under the home.
  */
 export function useStartTask(): {
-  start: (job: { prompt: string; agent: string; where: TaskWhere; model?: string; effort?: string; repo?: AskRepo | null }) => void;
+  start: (job: { prompt: string; agent: string; where: TaskWhere; model?: string; effort?: string; repo?: AskRepo | null }, options?: StartOptions) => void;
   retry: (task: AskTask, where?: TaskWhere) => void;
 } {
   const navigate = useNavigate();
@@ -89,6 +112,18 @@ export function useStartTask(): {
   /** What a home is made with and briefed with: the agent, what it already holds and what the person named. */
   const setupFor = (agent: string, prompt: string, where?: TaskWhere) => ({ agent, grants: grantsFor(agent), mentions: named(prompt, where) });
 
+  /**
+   * Throws when a Space on another computer can't take the job now (`spaces.reach`: the relay's word and a health
+   * check). Its thread lives on the relay, so a job handed to its agent, or a run started there, would otherwise
+   * "succeed" and wait for a computer that is gone; thrown, the start moves the job to the next computer the pool
+   * picks. A host that can't ask (an older app) lets the start go on.
+   */
+  const reachOrThrow = async (spaceId: string) => {
+    if (!host || !onAnotherComputer(spaceId, spaces)) return;
+    const reach = await host.call("spaces.reach", { spaceId }).catch(() => null);
+    if (reach && !reach.reachable) throw new Error(unreachableError(spaceId, reach));
+  };
+
   /** Posts the job to the agent's home: what the person named now is the grant, then the message goes to the agent through the thread. */
   const reuseHome = async (
     spaceId: string,
@@ -119,7 +154,10 @@ export function useStartTask(): {
         const task0 = askTask(id);
         const isHome = Boolean(task0?.home && children);
         if (target.kind === "host") {
-          const status = (await host?.call("host.status", {} as never).catch(() => null)) as HostStatus | null;
+          // Waits out the few seconds its sharing service restarts after Set up (CUA-3974).
+          const status = await hostStatusWhenOnline(
+            async () => ((await host?.call("host.status", {} as never).catch(() => null)) ?? null) as HostStatus | null,
+          );
           spaceId = hostSpaceId(status);
           if (!spaceId) throw new Error(HOST_NOT_SHARED);
           updateAskTask(id, { spaceId, onHost: true });
@@ -129,6 +167,9 @@ export function useStartTask(): {
           spaceId = place.reuse;
           updateAskTask(id, { spaceId, pendingId: null });
         }
+        // A Space that already exists, with an agent in it or not: its computer may have gone since it was picked.
+        // Asked before anything is handed to it (a Space made below has just answered).
+        if (spaceId && target.kind !== "host") await reachOrThrow(spaceId);
         if (!spaceId) {
           const os = target.kind === "create" ? target.os : "linux";
           const pendingId = place?.pendingId ?? newPendingId();
@@ -215,12 +256,36 @@ export function useStartTask(): {
         updateAskTask(id, { runId: started.run_id, inSpace: true });
       } catch (e) {
         if (place?.pendingId) dropQueue(place.pendingId);
-        updateAskTask(id, { error: e instanceof Error ? e.message : String(e), pendingId: null });
+        const raw = e instanceof Error ? e.message : String(e);
+        // Its computer couldn't be reached: the job moves to the next one the pool picks, and the task says from where.
+        const mover = movers.get(id);
+        const from = askTask(id)?.computer;
+        if (mover && from && isUnreachableError(raw)) {
+          mover.tried.push(from.id);
+          const next = mover.move(mover.tried);
+          if (next) {
+            const to = taskTarget(next.where);
+            updateAskTask(id, {
+              error: null,
+              runId: null,
+              pendingId: null,
+              os: whereOs(next.where),
+              spaceId: to.kind === "space" ? to.spaceId : null,
+              onHost: to.kind === "host",
+              computer: next.computer,
+              movedFrom: from,
+            });
+            run(id, to);
+            return;
+          }
+        }
+        movers.delete(id);
+        updateAskTask(id, { error: raw, pendingId: null });
       }
     })();
 
   return {
-    start: ({ prompt, agent, where, model, effort, repo }) => {
+    start: ({ prompt, agent, where, model, effort, repo }, options = {}) => {
       const target = taskTarget(where);
       // With Child Spaces on, the agent decides (or is told a computer): its home Space takes the request.
       const home = Boolean(children) && (where.kind === "agent" || where.kind === "machine");
@@ -230,7 +295,7 @@ export function useStartTask(): {
       // kept by the preparing driver, which sends it exactly once when the agent is ready, even across a quit.
       const preparing = getDriver();
       const prep = preparing?.state;
-      if (!home && preparing && prep?.wanted && prep.harness === agent && target.kind === "create" && target.os === "linux") {
+      if (!home && preparing && prep?.wanted && prep.harness === agent && target.kind === "create" && target.os === "linux" && !target.on) {
         const spaceId = prep.homeSpaceId;
         const task = addAskTask({
           prompt: prompt.trim(),
@@ -257,8 +322,16 @@ export function useStartTask(): {
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
         ...(repo ? { repo } : {}),
+        ...(options.computer ? { computer: options.computer } : {}),
+        ...(options.movedFrom ? { movedFrom: options.movedFrom } : {}),
       });
       record("ask_first_task_started");
+      if (options.move) movers.set(task.id, { move: options.move, tried: options.movedFrom ? [options.movedFrom.id] : [] });
+      // Home's grid: the job starts where it is and shows on its computer's card; its page is one click away.
+      if (options.open === false) {
+        run(task.id, target, target.kind === "host" ? undefined : {});
+        return;
+      }
       // Straight to the Space: the one picked or the one being made (its page follows the create); this Mac opens the task's page.
       const go = (spaceId: string) => void navigate({ to: "/spaces/$spaceId", params: { spaceId } });
       if (target.kind === "space") {

@@ -116,8 +116,7 @@ The loop still closes for most questions, and none of this needs a vision model:
 `xprop -root _NET_ACTIVE_WINDOW` proves which window holds focus; and scanning the
 written capture for colour transitions (PIL or equivalent) proves coarse layout.
 What none of them prove is that a specific small control was activated. For that
-use the `cua-perception` extension (see `VISUAL.md`) or an app that exposes a
-usable accessibility tree.
+use an app that exposes a usable accessibility tree.
 
 **Windows without `_NET_WM_PID`.** Tk, many Java/AWT builds, Wine, and legacy
 Xlib/Xt clients do not publish `_NET_WM_PID`. On X11, `list_windows` then asks
@@ -360,6 +359,15 @@ background clicks, scrolls and drags, but refuse keys
 (`client_drops_background_keys`): Qt sends keys only to the window the user has
 active.
 
+An app you have checked yourself can skip that quirk refusal. List its absolute
+executable path, one per line (`#` starts a comment), in
+`$XDG_CONFIG_HOME/cua-driver/hyprland-apps.txt` (`~/.config/cua-driver/` by
+default). Driver matches each entry, symlinks resolved, against the target's
+`/proc/<pid>/exe`. A dispatch admitted this way carries `admission: "user"` and
+says the user qualified the app, not Cua. The list lifts only quirk refusals:
+XWayland, `client_not_bound` (Chromium, Electron) and the plugin's own checks
+still refuse.
+
 The plugin separately binds the exact live native surface and checks geometry,
 desktop availability, and primary-client and other-lane conflicts. Each
 background lane publishes a private canonical `evdev`/`pc105`/`us` keymap, so
@@ -484,9 +492,10 @@ If a tool call surprises you on Linux:
    anything, and one that arrives sooner waits only for the rest of it.
    Retry once the worker has stopped. A worker that never stops, such as
    one blocked on a compositor or X server that stopped answering, keeps
-   every later desktop action refusing until the driver restarts. An
-   `input_busy` that names a pid is different: text input to that process is
-   already running.
+   every later desktop action refusing until the driver restarts. The
+   refusal's `lane` says which kind it is: `{"kind": "desktop"}` here, and
+   `{"kind": "pid", "pid": N}` when text input to that process is already
+   running.
 
 ## Forbidden vectors
 

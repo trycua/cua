@@ -8,6 +8,7 @@
 use super::classify::TargetClass;
 use super::pixel::GrayImage;
 use super::reason::{Reason, Verdict};
+use super::store::GuardStore;
 use super::{mode, set_mode, FastPathMode};
 use crate::protocol::ToolResult;
 use serde_json::{json, Value};
@@ -164,7 +165,13 @@ pub fn gray_from_captured(img: &crate::image_utils::CapturedImage) -> Option<Gra
 /// ask for a screenshot is tree-only, unless the window's tree is sparse
 /// (under 10 elements or mostly 1-pt frames), where the picture is the
 /// only reliable state.
-pub fn skip_reread_screenshot(args: &Value, pid: i32, window_id: u64) -> bool {
+pub fn skip_reread_screenshot(
+    store: &GuardStore,
+    args: &Value,
+    session: Option<&str>,
+    pid: i32,
+    window_id: u64,
+) -> bool {
     if !mode().deltas()
         || args.get("include_screenshot").is_some()
         || args.get("screenshot_out_file").is_some()
@@ -172,7 +179,7 @@ pub fn skip_reread_screenshot(args: &Value, pid: i32, window_id: u64) -> bool {
     {
         return false;
     }
-    match super::store::global().latest_stats(pid, window_id) {
+    match store.latest_stats(session, pid, window_id) {
         Some((elements, thin)) => elements >= 10 && thin * 2 <= elements,
         None => false,
     }
@@ -196,7 +203,7 @@ pub fn returns_delta(tool: &str) -> bool {
 
 /// The window a direct action's delta is read from, when the mode is `on`.
 /// From `pid`/`window_id`, or from the snapshot an `element_token` names.
-pub fn delta_target(args: &Value) -> Option<(i32, u64)> {
+pub fn delta_target(args: &Value, store: &GuardStore) -> Option<(i32, u64)> {
     if !mode().deltas() {
         return None;
     }
@@ -209,7 +216,7 @@ pub fn delta_target(args: &Value) -> Option<(i32, u64)> {
         .get("element_token")
         .and_then(Value::as_str)
         .and_then(crate::element_token::parse_token)?;
-    super::store::global()
+    store
         .element(snapshot, index)
         .map(|(pid, window, _)| (pid, window))
 }

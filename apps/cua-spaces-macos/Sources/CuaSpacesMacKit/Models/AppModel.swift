@@ -145,6 +145,10 @@ public final class AppModel {
     /// A sign-in still waiting after this fails (a device code lives
     /// about this long).
     public var signInTimeout: Duration = .seconds(600)
+    /// Brings the app in front of the browser once the browser confirmed a
+    /// sign-in: the next step is here, and a covered window plays no video.
+    /// `NSApp.activate()` alone is declined while the browser is in front.
+    var comeForward: @MainActor () -> Void = { if NSApp != nil { PermissionGuide.bringAppForward() } }
     /// Tells one sign-in from the next (a timeout of an old one is ignored).
     private var signInAttempt = 0
     /// The attempt in progress asked for a code instead of the browser's way back.
@@ -503,7 +507,7 @@ public final class AppModel {
         let os = v.patchVersion == 0 ? "macOS \(v.majorVersion).\(v.minorVersion)"
             : "macOS \(v.majorVersion).\(v.minorVersion).\(v.patchVersion)"
         return AppMachinesViewAbout(
-            computerName: Foundation.Host.current().localizedName ?? "",
+            computerName: ComputerName.current ?? "",
             appVersion: info["CuaVersion"] as? String ?? info["CFBundleShortVersionString"] as? String ?? "",
             osVersion: os)
     }()
@@ -1310,10 +1314,11 @@ public final class AppModel {
     /// The Local Network steps for a Mac that accepts Spaces from your other
     /// computers: the explanation, then macOS's prompt, or the fix when access
     /// was turned off. Never for a sign-in's setup, nor a setup during the
-    /// first run (its page sets this Mac up as it signs in): finishing the
-    /// first run asks instead (`onboarding.complete`). The switch and a join
-    /// code always ask. Cancel or a refusal changes nothing else; a local
-    /// macOS create asks again.
+    /// first run (its page sets this Mac up as it signs in): the first run's
+    /// permissions step asks instead, and finishing the first run asks
+    /// nothing (no dialog as Home opens). The switch and a join code always
+    /// ask. Cancel or a refusal changes nothing else; a local macOS create
+    /// asks again.
     func askLocalNetworkForHosting(bySetup: Bool = false) {
         guard onboarding.completed || !bySetup, hostingLocalNetworkCheck == nil, let gate = localNetworkGate,
               appLocalNetworkApplies(provider: .local, os: .macos, hostIsMac: true) else { return }
@@ -1821,6 +1826,11 @@ public final class AppModel {
             // take it, even when a retry or Cancel superseded this one (an
             // earlier tab confirmed after all). Only a sign-out since then
             // leaves it.
+            // Only a sign-in still waiting on screen brings the app forward;
+            // one a retry, Cancel or the timeout ended must not pull the
+            // person out of what they went on to do.
+            let waiting = if case .waiting = signIn { true } else { false }
+            let shown = signInAttempt == current && waiting
             guard signInAttempt == current || identity == nil else { return }
             signInAttempt += 1
             let previous = identity
@@ -1835,6 +1845,7 @@ public final class AppModel {
             }
             signIn = .idle
             signInURL = nil
+            if shown { comeForward() }
             // Relay sharing paused while signed out comes back for its
             // owner (another account is asked to set it up again).
             await host.reconcileAccount()
@@ -1913,7 +1924,9 @@ public final class AppModel {
             autoConnect: settings.autoConnect,
             overflow: placementOverflow,
             runtimes: runtimesInput,
-            showTips: !settings.tips.off))
+            showTips: !settings.tips.off,
+            closeWindowKeepsRunning: settings.closeWindowKeepsRunning,
+            closeNotice: !settings.closeNoticeOff))
     }
 
     // MARK: - Runtimes (Settings, Advanced)
@@ -2035,21 +2048,17 @@ public final class AppModel {
 
     // MARK: - Experiments
 
-    /// The experiments the daemon enforces (Child Spaces, CI runners, Public TCP shares, Phone app, Warm start) as
+    /// The experiments the daemon enforces (CI runners, Public TCP shares, Phone app) as
     /// the cua home keeps them: what `cua experiments enable` set shows here
     /// the next time Settings is read.
     public func refreshDaemonExperiments() {
         let kept = appSettingsLoad(path: settingsPath).experiments
-        guard kept.childSpaces != settings.experiments.childSpaces
-            || kept.ciRunners != settings.experiments.ciRunners
+        guard kept.ciRunners != settings.experiments.ciRunners
             || kept.tcpShares != settings.experiments.tcpShares
-            || kept.mobile != settings.experiments.mobile
-            || kept.warmPools != settings.experiments.warmPools else { return }
-        settings.experiments.childSpaces = kept.childSpaces
+            || kept.mobile != settings.experiments.mobile else { return }
         settings.experiments.ciRunners = kept.ciRunners
         settings.experiments.tcpShares = kept.tcpShares
         settings.experiments.mobile = kept.mobile
-        settings.experiments.warmPools = kept.warmPools
     }
 
     /// Settings, Experiments: a switch and one line per experiment.
@@ -2236,8 +2245,8 @@ public final class AppModel {
             // "Never ask again".
             await keyvault.setSkipUnlockPrompt(option != "on")
             if let error = keyvault.error { show(error: error) }
-        case "tips", "reset-tips":
-            // General's Show tips and Reset tips: the core's rule (`settings::choose`).
+        case "tips", "reset-tips", "close-window", "close-notice":
+            // General's Show tips, Reset tips and "When I close the window": the core's rule (`settings::choose`).
             settings = appSettingsChoose(settings: settings, row: row, option: option)
             saveSettings()
         case "telemetry":

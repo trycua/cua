@@ -42,6 +42,7 @@ export function sameSurface(a: SurfaceState | null, b: SurfaceState): boolean {
     a.spaceId === b.spaceId &&
     a.tier === b.tier &&
     a.interactive === b.interactive &&
+    a.windowId === b.windowId &&
     a.visible === b.visible &&
     a.occluded === b.occluded &&
     a.radius === b.radius &&
@@ -303,6 +304,7 @@ export class VideoSlotReporter {
       tier: slot.tier,
       // Under a modal dialog nothing takes the pointer or keys.
       interactive: slot.interactive && !modal,
+      ...(slot.windowId ? { windowId: slot.windowId } : {}),
       rect,
       clip,
       radius: Math.max(0, slot.radius - inset),

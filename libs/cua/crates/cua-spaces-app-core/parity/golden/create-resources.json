@@ -1834,7 +1834,7 @@
           "submit": null,
           "submitLabel": "Add Space"
         },
-        "canContinue": false,
+        "canContinue": true,
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
@@ -1846,13 +1846,13 @@
           "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
-        "image": "ghcr.io/trycua/windows:2022",
+        "image": "ghcr.io/trycua/windows:11",
         "imageField": {
           "custom": false,
           "error": null,
           "open": false,
           "rows": [],
-          "text": "ghcr.io/trycua/windows:2022"
+          "text": "ghcr.io/trycua/windows:11"
         },
         "kinds": [
           "vm"
@@ -1870,8 +1870,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Virtual machine",
-          "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 6.5 GB)",
+          "Architecture: ARM",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1892,7 +1891,7 @@
           "submit": null,
           "submitLabel": "Add Space"
         },
-        "canContinue": false,
+        "canContinue": true,
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
@@ -1904,13 +1903,13 @@
           "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
-        "image": "ghcr.io/trycua/windows:2022",
+        "image": "ghcr.io/trycua/windows:11",
         "imageField": {
           "custom": false,
           "error": null,
           "open": false,
           "rows": [],
-          "text": "ghcr.io/trycua/windows:2022"
+          "text": "ghcr.io/trycua/windows:11"
         },
         "kinds": [
           "vm"
@@ -1928,8 +1927,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Virtual machine",
-          "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 6.5 GB)",
+          "Architecture: ARM",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1950,25 +1948,21 @@
           "submit": null,
           "submitLabel": "Add Space"
         },
-        "canContinue": false,
+        "canContinue": true,
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
-          "os: System",
-          "image: Image [ghcr.io/org/app:tag]",
-          "placement: Run on",
-          "kind: Kind (advanced)",
-          "runtime: Runtime (advanced)",
-          "connect-cloud: Connect a cloud…"
+          "cpus: CPU cores",
+          "memory: Memory"
         ],
         "gpu": null,
-        "image": "ghcr.io/trycua/windows:2022",
+        "image": "ghcr.io/trycua/windows:11",
         "imageField": {
           "custom": false,
           "error": null,
           "open": false,
           "rows": [],
-          "text": "ghcr.io/trycua/windows:2022"
+          "text": "ghcr.io/trycua/windows:11"
         },
         "kinds": [
           "vm"
@@ -1986,8 +1980,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Virtual machine",
-          "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 6.5 GB)",
+          "Architecture: ARM",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1996,7 +1989,7 @@
           "auto",
           "qemu"
         ],
-        "step": 0
+        "step": 1
       },
       "wizard": "next"
     },
@@ -2008,7 +2001,7 @@
           "submit": null,
           "submitLabel": "Add Space"
         },
-        "canContinue": false,
+        "canContinue": true,
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
@@ -2020,13 +2013,13 @@
           "connect-cloud: Connect a cloud…"
         ],
         "gpu": null,
-        "image": "ghcr.io/trycua/windows:2022",
+        "image": "ghcr.io/trycua/windows:11",
         "imageField": {
           "custom": false,
           "error": null,
           "open": false,
           "rows": [],
-          "text": "ghcr.io/trycua/windows:2022"
+          "text": "ghcr.io/trycua/windows:11"
         },
         "kinds": [
           "vm"
@@ -2044,8 +2037,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Virtual machine",
-          "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 6.5 GB)",
+          "Architecture: ARM",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,

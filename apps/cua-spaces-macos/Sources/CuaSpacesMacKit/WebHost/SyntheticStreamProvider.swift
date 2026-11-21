@@ -26,6 +26,15 @@ final class SyntheticStreamProvider: SpaceStreamSourceProviding, @unchecked Send
     let startOffset: Int
     /// The fixture Space's OS (`linux`, `macos`): a Linux one takes ⌘ as Control.
     let guestOS: String
+    /// The windows `availableWindows` lists (none by default): tests give it the ones a Space shows.
+    var windows: [StreamWindow] = []
+    private let openedLock = NSLock()
+    private var opened: [StreamSource] = []
+    /// The sources sessions were opened on, oldest first (tests read which one a slot asked for).
+    var openedSources: [StreamSource] {
+        openedLock.lock(); defer { openedLock.unlock() }
+        return opened
+    }
 
     init(units: [AccessUnit], size: CGSize, fps: Double, startOffset: Int = 0, guestOS: String = "") {
         self.units = units
@@ -67,12 +76,13 @@ final class SyntheticStreamProvider: SpaceStreamSourceProviding, @unchecked Send
         return units
     }
 
-    func availableWindows() async throws -> [StreamWindow] { [] }
+    func availableWindows() async throws -> [StreamWindow] { windows }
 
     /// The last session opened (tests read what it was sent).
     private(set) weak var lastMedia: SyntheticMedia?
 
     func openSession(_ source: StreamSource, frames: FrameSink, audio: AudioSink?) async throws -> SpaceStreamSession {
+        openedLock.lock(); opened.append(source); openedLock.unlock()
         let media = SyntheticMedia(provider: self, sink: frames)
         lastMedia = media
         return media

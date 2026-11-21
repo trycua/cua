@@ -81,6 +81,25 @@ describe("SpaceWindowList (the Stream section)", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
+  it("labels a window another Space shows here with that Space's OS mark and name", async () => {
+    const shown: RemoteWindow = {
+      id: "xs:1",
+      appName: "Safari",
+      title: "Apple",
+      visible: true,
+      appId: "com.apple.Safari",
+      targetEpoch: 0,
+      origin: { spaceId: "local:mac-child", name: "mac-child", os: "macos" },
+    };
+    renderList(fakeTeleport({ listRemoteWindows: async () => [...remoteWindows, shown] }));
+    await screen.findByText("Apple");
+    const row = rowOf("Apple");
+    expect(within(row).getByTestId("ssr-origin")).toHaveTextContent("mac-child");
+    expect(row.querySelector('[data-os-icon="os-macos"]')).not.toBeNull();
+    // A Space's own rows say nothing about an origin.
+    expect(within(rowOf("Cua Docs")).queryByTestId("ssr-origin")).toBeNull();
+  });
+
   it("shows plain Desktop until the display list answers", async () => {
     renderList(fakeTeleport({ spacePrimaryDisplay: async () => null }));
     await screen.findByText("Cua Docs");

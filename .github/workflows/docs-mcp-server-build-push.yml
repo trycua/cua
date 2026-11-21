@@ -26,7 +26,6 @@ env:
   SERVICE_DIR: docs/scripts/docs-mcp-server
 
 permissions:
-  id-token: write
   contents: read
 
 concurrency:
@@ -37,6 +36,9 @@ jobs:
   build:
     runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     if: github.repository == 'trycua/cua'  # public repo only: needs its release secrets / AWS OIDC trust
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -155,6 +157,9 @@ jobs:
       github.repository == 'trycua/cua' &&
       github.event_name != 'pull_request' &&
       (github.ref == 'refs/heads/main' || inputs.force_push == true)
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - name: Configure AWS credentials

@@ -17,6 +17,7 @@ use cua_driver_core::{
     protocol::ToolResult,
     tool::{DesktopLease, Tool, ToolDef},
 };
+use objc2::rc::Retained;
 use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
 use serde_json::{json, Value};
 
@@ -30,6 +31,85 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 const VERIFY_TIMEOUT: Duration = Duration::from_millis(900);
 const VERIFY_POLL: Duration = Duration::from_millis(20);
 const VERIFY_STABLE: Duration = Duration::from_millis(100);
+
+/// How long AppKit may lag the kernel before a live pid counts as not an
+/// application. On the macOS E2E guest the lookup missed a live, frontmost
+/// app for under 200 ms; the bound leaves room for a loaded machine.
+const APP_LOOKUP_GRACE: Duration = Duration::from_secs(1);
+const APP_LOOKUP_POLL: Duration = Duration::from_millis(20);
+
+/// Why no `NSRunningApplication` could be had for a pid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AppMissing {
+    /// The kernel has no such process.
+    Exited,
+    /// The process lives, but AppKit never reported it as an application.
+    NotAnApplication,
+}
+
+impl AppMissing {
+    fn result(self, pid: i32) -> ToolResult {
+        let (code, message) = match self {
+            Self::Exited => (
+                "bring_to_front_pid_not_found",
+                format!("bring_to_front: no running application for pid {pid} (process not found or exited)."),
+            ),
+            Self::NotAnApplication => (
+                "bring_to_front_pid_not_application",
+                format!("bring_to_front: pid {pid} is running but is not a registered application."),
+            ),
+        };
+        ToolResult::error(message).with_structured(json!({
+            "code": code,
+            "pid": pid,
+            "activated": false,
+            "request_accepted": false,
+        }))
+    }
+}
+
+/// Whether the kernel has `pid`. `EPERM` still proves the process exists.
+fn process_exists(pid: i32) -> bool {
+    pid > 0
+        && (unsafe { libc::kill(pid, 0) } == 0
+            || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM))
+}
+
+/// The running application for `pid`.
+///
+/// `runningApplicationWithProcessIdentifier` answers from AppKit's cache of
+/// running applications, which can briefly miss a live app (seen right after
+/// another app took activation). A nil there is not proof the process exited,
+/// so ask the kernel, and wait for AppKit only while the process is alive.
+fn running_application(pid: i32) -> Result<Retained<NSRunningApplication>, AppMissing> {
+    await_application(
+        || unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) },
+        || process_exists(pid),
+        APP_LOOKUP_GRACE,
+        APP_LOOKUP_POLL,
+    )
+}
+
+fn await_application<T>(
+    mut lookup: impl FnMut() -> Option<T>,
+    mut alive: impl FnMut() -> bool,
+    grace: Duration,
+    poll: Duration,
+) -> Result<T, AppMissing> {
+    let deadline = Instant::now() + grace;
+    loop {
+        if let Some(app) = lookup() {
+            return Ok(app);
+        }
+        if !alive() {
+            return Err(AppMissing::Exited);
+        }
+        if Instant::now() >= deadline {
+            return Err(AppMissing::NotAnApplication);
+        }
+        std::thread::sleep(poll);
+    }
+}
 
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
@@ -213,6 +293,34 @@ fn observe_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
     }
 }
 
+fn already_front(observation: ExactWindowObservation, pid: i32, window_id: u32) -> bool {
+    observation.exact_postcondition(pid, window_id)
+        && observation.exact_window_frontmost_ordinary(window_id)
+        && observation
+            .workspace_frontmost_pid
+            .is_none_or(|front| front == pid)
+}
+
+/// The early return for a window that is already front. Every read in an
+/// observation is WindowServer or AX state, so AppKit can still hold another
+/// app active (as during a relaunch), and AX focus can hold while the NSWindow
+/// is not key, which leaves native menu commands disabled. `request` asks for
+/// both again; the observation after it must still be already front, or the
+/// caller takes the full activation path.
+fn confirm_already_front(
+    pid: i32,
+    window_id: u32,
+    mut observe: impl FnMut() -> ExactWindowObservation,
+    request: impl FnOnce() -> bool,
+) -> Option<(bool, ExactWindowObservation)> {
+    if !already_front(observe(), pid, window_id) {
+        return None;
+    }
+    let request_accepted = request();
+    let confirmed = observe();
+    already_front(confirmed, pid, window_id).then_some((request_accepted, confirmed))
+}
+
 fn wait_for_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
     let deadline = Instant::now() + VERIFY_TIMEOUT;
     let mut stable_since = None;
@@ -243,8 +351,7 @@ fn wait_for_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
 /// make the app active for AppKit, so a window the typing opens (Chrome's
 /// omnibox suggestions) hands the front back to the previous app mid-string.
 pub(crate) fn activate_exact_window_blocking(pid: i32, window_id: u32) -> bool {
-    let Some(app) = (unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) })
-    else {
+    let Ok(app) = running_application(pid) else {
         return false;
     };
     crate::input::skylight::set_front_process_persistently(pid, window_id);
@@ -261,8 +368,7 @@ pub(crate) fn activate_exact_window_blocking(pid: i32, window_id: u32) -> bool {
 /// the app's own key window comes forward. Best effort: macOS may refuse an
 /// activation requested by a background process.
 pub(crate) fn reactivate_application(pid: i32) -> bool {
-    let Some(app) = (unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) })
-    else {
+    let Ok(app) = running_application(pid) else {
         return false;
     };
     unsafe { app.activateWithOptions(NSApplicationActivationOptions::empty()) }
@@ -387,18 +493,9 @@ impl Tool for BringToFrontTool {
 
 impl BringToFrontTool {
     fn activate_blocking(pid: i32, window_id: Option<u32>) -> ToolResult {
-        let Some(app) =
-            (unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) })
-        else {
-            return ToolResult::error(format!(
-                "bring_to_front: no running application for pid {pid} (process not found or exited)."
-            ))
-            .with_structured(json!({
-                "code": "bring_to_front_pid_not_found",
-                "pid": pid,
-                "activated": false,
-                "request_accepted": false,
-            }));
+        let app = match running_application(pid) {
+            Ok(app) => app,
+            Err(missing) => return missing.result(pid),
         };
 
         if let Some(window_id) = window_id {
@@ -441,6 +538,21 @@ impl BringToFrontTool {
                     "activated": false,
                     "request_accepted": false,
                 }));
+            }
+
+            if let Some((request_accepted, confirmed)) = confirm_already_front(
+                pid,
+                window_id,
+                || observe_exact_window(pid, window_id),
+                || {
+                    let native_key_requested =
+                        crate::input::skylight::make_exact_window_key(pid, window_id);
+                    let cocoa_accepted =
+                        unsafe { app.activateWithOptions(NSApplicationActivationOptions::empty()) };
+                    native_key_requested || cocoa_accepted
+                },
+            ) {
+                return exact_result(pid, window_id, "already_front", request_accepted, confirmed);
             }
 
             // The persistent kCPSNoWindows request owns process activation
@@ -528,6 +640,71 @@ impl BringToFrontTool {
 mod tests {
     use super::*;
 
+    const NO_WAIT: Duration = Duration::ZERO;
+
+    #[test]
+    fn a_live_app_that_appkit_reports_late_is_found() {
+        let mut lookups = 0;
+        let found = await_application(
+            || {
+                lookups += 1;
+                (lookups == 3).then_some("app")
+            },
+            || true,
+            Duration::from_secs(5),
+            NO_WAIT,
+        );
+        assert_eq!(found, Ok("app"));
+        assert_eq!(lookups, 3);
+    }
+
+    #[test]
+    fn an_exited_process_fails_without_waiting() {
+        let started = Instant::now();
+        let found = await_application(
+            || None::<()>,
+            || false,
+            Duration::from_secs(5),
+            Duration::from_secs(1),
+        );
+        assert_eq!(found, Err(AppMissing::Exited));
+        assert!(started.elapsed() < Duration::from_millis(500));
+    }
+
+    #[test]
+    fn a_live_process_appkit_never_reports_is_not_an_application() {
+        let found = await_application(
+            || None::<()>,
+            || true,
+            Duration::from_millis(30),
+            Duration::from_millis(5),
+        );
+        assert_eq!(found, Err(AppMissing::NotAnApplication));
+    }
+
+    #[test]
+    fn the_kernel_oracle_tells_a_live_pid_from_a_reaped_one() {
+        assert!(process_exists(std::process::id() as i32));
+        let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+        let pid = child.id() as i32;
+        child.wait().unwrap();
+        assert!(!process_exists(pid));
+        assert!(!process_exists(0));
+        assert!(!process_exists(-1));
+    }
+
+    #[test]
+    fn a_reaped_pid_is_reported_as_exited() {
+        let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+        let pid = child.id() as i32;
+        child.wait().unwrap();
+        let result = BringToFrontTool::activate_blocking(pid, None);
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured refusal");
+        assert_eq!(structured["code"], "bring_to_front_pid_not_found");
+        assert_eq!(structured["activated"], false);
+    }
+
     fn observation(
         workspace_frontmost_pid: Option<i32>,
         front_process_matches_target: Option<bool>,
@@ -590,7 +767,7 @@ mod tests {
                 height: 600.0,
             },
             layer: 0,
-            z_index,
+            z_index: Some(z_index),
             is_on_screen: true,
             current_space_id: None,
             on_current_space: Some(true),
@@ -690,6 +867,88 @@ mod tests {
         assert!(
             lane_wait >= VERIFY_TIMEOUT / 2,
             "lane handed on while the worker still ran: {lane_wait:?}"
+        );
+    }
+
+    #[test]
+    fn only_a_focused_frontmost_window_of_the_active_process_skips_activation() {
+        assert!(already_front(
+            contested_observation(Some(7), Some(7), Some(7)),
+            42,
+            7
+        ));
+        assert!(!already_front(
+            contested_observation(Some(7), Some(900), Some(7)),
+            42,
+            7
+        ));
+        assert!(!already_front(
+            contested_observation(Some(8), Some(7), Some(7)),
+            42,
+            7
+        ));
+        assert!(!already_front(
+            observation(Some(42), Some(false), Some(7), Some(7), true),
+            42,
+            7
+        ));
+    }
+
+    #[test]
+    fn a_front_process_pid_other_than_the_window_owner_still_activates() {
+        assert!(!already_front(
+            observation(Some(515), Some(true), Some(7), Some(7), true),
+            42,
+            7
+        ));
+        assert!(already_front(
+            observation(None, Some(true), Some(7), Some(7), true),
+            42,
+            7
+        ));
+    }
+
+    #[test]
+    fn a_window_that_loses_the_front_during_the_requests_takes_the_full_path() {
+        let front = contested_observation(Some(7), Some(7), Some(7));
+        let sibling_on_top = contested_observation(Some(7), Some(8), Some(8));
+
+        let mut reads = [front, sibling_on_top].into_iter();
+        let mut requested = false;
+        let confirmed = confirm_already_front(
+            42,
+            7,
+            || reads.next().unwrap(),
+            || {
+                requested = true;
+                true
+            },
+        );
+        assert_eq!(confirmed, None);
+        assert!(requested);
+
+        let mut reads = [front, front].into_iter();
+        assert_eq!(
+            confirm_already_front(42, 7, || reads.next().unwrap(), || true),
+            Some((true, front))
+        );
+
+        let mut requested = false;
+        assert_eq!(
+            confirm_already_front(
+                42,
+                7,
+                || sibling_on_top,
+                || {
+                    requested = true;
+                    true
+                }
+            ),
+            None
+        );
+        assert!(
+            !requested,
+            "a window that is not front sends no early requests"
         );
     }
 

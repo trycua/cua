@@ -5,7 +5,7 @@ Background computer-use driver for any agents. Speaks MCP over stdio; drives nat
 See [MCP protocol and skills](docs/mcp-protocol-and-skills.md) for the modern
 stdio profile, legacy compatibility, bundled skill resources, and HTTP limits.
 
-## Optional visual perception
+## Optional visual perception (frozen: no new work)
 
 The default MIT-licensed Driver works without model artifacts. An explicitly
 installed `cua-perception` extension can parse one retained native window or
@@ -73,6 +73,8 @@ suffix. MCP remains implemented by the `cua-driver` executable as the
 runtime-neutral agent boundary.
 
 ## Computer History macOS preview
+
+> **Deprecated.** Computer History is deprecated. It is off by default, agents are no longer told to call `history_status` or `history_query`, and both tools will be removed in the release after 26 Nov 2026. To remove stored data, run `cua-driver history delete --yes`.
 
 Nightly macOS builds can provide an opt-in, encrypted history of actions
 performed through Cua Driver. The preview stores a strict metadata allowlist,
@@ -221,11 +223,12 @@ Register the standard MCP server:
 claude mcp add --transport stdio cua-driver -- cua-driver mcp
 ```
 
-The legacy `--claude-code-computer-use-compat` flag is still accepted so old
-configurations keep starting, but it currently has no tool-surface effect and
-does not register a standalone `screenshot` tool. Use `get_window_state` for a
-window tree plus screenshot, `get_desktop_state` for a full-display screenshot,
-and `zoom` for a cropped region.
+The old `--claude-code-computer-use-compat` flag has been removed, and
+`cua-driver` now exits with an error that names it. It had no effect on the
+tool surface, so delete it from older registrations and use the command above.
+There is no standalone `screenshot` tool. Use `get_window_state` for a window
+tree plus screenshot, `get_desktop_state` for a full-display screenshot, and
+`zoom` for a cropped region.
 
 ## macOS process identity and permissions
 

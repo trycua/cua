@@ -397,7 +397,7 @@ impl Tool for GetWindowStateTool {
                     "description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},
                 "screenshot_out_file":{"type":"string",
                     "description":"When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output carries screenshot_file_path instead."},
-                "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count."},
+                "query":{"type":"string","description":"Optional case-insensitive substring; `a|b` matches either. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count. A query that matches nothing says `0 of N elements match`."},
                 "max_elements":{"type":"integer","minimum":1,"description":"Cap on total AT-SPI nodes walked. Default 250 (5 000 with full_output:true); the response states when the tree was cut. Raise it to read further into a large window."},
                 "max_depth":{"type":"integer","minimum":1,"description":"Cap on the AT-SPI tree walk depth. Omit for the default (uncapped). Lower for deeply nested apps."},
                 "timeout_ms": cua_driver_core::tool_schema::timeout_ms_schema(),
@@ -773,7 +773,7 @@ impl Tool for GetWindowStateTool {
                 let mut published_snapshot = false;
                 let mut invalidated = Vec::new();
 
-                if let Some(tr) = tree_opt {
+                if let Some(mut tr) = tree_opt {
                     let source_trusted = tr.trusted;
                     let source_degraded_reason = tr.degraded_reason.clone();
                     let count = tr
@@ -831,7 +831,11 @@ impl Tool for GetWindowStateTool {
                     // the window's scope (`snapshot_binds_window`).
                     let target_scoped = binds_window;
                     if !observation_only && !target_scoped {
-                        invalidated.extend(state.snapshots.remove(pid as i32, xid));
+                        invalidated.extend(state.snapshots.remove(
+                            pid as i32,
+                            xid,
+                            session_id.as_deref(),
+                        ));
                         crate::atspi::snapshot::forget_window(pid, xid);
                     }
                     let (snapshot_id, replaced) = (!observation_only && target_scoped)
@@ -925,6 +929,15 @@ impl Tool for GetWindowStateTool {
                     structured["total_element_count"] = json!(count);
                     structured["returned_element_count"] = json!(elements.len());
                     structured["elements"] = json!(elements);
+                    // Display-only rows of a window-scoped native walk. An
+                    // application-wide tree would mix in other windows' text.
+                    if target_scoped && tr.trusted {
+                        cua_driver_core::element_query::publish_observations(
+                            &mut structured,
+                            std::mem::take(&mut tr.observations),
+                            query.as_deref(),
+                        );
+                    }
                     // Surface 6: snapshot id mirror for debug correlation.
                     if let Some(snapshot_id) = snapshot_id {
                         structured["snapshot_id"] = json!(
@@ -1191,7 +1204,9 @@ mod get_window_state_actions_tests {
             checked: None,
             enabled: Some(true),
             selected: None,
+            focused: None,
             description: None,
+            document_uri: None,
             actions,
             element_key: 1,
             identity: None,

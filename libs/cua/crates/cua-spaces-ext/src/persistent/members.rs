@@ -925,7 +925,7 @@ impl Persistent {
             author: Some(Author::system("dispatch")),
             note: String::new(),
         };
-        match store.claim(task.seq, &holder, claim_ttl_ms(), dispatch()) {
+        match store.claim_queued(task.seq, &holder, claim_ttl_ms(), dispatch()) {
             Ok(_) => {}
             Err(e) if e.tag() == crate::thread::claims::TASK_CLAIMED => {
                 return Ok(Delivered::Taken);
@@ -938,7 +938,7 @@ impl Persistent {
             .map(|e| e.text.clone())
             .unwrap_or_else(|| task.text.clone());
         let framed = format!(
-            "[thread #{} from {}] {text}\n\n(Everything you write between tool calls is posted to this thread as you write it, one message for each stretch, in order; nothing you wrote is replaced or removed. So talk to the person like a colleague: before a long job say in one short sentence what you will do, then do it, then say how it went. Never repeat something you already posted. Do not call thread_reply for plain text; use it only to attach files or to mark the task failed. To ask the person before something that needs their OK, call thread_post with an approval (action and details): that puts a card in front of them, and asking in plain words does not; then end your turn, because their answer arrives as a new message to you. Starting up, installing and \"working for Ns\" are shown by the app itself, so do not narrate them. To make another computer from here, run `cua spaces create IMAGE --name NAME` (it becomes this Space's child; `cua sb exec NAME -- COMMAND` runs things in it and `cua spaces delete --force NAME` removes it); if that is refused, say what the refusal says.)",
+            "[thread #{} from {}] {text}\n\n(Everything you write between tool calls is posted to this thread as you write it, one message for each stretch, in order; nothing you wrote is replaced or removed. So talk to the person like a colleague: before a long job say in one short sentence what you will do, then do it, then say how it went. Never repeat something you already posted. Do not call thread_reply for plain text; use it only to attach files or to mark the task failed. To ask the person before something that needs their OK, call thread_post with an approval (action and details): that puts a card in front of them, and asking in plain words does not; then end your turn, because their answer arrives as a new message to you. Starting up, installing and \"working for Ns\" are shown by the app itself, so do not narrate them. To make another computer from here, run `cua spaces create IMAGE --name NAME` (it becomes this Space's child; `cua sb exec NAME -- COMMAND` runs things in it and `cua spaces delete --force NAME` removes it). To show the person an app: open it in the child with the launch_space_app tool (not a shell command), then call the stream_space_window tool (space=the child, app_name=the app): the window appears live in this Space's Stream list. Then answer in one short line and leave that child running; never delete a Space the person asked to see, never send a screenshot instead, and do not offer options when the request is clear. If a command is refused, say what the refusal says.)",
             task.seq, task.author.name
         );
         // The member's standing instructions go in front of the first message
@@ -1110,29 +1110,6 @@ impl Persistent {
         }
     }
 
-    /// Records `seq`, already delivered, as claimed and being worked on by
-    /// the current turn of the session `rec` shows.
-    fn mark_delivered(
-        &self,
-        rec: &AgentRecord,
-        store: &ThreadStore,
-        seq: u64,
-        base: u32,
-    ) -> Result<()> {
-        store.claim(
-            seq,
-            &Holder::new(&rec.name, rec.k(), rec.drive_epoch()),
-            claim_ttl_ms(),
-            ClaimEntries {
-                states: vec![TaskState::Claimed, TaskState::Working],
-                author: Some(Author::system("dispatch")),
-                note: String::new(),
-            },
-        )?;
-        self.update_in(rec, |r| r.task = Some(InFlight { seq, turn: base }))?;
-        Ok(())
-    }
-
     /// Keeps the claims of the session `rec` shows while it works: the
     /// task its turn works on (taken again, silently, if its claim was
     /// lost to expiry and nobody else took it), and the tasks it claimed
@@ -1253,10 +1230,23 @@ impl Persistent {
             tracing::warn!(agent = name, "message not recorded in the thread: {e}");
             return Ok((d, None));
         }
-        let e = store.append(draft)?;
-        if tracked {
-            self.mark_delivered(&rec, &store, e.seq, if d.started { 0 } else { base })?;
+        if !tracked {
+            return Ok((d, Some(store.append(draft)?.seq)));
         }
+        // Already delivered: the task is written claimed, in one step, so
+        // the dispatcher never sees it queued and sends it a second time.
+        let (e, _) = store.append_claimed(
+            draft,
+            &Holder::new(&rec.name, rec.k(), rec.drive_epoch()),
+            claim_ttl_ms(),
+            ClaimEntries {
+                states: vec![TaskState::Claimed, TaskState::Working],
+                author: Some(Author::system("dispatch")),
+                note: String::new(),
+            },
+        )?;
+        let turn = if d.started { 0 } else { base };
+        self.update_in(&rec, |r| r.task = Some(InFlight { seq: e.seq, turn }))?;
         Ok((d, Some(e.seq)))
     }
 

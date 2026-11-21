@@ -206,7 +206,7 @@ static SHARED_CONNECTION: tokio::sync::OnceCell<AccessibilityConnection> =
 async fn shared_connection() -> Result<&'static AccessibilityConnection> {
     SHARED_CONNECTION
         .get_or_try_init(|| async {
-            let conn = AccessibilityConnection::new()
+            let conn = connect_accessibility_bus()
                 .await
                 .map_err(|error| anyhow!("AT-SPI connect failed: {error}"))?;
             if let Err(error) = conn.add_registry_event::<atspi::ObjectEvents>().await {
@@ -235,6 +235,54 @@ async fn shared_connection() -> Result<&'static AccessibilityConnection> {
             static TRACKER: OnceLock<()> = OnceLock::new();
             TRACKER.get_or_init(|| spawn_focus_tracker(conn));
         })
+}
+
+/// Join the accessibility bus the session's applications registered on.
+/// libatspi, and with it every toolkit bridge and pyatspi, takes
+/// `AT_SPI_BUS_ADDRESS` before it asks `org.a11y.Bus.GetAddress`. Asking only
+/// `GetAddress` joined a bus without the applications' registry whenever the
+/// two disagreed, so listener startup stalled and every walk timed out
+/// (#4874).
+async fn connect_accessibility_bus(
+) -> std::result::Result<AccessibilityConnection, atspi::AtspiError> {
+    if let Some(address) = session_accessibility_bus(std::env::var("AT_SPI_BUS_ADDRESS").ok()) {
+        match address.parse() {
+            Ok(parsed) => match AccessibilityConnection::from_address(parsed).await {
+                Ok(conn) => return Ok(conn),
+                Err(error) => {
+                    dlog!("AT_SPI_BUS_ADDRESS {address} unreachable ({error}); asking org.a11y.Bus")
+                }
+            },
+            Err(error) => {
+                dlog!("AT_SPI_BUS_ADDRESS {address:?} invalid ({error}); asking org.a11y.Bus")
+            }
+        }
+    }
+    AccessibilityConnection::new().await
+}
+
+/// `AT_SPI_BUS_ADDRESS` as libatspi reads it: an empty value is unset.
+fn session_accessibility_bus(environment: Option<String>) -> Option<String> {
+    environment.filter(|address| !address.is_empty())
+}
+
+#[cfg(test)]
+mod session_accessibility_bus_tests {
+    use super::session_accessibility_bus;
+
+    #[test]
+    fn a_set_address_names_the_bus() {
+        assert_eq!(
+            session_accessibility_bus(Some("unix:path=/run/a11y".into())).as_deref(),
+            Some("unix:path=/run/a11y")
+        );
+    }
+
+    #[test]
+    fn unset_or_empty_leaves_org_a11y_bus_to_answer() {
+        assert_eq!(session_accessibility_bus(None), None);
+        assert_eq!(session_accessibility_bus(Some(String::new())), None);
+    }
 }
 
 /// Object path of the accessible that most recently reported `focused=true`,
@@ -491,6 +539,7 @@ struct Visited<'a> {
     /// tooltip there ("Play"/"Pause", "Look in"), GTK its tooltip text.
     description: String,
     value: Option<String>,
+    document_uri: Option<String>,
     checked: Option<bool>,
     enabled: Option<bool>,
     selected: Option<bool>,
@@ -1460,6 +1509,9 @@ async fn collect_visited_bounded_opts<'a>(
     max_depth: Option<usize>,
     walk_closed_menus: bool,
 ) -> Result<Option<Collected<'a>>> {
+    if still_unresponsive(pid) {
+        return Ok(Some(unresponsive_collected()));
+    }
     let ResolvedApp {
         app,
         children: probed,
@@ -1515,15 +1567,24 @@ async fn collect_visited_bounded_opts<'a>(
         // modal-grabbed app. Report it as unresponsive rather than as an
         // application without windows — the caller can retry later.
         dlog!("application for pid {pid} did not answer GetChildren");
-        return Ok(Some(Collected {
-            visited: Vec::new(),
-            scoped_frame: None,
-            truncation: Some(Truncation {
-                reason: "app_unresponsive",
-                visited: 0,
-                pending: 0,
-            }),
-        }));
+        let bus = app.inner().destination().to_string();
+        let path = app.inner().path().to_string();
+        mark_unresponsive_until(pid, async move {
+            if let Ok(conn) = shared_connection().await {
+                let _ = tokio::time::timeout(
+                    OP_TIMEOUT,
+                    conn.connection().call_method(
+                        Some(bus.as_str()),
+                        path.as_str(),
+                        Some("org.a11y.atspi.Accessible"),
+                        "GetState",
+                        &(),
+                    ),
+                )
+                .await;
+            }
+        });
+        return Ok(Some(unresponsive_collected()));
     }
 
     // Resolve which seed is the caller's window before walking, from the same
@@ -1743,6 +1804,10 @@ async fn collect_visited_bounded_opts<'a>(
         };
         let focused = matches!(state_r.as_ref(), Some(Ok(s)) if s.contains(State::Focused));
         let role_lower = role.to_ascii_lowercase();
+        // Chromium puts the Document interface on nearly every node; only a
+        // document's own URI names the rendered page, so read it there alone.
+        let has_document = ifaces.contains(Interface::Document)
+            && matches!(role_lower.as_str(), "document web" | "document frame");
         let checked = if role_lower.contains("check") {
             state_r
                 .as_ref()
@@ -1788,8 +1853,9 @@ async fn collect_visited_bounded_opts<'a>(
         // and drop the borrow before `acc` moves into `visited`.
         let mut actions: Vec<String> = Vec::new();
         let mut value: Option<String> = None;
+        let mut document_uri: Option<String> = None;
         let mut text_content = String::new();
-        if has_action || has_value || has_text {
+        if has_action || has_value || has_text || has_document {
             if let Some(Ok(proxies)) = call(acc.proxies()).await {
                 if has_action {
                     if let Some(Ok(ap)) = call(proxies.action()).await {
@@ -1831,6 +1897,17 @@ async fn collect_visited_bounded_opts<'a>(
                                 text_content = t;
                             }
                         }
+                    }
+                }
+                if has_document {
+                    if let Some(Ok(document)) = call(proxies.document()).await {
+                        // Chromium maps AXTreeData.url to the standard ATK /
+                        // AT-SPI Document "URI" attribute. It is the rendered
+                        // destination, unlike localized names and titles.
+                        document_uri = call(document.get_attribute_value("URI"))
+                            .await
+                            .and_then(|result| result.ok())
+                            .filter(|uri| !uri.trim().is_empty());
                     }
                 }
             }
@@ -2002,6 +2079,7 @@ async fn collect_visited_bounded_opts<'a>(
             name,
             description,
             value,
+            document_uri,
             checked,
             enabled,
             selected,
@@ -2212,9 +2290,18 @@ fn sibling_ordinal(visited: &[Visited<'_>], _parents: &[Option<usize>], pos: usi
 /// (`perform_action`, `focus_element`, `set_value`, …), and those resolve an
 /// index against the whole application. Renumbering per window would make a
 /// window-scoped snapshot's indices name different elements at actuation time.
-fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<AtspiNode>) {
+/// One walk rendered three ways: the Markdown tree, the indexed nodes, and
+/// the display-only rows the tree shows without an index.
+struct Rendered {
+    markdown: String,
+    nodes: Vec<AtspiNode>,
+    observations: Vec<cua_driver_contract::WindowObservation>,
+}
+
+fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> Rendered {
     let mut md = String::new();
     let mut nodes = Vec::new();
+    let mut observations = Vec::new();
     let mut idx = 0usize;
     // The real AT-SPI parent of every node, so `parent_element_index` is the
     // nearest *indexed ancestor* — never a preceding cousin at a lower depth
@@ -2268,7 +2355,7 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
                     ));
                 }
             }
-            let act_str = v.actions.join(",");
+            let attrs = indexed_row_attrs(v.enabled, &v.actions);
             let val_part = match &v.value {
                 Some(val) if !val.is_empty() => format!(" value=\"{val}\""),
                 _ => String::new(),
@@ -2284,7 +2371,7 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
                 .map(|note| format!(" ({note})"))
                 .unwrap_or_default();
             md.push_str(&format!(
-                "{indent}- [{idx}] {role} \"{name}\"{desc}{val_part} [actions=[{act_str}]]{collapsed_note}{unlabelled_shown}
+                "{indent}- [{idx}] {role} \"{name}\"{desc}{val_part} [{attrs}]{collapsed_note}{unlabelled_shown}
 ",
                 role = v.role,
                 desc = description_shown.as_deref().unwrap_or(""),
@@ -2316,7 +2403,9 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
                 checked: v.checked,
                 enabled: v.enabled,
                 selected: v.selected,
+                focused: Some(v.focused),
                 description: (!description_parts.is_empty()).then(|| description_parts.join("; ")),
+                document_uri: v.document_uri.clone(),
                 actions: v.actions.clone(),
                 element_key: idx as u64,
                 identity: v.identity.clone(),
@@ -2328,43 +2417,38 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
             idx += 1;
         } else if emit && !v.name.is_empty() && v.showing {
             md.push_str(&format!(
-                "{indent}- {role} = \"{name}\"{marker}
+                "{indent}- {role} = \"{name}\"
 ",
                 role = v.role,
                 name = v.name,
-                marker = passive_marker(&v.role, !v.actions.is_empty(), v.has_component, v.enabled),
             ));
+            observations.push(cua_driver_contract::WindowObservation {
+                role: v.role.clone(),
+                depth: v.depth as u32,
+                label: Some(v.name.clone()),
+                value: v.value.clone().filter(|value| !value.is_empty()),
+                frame: None,
+                parent_index: parent_element_index.map(|index| index as u64),
+                in_web_content: v.in_web_doc.then_some(true),
+            });
         }
     }
 
-    (md, nodes)
+    Rendered {
+        markdown: md,
+        nodes,
+        observations,
+    }
 }
 
-/// Why a visible, named control is listed without an index. A disabled
-/// button is rendered as `- push button = "Restore" (disabled)` so a caller
-/// learns it must enable it (select something) rather than assume the tree
-/// dropped it.
-fn passive_marker(
-    role: &str,
-    has_action: bool,
-    has_component: bool,
-    enabled: Option<bool>,
-) -> &'static str {
-    let control = has_action
-        || (has_component
-            && matches!(
-                role.trim().to_ascii_lowercase().as_str(),
-                "button"
-                    | "push button"
-                    | "toggle button"
-                    | "menu item"
-                    | "check box"
-                    | "radio button"
-            ));
-    if control && enabled == Some(false) {
-        " (disabled)"
+/// The bracketed attributes of an indexed row: `enabled=false` for a disabled
+/// control (as on macOS), then its actions.
+fn indexed_row_attrs(enabled: Option<bool>, actions: &[String]) -> String {
+    let actions = format!("actions=[{}]", actions.join(","));
+    if enabled == Some(false) {
+        format!("enabled=false {actions}")
     } else {
-        ""
+        actions
     }
 }
 
@@ -2440,9 +2524,14 @@ fn is_enabled_state(state: &StateSet) -> bool {
 /// no Action even though a coordinate click on their bounds is operable. Keep
 /// every such control in the shared index space so physical-input fallbacks can
 /// address it without inventing pixels in the caller. Some GTK4 buttons expose
-/// only Component plus their control role; include those only when the state set
-/// positively verifies that they are enabled. Passive component-backed labels
-/// and containers remain outside the index.
+/// only Component plus their control role; include those too. Passive
+/// component-backed labels and containers remain outside the index, and so does
+/// a node whose state set could not be read.
+///
+/// A disabled control is indexed and published with `enabled: false`, as on
+/// macOS: enablement is state the caller needs to read (a form's Save button),
+/// not a reason to hide the row. The token writers refuse it
+/// (`tools::impl_::refuse_if_disabled`).
 ///
 /// This predicate is the single source of truth for the element-index space and
 /// MUST be applied identically in `render` and in every `action_nodes` filter
@@ -2471,19 +2560,55 @@ fn is_indexable_capabilities(
     enabled: Option<bool>,
 ) -> bool {
     let normalized_role = role.trim().to_ascii_lowercase();
-    let pixel_addressable_control = has_component
-        && enabled == Some(true)
-        && matches!(normalized_role.as_str(), "button" | "push button");
+    let pixel_addressable_control =
+        has_component && matches!(normalized_role.as_str(), "button" | "push button");
     !is_passive_role(&normalized_role)
         && (has_action
             || has_editable
             || has_value
             || has_selectable_state
             || pixel_addressable_control)
-        && enabled == Some(true)
+        && enabled.is_some()
 }
 
 // ── Public (sync) entry points ───────────────────────────────────────────────
+
+fn unresponsive_pids() -> &'static Mutex<HashSet<u32>> {
+    static PIDS: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
+    PIDS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn unresponsive_collected<'a>() -> Collected<'a> {
+    Collected {
+        visited: Vec::new(),
+        scoped_frame: None,
+        truncation: Some(Truncation {
+            reason: "app_unresponsive",
+            visited: 0,
+            pending: 0,
+        }),
+    }
+}
+
+/// Mark `pid` unresponsive until `probe` ends. A probe that ends without a
+/// reply also clears the mark, so a walk after an app resumes reads it again
+/// instead of reporting a stale `app_unresponsive`.
+fn mark_unresponsive_until(
+    pid: u32,
+    probe: impl std::future::Future<Output = ()> + Send + 'static,
+) {
+    if !unresponsive_pids().lock().unwrap().insert(pid) {
+        return;
+    }
+    runtime().spawn(async move {
+        probe.await;
+        unresponsive_pids().lock().unwrap().remove(&pid);
+    });
+}
+
+fn still_unresponsive(pid: u32) -> bool {
+    unresponsive_pids().lock().unwrap().contains(&pid)
+}
 
 fn first_application_walk(pid: u32) -> bool {
     static PIDS: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
@@ -2503,6 +2628,8 @@ pub fn walk_tree(pid: u32) -> Result<Option<(String, Vec<AtspiNode>)>> {
 pub struct WalkedTree {
     pub markdown: String,
     pub nodes: Vec<AtspiNode>,
+    /// Display-only rows of the walk (shown in `markdown` without an index).
+    pub observations: Vec<cua_driver_contract::WindowObservation>,
     pub bounds: Vec<(usize, i32, i32, u32, u32)>,
     /// True when a non-zero `xid` was resolved to exactly one application
     /// top-level and the snapshot contains only that window's nodes. False
@@ -2563,6 +2690,7 @@ pub(super) fn walk_tree_bounded_with_timeout(
                 return Ok(Some(WalkedTree {
                     markdown: String::new(),
                     nodes: Vec::new(),
+                    observations: Vec::new(),
                     bounds: Vec::new(),
                     window_scoped: false,
                     truncation: Some(Truncation {
@@ -2581,6 +2709,7 @@ pub(super) fn walk_tree_bounded_with_timeout(
                 return Ok(Some(WalkedTree {
                     markdown: String::new(),
                     nodes: Vec::new(),
+                    observations: Vec::new(),
                     bounds: Vec::new(),
                     window_scoped: false,
                     truncation: Some(Truncation {
@@ -2603,7 +2732,11 @@ pub(super) fn walk_tree_bounded_with_timeout(
             return Ok(None);
         };
         let walk_elapsed = walk_started.elapsed();
-        let (markdown, nodes) = render(&visited, scoped_frame);
+        let Rendered {
+            markdown,
+            nodes,
+            observations,
+        } = render(&visited, scoped_frame);
         let bounds_started = std::time::Instant::now();
         // Bounds resolution shares the deadline, but a walk that consumed the
         // whole budget must still yield *some* frames (element-index clicks
@@ -2650,6 +2783,7 @@ pub(super) fn walk_tree_bounded_with_timeout(
         Ok(Some(WalkedTree {
             markdown,
             nodes,
+            observations,
             bounds,
             window_scoped: scoped_frame.is_some(),
             truncation,
@@ -2992,14 +3126,24 @@ async fn write_through_editable_proxies(
         Ok(tp) => tp.caret_offset().await.unwrap_or(0),
         Err(_) => 0,
     };
+    write_editable_text(&et, off, text, len).await
+}
 
-    if et.insert_text(off, text, len).await.unwrap_or(false) {
+/// Insert `text` at `offset`, or replace the contents when the toolkit declines
+/// the insert. A `false` answer is the toolkit declining the write. A failed or
+/// unanswered call may still have written, so it ends the attempt with
+/// [`InputMayHaveLanded`] instead of writing the text again through
+/// SetTextContents or after GrabFocus.
+async fn write_editable_text(
+    et: &atspi::proxy::editable_text::EditableTextProxy<'_>,
+    offset: i32,
+    text: &str,
+    len: i32,
+) -> Result<bool> {
+    if send_input("EditableText.InsertText", et.insert_text(offset, text, len)).await? {
         return Ok(true);
     }
-    if et.set_text_contents(text).await.unwrap_or(false) {
-        return Ok(true);
-    }
-    Ok(false)
+    send_input("EditableText.SetTextContents", et.set_text_contents(text)).await
 }
 
 /// `length` for writing `text`, from the toolkit `lookup` names (polled only
@@ -3081,7 +3225,7 @@ pub fn type_into_editable(pid: u32, text: &str) -> Result<()> {
         async {
             let conn = shared_connection().await?;
             // Focused editable known from the event log: write there directly.
-            if let Some(true) = write_into_focused_editable(conn, pid, text).await {
+            if let Some(true) = write_into_focused_editable(conn, pid, text).await? {
                 return Ok(());
             }
             let Collected {
@@ -3153,7 +3297,7 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
         INPUT_QUERY_BUDGET,
         async {
             let conn = shared_connection().await?;
-            if let Some(true) = write_into_focused_editable(conn, pid, text).await {
+            if let Some(true) = write_into_focused_editable(conn, pid, text).await? {
                 return Ok(true);
             }
             let Collected {
@@ -3640,76 +3784,279 @@ fn exact_menu_path_matches(visited: &[Visited<'_>], path: &[String]) -> Vec<usiz
 
 /// Resolve and invoke an application menu one live hierarchy level at a time.
 /// Every hop re-walks AT-SPI after the preceding menu has materialized; no
-/// snapshot index is retained across mutations.
-pub fn invoke_menu_path(pid: u32, path: &[String]) -> Result<()> {
-    invoke_menu_path_in(pid, 0, path)
+/// snapshot index is retained across mutations. `Ok(false)`: the final
+/// action was sent and did not answer in time (see [`run_menu_command`]).
+pub fn invoke_menu_path(pid: u32, path: &[String]) -> Result<bool> {
+    invoke_menu_path_in(pid, 0, path, MenuOpening::Allowed)
+}
+
+/// Whether [`invoke_menu_path_in`] may open intermediate menus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuOpening {
+    /// Open each menu along the path when the final item cannot be reached
+    /// directly (the window was activated for a foreground delivery).
+    Allowed,
+    /// Background delivery: never open a menu. An open GTK, Qt or VCL menu
+    /// grabs the core keyboard and pointer, so the user's keystrokes land in
+    /// the menu instead of their own window for as long as it stays open
+    /// (trycua/cua#7371).
+    Forbidden,
+}
+
+/// The final menu item cannot be reached without opening a menu, and the
+/// delivery forbids opening one ([`MenuOpening::Forbidden`]). Nothing was
+/// actuated.
+#[derive(Debug)]
+pub struct MenuMustOpen {
+    pub detail: String,
+}
+
+impl std::fmt::Display for MenuMustOpen {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "the menu item is only reachable by opening a menu ({})",
+            self.detail
+        )
+    }
+}
+
+impl std::error::Error for MenuMustOpen {}
+
+/// The unique live node for `path` (all of it, or a prefix) in one walk;
+/// `Ok(None)` when no node matches it.
+fn resolve_menu_segment(
+    visited: &[Visited<'_>],
+    scoped_frame: Option<usize>,
+    path: &[String],
+) -> Result<Option<usize>> {
+    let depth = path.len() - 1;
+    let mut matches = exact_menu_path_matches(visited, path);
+    if matches.len() > 1 {
+        if let Some(scope) = scoped_frame {
+            let scoped: Vec<usize> = matches
+                .iter()
+                .copied()
+                .filter(|index| visited[*index].frame_ordinal == scope)
+                .collect();
+            if !scoped.is_empty() {
+                matches = scoped;
+            }
+        }
+    }
+    if matches.len() > 1 {
+        matches = dedupe_menu_matches(visited, matches);
+    }
+    match matches.as_slice() {
+        [index] => Ok(Some(*index)),
+        [] => Ok(None),
+        _ => anyhow::bail!("menu path segment {depth} is ambiguous"),
+    }
+}
+
+/// A menu node that opens a submenu rather than running a command: GTK and
+/// Qt give it the `menu` role, a command item is `menu item` / `check menu
+/// item` / `radio menu item`.
+fn opens_submenu(role: &str) -> bool {
+    role.trim().eq_ignore_ascii_case("menu")
+}
+
+/// The decision for one resolved final item, before any action is fired.
+#[derive(Debug, PartialEq, Eq)]
+enum LeafPlan {
+    /// Fire the item's own action; no menu opens.
+    Direct,
+    /// The item is itself a submenu: firing it opens a menu.
+    OpensMenu,
+}
+
+fn leaf_plan(role: &str) -> LeafPlan {
+    if opens_submenu(role) {
+        LeafPlan::OpensMenu
+    } else {
+        LeafPlan::Direct
+    }
+}
+
+/// The Action proxy and safe activation index of `target`.
+async fn menu_node_action<'a>(
+    target: &Visited<'a>,
+    depth: usize,
+) -> Result<(atspi::proxy::action::ActionProxy<'a>, i32)> {
+    if target.enabled == Some(false) {
+        anyhow::bail!("menu path segment {depth} is disabled");
+    }
+    let chosen = activation_index(&target.role, &target.actions)
+        .ok_or_else(|| anyhow!("menu path segment {depth} has no safe activation action"))?;
+    let proxies = target
+        .acc
+        .proxies()
+        .await
+        .map_err(|error| anyhow!("interface proxies unavailable: {error}"))?;
+    let action = proxies
+        .action()
+        .await
+        .map_err(|error| anyhow!("Action unavailable: {error}"))?;
+    Ok((action, chosen as i32))
+}
+
+/// Fire the safe activation action of a menu on the path, to open it.
+/// `Ok(false)` is the toolkit declining it.
+async fn fire_menu_node(target: &Visited<'_>, depth: usize) -> Result<bool> {
+    let (action, index) = menu_node_action(target, depth).await?;
+    action
+        .do_action(index)
+        .await
+        .map_err(|error| anyhow!("doAction failed: {error}"))
 }
 
 /// [`invoke_menu_path`] scoped to the caller's native window: when the same
 /// menu path exists under several top-levels of the process (LibreOffice
 /// publishes every document window's menubar in one AT-SPI application),
 /// the hop under `xid`'s frame wins instead of the path being ambiguous.
-pub fn invoke_menu_path_in(pid: u32, xid: u64, path: &[String]) -> Result<()> {
+///
+/// GTK 3 and Qt publish closed menus, so the final item is usually in the
+/// first walk: its action is fired directly and no menu ever opens (GTK runs
+/// the item's `activate` and leaves its menus unposted). Only when the item
+/// is missing or declines a closed-menu action does the path open each menu
+/// in turn, and only when `opening` allows it; otherwise [`MenuMustOpen`] is
+/// returned with nothing actuated.
+pub fn invoke_menu_path_in(
+    pid: u32,
+    xid: u64,
+    path: &[String],
+    opening: MenuOpening,
+) -> Result<bool> {
     bounded(
         async {
             let conn = shared_connection().await?;
+            let collected = collect_visited_bounded_opts(conn, pid, xid, None, None, true)
+                .await?
+                .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
+            let last = path.len() - 1;
+            match resolve_menu_segment(&collected.visited, collected.scoped_frame, path)? {
+                Some(index) => {
+                    let target = &collected.visited[index];
+                    if opening == MenuOpening::Forbidden
+                        && leaf_plan(&target.role) == LeafPlan::OpensMenu
+                    {
+                        return Err(MenuMustOpen {
+                            detail: format!(
+                                "segment {last} is a submenu, and invoking it opens that menu"
+                            ),
+                        }
+                        .into());
+                    }
+                    // The final item runs the command. Sent and answered, or
+                    // sent and unanswered, it ends the call; an error reply is
+                    // InputMayHaveLanded. Only a decline may open the menus.
+                    let (action, chosen) = menu_node_action(target, last).await?;
+                    match do_action(&action, chosen).await? {
+                        Some(true) => return Ok(true),
+                        None => return Ok(false),
+                        Some(false) => {}
+                    }
+                    if last == 0 {
+                        anyhow::bail!("menu path segment {last} rejected its native action");
+                    }
+                    if opening == MenuOpening::Forbidden {
+                        // Declined with its menu closed; the hop walk would
+                        // open the menu. Nothing ran.
+                        return Err(MenuMustOpen {
+                            detail: "the app declines the item's action while its menu is closed"
+                                .into(),
+                        }
+                        .into());
+                    }
+                }
+                None if last == 0 => anyhow::bail!("menu path segment 0 was not found"),
+                None if opening == MenuOpening::Forbidden => {
+                    return Err(MenuMustOpen {
+                        detail: "the app does not publish the item until its menu opens".into(),
+                    }
+                    .into())
+                }
+                None => {}
+            }
+            drop(collected);
             for depth in 0..path.len() {
                 let collected = collect_visited_bounded_opts(conn, pid, xid, None, None, true)
                     .await?
                     .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
-                let visited = collected.visited;
-                let mut matches = exact_menu_path_matches(&visited, &path[..=depth]);
-                if matches.len() > 1 {
-                    if let Some(scope) = collected.scoped_frame {
-                        let scoped: Vec<usize> = matches
-                            .iter()
-                            .copied()
-                            .filter(|index| visited[*index].frame_ordinal == scope)
-                            .collect();
-                        if !scoped.is_empty() {
-                            matches = scoped;
-                        }
-                    }
+                let index = resolve_menu_segment(
+                    &collected.visited,
+                    collected.scoped_frame,
+                    &path[..=depth],
+                )?
+                .ok_or_else(|| anyhow!("menu path segment {depth} was not found"))?;
+                let target = &collected.visited[index];
+                if depth + 1 == path.len() {
+                    let (action, chosen) = menu_node_action(target, depth).await?;
+                    return run_menu_command(&action, chosen, depth).await;
                 }
-                if matches.len() > 1 {
-                    matches = dedupe_menu_matches(&visited, matches);
-                }
-                let target_index = match matches.as_slice() {
-                    [index] => *index,
-                    [] => anyhow::bail!("menu path segment {depth} was not found"),
-                    _ => anyhow::bail!("menu path segment {depth} is ambiguous"),
-                };
-                let target = &visited[target_index];
-                if target.enabled == Some(false) {
-                    anyhow::bail!("menu path segment {depth} is disabled");
-                }
-                let chosen = activation_index(&target.role, &target.actions).ok_or_else(|| {
-                    anyhow!("menu path segment {depth} has no safe activation action")
-                })?;
-                let proxies = target
-                    .acc
-                    .proxies()
-                    .await
-                    .map_err(|error| anyhow!("interface proxies unavailable: {error}"))?;
-                let action = proxies
-                    .action()
-                    .await
-                    .map_err(|error| anyhow!("Action unavailable: {error}"))?;
-                let accepted = action
-                    .do_action(chosen as i32)
-                    .await
-                    .map_err(|error| anyhow!("doAction failed: {error}"))?;
-                if !accepted {
+                if !fire_menu_node(target, depth).await? {
                     anyhow::bail!("menu path segment {depth} rejected its native action");
                 }
-                if depth + 1 != path.len() {
-                    tokio::time::sleep(Duration::from_millis(80)).await;
-                }
+                tokio::time::sleep(Duration::from_millis(80)).await;
             }
-            Ok(())
+            Ok(true)
         },
         || Err(anyhow!("invoke_menu timed out for pid {pid}")),
     )
+}
+
+/// Fire the menu item at the end of the path, the one that runs the command.
+/// `Ok(true)` when the toolkit accepted it, `Ok(false)` when it did not answer
+/// in time: an item whose command opens a dialog answers only once the dialog
+/// closes, so the command was sent and must not be refused (and invoked
+/// again). An error reply is [`InputMayHaveLanded`].
+async fn run_menu_command(
+    action: &atspi::proxy::action::ActionProxy<'_>,
+    index: i32,
+    depth: usize,
+) -> Result<bool> {
+    match do_action(action, index).await? {
+        Some(true) => Ok(true),
+        Some(false) => Err(anyhow!(
+            "menu path segment {depth} rejected its native action"
+        )),
+        None => Ok(false),
+    }
+}
+
+#[cfg(test)]
+mod menu_leaf_tests {
+    use super::*;
+
+    #[test]
+    fn a_command_item_fires_directly_and_a_submenu_would_open_a_menu() {
+        // trycua/cua#7371: background invoke_menu must never open a menu,
+        // because an open menu grabs the user's keyboard. Command items run
+        // through their own action; only a submenu node opens one.
+        for role in [
+            "menu item",
+            "check menu item",
+            "radio menu item",
+            "Menu Item",
+        ] {
+            assert_eq!(leaf_plan(role), LeafPlan::Direct, "{role}");
+        }
+        for role in ["menu", "Menu", " menu "] {
+            assert_eq!(leaf_plan(role), LeafPlan::OpensMenu, "{role}");
+        }
+    }
+
+    #[test]
+    fn menu_must_open_names_why_nothing_ran() {
+        let error: anyhow::Error = MenuMustOpen {
+            detail: "segment 1 is a submenu".into(),
+        }
+        .into();
+        assert!(error.downcast_ref::<MenuMustOpen>().is_some());
+        assert!(error
+            .to_string()
+            .contains("only reachable by opening a menu"));
+    }
 }
 
 /// Several nodes matched one menu path segment inside the scoped frame.
@@ -3795,9 +4142,8 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool, bool)> {
             // note, and — unlike a genuine `suspected_noop` — does not by
             // itself imply the toolkit declined anything.
             let mut unacknowledged = false;
-            let rejected = match call(ap.do_action(chosen as i32)).await {
-                Some(Ok(accepted)) => !accepted,
-                Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
+            let rejected = match do_action(&ap, chosen as i32).await? {
+                Some(accepted) => !accepted,
                 None => {
                     dlog!("doAction dispatched but not acknowledged in time");
                     unacknowledged = true;
@@ -3867,6 +4213,435 @@ impl std::fmt::Display for CachedElementGone {
 }
 impl std::error::Error for CachedElementGone {}
 
+/// An AT-SPI request that changes the application (an `EditableText` write or
+/// a `doAction`) was sent, and its call then failed or did not answer in time.
+/// The application may have acted on it, so the caller must not send the same
+/// input through another route or report it as undelivered.
+#[derive(Debug)]
+pub struct InputMayHaveLanded(pub String);
+impl std::fmt::Display for InputMayHaveLanded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for InputMayHaveLanded {}
+
+/// Send one AT-SPI request that changes the application, bounded by the
+/// operation deadline. Once the request is polled it may have reached the
+/// application, so an error reply or a missing answer is
+/// [`InputMayHaveLanded`], never a plain failure to route around.
+async fn send_input<T, E: std::fmt::Display>(
+    request: &str,
+    call: impl std::future::Future<Output = std::result::Result<T, E>>,
+) -> Result<T> {
+    match tokio::time::timeout(remaining_budget(), call).await {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(error)) => Err(InputMayHaveLanded(format!("{request} failed: {error}")).into()),
+        Err(_) => Err(InputMayHaveLanded(format!("{request} did not answer in time")).into()),
+    }
+}
+
+/// Send `doAction(index)`. `Some(accepted)` is the toolkit's answer and `None`
+/// an unanswered call (dispatched, outcome unknown). An error reply is
+/// [`InputMayHaveLanded`]: the toolkit may have run the action before failing.
+async fn do_action(ap: &atspi::proxy::action::ActionProxy<'_>, index: i32) -> Result<Option<bool>> {
+    match call(ap.do_action(index)).await {
+        Some(Ok(accepted)) => Ok(Some(accepted)),
+        Some(Err(error)) => Err(InputMayHaveLanded(format!("doAction failed: {error}")).into()),
+        None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod input_dispatch_tests {
+    use super::{
+        bounded_for, do_action, run_menu_command, runtime, write_editable_text, InputMayHaveLanded,
+    };
+    use std::io::BufRead;
+    use std::process::{Child, Command, Stdio};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    const SERVICE: &str = "org.cua.FakeAccessible";
+    const PATH: &str = "/org/a11y/atspi/accessible/1";
+
+    struct PrivateBus(Child);
+    impl Drop for PrivateBus {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    /// A field whose toolkit answers by the text it is given. Every call that
+    /// reaches it is logged: that log is what the user would see typed.
+    struct Field(Arc<Mutex<Vec<String>>>);
+    #[zbus::interface(name = "org.a11y.atspi.EditableText")]
+    impl Field {
+        async fn insert_text(
+            &self,
+            _position: i32,
+            text: &str,
+            _length: i32,
+        ) -> zbus::fdo::Result<bool> {
+            self.0.lock().unwrap().push(format!("insert:{text}"));
+            match text {
+                "raises" => Err(zbus::fdo::Error::Failed("raised after inserting".into())),
+                "stalls" => {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    Ok(true)
+                }
+                "declined" => Ok(false),
+                _ => Ok(true),
+            }
+        }
+        fn set_text_contents(&self, new_contents: &str) -> bool {
+            self.0.lock().unwrap().push(format!("set:{new_contents}"));
+            true
+        }
+    }
+
+    /// Action 0 runs, action 1 is declined, any other runs and then raises.
+    struct Button(Arc<Mutex<Vec<String>>>);
+    #[zbus::interface(name = "org.a11y.atspi.Action")]
+    impl Button {
+        fn do_action(&self, index: i32) -> zbus::fdo::Result<bool> {
+            self.0.lock().unwrap().push(format!("action:{index}"));
+            match index {
+                0 => Ok(true),
+                1 => Ok(false),
+                _ => Err(zbus::fdo::Error::Failed("raised after acting".into())),
+            }
+        }
+    }
+
+    /// Passive labels, one per `doAction` behavior, under [`LABELS`].
+    const LABELS: &str = "/org/a11y/atspi/accessible/label";
+    const LABEL_REPLIES: [&str; 4] = ["acts", "declines", "raises", "stalls"];
+
+    /// A `label` with an Action: a passive node the at-point hit-test fires
+    /// only as its last resort.
+    struct Label;
+    #[zbus::interface(name = "org.a11y.atspi.Accessible")]
+    impl Label {
+        fn get_role_name(&self) -> String {
+            "label".into()
+        }
+        fn get_interfaces(&self) -> Vec<String> {
+            vec![
+                "org.a11y.atspi.Accessible".into(),
+                "org.a11y.atspi.Action".into(),
+            ]
+        }
+        #[zbus(property)]
+        fn name(&self) -> String {
+            "Label".into()
+        }
+    }
+
+    /// The label's one action, `click`, answers as `reply` says.
+    struct LabelAction {
+        reply: &'static str,
+        log: Arc<Mutex<Vec<String>>>,
+    }
+    #[zbus::interface(name = "org.a11y.atspi.Action")]
+    impl LabelAction {
+        #[zbus(property, name = "NActions")]
+        fn n_actions(&self) -> i32 {
+            1
+        }
+        fn get_name(&self, _index: i32) -> String {
+            "click".into()
+        }
+        async fn do_action(&self, _index: i32) -> zbus::fdo::Result<bool> {
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("label:{}", self.reply));
+            match self.reply {
+                "declines" => Ok(false),
+                "raises" => Err(zbus::fdo::Error::Failed("raised after acting".into())),
+                "stalls" => {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    Ok(true)
+                }
+                _ => Ok(true),
+            }
+        }
+    }
+
+    /// A private session bus with a fake accessible serving `Field` and
+    /// `Button`, and the [`LABELS`], plus a client connection. `None` when
+    /// dbus-daemon is missing.
+    fn fake_accessible(
+        log: Arc<Mutex<Vec<String>>>,
+    ) -> Option<(PrivateBus, zbus::Connection, zbus::Connection)> {
+        // An explicit config: a sandbox (Nix) has no session.conf.
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("bus.conf");
+        std::fs::write(
+            &config,
+            format!(
+                "<busconfig><type>session</type>\
+                 <listen>unix:dir={}</listen><auth>EXTERNAL</auth>\
+                 <policy context=\"default\"><allow send_destination=\"*\" eavesdrop=\"true\"/>\
+                 <allow eavesdrop=\"true\"/><allow own=\"*\"/></policy></busconfig>",
+                dir.path().display()
+            ),
+        )
+        .unwrap();
+        let spawned = Command::new("dbus-daemon")
+            .arg(format!("--config-file={}", config.display()))
+            .args(["--nofork", "--print-address=1"])
+            .stdout(Stdio::piped())
+            .spawn();
+        let mut bus = match spawned {
+            Ok(child) => PrivateBus(child),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                eprintln!("skipping: dbus-daemon is not installed");
+                return None;
+            }
+            Err(error) => panic!("private test bus: {error}"),
+        };
+        let mut address = String::new();
+        std::io::BufReader::new(bus.0.stdout.take().unwrap())
+            .read_line(&mut address)
+            .unwrap();
+        let address = address.trim().to_owned();
+        assert!(!address.is_empty(), "dbus-daemon printed no address");
+        // Built on the AT-SPI runtime, so its worker serves the fake while a
+        // test thread blocks on that runtime.
+        let (service, client) = runtime().block_on(async {
+            let mut service = zbus::connection::Builder::address(address.as_str())
+                .unwrap()
+                .name(SERVICE)
+                .unwrap()
+                .serve_at(PATH, Field(log.clone()))
+                .unwrap()
+                .serve_at(PATH, Button(log.clone()))
+                .unwrap();
+            for reply in LABEL_REPLIES {
+                let path = format!("{LABELS}/{reply}");
+                service = service
+                    .serve_at(path.clone(), Label)
+                    .unwrap()
+                    .serve_at(
+                        path,
+                        LabelAction {
+                            reply,
+                            log: log.clone(),
+                        },
+                    )
+                    .unwrap();
+            }
+            let service = service.build().await.unwrap();
+            let client = zbus::connection::Builder::address(address.as_str())
+                .unwrap()
+                .build()
+                .await
+                .unwrap();
+            (service, client)
+        });
+        Some((bus, service, client))
+    }
+
+    fn landed(error: &anyhow::Error) -> bool {
+        error.is::<InputMayHaveLanded>()
+    }
+
+    #[test]
+    fn a_sent_write_or_action_that_fails_is_never_sent_again() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let Some((_bus, _service, client)) = fake_accessible(log.clone()) else {
+            return;
+        };
+        let field = runtime().block_on(async {
+            atspi::proxy::editable_text::EditableTextProxy::builder(&client)
+                .destination(SERVICE)
+                .unwrap()
+                .path(PATH)
+                .unwrap()
+                .cache_properties(zbus::proxy::CacheProperties::No)
+                .build()
+                .await
+                .unwrap()
+        });
+        let button = runtime().block_on(async {
+            atspi::proxy::action::ActionProxy::builder(&client)
+                .destination(SERVICE)
+                .unwrap()
+                .path(PATH)
+                .unwrap()
+                .cache_properties(zbus::proxy::CacheProperties::No)
+                .build()
+                .await
+                .unwrap()
+        });
+        let write = |text: &str, budget: Duration| {
+            bounded_for(
+                budget,
+                write_editable_text(&field, 0, text, text.chars().count() as i32),
+                || Err(anyhow::anyhow!("operation backstop")),
+            )
+        };
+        let take = || std::mem::take(&mut *log.lock().unwrap());
+
+        // Answered writes keep their rungs: an insert, or a declined insert
+        // followed by SetTextContents.
+        assert!(write("typed", Duration::from_secs(3)).unwrap());
+        assert_eq!(take(), ["insert:typed"]);
+        assert!(write("declined", Duration::from_secs(3)).unwrap());
+        assert_eq!(take(), ["insert:declined", "set:declined"]);
+
+        // An insert that raised may have written: the field gets it once.
+        let raised = write("raises", Duration::from_secs(3)).unwrap_err();
+        assert!(landed(&raised), "{raised:#}");
+        assert_eq!(take(), ["insert:raises"]);
+
+        // Same for an insert that never answers within the budget.
+        let stalled = write("stalls", Duration::from_millis(300)).unwrap_err();
+        assert!(landed(&stalled), "{stalled:#}");
+        assert!(
+            stalled.to_string().contains("did not answer"),
+            "{stalled:#}"
+        );
+        assert_eq!(take(), ["insert:stalls"]);
+
+        // doAction: the toolkit's answer is kept; an error reply may have
+        // acted.
+        let act = |index: i32| {
+            bounded_for(Duration::from_secs(3), do_action(&button, index), || {
+                Err(anyhow::anyhow!("operation backstop"))
+            })
+        };
+        assert_eq!(act(0).unwrap(), Some(true));
+        assert_eq!(act(1).unwrap(), Some(false));
+        let raised = act(2).unwrap_err();
+        assert!(landed(&raised), "{raised:#}");
+        assert!(crate::atspi::input_may_have_landed(
+            &raised.context("context added by a caller")
+        ));
+        assert_eq!(take(), ["action:0", "action:1", "action:2"]);
+    }
+
+    #[test]
+    fn a_menu_command_that_was_sent_is_never_refused() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let Some((_bus, _service, client)) = fake_accessible(log.clone()) else {
+            return;
+        };
+        let action_at = |path: String| {
+            runtime().block_on(async {
+                atspi::proxy::action::ActionProxy::builder(&client)
+                    .destination(SERVICE)
+                    .unwrap()
+                    .path(path)
+                    .unwrap()
+                    .cache_properties(zbus::proxy::CacheProperties::No)
+                    .build()
+                    .await
+                    .unwrap()
+            })
+        };
+        let button = action_at(PATH.into());
+        let stalling = action_at(format!("{LABELS}/stalls"));
+        let run = |action: &atspi::proxy::action::ActionProxy<'_>, index: i32| {
+            bounded_for(
+                Duration::from_millis(600),
+                run_menu_command(action, index, 2),
+                || Err(anyhow::anyhow!("operation backstop")),
+            )
+        };
+
+        assert!(run(&button, 0).unwrap(), "an accepted command answered");
+        // A command that opens a dialog answers once it closes: it was sent,
+        // so it is not refused.
+        assert!(!run(&stalling, 0).unwrap());
+        // An error reply may follow the command.
+        assert!(landed(&run(&button, 2).unwrap_err()));
+        // Only a declined command is refused.
+        let declined = run(&button, 1).unwrap_err();
+        assert!(!landed(&declined));
+        assert!(declined.to_string().contains("rejected"), "{declined:#}");
+        assert_eq!(
+            std::mem::take(&mut *log.lock().unwrap()),
+            ["action:0", "label:stalls", "action:2", "action:1"]
+        );
+    }
+
+    #[test]
+    fn a_passive_hit_that_was_sent_never_reaches_the_full_walk() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let Some((_bus, _service, client)) = fake_accessible(log.clone()) else {
+            return;
+        };
+        // One at-point click on a label: the GetAccessibleAtPoint tier fires
+        // it, then the tier decision says whether the full walk runs.
+        let click = |reply: &str| {
+            let path = format!("{LABELS}/{reply}");
+            let chain = runtime().block_on(async {
+                let acc = super::AccessibleProxy::builder(&client)
+                    .destination(SERVICE)
+                    .unwrap()
+                    .path(path.clone())
+                    .unwrap()
+                    .cache_properties(zbus::proxy::CacheProperties::No)
+                    .build()
+                    .await
+                    .unwrap();
+                vec![super::HitNode {
+                    acc,
+                    oref: super::RawObjectRef {
+                        name: SERVICE.into(),
+                        path,
+                    },
+                }]
+            });
+            let live = bounded_for(
+                Duration::from_millis(600),
+                super::actuate_chain(&chain, 1, 1, false),
+                || Ok(None),
+            );
+            let mut walked = false;
+            let outcome = crate::atspi::walk_unless_fired(live, || {
+                walked = true;
+                Ok(None)
+            });
+            (outcome, walked, std::mem::take(&mut *log.lock().unwrap()))
+        };
+
+        // A doAction that does not answer was dispatched: a hit, so the
+        // full walk, which would send it again, never runs.
+        let (outcome, walked, sent) = click("stalls");
+        let hit = outcome
+            .unwrap()
+            .expect("an unanswered passive action is a hit");
+        assert_eq!((hit.action.as_str(), hit.role.as_str()), ("click", "label"));
+        assert!(!walked, "the full walk ran after a dispatched action");
+        assert_eq!(sent, ["label:stalls"]);
+
+        // Same for an accepted action, and for an error reply, which may
+        // have acted.
+        let (outcome, walked, sent) = click("acts");
+        assert!(outcome.unwrap().is_some());
+        assert!(!walked);
+        assert_eq!(sent, ["label:acts"]);
+        let (outcome, walked, sent) = click("raises");
+        assert!(landed(&outcome.unwrap_err()));
+        assert!(!walked);
+        assert_eq!(sent, ["label:raises"]);
+
+        // Only a declined action fired nothing: the full walk runs.
+        let (outcome, walked, sent) = click("declines");
+        assert!(outcome.unwrap().is_none());
+        assert!(
+            walked,
+            "a declined action must leave the point to the next tier"
+        );
+        assert_eq!(sent, ["label:declines"]);
+    }
+}
+
 /// Open a cached accessible and prove it is still alive (one role read).
 async fn live_accessible<'a>(
     conn: &'a AccessibilityConnection,
@@ -3891,7 +4666,8 @@ async fn live_accessible<'a>(
 
 /// [`perform_action`] on a snapshot-cached element identity. Same contract:
 /// `Ok((action_name, suspected_noop))`. Errors when the object no longer
-/// exists so the caller can fall back to resolving the index afresh.
+/// exists so the caller can fall back to resolving the index afresh, except
+/// for [`InputMayHaveLanded`]: the action was sent and must not be repeated.
 pub fn perform_action_ref(object_ref: &ObjectRef) -> Result<(String, bool, bool)> {
     bounded_for(
         REF_ACTION_BUDGET,
@@ -3915,9 +4691,8 @@ pub fn perform_action_ref(object_ref: &ObjectRef) -> Result<(String, bool, bool)
             // folded into `rejected`/`suspected_noop` (which would claim the
             // toolkit declined it) nor silently reported as a plain success.
             let mut unacknowledged = false;
-            let rejected = match call(ap.do_action(chosen as i32)).await {
-                Some(Ok(accepted)) => !accepted,
-                Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
+            let rejected = match do_action(&ap, chosen as i32).await? {
+                Some(accepted) => !accepted,
                 // The request was delivered; a GTK item whose action opens a
                 // dialog (nested main loop) only replies once that dialog
                 // closes. Treat the timeout as dispatched-but-unconfirmed:
@@ -4026,6 +4801,25 @@ pub fn element_showing_ref(object_ref: &ObjectRef) -> Result<bool> {
     )
 }
 
+/// Whether a snapshot-cached element is enabled right now, read from its own
+/// state set ([`is_enabled_state`]). `Ok(None)` when the toolkit exposes no
+/// state set.
+pub fn element_enabled_ref(object_ref: &ObjectRef) -> Result<Option<bool>> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, _) = live_accessible(conn, object_ref).await?;
+            match call(acc.get_state()).await {
+                Some(Ok(state)) => Ok(Some(is_enabled_state(&state))),
+                Some(Err(_)) => Ok(None),
+                None => Err(anyhow!("cached element did not answer in time")),
+            }
+        },
+        || Err(anyhow!("element_enabled (cached element) timed out")),
+    )
+}
+
 /// [`focus_element`] on a snapshot-cached element identity.
 pub fn focus_element_ref(object_ref: &ObjectRef) -> Result<bool> {
     bounded_for(
@@ -4088,23 +4882,29 @@ pub fn type_into_editable_ref(object_ref: &ObjectRef, text: &str) -> Result<()> 
 
 /// Write `text` into the focused widget known from the focus-event log, if it
 /// is editable. `Some(true)` = written, `Some(false)` = focused but not
-/// editable (or write rejected), `None` = no usable focus record.
+/// editable (or write rejected), `None` = no usable focus record. A write that
+/// may have landed is an error, so the caller does not write another field.
 async fn write_into_focused_editable(
     conn: &AccessibilityConnection,
     pid: u32,
     text: &str,
-) -> Option<bool> {
-    let (acc, oref) = focused_accessible_via_events(conn, pid).await?;
-    let ifaces = call(acc.get_interfaces()).await?.ok()?;
+) -> Result<Option<bool>> {
+    let Some((acc, oref)) = focused_accessible_via_events(conn, pid).await else {
+        return Ok(None);
+    };
+    let Some(Ok(ifaces)) = call(acc.get_interfaces()).await else {
+        return Ok(None);
+    };
     if !ifaces.contains(Interface::EditableText) {
         dlog!("focused object {} is not editable", oref.path);
-        return Some(false);
+        return Ok(Some(false));
     }
     match write_into_editable_acc(&acc, ifaces.contains(Interface::Component), text).await {
-        Ok(written) => Some(written),
+        Ok(written) => Ok(Some(written)),
+        Err(error) if error.is::<InputMayHaveLanded>() => Err(error),
         Err(error) => {
             dlog!("focused editable write failed: {error:#}");
-            Some(false)
+            Ok(Some(false))
         }
     }
 }
@@ -4120,11 +4920,15 @@ struct HitNode<'a> {
 /// Descend from `start` through `Component.GetAccessibleAtPoint(Window)` until
 /// the toolkit stops returning a deeper child. O(depth) round-trips instead of
 /// a full tree walk — this is how AT-SPI clients are meant to hit-test.
+///
+/// `stacking` says how far the toolkit's answer can be trusted where siblings
+/// overlap (see [`SiblingStacking`]).
 async fn descend_at_point<'a>(
     conn: &'a AccessibilityConnection,
     start: RawObjectRef,
     x: i32,
     y: i32,
+    stacking: SiblingStacking,
 ) -> Vec<HitNode<'a>> {
     let mut chain: Vec<HitNode<'a>> = Vec::new();
     let mut current = start;
@@ -4152,9 +4956,122 @@ async fn descend_at_point<'a>(
         if next.path.ends_with("/null") || next == current {
             break;
         }
+        let next = match stacking {
+            SiblingStacking::FirstMatch => later_sibling_on_top(conn, &current, &next, x, y)
+                .await
+                .unwrap_or(next),
+            SiblingStacking::Topmost => next,
+        };
         current = next;
     }
     chain
+}
+
+/// How a toolkit's `GetAccessibleAtPoint` picks among overlapping children.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SiblingStacking {
+    /// The answer is the child drawn on top.
+    Topmost,
+    /// ATK's container default (GTK 2 and 3): the *first* child, in child
+    /// order, whose extents contain the point. A `GtkOverlay` lists its main
+    /// child first and draws its overlays above it, so a banner shown over a
+    /// button answers with the button underneath.
+    FirstMatch,
+}
+
+impl SiblingStacking {
+    fn of_toolkit(name: &str, version: &str) -> Self {
+        let name = name.trim();
+        let gtk3_or_older = version
+            .trim()
+            .split('.')
+            .next()
+            .and_then(|major| major.parse::<u32>().ok())
+            .is_some_and(|major| major < 4);
+        if name.eq_ignore_ascii_case("gail") || (name.eq_ignore_ascii_case("gtk") && gtk3_or_older)
+        {
+            Self::FirstMatch
+        } else {
+            Self::Topmost
+        }
+    }
+
+    async fn of_app(app: &AccessibleProxy<'_>) -> Self {
+        let inner = app.inner();
+        let Some(application) = async {
+            atspi::proxy::application::ApplicationProxy::builder(inner.connection())
+                .cache_properties(zbus::proxy::CacheProperties::No)
+                .destination(inner.destination().to_owned())
+                .ok()?
+                .build()
+                .await
+                .ok()
+        }
+        .await
+        else {
+            return Self::Topmost;
+        };
+        let name = call(application.toolkit_name()).await.and_then(Result::ok);
+        let version = call(application.version()).await.and_then(Result::ok);
+        match (name, version) {
+            (Some(name), Some(version)) => Self::of_toolkit(&name, &version),
+            _ => Self::Topmost,
+        }
+    }
+}
+
+/// Overlapping siblings of one parent the stacking check reads at most; a
+/// container with more children (a list, a sheet) is not a stack.
+const STACKED_SIBLINGS_CAP: i32 = 32;
+
+/// For a [`SiblingStacking::FirstMatch`] toolkit: the last showing child of
+/// `parent` after `hit` whose extents contain the point, which the toolkit
+/// draws over `hit`. `None` keeps the toolkit's answer.
+async fn later_sibling_on_top(
+    conn: &AccessibilityConnection,
+    parent: &RawObjectRef,
+    hit: &RawObjectRef,
+    x: i32,
+    y: i32,
+) -> Option<RawObjectRef> {
+    let count = raw_child_count(conn.connection(), parent).await.ok()?;
+    if !(2..=STACKED_SIBLINGS_CAP).contains(&count) {
+        return None;
+    }
+    let index = call(accessible_for(conn, hit).await.ok()?.get_index_in_parent())
+        .await?
+        .ok()?;
+    if index < 0 {
+        return None;
+    }
+    let parent = accessible_for(conn, parent).await.ok()?;
+    for sibling in (index + 1..count).rev() {
+        let Some(Ok(child)) = call(parent.get_child_at_index(sibling)).await else {
+            continue;
+        };
+        let Some(raw) = RawObjectRef::from_atspi(&child) else {
+            continue;
+        };
+        let Ok(acc) = accessible_for(conn, &raw).await else {
+            continue;
+        };
+        let Some(Ok(proxies)) = call(acc.proxies()).await else {
+            continue;
+        };
+        let Some(Ok(component)) = call(proxies.component()).await else {
+            continue;
+        };
+        if !matches!(
+            call(component.contains(x, y, CoordType::Window)).await,
+            Some(Ok(true))
+        ) {
+            continue;
+        }
+        if matches!(call(acc.get_state()).await, Some(Ok(state)) if is_showing_state(&state)) {
+            return Some(raw);
+        }
+    }
+    None
 }
 
 impl PartialEq for RawObjectRef {
@@ -4216,8 +5133,9 @@ pub fn perform_action_at_point_in(
                 Some(ordinal) => seeds.get(ordinal).cloned().into_iter().collect(),
                 None => seeds,
             };
+            let stacking = SiblingStacking::of_app(&app).await;
             for seed in ordered {
-                let chain = descend_at_point(conn, seed, hit_x, hit_y).await;
+                let chain = descend_at_point(conn, seed, hit_x, hit_y, stacking).await;
                 if chain.len() <= 1 {
                     // The frame itself, or nothing: this top-level does not
                     // cover the point (or cannot hit-test). Try the next one.
@@ -4307,6 +5225,19 @@ pub(crate) fn at_point_toolkit_coords(
 #[cfg(test)]
 mod at_point_coords_tests {
     use super::at_point_toolkit_coords;
+
+    #[test]
+    fn only_gtk3_and_older_answer_at_point_with_the_first_matching_child() {
+        use super::SiblingStacking::{FirstMatch, Topmost};
+        let of = super::SiblingStacking::of_toolkit;
+        assert_eq!(of("gtk", "3.24.49"), FirstMatch);
+        assert_eq!(of("GAIL", "2.24.33"), FirstMatch);
+        assert_eq!(of("GTK", "4.14.4"), Topmost);
+        assert_eq!(of("gtk", ""), Topmost);
+        assert_eq!(of("Qt", "5.15.13"), Topmost);
+        assert_eq!(of("Chromium", "126.0"), Topmost);
+        assert_eq!(of("VCL", "3.24"), Topmost);
+    }
 
     #[test]
     fn only_vcl_measures_from_the_wm_frame() {
@@ -4479,18 +5410,17 @@ async fn actuate_chain(
             name,
             node.oref.path.clone(),
         );
-        match call(ap.do_action(chosen as i32)).await {
-            Some(Ok(true)) => {
+        match do_action(&ap, chosen as i32).await? {
+            Some(true) => {
                 tokio::time::sleep(Duration::from_millis(50)).await;
                 return Ok(Some(hit));
             }
             // Declined (a closed VCL menu answers false): nothing fired, so
             // the caller falls through to the real pointer press.
-            Some(Ok(false)) => {
+            Some(false) => {
                 dlog!("hit-test doAction declined; falling through to the pointer route");
                 return Ok(None);
             }
-            Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
             // Dispatched; the reply waits on a nested main loop.
             None => return Ok(Some(hit)),
         }
@@ -4519,7 +5449,9 @@ async fn actuate_chain(
         let Some(Ok(ap)) = call(proxies.action()).await else {
             return Ok(None);
         };
-        if let Some(Ok(true)) = call(ap.do_action(chosen as i32)).await {
+        // As above: only a declined action fired nothing. An unanswered one
+        // was dispatched, and a later tier would send it again.
+        if do_action(&ap, chosen as i32).await? != Some(false) {
             return Ok(Some(AtPointHit::fired(
                 actions.get(chosen).cloned().unwrap_or_default(),
                 role,
@@ -5240,7 +6172,9 @@ pub fn perform_action_at_point(
             for (i, v) in visited.iter().enumerate() {
                 if v.actions.is_empty()
                     || !v.has_component
+                    || v.enabled == Some(false)
                     || is_container_role(&v.role)
+                    || is_web_document_role(&v.role)
                     || crate::at_point_policy::is_top_level_shell_role(&v.role)
                 {
                     continue;
@@ -5301,13 +6235,12 @@ pub fn perform_action_at_point(
                 .action()
                 .await
                 .map_err(|e| anyhow!("Action unavailable: {e}"))?;
-            match call(ap.do_action(chosen as i32)).await {
-                Some(Ok(true)) => {}
-                Some(Ok(false)) => {
+            match do_action(&ap, chosen as i32).await? {
+                Some(true) => {}
+                Some(false) => {
                     dlog!("doAction declined at point; falling through to the pointer route");
                     return Ok(None);
                 }
-                Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
                 None => dlog!("doAction dispatched but not acknowledged in time"),
             }
             Ok(Some(AtPointHit::fired(
@@ -5343,6 +6276,8 @@ pub fn perform_action_at_point(
 /// screenshot and `get_window_state` frames are in). Returns `Ok(Some(action))`
 /// when AT-SPI accepts the action, `Ok(None)` when there is no target or the
 /// action is rejected so the caller can fall back to its native injection path.
+/// A `doAction` that fails after it was sent is [`InputMayHaveLanded`]: the
+/// caller must not click again by another route.
 pub fn perform_action_at_screen_point(
     pid: u32,
     xid: u64,
@@ -5375,6 +6310,7 @@ pub fn perform_action_at_screen_point(
                 .into_iter()
                 .filter(|&(idx, ..)| {
                     !crate::at_point_policy::is_top_level_shell_role(&action_nodes[idx].role)
+                        && action_nodes[idx].enabled != Some(false)
                 })
                 .map(|(idx, x, y, w, h)| {
                     (idx, x, y, w, h, is_passive_role(&action_nodes[idx].role))
@@ -5396,15 +6332,14 @@ pub fn perform_action_at_screen_point(
                 .action()
                 .await
                 .map_err(|e| anyhow!("Action unavailable: {e}"))?;
-            match call(ap.do_action(chosen as i32)).await {
-                Some(Ok(true)) => {}
+            match do_action(&ap, chosen as i32).await? {
+                Some(true) => {}
                 // Declined by the toolkit (a closed VCL menu): no accessible
                 // hit, so the caller falls through to the real pointer press.
-                Some(Ok(false)) => {
+                Some(false) => {
                     dlog!("doAction declined at point; falling through to the pointer route");
                     return Ok(None);
                 }
-                Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
                 None => dlog!("doAction dispatched but not acknowledged in time"),
             }
             Ok(target.actions.get(chosen).cloned())
@@ -5658,7 +6593,10 @@ pub enum OptionPick {
     Picked { name: String },
     /// No option has that text; nothing was changed.
     NoMatch { options: Vec<String> },
-    /// The element lists no options (or cannot select them).
+    /// Every read of the element answered, and it lists no options.
+    NoOptions,
+    /// No options could be read (or selected): a read failed or timed out,
+    /// or the element has no selection route.
     Unavailable,
 }
 
@@ -5728,31 +6666,44 @@ struct OptionNode {
     index: i32,
 }
 
+/// The options [`list_options`] found, and whether every read it made
+/// answered: an incomplete scan with no options proves nothing about the
+/// element.
+struct OptionScan {
+    options: Vec<OptionNode>,
+    complete: bool,
+}
+
 /// The options under `oref`: item children, or the items of its popup menu
 /// or list child (one level down), in order.
-async fn list_options(conn: &AccessibilityConnection, oref: &RawObjectRef) -> Vec<OptionNode> {
+async fn list_options(conn: &AccessibilityConnection, oref: &RawObjectRef) -> OptionScan {
     let zconn = conn.connection();
-    let mut options = Vec::new();
+    let mut scan = OptionScan {
+        options: Vec::new(),
+        complete: true,
+    };
     let Some(Ok(children)) = call(raw_children(zconn, oref)).await else {
-        return options;
+        scan.complete = false;
+        return scan;
     };
     for (position, child) in children.into_iter().enumerate() {
-        if options.len() >= OPTION_SCAN_CAP {
+        if scan.options.len() >= OPTION_SCAN_CAP {
             break;
         }
         let Some(Ok(acc)) = call(accessible_for(conn, &child)).await else {
+            scan.complete = false;
             continue;
         };
-        let role = call(acc.get_role_name())
-            .await
-            .and_then(|r| r.ok())
-            .unwrap_or_default();
+        let Some(Ok(role)) = call(acc.get_role_name()).await else {
+            scan.complete = false;
+            continue;
+        };
         if is_option_role(&role) {
             let name = call(acc.name())
                 .await
                 .and_then(|r| r.ok())
                 .unwrap_or_default();
-            options.push(OptionNode {
+            scan.options.push(OptionNode {
                 oref: child,
                 name,
                 index: position as i32,
@@ -5763,19 +6714,21 @@ async fn list_options(conn: &AccessibilityConnection, oref: &RawObjectRef) -> Ve
             continue;
         }
         let Some(Ok(items)) = call(raw_children(zconn, &child)).await else {
+            scan.complete = false;
             continue;
         };
         for (index, item) in items.into_iter().enumerate() {
-            if options.len() >= OPTION_SCAN_CAP {
+            if scan.options.len() >= OPTION_SCAN_CAP {
                 break;
             }
             let Some(Ok(item_acc)) = call(accessible_for(conn, &item)).await else {
+                scan.complete = false;
                 continue;
             };
-            let item_role = call(item_acc.get_role_name())
-                .await
-                .and_then(|r| r.ok())
-                .unwrap_or_default();
+            let Some(Ok(item_role)) = call(item_acc.get_role_name()).await else {
+                scan.complete = false;
+                continue;
+            };
             if !is_option_role(&item_role) {
                 continue;
             }
@@ -5783,14 +6736,14 @@ async fn list_options(conn: &AccessibilityConnection, oref: &RawObjectRef) -> Ve
                 .await
                 .and_then(|r| r.ok())
                 .unwrap_or_default();
-            options.push(OptionNode {
+            scan.options.push(OptionNode {
                 oref: item,
                 name,
                 index: index as i32,
             });
         }
     }
-    options
+    scan
 }
 
 /// Pick the option `value` names on a snapshot-cached selection container
@@ -5810,7 +6763,7 @@ pub fn select_option_ref(object_ref: &ObjectRef, value: &str) -> Result<OptionPi
             if !ifaces.contains(Interface::Selection) {
                 return Ok(OptionPick::Unavailable);
             }
-            let options = list_options(conn, &raw_ref(object_ref)).await;
+            let options = list_options(conn, &raw_ref(object_ref)).await.options;
             if options.is_empty() {
                 return Ok(OptionPick::Unavailable);
             }
@@ -5847,9 +6800,14 @@ pub fn activate_option_ref(object_ref: &ObjectRef, value: &str) -> Result<Option
         async {
             let conn = shared_connection().await?;
             live_accessible(conn, object_ref).await?;
-            let options = list_options(conn, &raw_ref(object_ref)).await;
+            let scan = list_options(conn, &raw_ref(object_ref)).await;
+            let options = scan.options;
             if options.is_empty() {
-                return Ok(OptionPick::Unavailable);
+                return Ok(if scan.complete {
+                    OptionPick::NoOptions
+                } else {
+                    OptionPick::Unavailable
+                });
             }
             let names: Vec<String> = options.iter().map(|o| o.name.clone()).collect();
             let Some(found) = match_option(&names, value) else {
@@ -5894,7 +6852,7 @@ pub fn options_showing_ref(object_ref: &ObjectRef) -> bool {
         REF_ACTION_BUDGET,
         async {
             let conn = shared_connection().await?;
-            for option in list_options(conn, &raw_ref(object_ref)).await {
+            for option in list_options(conn, &raw_ref(object_ref)).await.options {
                 if let Some(Ok(acc)) = call(accessible_for(conn, &option.oref)).await {
                     if let Some(Ok(state)) = call(acc.get_state()).await {
                         if is_showing_state(&state) {
@@ -6200,14 +7158,19 @@ fn screen_answer_overrides_window(
 /// window id `xid` AND `pid`) as native Wayland, not XWayland, with an origin.
 /// Hyprland reports XWayland per client; under niri an X11 client belongs to
 /// xwayland-satellite's pid, so a matching pid on a placed niri window is a
-/// native client. Missing, mismatched, or unreported clients fail closed, so
+/// native client. The nested cua-compositor runs no XWayland, so a window
+/// listed for this process whose origin the compositor reports is native.
+/// Missing, mismatched, or unreported clients fail closed, so
 /// `Screen` extents keep winning, which is correct for XWayland GTK and
 /// LibreOffice. Performs blocking compositor IPC: async callers must use
 /// `bounded_blocking`.
 fn native_wayland_origin_attested(pid: u32, xid: u64) -> bool {
     xid != 0
         && crate::wayland::is_wayland()
-        && if crate::wayland::hyprland::is_session() {
+        && if crate::wayland::is_inject_mode() {
+            crate::wayland::window_was_listed_for_pid(pid, xid)
+                && crate::wayland::inject_accessibility_offset(pid).is_some()
+        } else if crate::wayland::hyprland::is_session() {
             crate::wayland::hyprland::native_client_attested(xid, pid)
         } else {
             crate::wayland::niri::is_session()
@@ -6217,6 +7180,10 @@ fn native_wayland_origin_attested(pid: u32, xid: u64) -> bool {
 }
 
 pub(crate) fn x11_window_origin(xid: u64) -> Option<(i32, i32)> {
+    x11_window_geometry(xid).map(|(x, y, _, _)| (x, y))
+}
+
+fn x11_window_geometry(xid: u64) -> Option<(i32, i32, i32, i32)> {
     use x11rb::protocol::xproto::*;
     use x11rb::rust_connection::RustConnection;
 
@@ -6228,7 +7195,12 @@ pub(crate) fn x11_window_origin(xid: u64) -> Option<(i32, i32)> {
         .ok()?
         .reply()
         .ok()?;
-    Some((trans.dst_x as i32, trans.dst_y as i32))
+    Some((
+        trans.dst_x as i32,
+        trans.dst_y as i32,
+        i32::from(geom.width),
+        i32::from(geom.height),
+    ))
 }
 
 fn x11_top_level_geometry(xid: u64) -> Option<(i32, i32, i32, i32)> {
@@ -6574,7 +7546,7 @@ async fn web_document_origin_for_visited(
 }
 
 fn screen_extent_rebase(
-    x11_origin: (i32, i32),
+    x11_window: (i32, i32, i32, i32),
     accessible_frame_extents: (i32, i32, i32, i32),
     top_level: Option<(i32, i32, i32, i32)>,
 ) -> Option<(i32, i32)> {
@@ -6586,11 +7558,16 @@ fn screen_extent_rebase(
     // origin. A legitimate screen provider may differ from the X11 client
     // origin by title-bar/CSD extents; rebasing that small decoration delta
     // would move otherwise-correct GTK coordinates off their controls.
-    if top_level == Some(accessible_frame_extents) {
+    // A frame whose size differs from the target X11 window belongs to
+    // another window (or is in DIPs under a device scale), so it is not
+    // this window's renderer origin.
+    if top_level == Some(accessible_frame_extents)
+        || (accessible_frame_extents.2, accessible_frame_extents.3) != (x11_window.2, x11_window.3)
+    {
         return None;
     }
     if frame_x.abs() <= 2 && frame_y.abs() <= 2 {
-        Some((x11_origin.0 - frame_x, x11_origin.1 - frame_y))
+        Some((x11_window.0 - frame_x, x11_window.1 - frame_y))
     } else {
         None
     }
@@ -7006,7 +7983,7 @@ async fn element_bounds_for_visited(
     // required window-origin delta. GTK's explicit Window-coordinate
     // path above remains authoritative when available.
     let screen_rebase = if offset.is_none() && !crate::wayland::is_wayland() && xid != 0 {
-        let x11_origin = bounded_blocking(move || x11_window_origin(xid))
+        let x11_window = bounded_blocking(move || x11_window_geometry(xid))
             .await
             .flatten();
         let top_level = bounded_blocking(move || x11_top_level_geometry(xid))
@@ -7020,7 +7997,7 @@ async fn element_bounds_for_visited(
                     "frame" | "window" | "dialog" | "alert" | "file chooser"
                 )
         });
-        if let (Some(origin), Some(frame)) = (x11_origin, frame) {
+        if let (Some(window), Some(frame)) = (x11_window, frame) {
             let accessible_frame = match call(frame.acc.proxies()).await {
                 Some(Ok(proxies)) => match call(proxies.component()).await {
                     Some(Ok(component)) => {
@@ -7033,8 +8010,7 @@ async fn element_bounds_for_visited(
                 },
                 _ => None,
             };
-            accessible_frame
-                .and_then(|frame_extents| screen_extent_rebase(origin, frame_extents, top_level))
+            accessible_frame.and_then(|frame| screen_extent_rebase(window, frame, top_level))
         } else {
             None
         }
@@ -7493,8 +8469,8 @@ mod coord_tests {
     use super::{
         activation_index, before_snapshot_deadline, bounded_blocking,
         combine_wayland_content_offsets, counts_as_showing, hyprland_document_top_inset,
-        is_activation_action, is_enabled_state, is_indexable_capabilities, is_passive_role,
-        is_showing_state, is_web_process_bus, listing_state, passive_marker,
+        indexed_row_attrs, is_activation_action, is_enabled_state, is_indexable_capabilities,
+        is_passive_role, is_showing_state, is_web_process_bus, listing_state,
         prefer_authoritative_wayland_origin, project_screen_extents, rebase_renderer_window_offset,
         scoped_component_nodes, screen_extent_rebase, select_click_target, select_web_document,
         wayland_window_origin, ApplicationSelection,
@@ -7662,7 +8638,7 @@ mod coord_tests {
             true,
             Some(true)
         ));
-        assert!(!is_indexable_capabilities(
+        assert!(is_indexable_capabilities(
             "button",
             true,
             false,
@@ -7686,7 +8662,7 @@ mod coord_tests {
     }
 
     #[test]
-    fn hidden_and_disabled_controls_are_not_indexed_but_are_named() {
+    fn hidden_controls_are_not_listed_and_offscreen_ones_are_marked() {
         // `Showing` is the on-screen state.
         assert!(!is_showing_state(&StateSet::new(
             State::Enabled | State::Visible
@@ -7732,17 +8708,17 @@ mod coord_tests {
             "menu item",
             &StateSet::new(State::Enabled)
         ));
-        // A visible but insensitive button keeps a marker in the markdown.
+    }
+
+    #[test]
+    fn a_disabled_control_row_says_so() {
+        let click = vec!["click".to_owned()];
         assert_eq!(
-            passive_marker("push button", true, true, Some(false)),
-            " (disabled)"
+            indexed_row_attrs(Some(false), &click),
+            "enabled=false actions=[click]"
         );
-        assert_eq!(
-            passive_marker("push button", false, true, Some(false)),
-            " (disabled)"
-        );
-        assert_eq!(passive_marker("push button", true, true, Some(true)), "");
-        assert_eq!(passive_marker("label", false, true, Some(false)), "");
+        assert_eq!(indexed_row_attrs(Some(true), &click), "actions=[click]");
+        assert_eq!(indexed_row_attrs(None, &[]), "actions=[]");
     }
 
     #[test]
@@ -7772,11 +8748,20 @@ mod coord_tests {
 
     #[test]
     fn component_role_fallback_rejects_unverified_or_passive_nodes() {
-        for enabled in [None, Some(false)] {
-            assert!(!is_indexable_capabilities(
-                "button", false, false, false, false, true, enabled
-            ));
-        }
+        assert!(!is_indexable_capabilities(
+            "button", false, false, false, false, true, None
+        ));
+        // A disabled component-only button is indexed so its `enabled: false`
+        // can be read.
+        assert!(is_indexable_capabilities(
+            "button",
+            false,
+            false,
+            false,
+            false,
+            true,
+            Some(false)
+        ));
         assert!(!is_indexable_capabilities(
             "button",
             false,
@@ -7803,15 +8788,15 @@ mod coord_tests {
     fn screen_extents_are_rebased_from_accessible_frame_to_x11_origin() {
         let frame = Some((600, 50, 800, 600));
         assert_eq!(
-            screen_extent_rebase((604, 80), (0, 0, 792, 566), frame),
+            screen_extent_rebase((604, 80, 792, 566), (0, 0, 792, 566), frame),
             Some((604, 80))
         );
         assert_eq!(
-            screen_extent_rebase((604, 100), (604, 80, 792, 566), frame),
+            screen_extent_rebase((604, 100, 792, 566), (604, 80, 792, 566), frame),
             None
         );
         assert_eq!(
-            screen_extent_rebase((604, 80), (604, 80, 792, 566), frame),
+            screen_extent_rebase((604, 80, 792, 566), (604, 80, 792, 566), frame),
             None
         );
     }
@@ -7819,24 +8804,28 @@ mod coord_tests {
     #[test]
     fn sentinel_frame_extents_are_not_a_renderer_origin() {
         assert_eq!(
-            screen_extent_rebase((155, 149), (-1, -1, -1, -1), None),
+            screen_extent_rebase((155, 149, 800, 600), (-1, -1, -1, -1), None),
             None
         );
-        assert_eq!(screen_extent_rebase((155, 149), (0, 0, 0, 0), None), None);
+        assert_eq!(
+            screen_extent_rebase((155, 149, 800, 600), (0, 0, 0, 0), None),
+            None
+        );
     }
 
     #[test]
     fn a_renderer_local_frame_at_the_corner_keeps_its_rebase() {
+        let window = (5, 29, 640, 480);
         assert_eq!(
-            screen_extent_rebase((5, 29), (0, 0, 640, 480), Some((0, 0, 650, 514))),
+            screen_extent_rebase(window, (0, 0, 640, 480), Some((0, 0, 650, 514))),
             Some((5, 29))
         );
         assert_eq!(
-            screen_extent_rebase((5, 56), (0, 0, 640, 480), Some((0, 27, 650, 514))),
+            screen_extent_rebase((5, 56, 640, 480), (0, 0, 640, 480), Some((0, 27, 650, 514))),
             Some((5, 56))
         );
         assert_eq!(
-            screen_extent_rebase((5, 29), (0, 0, 640, 480), None),
+            screen_extent_rebase(window, (0, 0, 640, 480), None),
             Some((5, 29))
         );
     }
@@ -7844,9 +8833,33 @@ mod coord_tests {
     #[test]
     fn a_gtk_frame_matching_its_window_manager_frame_at_the_corner_is_not_rebased() {
         assert_eq!(
-            screen_extent_rebase((5, 29), (0, 0, 650, 514), Some((0, 0, 650, 514))),
+            screen_extent_rebase((5, 29, 640, 480), (0, 0, 650, 514), Some((0, 0, 650, 514))),
             None
         );
+    }
+
+    #[test]
+    fn a_frame_of_another_window_is_not_rebased_onto_a_popup() {
+        let popup = (171, 205, 155, 33);
+        assert_eq!(
+            screen_extent_rebase(popup, (0, 0, 1280, 27), Some(popup)),
+            None
+        );
+        let popup = (1086, 513, 173, 287);
+        assert_eq!(
+            screen_extent_rebase(popup, (0, 0, 1280, 800), Some(popup)),
+            None
+        );
+    }
+
+    #[test]
+    fn a_chromium_frame_in_dips_under_device_scale_2_is_not_rebased() {
+        let window = (604, 80, 1584, 1132);
+        assert_eq!(
+            screen_extent_rebase(window, (0, 0, 792, 566), Some((600, 50, 1600, 1200))),
+            None
+        );
+        assert_eq!(screen_extent_rebase(window, (0, 0, 792, 566), None), None);
     }
 
     #[test]
@@ -9057,5 +10070,29 @@ mod editable_insert_length_tests {
         // GTK reads bytes (8) and Qt UTF-16 units (5): either guess breaks one.
         assert_eq!(editable_insert_length(None, "ñ🙂ab"), None);
         assert_eq!(editable_insert_length(None, "abc"), Some(3));
+    }
+}
+
+#[cfg(test)]
+mod unresponsive_tests {
+    use super::{mark_unresponsive_until, still_unresponsive};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_pid_stays_unresponsive_only_while_its_probe_is_pending() {
+        let pid = u32::MAX;
+        let (end_probe, probe_ended) = tokio::sync::oneshot::channel::<()>();
+        mark_unresponsive_until(pid, async move {
+            let _ = probe_ended.await;
+        });
+        mark_unresponsive_until(pid, std::future::ready(()));
+        assert!(still_unresponsive(pid));
+
+        end_probe.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while still_unresponsive(pid) {
+            assert!(Instant::now() < deadline, "the mark outlived its probe");
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 }

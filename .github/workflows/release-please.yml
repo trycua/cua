@@ -220,8 +220,13 @@ jobs:
               '.files | any(.path == "libs/cua-spacesd/VERSION")')
             SDK=$(echo "$PR" | jq -r \
               '.files | any(.path == "libs/cua/VERSION")')
+            BENCH=$(echo "$PR" | jq -r \
+              '.files | any(.path == "libs/cua-bench/pyproject.toml")')
+            SPACES=$(echo "$PR" | jq -r \
+              '.files | any(.path == "apps/cua-spaces-macos/VERSION")')
             if [[ "$DRIVER" != "true" && "$PERCEPTION" != "true" && "$LUME" != "true" && \
-                  "$SANDBOX" != "true" && "$SPACESD" != "true" && "$SDK" != "true" ]]; then
+                  "$SANDBOX" != "true" && "$SPACESD" != "true" && "$SDK" != "true" && \
+                  "$BENCH" != "true" && "$SPACES" != "true" ]]; then
               continue
             fi
 
@@ -281,6 +286,12 @@ jobs:
               if [[ "${SDK}" == "true" ]]; then
                 COMPONENT_ARGS+=(--component cua-sdk)
               fi
+              if [[ "${BENCH}" == "true" ]]; then
+                COMPONENT_ARGS+=(--component bench)
+              fi
+              if [[ "${SPACES}" == "true" ]]; then
+                COMPONENT_ARGS+=(--component cua-spaces)
+              fi
               "$TOOLS/replay_release_branch.sh" "origin/$BRANCH" "${COMPONENT_ARGS[@]}"
             fi
             if [[ "$PERCEPTION" == "true" ]]; then
@@ -300,19 +311,13 @@ jobs:
               for manifest in libs/cua-spacesd/Cargo.toml libs/cua-spacesd/tests/*/Cargo.toml; do
                 cargo metadata --format-version 1 --manifest-path "$manifest" > /dev/null
               done
-              python3 .github/scripts/sync_driver_release_docs.py
               python3 .github/scripts/validate_release_versions.py --product driver
               git add libs/cua-driver/rust/Cargo.lock \
-                libs/cua-spacesd/Cargo.lock libs/cua-spacesd/tests/*/Cargo.lock \
-                docs/content/docs/cua-driver/reference \
-                scripts/docs-generators/cli-specs/cua-driver.json
+                libs/cua-spacesd/Cargo.lock libs/cua-spacesd/tests/*/Cargo.lock
               COMMIT_MESSAGE="chore(cua-driver-rs): synchronize generated release files"
             elif [[ "$LUME" == "true" ]]; then
-              python3 .github/scripts/sync_lume_release_docs.py
               python3 .github/scripts/validate_release_versions.py --product lume
-              git add docs/content/docs/lume/reference \
-                scripts/docs-generators/cli-specs/lume.json
-              COMMIT_MESSAGE="chore(lume): synchronize release documentation"
+              COMMIT_MESSAGE="chore(lume): synchronize release files"
             elif [[ "$SPACESD" == "true" ]]; then
               # Release Please bumps the workspace version in Cargo.toml; the
               # lockfiles (the workspace and the standalone e2e workspaces
@@ -331,22 +336,48 @@ jobs:
               python3 .github/scripts/sync_sdk_release_docs.py --from "$PREVIOUS"
               SDK_LOCKS=$(python3 .github/scripts/sync_sdk_release_locks.py)
               python3 .github/scripts/validate_release_versions.py --product sdk
-              git add docs/content/docs/cua-cli docs/content/docs/cua-sdk scripts/docs-generators/cli-specs/cua.json
+              git add docs/content/docs/cua-cli docs/content/docs/cua-sdk
               if [[ -n "$SDK_LOCKS" ]]; then
                 mapfile -t SDK_LOCK_PATHS <<< "$SDK_LOCKS"
                 git add -- "${SDK_LOCK_PATHS[@]}"
               fi
               COMMIT_MESSAGE="chore(cua-sdk): synchronize release documentation and lockfiles"
+            elif [[ "$SPACES" == "true" ]]; then
+              # Release Please bumps every Cua Spaces version file itself (the
+              # Info.plist, the Tauri app and its lockfile); nothing is generated
+              # here, but the replay above keeps the branch mergeable.
+              python3 .github/scripts/validate_release_versions.py --product spaces
+              COMMIT_MESSAGE="chore(cua-spaces): synchronize release files"
+            elif [[ "$BENCH" == "true" ]]; then
+              # Other lockfiles lock cua-bench from the checkout and still record
+              # the old version; follow it without relocking.
+              BENCH_LOCKS=$(python3 .github/scripts/sync_uv_member_locks.py)
+              if [[ -n "$BENCH_LOCKS" ]]; then
+                mapfile -t BENCH_LOCK_PATHS <<< "$BENCH_LOCKS"
+                git add -- "${BENCH_LOCK_PATHS[@]}"
+              fi
+              COMMIT_MESSAGE="chore(bench): synchronize release lockfiles"
             else
               python3 .github/scripts/validate_release_versions.py --product sandbox
-              # The Sandbox reference records the package version, so regenerate
-              # it with the release version. Lifecycle scripts stay disabled
-              # because this step holds the release app token.
-              npx --yes pnpm@9.0.4 --dir docs install --frozen-lockfile --ignore-scripts
-              node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library sandbox
-              git add docs/content/docs/cua-sdk/reference/runtime-support.mdx \
-                docs/content/docs/cua-sdk/reference/os-image-catalog.mdx \
-                docs/content/docs/cua-sdk/reference/image-software.mdx
+              # The hand-written SDK pages and the other lockfiles that lock the
+              # checkout's cua-sandbox record its version too.
+              PREVIOUS=$(git show origin/main:libs/python/cua-sandbox/VERSION)
+              python3 .github/scripts/sync_sandbox_release_docs.py --from "$PREVIOUS"
+              SANDBOX_LOCKS=$(python3 .github/scripts/sync_uv_member_locks.py)
+              if [[ -n "$SANDBOX_LOCKS" ]]; then
+                mapfile -t SANDBOX_LOCK_PATHS <<< "$SANDBOX_LOCKS"
+                git add -- "${SANDBOX_LOCK_PATHS[@]}"
+              fi
+              # cua-bench and cua-agent cap cua-sandbox below the next minor; a
+              # release that crosses the cap would make the ALE jobs unsatisfiable.
+              SANDBOX_CAPS=$(python3 .github/scripts/widen_sibling_dependency_caps.py \
+                --package cua-sandbox --from "$PREVIOUS" \
+                --to "$(cat libs/python/cua-sandbox/VERSION)")
+              if [[ -n "$SANDBOX_CAPS" ]]; then
+                mapfile -t SANDBOX_CAP_PATHS <<< "$SANDBOX_CAPS"
+                git add -- "${SANDBOX_CAP_PATHS[@]}"
+              fi
+              git add docs/content/docs/cua-sdk
               COMMIT_MESSAGE="chore(sandbox): synchronize release metadata"
             fi
             if git diff --cached --quiet; then
@@ -370,3 +401,123 @@ jobs:
 
       - name: Verify repository release versions
         run: python3 .github/scripts/validate_release_versions.py --product all
+
+  # cua-sandbox's `driver` extra caps cua-driver below the next 0.x minor, and
+  # test_cua_sandbox_driver_range.py blocks a Driver release PR whose version is
+  # outside it. This raises the cap in a normal `fix(cua-sandbox)` pull request (so
+  # cua-sandbox ships the new range with the Driver, and the contract clients CI
+  # gates the change) instead of by hand. Not on the release branch: Release Please
+  # rebuilds it, and a chore commit inside the Driver release is not a cua-sandbox
+  # release. Once the PR merges the Driver version is in range and this is a no-op.
+  #
+  # A separate job so no release-branch code has run in this checkout: it holds
+  # only main's tree, reads the release branch's files as data, and keeps the App
+  # token out of the git config. The App token (not GITHUB_TOKEN) is what lets the
+  # pull request start its checks.
+  driver-bound:
+    needs: release-please
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: >-
+      !cancelled() && github.repository == 'trycua/cua' &&
+      (github.event_name == 'push' ||
+       (inputs.component == 'automatic' && inputs.bump == 'automatic'))
+    steps:
+      - name: Generate release GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Raise cua-sandbox's cua-driver bound for an open Driver release
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          RELEASE_BRANCH=release-please--branches--main--components--cua-driver-rs
+          BOUND_BRANCH=automation/cua-sandbox-driver-bound
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          if ! git ls-remote --exit-code --heads "$REMOTE" "$RELEASE_BRANCH" > /dev/null; then
+            echo "No open Driver release branch; nothing to do"
+            exit 0
+          fi
+          PR_JSON=$(gh pr list --state open --base main --head "$RELEASE_BRANCH" \
+            --json number,headRepositoryOwner --jq '.[0] // empty')
+          if [[ -z "$PR_JSON" ]]; then
+            echo "No open Driver release PR; nothing to do"
+            exit 0
+          fi
+          if [[ "$(jq -r .headRepositoryOwner.login <<<"$PR_JSON")" != "${REPO%/*}" ]]; then
+            echo "::error::Driver release PR does not come from this repository"
+            exit 1
+          fi
+          git fetch -q "$REMOTE" "+refs/heads/main:refs/remotes/origin/main" \
+            "+refs/heads/$RELEASE_BRANCH:refs/remotes/origin/$RELEASE_BRANCH"
+          # The release branch is data only: its VERSION and manifest must agree.
+          DRIVER_VERSION=$(git show "origin/$RELEASE_BRANCH:libs/cua-driver/rust/VERSION" | tr -d '[:space:]')
+          MANIFEST_VERSION=$(git show "origin/$RELEASE_BRANCH:.release-please-manifest.json" \
+            | jq -r '.["libs/cua-driver"]')
+          if [[ "$DRIVER_VERSION" != "$MANIFEST_VERSION" ]]; then
+            echo "::error::Driver release branch VERSION ($DRIVER_VERSION) and manifest ($MANIFEST_VERSION) disagree"
+            exit 1
+          fi
+          git checkout -q -f --detach origin/main
+          set +e
+          python3 -I .github/scripts/sync_cua_sandbox_driver_bound.py \
+            --driver-version "$DRIVER_VERSION" --check
+          STATUS=$?
+          set -e
+          if [[ "$STATUS" == 0 ]]; then
+            echo "cua-driver $DRIVER_VERSION is inside cua-sandbox's bound"
+            exit 0
+          elif [[ "$STATUS" != 1 ]]; then
+            exit "$STATUS"
+          fi
+          git config user.name "trycua-release[bot]"
+          git config user.email "trycua-release[bot]@users.noreply.github.com"
+          git checkout -q -B "$BOUND_BRANCH" origin/main
+          CHANGED=$(python3 -I .github/scripts/sync_cua_sandbox_driver_bound.py \
+            --driver-version "$DRIVER_VERSION")
+          mapfile -t CHANGED_PATHS <<< "$CHANGED"
+          git add -- "${CHANGED_PATHS[@]}"
+          TITLE="fix(cua-sandbox): accept cua-driver ${DRIVER_VERSION%.*}"
+          git commit -q -m "$TITLE"
+          # Only the files the script owns may differ from main.
+          test "$(git diff --name-only origin/main HEAD | sort)" = "$(printf '%s\n' "${CHANGED_PATHS[@]}" | sort)"
+          # Rebuilt from main on every run; push only when the content differs,
+          # with a lease on the SHA just observed.
+          if git ls-remote --exit-code --heads "$REMOTE" "$BOUND_BRANCH" > /dev/null; then
+            git fetch -q "$REMOTE" "+refs/heads/$BOUND_BRANCH:refs/remotes/origin/$BOUND_BRANCH"
+            REMOTE_HEAD=$(git rev-parse "origin/$BOUND_BRANCH")
+            if git diff --quiet "origin/$BOUND_BRANCH" HEAD; then
+              HEAD_SHA=$REMOTE_HEAD
+            else
+              git push --force-with-lease="refs/heads/$BOUND_BRANCH:$REMOTE_HEAD" \
+                "$REMOTE" "HEAD:refs/heads/$BOUND_BRANCH"
+              HEAD_SHA=$(git rev-parse HEAD)
+            fi
+          else
+            git push "$REMOTE" "HEAD:refs/heads/$BOUND_BRANCH"
+            HEAD_SHA=$(git rev-parse HEAD)
+          fi
+          PR=$(gh pr list --state open --base main --head "$BOUND_BRANCH" \
+            --json number --jq '.[0].number // empty')
+          if [[ -z "$PR" ]]; then
+            gh pr create --base main --head "$BOUND_BRANCH" --title "$TITLE" --body \
+              "Cua Driver $DRIVER_VERSION is about to release, and cua-sandbox's \`driver\` extra stops below the next minor, so \`pip install cua-sandbox[driver]\` would stay on the old Driver. This raises the upper bound to the next minor everywhere it is recorded. Opened by the release workflow (.github/scripts/sync_cua_sandbox_driver_bound.py); the cua-driver contract clients CI gates it, and it merges on green."
+            PR=$(gh pr list --state open --base main --head "$BOUND_BRANCH" \
+              --json number --jq '.[0].number')
+          fi
+          # Re-enabled on every run, so a run that died before this line heals.
+          # With a merge queue on main the queue sets the method and gh refuses --squash.
+          gh pr merge "$PR" --auto --squash --match-head-commit "$HEAD_SHA" ||
+            gh pr merge "$PR" --auto --match-head-commit "$HEAD_SHA"

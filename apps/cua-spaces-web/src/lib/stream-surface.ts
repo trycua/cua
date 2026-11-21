@@ -56,6 +56,9 @@ export interface SurfaceState {
   tier: SurfaceTier;
   /** Pointer, scroll and keys go to the Space (the viewer); a tile passes them to the page. */
   interactive: boolean;
+  /** One window of the Space instead of its desktop: its handle from the Space's window list (a window another
+   * Space shows here is `xs:…`). Absent: the desktop. */
+  windowId?: string;
   /** Where the video goes, inside the slot's border. */
   rect: SurfaceRect;
   /** The part of `rect` its scroll containers and the viewport leave visible; null when none is. */

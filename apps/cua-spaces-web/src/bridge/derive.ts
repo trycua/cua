@@ -53,7 +53,8 @@ function fallbackRowToSpace(row: SpaceRow, now: number): Space {
   // Not reported: unknown, never guessed (the core's `row_to_space`).
   const os = row.os ?? "unknown";
   const off = row.powerState === "suspended" || row.powerState === "stopped";
-  const status: SpaceStatus = row.reachable && !(row.power && off) ? "running" : "suspended";
+  // This Mac's own desktop is `local` while it is shared (the host says so), else off.
+  const status: SpaceStatus = row.id === "this-mac" ? (row.reachable ? "local" : "suspended") : row.reachable && !(row.power && off) ? "running" : "suspended";
   const added = row.addedAt ? Date.parse(row.addedAt) : NaN;
   return {
     id: row.id,
@@ -65,6 +66,7 @@ function fallbackRowToSpace(row: SpaceRow, now: number): Space {
     lastUsedAt: Number.isFinite(added) ? added : now,
     scene: SCENES[os],
     provider: row.provider,
+    ...(row.hidden ? { hidden: true } : {}),
     sdk: { features: row.features, spacesdVersion: row.spacesdVersion, reachable: row.reachable, error: row.error },
     osName: row.osName,
     osPrettyName: row.osPrettyName,
@@ -716,6 +718,9 @@ export function settingsPage(
     keyvaultProtection: settings.hostSettings?.keyvaultProtection ?? [],
     autoConnect: settings.hostSettings?.autoConnect ?? null,
     overflow: settings.hostSettings?.overflow ?? null,
+    // The Mac app's "When I close the window" rows (none on other hosts).
+    closeWindowKeepsRunning: settings.hostSettings?.closeWindowKeepsRunning ?? null,
+    closeNotice: settings.hostSettings?.closeNotice ?? true,
     // Every host's runtimes section; what the host read fills it in.
     runtimes: settings.hostSettings?.runtimes ?? null,
     agents: agents?.agents ?? null,

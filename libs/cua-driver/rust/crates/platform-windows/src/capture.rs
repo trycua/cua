@@ -636,9 +636,9 @@ pub fn screenshot_window(hwnd: u64) -> Result<(String, u32, u32)> {
 /// does for the other capture paths. The agent cursor overlay is excluded
 /// from the duplicated frame the same way it is for desktop captures.
 ///
-/// Returns `None` unless the window is unoccluded, covers a whole monitor, and
-/// duplication succeeds, so the caller keeps the PrintWindow / WGC / BitBlt
-/// ladder as the fallback for every other case.
+/// Returns `None` unless the window covers a whole monitor, no other window
+/// overlaps its frame, and duplication succeeds, so the caller keeps the
+/// PrintWindow / WGC / BitBlt ladder as the fallback for every other case.
 unsafe fn screenshot_via_dxgi_duplication(
     hwnd: HWND,
 ) -> Option<(Vec<u8>, i32, i32, FrameGeometry)> {
@@ -651,12 +651,13 @@ unsafe fn screenshot_via_dxgi_duplication(
         window.left + window.width,
         window.top + window.height,
     ));
+    let frame = window.cropped(dwm);
     // Check coverage before excluding the overlay: that costs two DWM frames,
     // and most windows do not cover a monitor.
     let covers_monitor = monitor_bounds()
         .into_iter()
         .any(|monitor| crate::dxgi_duplication::rect_covers(window_rect, bounds_rect(monitor)));
-    if !covers_monitor || target_is_obscured(hwnd) {
+    if !covers_monitor || window_above_overlaps(hwnd, frame) {
         return None;
     }
     let captured = capture_excluding_overlays(&crate::overlay::CaptureExcluder, |_| {
@@ -682,7 +683,6 @@ unsafe fn screenshot_via_dxgi_duplication(
     if output.width as u32 != captured.width || output.height as u32 != captured.height {
         return None;
     }
-    let frame = window.cropped(dwm);
     let pixels = crop_bgra(&captured.bgra, output, frame)?;
     tracing::debug!(
         target: "cua-driver",
@@ -691,6 +691,66 @@ unsafe fn screenshot_via_dxgi_duplication(
         frame.height
     );
     Some((pixels, frame.width, frame.height, frame))
+}
+
+/// Whether any visible window above `target` in z-order overlaps `frame`.
+///
+/// Desktop Duplication reads the monitor, not the window, so a covering window
+/// anywhere in the frame would be returned as the target's pixels. The
+/// five-point `target_is_obscured` probe misses a small window between its
+/// samples, so walk the whole z-order above the target instead. Windows of
+/// this process (the agent cursor overlay, excluded from the capture) do not
+/// count; a window whose cloak state cannot be read counts as visible.
+unsafe fn window_above_overlaps(target: HWND, frame: FrameGeometry) -> bool {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+    use windows::Win32::System::Threading::GetCurrentProcessId;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetAncestor, GetWindow, GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+        GA_ROOT, GW_HWNDPREV,
+    };
+
+    let own_pid = GetCurrentProcessId();
+    let mut above = GetWindow(GetAncestor(target, GA_ROOT), GW_HWNDPREV);
+    while let Ok(window) = above {
+        if window.0.is_null() {
+            break;
+        }
+        above = GetWindow(window, GW_HWNDPREV);
+        if !IsWindowVisible(window).as_bool() || IsIconic(window).as_bool() {
+            continue;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(window, Some(&mut pid));
+        if pid == own_pid {
+            continue;
+        }
+        let mut cloaked = 0u32;
+        let cloak_read = DwmGetWindowAttribute(
+            window,
+            DWMWA_CLOAKED,
+            &mut cloaked as *mut u32 as *mut _,
+            std::mem::size_of::<u32>() as u32,
+        );
+        if cloak_read.is_ok() && cloaked != 0 {
+            continue;
+        }
+        let mut rect = RECT::default();
+        if GetWindowRect(window, &mut rect).is_err()
+            || overlaps(frame, (rect.left, rect.top, rect.right, rect.bottom))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether `bounds` shares at least one pixel with `frame`.
+fn overlaps(frame: FrameGeometry, (left, top, right, bottom): Bounds) -> bool {
+    let frame_right = i64::from(frame.left) + i64::from(frame.width);
+    let frame_bottom = i64::from(frame.top) + i64::from(frame.height);
+    i64::from(left).max(i64::from(frame.left)) < i64::from(right).min(frame_right)
+        && i64::from(top).max(i64::from(frame.top)) < i64::from(bottom).min(frame_bottom)
 }
 
 fn bounds_rect((left, top, right, bottom): Bounds) -> windows::Win32::Foundation::RECT {
@@ -1185,8 +1245,19 @@ pub fn png_dimensions_pub(data: &[u8]) -> Result<(u32, u32)> {
 #[cfg(test)]
 mod wgc_validation_tests {
     use super::{
-        crop_bgra, monitors_cover, normalize_wgc_frame, validate_wgc_frame, FrameGeometry,
+        crop_bgra, monitors_cover, normalize_wgc_frame, overlaps, validate_wgc_frame, FrameGeometry,
     };
+
+    #[test]
+    fn any_shared_pixel_counts_as_overlap() {
+        let frame = FrameGeometry::from_bounds((1, 1, 1919, 1079)).unwrap();
+        // A toast between the occlusion probe's five sample points.
+        assert!(overlaps(frame, (1500, 900, 1880, 1000)));
+        assert!(overlaps(frame, (1918, 1078, 1930, 1090)));
+        assert!(!overlaps(frame, (1919, 0, 2000, 1080)));
+        assert!(!overlaps(frame, (0, 1079, 1920, 1120)));
+        assert!(!overlaps(frame, (500, 500, 500, 900)));
+    }
 
     #[test]
     fn duplicated_monitor_crops_to_the_window_capture_frame() {

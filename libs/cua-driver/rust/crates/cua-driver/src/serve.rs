@@ -2695,7 +2695,11 @@ pub(crate) fn wait_for_release(socket_path: &str) {
             eprintln!("Cua Driver daemon did not release socket within 2s");
             std::process::exit(1);
         }
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(
+            deadline
+                .saturating_duration_since(std::time::Instant::now())
+                .min(std::time::Duration::from_millis(50)),
+        );
     }
 }
 

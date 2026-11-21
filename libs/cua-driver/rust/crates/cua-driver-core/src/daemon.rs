@@ -271,7 +271,11 @@ fn probe_exchange(
             Err(error)
                 if error.raw_os_error() == Some(ERROR_PIPE_BUSY) && Instant::now() < deadline =>
             {
-                std::thread::sleep(Duration::from_millis(50));
+                std::thread::sleep(
+                    deadline
+                        .saturating_duration_since(Instant::now())
+                        .min(Duration::from_millis(50)),
+                );
             }
             Err(_) => return Err(ProbeFailure::Unanswered),
         }
@@ -331,9 +335,10 @@ fn exchange_overlapped(
     }
 }
 
-/// Start one overlapped transfer and wait for it until `deadline`. A transfer
-/// still pending then is cancelled, and it has always finished by the time
-/// this returns, so its buffer may be reused or freed.
+/// Start one overlapped transfer and wait for it until `deadline`. None is
+/// started once the deadline has passed. A transfer still pending at the
+/// deadline is cancelled, and it has always finished by the time this
+/// returns, so its buffer may be reused or freed.
 #[cfg(windows)]
 fn overlapped_transfer(
     pipe: windows::Win32::Foundation::HANDLE,
@@ -345,6 +350,10 @@ fn overlapped_transfer(
     use windows::Win32::System::Threading::WaitForSingleObject;
     use windows::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 
+    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+    if remaining.is_zero() {
+        return None;
+    }
     let mut overlapped = OVERLAPPED {
         hEvent: event,
         ..Default::default()
@@ -835,6 +844,28 @@ mod probe_endpoint_tests {
             .await
             .expect("the probe kept its connection open after giving up")
             .ok();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_reply_that_never_ends_stops_at_the_deadline() {
+        let endpoint = endpoint::unused();
+        let listener = endpoint::listen(&endpoint);
+        let path = endpoint.path.clone();
+        let started = std::time::Instant::now();
+        let probed =
+            tokio::task::spawn_blocking(move || probe_endpoint(&path, Duration::from_millis(300)));
+        let mut connection = BufReader::new(endpoint::accept(listener).await);
+        let mut request = String::new();
+        connection.read_line(&mut request).await.unwrap();
+        // Keep the reply going without ever ending its line.
+        while !probed.is_finished() {
+            if connection.get_mut().write_all(b"x").await.is_err() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert_eq!(probed.await.unwrap(), EndpointProbe::Unanswered);
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[tokio::test(flavor = "multi_thread")]

@@ -1096,15 +1096,23 @@ static EXPLICITLY_ENDED_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::n
 /// from, and its `start_session` claims a label ended with `end_session`. The
 /// closed owner itself stays refused on every label ([`closed_label_owner`]),
 /// so a late call from the dead connection neither resurrects nor binds one.
-/// An owner is forgotten once no labelled episode names it and
-/// [`CLOSED_OWNER_GRACE`] has passed since its close, so the set holds only
-/// the transports that closed within that window plus those a label still
-/// names. Mutated and read only while holding the `ENDED_SESSIONS` lock.
+/// An owner is forgotten once no labelled episode names it, no call of its
+/// is pending ([`begin_owner_dispatch`]), and [`CLOSED_OWNER_GRACE`] has
+/// passed since its close, so the set holds only the transports that closed
+/// within that window plus those a label or a pending call still names.
+/// Mutated and read only while holding the `ENDED_SESSIONS` lock.
 static CLOSED_TRANSPORTS: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
-/// How long a closed transport that no label names stays refused. A call it
-/// sent before closing is already being read or dispatched when the close
-/// lands, so it arrives well within one idle TTL.
+/// How long a closed transport that no label or pending call names stays
+/// refused: long enough for a call it sent before closing that the transport
+/// had read but not yet dispatched. A call already dispatched stays covered
+/// by [`PENDING_OWNER_DISPATCHES`] however long it waits for consent or an
+/// input lane.
 const CLOSED_OWNER_GRACE: Duration = DEFAULT_SESSION_IDLE_TTL;
+/// Calls at the native dispatch boundary that have not finished, per owner
+/// transport. Lifecycle admission comes after consent and input-lane waits
+/// with no deadline, so a call sent before its transport closed can reach it
+/// arbitrarily late; its owner is not forgotten while it is pending.
+static PENDING_OWNER_DISPATCHES: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
 /// Runtime generations that have received terminal revoke-all.
 ///
 /// This latch is intentionally independent of grants and public session
@@ -1140,9 +1148,42 @@ fn closed_transports() -> &'static Mutex<HashMap<String, Instant>> {
     CLOSED_TRANSPORTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+pub(crate) fn pending_owner_dispatches() -> &'static Mutex<HashMap<String, usize>> {
+    PENDING_OWNER_DISPATCHES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// One call from `owner_transport` that has entered the native dispatch
+/// boundary. While it lives, a closed `owner_transport` stays refused.
+pub struct OwnerDispatchGuard {
+    owner_transport: String,
+}
+
+pub fn begin_owner_dispatch(owner_transport: &str) -> OwnerDispatchGuard {
+    *pending_owner_dispatches()
+        .lock()
+        .unwrap()
+        .entry(owner_transport.to_owned())
+        .or_default() += 1;
+    OwnerDispatchGuard {
+        owner_transport: owner_transport.to_owned(),
+    }
+}
+
+impl Drop for OwnerDispatchGuard {
+    fn drop(&mut self) {
+        let mut pending = pending_owner_dispatches().lock().unwrap();
+        if let Some(count) = pending.get_mut(&self.owner_transport) {
+            *count -= 1;
+            if *count == 0 {
+                pending.remove(&self.owner_transport);
+            }
+        }
+    }
+}
+
 /// Forget closed owners past [`CLOSED_OWNER_GRACE`] that no labelled episode,
-/// live or tombstoned, names. The caller holds the `ENDED_SESSIONS` and
-/// lifecycle record locks and passes both maps.
+/// live or tombstoned, and no pending call names. The caller holds the
+/// `ENDED_SESSIONS` and lifecycle record locks and passes both maps.
 fn forget_closed_owners(
     ended: &HashMap<String, Option<String>>,
     records: &HashMap<String, LifecycleRecord>,
@@ -1165,9 +1206,11 @@ fn forget_closed_owners(
                 .map(|(_, record)| record.owner_transport.as_str()),
         )
         .collect::<HashSet<_>>();
+    let pending = pending_owner_dispatches().lock().unwrap();
     closed.retain(|owner, closed_at| {
         now.saturating_duration_since(*closed_at) < CLOSED_OWNER_GRACE
             || named.contains(owner.as_str())
+            || pending.contains_key(owner)
     });
 }
 
@@ -2881,6 +2924,7 @@ mod tests {
         let label = "test-grace-closed-owner-label-G1H2";
         let idle = "test-grace-closed-owner-transport-idle";
         let labelled = "test-grace-closed-owner-transport-labelled";
+        let calling = "test-grace-closed-owner-transport-calling";
         drop(
             begin_session_dispatch(
                 label,
@@ -2900,6 +2944,12 @@ mod tests {
             end_sessions_for_owner(labelled, SessionEndReason::ProcessExit),
             1
         );
+        // A call sent before the close still waits ahead of admission.
+        let call = begin_owner_dispatch(calling);
+        assert_eq!(
+            end_sessions_for_owner(calling, SessionEndReason::ProcessExit),
+            0
+        );
 
         let ended = ended_sessions().lock().unwrap();
         let records = lifecycle_records().lock().unwrap();
@@ -2910,7 +2960,7 @@ mod tests {
             .unwrap()
             .clone()
             .into_iter()
-            .filter(|(owner, _)| owner == idle || owner == labelled)
+            .filter(|(owner, _)| [idle, labelled, calling].contains(&owner.as_str()))
             .collect::<HashMap<_, _>>();
         let now = Instant::now();
         forget_closed_owners(&ended, &records, &mut closed, now);
@@ -2921,6 +2971,10 @@ mod tests {
             closed.contains_key(labelled),
             "its tombstone still names it"
         );
+        assert!(closed.contains_key(calling), "its call is still pending");
+        drop(call);
+        forget_closed_owners(&ended, &records, &mut closed, now + CLOSED_OWNER_GRACE);
+        assert!(!closed.contains_key(calling), "its call has finished");
         drop((records, ended));
         forget_ended_sessions_with_prefix("test-grace-closed-owner-");
     }

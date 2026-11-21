@@ -2201,6 +2201,16 @@ impl ToolRegistry {
             .get("_session_id")
             .and_then(Value::as_str)
             .map(str::to_owned);
+        // Hold the owner's pending-call count through every wait before
+        // lifecycle admission, so a closed owner stays refused however late
+        // this call arrives there.
+        let _owner_dispatch = runtime_session.as_deref().map(|session| {
+            crate::session::begin_owner_dispatch(
+                args.get("_transport_session_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or(session),
+            )
+        });
         if let Some(session) = runtime_session.as_deref() {
             let owner = args
                 .get("_transport_session_id")
@@ -7514,6 +7524,97 @@ resources:
             parked.structured_content
         );
         assert_eq!(hits.load(Ordering::SeqCst), 2);
+    }
+
+    /// A call still waiting ahead of lifecycle admission keeps its owner
+    /// transport pending, so a close cannot be forgotten before the call
+    /// reaches admission and is refused there.
+    #[cfg(feature = "yaml")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_call_waiting_on_consent_keeps_its_owner_pending() {
+        let pid = 8_675_431;
+        let transport = "test-pending-owner-transport-P1Q2";
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(ObservationProbe {
+            hits: Arc::new(AtomicUsize::new(0)),
+            def: super::ToolDef {
+                name: "type_text".into(),
+                description: "test text input".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        registry.register(Box::new(ParkedListApps {
+            entered: entered.clone(),
+            release: release.clone(),
+            def: super::ToolDef {
+                name: "list_apps".into(),
+                description: "test app list".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: true,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+        let manifest = manifest_context(
+            PermissionMode::Standard,
+            &format!(
+                r#"
+version: 3
+expires_after: 1h
+idle_timeout: 30m
+allow:
+  tools: [type_text]
+resources:
+  desktop:
+    windows:
+      - pid: {pid}
+        window_id: 7
+"#
+            ),
+        );
+        let pending = || {
+            crate::session::pending_owner_dispatches()
+                .lock()
+                .unwrap()
+                .keys()
+                .any(|owner| owner.ends_with(transport))
+        };
+        let mut args = serde_json::json!({
+            "pid": pid,
+            "window_id": 7,
+            "text": "a",
+            "session": "pending-owner-label",
+            "_transport_session_id": transport,
+        });
+        let evidence = TrustedInvocationEvidence::extract_from_adapter_args(&mut args);
+
+        let parked = tokio::spawn({
+            let registry = registry.clone();
+            async move {
+                registry
+                    .invoke_with_context_and_evidence("type_text", args, manifest, evidence)
+                    .await
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(10), entered.notified())
+            .await
+            .expect("the call reaches authorization");
+        assert!(pending(), "a call waiting on consent keeps its owner");
+
+        release.notify_one();
+        tokio::time::timeout(Duration::from_secs(10), parked)
+            .await
+            .expect("the call finishes")
+            .unwrap();
+        assert!(!pending(), "a finished call releases its owner");
     }
 
     #[test]

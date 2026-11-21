@@ -5128,6 +5128,20 @@ async fn press_key_whose_ref_focus_opens_a_dialog(configure: impl FnOnce(&mut Fi
     assert_eq!(s["refusal"]["detail"]["pressed"], false);
     assert_eq!(s["refusal"]["detail"]["dialog"]["present"], true, "{s}");
     assert!(recorded_calls(&f, "Input.dispatchKeyEvent").is_empty());
+    // Nothing may queue behind the focus handler's dialog: no geometry or
+    // visual lookup runs between the focus and the key loop.
+    let state = f.state.lock().unwrap();
+    let focus = state
+        .calls
+        .iter()
+        .position(|(_, method, _)| method == "DOM.focus")
+        .expect("the ref was focused");
+    let after: Vec<&str> = state.calls[focus + 1..]
+        .iter()
+        .map(|(_, method, _)| method.as_str())
+        .filter(|method| method.starts_with("DOM."))
+        .collect();
+    assert!(after.is_empty(), "DOM calls after the focus: {after:?}");
 }
 
 #[tokio::test]

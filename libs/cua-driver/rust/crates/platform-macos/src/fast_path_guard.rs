@@ -95,41 +95,34 @@ pub fn record_snapshot(
     );
 }
 
-/// Keep the read-time window image (greyscale, in memory) and the window
-/// fingerprint for the pixel and window guards.
-pub fn record_read_image(
-    store: &GuardStore,
-    session: Option<&str>,
+/// The read-time window image (greyscale, in memory) and the window
+/// fingerprint for the pixel and window guards, for the caller to put in its
+/// guard store.
+pub fn read_image(
     pid: i32,
     window_id: u32,
     raw: &cua_driver_core::image_utils::CapturedImage,
     bounds: &crate::windows::WindowBounds,
-) {
+) -> Option<ReadImage> {
     if !fp::mode().checks() {
-        return;
+        return None;
     }
-    let Some(image) = wire::gray_from_captured(raw) else {
-        return;
-    };
+    let image = wire::gray_from_captured(raw)?;
     let scale = if bounds.width > 0.0 {
         image.width as f64 / bounds.width
     } else {
         1.0
     };
-    store.put_image(
-        session,
-        pid,
-        ReadImage {
-            snapshot_id: 0,
-            image,
-            window: WindowFingerprint {
-                window_id: u64::from(window_id),
-                pid,
-                frame: Rect::new(bounds.x, bounds.y, bounds.width, bounds.height),
-                scale,
-            },
+    Some(ReadImage {
+        snapshot_id: 0,
+        image,
+        window: WindowFingerprint {
+            window_id: u64::from(window_id),
+            pid,
+            frame: Rect::new(bounds.x, bounds.y, bounds.width, bounds.height),
+            scale,
         },
-    );
+    })
 }
 
 /// Record only the window fingerprint (tree-only reads).

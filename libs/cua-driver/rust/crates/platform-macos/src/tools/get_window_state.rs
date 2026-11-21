@@ -448,8 +448,6 @@ impl Tool for GetWindowStateTool {
         };
         let screenshot = if should_capture {
             let out_file = screenshot_out_file.clone();
-            let guard_store = self.state.guard_store.clone();
-            let guard_session = session_id.clone();
             let res = tokio::task::spawn_blocking(move || -> Result<
                 (
                     Vec<u8>,
@@ -460,6 +458,7 @@ impl Tool for GetWindowStateTool {
                     u32,
                     crate::windows::WindowBounds,
                     f64,
+                    Option<cua_driver_core::fast_path::store::ReadImage>,
                 ),
                 super::px_frame::PxFrameError,
             > {
@@ -472,14 +471,9 @@ impl Tool for GetWindowStateTool {
                     &bounds,
                     || crate::capture::screenshot_window_image(window_id),
                 )?;
-                crate::fast_path_guard::record_read_image(
-                    &guard_store,
-                    guard_session.as_deref(),
-                    pid,
-                    window_id,
-                    &raw,
-                    &bounds,
-                );
+                // Published after the join, while this call still holds its
+                // session, so a cancelled read cannot outlive session_end.
+                let guard_read = crate::fast_path_guard::read_image(pid, window_id, &raw, &bounds);
                 // Resize and encode once from the raw pixels; the PNG bytes
                 // are identical to the former encode-decode-resize round trip.
                 let (png, w, h) = raw.encode(max_dim, encoding).map_err(|e| {
@@ -504,6 +498,7 @@ impl Tool for GetWindowStateTool {
                         orig_h,
                         bounds,
                         scale,
+                        guard_read,
                     ))
                 } else {
                     Ok((
@@ -515,11 +510,17 @@ impl Tool for GetWindowStateTool {
                         orig_h,
                         bounds,
                         scale,
+                        guard_read,
                     ))
                 }
             }).await;
             match res {
-                Ok(Ok((png, file_path, w, h, orig_w, orig_h, bounds, scale))) => {
+                Ok(Ok((png, file_path, w, h, orig_w, orig_h, bounds, scale, guard_read))) => {
+                    if let Some(read) = guard_read {
+                        self.state
+                            .guard_store
+                            .put_image(session_id.as_deref(), pid, read);
+                    }
                     if !observation_only {
                         screenshot_resize_scale = Some(orig_w as f64 / w as f64);
                     }

@@ -32,10 +32,10 @@ pub(crate) trait PlatformMainHooks {
 
     /// Run `work` for the rest of the process and return the exit code.
     ///
-    /// On macOS `work` runs on its own thread and the process exits with its
+    /// `work` runs on its own thread. On macOS the process exits with its
     /// code, while the main thread runs `on_main` and then, when `on_main`
-    /// returns `true`, the AppKit overlay. Elsewhere `work` runs on the
-    /// calling thread and `on_main` never runs.
+    /// returns `true`, the AppKit overlay. Elsewhere the main thread joins
+    /// `work` and `on_main` never runs. A panic in `work` exits 101.
     fn run_long_lived(
         work: impl FnOnce() -> i32 + Send + 'static,
         on_main: impl FnOnce() -> bool,
@@ -196,7 +196,14 @@ impl PlatformMainHooks for Platform {
         work: impl FnOnce() -> i32 + Send + 'static,
         _on_main: impl FnOnce() -> bool,
     ) -> i32 {
-        work()
+        // On the main thread, the handle std creates lazily for it is never
+        // freed, and Memcheck reports it as possibly lost.
+        std::thread::Builder::new()
+            .name("cua-serve".into())
+            .spawn(work)
+            .expect("spawn long-lived worker thread")
+            .join()
+            .unwrap_or(101)
     }
 }
 

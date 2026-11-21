@@ -79,8 +79,9 @@ fn def() -> &'static ToolDef {
               identifies javascript, cdp, or ax_fallback; a successful AX fallback preserves \
               the triggering error and truncation state in structuredContent.\n\
             - query_dom: Find elements matching a CSS selector, with the same macOS fallback \
-              metadata contract as get_text. The macOS AX fallback applies only `*` and bare tag \
-              selectors and refuses any other selector instead of returning every element.".into(),
+              metadata contract as get_text. The macOS AX fallback applies only `*` (or a blank \
+              selector) and bare tag selectors and refuses any other selector instead of \
+              returning every element.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["action"],

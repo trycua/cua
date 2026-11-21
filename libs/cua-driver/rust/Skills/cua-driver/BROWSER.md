@@ -549,8 +549,8 @@ cut short. A direct WKWebView/Tauri AX read has no `fallback_error` because no
 JavaScript or CDP route was attempted.
 
 The AX fallback for `query_dom` applies only bare tag selectors (`a`, `button`,
-`input`, `h1`-`h6`, `p`, `li`, `img`, `select`, `*`). Any other selector, such
-as `select#model` or `nav`, fails with an error saying the selector was not
+`input`, `h1`-`h6`, `p`, `li`, `img`, `select`, `*`); a blank selector counts as
+`*`. Any other selector, such as `select#model` or `nav`, fails with an error saying the selector was not
 applied, instead of returning every element of the window.
 
 ## Support boundaries

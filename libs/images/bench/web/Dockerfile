@@ -7,10 +7,9 @@
 # by default, or a published ghcr.io/trycua/linux@sha256:... pin
 # (CUA_BENCH_BASE_IMAGE). XFCE on Xvfb :1, cua-spacesd on :3211 with the
 # HTML5 viewer, plus:
-#   - Chromium (open-source build, BSD-3-Clause, from the xtradeb/apps PPA,
-#     pinned by version and signing key) with CDP on 127.0.0.1:9223,
-#     published on 0.0.0.0:9222 by socat. Not Playwright's download: that is
-#     Google-branded Chrome for Testing, which this public image must not ship;
+#   - Chromium (Playwright's pinned Chrome for Testing build, installed by the
+#     base image) with CDP on 127.0.0.1:9223, published on 0.0.0.0:9222 by
+#     socat;
 #   - bench-web-ctl on :7000: a small HTTP API over CDP (health, reset,
 #     navigate, eval) so adapters reach the browser the same way locally and
 #     through a service gateway (plain HTTP);
@@ -25,11 +24,6 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 ARG TARGETARCH
-# The Chromium the base (libs/images/linux, whose Dockerfile pins it per
-# arch) installed, so the two never drift apart (the PPA keeps only its
-# newest build per arch). CHROMIUM_VERSION, when set, wins.
-ARG CHROMIUM_VERSION=
-ARG CHROMIUM_PPA_KEY=5301FA4FD93244FBC6F6149982BB6851C64F6880
 ARG PYWEBVIEW_VERSION=6.2.1
 ARG WEBSOCKET_CLIENT_VERSION=1.9.2
 ARG MINIWOB_REPO=https://github.com/Farama-Foundation/miniwob-plusplus.git
@@ -44,27 +38,9 @@ RUN apt-get update \
       [ "$attempt" = 3 ] && exit 1; done \
  && rm -rf /var/lib/apt/lists/*
 
-# Chromium from the xtradeb/apps PPA: only the chromium packages may come from
-# it (everything else stays Ubuntu's), at exactly CHROMIUM_VERSION, and the
-# key must have the pinned fingerprint. The key is vendored
-# (common/apt-keys/xtradeb-apps.asc, shared with libs/images/linux), not
-# fetched from keyserver.ubuntu.com, so a keyserver outage cannot break the build.
-RUN --mount=type=bind,source=common/apt-keys/xtradeb-apps.asc,target=/tmp/xtradeb-apps.asc \
-    install -d -m 0755 /etc/apt/keyrings \
- && gpg --dearmor </tmp/xtradeb-apps.asc >/etc/apt/keyrings/xtradeb-apps.gpg \
- && gpg --show-keys --with-colons /etc/apt/keyrings/xtradeb-apps.gpg | grep -q "^fpr:::::::::${CHROMIUM_PPA_KEY}:" \
- && echo "deb [signed-by=/etc/apt/keyrings/xtradeb-apps.gpg] https://ppa.launchpadcontent.net/xtradeb/apps/ubuntu noble main" \
-      >/etc/apt/sources.list.d/xtradeb-apps.list \
- && printf 'Package: *\nPin: origin ppa.launchpadcontent.net\nPin-Priority: -1\n\nPackage: chromium chromium-common chromium-sandbox\nPin: origin ppa.launchpadcontent.net\nPin-Priority: 1001\n' \
-      >/etc/apt/preferences.d/xtradeb-chromium \
- && pin="${CHROMIUM_VERSION:-$(dpkg-query -W -f='${Version}' chromium 2>/dev/null || true)}" && test -n "$pin" \
- && apt-get update \
- && for attempt in 1 2 3; do apt-get install -y --no-install-recommends \
-      "chromium=${pin}" "chromium-common=${pin}" && break; \
-      echo "apt attempt $attempt failed; reconfiguring" >&2; dpkg --configure -a || true; \
-      [ "$attempt" = 3 ] && exit 1; done \
- && rm -rf /var/lib/apt/lists/* \
- && chromium --version | tee /etc/cua-image/chromium-version
+# Chromium comes from the base (libs/images/linux: Playwright's pinned build,
+# checked there against the minimum major); fail early if the base lacks it.
+RUN test -x /usr/lib/chromium/chromium && cat /etc/cua-image/chromium-version
 
 # CDP client for bench-web-ctl.
 RUN python3 -m venv /opt/bench-web/venv \

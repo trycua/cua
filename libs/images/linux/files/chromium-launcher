@@ -1,0 +1,10 @@
+#!/bin/sh
+# /usr/bin/chromium: starts the Chromium payload at /usr/lib/chromium/chromium
+# (Playwright's pinned build) the way Debian's launcher did: every file in
+# /etc/chromium.d is sourced first, and may add to CHROMIUM_FLAGS (the sandbox
+# flags the image picks per runtime, /etc/chromium.d/cua-sandbox).
+for cua_conf in /etc/chromium.d/*; do
+  [ -r "$cua_conf" ] && . "$cua_conf"
+done
+# shellcheck disable=SC2086 # CHROMIUM_FLAGS is a space-separated list
+exec /usr/lib/chromium/chromium $CHROMIUM_FLAGS "$@"

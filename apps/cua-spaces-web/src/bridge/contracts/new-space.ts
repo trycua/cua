@@ -49,14 +49,14 @@ export interface LocalStatus {
   containerImage?: string;
   macosImage?: string | null;
   error: string | null;
-  /** What the host can do about `error` (Windows: install or start Docker Desktop). */
+  /** What the host can do about `error` (Windows: set up WSL 2). */
   fix?: RuntimeFix | null;
   hostArch?: string;
   storage?: LocalStorage | null;
 }
 
 /** `spaces.fixRuntime`'s actions. */
-export type RuntimeFixAction = "install-docker" | "start-docker" | "restart-app" | "open-windows-features";
+export type RuntimeFixAction = "setup-wsl" | "restart-app" | "open-windows-features";
 
 /** A step the host offers next to "no local runtime" (`LocalStatus.fix`). */
 export interface RuntimeFix {

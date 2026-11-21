@@ -56,6 +56,7 @@ pub(crate) mod portal_screencast;
 /// Whether the GNOME/KDE RemoteDesktop + libei input backend is compiled in.
 pub const PORTAL_INPUT_ENABLED: bool = cfg!(feature = "portal-input");
 
+use cua_driver_core::action_record::ActionTransport;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
@@ -2712,12 +2713,20 @@ pub fn move_cursor_absolute(window_id: Option<u64>, x: i32, y: i32) -> anyhow::R
     )
 }
 
-/// Warp the cursor to a desktop-frame point (the `get_desktop_state` frame).
-pub fn move_cursor_desktop(space: &DesktopInputSpace, x: i32, y: i32) -> anyhow::Result<()> {
+/// Warp the cursor to a desktop-frame point (the `get_desktop_state` frame),
+/// returning the transport that moved it.
+pub fn move_cursor_desktop(
+    space: &DesktopInputSpace,
+    x: i32,
+    y: i32,
+) -> anyhow::Result<ActionTransport> {
     let (x, y) = space.input_layout(x, y)?;
     with_libei_fallback(
-        || move_cursor_absolute_vptr(None, x, y, Some(space)),
-        || libei_move_absolute(x, y),
+        || {
+            move_cursor_absolute_vptr(None, x, y, Some(space))
+                .map(|()| ActionTransport::LinuxWaylandVirtualPointer)
+        },
+        || libei_move_absolute(x, y).map(|()| ActionTransport::LinuxLibei),
     )
 }
 

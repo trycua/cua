@@ -1527,6 +1527,27 @@
                     "null"
                   ]
                 },
+                "custom_actions": {
+                  "items": {
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "raw": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "raw"
+                    ],
+                    "type": "object"
+                  },
+                  "type": [
+                    "array",
+                    "null"
+                  ]
+                },
                 "depth": {
                   "minimum": 0,
                   "type": "integer"
@@ -1574,6 +1595,12 @@
                   ]
                 },
                 "in_web_content": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "is_password": {
                   "type": [
                     "boolean",
                     "null"

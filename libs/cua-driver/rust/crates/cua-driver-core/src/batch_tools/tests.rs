@@ -47,6 +47,14 @@ impl Tool for Probe {
         }
         if args["fail"] == true {
             ToolResult::error(format!("{} refused: probe asked to fail", self.def.name))
+        } else if self.def.name == "move_cursor" {
+            // Its producers attach their own record; nothing guesses one.
+            ToolResult::text("move_cursor done").with_action_record(
+                crate::action_record::ActionExecutionRecord::cursor_move(
+                    crate::action_record::ActionTransport::AgentCursorOverlay,
+                    &args,
+                ),
+            )
         } else {
             ToolResult::text(format!("{} done", self.def.name))
         }

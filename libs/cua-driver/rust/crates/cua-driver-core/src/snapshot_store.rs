@@ -2177,6 +2177,27 @@ mod tests {
     }
 
     #[test]
+    fn a_zoom_against_a_refreshed_frame_is_refused_even_at_the_same_scale() {
+        let cache = SnapshotStore::new();
+        let session = Some("client-a");
+        cache.publish_sized_for_session(10, 20, Payload(vec![1]), session, Some(2.0), None);
+        let before = cache.screenshot_context(10, Some(20), session).unwrap();
+        cache
+            .refresh_screenshot_for_session(10, 20, session, 2.0, None)
+            .unwrap();
+        let after = cache.screenshot_context(10, Some(20), session).unwrap();
+        let late = ZoomContext {
+            screenshot: before,
+            ..zoom_on(after.snapshot_id, after.scale)
+        };
+        assert_eq!(
+            refusal_code(cache.set_zoom(10, session, late).unwrap_err()),
+            "zoom_context_missing"
+        );
+        assert!(cache.zoom(10, Some(20), session).is_err());
+    }
+
+    #[test]
     fn newer_snapshot_or_session_end_retires_zoom() {
         let cache = SnapshotStore::new();
         let snapshot = cache

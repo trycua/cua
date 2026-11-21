@@ -331,6 +331,35 @@ its full `nightly-cua-driver-rs-v…` tag from the GitHub release before running
 the installer. The pin does not change the saved channel and never falls back
 to another release.
 
+### Download from a mirror
+
+The installers download release assets from GitHub Releases. Where GitHub is
+slow or unreachable, set `CUA_DRIVER_RS_DOWNLOAD_BASE_URL` to a mirror that
+serves the same files at `<url>/<tag>/<asset>`, including `SHA256SUMS` and the
+`.sigstore.json` bundles. The installer runs the same checksum and signature
+checks on what it downloads.
+
+<Tabs items={['macOS and Linux', 'Windows']}>
+  <Tab value="macOS and Linux">
+
+```bash skip="host-install"
+curl -fsSL https://cua.ai/driver/install.sh | CUA_DRIVER_RS_DOWNLOAD_BASE_URL=https://mirror.example/trycua/cua/releases/download bash
+```
+
+  </Tab>
+  <Tab value="Windows">
+
+```powershell skip="host-install"
+$env:CUA_DRIVER_RS_DOWNLOAD_BASE_URL = "https://mirror.example/trycua/cua/releases/download"
+irm https://cua.ai/driver/install.ps1 | iex
+```
+
+  </Tab>
+</Tabs>
+
+`cua-driver update --apply` runs the same installer, so keep the variable set
+for updates too.
+
 ## Personalize the cursor
 
 The agent's cursor is an overlay, not the real pointer: a plain

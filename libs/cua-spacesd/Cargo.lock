@@ -1794,7 +1794,7 @@ dependencies = [
 
 [[package]]
 name = "cua-auth"
-version = "0.28.1"
+version = "0.31.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1816,7 +1816,7 @@ dependencies = [
 
 [[package]]
 name = "cua-chromium-storage"
-version = "0.28.1"
+version = "0.31.0"
 dependencies = [
  "base64 0.22.1",
  "cua-teleport-bundle",
@@ -1831,7 +1831,7 @@ dependencies = [
 
 [[package]]
 name = "cua-cluster"
-version = "0.28.1"
+version = "0.31.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1862,14 +1862,14 @@ dependencies = [
 
 [[package]]
 name = "cua-cursor-motion"
-version = "0.53.0"
+version = "0.56.7"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "cua-driver-contract"
-version = "0.53.0"
+version = "0.56.7"
 dependencies = [
  "schemars",
  "serde",
@@ -1879,7 +1879,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-core"
-version = "0.53.0"
+version = "0.56.7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1914,14 +1914,14 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
- "windows 0.58.0",
+ "windows 0.61.3",
  "zeroize",
  "zune-core",
 ]
 
 [[package]]
 name = "cua-driver-sdk"
-version = "0.53.0"
+version = "0.56.7"
 dependencies = [
  "async-trait",
  "core-foundation 0.10.1",
@@ -1943,7 +1943,7 @@ dependencies = [
 
 [[package]]
 name = "cua-home"
-version = "0.28.1"
+version = "0.31.0"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -1951,7 +1951,7 @@ dependencies = [
 
 [[package]]
 name = "cua-host"
-version = "0.28.1"
+version = "0.31.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1977,7 +1977,7 @@ dependencies = [
 
 [[package]]
 name = "cua-hotspot"
-version = "0.28.1"
+version = "0.31.0"
 dependencies = [
  "futures-util",
  "tokio",
@@ -1985,7 +1985,7 @@ dependencies = [
 
 [[package]]
 name = "cua-logging"
-version = "0.28.1"
+version = "0.31.0"
 dependencies = [
  "tracing",
  "tracing-appender",
@@ -1994,7 +1994,7 @@ dependencies = [
 
 [[package]]
 name = "cua-machine-seal"
-version = "0.28.1"
+version = "0.31.0"
 dependencies = [
  "chacha20poly1305 0.11.0",
  "cua-home",
@@ -2008,7 +2008,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-codec"
-version = "0.28.1"
+version = "0.31.0"
 dependencies = [
  "audiopus_sys",
  "libloading",
@@ -2024,7 +2024,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-protocol"
-version = "0.28.1"
+version = "0.31.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2032,7 +2032,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-transport"
-version = "0.28.1"
+version = "0.31.0"
 dependencies = [
  "cua-media-protocol",
  "quinn",
@@ -2045,7 +2045,7 @@ dependencies = [
 
 [[package]]
 name = "cua-mesh"
-version = "0.28.1"
+version = "0.31.0"
 dependencies = [
  "base64 0.22.1",
  "boringtun",
@@ -2076,7 +2076,7 @@ dependencies = [
 
 [[package]]
 name = "cua-oidc"
-version = "0.16.1"
+version = "0.17.3"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -2108,7 +2108,7 @@ dependencies = [
 
 [[package]]
 name = "cua-proto"
-version = "0.28.1"
+version = "0.31.0"
 dependencies = [
  "pbjson",
  "pbjson-build",
@@ -2124,7 +2124,7 @@ dependencies = [
 
 [[package]]
 name = "cua-push"
-version = "0.28.1"
+version = "0.31.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2140,7 +2140,7 @@ dependencies = [
 
 [[package]]
 name = "cua-relay"
-version = "0.16.1"
+version = "0.17.3"
 dependencies = [
  "axum 0.8.9",
  "base64 0.22.1",
@@ -2167,6 +2167,8 @@ dependencies = [
  "serde_json",
  "subtle",
  "tempfile",
+ "tikv-jemalloc-ctl",
+ "tikv-jemallocator",
  "tokio",
  "tokio-native-tls",
  "tokio-tungstenite 0.24.0",
@@ -2181,7 +2183,7 @@ dependencies = [
 
 [[package]]
 name = "cua-snapshot-sync"
-version = "0.28.1"
+version = "0.31.0"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -2202,7 +2204,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd"
-version = "0.16.1"
+version = "0.17.3"
 dependencies = [
  "axum 0.7.9",
  "bytes",
@@ -2248,7 +2250,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-client"
-version = "0.28.1"
+version = "0.31.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -2285,7 +2287,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-desktop"
-version = "0.16.1"
+version = "0.17.3"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -2334,7 +2336,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-doctor"
-version = "0.16.1"
+version = "0.17.3"
 dependencies = [
  "bytes",
  "cua-hotspot",
@@ -2368,7 +2370,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-html5"
-version = "0.28.1"
+version = "0.31.0"
 dependencies = [
  "axum 0.8.9",
  "http",
@@ -2376,7 +2378,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-provider-api"
-version = "0.16.1"
+version = "0.17.3"
 dependencies = [
  "cua-media-protocol",
  "serde_json",
@@ -2385,7 +2387,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-server"
-version = "0.16.1"
+version = "0.17.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2453,7 +2455,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-session"
-version = "0.16.1"
+version = "0.17.3"
 dependencies = [
  "cua-media-codec",
  "cua-media-protocol",
@@ -2470,7 +2472,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-socks"
-version = "0.16.1"
+version = "0.17.3"
 dependencies = [
  "cua-hotspot",
  "futures-util",
@@ -2480,14 +2482,14 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-supervise"
-version = "0.16.1"
+version = "0.17.3"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "cua-spacesd-teleport"
-version = "0.16.1"
+version = "0.17.3"
 dependencies = [
  "cua-chromium-storage",
  "cua-teleport-bundle",
@@ -2504,7 +2506,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-test-apps"
-version = "0.16.1"
+version = "0.17.3"
 dependencies = [
  "libc",
  "libloading",
@@ -2515,7 +2517,7 @@ dependencies = [
 
 [[package]]
 name = "cua-telemetry"
-version = "0.28.1"
+version = "0.31.0"
 dependencies = [
  "hex",
  "rand 0.9.5",
@@ -2528,7 +2530,7 @@ dependencies = [
 
 [[package]]
 name = "cua-teleport-bundle"
-version = "0.28.1"
+version = "0.31.0"
 dependencies = [
  "aes 0.8.4",
  "aes-gcm",
@@ -2547,7 +2549,7 @@ dependencies = [
 
 [[package]]
 name = "cua-volume"
-version = "0.28.1"
+version = "0.31.0"
 dependencies = [
  "async-trait",
  "cua-home",
@@ -2567,7 +2569,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-overlay"
-version = "0.53.0"
+version = "0.56.7"
 dependencies = [
  "anyhow",
  "cua-cursor-motion",
@@ -5140,6 +5142,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "paste"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+
+[[package]]
 name = "pbjson"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5311,7 +5319,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "platform-linux"
-version = "0.53.0"
+version = "0.56.7"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -5356,7 +5364,7 @@ dependencies = [
 
 [[package]]
 name = "platform-macos"
-version = "0.53.0"
+version = "0.56.7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5393,7 +5401,7 @@ dependencies = [
 
 [[package]]
 name = "platform-windows"
-version = "0.53.0"
+version = "0.56.7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5410,7 +5418,7 @@ dependencies = [
  "tiny-skia",
  "tokio",
  "tracing",
- "windows 0.58.0",
+ "windows 0.61.3",
  "zeroize",
 ]
 
@@ -6952,6 +6960,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "tikv-jemalloc-ctl"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a184c43b8ab2f41df2733b55556e3f5f632f4aeaa205b1bb018f574b7f5f142"
+dependencies = [
+ "libc",
+ "paste",
+ "tikv-jemalloc-sys",
+]
+
+[[package]]
+name = "tikv-jemalloc-sys"
+version = "0.7.1+5.3.1-0-g81034ce1f1373e37dc865038e1bc8eeecf559ce8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a2825c78386b4ae0314074867860ba9577875de945f05992c38815cbec327f0"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
+name = "tikv-jemallocator"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "249f09e49ab1609436f34c776e84231bead18d6a955f119f939bdc1d847561bd"
+dependencies = [
+ "libc",
+ "tikv-jemalloc-sys",
+]
+
+[[package]]
 name = "time"
 version = "0.3.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8240,6 +8279,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "windows"
+version = "0.61.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9babd3a767a4c1aef6900409f85f5d53ce2544ccdfaa86dad48c91782c6d6893"
+dependencies = [
+ "windows-collections",
+ "windows-core 0.61.2",
+ "windows-future",
+ "windows-link 0.1.3",
+ "windows-numerics",
+]
+
+[[package]]
+name = "windows-collections"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3beeceb5e5cfd9eb1d76b381630e82c4241ccd0d27f1a39ed41b2760b255c5e8"
+dependencies = [
+ "windows-core 0.61.2",
+]
+
+[[package]]
 name = "windows-core"
 version = "0.58.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8267,6 +8328,19 @@ dependencies = [
 
 [[package]]
 name = "windows-core"
+version = "0.61.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0fdd3ddb90610c7638aa2b3a3ab2904fb9e5cdbecc643ddb3647212781c4ae3"
+dependencies = [
+ "windows-implement 0.60.2",
+ "windows-interface 0.59.3",
+ "windows-link 0.1.3",
+ "windows-result 0.3.4",
+ "windows-strings 0.4.2",
+]
+
+[[package]]
+name = "windows-core"
 version = "0.62.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8e83a14d34d0623b51dce9581199302a221863196a1dde71a7663a4c2be9deb"
@@ -8276,6 +8350,17 @@ dependencies = [
  "windows-link 0.2.1",
  "windows-result 0.4.1",
  "windows-strings 0.5.1",
+]
+
+[[package]]
+name = "windows-future"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc6a41e98427b19fe4b73c550f060b59fa592d7d686537eebf9385621bfbad8e"
+dependencies = [
+ "windows-core 0.61.2",
+ "windows-link 0.1.3",
+ "windows-threading",
 ]
 
 [[package]]
@@ -8359,6 +8444,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "windows-numerics"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9150af68066c4c5c07ddc0ce30421554771e528bde427614c61038bc2c92c2b1"
+dependencies = [
+ "windows-core 0.61.2",
+ "windows-link 0.1.3",
+]
+
+[[package]]
 name = "windows-result"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8400,6 +8495,15 @@ name = "windows-strings"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "87fa48cc5d406560701792be122a10132491cff9d0aeb23583cc2dcafc847319"
+dependencies = [
+ "windows-link 0.1.3",
+]
+
+[[package]]
+name = "windows-strings"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56e6c93f3a0c3b36176cb1327a4958a0353d5d166c2a35cb268ace15e91d3b57"
 dependencies = [
  "windows-link 0.1.3",
 ]
@@ -8504,6 +8608,15 @@ dependencies = [
  "windows_x86_64_gnu 0.53.1",
  "windows_x86_64_gnullvm 0.53.1",
  "windows_x86_64_msvc 0.53.1",
+]
+
+[[package]]
+name = "windows-threading"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b66463ad2e0ea3bbf808b7f1d371311c80e115c0b71d60efc142cafbcfb057a6"
+dependencies = [
+ "windows-link 0.1.3",
 ]
 
 [[package]]

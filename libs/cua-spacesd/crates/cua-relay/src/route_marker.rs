@@ -97,12 +97,71 @@ impl RouteMarker {
     }
 }
 
-/// `GET /healthz` on every listener (main, probe port, STUN-only): 204 and
-/// `ok`.
+/// Header: a random id, new for every process start. Two answers with the
+/// same id come from the same relay process; a new id means it restarted.
+pub const BOOT_HEADER: &str = "x-cua-relay-boot";
+/// Header: when this process started, in Unix seconds.
+pub const STARTED_HEADER: &str = "x-cua-relay-started";
+/// Header: the relay's crate version.
+pub const VERSION_HEADER: &str = "x-cua-relay-version";
+
+/// What identifies this relay process: for tests, canaries and dashboards
+/// that must tell a restart from a failure (a rollout from an outage).
+/// Random and public by design: it carries no secret and grants nothing.
+#[derive(Debug)]
+pub struct Boot {
+    id: String,
+    started: u64,
+}
+
+impl Boot {
+    /// The random id of this process (32 hex digits).
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Unix seconds at which this process started.
+    pub fn started(&self) -> u64 {
+        self.started
+    }
+}
+
+/// This process's identity, fixed at the first call. `main` calls it at
+/// start, so the time is the process start.
+pub fn boot() -> &'static Boot {
+    static BOOT: std::sync::OnceLock<Boot> = std::sync::OnceLock::new();
+    BOOT.get_or_init(|| Boot {
+        id: hex::encode(rand::random::<[u8; 16]>()),
+        started: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs()),
+    })
+}
+
+/// Adds the boot identity headers to `response`.
+pub(crate) fn stamp_boot(response: &mut Response) {
+    let boot = boot();
+    let headers = response.headers_mut();
+    if let Ok(v) = HeaderValue::from_str(boot.id()) {
+        headers.insert(BOOT_HEADER, v);
+    }
+    if let Ok(v) = HeaderValue::from_str(&boot.started().to_string()) {
+        headers.insert(STARTED_HEADER, v);
+    }
+    headers.insert(
+        VERSION_HEADER,
+        HeaderValue::from_static(env!("CARGO_PKG_VERSION")),
+    );
+}
+
+/// `GET /healthz` on every listener (main, probe port, STUN-only): 204,
+/// `ok`, and the boot identity ([`BOOT_HEADER`], [`STARTED_HEADER`],
+/// [`VERSION_HEADER`]).
 pub async fn healthz() -> Response {
     use axum::response::IntoResponse as _;
     let mut response = StatusCode::NO_CONTENT.into_response();
     stamp(&mut response, RouteMarker::Ok);
+    stamp_boot(&mut response);
     response
 }
 
@@ -158,6 +217,16 @@ mod tests {
             ]
         );
         assert_eq!(HEADER, "x-cua-relay-route");
+    }
+
+    #[test]
+    fn boot_identity_is_stable_within_a_process() {
+        let a = boot();
+        let b = boot();
+        assert_eq!(a.id(), b.id());
+        assert_eq!(a.id().len(), 32);
+        assert!(a.id().bytes().all(|c| c.is_ascii_hexdigit()));
+        assert!(a.started() > 1_700_000_000);
     }
 
     #[test]

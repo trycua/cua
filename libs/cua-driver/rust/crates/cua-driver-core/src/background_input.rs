@@ -45,6 +45,11 @@ pub enum ElementAncestry {
     /// The live element ascends to an AX window whose CGWindowID is the
     /// requested one.
     ProvenDescendant,
+    /// The requested window's own AX subtree lists the element's container,
+    /// but the element draws in a separate WindowServer window and names no
+    /// window upward (a Mac Catalyst pop-up's menu). A semantic AX action
+    /// reaches it; pointer and key input routed to the window do not.
+    ProvenSemanticOnly,
     /// The live element ascends to a different window of the same process.
     OutsideTargetWindow,
     /// Ancestry could not be resolved (dead element, SPI failure). An address
@@ -206,7 +211,8 @@ fn refuse(
 /// - a target absent from fresh `AXWindows` (off-Space or AX-unresolved) is
 ///   observation-only;
 /// - an addressed element must prove ancestry to the requested window for
-///   every route, including semantic AX;
+///   every route, including semantic AX; an element proven only for semantic
+///   AX (it draws in a window of its own) refuses every other route;
 /// - semantic AX actions remain available for minimized/hidden targets;
 /// - the routed pointer requires a visible (possibly occluded) target; and
 /// - process-scoped keyboard additionally requires that the target is the
@@ -259,6 +265,20 @@ pub fn decide_background_input(
 
     match facts.element {
         ElementAncestry::NotAddressed | ElementAncestry::ProvenDescendant => {}
+        ElementAncestry::ProvenSemanticOnly if action == BackgroundAction::AxSemantic => {}
+        ElementAncestry::ProvenSemanticOnly => {
+            return refuse(
+                refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW,
+                format!(
+                    "the addressed element is listed by window {} but draws in a window \
+                     of its own (a pop-up menu), so pointer and key input routed to window \
+                     {} cannot reach it; act on it by element (click or set_value with its \
+                     element_token)",
+                    target.window_id, target.window_id
+                ),
+                Some("accessibility"),
+            );
+        }
         ElementAncestry::OutsideTargetWindow | ElementAncestry::Unproven => {
             return refuse(
                 refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW,
@@ -690,6 +710,43 @@ mod tests {
             ..matched_facts()
         };
         assert!(decide_background_input(TARGET, &facts, BackgroundAction::AxSemantic).is_execute());
+    }
+
+    /// A Catalyst pop-up menu item is listed by the window but draws in its
+    /// own: a semantic AX action reaches it, routed pointer and keys do not.
+    #[test]
+    fn semantic_only_element_admits_only_semantic_ax() {
+        let facts = BackgroundTargetFacts {
+            element: ElementAncestry::ProvenSemanticOnly,
+            ..matched_facts()
+        };
+        assert!(decide_background_input(TARGET, &facts, BackgroundAction::AxSemantic).is_execute());
+        for action in [
+            BackgroundAction::WindowPointer,
+            BackgroundAction::InsertText,
+            BackgroundAction::GenericKey,
+            BackgroundAction::ExactWindowKeys,
+        ] {
+            match decide_background_input(TARGET, &facts, action) {
+                BackgroundInputDecision::Refuse(refusal) => {
+                    assert_eq!(refusal.code, refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW);
+                    assert_eq!(refusal.advice, Some("accessibility"), "{action:?}");
+                }
+                other => panic!("{action:?} expected a refusal, got {other:?}"),
+            }
+        }
+        let off_space = BackgroundTargetFacts {
+            ax_window_present: false,
+            ..facts
+        };
+        assert_eq!(
+            code_of(decide_background_input(
+                TARGET,
+                &off_space,
+                BackgroundAction::AxSemantic
+            )),
+            refusal_codes::OFF_SPACE_OR_AX_UNRESOLVED
+        );
     }
 
     /// Refusal precedence: exactness failures are reported before state or

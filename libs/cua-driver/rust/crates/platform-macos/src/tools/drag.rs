@@ -589,7 +589,7 @@ impl Tool for DragTool {
         match result {
             Ok(Ok(BackgroundDrag::SessionOpen))
                 if cua_driver_core::delivery::brief_foreground_allowed()
-                    && !cua_driver_core::delivery::background_requested_explicitly(&args) =>
+                    && delivery_mode.allows_escalation() =>
             {
                 self.brief_foreground_drag(&args, pid, wid, prior_front)
                     .await

@@ -9,7 +9,7 @@ classifiers = ["Development Status :: 7 - Inactive"]
 license = "MIT"
 
 dependencies = [
-    "claude-agent-sdk>=0.1.0",
+    "claude-agent-sdk>=0.2.121",
     "cua-sandbox>=0.1.1",
     "pydantic>=2.0",
     "click>=8.0",

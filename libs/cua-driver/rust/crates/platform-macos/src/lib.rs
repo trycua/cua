@@ -60,6 +60,8 @@ pub mod pointer_shape_map;
 #[cfg(target_os = "macos")]
 pub mod recording_hooks;
 #[cfg(target_os = "macos")]
+pub mod running_image;
+#[cfg(target_os = "macos")]
 pub mod security_prompt;
 #[cfg(target_os = "macos")]
 pub mod session;

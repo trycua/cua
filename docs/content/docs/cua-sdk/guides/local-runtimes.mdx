@@ -233,14 +233,14 @@ create's progress.
 ## microVMs on Windows
 
 `--kind microvm` runs in QEMU on the Windows Hypervisor Platform: hardware
-acceleration only, never software emulation. `cua runtime doctor` and New Space
-say what is missing: the Windows feature (`cua runtime setup microvm` turns it on
-through one administrator prompt, then restart), QEMU 9 or later (installed with
-winget), or virtualization in the firmware. Checkpoints, forks and warm pools work on the VM's disk: Windows does not
-let QEMU save a running VM's memory, so a restore or fork boots the saved disk
-(about four seconds, or half a second from a ready standby of the checkpoint);
-claiming a pooled VM is as fast. QEMU's network enforces no rules, so a microVM has no
-network.
+acceleration only, never software emulation. Creating one sets up what it can:
+the pinned QEMU 11.1.0 (SHA-256 checked, winget only as a fallback), the guest
+kernel and the Windows feature, with one administrator prompt, then a restart
+the create reports. `cua runtime setup microvm` does it ahead; firmware
+virtualization turned off is reported, not set up. Checkpoints, forks and
+warm pools work on the VM's disk: Windows cannot save a running VM's memory, so a
+restore or fork boots the saved disk (about four seconds); a claimed pooled VM is as fast. A microVM has no network (QEMU's
+enforces no rules).
 
 ## Your own cloud
 

@@ -52,6 +52,27 @@ case "$SUITE" in
   *) echo "unsupported internal lane: $SUITE" >&2; exit 2 ;;
 esac
 
+# Resolve Cargo's target directory once against the Rust workspace so the
+# driver build, binary lookup, fixture builders, and later Cargo invocations
+# agree on one path. Leave CARGO_TARGET_DIR unset when not configured so nested
+# Cargo projects keep their default target directories.
+if [[ -n "${CARGO_TARGET_DIR+x}" && -z "${CARGO_TARGET_DIR}" ]]; then
+  echo "CARGO_TARGET_DIR must not be empty" >&2
+  exit 2
+fi
+if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
+  case "${CARGO_TARGET_DIR}" in
+    /*) BUILD_TARGET_DIR="${CARGO_TARGET_DIR}" ;;
+    *) BUILD_TARGET_DIR="${RUST_ROOT}/${CARGO_TARGET_DIR}" ;;
+  esac
+  while [[ "${BUILD_TARGET_DIR}" != "/" && "${BUILD_TARGET_DIR}" == */ ]]; do
+    BUILD_TARGET_DIR="${BUILD_TARGET_DIR%/}"
+  done
+  export CARGO_TARGET_DIR="${BUILD_TARGET_DIR}"
+else
+  BUILD_TARGET_DIR="${RUST_ROOT}/target"
+fi
+
 ARTIFACT_DIR="${CUA_E2E_ARTIFACT_DIR:-${REPO_ROOT}/artifacts/cua-driver/linux}"
 mkdir -p "${ARTIFACT_DIR}"
 RECORDING_ROOT="${ARTIFACT_DIR}/recordings"
@@ -73,7 +94,7 @@ export CUA_E2E_RECORDINGS_ROOT="${RECORDING_ROOT}"
 # presentation latency rows) write them under this directory.
 export CUA_E2E_ARTIFACT_DIR="${ARTIFACT_DIR}"
 export CUA_TEST_WORKSPACE_ROOT="${RUST_ROOT}"
-export CUA_TEST_DRIVER_BIN="${RUST_ROOT}/target/release/cua-driver"
+export CUA_TEST_DRIVER_BIN="${BUILD_TARGET_DIR%/}/release/cua-driver"
 export CUA_TEST_APPS_ROOT="${RUST_ROOT}/test-apps"
 export CUA_TEST_REQUIRE_FIXTURES=1
 export CUA_TEST_DRIVER_STDERR=1
@@ -135,9 +156,9 @@ command -v ffprobe >/dev/null || { echo "ffprobe is required for E2E trajectory 
 command -v jq >/dev/null || { echo "jq is required for E2E ownership validation" >&2; exit 1; }
 
 if [[ "${BUILD_FIXTURES}" == 1 ]]; then
-  cargo build --release -p cua-driver \
+  (cd "${RUST_ROOT}" && cargo build --release -p cua-driver \
     "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
-    --manifest-path "${RUST_ROOT}/Cargo.toml"
+    --manifest-path "${RUST_ROOT}/Cargo.toml")
   case "${SUITE}" in
     shared) FIXTURE_TARGETS="${CUA_E2E_HARNESS_FILTER:-electron,tauri}" ;;
     native)

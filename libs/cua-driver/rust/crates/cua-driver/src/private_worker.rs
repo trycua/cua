@@ -4,7 +4,7 @@
 //! Hidden process-isolated SDK runtime entry point.
 //!
 //! This is intentionally not a CLI product surface. A trusted SDK host starts
-//! it directly and owns the inherited stdin/stdout channel for the lifetime of
+//! it directly and owns the inherited channel for the lifetime of
 //! one runtime generation.
 
 use cua_driver_sdk::worker::{
@@ -74,9 +74,21 @@ async fn run_async(
 ) -> anyhow::Result<()> {
     let mut initialized = InitializationSignal(initialized);
     let stdin = std::io::stdin();
-    let mut lines = stdin.lock().lines();
     let stdout = std::io::stdout();
-    let mut writer = stdout.lock();
+    let reader = stdin.lock();
+    let writer = stdout.lock();
+    #[cfg(target_os = "macos")]
+    let (reader, mut writer): (Box<dyn BufRead + '_>, Box<dyn Write + '_>) =
+        match crate::private_transport::take()? {
+            Some(stream) => (
+                Box::new(std::io::BufReader::new(stream.try_clone()?)),
+                Box::new(stream),
+            ),
+            None => (Box::new(reader), Box::new(writer)),
+        };
+    #[cfg(not(target_os = "macos"))]
+    let mut writer = writer;
+    let mut lines = reader.lines();
 
     let Some(first_line) = lines.next() else {
         return Ok(());
@@ -200,6 +212,13 @@ async fn run_async(
             continue;
         }
 
+        #[cfg(target_os = "macos")]
+        let response = tokio::select! {
+            biased;
+            _ = crate::private_transport::closed() => break,
+            response = handle_request(&driver, &mut sessions, &generation, request) => response,
+        };
+        #[cfg(not(target_os = "macos"))]
         let response = handle_request(&driver, &mut sessions, &generation, request).await;
         let shutdown = response
             .result

@@ -25,8 +25,8 @@ use cua_host::testing::FakeRelay;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// The share of one core the daemon may use while watched at idle. The bug this guards against used a
-/// quarter of a core; a fixed daemon measures 1.2% on a quiet Mac and 1.5 to 2.2% on a shared CI runner.
+/// The share of one core the daemon may use while watched at idle. The bug this guards against costs
+/// several times this budget; the headroom above a quiet machine is for a shared CI runner.
 const BUDGET: f64 = 0.03;
 /// How long the daemon is measured.
 const WINDOW: Duration = Duration::from_secs(60);

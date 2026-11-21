@@ -79,6 +79,7 @@ uuid.workspace = true
 # ConPTY for PTY processes (portable-pty is MIT; its errors are anyhow).
 anyhow = "1"
 portable-pty = "0.9"
+platform-windows = { path = "../../../cua-driver/rust/crates/platform-windows" }
 # The Cua Volume drive: GetLogicalDrives, GetDriveTypeW, WNetGetConnectionW.
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_NetworkManagement_WNet"] }
 

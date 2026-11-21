@@ -2424,6 +2424,7 @@ dependencies = [
  "native-tls",
  "notify",
  "percent-encoding",
+ "platform-windows",
  "portable-pty",
  "prost",
  "prost-types",

@@ -3,10 +3,10 @@
 
 //! Parity check for `launch_app`.
 //!
-//! Launches Notepad (safe target) in background, asserts:
-//! - Text starts with `"✅ Launched ... (pid <N>) in background."`
+//! Launches Notepad (safe target), asserts:
+//! - Text starts with `"✅ Launched ... (pid <N>)."`
 //! - structuredContent has `{pid, bundle_id, name, running, active, windows}`
-//! - `active: false` (Swift's background-launch invariant)
+//! - `active` reflects whether a returned window owns the foreground.
 //! - At least one entry in `windows` array OR `windows: []` if the window
 //!   didn't materialize within the 5×200ms retry budget.
 //!
@@ -85,10 +85,8 @@ fn main() {
 
     let header = text.lines().next().unwrap_or("");
     assert!(
-        header.starts_with("✅ Launched ")
-            && header.contains(" (pid ")
-            && header.ends_with("in background."),
-        "Header {header:?} doesn't match Swift format `✅ Launched <name> (pid X) in background.`"
+        header.starts_with("✅ Launched ") && header.contains(" (pid ") && header.ends_with(")."),
+        "Header {header:?} doesn't match `✅ Launched <name> (pid X).`"
     );
 
     let pid = v
@@ -122,10 +120,6 @@ fn main() {
         "pid must be captured (ShellExecuteEx pid or packaged-app pid)"
     );
     assert!(running, "running must be true");
-    assert!(
-        !active,
-        "active must be false (background launch — Swift's invariant)"
-    );
     // bundle_id is either null (plain Win32 launch — Win10 / unpackaged
     // Notepad) or an AUMID string (Win11 — `notepad` resolved through
     // shell:AppsFolder to the packaged Notepad). Both are correct.

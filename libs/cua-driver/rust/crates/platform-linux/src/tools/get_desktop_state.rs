@@ -267,16 +267,18 @@ impl Tool for GetDesktopStateTool {
                     ));
                     structured["distorted_outputs"] = json!(distorted.outputs);
                 }
-                if let Some(path) = written {
+                let mut summary = if let Some(path) = written {
                     structured["screenshot_file_path"] = json!(path);
-                    content.push(cua_driver_core::protocol::Content::text(format!(
+                    format!(
                         "✅ Desktop screenshot {shot_w}x{shot_h} written to {path} (screen {screen_w}x{screen_h}{frame_note}){window_lines}"
-                    )));
+                    )
                 } else {
-                    content.push(cua_driver_core::protocol::Content::text(format!(
+                    format!(
                         "✅ Desktop screenshot {shot_w}x{shot_h} (screen {screen_w}x{screen_h}{frame_note}){window_lines}"
-                    )));
-                }
+                    )
+                };
+                cua_driver_core::window_state_view::append_capture_id(&mut summary, &capture_id);
+                content.push(cua_driver_core::protocol::Content::text(summary));
                 ToolResult {
                     content,
                     is_error: None,

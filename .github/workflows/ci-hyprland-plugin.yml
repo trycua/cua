@@ -57,6 +57,8 @@ jobs:
         run: python3 -m unittest discover -s tests -p '*_test.py' -v
       - name: Check the requalification automation (unit and dry-run)
         run: python3 -m unittest discover -s requalify -p 'test_*.py' -v
+      - name: Check the Omarchy edge watch
+        run: python3 -m unittest discover -s edge-watch -p 'test_*.py' -v
       - name: Check pinned source-release contracts
         run: python3 -m unittest discover -s packaging/release -p 'test_*.py' -v
       # No real Hyprland headers, module load, or desktop certification in this job.

@@ -1,0 +1,108 @@
+name: "Omarchy: update request"
+
+# After a plugin release, prepares the issue that asks Omarchy to move its
+# cua-hyprland-plugin package to it (CUA-3108). NOTHING is posted until the
+# reviewer approves the `omarchy-outreach` environment in the Actions UI.
+#
+#   prepare   no environment: writes the issue text to the job summary and an
+#             artifact, so it can be read before approving
+#   post      environment omarchy-outreach (required reviewer: Francesco):
+#             creates the issue in the Omarchy repository with the secret
+#             OMARCHY_ISSUE_TOKEN. Skips if an issue for the same plugin
+#             version already exists.
+#
+# Settings Francesco owns: the omarchy-outreach environment with required
+# reviewer, the secret OMARCHY_ISSUE_TOKEN (a token that can open issues in the
+# Omarchy repository), and optionally the variable OMARCHY_ISSUE_REPO
+# (default basecamp/omarchy).
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Driver release tag whose plugin to announce, e.g. cua-driver-rs-v0.39.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  OMARCHY_REPO: ${{ vars.OMARCHY_ISSUE_REPO || 'basecamp/omarchy' }}
+
+jobs:
+  prepare:
+    if: >-
+      github.repository == 'trycua/cua' &&
+      (github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'cua-driver-rs-v'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      GH_TOKEN: ${{ github.token }}
+    outputs:
+      ready: ${{ steps.text.outputs.ready }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Write the issue text
+        id: text
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" --json assets --jq '.assets[].name' | grep -q '^cua-hyprland-plugin-'; then
+            echo "::notice::$TAG carries no plugin assets; nothing to announce."
+            exit 0
+          fi
+          mkdir -p outreach
+          python3 libs/cua-driver/hyprland-plugin/edge-watch/edge_watch.py outreach --tag "$TAG" \
+            --repo "$GITHUB_REPOSITORY" --title-out outreach/title.txt --body-out outreach/body.md >/dev/null
+          {
+            echo "### Omarchy update request (not posted)"
+            echo "Target: \`$OMARCHY_REPO\`. Approve the \`omarchy-outreach\` environment on the post job to open it."
+            echo
+            echo "**Title:** $(cat outreach/title.txt)"
+            echo
+            cat outreach/body.md
+          } >>"$GITHUB_STEP_SUMMARY"
+          echo "ready=true" >>"$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: steps.text.outputs.ready == 'true'
+        with:
+          name: omarchy-issue
+          path: outreach/
+          retention-days: 30
+
+  post:
+    needs: prepare
+    if: needs.prepare.outputs.ready == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: omarchy-outreach
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: omarchy-issue
+          path: outreach
+      - name: Open the issue in the Omarchy repository
+        env:
+          GH_TOKEN: ${{ secrets.OMARCHY_ISSUE_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::Secret OMARCHY_ISSUE_TOKEN is not set; nothing was posted."
+            exit 1
+          fi
+          title=$(cat outreach/title.txt)
+          found=$(gh issue list --repo "$OMARCHY_REPO" --state all --search "\"$title\" in:title" \
+                    --json number,title --jq ".[] | select(.title == \"$title\") | .number" | head -1)
+          if [ -n "$found" ]; then
+            echo "Already requested in $OMARCHY_REPO#$found; not posting again." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          url=$(gh issue create --repo "$OMARCHY_REPO" --title "$title" --body-file outreach/body.md)
+          echo "Posted: $url" | tee -a "$GITHUB_STEP_SUMMARY"

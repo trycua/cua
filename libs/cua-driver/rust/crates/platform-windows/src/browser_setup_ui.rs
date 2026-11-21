@@ -72,24 +72,33 @@ fn is_native_tab(node: &UiaNode) -> bool {
         && node.rect.is_some_and(|(l, t, r, b)| l < r && t < b)
 }
 
+/// Every native tab, with or without bounds: a tab in a collapsed group has
+/// none until the group expands, and it is still not the new tab.
 fn retain_native_tabs(nodes: &[UiaNode]) -> RetainedElements {
     RetainedElements(
         nodes
             .iter()
-            .filter(|node| is_native_tab(node))
+            .filter(|node| {
+                !node.in_web_content && node.control_type == "TabItem" && node.element_ptr != 0
+            })
             .map(|node| retain_element(node.element_ptr))
             .collect(),
     )
 }
 
 /// UIA identity (runtime id), which a tab keeps when it moves in the strip.
-fn same_element(uia: &IUIAutomation, left: usize, right: usize) -> bool {
+fn same_element(uia: &IUIAutomation, left: usize, right: usize) -> Result<bool, BrowserRefusal> {
     let left = unsafe { IUIAutomationElement::from_raw(left as *mut _) };
     let right = unsafe { IUIAutomationElement::from_raw(right as *mut _) };
-    let same = unsafe { uia.CompareElements(&left, &right) }.is_ok_and(|same| same.as_bool());
+    let same = unsafe { uia.CompareElements(&left, &right) };
     std::mem::forget(left);
     std::mem::forget(right);
-    same
+    same.map(|same| same.as_bool()).map_err(|error| {
+        BrowserRefusal::new(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            format!("could not establish a native tab's identity: {error}"),
+        )
+    })
 }
 
 /// Browser chrome only: tab strip, toolbar, omnibox, and the active tab's
@@ -381,7 +390,7 @@ fn confirm_setup_navigation(hwnd: u64) -> Result<(), BrowserRefusal> {
 /// not know, matched by identity rather than by position in the strip.
 fn exact_new_tab_close_button(
     nodes: &[UiaNode],
-    existed_before: impl Fn(&UiaNode) -> bool,
+    existed_before: impl Fn(&UiaNode) -> Result<bool, BrowserRefusal>,
 ) -> Result<Option<usize>, BrowserRefusal> {
     let has_rect = |node: &UiaNode| node.rect.is_some_and(|(l, t, r, b)| l < r && t < b);
     let mut created = Vec::new();
@@ -390,7 +399,7 @@ fn exact_new_tab_close_button(
             && !created
                 .iter()
                 .any(|seen: &usize| nodes[*seen].rect == node.rect)
-            && !existed_before(node)
+            && !existed_before(node)?
         {
             created.push(index);
         }
@@ -721,10 +730,12 @@ fn set_remote_debugging(
             })
             .and_then(|uia| {
                 exact_new_tab_close_button(&created, |node| {
-                    tabs_before
-                        .0
-                        .iter()
-                        .any(|before| same_element(&uia, *before, node.element_ptr))
+                    for before in &tabs_before.0 {
+                        if same_element(&uia, *before, node.element_ptr)? {
+                            return Ok(true);
+                        }
+                    }
+                    Ok(false)
                 })
             });
             drop(tabs_before);
@@ -1322,7 +1333,7 @@ mod tests {
             .iter()
             .position(|node| node.control_type == "TabItem")
             .unwrap();
-        let existing = |node: &UiaNode| node.element_ptr == 13;
+        let existing = |node: &UiaNode| Ok(node.element_ptr == 13);
         assert_eq!(exact_new_tab_close_button(&nodes, existing).unwrap(), None);
 
         // An extension can move tabs, so the new tab is the one whose identity
@@ -1358,6 +1369,20 @@ mod tests {
         nodes.splice(tab..tab, another);
         assert_eq!(
             exact_new_tab_close_button(&nodes, existing)
+                .unwrap_err()
+                .code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+
+        // A tab whose identity cannot be read is refused, never taken as new.
+        let unreadable = |_: &UiaNode| {
+            Err(BrowserRefusal::new(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "unreadable",
+            ))
+        };
+        assert_eq!(
+            exact_new_tab_close_button(&nodes, unreadable)
                 .unwrap_err()
                 .code,
             BrowserRefusalCode::BrowserWrongTargetRefused

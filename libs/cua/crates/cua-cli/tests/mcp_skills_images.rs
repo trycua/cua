@@ -250,6 +250,53 @@ async fn mcp_serves_sandbox_computer_and_skills_tools() {
     m.close().await;
 }
 
+/// `sandbox_view` on a sandbox whose viewer link is plain HTTP to a host other
+/// than loopback (a Lume VM's NAT address) hands out a loopback proxy to it
+/// instead, a secure context (#5734), and keeps that proxy for the session:
+/// past the call, and reused by the next one. `0.0.0.0` stands in for the NAT
+/// address; it reaches the mock's loopback listener on Unix only.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mcp_sandbox_view_hands_out_a_loopback_link_for_the_session() {
+    let env = fixtures::start_env(Some("t"), None).await;
+    let h = Home::new();
+    let port = env.url.rsplit(':').next().unwrap();
+    h.run(&[
+        "--embedded",
+        "sb",
+        "create",
+        "--on",
+        &format!("direct:http://0.0.0.0:{port}"),
+        "--token",
+        "t",
+        "--name",
+        "nat-box",
+    ])
+    .await
+    .ok();
+    let mut m = Mcp::start(&h, &["--embedded", "mcp"]);
+    let mut view = async || {
+        let r = m.tool("sandbox_view", json!({"name": "nat-box"})).await;
+        let url = text(&r)["viewer_url"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let link = url::Url::parse(&url).unwrap_or_else(|e| panic!("{e}: {r}"));
+        assert_eq!(link.host_str(), Some("127.0.0.1"), "{url}");
+        assert_eq!(link.path(), "/viewer/", "{url}");
+        assert!(
+            link.fragment().unwrap().starts_with("ticket=mock-viewer"),
+            "{url}"
+        );
+        link.origin().ascii_serialization()
+    };
+    let first = view().await;
+    // The proxy outlives the call.
+    assert_viewer_reaches(&first, &env).await;
+    assert_eq!(view().await, first, "a second call opened another proxy");
+    m.close().await;
+}
+
 /// Stops a daemon started by a test even when an assertion fails.
 struct DaemonGuard<'a>(&'a Home);
 
@@ -510,6 +557,83 @@ async fn skills_record_receives_captions_and_writes_a_skill() {
     assert_eq!(llm.requests().len(), 2);
     let o = h.run(&["--json", "skills", "ls"]).await;
     assert_eq!(o.json()[0]["steps"], 2);
+}
+
+/// `skills record --sandbox` opens the viewer of a sandbox whose link is plain
+/// HTTP to a host other than loopback (a Lume VM's NAT address) through a
+/// loopback proxy, a secure context (#5734), for as long as it records.
+/// `0.0.0.0` stands in for the NAT address; it reaches the mock's loopback
+/// listener on Unix only. The recording itself is covered above; ffmpeg is
+/// only probed before the viewer opens, so a stub stands in for it.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn skills_record_opens_a_non_loopback_sandbox_viewer_on_loopback() {
+    use std::os::unix::fs::PermissionsExt;
+    let env = fixtures::start_env(Some("t"), None).await;
+    let mut h = Home::new();
+    let bin = h.dir.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    std::fs::write(bin.join("ffmpeg"), "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(bin.join("ffmpeg"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    h.set("PATH", path);
+    let port = env.url.rsplit(':').next().unwrap();
+    h.run(&[
+        "--embedded",
+        "sb",
+        "create",
+        "--on",
+        &format!("direct:http://0.0.0.0:{port}"),
+        "--token",
+        "t",
+        "--name",
+        "nat-box",
+    ])
+    .await
+    .ok();
+    let mut child = h.spawn(&[
+        "--embedded",
+        "skills",
+        "record",
+        "--sandbox",
+        "nat-box",
+        "--api-key",
+        "test-key",
+        "--name",
+        "demo",
+        "--description",
+        "Click OK",
+    ]);
+    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut url = None;
+    while let Ok(Ok(Some(l))) =
+        tokio::time::timeout(Duration::from_secs(60), lines.next_line()).await
+    {
+        if let Some(u) = l.strip_prefix("Viewer: ") {
+            url = Some(u.to_string());
+            break;
+        }
+    }
+    let url = url.expect("no viewer link printed");
+    let link = url::Url::parse(&url).unwrap();
+    assert_eq!(link.host_str(), Some("127.0.0.1"), "{url}");
+    assert_eq!(link.path(), "/viewer/", "{url}");
+    assert!(
+        link.fragment().unwrap().starts_with("ticket=mock-viewer"),
+        "{url}"
+    );
+    assert!(
+        link.query_pairs()
+            .any(|(k, v)| k == "autorecord" && v == "true"),
+        "{url}"
+    );
+    // The proxy lives while it records.
+    assert_viewer_reaches(&link.origin().ascii_serialization(), &env).await;
+    assert!(child.try_wait().unwrap().is_none(), "record exited: {url}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

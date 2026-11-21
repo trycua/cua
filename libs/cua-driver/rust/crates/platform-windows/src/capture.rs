@@ -1,11 +1,24 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Window screenshot via PrintWindow + GDI BitBlt on Windows.
+//! Window screenshot via PrintWindow + GDI BitBlt on Windows, with a DXGI
+//! Desktop Duplication fast path for fullscreen Direct3D windows.
 //!
 //! `PW_RENDERFULLCONTENT` (0x2) renders the window contents even if it is
 //! occluded or off-screen for GDI-backed surfaces. The result is encoded as
 //! base64 PNG in memory.
+//!
+//! ## Fullscreen Direct3D fast path
+//!
+//! A fullscreen, flip-model Direct3D swap chain — the presentation mode used
+//! by Unity / Unreal games — is scanned out by the display controller instead
+//! of being composed into the window's DWM redirection surface. DWM keeps only
+//! the last composed copy, so PrintWindow (and a BitBlt from the window DC)
+//! can return a stale frame while the display keeps updating. Windows that
+//! fully cover a monitor are therefore captured from the real display image
+//! through DXGI Desktop Duplication first ([`crate::dxgi_duplication`]); the
+//! PrintWindow / WGC / BitBlt ladder below still covers every other window,
+//! and every failure of the duplication path.
 //!
 //! ## UWP / DirectComposition fallback (CUA-542)
 //!
@@ -608,6 +621,275 @@ pub fn screenshot_window(hwnd: u64) -> Result<(String, u32, u32)> {
     Ok((BASE64.encode(&png_bytes), w, h))
 }
 
+/// Capture a window that fully covers one monitor straight from the display
+/// output via DXGI Desktop Duplication.
+///
+/// A fullscreen, flip-model Direct3D swap chain (the presentation mode Unity /
+/// Unreal games use) is scanned out by the display controller instead of being
+/// composed into the window's DWM redirection surface. DWM keeps only an old
+/// composed copy, so PrintWindow — and a BitBlt from the window DC — can return
+/// a stale frame while the display keeps updating. Desktop Duplication reads
+/// the real display image.
+///
+/// The monitor image is cropped to the same DWM-inset frame PrintWindow
+/// returns, so `bitmap_to_screen` maps pixels on this screenshot exactly as it
+/// does for the other capture paths. The agent cursor overlay is excluded
+/// from the duplicated frame the same way it is for desktop captures.
+///
+/// Returns `None` unless, both before and after the capture, the window is
+/// shown and opaque at the same bounds, its frame lies on the one monitor it
+/// covers, and no other window overlaps that frame; and unless duplication
+/// succeeds with the overlay excluded. The caller then keeps the PrintWindow /
+/// WGC / BitBlt ladder as the fallback for every other case.
+unsafe fn screenshot_via_dxgi_duplication(
+    hwnd: HWND,
+) -> Option<(Vec<u8>, i32, i32, FrameGeometry)> {
+    use cursor_overlay::capture_exclusion::{capture_excluding_overlays, ResidualCheck};
+
+    if !window_shown_opaque(hwnd) {
+        return None;
+    }
+    let geometry = window_geometry(hwnd).ok()?;
+    let (window, dwm) = geometry;
+    let window_rect = bounds_rect((
+        window.left,
+        window.top,
+        window.left + window.width,
+        window.top + window.height,
+    ));
+    let frame = window.cropped(dwm);
+    let frame_rect = bounds_rect((
+        frame.left,
+        frame.top,
+        frame.left + frame.width,
+        frame.top + frame.height,
+    ));
+    // Check coverage before excluding the overlay: that costs two DWM frames,
+    // and most windows do not cover a monitor. The frame must also fit on that
+    // monitor, or the crop below cannot succeed.
+    let fits_monitor = monitor_bounds().into_iter().any(|monitor| {
+        let monitor = bounds_rect(monitor);
+        crate::dxgi_duplication::rect_covers(window_rect, monitor)
+            && crate::dxgi_duplication::rect_covers(monitor, frame_rect)
+    });
+    if !fits_monitor || window_above_overlaps(hwnd, frame) {
+        return None;
+    }
+    let captured = capture_excluding_overlays(&crate::overlay::CaptureExcluder, |hidden| {
+        // No overlay was hidden although one exists: exclusion is unsupported,
+        // so the frame would show the overlay over the target.
+        if hidden.is_none() && crate::overlay::overlay_window_exists() {
+            bail!("the agent cursor overlay could not be excluded");
+        }
+        crate::dxgi_duplication::capture_output_covered_by(window_rect)
+            .map(|captured| (captured, ResidualCheck::Clean))
+    });
+    let captured = match captured {
+        Ok((captured, _)) => captured,
+        Err(error) => {
+            tracing::debug!(
+                target: "cua-driver",
+                "screenshot: DXGI Desktop Duplication fast path unavailable: {error:#}"
+            );
+            return None;
+        }
+    };
+    let output = FrameGeometry::from_bounds((
+        captured.desktop_rect.left,
+        captured.desktop_rect.top,
+        captured.desktop_rect.right,
+        captured.desktop_rect.bottom,
+    ))?;
+    if output.width as u32 != captured.width || output.height as u32 != captured.height {
+        return None;
+    }
+    // Duplication waits for a present: in that time the target may have hidden,
+    // moved, or been covered, and the frame would show something else.
+    if !window_shown_opaque(hwnd)
+        || window_geometry(hwnd).ok() != Some(geometry)
+        || window_above_overlaps(hwnd, frame)
+    {
+        return None;
+    }
+    let pixels = crop_bgra(&captured.bgra, output, frame)?;
+    tracing::debug!(
+        target: "cua-driver",
+        "screenshot: captured window via DXGI Desktop Duplication ({}x{})",
+        frame.width,
+        frame.height
+    );
+    Some((pixels, frame.width, frame.height, frame))
+}
+
+/// Whether any visible window above `target` in z-order overlaps `frame`.
+///
+/// Desktop Duplication reads the monitor, not the window, so a covering window
+/// anywhere in the frame would be returned as the target's pixels. The
+/// five-point `target_is_obscured` probe misses a small window between its
+/// samples, so walk the whole z-order above the target instead. Windows of
+/// this process (the agent cursor overlay, excluded from the capture) do not
+/// count; a window whose cloak state cannot be read counts as visible. The
+/// z-order can change during the walk, so a window seen twice, or a step that
+/// fails rather than reaching the top, ends it as overlapping.
+unsafe fn window_above_overlaps(target: HWND, frame: FrameGeometry) -> bool {
+    use windows::Win32::Foundation::{SetLastError, RECT, WIN32_ERROR};
+    use windows::Win32::System::Threading::GetCurrentProcessId;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetAncestor, GetWindow, GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+        GA_ROOT, GW_HWNDPREV,
+    };
+
+    // `None` at the top of the z-order; `Some(None)` when the step failed.
+    let above = |window: HWND| -> Option<Option<HWND>> {
+        SetLastError(WIN32_ERROR(0));
+        match GetWindow(window, GW_HWNDPREV) {
+            Ok(next) if !next.0.is_null() => Some(Some(next)),
+            Ok(_) => None,
+            Err(error) if error.code().is_ok() => None,
+            Err(_) => Some(None),
+        }
+    };
+    let own_pid = GetCurrentProcessId();
+    let mut seen = std::collections::HashSet::new();
+    let mut next = above(GetAncestor(target, GA_ROOT));
+    while let Some(step) = next {
+        let Some(window) = step else {
+            return true;
+        };
+        if !seen.insert(window.0 as isize) {
+            return true;
+        }
+        next = above(window);
+        if !IsWindowVisible(window).as_bool() || IsIconic(window).as_bool() {
+            continue;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(window, Some(&mut pid));
+        if pid == own_pid {
+            continue;
+        }
+        if cloaked(window) == Some(true) {
+            continue;
+        }
+        let mut rect = RECT::default();
+        if GetWindowRect(window, &mut rect).is_err()
+            || overlaps(frame, (rect.left, rect.top, rect.right, rect.bottom))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether the monitor shows `window`'s own pixels across its whole frame.
+///
+/// A hidden or cloaked window keeps its bounds while the monitor shows
+/// something else there. A layered window, a window with a custom region, one
+/// without a redirection bitmap (a DirectComposition surface), or one whose
+/// corners DWM may round can be partly transparent, so the monitor shows what
+/// lies behind it.
+unsafe fn window_shown_opaque(window: HWND) -> bool {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::Graphics::Gdi::{GetWindowRgnBox, RGN_ERROR};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, IsIconic, IsWindowVisible, GWL_EXSTYLE, WS_EX_LAYERED,
+        WS_EX_NOREDIRECTIONBITMAP,
+    };
+
+    let see_through = (WS_EX_LAYERED.0 | WS_EX_NOREDIRECTIONBITMAP.0) as isize;
+    let mut region = RECT::default();
+    IsWindowVisible(window).as_bool()
+        && !IsIconic(window).as_bool()
+        && cloaked(window) == Some(false)
+        && (GetWindowLongPtrW(window, GWL_EXSTYLE) & see_through) == 0
+        && GetWindowRgnBox(window, &mut region) == RGN_ERROR
+        && !corners_may_round(window)
+}
+
+/// Whether DWM may round `window`'s corners. Windows 11 rounds framed windows
+/// that are not maximized unless they opt out, and any window that opts in.
+/// Earlier versions reject the corner preference and round nothing, but a
+/// framed window still counts as rounded there, which only costs a fallback.
+unsafe fn corners_may_round(window: HWND) -> bool {
+    use windows::Win32::Graphics::Dwm::{
+        DwmGetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DEFAULT, DWMWCP_DONOTROUND,
+        DWM_WINDOW_CORNER_PREFERENCE,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, IsZoomed, GWL_STYLE, WS_CAPTION, WS_THICKFRAME,
+    };
+
+    let mut preference = DWMWCP_DEFAULT;
+    let preference = DwmGetWindowAttribute(
+        window,
+        DWMWA_WINDOW_CORNER_PREFERENCE,
+        &mut preference as *mut DWM_WINDOW_CORNER_PREFERENCE as *mut _,
+        std::mem::size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
+    )
+    .map(|_| preference)
+    .unwrap_or(DWMWCP_DEFAULT);
+    let framed =
+        (GetWindowLongPtrW(window, GWL_STYLE) & (WS_CAPTION.0 | WS_THICKFRAME.0) as isize) != 0;
+    match preference {
+        DWMWCP_DEFAULT => framed && !IsZoomed(window).as_bool(),
+        DWMWCP_DONOTROUND => false,
+        _ => true,
+    }
+}
+
+/// DWM's cloak state for `window`, or `None` when it cannot be read.
+unsafe fn cloaked(window: HWND) -> Option<bool> {
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+
+    let mut cloaked = 0u32;
+    DwmGetWindowAttribute(
+        window,
+        DWMWA_CLOAKED,
+        &mut cloaked as *mut u32 as *mut _,
+        std::mem::size_of::<u32>() as u32,
+    )
+    .ok()
+    .map(|_| cloaked != 0)
+}
+
+/// Whether `bounds` shares at least one pixel with `frame`.
+fn overlaps(frame: FrameGeometry, (left, top, right, bottom): Bounds) -> bool {
+    let frame_right = i64::from(frame.left) + i64::from(frame.width);
+    let frame_bottom = i64::from(frame.top) + i64::from(frame.height);
+    i64::from(left).max(i64::from(frame.left)) < i64::from(right).min(frame_right)
+        && i64::from(top).max(i64::from(frame.top)) < i64::from(bottom).min(frame_bottom)
+}
+
+fn bounds_rect((left, top, right, bottom): Bounds) -> windows::Win32::Foundation::RECT {
+    windows::Win32::Foundation::RECT {
+        left,
+        top,
+        right,
+        bottom,
+    }
+}
+
+/// Copy the `frame` region out of tightly packed BGRA `pixels` that cover
+/// `source`. `None` when `frame` is not inside `source` or the buffer does not
+/// match `source`'s size.
+fn crop_bgra(pixels: &[u8], source: FrameGeometry, frame: FrameGeometry) -> Option<Vec<u8>> {
+    let x = usize::try_from(i64::from(frame.left) - i64::from(source.left)).ok()?;
+    let y = usize::try_from(i64::from(frame.top) - i64::from(source.top)).ok()?;
+    let (source_w, source_h) = (source.width as usize, source.height as usize);
+    let (frame_w, frame_h) = (frame.width as usize, frame.height as usize);
+    if x + frame_w > source_w || y + frame_h > source_h || pixels.len() != source_w * source_h * 4 {
+        return None;
+    }
+    let stride = source_w * 4;
+    let crop_stride = frame_w * 4;
+    let mut cropped = Vec::with_capacity(crop_stride * frame_h);
+    for row in y..y + frame_h {
+        let start = row * stride + x * 4;
+        cropped.extend_from_slice(&pixels[start..start + crop_stride]);
+    }
+    Some(cropped)
+}
+
 unsafe fn screenshot_window_bytes_with_occlusion_unsafe(
     hwnd: u64,
 ) -> Result<(Vec<u8>, bool, Option<FrameGeometry>)> {
@@ -639,6 +921,19 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(
              BitBlt fallback both return an all-black bitmap for iconic \
              windows."
         );
+    }
+
+    // A fullscreen, flip-model Direct3D window (games) bypasses DWM
+    // composition: it is scanned out directly by the display controller, so
+    // DWM's copy of the window stays frozen at the last composed frame.
+    // PrintWindow and a BitBlt from the window DC then return that stale frame
+    // while the screen keeps updating. Capture the real display image first.
+    if let Some((pixels, w, h, geometry)) = screenshot_via_dxgi_duplication(hwnd) {
+        return Ok((
+            cua_driver_core::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32)?,
+            false,
+            Some(geometry),
+        ));
     }
 
     // CUA-542 routing: for known XAML / WinUI3 / UWP targets, the
@@ -893,6 +1188,20 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(
 // `cua_driver_core::image_utils::*` so all three platform crates call the
 // same code. See `CUA_DRIVER_RS_DEDUP_AUDIT.md` for the full audit.
 
+/// Whether the foreground window is not minimized and covers `rect`.
+unsafe fn foreground_covers(rect: windows::Win32::Foundation::RECT) -> bool {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect, IsIconic};
+
+    let foreground = GetForegroundWindow();
+    if foreground.0.is_null() || IsIconic(foreground).as_bool() {
+        return false;
+    }
+    let mut window = RECT::default();
+    GetWindowRect(foreground, &mut window).is_ok()
+        && crate::dxgi_duplication::rect_covers(window, rect)
+}
+
 /// Capture the primary display (full screen), returning raw PNG bytes.
 pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
     unsafe {
@@ -905,6 +1214,25 @@ pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
         let h = GetSystemMetrics(SM_CYSCREEN);
         if w <= 0 || h <= 0 {
             bail!("Could not get screen metrics");
+        }
+        // Fullscreen flip-model Direct3D content is scanned out without
+        // passing through DWM's redirection surface, so the GDI BitBlt below
+        // can return a stale desktop image. When a foreground window covers
+        // the primary monitor, prefer the real display image via DXGI Desktop
+        // Duplication and keep BitBlt as the fallback. Only then: a fresh
+        // duplication waits for the next present, which an idle desktop may
+        // never send.
+        let primary_rect = bounds_rect((0, 0, w, h));
+        if foreground_covers(primary_rect) {
+            if let Ok(captured) = crate::dxgi_duplication::capture_output_covered_by(primary_rect) {
+                if captured.width as i32 == w && captured.height as i32 == h {
+                    return cua_driver_core::image_utils::encode_bgra_to_png(
+                        &captured.bgra,
+                        captured.width,
+                        captured.height,
+                    );
+                }
+            }
         }
         let screen_dc = GetDC(HWND::default());
         if screen_dc.is_invalid() {
@@ -1023,7 +1351,47 @@ pub fn png_dimensions_pub(data: &[u8]) -> Result<(u32, u32)> {
 
 #[cfg(test)]
 mod wgc_validation_tests {
-    use super::{monitors_cover, normalize_wgc_frame, validate_wgc_frame, FrameGeometry};
+    use super::{
+        crop_bgra, monitors_cover, normalize_wgc_frame, overlaps, validate_wgc_frame, FrameGeometry,
+    };
+
+    #[test]
+    fn any_shared_pixel_counts_as_overlap() {
+        let frame = FrameGeometry::from_bounds((1, 1, 1919, 1079)).unwrap();
+        // A toast between the occlusion probe's five sample points.
+        assert!(overlaps(frame, (1500, 900, 1880, 1000)));
+        assert!(overlaps(frame, (1918, 1078, 1930, 1090)));
+        assert!(!overlaps(frame, (1919, 0, 2000, 1080)));
+        assert!(!overlaps(frame, (0, 1079, 1920, 1120)));
+        assert!(!overlaps(frame, (500, 500, 500, 900)));
+    }
+
+    #[test]
+    fn duplicated_monitor_crops_to_the_window_capture_frame() {
+        // A borderless fullscreen window on a 4x3 secondary monitor: the
+        // capture frame is the DWM bounds inset by one pixel, so the crop
+        // starts one pixel into the monitor image.
+        let output = FrameGeometry::from_bounds((-4, 0, 0, 3)).unwrap();
+        let pixels: Vec<u8> = (0..12u8).flat_map(|i| [i, i, i, 255]).collect();
+        let frame = output.cropped(Some((-4, 0, 0, 3)));
+        assert_eq!(frame, FrameGeometry::from_bounds((-3, 1, -1, 2)).unwrap());
+        assert_eq!(
+            crop_bgra(&pixels, output, frame),
+            Some(vec![5, 5, 5, 255, 6, 6, 6, 255])
+        );
+        assert_eq!(crop_bgra(&pixels, output, output), Some(pixels.clone()));
+    }
+
+    #[test]
+    fn crop_outside_the_duplicated_monitor_is_refused() {
+        let output = FrameGeometry::from_bounds((0, 0, 4, 3)).unwrap();
+        let pixels = vec![0u8; 4 * 3 * 4];
+        for frame in [(-1, 0, 3, 3), (0, 0, 5, 3), (1, 1, 4, 4)] {
+            let frame = FrameGeometry::from_bounds(frame).unwrap();
+            assert_eq!(crop_bgra(&pixels, output, frame), None);
+        }
+        assert_eq!(crop_bgra(&pixels[4..], output, output), None);
+    }
 
     #[test]
     fn screen_region_must_lie_on_real_monitors() {

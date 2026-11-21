@@ -1653,6 +1653,11 @@ impl ZOrderEnforcer for WinZOrderEnforcer {
 
 // ── Capture exclusion (Windows adapter of cursor_overlay::capture_exclusion) ─
 
+/// Whether the agent cursor overlay window exists.
+pub(crate) fn overlay_window_exists() -> bool {
+    OVERLAY_HWND.load(std::sync::atomic::Ordering::Acquire) != 0
+}
+
 /// Name reported in `agent_overlay_capture.method` for the Windows mechanism.
 pub const CAPTURE_EXCLUSION_METHOD: &str = "win32_display_affinity_exclude_from_capture";
 

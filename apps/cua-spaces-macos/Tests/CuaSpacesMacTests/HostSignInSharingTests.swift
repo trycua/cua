@@ -45,6 +45,21 @@ struct HostSignInSharingTests {
         #expect(panel.actions.map(\.id) == [.stopSharing, .remove])
     }
 
+    /// CUA-3746: Cua not having started when the check runs (the SDK failed
+    /// to come up after a wake or an update) is not "signed out". It must not
+    /// pause sharing, which takes this Mac off the relay.
+    @Test func cuaNotStartedIsNotSignedOut() async {
+        let host = FixtureHost()
+        let (m, _, _) = await sharing(host)
+        let gate = LiveGate<LiveServices>()
+        gate.resolve(LiveServices(backend: FixtureSpacesBackend(rows: []), live: nil, startError: "did not start"))
+        m.accountToken = { force in try await LiveAccountToken.read(gate: gate, force: force) }
+        m.currentAccount = { nil }
+        await m.reconcileAccount()
+        #expect(!host.calls.contains("pause"))
+        #expect(host.current.sharing && !host.current.pausedSignedOut)
+    }
+
     @Test func signedOutPausesSharingAndSaysSo() async {
         let host = FixtureHost()
         let (m, account, who) = await sharing(host)

@@ -86,4 +86,39 @@ struct HelperMoveTests {
         #expect(host.calls.contains("migrate:false"))
         #expect(m.helperMove == nil)
     }
+
+    /// CUA-3746: a helper that should run but does not is started again with
+    /// backoff, not three times and never again.
+    @Test func aStoppedHelperIsStartedAgainWithBackoff() async {
+        var s = FixtureHost.unconfigured
+        s.configured = true
+        s.mode = "relay"
+        s.machineId = "0123abcd4567"
+        s.sharing = true
+        s.serviceInstalled = true
+        s.serviceRunning = false
+        s.serviceKind = "app-helper"
+        s.helperAvailable = true
+        let host = FixtureHost(status: s)
+        let m = HostModel(host: host)
+        var now = Date(timeIntervalSince1970: 1_800_000_000)
+        m.repairClock = { now }
+        func starts() -> Int { host.calls.filter { $0 == "start" }.count }
+        await m.refresh()
+        #expect(starts() == 1)
+        await m.refresh()
+        #expect(starts() == 1, "inside the backoff")
+        now.addTimeInterval(16)
+        await m.refresh()
+        #expect(starts() == 2)
+        // Many failures later it still tries, every five minutes.
+        for _ in 0..<10 { now.addTimeInterval(301); await m.refresh() }
+        #expect(starts() == 12)
+        // Running: starts over.
+        host.setServiceRunning(true)
+        await m.refresh()
+        host.setServiceRunning(false)
+        await m.refresh()
+        #expect(starts() == 13)
+    }
 }

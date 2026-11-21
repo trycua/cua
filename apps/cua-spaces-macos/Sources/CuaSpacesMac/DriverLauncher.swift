@@ -55,12 +55,13 @@ enum DriverLauncher {
                 switch verdict {
                 case .keep: return false
                 case .stop: NSLog("cua-spaces driver: the app's files are gone; stopping")
+                case .retryLater: NSLog("cua-spaces driver: the app's files are gone; stopping, launchd tries again")
                 case .restart: NSLog("cua-spaces driver: the app was updated; restarting onto the new build")
                 }
                 return true
             }
             return false
         }
-        exit(verdict == .restart ? HelperService.restartExitCode : 0)
+        exit(verdict == .restart || verdict == .retryLater ? HelperService.restartExitCode : 0)
     }
 }

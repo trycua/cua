@@ -444,6 +444,12 @@ pub fn element_enabled_observed(element: &cache::CachedElement) -> Result<Option
     native::element_enabled_ref(object_ref)
 }
 
+/// [`native::field_takes_keys_ref`] on the exact object the token's snapshot
+/// observed. Never re-walks.
+pub fn token_field_takes_keys(token: &TokenElement) -> Result<bool> {
+    native::field_takes_keys_ref(token.object()?)
+}
+
 /// Give an indexed AT-SPI element keyboard focus without activating its window.
 pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
     if let Some(observed) = cache::cached_element(pid, None, idx) {
@@ -775,6 +781,14 @@ pub fn focus_token(pid: u32, token: &TokenElement) -> Result<bool> {
     token.act(native::focus_element_ref, |idx| {
         native::focus_element(pid, idx)
     })
+}
+
+/// [`focus_token`] accepted on the application's reply, without waiting for
+/// the element to report `Focused`. See [`native::request_focus_ref`]. Only
+/// the object the token's snapshot saw is focused, never one re-resolved by
+/// index.
+pub fn request_focus_token(token: &TokenElement) -> Result<bool> {
+    native::request_focus_ref(token.object()?)
 }
 
 /// Type into the token's editable.

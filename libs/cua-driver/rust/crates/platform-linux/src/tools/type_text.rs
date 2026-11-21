@@ -12,8 +12,9 @@ use serde_json::{json, Value};
 use std::{fs, sync::Arc};
 
 use super::impl_::{
-    announce_keyboard_target, atspi_text_outcome_unknown, atspi_up, background_keyboard_refusal,
-    background_virtual_text, coordinate_frame_is_desktop, coordinate_frame_schema, focus_by_pixel,
+    announce_keyboard_target, atspi_outcome_unknown, atspi_text_outcome_unknown, atspi_up,
+    attach_focus_guard, background_keyboard_refusal, background_virtual_text,
+    coordinate_frame_is_desktop, coordinate_frame_schema, focus_by_pixel,
     focus_hyprland_foreground, focus_nested_inject_target, foreground_hyprland_refusal,
     foreground_structured, hyprland_foreground, hyprland_input_result, inject_terminal_input,
     input_error_result, invalid_pointer_arguments, is_chromium_embedder, is_popup_keyboard_grab,
@@ -812,9 +813,16 @@ impl Tool for TypeTextTool {
                     if !delivery.is_foreground()
                         && error.is::<crate::atspi::native::QtLineEditSetsText>() =>
                 {
-                    return crate::input::delivery::background_unavailable_error(
-                        crate::input::delivery::BackgroundUnavailable::QtLineEditSetsText,
-                    );
+                    return qt_line_edit_background(
+                        resolve_cursor_key(&args),
+                        pid,
+                        xid,
+                        element,
+                        &text,
+                        pacing,
+                        delivery,
+                    )
+                    .await;
                 }
                 Ok(Err(_)) | Err(_)
                     if !delivery.is_foreground() && crate::wayland::is_wayland() =>
@@ -1263,6 +1271,20 @@ fn type_text_mpx_result(
     text_len: usize,
     report: crate::input::KeyboardDeliveryReport,
 ) -> ToolResult {
+    keys_result(
+        text_len,
+        report,
+        "not verified — confirm with a screenshot.",
+    )
+}
+
+/// [`type_text_mpx_result`] with `verification` as the sentence that says
+/// whether the text was read back.
+fn keys_result(
+    text_len: usize,
+    report: crate::input::KeyboardDeliveryReport,
+    verification: &str,
+) -> ToolResult {
     let mut structured = type_text_structured(report.path, text_len, false);
     for (key, value) in report.to_json().as_object().into_iter().flatten() {
         structured[key] = value.clone();
@@ -1274,8 +1296,7 @@ fn type_text_mpx_result(
         "Partial typing result".to_owned()
     };
     let mut text = format!(
-        "{outcome} as real key events {} (delivery_mode=background); \
-         not verified — confirm with a screenshot.",
+        "{outcome} as real key events {} (delivery_mode=background); {verification}",
         report.route_phrase()
     );
     if !report.skipped_characters.is_empty() {
@@ -1301,6 +1322,328 @@ fn type_text_mpx_result(
     result.with_structured(structured)
 }
 
+/// Background `type_text` into a Qt single-line field (trycua/cua#7327): key
+/// events to the field's window after `GrabFocus` gives it the window's
+/// focus, so the field's validator and input mask apply; the virtual master
+/// keyboard where the host has one, otherwise `XSendEvent`. The result
+/// grades the field's value read back after the keys.
+async fn qt_line_edit_background(
+    cursor_id: String,
+    pid: u32,
+    xid: u64,
+    element: crate::atspi::TokenElement,
+    text: &str,
+    pacing: crate::input::TypePacing,
+    delivery: crate::input::delivery::DeliveryMode,
+) -> ToolResult {
+    if crate::wayland::is_wayland() {
+        return crate::input::delivery::background_unavailable_error(
+            crate::input::delivery::BackgroundUnavailable::QtLineEditSetsText,
+        );
+    }
+    let agent_keyboard = crate::input::real_keyboard_input_available();
+    let text_len = text.chars().count();
+    let idx = element.index;
+    let role = element.observed.role.to_ascii_lowercase();
+    let numeric = role.contains("spin");
+    let before = if role.contains("password") {
+        None
+    } else {
+        bounded_readback(element.clone(), None, text, numeric).await
+    };
+    let typed = text.to_owned();
+    let target = element.clone();
+    let delivered = spawn_blocking_bounded(
+        "background type_text",
+        text_typing_budget(text) + paced_extra(text_len, pacing),
+        move || {
+            crate::input::focus_guard::guarded(Some(pid), || {
+                match qt_key_blocker(pid, xid, &target) {
+                    Ok(None) => {}
+                    Ok(Some(reason)) => return Err(QtKeysBlocked(reason).into()),
+                    Err(error) => {
+                        return Err(QtFieldNotFocused(format!(
+                            "reading the Qt field's state: {error:#}"
+                        ))
+                        .into())
+                    }
+                }
+                match crate::atspi::request_focus_token(&target) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        return Err(QtFieldNotFocused(format!(
+                            "AT-SPI Component.GrabFocus returned false for element {}",
+                            target.index
+                        ))
+                        .into())
+                    }
+                    Err(error) => return Err(QtFieldNotFocused(format!("{error:#}")).into()),
+                }
+                Ok(if agent_keyboard {
+                    crate::input::send_virtual_keyboard_text_paced(&cursor_id, xid, &typed, pacing)
+                        .map(Some)
+                } else {
+                    crate::input::send_type_text_with_delay(xid, &typed, pacing.delay_ms)
+                        .map(|()| None)
+                })
+            })
+        },
+    )
+    .await;
+    let transport = if agent_keyboard {
+        cua_driver_core::action_record::ActionTransport::LinuxX11MpxUinput
+    } else {
+        cua_driver_core::action_record::ActionTransport::LinuxXSendEvent
+    };
+    let unknown = |error: &anyhow::Error| {
+        atspi_outcome_unknown(
+            format!(
+                "type_text: key events may have been sent to the field, but {error}; whether \
+                 the text landed is unknown. Read the field back (get_window_state) before \
+                 typing again."
+            ),
+            transport,
+            delivery,
+            Some(error.to_string()),
+        )
+    };
+    let (sent, guard) = match delivered {
+        Ok(Ok(sent)) => sent,
+        Ok(Err(error)) if error.is::<QtFieldNotFocused>() => return input_error_result(error),
+        Ok(Err(error)) if error.is::<QtKeysBlocked>() => {
+            let reason = error.downcast_ref::<QtKeysBlocked>().unwrap().0;
+            return crate::input::delivery::background_unavailable_error(reason);
+        }
+        Ok(Err(error)) => return unknown(&error),
+        Err(error) => return unknown(&anyhow::anyhow!("the typing task ended: {error}")),
+    };
+    let report = match sent {
+        Ok(report) => report,
+        Err(error) if crate::input::is_uinput_unavailable(&error) => {
+            return background_keyboard_refusal(atspi_up());
+        }
+        Err(error) => return unknown(&error),
+    };
+    let after = match &before {
+        Some(before) => bounded_readback(element, Some(before.clone()), text, numeric).await,
+        None => None,
+    };
+    let grade = grade_qt_readback(idx, text, numeric, before.as_deref(), after.as_deref());
+    let verification = grade.as_ref().map_or(
+        "not verified — confirm with a screenshot.".to_owned(),
+        |grade| grade.note.clone(),
+    );
+    let result = match report {
+        Some(mut report) => {
+            report.focus_guard = guard;
+            keys_result(text_len, report, &verification)
+        }
+        None => {
+            let mut structured = type_text_structured("x11_xsendevent", text_len, false);
+            structured["delivery_mode"] = json!("background");
+            attach_focus_guard(
+                ToolResult::text(format!(
+                    "Typed {text_len} character(s) as XSendEvent key events to window {xid} \
+                     (path=x11_xsendevent, delivery_mode=background); {verification}"
+                ))
+                .with_structured(structured),
+                guard.as_ref(),
+            )
+        }
+    };
+    apply_qt_grade(result, grade)
+}
+
+/// Why keys sent to the field's window would not reach the field, read before
+/// any key: the field is not showing, enabled and writable, or the
+/// application has an open popup (an override-redirect window: menu, combo
+/// box list) or a modal dialog.
+fn qt_key_blocker(
+    pid: u32,
+    xid: u64,
+    element: &crate::atspi::TokenElement,
+) -> anyhow::Result<Option<crate::input::delivery::BackgroundUnavailable>> {
+    use crate::input::delivery::BackgroundUnavailable;
+    if !crate::atspi::token_field_takes_keys(element)? {
+        return Ok(Some(BackgroundUnavailable::QtFieldTakesNoKeys));
+    }
+    let modal = || {
+        crate::x11::list_windows(Some(pid)).iter().any(|window| {
+            window.xid != xid && window.is_on_screen && crate::x11::window_is_modal(window.xid)
+        })
+    };
+    if crate::input::popup_of_pid(pid).is_some() || modal() {
+        return Ok(Some(BackgroundUnavailable::QtWindowBlocked));
+    }
+    Ok(None)
+}
+
+/// Longest wait for the field to show the typed text before it is graded.
+const QT_READBACK_SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
+/// Bound on one readback, so a slow accessibility bus cannot turn delivered
+/// keys into a timeout.
+const QT_READBACK_BUDGET: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// The field's value: at once without `before`, otherwise once it holds
+/// `text` inserted into `before` or after [`QT_READBACK_SETTLE`]. `None` when
+/// the field cannot be read within [`QT_READBACK_BUDGET`].
+async fn bounded_readback(
+    element: crate::atspi::TokenElement,
+    before: Option<String>,
+    text: &str,
+    numeric: bool,
+) -> Option<String> {
+    let text = text.to_owned();
+    let read = tokio::task::spawn_blocking(move || {
+        let read = || crate::atspi::read_value_token(&element);
+        let Some(before) = before else {
+            return read();
+        };
+        let deadline = std::time::Instant::now() + QT_READBACK_SETTLE;
+        loop {
+            let seen = read();
+            let landed = seen
+                .as_deref()
+                .is_some_and(|seen| holds_insertion(&before, seen, &text, numeric));
+            if landed || std::time::Instant::now() >= deadline {
+                return seen;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    });
+    tokio::time::timeout(QT_READBACK_BUDGET, read)
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .flatten()
+}
+
+/// `after` differs from `before` and is `before` with `text` inserted at one
+/// position; for a spin box the same whole number counts (it reads `0` +
+/// typed `12` back as `12`). Text with a control key (Tab, Return) is
+/// never confirmed from one field's value.
+fn holds_insertion(before: &str, after: &str, text: &str, numeric: bool) -> bool {
+    if before == after || text.chars().any(char::is_control) {
+        return false;
+    }
+    let after_number = after.trim().parse::<f64>().ok();
+    let integer_match = |typed: &str| {
+        typed
+            .trim()
+            .parse::<i64>()
+            .is_ok_and(|n| after_number == Some(n as f64))
+    };
+    before
+        .char_indices()
+        .map(|(at, _)| at)
+        .chain([before.len()])
+        .any(|at| {
+            let typed = format!("{}{text}{}", &before[..at], &before[at..]);
+            typed == after || (numeric && integer_match(&typed))
+        })
+}
+
+/// AT-SPI did not give the field the focus, or its state could not be read;
+/// no key was sent.
+#[derive(Debug)]
+struct QtFieldNotFocused(String);
+impl std::fmt::Display for QtFieldNotFocused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for QtFieldNotFocused {}
+
+/// The field or the app cannot take the keys; no key was sent.
+#[derive(Debug)]
+struct QtKeysBlocked(crate::input::delivery::BackgroundUnavailable);
+impl std::fmt::Display for QtKeysBlocked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
+impl std::error::Error for QtKeysBlocked {}
+
+struct QtGrade {
+    effect: &'static str,
+    readback: String,
+    note: String,
+    idx: usize,
+}
+
+/// Grade keys typed into a field from its value before and after: `confirmed`
+/// when it is the old value with the text inserted, `suspected_noop` when it
+/// did not change, `unverifiable` when it changed to something else. `None`
+/// without both reads.
+fn grade_qt_readback(
+    idx: usize,
+    text: &str,
+    numeric: bool,
+    before: Option<&str>,
+    after: Option<&str>,
+) -> Option<QtGrade> {
+    let (Some(before), Some(after)) = (before, after) else {
+        return None;
+    };
+    if text.is_empty() {
+        return None;
+    }
+    let readback: String = after.chars().take(200).collect();
+    let (effect, note) = if holds_insertion(before, after, text, numeric) {
+        (
+            "confirmed",
+            format!("element [{idx}] reads back '{readback}'."),
+        )
+    } else if before == after {
+        (
+            "suspected_noop",
+            format!(
+                "element [{idx}] still reads '{readback}': the field did not take the typed \
+                 text (its validator or input mask rejected it, or the keys went elsewhere)."
+            ),
+        )
+    } else {
+        (
+            "unverifiable",
+            format!(
+                "element [{idx}] now reads '{readback}', which is not its earlier value with \
+                 the typed text inserted."
+            ),
+        )
+    };
+    Some(QtGrade {
+        effect,
+        readback,
+        note,
+        idx,
+    })
+}
+
+fn apply_qt_grade(mut result: ToolResult, grade: Option<QtGrade>) -> ToolResult {
+    let Some(grade) = grade else {
+        return result;
+    };
+    if result.is_error == Some(true) {
+        return result;
+    }
+    if let Some(structured) = result.structured_content.as_mut() {
+        structured["effect"] = json!(grade.effect);
+        structured["verified"] = json!(grade.effect == "confirmed");
+        structured["readback"] = json!(grade.readback);
+        if grade.effect == "confirmed" {
+            let item = json!({
+                "kind": "value_readback",
+                "detail": format!("element [{}] reads back the typed text", grade.idx),
+            });
+            match structured["evidence"].as_array_mut() {
+                Some(evidence) => evidence.push(item),
+                None => structured["evidence"] = json!([item]),
+            }
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 #[test]
 fn mpx_type_text_with_skipped_characters_is_an_error() {
@@ -1323,4 +1666,68 @@ fn mpx_type_text_with_skipped_characters_is_an_error() {
         skipped.structured_content.unwrap()["skipped_characters"],
         "約"
     );
+}
+
+#[cfg(test)]
+#[test]
+fn qt_line_edit_keys_are_graded_by_the_field_value() {
+    let report = || crate::input::KeyboardDeliveryReport {
+        virtual_focus_held: true,
+        core_focus_unchanged: true,
+        delivery_confirmed: true,
+        key_events: 6,
+        skipped_characters: Vec::new(),
+        focus_guard: None,
+        released_stuck: Vec::new(),
+        path: crate::input::MPX_UINPUT_PATH,
+        grab_popup: None,
+    };
+    let grade_as = |numeric: bool, text: &str, before: Option<&str>, after: Option<&str>| {
+        let grade = grade_qt_readback(4, text, numeric, before, after);
+        let note = grade
+            .as_ref()
+            .map_or("unread".to_owned(), |g| g.note.clone());
+        let result = apply_qt_grade(keys_result(3, report(), &note), grade);
+        let record = cua_driver_core::action_record::ActionExecutionRecord::from_legacy(
+            "type_text",
+            &json!({"delivery_mode": "background"}),
+            result.structured_content.as_ref().unwrap(),
+        )
+        .expect("type_text result normalizes to an action record");
+        let public = record.public_result().expect("publishable action result");
+        (serde_json::to_value(public.effect).unwrap(), result)
+    };
+    let graded = |text: &str, before: Option<&str>, after: Option<&str>| {
+        grade_as(false, text, before, after)
+    };
+
+    let (effect, typed) = graded("123", Some(""), Some("123"));
+    assert_eq!(effect, "confirmed");
+    assert!(format!("{:?}", typed.content).contains("element [4] reads back '123'"));
+    assert_eq!(grade_as(true, "12", Some("0"), Some("12")).0, "confirmed");
+    assert_eq!(graded("12", Some("0"), Some("12")).0, "unverifiable");
+    assert_eq!(graded("0", Some("1"), Some("1")).0, "suspected_noop");
+    assert_eq!(
+        grade_as(true, "0", Some("1"), Some("1")).0,
+        "suspected_noop"
+    );
+    assert_eq!(
+        grade_as(true, "20", Some("1.0"), Some("1.02")).0,
+        "unverifiable"
+    );
+
+    let (effect, filtered) = graded("1a2", Some(""), Some("12"));
+    assert_eq!(effect, "unverifiable");
+    assert_eq!(filtered.structured_content.unwrap()["readback"], "12");
+    assert_eq!(graded("12", Some("121"), Some("1211")).0, "unverifiable");
+    assert_eq!(graded("ab", Some("b"), Some("ab")).0, "unverifiable");
+    assert_eq!(graded("12\t", Some(""), Some("12")).0, "unverifiable");
+    assert_eq!(graded("xy", Some("ab"), Some("axyb")).0, "confirmed");
+
+    let (effect, rejected) = graded("AB", Some("7"), Some("7"));
+    assert_eq!(effect, "suspected_noop");
+    assert!(format!("{:?}", rejected.content).contains("still reads '7'"));
+
+    assert_eq!(graded("12", None, Some("12")).0, "unverifiable");
+    assert_eq!(graded("12", Some(""), None).0, "unverifiable");
 }

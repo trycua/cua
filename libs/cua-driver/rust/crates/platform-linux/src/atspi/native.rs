@@ -4815,6 +4815,30 @@ pub fn element_showing_ref(object_ref: &ObjectRef) -> Result<bool> {
     )
 }
 
+/// Whether a snapshot-cached field would take typed keys: its state set
+/// carries `Showing`, `Visible`, `Focusable` and enabled, and not `ReadOnly`
+/// (Qt marks a spin box focusable, not editable). `Ok(false)` when it exposes
+/// no state set.
+pub fn field_takes_keys_ref(object_ref: &ObjectRef) -> Result<bool> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, _) = live_accessible(conn, object_ref).await?;
+            match call(acc.get_state()).await {
+                Some(Ok(state)) => Ok(state.contains(State::Showing)
+                    && state.contains(State::Visible)
+                    && state.contains(State::Focusable)
+                    && !state.contains(State::ReadOnly)
+                    && is_enabled_state(&state)),
+                Some(Err(_)) => Ok(false),
+                None => Err(anyhow!("cached element did not answer in time")),
+            }
+        },
+        || Err(anyhow!("field_takes_keys (cached element) timed out")),
+    )
+}
+
 /// Whether a snapshot-cached element is enabled right now, read from its own
 /// state set ([`is_enabled_state`]). `Ok(None)` when the toolkit exposes no
 /// state set.
@@ -4836,6 +4860,18 @@ pub fn element_enabled_ref(object_ref: &ObjectRef) -> Result<Option<bool>> {
 
 /// [`focus_element`] on a snapshot-cached element identity.
 pub fn focus_element_ref(object_ref: &ObjectRef) -> Result<bool> {
+    grab_focus_ref(object_ref, true)
+}
+
+/// `Component.GrabFocus` on a snapshot-cached element, accepted on the
+/// application's reply alone. Qt sets the widget's focus before it replies,
+/// but reports `Focused` only while its window is active, so the observed
+/// form never succeeds for a field in a background Qt window.
+pub fn request_focus_ref(object_ref: &ObjectRef) -> Result<bool> {
+    grab_focus_ref(object_ref, false)
+}
+
+fn grab_focus_ref(object_ref: &ObjectRef, observe: bool) -> Result<bool> {
     bounded_for(
         REF_ACTION_BUDGET,
         async {
@@ -4854,8 +4890,8 @@ pub fn focus_element_ref(object_ref: &ObjectRef) -> Result<bool> {
                 Some(Err(e)) => return Err(anyhow!("Component.GrabFocus failed: {e}")),
                 None => return Err(anyhow!("Component.GrabFocus timed out")),
             };
-            if !accepted {
-                return Ok(false);
+            if !accepted || !observe {
+                return Ok(accepted);
             }
             let settle_deadline = tokio::time::Instant::now() + Duration::from_millis(500);
             while tokio::time::Instant::now() < settle_deadline {

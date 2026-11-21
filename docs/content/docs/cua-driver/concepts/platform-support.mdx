@@ -98,6 +98,7 @@ Browser mutation always starts from an exact native `(pid, window_id)` binding.
 | Chrome on Sway | Exact binding when compositor identity and geometry agree | Generic GNOME or KDE Wayland is read-only. |
 | Electron (Windows, macOS, X11, Sway) | Typed mutation while one native window maps to one page | A second page or window invalidates the route. |
 | Brave, Vivaldi, Opera, Arc | Detected, not release-accepted | Use at your own risk. |
+| Helium on Linux and macOS | Existing-profile attachment when the profile already has a `DevToolsActivePort` endpoint owned by the exact process | No automated setup; not release-accepted. Windows does not recognize Helium. |
 | Tauri, WKWebView, WebKitGTK, split-process WebView2, Safari, Firefox | Browser identity and a clean refusal | Use native accessibility and pixel actions. |
 
 Logged-in profile attachment is covered in [Browsers](/cua-driver/guides/browsers#attach-to-a-logged-in-profile).

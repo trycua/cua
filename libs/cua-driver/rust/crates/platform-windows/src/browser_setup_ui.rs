@@ -15,9 +15,11 @@ use cua_driver_core::browser::{
 };
 use windows::core::{Interface, HSTRING};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, IUIAutomationLegacyIAccessiblePattern, IUIAutomationTogglePattern,
-    ToggleState_Off, ToggleState_On, UIA_LegacyIAccessiblePatternId, UIA_TogglePatternId,
+    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationLegacyIAccessiblePattern,
+    IUIAutomationTogglePattern, ToggleState_Off, ToggleState_On, UIA_LegacyIAccessiblePatternId,
+    UIA_TogglePatternId,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{MapVirtualKeyW, MAPVK_VK_TO_VSC, VK_RETURN};
 use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_KEYDOWN, WM_KEYUP};
@@ -50,6 +52,44 @@ fn retain_element(element_ptr: usize) -> usize {
     let ptr = retained.as_raw() as usize;
     std::mem::forget(retained);
     ptr
+}
+
+/// Elements retained past the walk that read them, released on drop.
+struct RetainedElements(Vec<usize>);
+
+impl Drop for RetainedElements {
+    fn drop(&mut self) {
+        for element_ptr in &self.0 {
+            release_element(*element_ptr);
+        }
+    }
+}
+
+fn is_native_tab(node: &UiaNode) -> bool {
+    !node.in_web_content
+        && node.control_type == "TabItem"
+        && node.element_ptr != 0
+        && node.rect.is_some_and(|(l, t, r, b)| l < r && t < b)
+}
+
+fn retain_native_tabs(nodes: &[UiaNode]) -> RetainedElements {
+    RetainedElements(
+        nodes
+            .iter()
+            .filter(|node| is_native_tab(node))
+            .map(|node| retain_element(node.element_ptr))
+            .collect(),
+    )
+}
+
+/// UIA identity (runtime id), which a tab keeps when it moves in the strip.
+fn same_element(uia: &IUIAutomation, left: usize, right: usize) -> bool {
+    let left = unsafe { IUIAutomationElement::from_raw(left as *mut _) };
+    let right = unsafe { IUIAutomationElement::from_raw(right as *mut _) };
+    let same = unsafe { uia.CompareElements(&left, &right) }.is_ok_and(|same| same.as_bool());
+    std::mem::forget(left);
+    std::mem::forget(right);
+    same
 }
 
 /// Browser chrome only: tab strip, toolbar, omnibox, and the active tab's
@@ -337,15 +377,33 @@ fn confirm_setup_navigation(hwnd: u64) -> Result<(), BrowserRefusal> {
     })
 }
 
-/// The one native close action inside the last native tab, which is where the
-/// native new-tab action puts the tab it opens.
-fn exact_new_tab_close_button(nodes: &[UiaNode]) -> Result<Option<usize>, BrowserRefusal> {
+/// The one native close action inside the one tab that `existed_before` does
+/// not know, matched by identity rather than by position in the strip.
+fn exact_new_tab_close_button(
+    nodes: &[UiaNode],
+    existed_before: impl Fn(&UiaNode) -> bool,
+) -> Result<Option<usize>, BrowserRefusal> {
     let has_rect = |node: &UiaNode| node.rect.is_some_and(|(l, t, r, b)| l < r && t < b);
-    let Some(tab_index) = nodes
-        .iter()
-        .rposition(|node| !node.in_web_content && node.control_type == "TabItem" && has_rect(node))
-    else {
-        return Ok(None);
+    let mut created = Vec::new();
+    for (index, node) in nodes.iter().enumerate() {
+        if is_native_tab(node)
+            && !created
+                .iter()
+                .any(|seen: &usize| nodes[*seen].rect == node.rect)
+            && !existed_before(node)
+        {
+            created.push(index);
+        }
+    }
+    let tab_index = match created.as_slice() {
+        [] => return Ok(None),
+        [index] => *index,
+        _ => {
+            return Err(BrowserRefusal::new(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the native tab strip showed more than one new tab",
+            ))
+        }
     };
     let depth = nodes[tab_index].depth;
     let mut buttons = Vec::new();
@@ -629,6 +687,7 @@ fn set_remote_debugging(
                 release_nodes(&tab_tree);
                 return Err(handle.abort(error));
             }
+            let tabs_before = retain_native_tabs(&tab_tree);
             release_nodes(&tab_tree);
             handle.opened_setup_page = true;
 
@@ -651,7 +710,25 @@ fn set_remote_debugging(
                 }
                 std::thread::sleep(Duration::from_millis(100));
             };
-            match exact_new_tab_close_button(&created) {
+            let close = unsafe {
+                CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+            }
+            .map_err(|error| {
+                BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    format!("could not compare the native tabs: {error}"),
+                )
+            })
+            .and_then(|uia| {
+                exact_new_tab_close_button(&created, |node| {
+                    tabs_before
+                        .0
+                        .iter()
+                        .any(|before| same_element(&uia, *before, node.element_ptr))
+                })
+            });
+            drop(tabs_before);
+            match close {
                 Ok(Some(close)) => handle.setup_tab_close = retain_element(close),
                 Ok(None) => {
                     release_nodes(&created);
@@ -1245,25 +1322,44 @@ mod tests {
             .iter()
             .position(|node| node.control_type == "TabItem")
             .unwrap();
-        assert_eq!(exact_new_tab_close_button(&nodes).unwrap(), Some(14));
+        let existing = |node: &UiaNode| node.element_ptr == 13;
+        assert_eq!(exact_new_tab_close_button(&nodes, existing).unwrap(), None);
 
-        // The native new-tab action appends its tab, so the last tab's close
-        // action is the one setup keeps, whichever tab is selected.
-        nodes[tab].selected = Some(true);
+        // An extension can move tabs, so the new tab is the one whose identity
+        // is new, wherever it sits in the strip.
         let mut opened = nodes[tab..=tab + 1].to_vec();
-        opened[0].selected = Some(false);
         opened[0].rect = Some((340, 40, 596, 81));
+        opened[0].element_ptr = 20;
         opened[1].rect = Some((564, 52, 580, 68));
         opened[1].element_ptr = 16;
-        nodes.splice(tab + 2..tab + 2, opened.clone());
-        assert_eq!(exact_new_tab_close_button(&nodes).unwrap(), Some(16));
+        nodes.splice(tab..tab, opened.clone());
+        assert_eq!(
+            exact_new_tab_close_button(&nodes, existing).unwrap(),
+            Some(16)
+        );
 
         let mut second_button = opened[1].clone();
         second_button.rect = Some((540, 52, 556, 68));
         second_button.element_ptr = 17;
-        nodes.insert(tab + 4, second_button);
+        nodes.insert(tab + 2, second_button);
         assert_eq!(
-            exact_new_tab_close_button(&nodes).unwrap_err().code,
+            exact_new_tab_close_button(&nodes, existing)
+                .unwrap_err()
+                .code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+        nodes.remove(tab + 2);
+
+        let mut another = opened.clone();
+        another[0].rect = Some((600, 40, 856, 81));
+        another[0].element_ptr = 21;
+        another[1].rect = Some((824, 52, 840, 68));
+        another[1].element_ptr = 18;
+        nodes.splice(tab..tab, another);
+        assert_eq!(
+            exact_new_tab_close_button(&nodes, existing)
+                .unwrap_err()
+                .code,
             BrowserRefusalCode::BrowserWrongTargetRefused
         );
     }

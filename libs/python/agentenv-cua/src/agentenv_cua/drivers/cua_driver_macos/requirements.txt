@@ -1,0 +1,3 @@
+# The driver's venv in the VM. CuaDriver.app itself comes from the cua-driver-rs 0.38.0 darwin-arm64 release
+# tarball (see image/provision.sh), since its bundle is what holds the TCC grants.
+agentenv-framework-protocol[computer]==0.1.440

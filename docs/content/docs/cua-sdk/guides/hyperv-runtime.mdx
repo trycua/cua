@@ -1,0 +1,27 @@
+---
+title: Hyper-V instead of WSL 2
+description: The built-in Linux runtime as a Hyper-V virtual machine on Windows PCs without WSL 2, such as Windows Server.
+---
+
+Where Hyper-V is on and WSL 2 is not (Windows Server has no WSL 2), the same
+runtime runs as a Hyper-V virtual machine, the Mac's design on Hyper-V: the
+same pinned Ubuntu disk with Docker and gVisor, a cloud-init seed cua writes
+itself, and the same pipe. Spaces run under gVisor there, as on a Mac.
+
+- **Which one.** `auto` uses WSL 2 when it works, and Hyper-V when it does not
+  and Hyper-V can; a home keeps the engine it set up. Choose with
+  `runtime.windows_backend` in `config.toml` (`auto`, `wsl` or `hyperv`) or
+  `CUA_RUNTIME_WINDOWS_BACKEND`.
+- **Permission.** Hyper-V is managed by administrators and the
+  `Hyper-V Administrators` group; `cua runtime doctor` says when this account is
+  in neither. Windows 10 and 11 give the VM the built-in Default Switch. Windows
+  Server has none, so the first setup makes a private switch and NAT
+  (`cua-runtime`, 10.232.0.0/24) and needs an elevated session once.
+- **Its own VM.** `cua-runtime-<tag>`, one per cua home, with a dynamic disk of
+  up to 60 GB under `<cua home>\runtimes\linux\hyperv` and an SSH key only your
+  user can read. Docker is reached over that key through the pipe, never a TCP
+  port. Remove host setup deletes the VM, its disk and (on Server) the switch.
+- **Needs.** Hyper-V (Windows Pro, Enterprise, Education or Server; not Home) and
+  the OpenSSH client Windows ships.
+
+See [Local runtimes](/docs/cua-sdk/guides/local-runtimes#the-linux-runtime-on-windows) for the WSL 2 runtime.

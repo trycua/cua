@@ -1561,7 +1561,12 @@ pub fn with_foreground_hid_activation(
         // renderer focus even though WindowServer keeps the app frontmost.
         // The AX window proof lets us deliver directly without weakening the
         // exact-window guard or disturbing the current key target.
-        return action();
+        let result = action();
+        // The app orders its key window to the front when it handles a
+        // click, which still covers the agent cursor's overlay.
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        crate::cursor::overlay::request_repin();
+        return result;
     }
 
     let activated = unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };

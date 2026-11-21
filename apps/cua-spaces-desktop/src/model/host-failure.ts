@@ -66,10 +66,24 @@ export function classify(raw: string): HostFailureKind {
 
   if (
     any([
-      "timed out", "timeout", "offline", "not connected to the internet", "network is unreachable",
-      "network unreachable", "connection refused", "connection reset", "connection closed",
-      "could not resolve", "couldn't resolve", "failed to lookup", "dns error", "dns lookup",
-      "error sending request", "host is unreachable", "no route to host", "tls handshake",
+      "timed out",
+      "timeout",
+      "offline",
+      "not connected to the internet",
+      "network is unreachable",
+      "network unreachable",
+      "connection refused",
+      "connection reset",
+      "connection closed",
+      "could not resolve",
+      "couldn't resolve",
+      "failed to lookup",
+      "dns error",
+      "dns lookup",
+      "error sending request",
+      "host is unreachable",
+      "no route to host",
+      "tls handshake",
     ])
   )
     return "network";
@@ -81,9 +95,19 @@ export function classify(raw: string): HostFailureKind {
   if (
     word("401") ||
     any([
-      "signed out", "not signed in", "sign in again", "please sign in", "unauthenticated", "unauthorized",
-      "login required", "not logged in", "session expired", "token expired", "invalid token",
-      "no account token", "missing account token",
+      "signed out",
+      "not signed in",
+      "sign in again",
+      "please sign in",
+      "unauthenticated",
+      "unauthorized",
+      "login required",
+      "not logged in",
+      "session expired",
+      "token expired",
+      "invalid token",
+      "no account token",
+      "missing account token",
     ])
   )
     return "signedOut";
@@ -108,10 +132,7 @@ export function failureWords(kind: HostFailureKind, platform: NodeJS.Platform = 
       return ["Couldn’t connect", "Cua Spaces couldn’t reach the internet. Check your connection and try again."];
     case "throttled": {
       const secs = throttledWait(raw);
-      return [
-        "Too many attempts right now",
-        secs ? `Trying again in ${secs} ${secs === 1 ? "second" : "seconds"}.` : "Wait a few seconds, then try again.",
-      ];
+      return ["Too many attempts right now", secs ? `Trying again in ${secs} ${secs === 1 ? "second" : "seconds"}.` : "Wait a few seconds, then try again."];
     }
     case "guiSession":
       return [

@@ -840,6 +840,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: apps/cua-spaces/pnpm-lock.yaml
       - name: Install Rust (toolchain from rust-toolchain.toml), wasm32 and wasm-bindgen
+        working-directory: apps/cua-spaces
         shell: bash
         run: |
           rustup show active-toolchain || rustup toolchain install
@@ -1793,32 +1794,37 @@ jobs:
         with:
           pattern: winfeed-*
           path: winfeed
-      - name: Join the feeds
+      # Both architectures' installers, blockmaps and signing note, from the
+      # artifacts the packaging jobs finished. electron-windows is assembled
+      # and uploaded as one artifact here, not merged from a pattern that also
+      # names an artifact this job has just uploaded: the listing can lag, and
+      # the merge then dropped the joined feed (0.39.11, 0.41.2: "no latest.yml").
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: electron-windows-*
+          path: electron-windows
+          merge-multiple: true
+      - name: Join the feeds into the electron-windows artifact
         run: |
           set -euo pipefail
-          mkdir -p merged-feed
           for name in latest.yml beta.yml; do
             if [ -f "winfeed/winfeed-x64/$name" ] || [ -f "winfeed/winfeed-arm64/$name" ]; then
               test -f "winfeed/winfeed-x64/$name" && test -f "winfeed/winfeed-arm64/$name" \
                 || { echo "::error::$name is missing from one architecture's build"; exit 1; }
-              node apps/cua-spaces-desktop/scripts/merge-feeds.mjs --out "merged-feed/$name" \
+              node apps/cua-spaces-desktop/scripts/merge-feeds.mjs --out "electron-windows/$name" \
                 "winfeed/winfeed-x64/$name" "winfeed/winfeed-arm64/$name"
             fi
           done
-          ls merged-feed
-          test -n "$(ls merged-feed)" || { echo "::error::no Windows feed"; exit 1; }
+          ls electron-windows
+          test -f electron-windows/latest.yml || test -f electron-windows/beta.yml \
+            || { echo "::error::no Windows feed"; exit 1; }
+      # Installers, blockmaps, the signing note and the joined feed of both
+      # architectures, as electron-windows.
       - uses: actions/upload-artifact@v4
         with:
-          name: electron-windows-feed
-          path: merged-feed/
-          if-no-files-found: error
-          retention-days: 7
-      # Installers, blockmaps and the signing note of both architectures, and
-      # the joined feed, as electron-windows (merged without downloading).
-      - uses: actions/upload-artifact/merge@v4
-        with:
           name: electron-windows
-          pattern: electron-windows-*
+          path: electron-windows/
+          if-no-files-found: error
           retention-days: 7
 
   # Linux: x64 and arm64 packaged in parallel (fpm and the AppImage tools run
@@ -2261,6 +2267,38 @@ jobs:
           kinds="$(IFS=,; echo "${expect[*]}")"
           apps/cua-spaces-macos/scripts/verify-release.sh --dir release --version "$VERSION" \
             --repo "$GITHUB_REPOSITORY" --expect "$kinds"
+      # The upgrade test: the previous stable release downloads this build
+      # from a local appcast, "Restart to update" is pressed, and the new
+      # version must be the one running (CUA-3964). Not blocking yet: it
+      # drives the menu with System Events, so it is proven on a few releases
+      # before it can hold one back.
+      - name: Upgrade test (previous release to this build)
+        if: env.SWIFT == 'true' && env.SWIFT_SIGNED == 'true' && !contains(env.VERSION, '-')
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          prev="$(gh release list -R "$GITHUB_REPOSITORY" --limit 40 --json tagName,isDraft,isPrerelease \
+            -q '[.[] | select(.isDraft == false and .isPrerelease == false) | .tagName | select(test("^cua-spaces-v[0-9]+\\.[0-9]+\\.[0-9]+$"))][0]')"
+          prev_version="${prev#cua-spaces-v}"
+          if [ -z "$prev" ] || [ "$prev_version" = "$VERSION" ]; then
+            echo "::notice::no earlier stable release to upgrade from"
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/prev"
+          gh release download "$prev" -R "$GITHUB_REPOSITORY" -p '*-darwin-universal.dmg' -D "$RUNNER_TEMP/prev"
+          # 0.20.0 to 0.22.0 have a dead button; the test then checks that quitting installs.
+          legacy=()
+          if [ "$(printf '%s\n' 0.22.1 "$prev_version" | sort -V | head -1)" != 0.22.1 ]; then legacy=(--legacy); fi
+          status=0
+          apps/cua-spaces-macos/scripts/test-update-restart.sh ${legacy[@]+"${legacy[@]}"} \
+            --old-dmg "$RUNNER_TEMP"/prev/*.dmg --new-dmg release/cua-spaces-"$VERSION"-darwin-universal.dmg || status=$?
+          if [ "$status" = 77 ]; then
+            echo "::warning::upgrade test skipped: this runner may not drive menus (Accessibility)"
+            exit 0
+          fi
+          exit "$status"
 
   installer-manifest:
     name: release-artifacts.json, latest.json, publish
@@ -2398,7 +2436,20 @@ jobs:
             # Cua Spaces is the one package allowed to be the repo-wide "Latest".
             # Every other release workflow passes --latest=false (release-latest-policy test).
             flags+=(--prerelease=false)
-            [ "$GITHUB_REPOSITORY" = trycua/cua ] && flags+=(--latest)
+            # Two releases build at once and finish in any order. One that finishes
+            # after a newer published stable release must not take Latest from it
+            # (0.37.0 did, after 0.37.1, on 16 Nov 2026).
+            if [ "$GITHUB_REPOSITORY" = trycua/cua ]; then
+              newer="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases --limit 30 \
+                --json tagName --jq '.[].tagName' | grep -E '^cua-spaces-v[0-9]+\.[0-9]+\.[0-9]+$' \
+                | sed 's/^cua-spaces-v//' | grep -vxF "$VERSION" | sort -V | tail -1 || true)"
+              if [ -n "$newer" ] && [ "$(printf '%s\n%s\n' "$newer" "$VERSION" | sort -V | tail -1)" = "$newer" ]; then
+                echo "::warning::cua-spaces-v$newer is already published and newer; publishing $VERSION without Latest"
+                flags+=(--latest=false)
+              else
+                flags+=(--latest)
+              fi
+            fi
           fi
           if [ "$GITHUB_REPOSITORY" != trycua/cua ] || grep -q UNSIGNED signing/*.txt; then
             label="staging"; [ "$GITHUB_REPOSITORY" = trycua/cua ] && label="test"
@@ -2482,7 +2533,13 @@ jobs:
               exit 1
             }
           fi
-          gh release upload cua-spaces-latest electron-feed/*.yml --clobber --repo "$GITHUB_REPOSITORY"
+          # Out-of-order finishes must not move a feed back: a late 0.38.12 run
+          # once replaced 0.38.13's latest.yml. Skip any feed the published one
+          # outranks (logged), upload the rest.
+          python3 .github/scripts/feed_monotonic.py select electron-feed electron-feed-publish --repo "$GITHUB_REPOSITORY"
+          if compgen -G "electron-feed-publish/*.yml" >/dev/null; then
+            gh release upload cua-spaces-latest electron-feed-publish/*.yml --clobber --repo "$GITHUB_REPOSITORY"
+          fi
       # The macOS updater's feed, once the release it names is published.
       # Beta items come from prereleases, so this runs for them too (apps on
       # Stable never see them).
@@ -2615,3 +2672,33 @@ jobs:
           [ "$LINUX" = true ] && feeds+=(electron-linux)
           python3 .github/scripts/check_spaces_site_follows_release.py \
             --version "$VERSION" --timeout 2400 --feeds "$(IFS=,; echo "${feeds[*]}")"
+
+  # Mirror to the downloads CDN (CUA-3941). GitHub stays the source of truth:
+  # this job never blocks or fails the release (continue-on-error) but shows a
+  # red job and a loud step summary when the CDN copy is incomplete.
+  cdn-publish:
+    name: Copy to the downloads CDN
+    needs: [installer-manifest, electron-plan]
+    if: >-
+      !cancelled() && github.repository == 'trycua/cua' && needs.installer-manifest.result == 'success'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 90
+    # The publish role trusts main and this environment (OIDC).
+    environment: cua-driver-release-signing
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts
+            .github/actions
+          persist-credentials: false
+      - uses: ./.github/actions/publish-downloads-cdn
+        with:
+          tags: |
+            cua-spaces-v${{ needs.electron-plan.outputs.version }}
+            cua-spaces-latest
+            cua-install-latest

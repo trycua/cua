@@ -1040,10 +1040,6 @@ impl DesktopBackend for ToolBackend {
             .unwrap_or(false);
         let audio = self.media.audio.is_some();
         let no_audio = "no audio capture backend is available on this host";
-        let encoders = cua_media_codec::probe();
-        let hardware = encoders.iter().any(|encoder| {
-            encoder.status == cua_media_codec::ProbeStatus::Available && encoder.hardware
-        });
         vec![
             if displays {
                 FeatureStatus::yes("desktop_stream")
@@ -1055,11 +1051,7 @@ impl DesktopBackend for ToolBackend {
             },
             FeatureStatus::yes("window_stream"),
             FeatureStatus::yes("h264_sw"),
-            if hardware {
-                FeatureStatus::yes("h264_hw")
-            } else {
-                FeatureStatus::no("h264_hw", "no hardware H.264 encoder was found")
-            },
+            crate::encoder_probe::host_h264_hw("no hardware H.264 encoder was found"),
             FeatureStatus {
                 limitation:
                     "pointer/key down-up pairs are not available; use click, drag, press or hotkey"

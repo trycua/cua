@@ -131,9 +131,21 @@ export const LINKS_COVERAGE = {
   "links.stop": { webkit: { methods: ["links.stop"] }, tauri: [], unsupported: { tauri: "links are the cua daemon's; the Tauri app has no share API" } },
   "links.approve": { webkit: { methods: ["links.approve"] }, tauri: [], unsupported: { tauri: "links are the cua daemon's; the Tauri app has no share API" } },
   "links.deny": { webkit: { methods: ["links.deny"] }, tauri: [], unsupported: { tauri: "links are the cua daemon's; the Tauri app has no share API" } },
-  "shares.settings.get": { webkit: { methods: ["shares.settings.get"] }, tauri: [], unsupported: { tauri: "shares are the cua daemon's; the Tauri app has no share API" } },
-  "shares.settings.set": { webkit: { methods: ["shares.settings.set"] }, tauri: [], unsupported: { tauri: "shares are the cua daemon's; the Tauri app has no share API" } },
-  "shares.edge.remove": { webkit: { methods: ["shares.edge.remove"] }, tauri: [], unsupported: { tauri: "shares are the cua daemon's; the Tauri app has no share API" } },
+  "shares.settings.get": {
+    webkit: { methods: ["shares.settings.get"] },
+    tauri: [],
+    unsupported: { tauri: "shares are the cua daemon's; the Tauri app has no share API" },
+  },
+  "shares.settings.set": {
+    webkit: { methods: ["shares.settings.set"] },
+    tauri: [],
+    unsupported: { tauri: "shares are the cua daemon's; the Tauri app has no share API" },
+  },
+  "shares.edge.remove": {
+    webkit: { methods: ["shares.edge.remove"] },
+    tauri: [],
+    unsupported: { tauri: "shares are the cua daemon's; the Tauri app has no share API" },
+  },
 } as const satisfies Record<keyof LinksOps, OpCoverage>;
 
 /** A host with no daemon-owned links. */

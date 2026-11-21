@@ -68,7 +68,11 @@ export interface SpacesSettingsOps {
   "spaces.resolveDefault": { args: Record<string, never>; result: DefaultSpace | null };
 }
 
-export const SPACES_SETTINGS_OPERATIONS = ["spaces.settings", "spaces.setSettings", "spaces.resolveDefault"] as const satisfies readonly (keyof SpacesSettingsOps)[];
+export const SPACES_SETTINGS_OPERATIONS = [
+  "spaces.settings",
+  "spaces.setSettings",
+  "spaces.resolveDefault",
+] as const satisfies readonly (keyof SpacesSettingsOps)[];
 
 /** The native hosts' methods: the operations' own names and arguments. */
 export const SPACES_SETTINGS_WEBKIT_METHODS = SPACES_SETTINGS_OPERATIONS;
@@ -126,6 +130,19 @@ export function resolveDefaultSpace(settings: SpacesSettingsInput | null, candid
   const defaultSpace = def ? (settings?.defaultSpace ?? null) : null;
   const defaultOnline = defaultSpace === null ? null : def?.here ? true : (def?.online ?? false);
   if (def?.here) return { space: here!.space, reason: "default", defaultSpace, defaultOnline, order };
-  if (!first) return { space: here?.space ?? null, reason: defaultSpace === null && order.length <= (here ? 1 : 0) ? "unset" : "here", defaultSpace, defaultOnline, order };
-  return { space: first.space, reason: first.role === "default" ? "default" : defaultSpace === null ? "unset" : "fallback", defaultSpace, defaultOnline, order };
+  if (!first)
+    return {
+      space: here?.space ?? null,
+      reason: defaultSpace === null && order.length <= (here ? 1 : 0) ? "unset" : "here",
+      defaultSpace,
+      defaultOnline,
+      order,
+    };
+  return {
+    space: first.space,
+    reason: first.role === "default" ? "default" : defaultSpace === null ? "unset" : "fallback",
+    defaultSpace,
+    defaultOnline,
+    order,
+  };
 }

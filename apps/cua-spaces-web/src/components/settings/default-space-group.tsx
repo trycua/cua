@@ -12,6 +12,7 @@ import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { toastError } from "@/components/ui/toast";
 import { findNode, treeRows, type SpacesTree, type TreeNode } from "@/lib/spaces-tree";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { thisComputerLabel } from "@/lib/host-labels";
 
@@ -41,6 +42,7 @@ export function moved<T>(list: readonly T[], from: number, to: number): T[] {
  * keeps it for the account, so every computer and the CLI agree.
  */
 export function DefaultSpaceGroup() {
+  const t = useT();
   const { tree, defaults } = useSpacesTreeData();
   const [dragging, setDragging] = useState<number | null>(null);
   if (!tree || defaults.unsupported || tree.roots.length === 0) return null;
@@ -52,10 +54,14 @@ export function DefaultSpaceGroup() {
   const fallbackOn = settings?.fallbackOn ?? true;
   const order = orderToTry(tree, settings, defaultKey);
   const here = tree.roots.find((r) => r.current);
-  const fail = toastError("Couldn't change where tasks run");
+  const fail = toastError(t("settings.default_space.save_failed"));
   const save = (patch: Partial<Pick<SpacesSettings, "defaultSpace" | "fallback" | "fallbackOn">>) =>
     void defaults
-      .save({ defaultSpace: patch.defaultSpace !== undefined ? patch.defaultSpace : (settings?.defaultSpace ?? null), fallback: patch.fallback ?? settings?.fallback ?? [], fallbackOn: patch.fallbackOn ?? fallbackOn })
+      .save({
+        defaultSpace: patch.defaultSpace !== undefined ? patch.defaultSpace : (settings?.defaultSpace ?? null),
+        fallback: patch.fallback ?? settings?.fallback ?? [],
+        fallbackOn: patch.fallbackOn ?? fallbackOn,
+      })
       .catch(fail);
   const reorder = (from: number, to: number) => {
     if (from === to) return;
@@ -68,29 +74,32 @@ export function DefaultSpaceGroup() {
     e.preventDefault();
   };
   return (
-    <SettingsGroup title="Where new agent tasks run" footer="A new computer is never made unless you pick one." data-default-space-group="">
+    <SettingsGroup title={t("settings.default_space.title")} footer={t("settings.default_space.footer")} data-default-space-group="">
       <SettingsRow
-        label="Default Space"
-        description="Agents run here when a task doesn't name a computer."
+        label={t("settings.default_space.label")}
+        description={t("settings.default_space.help")}
         control={
           <Select
-            aria-label="Default Space"
+            aria-label={t("settings.default_space.label")}
             className="min-w-56"
             value={value}
-            options={choices.map((n) => ({ value: n.settingsId!, label: parentName(n) ? `${n.name}, on ${parentName(n)}` : n.name }))}
+            options={choices.map((n) => ({
+              value: n.settingsId!,
+              label: parentName(n) ? t("settings.default_space.option_on", { name: n.name, parent: parentName(n) }) : n.name,
+            }))}
             onValueChange={(v) => save({ defaultSpace: v, fallback: (settings?.fallback ?? []).filter((id) => id !== v) })}
           />
         }
       />
       <SettingsRow
-        label="If it's offline"
-        description={`Use your next online computer, then ${thisComputerLabel()}.`}
-        control={<Switch aria-label="If it's offline, use your next online computer" checked={fallbackOn} onCheckedChange={(v) => save({ fallbackOn: v })} />}
+        label={t("settings.default_space.offline")}
+        description={t("settings.default_space.offline_help", { fallback: thisComputerLabel() })}
+        control={<Switch aria-label={t("settings.default_space.offline_switch")} checked={fallbackOn} onCheckedChange={(v) => save({ fallbackOn: v })} />}
       />
       {fallbackOn && (order.length > 0 || here) ? (
         <SettingsRow
-          label="Order to try"
-          description="Drag to change."
+          label={t("settings.default_space.order")}
+          description={t("settings.default_space.order_help")}
           control={
             <ol className="flex min-w-56 flex-col gap-1.5" data-order-to-try="">
               {order.map((n, i) => (
@@ -98,7 +107,7 @@ export function DefaultSpaceGroup() {
                   key={n.key}
                   draggable
                   tabIndex={0}
-                  aria-label={`${i + 1}. ${n.name}. Use the arrow keys to move it.`}
+                  aria-label={t("settings.default_space.order_item", { position: String(i + 1), name: n.name })}
                   onKeyDown={onKey(i)}
                   onDragStart={(e: DragEvent) => {
                     setDragging(i);
@@ -112,7 +121,10 @@ export function DefaultSpaceGroup() {
                   }}
                   onDragEnd={() => setDragging(null)}
                   data-order-item={n.settingsId!}
-                  className={cn("flex h-8 cursor-grab items-center gap-2 rounded-lg bg-foreground/[0.05] px-2.5 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring/60", dragging === i && "opacity-50")}
+                  className={cn(
+                    "flex h-8 cursor-grab items-center gap-2 rounded-lg bg-foreground/[0.05] px-2.5 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+                    dragging === i && "opacity-50",
+                  )}
                 >
                   <GripVerticalIcon className="size-3.5 text-muted-foreground" aria-hidden />
                   <TreeIcon node={n} />
@@ -123,7 +135,7 @@ export function DefaultSpaceGroup() {
                 <li className="flex h-8 items-center gap-2 px-2.5 text-[13px] text-muted-foreground" data-order-item="here">
                   <TreeIcon node={here} />
                   <span className="truncate">{thisComputerLabel()}</span>
-                  <span className="ml-auto">Last resort</span>
+                  <span className="ml-auto">{t("settings.default_space.last_resort")}</span>
                 </li>
               ) : null}
             </ol>

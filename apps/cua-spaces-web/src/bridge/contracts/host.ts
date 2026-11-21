@@ -518,8 +518,8 @@ export interface HostStatus {
   account?: HostAccount | null;
   /** What a running setup (or Sign In) waits for, such as finishing the
    * sign-in in the browser (the SwiftUI app's `HostModel.progress`). */
-  progress?: string | null;  /** The name System Settings lists the app under ("Cua Spaces", "Cua
-   * Spaces Local"): the Mac app's own name, for the permissions screen. */
+  progress?: string | null /** The name System Settings lists the app under ("Cua Spaces", "Cua
+   * Spaces Local"): the Mac app's own name, for the permissions screen. */;
   appName?: string | null;
 }
 
@@ -788,6 +788,10 @@ export interface SettingsInput {
   autoConnect?: boolean | null;
   /** Overflow into your clouds when this machine is full (`placement.overflow`; none: no row). */
   overflow?: boolean | null;
+  /** Settings, General's "When I close the window" (none: no rows). */
+  closeWindowKeepsRunning?: boolean | null;
+  /** The notice that Cua Spaces keeps running is on (shown with the row above). */
+  closeNotice?: boolean;
   /** Settings, Advanced's runtimes: each kind's setting, what is installed
    * for it and whether it runs here (`runtimes::RuntimesInput`). None: not
    * read yet (the rows still show, "Checking…"). */
@@ -802,16 +806,7 @@ export interface SettingsInput {
   showTips?: boolean;
 }
 
-export type SettingsRowKind =
-  | "text"
-  | "choice"
-  | "note"
-  | "error"
-  | "field"
-  | "secret"
-  | "prompt"
-  | "link"
-  | "toggle";
+export type SettingsRowKind = "text" | "choice" | "note" | "error" | "field" | "secret" | "prompt" | "link" | "toggle";
 
 export interface SettingsOption {
   id: string;

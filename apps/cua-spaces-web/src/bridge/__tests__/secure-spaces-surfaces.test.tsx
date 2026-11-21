@@ -33,24 +33,26 @@ const WORKER = "local:swarm-worker-1";
 
 describe("Secure Spaces (always on)", () => {
   it("shows the Network row and the Access rows", async () => {
-    inApp(networkDemo(), (
+    inApp(
+      networkDemo(),
       <>
         <NetworkRow spaceId={WORKER} />
         <SecurityRows spaceId={WORKER} />
-      </>
-    ));
+      </>,
+    );
     await waitFor(() => expect(document.querySelector("[data-security-rows]")).not.toBeNull());
     expect(document.querySelectorAll("[data-network-row]").length).toBe(2);
     expect(document.querySelector("[data-network-row]")?.textContent).toContain("Internet and this computer's services");
   });
 
   it("opens the Network sheet from the row", async () => {
-    inApp(networkDemo(), (
+    inApp(
+      networkDemo(),
       <>
         <NetworkRow spaceId={WORKER} />
         <NetworkSheet spaceName={(id) => id} />
-      </>
-    ));
+      </>,
+    );
     const row = await waitFor(() => {
       const r = document.querySelector<HTMLElement>("[data-network-row]");
       expect(r).not.toBeNull();
@@ -62,12 +64,13 @@ describe("Secure Spaces (always on)", () => {
   });
 
   it("shows the blocked connection's notice and the exit-down line", async () => {
-    inApp(networkDemo(), (
+    inApp(
+      networkDemo(),
       <>
         <BlockedNotice spaceId={WORKER} />
         <ExitDownNotice spaceId="local:research-swarm" />
-      </>
-    ));
+      </>,
+    );
     await waitFor(() => expect(document.querySelector("[data-network-blocked]")).not.toBeNull());
   });
 });

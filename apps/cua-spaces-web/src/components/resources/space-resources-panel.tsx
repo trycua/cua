@@ -71,7 +71,11 @@ function DiskFit({ fit, host, computer }: { fit: DiskFitView; host: ComputerReso
         <h3 className="text-[13px] font-semibold">How it fits on {computer}</h3>
         <span className="text-xs text-muted-foreground tabular-nums">{fit.total}</span>
       </div>
-      <div className="mt-3 flex h-2 overflow-hidden rounded-full bg-foreground/10" role="img" aria-label={fit.parts.map((p) => `${p.label} ${p.value}`).join(", ")}>
+      <div
+        className="mt-3 flex h-2 overflow-hidden rounded-full bg-foreground/10"
+        role="img"
+        aria-label={fit.parts.map((p) => `${p.label} ${p.value}`).join(", ")}
+      >
         {bar.map((p) => (
           <div key={p.key} className={cn("h-full", SWATCH[p.kind])} style={{ width: `${p.fraction * 100}%` }} />
         ))}
@@ -88,7 +92,11 @@ function DiskFit({ fit, host, computer }: { fit: DiskFitView; host: ComputerReso
           </li>
         ))}
       </ul>
-      {fit.note ? <p data-disk-fit-note="" className="mt-3 text-xs text-muted-foreground">{fit.note}</p> : null}
+      {fit.note ? (
+        <p data-disk-fit-note="" className="mt-3 text-xs text-muted-foreground">
+          {fit.note}
+        </p>
+      ) : null}
       {warning ? <LowDiskWarning warning={warning} compact className="mt-4 rounded-lg" /> : null}
     </div>
   );

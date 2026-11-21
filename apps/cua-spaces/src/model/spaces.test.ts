@@ -3,14 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  displayName,
-  hasFeature,
-  nameOf,
-  providerOfId,
-  rowToSpace,
-  type SpaceRow,
-} from "./spaces";
+import { displayName, hasFeature, nameOf, providerOfId, rowToSpace, type SpaceRow } from "./spaces";
 
 function row(overrides: Partial<SpaceRow> = {}): SpaceRow {
   return {
@@ -46,7 +39,13 @@ describe("rowToSpace", () => {
 
   it("maps direct and local rows, preserving an unknown OS", () => {
     const direct = rowToSpace(
-      row({ id: "space://direct/10.0.0.5:3211", name: "10.0.0.5:3211", provider: "direct", os: undefined, addedAt: undefined }),
+      row({
+        id: "space://direct/10.0.0.5:3211",
+        name: "10.0.0.5:3211",
+        provider: "direct",
+        os: undefined,
+        addedAt: undefined,
+      }),
       42,
     );
     expect(direct.os).toBe("unknown");
@@ -70,10 +69,7 @@ describe("ids and features", () => {
     expect(providerOfId("local:box")).toBe("local");
     expect(providerOfId("direct:10.0.0.5:3211")).toBe("direct");
     expect(providerOfId("relay:0123abcd4567")).toBe("relay");
-    const direct = rowToSpace(
-      row({ id: "direct:10.0.0.5:3211", name: "10.0.0.5:3211", provider: "direct" }),
-      0,
-    );
+    const direct = rowToSpace(row({ id: "direct:10.0.0.5:3211", name: "10.0.0.5:3211", provider: "direct" }), 0);
     expect(direct.detail).toBe("10.0.0.5:3211");
   });
 

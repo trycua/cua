@@ -309,12 +309,34 @@ function redact(s) {
   return out;
 }
 
+// A journal line stays small. A tool that reads an image returns it as base64 (hundreds of
+// KB, twice in one event); a command can print megabytes. The transcript keeps what the
+// person and a resumed turn read: the text, cut at JOURNAL_STRING_MAX with a note of how
+// much was left out, and a short note in place of image data. The full output is the
+// tool's own (its file or the Space), not the journal's (Pi Durable keeps the retained
+// tail of a tool's output in the transcript and the whole of it in a file the same way).
+export const JOURNAL_STRING_MAX = 32 * 1024;
+const BASE64_RUN = /^[A-Za-z0-9+/=\r\n]{2048,}$/;
+export function shrink(v, depth = 0) {
+  if (typeof v === "string") {
+    if (v.length > 2048 && BASE64_RUN.test(v)) return `[image or binary data, ${v.length} characters, not kept in the log]`;
+    if (v.length > JOURNAL_STRING_MAX) return `${v.slice(0, JOURNAL_STRING_MAX)}
+[${v.length - JOURNAL_STRING_MAX} more characters not kept in the log]`;
+    return v;
+  }
+  if (depth > 12 || v === null || typeof v !== "object") return v;
+  if (Array.isArray(v)) return v.map((x) => shrink(x, depth + 1));
+  const out = {};
+  for (const [k, x] of Object.entries(v)) out[k] = shrink(x, depth + 1);
+  return out;
+}
+
 const SYNC_EVENTS = new Set(["turn_started", "turn_ended", "session", "run_exited", "driver_start", "degraded"]);
 function emit(type, fields = {}) {
   checkFence();
   seq += 1;
   const line = redact(
-    JSON.stringify({ seq, ts: Date.now(), turn: state.turn, ...(durable ? { epoch: durable.epoch } : {}), type, ...fields }),
+    JSON.stringify({ seq, ts: Date.now(), turn: state.turn, ...(durable ? { epoch: durable.epoch } : {}), type, ...shrink(fields) }),
   );
   appendJournal("events.jsonl", line, Boolean(durable) && SYNC_EVENTS.has(type));
   if (durable) logActivity({ turn: state.turn, epoch: durable.epoch, type, ...fields });

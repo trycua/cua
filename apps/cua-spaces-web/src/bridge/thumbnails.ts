@@ -150,7 +150,11 @@ export function useSpaceThumbnail(spaceId: string, active: boolean): string | nu
     const timer = setInterval(() => void thumbs.request(spaceId), THUMBNAIL_REFRESH_MS);
     return () => clearInterval(timer);
   }, [thumbs, spaceId, active]);
-  const url = useSyncExternalStore(thumbs ? thumbs.subscribe : noop, () => thumbs?.get(spaceId) ?? null, () => null);
+  const url = useSyncExternalStore(
+    thumbs ? thumbs.subscribe : noop,
+    () => thumbs?.get(spaceId) ?? null,
+    () => null,
+  );
   useEffect(() => {
     if (url) thumbs?.touch(spaceId);
   }, [thumbs, spaceId, url]);

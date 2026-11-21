@@ -19,9 +19,22 @@ afterEach(() => {
   delete (window as Host).cuaDesktop;
 });
 
-const machine = (over: Partial<Machine>): Machine => ({ id: "m", name: "M", os: "macos", via: "relay", connection: "relay", online: true, current: false, spaceIds: [], limits: [], ...over });
+const machine = (over: Partial<Machine>): Machine => ({
+  id: "m",
+  name: "M",
+  os: "macos",
+  via: "relay",
+  connection: "relay",
+  online: true,
+  current: false,
+  spaceIds: [],
+  limits: [],
+  ...over,
+});
 const here = machine({ id: "this-mac", name: "Ada's computer", current: true, via: "local", relayId: "here-1" });
-const spaces: Space[] = [{ id: "this-mac", name: "This Mac", os: "macos", status: "local", detail: "", lastUsedAt: 0, scene: "blank", provider: "local" } as Space];
+const spaces: Space[] = [
+  { id: "this-mac", name: "This Mac", os: "macos", status: "local", detail: "", lastUsedAt: 0, scene: "blank", provider: "local" } as Space,
+];
 
 const WORDS = [
   ["darwin", "This Mac", "this Mac"],

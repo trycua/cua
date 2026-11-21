@@ -52,8 +52,7 @@ export function createFallbackSpacesListBridge(): SpacesListBridge {
 
 export function createTauriSpacesListBridge(): SpacesListBridge {
   const core = import("@tauri-apps/api/core");
-  const invoke = async <T>(command: string, args?: Record<string, unknown>) =>
-    (await core).invoke<T>(command, args);
+  const invoke = async <T>(command: string, args?: Record<string, unknown>) => (await core).invoke<T>(command, args);
   return {
     isNative: true,
     open: (request) => invoke<void>("open_spaces_list", { request }),

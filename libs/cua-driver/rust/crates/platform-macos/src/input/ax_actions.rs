@@ -226,9 +226,35 @@ pub fn ensure_ax_action_enabled(element_ptr: usize, action: &str) -> anyhow::Res
     ensure_ax_enabled(enabled, action)
 }
 
+/// How long a read made right after a foreground activation waits for a
+/// control that reports disabled to become enabled.
+const ACTIVATION_ENABLE_SETTLE: std::time::Duration = std::time::Duration::from_millis(750);
+const ACTIVATION_ENABLE_POLL: std::time::Duration = std::time::Duration::from_millis(25);
+
+/// Like [`ensure_ax_action_enabled`], for a read made right after a foreground
+/// activation. The window reports focus before the app has handled its
+/// activation, so a control that is enabled only while the app is active can
+/// still read `AXEnabled=false` for a moment. Re-read until it reports enabled
+/// or the settle window ends, then refuse. A control that stays disabled costs
+/// one settle window before the refusal.
+pub fn ensure_ax_action_enabled_after_activation(
+    element_ptr: usize,
+    action: &str,
+) -> anyhow::Result<()> {
+    let deadline = std::time::Instant::now() + ACTIVATION_ENABLE_SETTLE;
+    loop {
+        let enabled = unsafe { copy_bool_attr(element_ptr as AXUIElementRef, "AXEnabled") };
+        if enabled != Some(false) || std::time::Instant::now() >= deadline {
+            return ensure_ax_enabled(enabled, action);
+        }
+        std::thread::sleep(ACTIVATION_ENABLE_POLL);
+    }
+}
+
 /// Perform an AX action on a cached element.
 pub fn perform_ax_action(element_ptr: usize, action: &str) -> anyhow::Result<()> {
-    let ax_action = map_action(action)?;
+    let advertised = unsafe { copy_action_names(element_ptr as AXUIElementRef) };
+    let ax_action = crate::ax::actions::wire_name(&advertised, action)?;
     ensure_ax_action_enabled(element_ptr, ax_action)?;
     let err = unsafe { perform_action(element_ptr as AXUIElementRef, ax_action) };
 
@@ -312,6 +338,35 @@ pub fn is_element_focused(pid: i32, element_ptr: usize) -> bool {
 pub fn element_has_keyboard_focus(pid: i32, element_ptr: usize) -> bool {
     is_element_focused(pid, element_ptr)
         || unsafe { copy_bool_attr(element_ptr as AXUIElementRef, "AXFocused") } == Some(true)
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("the addressed element did not acquire keyboard focus; no key was dispatched")]
+pub struct KeyFocusUnconfirmed;
+
+/// Focus `target` and confirm it holds keyboard focus before `dispatch` runs.
+/// A target whose focus is not confirmed within 200ms fails with
+/// [`KeyFocusUnconfirmed`] and nothing is dispatched; `None` dispatches as is.
+pub fn with_confirmed_key_focus<T>(
+    target: Option<usize>,
+    mut focus: impl FnMut(usize) -> anyhow::Result<()>,
+    mut is_focused: impl FnMut(usize) -> bool,
+    dispatch: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    if let Some(target) = target {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
+        loop {
+            focus(target)?;
+            if is_focused(target) {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(KeyFocusUnconfirmed.into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+    dispatch()
 }
 
 #[cfg(test)]

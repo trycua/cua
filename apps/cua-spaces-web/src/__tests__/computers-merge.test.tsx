@@ -32,7 +32,10 @@ describe("where an old link lands", () => {
   it("/machines opens the list, with Add a computer for add or join, and a named computer on its own page", () => {
     expect(machinesLinkTarget({})).toEqual({ to: "/spaces", search: {} });
     expect(machinesLinkTarget({ add: "1" })).toEqual({ to: "/spaces", search: { add: true } });
-    expect(machinesLinkTarget({ join: "K7QM4XPB2RHD", relay: "https://r.example" })).toEqual({ to: "/spaces", search: { join: "K7QM4XPB2RHD", relay: "https://r.example" } });
+    expect(machinesLinkTarget({ join: "K7QM4XPB2RHD", relay: "https://r.example" })).toEqual({
+      to: "/spaces",
+      search: { join: "K7QM4XPB2RHD", relay: "https://r.example" },
+    });
     expect(machinesLinkTarget({ machine: "studio" })).toEqual({ to: "/spaces/computer/$computerId", params: { computerId: "studio" } });
     // Adding wins over a named computer: the sheet is what the link asked for.
     expect(machinesLinkTarget({ machine: "studio", add: 1 })).toEqual({ to: "/spaces", search: { add: true } });

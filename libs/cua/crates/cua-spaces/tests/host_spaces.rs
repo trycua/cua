@@ -1558,7 +1558,7 @@ async fn an_offline_machine_set_up_for_spaces_is_listed_by_name() {
 /// so it never says which it applied). The third field: a host whose cua
 /// predates egress policies (it ignores `CreateHostSpaceRequest.egress` and
 /// has no `SetHostSpaceEgress`).
-struct HostSvc(Arc<HostSpacesServer>, bool, bool);
+struct HostSvc(Arc<HostSpacesServer>, bool, bool, Option<tonic::Status>);
 
 #[tonic::async_trait]
 impl pb::host_spaces_service_server::HostSpacesService for HostSvc {
@@ -1653,6 +1653,9 @@ impl pb::host_spaces_service_server::HostSpacesService for HostSvc {
         &self,
         _req: tonic::Request<pb::DiagnoseHostRequest>,
     ) -> Result<tonic::Response<pb::DiagnoseHostResponse>, tonic::Status> {
+        if let Some(status) = &self.3 {
+            return Err(status.clone());
+        }
         Ok(tonic::Response::new(pb::DiagnoseHostResponse {
             report: None,
             cua_version: "0.0.0-test".into(),
@@ -1702,6 +1705,16 @@ async fn client_fixture_full(
     no_egress: bool,
     ext: Option<Arc<dyn cua_spaces::extension::SpacesExtension>>,
 ) -> (String, Spaces, tempfile::TempDir) {
+    client_fixture_with_health_error(f, old_host, no_egress, ext, None).await
+}
+
+async fn client_fixture_with_health_error(
+    f: &Fixture,
+    old_host: bool,
+    no_egress: bool,
+    ext: Option<Arc<dyn cua_spaces::extension::SpacesExtension>>,
+    health_error: Option<tonic::Status>,
+) -> (String, Spaces, tempfile::TempDir) {
     let relay = cua_host::RelayClient::new(&f.relay.url).unwrap();
     let host = relay
         .machines("ada-token")
@@ -1720,6 +1733,7 @@ async fn client_fixture_full(
         f.server.clone(),
         old_host,
         no_egress,
+        health_error,
     ));
     let snaps = pb::host_snapshots_service_server::HostSnapshotsServiceServer::new(SnapSvc(
         f.server.clone(),
@@ -1754,6 +1768,60 @@ async fn client_fixture_full(
     }
     let spaces = builder.build();
     (host, spaces, other)
+}
+
+#[tokio::test]
+async fn machine_health_returns_the_hosts_response() {
+    let f = fixture(HostProfile::Spare).await;
+    let (host, spaces, _other) = client_fixture(&f).await;
+    let health = spaces.machine_health(&host).await.unwrap();
+    assert_eq!(health.cua_version, "0.0.0-test");
+    assert_eq!(health.os, "macos");
+    assert!(health.report.is_none());
+}
+
+#[tokio::test]
+async fn machine_health_unimplemented_does_not_assume_an_old_host() {
+    for reason in [
+        "providing Spaces from a Windows host is not supported yet",
+        "unknown method DiagnoseHost",
+    ] {
+        let f = fixture(HostProfile::Spare).await;
+        let (host, spaces, _other) = client_fixture_with_health_error(
+            &f,
+            false,
+            false,
+            None,
+            Some(tonic::Status::unimplemented(reason)),
+        )
+        .await;
+        let error = spaces.machine_health(&host).await.unwrap_err();
+        assert_eq!(error.tag(), "host_capability_missing");
+        assert_eq!(
+            error.to_string(),
+            "machine health is not available on this host: Mac mini (spare) does not support remote health checks; run `cua doctor --machine this` on that computer"
+        );
+    }
+}
+
+#[tokio::test]
+async fn machine_health_preserves_other_rpc_errors() {
+    for status in [
+        tonic::Status::permission_denied("health check denied"),
+        tonic::Status::unavailable("host disconnected"),
+    ] {
+        let expected = if status.code() == tonic::Code::PermissionDenied {
+            cua_spaces::Error::Relay(cua_host::Error::PermissionDenied(status.message().into()))
+        } else {
+            cua_spaces::Error::Env(cua_spacesd_client::Error::from(status.clone()))
+        };
+        let f = fixture(HostProfile::Spare).await;
+        let (host, spaces, _other) =
+            client_fixture_with_health_error(&f, false, false, None, Some(status)).await;
+        let error = spaces.machine_health(&host).await.unwrap_err();
+        assert_eq!(error.tag(), expected.tag());
+        assert_eq!(error.to_string(), expected.to_string());
+    }
 }
 
 /// The relay machines of ada's account a host provides (its Spaces).
@@ -1804,8 +1872,8 @@ async fn a_create_the_host_fails_leaves_no_relay_space_behind() {
 
 /// A Space's relay entry whose Space the host does not have (left by an
 /// older client, or the host was set up again) deletes as a stale entry;
-/// one whose host left the relay too. `relay-unregister` takes one off the
-/// relay instead of calling it a host.
+/// one this device still lists after its host left the relay too.
+/// `relay-unregister` takes one off the relay instead of calling it a host.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_stale_relay_space_is_removed_by_delete_or_relay_unregister() {
     let f = fixture(HostProfile::Spare).await;
@@ -1854,13 +1922,28 @@ async fn a_stale_relay_space_is_removed_by_delete_or_relay_unregister() {
         .to_string();
     assert!(e.contains("cua host remove"), "{e}");
 
-    // Its host left the relay (removed, set up again as a new machine).
+    // Its host left the relay (removed, set up again as a new machine)
+    // after this device listed the Space. The relay detaches a removed
+    // computer's Spaces and stops listing them, so only a recent listing
+    // still names the Space; its entry goes for good, not just detached.
     register("space-00000000000000a2", host.clone()).await;
+    assert!(
+        spaces
+            .relay_machines()
+            .await
+            .unwrap()
+            .iter()
+            .any(|m| m.id == "space-00000000000000a2"),
+        "listed before its host leaves"
+    );
     relay.delete("ada-token", &host).await.unwrap();
     let msg = spaces.delete("relay:space-00000000000000a2").await.unwrap();
     assert!(msg.contains("stale entry"), "{msg}");
     assert!(msg.contains("no longer on the relay"), "{msg}");
-    assert!(provided_machines(&f).await.is_empty());
+    assert!(
+        f.relay.machine("space-00000000000000a2").is_none(),
+        "the relay forgets it"
+    );
 }
 
 /// A host that stopped sharing says so (and how to resume) instead of

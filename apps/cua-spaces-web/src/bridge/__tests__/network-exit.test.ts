@@ -28,7 +28,12 @@ describe("Exit through", () => {
     const t = topologyFromJson(
       JSON.stringify({
         space: { id: "local:w1", name: "w1.swarm" },
-        tree: { members: [{ id: "local:swarm", name: "swarm.swarm", relation: "parent" }, { id: "local:w1", name: "w1.swarm", relation: "self" }] },
+        tree: {
+          members: [
+            { id: "local:swarm", name: "swarm.swarm", relation: "parent" },
+            { id: "local:w1", name: "w1.swarm", relation: "self" },
+          ],
+        },
         via: { kind: "space", label: "swarm" },
         exit: { state: "unreachable", note: "It's stopped." },
         host: { reach: ["localhost:3000"] },
@@ -93,4 +98,3 @@ describe("The blocked-connection line", () => {
     expect(isBackgroundNoise("10.0.3.255:5353")).toBe(false);
   });
 });
-

@@ -103,7 +103,11 @@ export function useTips(): TipsHook {
     },
     [store],
   );
-  const state = useSyncExternalStore(subscribe, () => (store ? tipsState(store) : NO_TIPS), () => NO_TIPS);
+  const state = useSyncExternalStore(
+    subscribe,
+    () => (store ? tipsState(store) : NO_TIPS),
+    () => NO_TIPS,
+  );
   return {
     state,
     send: (event) => ctx.ready.then((s) => sendTipsEvent(s, event)),

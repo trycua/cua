@@ -141,6 +141,16 @@ pub struct WindowKeyScope {
     /// The app's on-screen windows before priming, front to back.
     order_before: Vec<u32>,
     primed: KeyPrime,
+    /// Held for apps that route keys only while AppKit-active (GTK 3); it
+    /// drops after key is handed back.
+    activation: Option<crate::input::appkit_activation::ActivationLease>,
+}
+
+impl WindowKeyScope {
+    /// Keep `lease` for as long as this scope holds the window key.
+    pub fn hold_activation(&mut self, lease: crate::input::appkit_activation::ActivationLease) {
+        self.activation = Some(lease);
+    }
 }
 
 /// The window key goes back to. Normally the previous key window. LibreOffice
@@ -357,6 +367,7 @@ pub fn enter_exact_window_key(pid: pid_t, target_wid: u32) -> Result<WindowKeySc
         previous,
         order_before,
         primed,
+        activation: None,
     })
 }
 
@@ -718,6 +729,51 @@ pub(super) fn set_integer_field(event_ptr: *mut c_void, field: u32, value: i64) 
 /// Return the Skylight main connection ID for the current process.
 pub fn main_connection_id() -> Option<u32> {
     connection_id_fn().map(|f| unsafe { f() })
+}
+
+/// WindowServer's parent window of `window_id`, when it has one.
+///
+/// A child window (`-[NSWindow addChildWindow:]`) is recorded with its parent
+/// in WindowServer. Finder's inline rename field is such a window: a separate
+/// small window whose AX element names only the application as its parent, so
+/// WindowServer is the only place that links it back to its Finder window.
+/// `None` means no parent (a top-level window) or the query is unavailable.
+pub fn window_parent_id(window_id: u32) -> Option<u32> {
+    type QueryWindows = unsafe extern "C" fn(u32, *const c_void, u32) -> *const c_void;
+    type CopyWindows = unsafe extern "C" fn(*const c_void) -> *const c_void;
+    type Advance = unsafe extern "C" fn(*const c_void) -> bool;
+    type GetU32 = unsafe extern "C" fn(*const c_void) -> u32;
+    use core_foundation::{array::CFArray, base::TCFType, number::CFNumber};
+
+    let cid = main_connection_id()?;
+    let query_windows: QueryWindows = unsafe { as_fn(find_sym(b"SLSWindowQueryWindows\0")?) };
+    let copy_windows: CopyWindows =
+        unsafe { as_fn(find_sym(b"SLSWindowQueryResultCopyWindows\0")?) };
+    let advance: Advance = unsafe { as_fn(find_sym(b"SLSWindowIteratorAdvance\0")?) };
+    let parent_of: GetU32 = unsafe { as_fn(find_sym(b"SLSWindowIteratorGetParentID\0")?) };
+    let window_of: GetU32 = unsafe { as_fn(find_sym(b"SLSWindowIteratorGetWindowID\0")?) };
+
+    let ids = CFArray::from_CFTypes(&[CFNumber::from(window_id as i64)]);
+    unsafe {
+        let query = query_windows(cid, ids.as_concrete_TypeRef() as *const c_void, 0);
+        if query.is_null() {
+            return None;
+        }
+        let iterator = copy_windows(query);
+        core_foundation::base::CFRelease(query as _);
+        if iterator.is_null() {
+            return None;
+        }
+        let mut parent = None;
+        while advance(iterator) {
+            if window_of(iterator) == window_id {
+                parent = Some(parent_of(iterator)).filter(|id| *id != 0);
+                break;
+            }
+        }
+        core_foundation::base::CFRelease(iterator as _);
+        parent
+    }
 }
 
 fn nonzero_space_id(space_id: Option<u64>) -> Option<u64> {
@@ -1492,7 +1548,13 @@ pub fn with_foreground_hid_activation(
         anyhow::bail!("could not resolve target window for foreground HID delivery");
     }
 
-    let focused_window_id = crate::ax::bindings::focused_window_id_of_pid(target_pid);
+    // Finder reports no focused window while its inline rename field has the
+    // focus; a key sent then goes to that field, which is part of the target.
+    let focused_window_id =
+        crate::ax::bindings::focused_window_id_of_pid(target_pid).or_else(|| {
+            crate::ax::bindings::inline_editor_open(target_pid, target_wid)
+                .then(|| crate::ax::exact_target::AxWindowId::window(target_wid))
+        });
     if preserves_exact_existing_focus(prev_ok, prev_psn, target_psn, focused_window_id, target_wid)
     {
         // Re-activating an already key exact window can clear Chromium's
@@ -1520,6 +1582,8 @@ pub fn with_foreground_hid_activation(
         if restores_front(prev_ok, front_psn(), target_psn) {
             unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
         }
+        // The raise above may still have covered the agent cursor's overlay.
+        crate::cursor::overlay::request_repin();
         anyhow::bail!(
             "exact target window did not become focused for foreground HID delivery{}",
             focus_failure_hint(target_pid, target_wid)
@@ -1532,6 +1596,8 @@ pub fn with_foreground_hid_activation(
     if restores_front(prev_ok, front_psn(), target_psn) {
         unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
     }
+    // The raise put the target window over the agent cursor's overlay.
+    crate::cursor::overlay::request_repin();
 
     result
 }

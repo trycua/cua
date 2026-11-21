@@ -48,7 +48,12 @@ export async function dropOnSpace(model: AppModel, ui: NotchFeedUi, spaceId: str
   if (paths.some(isAppBundle)) {
     // An app: its Teleport review, the files beside it going with it (the Swift tile's drop). The page asks for these paths by name, as for a drop on the well.
     fileOffers(model).setNotchDrop(paths);
-    openSpaceFromNotch(model, ui, spaceId, paths.map((p) => basename(p)));
+    openSpaceFromNotch(
+      model,
+      ui,
+      spaceId,
+      paths.map((p) => basename(p)),
+    );
     return;
   }
   openSpaceFromNotch(model, ui, spaceId);

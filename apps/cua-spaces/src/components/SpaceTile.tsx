@@ -107,7 +107,20 @@ function useLiveThumbnail(space: Space): { shot: string | null; preload: () => v
   return { shot, preload };
 }
 
-export function SpaceTile({ space, focused, onFocus, onSelect, onPin, onShareApp, hotspot = false, onDelete, onPower, dropMode = false, dropTarget = false, dropGhost = null }: SpaceTileProps) {
+export function SpaceTile({
+  space,
+  focused,
+  onFocus,
+  onSelect,
+  onPin,
+  onShareApp,
+  hotspot = false,
+  onDelete,
+  onPower,
+  dropMode = false,
+  dropTarget = false,
+  dropGhost = null,
+}: SpaceTileProps) {
   const t = useT("spaces");
   const ref = useRef<HTMLButtonElement>(null);
   const { shot, preload } = useLiveThumbnail(space);
@@ -127,17 +140,12 @@ export function SpaceTile({ space, focused, onFocus, onSelect, onPin, onShareApp
   // In drop mode the tile is a clean drop target: hover controls are hidden.
   const pinnable = Boolean(onPin && space.sdk) && !dropMode;
   const shareable = Boolean(onShareApp && space.status !== "local") && !dropMode;
-  const deletable =
-    Boolean(onDelete && space.sdk && space.status !== "local") && !dropMode;
+  const deletable = Boolean(onDelete && space.sdk && space.status !== "local") && !dropMode;
   // The core's power button: only for a Space that turns off and on.
   const power = onPower && space.power && !dropMode ? powerButton(space) : null;
 
   return (
-    <span
-      className="tile-wrap"
-      data-drop-target={dropTarget ? "true" : undefined}
-      onMouseEnter={preload}
-    >
+    <span className="tile-wrap" data-drop-target={dropTarget ? "true" : undefined} onMouseEnter={preload}>
       <button
         ref={ref}
         type="button"
@@ -184,7 +192,11 @@ export function SpaceTile({ space, focused, onFocus, onSelect, onPin, onShareApp
         <span className="tile-caption">
           <span className="tile-name">
             <OsIcon space={space} />
-            {space.status === "local" ? <span className="tile-check" aria-hidden="true" /> : <StatusDot status={space.status} />}
+            {space.status === "local" ? (
+              <span className="tile-check" aria-hidden="true" />
+            ) : (
+              <StatusDot status={space.status} />
+            )}
             {space.name}
           </span>
         </span>
@@ -303,10 +315,36 @@ function ShareGlyph() {
         strokeWidth="1.2"
         strokeLinejoin="round"
       />
-      <path d="M6 8.7a1.9 1.9 0 0 1 3.15-.85l.55.5" fill="none" stroke="currentColor" strokeWidth="1.15" strokeLinecap="round" />
-      <path d="M10 6.9v1.6H8.4" fill="none" stroke="currentColor" strokeWidth="1.15" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M10 10.1a1.9 1.9 0 0 1-3.15.85l-.55-.5" fill="none" stroke="currentColor" strokeWidth="1.15" strokeLinecap="round" />
-      <path d="M6 11.9v-1.6h1.6" fill="none" stroke="currentColor" strokeWidth="1.15" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M6 8.7a1.9 1.9 0 0 1 3.15-.85l.55.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.15"
+        strokeLinecap="round"
+      />
+      <path
+        d="M10 6.9v1.6H8.4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.15"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M10 10.1a1.9 1.9 0 0 1-3.15.85l-.55-.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.15"
+        strokeLinecap="round"
+      />
+      <path
+        d="M6 11.9v-1.6h1.6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.15"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }

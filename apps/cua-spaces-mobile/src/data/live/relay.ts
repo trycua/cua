@@ -113,7 +113,16 @@ export class RelayClient {
 
   /** `GET /v1/devices`: the account's devices, the phones among them (for the pool's Computers list). */
   async devices(token: string, deviceSession?: string | null): Promise<RelayDevice[]> {
-    type Wire = { id?: string; name?: string; platform?: string; phone?: boolean; state?: string; current?: boolean; last_seen?: number | null; capabilities?: { v?: number; can_host_spaces?: boolean; images?: string[]; kinds?: string[]; desktop?: boolean } | null };
+    type Wire = {
+      id?: string;
+      name?: string;
+      platform?: string;
+      phone?: boolean;
+      state?: string;
+      current?: boolean;
+      last_seen?: number | null;
+      capabilities?: { v?: number; can_host_spaces?: boolean; images?: string[]; kinds?: string[]; desktop?: boolean } | null;
+    };
     const r = await this.call<{ devices?: Wire[] } | Wire[]>("GET", "/v1/devices", token, undefined, deviceSession);
     const list = Array.isArray(r) ? r : (r.devices ?? []);
     return list.map((d) => ({
@@ -124,12 +133,25 @@ export class RelayClient {
       state: d.state ?? "",
       current: d.current === true,
       lastSeen: d.last_seen ?? null,
-      capabilities: d.capabilities ? { v: d.capabilities.v ?? 0, canHostSpaces: d.capabilities.can_host_spaces === true, images: d.capabilities.images ?? [], kinds: d.capabilities.kinds ?? [], desktop: d.capabilities.desktop === true } : null,
+      capabilities: d.capabilities
+        ? {
+            v: d.capabilities.v ?? 0,
+            canHostSpaces: d.capabilities.can_host_spaces === true,
+            images: d.capabilities.images ?? [],
+            kinds: d.capabilities.kinds ?? [],
+            desktop: d.capabilities.desktop === true,
+          }
+        : null,
     }));
   }
 
   /** `PATCH /v1/machines/{id}`: replace the allowlist (editors) and view-only list (owner). */
-  patchMachine(token: string, id: string, patch: { allow?: string[]; viewers?: string[]; sharing?: boolean; name?: string }, deviceSession?: string | null): Promise<RelayMachine> {
+  patchMachine(
+    token: string,
+    id: string,
+    patch: { allow?: string[]; viewers?: string[]; sharing?: boolean; name?: string },
+    deviceSession?: string | null,
+  ): Promise<RelayMachine> {
     return this.call("PATCH", `/v1/machines/${id}`, token, patch, deviceSession);
   }
 
@@ -155,7 +177,14 @@ export class RelayClient {
     await this.call("DELETE", `/v1/push/registrations/${encodeURIComponent(deviceId)}`, token, undefined, deviceSession);
   }
 
-  registerDevice(token: string, key: DeviceSigner, name: string, platform: string, nowSecs: number, capabilities?: Record<string, unknown>): Promise<Enrollment> {
+  registerDevice(
+    token: string,
+    key: DeviceSigner,
+    name: string,
+    platform: string,
+    nowSecs: number,
+    capabilities?: Record<string, unknown>,
+  ): Promise<Enrollment> {
     return this.call("POST", "/v1/devices", token, {
       public_key: key.publicKey,
       name,

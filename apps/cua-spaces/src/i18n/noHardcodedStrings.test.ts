@@ -46,7 +46,8 @@ export function findHardcodedStrings(fileName: string, source: string): string[]
       const init = node.initializer;
       const lit = ts.isStringLiteral(init)
         ? init
-        : ts.isJsxExpression(init) && init.expression &&
+        : ts.isJsxExpression(init) &&
+            init.expression &&
             (ts.isStringLiteral(init.expression) || ts.isNoSubstitutionTemplateLiteral(init.expression))
           ? init.expression
           : null;

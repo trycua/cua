@@ -40,7 +40,13 @@ describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
   ])("marks only the tab for %s as selected (%s)", async (path, label) => {
     await mountApp(path, host);
     const tabs = () => [...document.querySelectorAll<HTMLElement>('[role="tablist"][aria-label="Settings"] [role="tab"]')];
-    await waitFor(() => expect(tabs().filter((t) => t.getAttribute("aria-selected") === "true").map((t) => t.textContent)).toEqual([label]));
+    await waitFor(() =>
+      expect(
+        tabs()
+          .filter((t) => t.getAttribute("aria-selected") === "true")
+          .map((t) => t.textContent),
+      ).toEqual([label]),
+    );
     expect(tabs().filter((t) => t.getAttribute("aria-selected") === "false")).toHaveLength(4);
   });
 
@@ -64,7 +70,7 @@ describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
   it("sends the old Trusted machines address to This Mac's page under Computers", async () => {
     const { router } = await mountApp("/settings/devices", host);
     await waitFor(() => expect(router.state.location.pathname).toBe("/spaces/computer/this-mac"));
-    expect(document.querySelector('[data-settings-tab]')).toBeNull();
+    expect(document.querySelector("[data-settings-tab]")).toBeNull();
   });
 
   it("keeps General to the everyday settings: no Keyboard shortcuts, Shared links, Storage or Runtimes", async () => {
@@ -84,7 +90,9 @@ describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
     const headings = [...t.querySelectorAll("h2")].map((h) => h.textContent);
     expect(headings).toEqual(["Coding apps", "Agent menu", "On another computer", "Providers"]);
     // The providers are the last section on the page.
-    const sections = [...t.querySelectorAll("[data-connectors-apps], [data-connectors-other-machine-group], [data-connectors-providers]")].map((e) => e.getAttributeNames().find((n) => n.startsWith("data-connectors-")));
+    const sections = [...t.querySelectorAll("[data-connectors-apps], [data-connectors-other-machine-group], [data-connectors-providers]")].map((e) =>
+      e.getAttributeNames().find((n) => n.startsWith("data-connectors-")),
+    );
     expect(sections).toEqual(["data-connectors-apps", "data-connectors-other-machine-group", "data-connectors-providers"]);
     expect(t.textContent).not.toContain("Connections");
     expect(t.textContent).not.toMatch(/Use Cua from Terminal/);

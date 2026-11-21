@@ -24,10 +24,9 @@ pub enum Error {
     NotFound(String),
     /// The target has no cua-spacesd, and nothing else answered either
     /// (a Space without spacesd needs a declared service or an MCP URL).
-    #[error(
-        "{space} has no cua-spacesd ({reason}); the spacesd primitives need an \
-         image that runs it, for example ghcr.io/trycua/linux:24.04"
-    )]
+    /// A computer the relay lists offline says so instead
+    /// ([`cua_spaces_contract::presence::LISTED_OFFLINE`]).
+    #[error("{}", spacesd_missing(.space, .reason))]
     SpacesdNotAvailable {
         /// The Space or URL.
         space: String,
@@ -174,6 +173,17 @@ fn limitation_suffix(limitation: &str) -> String {
     }
 }
 
+fn spacesd_missing(space: &str, reason: &str) -> String {
+    if cua_spaces_contract::presence::says_listed_offline(reason) {
+        format!("{space}: {reason}")
+    } else {
+        format!(
+            "{space} has no cua-spacesd ({reason}); the spacesd primitives need an \
+             image that runs it, for example ghcr.io/trycua/linux:24.04"
+        )
+    }
+}
+
 impl Error {
     /// A stable, lowercase kind for callers that branch on failures.
     pub fn tag(&self) -> &'static str {
@@ -286,7 +296,10 @@ impl From<cua_sandbox_core::Error> for Error {
             cua_sandbox_core::Error::Mcp(e) => Error::Mcp(e),
             cua_sandbox_core::Error::Cloud(m) => Error::extension("cloud", m),
             // A refusal is the caller's to fix, not a runtime failure.
-            cua_sandbox_core::Error::InvalidArgument(m) => Error::InvalidArgument(m),
+            cua_sandbox_core::Error::InvalidArgument(m)
+            | cua_sandbox_core::Error::Runtime(cua_sandbox_core::RuntimeError::InvalidArgument(
+                m,
+            )) => Error::InvalidArgument(m),
             cua_sandbox_core::Error::Cancelled(m) => Error::Cancelled(m),
             cua_sandbox_core::Error::ProviderNotConfigured(p) => Error::host(
                 cua_spaces_contract::host::LOCAL_RUNTIME,

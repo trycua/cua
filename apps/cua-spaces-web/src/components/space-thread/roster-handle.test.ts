@@ -9,13 +9,13 @@ import { buildRoster } from "./roster";
 
 const member = (over: Partial<AgentMember>): AgentMember =>
   ({
-  name: "claude",
-  harness: "claude-code",
-  status: "idle",
-  activity: null,
-  sessions: 1,
-  rights: null,
-  ...over,
+    name: "claude",
+    harness: "claude-code",
+    status: "idle",
+    activity: null,
+    sessions: 1,
+    rights: null,
+    ...over,
   }) as AgentMember;
 
 describe("a Space's @claude when another Space has the plain name", () => {

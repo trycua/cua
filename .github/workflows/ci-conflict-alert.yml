@@ -62,11 +62,24 @@ jobs:
                 }
               }`;
 
+            // GitHub's API answers 502/503 now and then. Retry with a backoff.
+            async function graphqlRetry(vars) {
+              for (let attempt = 1; ; attempt++) {
+                try {
+                  return await github.graphql(QUERY, vars);
+                } catch (e) {
+                  const transient = !e.status || e.status >= 500;
+                  if (!transient || attempt === 4) throw e;
+                  await new Promise((r) => setTimeout(r, 10000 * attempt));
+                }
+              }
+            }
+
             async function listOpen() {
               const out = [];
               let after = null;
               for (;;) {
-                const r = await github.graphql(QUERY, { owner, repo, after });
+                const r = await graphqlRetry({ owner, repo, after });
                 const page = r.repository.pullRequests;
                 out.push(...page.nodes);
                 if (!page.pageInfo.hasNextPage) return out;
@@ -78,10 +91,19 @@ jobs:
 
             // GitHub computes `mergeable` lazily after a push to main: UNKNOWN
             // means "not computed yet". Wait and re-read once for those.
-            let prs = await listOpen();
-            if (prs.some((p) => p.mergeable === 'UNKNOWN')) {
-              await new Promise((r) => setTimeout(r, 45000));
+            // A GitHub outage is not a conflict-alert failure: the hourly run
+            // re-checks, so warn and stop instead of turning main red.
+            let prs;
+            try {
               prs = await listOpen();
+              if (prs.some((p) => p.mergeable === 'UNKNOWN')) {
+                await new Promise((r) => setTimeout(r, 45000));
+                prs = await listOpen();
+              }
+            } catch (e) {
+              if (e.status && e.status < 500) throw e;
+              core.warning(`GitHub API unavailable, skipping this run: ${String(e.message).slice(0, 200)}`);
+              return;
             }
 
             async function ensureLabels() {

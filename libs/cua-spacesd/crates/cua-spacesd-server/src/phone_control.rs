@@ -361,7 +361,7 @@ mod tests {
     fn the_experiment_is_read_from_the_environment_and_the_switch_file() {
         assert_eq!(env_says(Some("mobile")), Some(true));
         assert_eq!(env_says(Some("secure-spaces, -mobile")), Some(false));
-        assert_eq!(env_says(Some("child-spaces")), None);
+        assert_eq!(env_says(Some("ci-runners")), None);
         assert_eq!(env_says(None), None);
     }
 }

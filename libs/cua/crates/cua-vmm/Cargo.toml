@@ -8,7 +8,7 @@ description = "Local sandbox runtimes for the cua SDK: Lume, QEMU, OCI container
 
 [features]
 default = ["lume", "qemu", "container", "vnc", "microvm", "containerization"]
-lume = ["dep:reqwest"]
+lume = ["dep:reqwest", "dep:flate2"]
 # Agentless screenshots over a VMM's VNC endpoint (`vnc::capture_png`).
 vnc = ["dep:vnc", "dep:png"]
 qemu = ["dep:cua-spacesd-client"]
@@ -84,3 +84,11 @@ tokio = { version = "1", features = ["full"] }
 serde_yaml_ng = "0.10"
 # Property tests of the network model (fail closed, tree intersection).
 proptest = "1"
+
+[[example]]
+name = "lume_warm"
+required-features = ["lume"]
+
+[[example]]
+name = "containerization_claim"
+required-features = ["containerization"]

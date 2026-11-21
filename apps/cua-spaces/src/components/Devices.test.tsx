@@ -4,7 +4,15 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { approveOpen, approveView, devicesView, enrollInitial, enrollView, reduceEnroll, type DevicesInput } from "../model/devices";
+import {
+  approveOpen,
+  approveView,
+  devicesView,
+  enrollInitial,
+  enrollView,
+  reduceEnroll,
+  type DevicesInput,
+} from "../model/devices";
 import { createFakeDevicesBridge } from "../native/devices";
 import { ApproveSheet, DevicesBanner, DevicesSection, EnrollSheet, RevokeSheet, useDevices } from "./Devices";
 
@@ -91,7 +99,17 @@ describe("Settings → Devices", () => {
       <>
         <DevicesBanner view={v} onEnroll={onEnroll} />
         <DevicesSection
-        onConfirmMachine={() => {}} view={v} error={null} signedIn nowMs={NOW * 1000} onEnroll={onEnroll} onApprove={() => {}} onDeny={() => {}} onRename={() => {}} onRevoke={() => {}} />
+          onConfirmMachine={() => {}}
+          view={v}
+          error={null}
+          signedIn
+          nowMs={NOW * 1000}
+          onEnroll={onEnroll}
+          onApprove={() => {}}
+          onDeny={() => {}}
+          onRename={() => {}}
+          onRevoke={() => {}}
+        />
       </>,
     );
     expect(screen.getByRole("status", { name: "Device enrollment" }).textContent).toContain("within 5 days");
@@ -100,7 +118,17 @@ describe("Settings → Devices", () => {
     expect(onEnroll).toHaveBeenCalled();
     rerender(
       <DevicesSection
-        onConfirmMachine={() => {}} view={null} error={null} signedIn={false} nowMs={0} onEnroll={() => {}} onApprove={() => {}} onDeny={() => {}} onRename={() => {}} onRevoke={() => {}} />,
+        onConfirmMachine={() => {}}
+        view={null}
+        error={null}
+        signedIn={false}
+        nowMs={0}
+        onEnroll={() => {}}
+        onApprove={() => {}}
+        onDeny={() => {}}
+        onRename={() => {}}
+        onRevoke={() => {}}
+      />,
     );
     expect(screen.getByText(/Sign in to Cua/)).toBeInTheDocument();
   });
@@ -124,7 +152,9 @@ describe("enroll sheet", () => {
     try {
       const bridge = createFakeDevicesBridge({ approvedAfterChecks: 2 });
       const onEnrolled = vi.fn();
-      render(<EnrollSheet bridge={bridge} signIn={async () => {}} onClose={() => {}} onEnrolled={onEnrolled} pollMs={10} />);
+      render(
+        <EnrollSheet bridge={bridge} signIn={async () => {}} onClose={() => {}} onEnrolled={onEnrolled} pollMs={10} />,
+      );
       fireEvent.click(screen.getByRole("button", { name: /Add it from another computer/ }));
       await act(async () => {});
       expect(screen.getByLabelText("One-time code").textContent).toBe("K7QX-M2RP");
@@ -144,7 +174,9 @@ describe("enroll sheet", () => {
     const bridge = createFakeDevicesBridge({ firstDevice: true });
     const onEnrolled = vi.fn();
     const signIn = vi.fn(async () => {});
-    const { unmount } = render(<EnrollSheet bridge={bridge} signIn={signIn} onClose={() => {}} onEnrolled={onEnrolled} />);
+    const { unmount } = render(
+      <EnrollSheet bridge={bridge} signIn={signIn} onClose={() => {}} onEnrolled={onEnrolled} />,
+    );
     fireEvent.click(screen.getByRole("button", { name: /Sign in again/ }));
     await waitFor(() => expect(onEnrolled).toHaveBeenCalled());
     expect(signIn).toHaveBeenCalled();

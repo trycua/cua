@@ -3,11 +3,65 @@
 //! Hard rules: exception values and messages are cleared (they can carry
 //! Space names, file names, emails); the user, request bodies and headers,
 //! breadcrumbs, contexts and the host name are dropped; every string that
-//! remains loses home folder prefixes (`~`) and emails (`[email]`); URLs
+//! remains loses home folder prefixes (`~`), emails (`[email]`) and
+//! token-shaped secrets (`[redacted]`); URLs
 //! lose query strings and fragments.
 
+use std::sync::LazyLock;
+
+use regex_lite::Regex;
 use sentry::protocol::{DebugImage, Event, Frame, Stacktrace};
 use serde_json::Value;
+
+/// What a redacted secret is replaced with.
+const REDACTED: &str = "[redacted]";
+
+/// JWT-shaped strings: a base64url JSON header (`eyJ`), a payload and a
+/// signature (which may be empty for unsigned tokens).
+static JWT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*").unwrap()
+});
+
+/// `Bearer <credential>` as it appears in an Authorization header.
+static BEARER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{8,}").unwrap());
+
+/// AWS access key ids (long-lived and temporary) and the other IAM id kinds.
+static AWS_KEY_ID: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA|AIPA|ABIA|ACCA)[A-Z0-9]{16}\b").unwrap()
+});
+
+/// A long base64, base64url or hex value after `token`, `key`, `secret` or
+/// `password` (any prefix such as `api_key` or `aws_secret_access_key`) and
+/// `=` or `:`, bare, quoted, or as a JSON string.
+static KEYED_SECRET: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"(?i)\b([a-z0-9_.-]*(?:token|key|secret)[a-z0-9_-]*["']?\s*[=:]\s*["']?)[A-Za-z0-9+/_~.=-]{16,}"#,
+    )
+    .unwrap()
+});
+
+/// `password=` secrets are shorter than API tokens, so the bar is lower.
+static KEYED_PASSWORD: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"(?i)\b([a-z0-9_.-]*(?:password|passwd)[a-z0-9_-]*["']?\s*[=:]\s*["']?)[^\s"'&,;)}\]]{8,}"#,
+    )
+    .unwrap()
+});
+
+/// Replaces token-shaped strings with `[redacted]`: JWTs, `Bearer`
+/// credentials, AWS access key ids, and long secrets after `token=`,
+/// `key=`, `secret=` and `password=` (also with `:`). Runs on every string
+/// that leaves the machine, as part of [`scrub_text_with_home`].
+pub fn scrub_secrets(s: &str) -> String {
+    let s = JWT.replace_all(s, REDACTED);
+    let s = BEARER.replace_all(&s, format!("${{1}}{REDACTED}").as_str());
+    let s = AWS_KEY_ID.replace_all(&s, REDACTED);
+    let s = KEYED_SECRET.replace_all(&s, format!("${{1}}{REDACTED}").as_str());
+    KEYED_PASSWORD
+        .replace_all(&s, format!("${{1}}{REDACTED}").as_str())
+        .into_owned()
+}
 
 /// Marker directories whose next path segment is a user name.
 const HOME_PARENTS: [&str; 3] = ["/Users/", "/home/", "\\Users\\"];
@@ -27,7 +81,7 @@ pub fn scrub_text_with_home(s: &str, home: Option<&str>) -> String {
     {
         out = out.replace(h, "~");
     }
-    scrub_emails(&scrub_home_dirs(&out))
+    scrub_emails(&scrub_home_dirs(&scrub_secrets(&out)))
 }
 
 fn is_sep(c: char) -> bool {
@@ -265,6 +319,78 @@ mod tests {
         assert_eq!(scrub_text("@handle and a @ b"), "@handle and a @ b");
     }
 
+    const JWT_SAMPLE: &str = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEyMyJ9.c2lnbmF0dXJlX2J5dGVz";
+
+    #[test]
+    fn jwts_are_redacted() {
+        assert_eq!(
+            scrub_text(&format!("auth {JWT_SAMPLE} failed")),
+            "auth [redacted] failed"
+        );
+        assert_eq!(
+            scrub_text("eyJhbGciOiJub25lIn0.eyJzdWIiOiIxIn0."),
+            "[redacted]"
+        );
+        assert_eq!(scrub_text("a.b.c and v1.2.3"), "a.b.c and v1.2.3");
+    }
+
+    #[test]
+    fn bearer_credentials_are_redacted() {
+        assert_eq!(
+            scrub_text("Authorization: Bearer abc123DEF456ghi789"),
+            "Authorization: Bearer [redacted]"
+        );
+        assert_eq!(scrub_text("bearer sk_live_0123456789"), "bearer [redacted]");
+        assert_eq!(scrub_text("the bearer of news"), "the bearer of news");
+    }
+
+    #[test]
+    fn keyed_secrets_are_redacted() {
+        let b64 = "dGhpcyBpcyBhIHNlY3JldCB2YWx1ZQ==";
+        let hex = "0123456789abcdef0123456789abcdef";
+        for (input, want) in [
+            (format!("token={b64}"), "token=[redacted]".to_string()),
+            (
+                format!("?api_key={hex}&x=1"),
+                "?api_key=[redacted]&x=1".into(),
+            ),
+            (
+                format!("client_secret: {hex}"),
+                "client_secret: [redacted]".into(),
+            ),
+            (
+                format!(r#"{{"access_token":"{b64}"}}"#),
+                r#"{"access_token":"[redacted]"}"#.into(),
+            ),
+            (
+                format!("aws_secret_access_key={b64}"),
+                "aws_secret_access_key=[redacted]".into(),
+            ),
+            (
+                "password=hunter2hunter2".into(),
+                "password=[redacted]".into(),
+            ),
+            (
+                "PASSWORD: 's3cr3t-pass'".into(),
+                "PASSWORD: '[redacted]'".into(),
+            ),
+        ] {
+            assert_eq!(scrub_text(&input), want);
+        }
+        // Short values and unrelated words stay.
+        assert_eq!(scrub_text("key=abc and tokens=3"), "key=abc and tokens=3");
+        assert_eq!(scrub_text("keyboard=layout"), "keyboard=layout");
+    }
+
+    #[test]
+    fn aws_key_ids_are_redacted() {
+        assert_eq!(
+            scrub_text("id AKIAIOSFODNN7EXAMPLE and ASIAIOSFODNN7EXAMPLE."),
+            "id [redacted] and [redacted]."
+        );
+        assert_eq!(scrub_text("AKIA short"), "AKIA short");
+    }
+
     #[test]
     fn urls_lose_query_fragment_and_credentials() {
         assert_eq!(
@@ -309,6 +435,14 @@ mod tests {
         ev.tags.insert("path".into(), "/home/bob/x a@b.co".into());
         ev.extra
             .insert("n".into(), serde_json::json!({"p": ["/Users/zed/q"]}));
+        ev.extra.insert(
+            "auth".into(),
+            serde_json::json!({"h": format!("Bearer {}", "A".repeat(20)), "j": JWT_SAMPLE}),
+        );
+        ev.tags
+            .insert("aws".into(), "AKIAIOSFODNN7EXAMPLE".to_string());
+        ev.exception.values[0].stacktrace.as_mut().unwrap().frames[0].function =
+            Some("run?token=0123456789abcdef0123".into());
         ev
     }
 
@@ -323,15 +457,28 @@ mod tests {
         let f = &ev.exception.values[0].stacktrace.as_ref().unwrap().frames[0];
         assert_eq!(f.filename.as_deref(), Some("~/src/lib.rs"));
         assert_eq!(f.abs_path.as_deref(), Some("~/src/lib.rs"));
-        assert_eq!(f.function.as_deref(), Some("run"));
+        assert_eq!(f.function.as_deref(), Some("run?token=[redacted]"));
         assert!(f.context_line.is_none());
         let r = ev.request.clone().unwrap();
         assert_eq!(r.url.clone().unwrap().as_str(), "https://x.test/p");
         assert!(r.query_string.is_none() && r.headers.is_empty());
         assert_eq!(ev.tags["path"], "~/x [email]");
         assert_eq!(ev.extra["n"]["p"][0], "~/q");
+        assert_eq!(ev.extra["auth"]["h"], "Bearer [redacted]");
+        assert_eq!(ev.extra["auth"]["j"], "[redacted]");
+        assert_eq!(ev.tags["aws"], "[redacted]");
         let all = format!("{ev:?}");
-        for needle in ["alice", "bob", "zed", "secret", "MacBook", "a@b.co"] {
+        for needle in [
+            "alice",
+            "bob",
+            "zed",
+            "secret",
+            "MacBook",
+            "a@b.co",
+            "eyJ",
+            "AKIA",
+            "0123456789abcdef0123",
+        ] {
             assert!(!all.contains(needle), "{needle} leaked: {all}");
         }
     }

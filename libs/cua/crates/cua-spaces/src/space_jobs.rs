@@ -697,6 +697,19 @@ pub const WATCH_OP: &str = "space_job.watch";
 /// answer goes in the tool result: `{registered: true, ...}`, or
 /// `{registered: false, reason}` where nothing can follow the job (the job
 /// still runs).
+#[cfg(not(feature = "mcp"))]
+pub async fn watch(
+    _spaces: &crate::Spaces,
+    _space: &Space,
+    _started: &Value,
+    _a: &i::SpaceJob,
+) -> Value {
+    json!({"registered": false,
+        "reason": "this runtime has no Cua Spaces daemon to follow the job; read it with action logs"})
+}
+
+/// [`watch`] where extensions are installed.
+#[cfg(feature = "mcp")]
 pub async fn watch(
     spaces: &crate::Spaces,
     space: &Space,

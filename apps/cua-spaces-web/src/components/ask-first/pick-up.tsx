@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from "react";
 
+import { t } from "@/i18n";
 import { isUnsupported, onlyAgents, threadAgentOf, useBridge, type DataAdapter, type RecentThread } from "@/bridge";
 
 /** How many chats the Ready screen offers. */
@@ -82,11 +83,11 @@ export function useRecentThreads(limit = PICK_UP_LIMIT, agents?: readonly string
 /** "25 min ago", "3 h ago", "2 days ago". */
 export function agoLabel(ms: number, now = Date.now()): string {
   const s = Math.max(0, Math.round((now - ms) / 1000));
-  if (s < 60) return "just now";
+  if (s < 60) return t("home.pick_up.ago_now");
   const m = Math.round(s / 60);
-  if (m < 60) return `${m} min ago`;
+  if (m < 60) return t("home.pick_up.ago_minutes", { count: m });
   const h = Math.round(m / 60);
-  if (h < 24) return `${h} h ago`;
+  if (h < 24) return t("home.pick_up.ago_hours", { count: h });
   const d = Math.round(h / 24);
-  return d === 1 ? "yesterday" : `${d} days ago`;
+  return d === 1 ? t("home.pick_up.ago_yesterday") : t("home.pick_up.ago_days", { count: d });
 }

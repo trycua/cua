@@ -90,7 +90,7 @@
         },
         {
           "path": "apps/lighthouse-desk/package-lock.json",
-          "sha256": "bc10a1a8f1fc47585b656e4f2e890e126cb61e22b4386d92df2db8def01d76e7"
+          "sha256": "2b25b0414ac69fa22ec6d123430bb9ac4df5d41a61ecca9aae9148ea19d0510d"
         },
         {
           "path": "apps/lighthouse-desk/renderer/index.html",

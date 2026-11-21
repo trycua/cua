@@ -5,13 +5,31 @@
 
 import { describe, expect, it } from "vitest";
 
-import { AGENT_THREADS_TOOLS, folderLabel, isMissingAgentThreadsTool, onlyAgents, pastThreadFromTool, recentThreadsFromTool, resumeContext, webkitAgentThreadsOps } from "../ops/agent-threads";
+import {
+  AGENT_THREADS_TOOLS,
+  folderLabel,
+  isMissingAgentThreadsTool,
+  onlyAgents,
+  pastThreadFromTool,
+  recentThreadsFromTool,
+  resumeContext,
+  webkitAgentThreadsOps,
+} from "../ops/agent-threads";
 
-const ROW = { agent: "claude-code", id: "abc", title: "Kettle timer", cwd: "/Users/sam/code/kettle", last_active_ms: 1_000, resume: ["claude", "--resume", "abc"] };
+const ROW = {
+  agent: "claude-code",
+  id: "abc",
+  title: "Kettle timer",
+  cwd: "/Users/sam/code/kettle",
+  last_active_ms: 1_000,
+  resume: ["claude", "--resume", "abc"],
+};
 
 describe("agent threads", () => {
   it("maps the list, leaving out rows it can't read", () => {
-    const out = recentThreadsFromTool({ threads: [ROW, { agent: "cursor", id: "x" }, { agent: "codex", id: "c1", title: "", cwd: null, last_active_ms: 2 }, "junk"] });
+    const out = recentThreadsFromTool({
+      threads: [ROW, { agent: "cursor", id: "x" }, { agent: "codex", id: "c1", title: "", cwd: null, last_active_ms: 2 }, "junk"],
+    });
     expect(out).toEqual([
       { agent: "claude-code", id: "abc", title: "Kettle timer", cwd: "/Users/sam/code/kettle", lastActiveMs: 1_000, resume: ["claude", "--resume", "abc"] },
       { agent: "openai-codex", id: "c1", title: "Untitled chat", cwd: null, lastActiveMs: 2, resume: [] },
@@ -74,7 +92,9 @@ describe("agent threads", () => {
     expect(onlyAgents(rows, ["gemini-cli"])).toEqual([]);
     expect(onlyAgents(rows)).toHaveLength(3);
     const seen: unknown[] = [];
-    const ops = webkitAgentThreadsOps(<T,>(_m: string, a?: Record<string, unknown>) => (seen.push(a), Promise.resolve({ threads: [{ agent: "openai-codex", id: "b", title: "B" }] } as T)));
+    const ops = webkitAgentThreadsOps(
+      <T>(_m: string, a?: Record<string, unknown>) => (seen.push(a), Promise.resolve({ threads: [{ agent: "openai-codex", id: "b", title: "B" }] } as T)),
+    );
     expect(await ops["agents.recentThreads"]({ agents: ["claude-code"] })).toEqual([]);
     expect(seen).toEqual([{ agents: ["claude-code"] }]);
   });

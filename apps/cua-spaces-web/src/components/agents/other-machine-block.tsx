@@ -34,7 +34,8 @@ export function OtherMachineBlock() {
   return (
     <div data-connect-other-machine="" className="px-4 py-3.5">
       <p className="text-xs text-muted-foreground">
-        An agent that runs on a different machine can use {hereName} too. Host to name: <span className="font-medium text-foreground select-text">{hereName}</span>
+        An agent that runs on a different machine can use {hereName} too. Host to name:{" "}
+        <span className="font-medium text-foreground select-text">{hereName}</span>
         {here?.relayId ? (
           <>
             , its Space <code className="font-mono select-text">relay:{here.relayId}</code>

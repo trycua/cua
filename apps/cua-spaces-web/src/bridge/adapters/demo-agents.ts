@@ -16,7 +16,15 @@ const MIN = 60_000;
 export function demoPersistentAgents(now: number): PersistentAgent[] {
   return [
     { name: "ada", harness: "claude-code", space: "local:design-review", paused: false, spaceState: "running", runId: "run-ada-7", savedMs: now - 2 * MIN },
-    { name: "atlas", harness: "openai-codex", space: "relay:linux-box/ubuntu-build", paused: false, spaceState: "running", runId: null, savedMs: now - 38 * MIN },
+    {
+      name: "atlas",
+      harness: "openai-codex",
+      space: "relay:linux-box/ubuntu-build",
+      paused: false,
+      spaceState: "running",
+      runId: null,
+      savedMs: now - 38 * MIN,
+    },
     { name: "claw", harness: "openclaw", space: "relay:mac-mini/qa-windows", paused: false, spaceState: "running", runId: null, savedMs: now - 3 * 60 * MIN },
     {
       name: "scout",
@@ -75,7 +83,13 @@ export function demoAgentSetup(fresh = false, only: string[] | null = null): Age
   return rows.map((r) => {
     const installed = only ? only.includes(r.agent) : r.installed;
     const configured = fresh ? false : installed && r.configured;
-    return { ...r, installed, configured, skillsInstalled: configured ? r.skillsTotal : 0, detail: !installed ? "Not installed" : configured ? r.detail : "Not set up" };
+    return {
+      ...r,
+      installed,
+      configured,
+      skillsInstalled: configured ? r.skillsTotal : 0,
+      detail: !installed ? "Not installed" : configured ? r.detail : "Not set up",
+    };
   });
 }
 
@@ -91,7 +105,8 @@ export function demoConnections(rows: AgentSetupRow[], imported: readonly string
   const agents = sorted.map((r): ConnectionRow => {
     const name = r.agent === "codex" ? "Codex" : r.name;
     // Codex's demo sign-in waits for `codex login`; the others are signed in.
-    const signedIn: ConnectionRow["signed_in"] = r.agent === "codex" ? (r.signedIn ? "yes" : "no") : r.agent in copyable || r.agent === "cursor" ? "yes" : "unknown";
+    const signedIn: ConnectionRow["signed_in"] =
+      r.agent === "codex" ? (r.signedIn ? "yes" : "no") : r.agent in copyable || r.agent === "cursor" ? "yes" : "unknown";
     const copied = imported.includes(r.agent);
     let state: ConnectionRow["state"];
     let problem: ConnectionRow["problem"] = null;
@@ -180,10 +195,22 @@ class Script {
 
   tool(kind: string, title: string, status: "completed" | "failed" = "completed", output?: string, ms = 1400): this {
     const id = `toolu_${String(++this.tools).padStart(2, "0")}`;
-    this.push({ kind: "tool_call", tool_id: id, tool_title: title, tool_kind: kind, tool_status: "pending", category: "activity", summary: `Tool ${title}` }, 500);
+    this.push(
+      { kind: "tool_call", tool_id: id, tool_title: title, tool_kind: kind, tool_status: "pending", category: "activity", summary: `Tool ${title}` },
+      500,
+    );
     const tail = output ? `: ${output.split("\n")[0]}` : "";
     return this.push(
-      { kind: "tool_update", tool_id: id, tool_title: title, tool_kind: kind, tool_status: status, text: output, category: "activity", summary: `Tool ${title} ${status}${tail}` },
+      {
+        kind: "tool_update",
+        tool_id: id,
+        tool_title: title,
+        tool_kind: kind,
+        tool_status: status,
+        text: output,
+        category: "activity",
+        summary: `Tool ${title} ${status}${tail}`,
+      },
       ms,
     );
   }
@@ -200,10 +227,7 @@ class Script {
   }
 
   end(stopReason = "end_turn"): this {
-    return this.push(
-      { kind: "turn_ended", stop_reason: stopReason, category: "activity", summary: `Turn ${this.turn} ended (${stopReason})` },
-      300,
-    );
+    return this.push({ kind: "turn_ended", stop_reason: stopReason, category: "activity", summary: `Turn ${this.turn} ended (${stopReason})` }, 300);
   }
 
   error(text: string): this {
@@ -256,7 +280,7 @@ function adaRun(t0: number): DemoRunRecord {
     .tool("read", "Read apps/cua-spaces-web/src/routes/spaces/index.tsx")
     .tool("execute", 'rg -n "shrink|min-w" apps/cua-spaces-web/src/components', "completed", "3 matches in 2 files")
     .say(
-      "The overflow comes from the state label. `StateLabel` sits in a flex row next to the Space name, and it has no `shrink-0`, so a long computer name pushes it out of the tile instead of truncating.\n\nThe name already has `truncate`, but its wrapper needs `min-w-0` for that to work inside flex:\n\n```tsx\n<div className=\"min-w-0 flex-1\">\n  <div className=\"truncate\">{space.name}</div>\n</div>\n```\n\nI haven't changed anything yet.",
+      'The overflow comes from the state label. `StateLabel` sits in a flex row next to the Space name, and it has no `shrink-0`, so a long computer name pushes it out of the tile instead of truncating.\n\nThe name already has `truncate`, but its wrapper needs `min-w-0` for that to work inside flex:\n\n```tsx\n<div className="min-w-0 flex-1">\n  <div className="truncate">{space.name}</div>\n</div>\n```\n\nI haven\'t changed anything yet.',
     )
     .usage()
     .end()
@@ -278,7 +302,7 @@ function adaRun(t0: number): DemoRunRecord {
     // written live, starting a moment after the adapter starts.
     .at(t0 + 1_000)
     .tool("execute", "rg -n '!' apps/cua-spaces-web/src/routes/onboarding", "completed", "4 matches in 1 file", 2200)
-    .thought("Four exclamation marks, all in the first two screens. The agents screen repeats \"MCP server\" three times.", 1600)
+    .thought('Four exclamation marks, all in the first two screens. The agents screen repeats "MCP server" three times.', 1600)
     .tool("edit", "Edit apps/cua-spaces-web/src/routes/onboarding/index.tsx", "completed", undefined, 2600)
     .tool("execute", "pnpm test -- onboarding", "completed", "8 passed", 3200)
     .say(ONBOARDING_DIFF, 180)
@@ -325,7 +349,7 @@ export function demoRunRecords(t0: number): DemoRunRecord[] {
     .tool("execute", "for i in $(seq 20); do cargo test -q -p cua-spacesd reconnect || echo FAIL; done", "completed", "4 of 20 failed")
     .tool("execute", "git bisect run scripts/flaky.sh 20", "completed", "first bad commit: 6c1e2a4", 4200)
     .say(
-      "The first bad commit is `6c1e2a4` (\"spacesd: reuse the stream socket across suspends\").\n\nAfter a suspend, the reconnect races the old socket's close. When the close lands second, the new stream reads the old `EOF` and gives up:\n\n```rust\n// stream.rs, after resume\nlet sock = self.sock.take().unwrap_or_else(|| connect(addr))?;\n```\n\nDropping the old socket before resuming fixes it: 0 failures in 100 runs.",
+      'The first bad commit is `6c1e2a4` ("spacesd: reuse the stream socket across suspends").\n\nAfter a suspend, the reconnect races the old socket\'s close. When the close lands second, the new stream reads the old `EOF` and gives up:\n\n```rust\n// stream.rs, after resume\nlet sock = self.sock.take().unwrap_or_else(|| connect(addr))?;\n```\n\nDropping the old socket before resuming fixes it: 0 failures in 100 runs.',
     )
     .end()
     .wait(12 * MIN)
@@ -354,23 +378,52 @@ export function demoRunRecords(t0: number): DemoRunRecord[] {
     adaRun(t0),
     finished(
       "local:design-review",
-      { runId: "run-3f1c", agent: "openai-codex", status: "idle", reason: "waiting for a follow-up", summary: "Update the Playwright snapshots for the dark theme", createdAt: Math.floor((t0 - 2 * 60 * MIN) / 1000) },
+      {
+        runId: "run-3f1c",
+        agent: "openai-codex",
+        status: "idle",
+        reason: "waiting for a follow-up",
+        summary: "Update the Playwright snapshots for the dark theme",
+        createdAt: Math.floor((t0 - 2 * 60 * MIN) / 1000),
+      },
       snapshots,
     ),
     finished(
       "relay:linux-box/ubuntu-build",
-      { runId: "run-atlas-12", agent: "openai-codex", status: "idle", reason: "waiting for a follow-up", summary: "Bisect the flaky reconnect test in cua-spacesd", createdAt: Math.floor((t0 - 95 * MIN) / 1000) },
+      {
+        runId: "run-atlas-12",
+        agent: "openai-codex",
+        status: "idle",
+        reason: "waiting for a follow-up",
+        summary: "Bisect the flaky reconnect test in cua-spacesd",
+        createdAt: Math.floor((t0 - 95 * MIN) / 1000),
+      },
       bisect,
     ),
     finished(
       "relay:linux-box/ubuntu-build",
-      { runId: "run-9b20", agent: "hermes", status: "failed", reason: "the runner exited with code 2", summary: "Build the arm64 .deb and attach it to the draft release", createdAt: Math.floor((t0 - 4 * 60 * MIN) / 1000) },
+      {
+        runId: "run-9b20",
+        agent: "hermes",
+        status: "failed",
+        reason: "the runner exited with code 2",
+        summary: "Build the arm64 .deb and attach it to the draft release",
+        createdAt: Math.floor((t0 - 4 * 60 * MIN) / 1000),
+      },
       deb,
       "exited",
     ),
     finished(
       "relay:mac-mini/qa-windows",
-      { runId: "run-claw-4", agent: "openclaw", status: "idle", reason: "waiting for a follow-up", summary: "Install the 0.6.1 Windows build and note what breaks", needsYou: { title: "OpenClaw needs you to sign in to GitHub", detail: "It is checking the installer in qa-windows and can't go on until you sign in." }, createdAt: Math.floor((t0 - 3 * 60 * MIN) / 1000) },
+      {
+        runId: "run-claw-4",
+        agent: "openclaw",
+        status: "idle",
+        reason: "waiting for a follow-up",
+        summary: "Install the 0.6.1 Windows build and note what breaks",
+        needsYou: { title: "OpenClaw needs you to sign in to GitHub", detail: "It is checking the installer in qa-windows and can't go on until you sign in." },
+        createdAt: Math.floor((t0 - 3 * 60 * MIN) / 1000),
+      },
       installer,
     ),
   ];
@@ -417,8 +470,10 @@ export function demoReply(rec: DemoRunRecord, text: string, t: number): void {
   const written = writtenEvents(rec, t);
   const s = Script.after(written, t).prompt(text);
   if (/sign|signed|logged|done|go ahead|yes/i.test(text)) {
-    s.tool("execute", "gh pr comment --body-file result.md", "completed", "Posted a comment", 2200)
-      .say("Posted the result on your pull request. You can keep this machine for the next check, or throw it away.", 80);
+    s.tool("execute", "gh pr comment --body-file result.md", "completed", "Posted a comment", 2200).say(
+      "Posted the result on your pull request. You can keep this machine for the next check, or throw it away.",
+      80,
+    );
   } else {
     s.thought("Read the reply and carry on.", 800).say("Got it. I'll go on with that.", 80);
   }

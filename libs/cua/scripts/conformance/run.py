@@ -42,7 +42,7 @@ class Run:
         self.env = dict(os.environ)
         self.env.update({
             "CUA_HOME": str(self.home), "CUA_TELEMETRY": "0", "DO_NOT_TRACK": "1",
-            "CUA_CREDENTIAL_STORE": "test-keychain", "CUA_EXPERIMENTS": "child-spaces",
+            "CUA_CREDENTIAL_STORE": "test-keychain",
         })
         # The daemon forwards it to the agent (`env_from_host`); the scripted model ignores the value.
         self.env.setdefault("ANTHROPIC_API_KEY", "mock-key")

@@ -28,10 +28,6 @@ pub enum Command {
         /// Own the runtime in this MCP process. On macOS this is an explicit
         /// TCC-attribution choice; it is mutually exclusive with `--socket`.
         direct: bool,
-        /// `--claude-code-computer-use-compat`: legacy compatibility flag.
-        /// It currently has no tool-surface effect and remains accepted so
-        /// existing Claude Code launch configurations keep working.
-        claude_code_compat: bool,
         /// Repeatable trusted launch grants for residual standard-mode
         /// boundaries, for example `--grant existing-profile`.
         grants: Vec<String>,
@@ -47,10 +43,12 @@ pub enum Command {
         /// `serve::default_socket_path()` when None.
         socket: Option<String>,
     },
-    /// `cua-driver connect`: connect Claude Code, Codex and Cursor.
+    /// `cua-driver connect`: connect Claude Code, Codex, Cursor and Factory Droid.
     Connect {
         clients: Vec<String>,
         dry_run: bool,
+        /// Switch an agent that uses another Cua Driver to this one.
+        replace: bool,
         json: bool,
     },
     McpConfig {
@@ -77,11 +75,6 @@ pub enum Command {
         /// two opt-out signals.
         no_permissions_gate: bool,
         no_automation_prompts: bool,
-        /// True when `--claude-code-computer-use-compat` is on argv. The MCP
-        /// proxy forwards this flag to a daemon it auto-launches (see
-        /// `launch_daemon_and_wait`) so existing launch configurations stay
-        /// stable. It currently has no tool-surface effect.
-        claude_code_compat: bool,
         /// Repeatable trusted launch grants.
         grants: Vec<String>,
         /// Admit the encrypted local Computer History early preview for this
@@ -253,7 +246,6 @@ const VALUE_FLAGS: &[&str] = &[
     "--socket",
     "--permission-mode",
     "--grant",
-    "--session-policy",
     "--capability-manifest",
     "--pid-file",
     "--expected-pid",
@@ -268,9 +260,10 @@ const VALUE_FLAGS: &[&str] = &[
     "--archive",
     "--image",
     "--capture",
-    // Experimental PiP preview — value flag for the optional geometry
-    // override (--experimental-pip itself is a bare flag and doesn't
-    // need to be listed here).
+    // Removed picture-in-picture preview: `--experimental-pip` and
+    // `--experimental-pip-geometry WxH` are still accepted and ignored for
+    // one release so existing launch configs keep working. The geometry
+    // flag takes a value, so it must stay listed here.
     "--experimental-pip-geometry",
     // `cursor motion` options.
     "--style",
@@ -287,12 +280,40 @@ const SERVE_ONLY_AUTHORIZATION_FLAGS: &[&str] = &[
     "--permission-mode",
     "--capability-manifest",
     "--approve-capability-manifest",
-    "--session-policy",
-    "--approve-session-policy",
     "--dangerously-bypass-approvals",
     "--no-permissions-gate",
     "--no-automation-prompts",
 ];
+
+/// Options that were removed, each with what to do instead. Passing one fails
+/// with that message rather than being ignored or reported as unknown.
+const REMOVED_OPTIONS: &[(&str, &str)] = &[
+    (
+        "--session-policy",
+        "use `cua-driver serve --capability-manifest <path>` instead",
+    ),
+    (
+        "--approve-session-policy",
+        "use `cua-driver serve --approve-capability-manifest` instead",
+    ),
+    (
+        "--claude-code-computer-use-compat",
+        "it had no effect on the tool surface. Remove it and register the server as plain `cua-driver mcp` (see \"Claude Code registration\" in the Cua Driver README, or run `cua-driver mcp-config --client claude`)",
+    ),
+];
+
+fn removed_option_error(args: &[String]) -> Option<String> {
+    REMOVED_OPTIONS.iter().find_map(|(flag, instead)| {
+        args.iter()
+            .any(|arg| {
+                arg == flag
+                    || arg
+                        .strip_prefix(flag)
+                        .is_some_and(|remainder| remainder.starts_with('='))
+            })
+            .then(|| format!("cua-driver: {flag} was removed; {instead}."))
+    })
+}
 
 fn serve_only_authorization_flag(args: &[String]) -> Option<&'static str> {
     SERVE_ONLY_AUTHORIZATION_FLAGS.iter().copied().find(|flag| {
@@ -541,6 +562,7 @@ fn finite_client_kind_from_args(args: &[String]) -> &'static str {
         "qwen" | "qwen-code" => "qwen_code",
         "droid" | "factory" => "factory_droid",
         "zcode" => "zcode",
+        "deepseek-harness" => "deepseek_harness",
         _ => "other",
     }
 }
@@ -563,6 +585,11 @@ fn finite_tool_name_from_args(args: &[String]) -> Option<String> {
 /// independently; we only care about the first non-`--` arg here.
 pub fn parse_command() -> Command {
     let args: Vec<String> = std::env::args().skip(1).collect();
+
+    if let Some(error) = removed_option_error(&args) {
+        eprintln!("{error}");
+        process::exit(64);
+    }
 
     // Handle --version / -V before any other parsing so they are never
     // silently stripped as "bare flags" and swallowed by MCP mode.
@@ -619,7 +646,7 @@ pub fn parse_command() -> Command {
         println!("skills options (agent skill-pack management, opt-in):");
         println!("  cua-driver skills install       Fetch the versioned skill pack from GitHub Releases and symlink it");
         println!("                                  into each detected agent's skills/ dir (Claude Code, Codex, Prime Agent,");
-        println!("                                  OpenClaw, OpenCode). Idempotent. Never overwrites existing user links.");
+        println!("                                  OpenClaw, OpenCode, DeepSeek Harness). Idempotent. Never overwrites existing user links.");
         println!("  cua-driver skills update        Re-fetch the skill pack from GitHub, refreshing the local copy + links.");
         println!("  cua-driver skills uninstall     Remove the agent symlinks. Add --all to also delete the local copy.");
         println!("  cua-driver skills status        Report local install state + per-agent link state. Read-only.");
@@ -674,10 +701,6 @@ pub fn parse_command() -> Command {
         );
         println!("  --approve-capability-manifest   Required with --capability-manifest; the trusted launcher asserts");
         println!("                                  that the human reviewed this exact manifest at startup.");
-        println!("  --session-policy <path>         Deprecated alias for --capability-manifest.");
-        println!(
-            "  --approve-session-policy        Deprecated alias for --approve-capability-manifest."
-        );
         println!();
         println!("authorization revocation:");
         println!("  cua-driver revoke --session <id>  Stop and revoke one session's grants.");
@@ -697,12 +720,6 @@ pub fn parse_command() -> Command {
             "  --host-bundle-id <id>   Advisory host bundle id label for check_permissions output."
         );
         println!("  --socket <path>         Select an explicit daemon socket/pipe endpoint.");
-        println!("  --claude-code-computer-use-compat");
-        println!("                          Legacy compatibility flag retained for existing launch configs.");
-        println!(
-            "                          It currently has no tool-surface effect and does not add a"
-        );
-        println!("                          standalone screenshot tool.");
         println!();
         println!("agent cursor overlay (serve only — needs the daemon UI runloop):");
         println!("  The overlay is ON by default: every MCP session automatically gets its own");
@@ -761,25 +778,13 @@ pub fn parse_command() -> Command {
         println!();
         println!("experimental options (default: off):");
         println!(
-            "  --experimental-history      Admit encrypted local Computer History for this daemon."
+            "  --experimental-history      Admit encrypted local Computer History (deprecated; removal after 26 Nov 2026)."
         );
         println!(
             "                              Capture remains off until `cua-driver history enable`."
         );
         println!("  cua-driver history enable   Opt in and initialize encrypted local history.");
         println!("  cua-driver history status|pause|resume|flush|list|show|disable|delete");
-        println!("  --experimental-pip          Show a small always-on-top window with the latest");
-        println!(
-            "                              post-action screenshot + a 1-line label. macOS only"
-        );
-        println!(
-            "                              today; Win/Linux print a not-yet-implemented notice."
-        );
-        println!(
-            "  --experimental-pip-geometry WxH[+X+Y]   Override window size (and optional top-left"
-        );
-        println!("                                          origin). Defaults to 480x360 in the top-right");
-        println!("                                          corner of the main display.");
         std::process::exit(0);
     }
 
@@ -836,9 +841,10 @@ pub fn parse_command() -> Command {
         }
     }
 
-    let claude_code_compat = args
-        .iter()
-        .any(|a| a == "--claude-code-computer-use-compat");
+    if let Err(error) = check_options(&args, &positionals) {
+        eprintln!("{error}");
+        process::exit(64);
+    }
 
     let mut pos = positionals.into_iter();
     match pos.next() {
@@ -869,20 +875,19 @@ pub fn parse_command() -> Command {
             Command::Mcp {
                 socket: socket.clone(),
                 direct: args.iter().any(|a| a == "--direct"),
-                claude_code_compat,
                 grants: grants.clone(),
             }
         }
         Some("mcp") => Command::Mcp {
             socket: socket.clone(),
             direct: args.iter().any(|a| a == "--direct"),
-            claude_code_compat,
             grants: grants.clone(),
         },
         Some("list-tools") => Command::ListTools,
         Some("connect") => Command::Connect {
             clients: flag_values(&args, "--client"),
             dry_run: args.iter().any(|a| a == "--dry-run"),
+            replace: args.iter().any(|a| a == "--replace"),
             json: args.iter().any(|a| a == "--json"),
         },
         Some("mcp-config") => Command::McpConfig {
@@ -896,18 +901,11 @@ pub fn parse_command() -> Command {
             dangerously_bypass_approvals: args
                 .iter()
                 .any(|a| a == "--dangerously-bypass-approvals"),
-            capability_manifest: aliased_flag_value(
-                &args,
-                "--capability-manifest",
-                "--session-policy",
-            ),
-            approve_capability_manifest: args
-                .iter()
-                .any(|a| a == "--approve-capability-manifest" || a == "--approve-session-policy"),
+            capability_manifest: flag_value(&args, "--capability-manifest"),
+            approve_capability_manifest: args.iter().any(|a| a == "--approve-capability-manifest"),
             // Bare flag — present anywhere on argv counts as "skip the gate".
             no_permissions_gate: args.iter().any(|a| a == "--no-permissions-gate"),
             no_automation_prompts: args.iter().any(|a| a == "--no-automation-prompts"),
-            claude_code_compat,
             grants,
             experimental_history: args.iter().any(|a| a == "--experimental-history"),
         },
@@ -1286,6 +1284,149 @@ fn cursor_motion_args(args: &[String]) -> Result<serde_json::Value, String> {
     Ok(out.into())
 }
 
+/// Commands that parse their own arguments and reject unknown options there.
+const SELF_PARSING_COMMANDS: &[&str] = &["extension", "perception", "cursor-theme"];
+
+/// Options a command accepts that its `cli_docs_json` entry does not list.
+/// `(command, option, takes_value)`.
+const UNLISTED_OPTIONS: &[(&str, &str, bool)] = &[
+    // Internal embedded-host lifetime contract (`EmbeddedCuaDriverHost`).
+    ("serve", "--parent-liveness-stdio", false),
+    // Removed picture-in-picture preview, still accepted and ignored.
+    ("serve", "--experimental-pip", false),
+    ("serve", "--experimental-pip-geometry", true),
+    // Accepted before the check landed, and still passed by the hosted macOS
+    // release gate (`--socket S permissions status --json`). The status
+    // command does not read it, so it is accepted and ignored.
+    ("permissions", "--socket", true),
+    // Direct MCP owns a runtime and reads these through `CursorConfig`.
+    ("mcp", "--no-overlay", false),
+    ("mcp", "--glide-ms", true),
+    ("mcp", "--dwell-ms", true),
+    ("mcp", "--idle-hide-ms", true),
+];
+
+/// Reject any option the selected command does not take. The accepted set is
+/// the command's `cli_docs_json` entry (the table `--help` and the generated
+/// reference render), merged along the subcommand path, plus
+/// `UNLISTED_OPTIONS`. Without this, a misspelled option was skipped and the
+/// command ran as if it were absent (#4698).
+fn check_options(args: &[String], positionals: &[&str]) -> Result<(), String> {
+    // These get only the words after their own name, so nothing before it
+    // is read by anyone.
+    if let Some(command) = positionals
+        .first()
+        .filter(|command| SELF_PARSING_COMMANDS.contains(command))
+    {
+        let before = args.iter().position(|arg| arg == command).unwrap_or(0);
+        return check_against(&args[..before], &[], command, command);
+    }
+    let docs = cli_docs_json();
+    fn find<'a>(nodes: &'a serde_json::Value, name: &str) -> Option<&'a serde_json::Value> {
+        nodes.as_array()?.iter().find(|node| node["name"] == name)
+    }
+    // Bare `cua-driver` runs MCP, and an unknown first word is a tool name.
+    let first = positionals.first().copied();
+    let root = match first {
+        None => "mcp",
+        Some(word) if find(&docs["commands"], word).is_some() => word,
+        Some(_) => "call",
+    };
+    let Some(root_node) = find(&docs["commands"], root) else {
+        return Ok(());
+    };
+    let mut help_path = vec![root];
+    let mut nodes = vec![root_node];
+    for word in positionals.iter().skip(1) {
+        let current = nodes[nodes.len() - 1];
+        let Some(child) = find(&current["subcommands"], word) else {
+            break;
+        };
+        help_path.push(word);
+        nodes.push(child);
+    }
+    // `channel --json` runs `channel status`, so it takes that one's options.
+    if let [only] = nodes.as_slice() {
+        if let Some(default) = only["default_subcommand"].as_str() {
+            nodes.extend(find(&only["subcommands"], default));
+        }
+    }
+
+    let mut accepted: Vec<(String, bool)> = UNLISTED_OPTIONS
+        .iter()
+        .filter(|(command, _, _)| *command == root)
+        .map(|(_, option, takes_value)| ((*option).to_owned(), *takes_value))
+        .collect();
+    for node in &nodes {
+        for (key, takes_value) in [("options", true), ("flags", false)] {
+            for option in node[key].as_array().into_iter().flatten() {
+                if let Some(name) = option["name"].as_str() {
+                    accepted.push((format!("--{name}"), takes_value));
+                }
+                if let Some(short) = option["short_name"].as_str() {
+                    accepted.push((format!("-{short}"), takes_value));
+                }
+            }
+        }
+    }
+
+    let command = help_path.join(" ");
+    let shown = match first {
+        Some(tool) if root == "call" && tool != "call" => tool,
+        _ => &command,
+    };
+    check_against(args, &accepted, shown, &command)
+}
+
+/// Check every option in `args` against `accepted` (`(option, takes_value)`).
+/// Errors name `shown` and point at `cua-driver <help> --help`.
+fn check_against(
+    args: &[String],
+    accepted: &[(String, bool)],
+    shown: &str,
+    help: &str,
+) -> Result<(), String> {
+    // A lone `-` or a number is a value, never an option. A value that starts
+    // with `-` otherwise has to be written `--option=-value`, so a value
+    // option can never swallow the option after it.
+    let is_value = |arg: &str| !arg.starts_with('-') || arg == "-" || arg.parse::<f64>().is_ok();
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        index += 1;
+        // macOS LaunchServices may add a process serial number,
+        // `-psn_<high>_<low>`, to an app launch.
+        let serial_number = arg.strip_prefix("-psn_").is_some_and(|serial| {
+            serial.split_once('_').is_some_and(|(high, low)| {
+                [high, low]
+                    .iter()
+                    .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+            })
+        });
+        if is_value(arg) || serial_number {
+            continue;
+        }
+        let (name, inline_value) = match arg.split_once('=') {
+            Some((name, _)) if name.starts_with("--") => (name, true),
+            _ => (arg, false),
+        };
+        match accepted.iter().find(|(option, _)| option == name) {
+            Some((_, true)) if !inline_value && !args.get(index).is_some_and(|v| is_value(v)) => {
+                return Err(format!("cua-driver {shown}: option '{arg}' needs a value."));
+            }
+            Some((_, true)) if !inline_value => index += 1,
+            Some((_, true)) => {}
+            Some((_, false)) if !inline_value => {}
+            _ => {
+                return Err(format!(
+                    "cua-driver {shown}: unknown option '{arg}'. Run `cua-driver {help} --help` for the options it takes."
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn parse_expected_stop_pid(args: &[String], command: Option<&str>) -> Option<u32> {
     let raw = flag_value(args, "--expected-pid")?;
     if command != Some("stop") {
@@ -1316,19 +1457,6 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
         }
     }
     None
-}
-
-fn aliased_flag_value(args: &[String], preferred: &str, deprecated: &str) -> Option<String> {
-    let preferred_value = flag_value(args, preferred);
-    let deprecated_value = flag_value(args, deprecated);
-    if preferred_value.is_some()
-        && deprecated_value.is_some()
-        && preferred_value != deprecated_value
-    {
-        eprintln!("{preferred} conflicts with deprecated {deprecated}");
-        process::exit(64);
-    }
-    preferred_value.or(deprecated_value)
 }
 
 /// Return every value of a repeatable `--flag value` or `--flag=value`.
@@ -1467,12 +1595,10 @@ impl std::error::Error for LaunchDaemonError {}
 pub fn launch_daemon_and_wait(
     socket_path: &str,
     timeout_secs: u64,
-    claude_code_compat: bool,
     grants: &[String],
     experimental_history: bool,
 ) -> Result<(), LaunchDaemonError> {
     let state = crate::history_runtime::DaemonLaunchState {
-        claude_code_compat,
         grants: grants.to_vec(),
         ..Default::default()
     };
@@ -1821,9 +1947,6 @@ fn append_daemon_launch_state(
     if state.no_automation_prompts {
         args.push("--no-automation-prompts".to_owned());
     }
-    if state.claude_code_compat {
-        args.push("--claude-code-computer-use-compat".to_owned());
-    }
     if experimental_history {
         args.push("--experimental-history".to_owned());
     }
@@ -1862,7 +1985,6 @@ impl McpDaemonStartup {
 
 pub fn run_mcp_via_daemon_proxy<F>(
     socket: Option<String>,
-    claude_code_compat: bool,
     grants: &[String],
     on_startup: F,
 ) -> anyhow::Result<()>
@@ -1925,13 +2047,7 @@ where
             }
             true
         };
-        if let Err(error) = launch_daemon_and_wait(
-            &socket_path,
-            10,
-            claude_code_compat,
-            grants,
-            experimental_history,
-        ) {
+        if let Err(error) = launch_daemon_and_wait(&socket_path, 10, grants, experimental_history) {
             if let Some(on_startup) = on_startup.take() {
                 on_startup(
                     if error.kind == LaunchDaemonErrorKind::Timeout {
@@ -2048,7 +2164,6 @@ pub fn build_manifest() -> serde_json::Value {
               "args": [
                   { "name": "--socket", "type": "string", "description": "Select an explicit daemon socket or named-pipe endpoint." },
                   { "name": "--direct", "type": "flag", "description": "Own the runtime in the MCP process; on macOS this explicitly accepts host TCC attribution. Mutually exclusive with --socket." },
-                  { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Legacy compatibility flag with no current tool-surface effect." },
                   { "name": "--embedded", "type": "flag", "description": "Declare embedding-host mode. Without --direct, requires the host's private service through --socket instead of auto-launching the standalone app." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." },
                   { "name": "--grant", "type": "repeatable-string", "description": "Pre-authorize a residual standard-mode boundary for a newly launched runtime. Supported value: existing-profile." }
@@ -2062,11 +2177,8 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--dangerously-bypass-approvals", "type": "flag", "description": "Select unrestricted mode and acknowledge its risk." },
                   { "name": "--capability-manifest", "type": "string", "description": "Optional narrow-only tool/resource ceiling; required in bounded mode." },
                   { "name": "--approve-capability-manifest", "type": "flag", "description": "Trusted-launcher confirmation that the exact capability manifest was reviewed." },
-                  { "name": "--session-policy", "type": "string", "description": "Deprecated alias for --capability-manifest." },
-                  { "name": "--approve-session-policy", "type": "flag", "description": "Deprecated alias for --approve-capability-manifest." },
                   { "name": "--no-permissions-gate", "type": "flag", "description": "Skip the macOS TCC first-launch gate." },
                   { "name": "--no-automation-prompts", "type": "flag", "description": "Refuse scripting actions without granted macOS Automation consent." },
-                  { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Legacy compatibility flag forwarded by the MCP proxy; no current tool-surface effect." },
                   { "name": "--embedded", "type": "flag", "description": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." }
                   ,{ "name": "--experimental-history", "type": "flag", "description": "Admit the encrypted local Computer History early preview for this daemon launch." }
@@ -2106,16 +2218,17 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--socket", "type": "string", "description": "Override the required daemon socket path." }
               ] },
             { "name": "connect",
-              "description": "Connect Claude Code, Codex and Cursor to Cua Driver: add it to each agent that is installed and install the skill pack. Safe to run again.",
+              "description": "Connect Claude Code, Codex, Cursor and Factory Droid to Cua Driver: add it to each agent that is installed and install the skill pack. Safe to run again.",
               "args": [
-                  { "name": "--client", "type": "string", "description": "Connect only this agent (claude, codex or cursor). Repeat for several. Default: every agent found." },
+                  { "name": "--client", "type": "string", "description": "Connect only this agent (claude, codex, cursor or droid). Repeat for several. Default: every agent found." },
                   { "name": "--dry-run", "type": "flag", "description": "Show what would be connected without changing anything." },
+                  { "name": "--replace", "type": "flag", "description": "Switch an agent that uses another Cua Driver, such as the one inside Cua Spaces, to this one." },
                   { "name": "--json", "type": "flag", "description": "Emit machine-readable output." }
               ] },
             { "name": "mcp-config",
               "description": "Print client-specific connection guidance (MCP config where supported) and, with --client, install the skill pack for that agent.",
               "args": [
-                  { "name": "--client", "type": "string", "description": "One of: claude, codex, cursor, hermes, antigravity, openclaw, opencode, pi, prime-agent, qwen, droid, zcode. Omit for the generic snippet." },
+                  { "name": "--client", "type": "string", "description": "One of: claude, codex, cursor, hermes, antigravity, openclaw, opencode, pi, prime-agent, qwen, droid, zcode, deepseek-harness. Omit for the generic snippet." },
                   { "name": "--no-skills", "type": "flag", "description": "With --client, do not install the cua-driver skill pack for that agent." }
               ] },
             { "name": "manifest",
@@ -2253,7 +2366,8 @@ pub fn build_manifest() -> serde_json::Value {
 /// Print client-specific connection guidance (MCP config where supported).
 ///
 /// `--client <name>` selects one of: claude, codex, cursor, hermes,
-/// antigravity, openclaw, opencode, pi, prime-agent, qwen, droid, zcode.
+/// antigravity, openclaw, opencode, pi, prime-agent, qwen, droid, zcode,
+/// deepseek-harness.
 /// Omit for the generic JSON snippet.
 ///
 /// A named client also gets the skill pack for its agent, because agents
@@ -2290,14 +2404,6 @@ pub fn run_mcp_config(client: Option<&str>, no_skills: bool) {
             // defaults to the per-project config (`<cwd>/.claude.json`),
             // which is the source of the "registered cua-driver but
             // Claude Code doesn't see it" surprise users hit.
-            //
-            // The `--claude-code-computer-use-compat` flag is NOT
-            // emitted: the only tool it ever gated (the compat
-            // screenshot) was removed in #1692, so the flag is a no-op
-            // today on every code path. Carrying it confused Claude
-            // Code's tool indexer in observed sessions; dropping it
-            // makes the registration shape match what `--client codex`,
-            // `--client cursor`, etc. already produce.
             //
             // Why `add-json` instead of `add -- BIN --flag`? PowerShell's
             // native-command arg parser mangles long flags after a bare
@@ -2483,8 +2589,27 @@ pub fn run_mcp_config(client: Option<&str>, no_skills: bool) {
                  {pretty}",
             );
         }
+        Some("deepseek-harness") => {
+            // DeepSeek Harness composes Cordis patch layers. A user layer is a
+            // top-level YAML list; this inserts one generic MCP client row.
+            // No skill-filesystem row: DSH's base bundle already mounts that
+            // provider, and it scans ~/.agents/skills, where the pack lands.
+            let command = binary.replace('\'', "''");
+            println!("# DeepSeek Harness: append this entry to $DSH_HOME/cordis.patch.yml (every");
+            println!("# profile) or $DSH_HOME/profiles/<profile>/cordis.patch.yml. DSH_HOME");
+            println!("# defaults to ~/.dsh. The file is a YAML list of patches: keep the entries");
+            println!("# already there, or replace a lone [] with this one.");
+            println!("- insert:");
+            println!("    - id: cua-driver");
+            println!("      name: '@deepseek-ai/dsh-mcp-client'");
+            println!("      config:");
+            println!("        serverName: cua-driver");
+            println!("        transport: stdio");
+            println!("        command: '{command}'");
+            println!("        args: [mcp]");
+        }
         Some(other) => {
-            eprintln!("Unknown client '{other}'. Valid: claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, zcode.");
+            eprintln!("Unknown client '{other}'. Valid: claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, zcode, deepseek-harness.");
             process::exit(2);
         }
     }
@@ -2534,7 +2659,7 @@ mod daemon_compatibility_tests {
 
     #[test]
     fn incompatible_daemon_is_refused_before_a_cli_action_can_dispatch() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
         let socket = directory.path().join("driver.sock");
         let listener = UnixListener::bind(&socket).unwrap();
         let server = std::thread::spawn(move || {
@@ -2798,6 +2923,9 @@ pub fn run_history_cmd(
     if !valid {
         eprintln!("Unknown history subcommand '{subcommand}'. Valid: enable, disable, pause, resume, status, flush, list, show <sequence>, delete --yes");
         process::exit(64);
+    }
+    if subcommand == "enable" {
+        eprintln!("notice: Computer History is deprecated and will be removed in the release after 26 Nov 2026. Use `cua-driver history delete --yes` to remove stored history.");
     }
     if subcommand == "delete" && !confirmed {
         eprintln!("history delete destroys the encrypted files and their native credential-store key. Re-run with --yes.");
@@ -3256,7 +3384,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
         }
 
         other => {
-            eprintln!("Unknown recording subcommand '{other}'. Valid: start <dir>, stop, status, render <dir> --output <out.mp4>");
+            eprintln!("Unknown recording subcommand '{other}'. Valid: start <dir>, stop, status, render <input-dir> <out.mp4> [--no-zoom] [--scale N]");
             process::exit(64);
         }
     }
@@ -3341,9 +3469,9 @@ fn run_recording_render(args: &[String]) {
 /// installer script — see [`crate::updater`] for why we go through the script
 /// instead of re-implementing the asset resolution + atomic swap + GC in Rust.
 pub fn run_update_cmd(apply: bool, json: bool) {
-    if crate::updater::is_pacman_managed() {
+    if let Some(owner) = crate::updater::update_owner() {
         print_check_update_state(
-            crate::version_check::check_update_state_with_ownership(false, true),
+            crate::version_check::check_update_state_with_owner(false, Some(owner)),
             json,
         );
         return;
@@ -3723,10 +3851,11 @@ fn permission_status_text(structured: &serde_json::Value, cli_name: &str) -> Str
             }
         }
         None => {
-            if structured.get("direct_capture_verification").is_some() {
+            if let Some(day) = direct_capture_verified_on(structured) {
                 let _ = writeln!(
                     out,
-                    "Test screenshot:                             ✅ worked last time it was checked"
+                    "Test screenshot:                             ✅ worked on {day} \
+                     (checked by `{cli_name} permissions grant`)"
                 );
             } else if sr {
                 let _ = writeln!(
@@ -3746,10 +3875,38 @@ fn permission_status_text(structured: &serde_json::Value, cli_name: &str) -> Str
             "These are the permissions of the app Cua Driver runs inside."
         );
     }
-    if !(ax && sr) {
+    let direct_capture_unverified = structured.get("direct_capture_status")
+        == Some(&serde_json::json!("not_checked"))
+        && direct_capture_verified_on(structured).is_none();
+    if !(ax && sr) || direct_capture_unverified {
         let _ = writeln!(out, "Next: run `{cli_name} permissions grant`.");
     }
     out
+}
+
+/// The UTC day of the last successful `permissions grant` test screenshot.
+/// The platform clears this record whenever a later probe fails.
+fn direct_capture_verified_on(structured: &serde_json::Value) -> Option<&str> {
+    structured
+        .get("direct_capture_verification")?
+        .get("verified_at")?
+        .as_str()?
+        .get(..10)
+}
+
+/// Whether an earlier `permissions grant` had already recorded a working
+/// test screenshot, read from the status taken before this run's probe. A
+/// record means macOS may have answered from its saved consent without asking.
+#[cfg(any(target_os = "macos", test))]
+fn permission_grant_direct_capture_history(before: &serde_json::Value) -> String {
+    match direct_capture_verified_on(before) {
+        Some(day) => format!(
+            "A test screenshot had already worked on {day}, so macOS may not have asked again."
+        ),
+        None => {
+            "This is the first working test screenshot recorded for this Cua Driver.".to_owned()
+        }
+    }
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -4008,7 +4165,6 @@ fn run_permissions_grant() {
             if let Err(e) = launch_daemon_and_wait(
                 &socket,
                 180,
-                false,
                 &[],
                 crate::history_runtime::preview_admitted_preference(),
             ) {
@@ -4127,7 +4283,11 @@ fn run_permissions_grant() {
             .as_ref()
             .is_some_and(permission_grant_is_ready)
         {
-            println!("\n✅ All set. Cua Driver can now use this Mac.");
+            if let Some(before) = staged_status.as_ref() {
+                println!("\n{}", permission_grant_direct_capture_history(before));
+            }
+            println!("`{cli_name} permissions status` now shows when this check last worked.");
+            println!("✅ All set. Cua Driver can now use this Mac.");
             return;
         }
 
@@ -4248,7 +4408,7 @@ pub fn run_kwin_capture_cmd(subcommand: &str, override_portal_deny: bool) {
 /// Inspect or persist the release channel. Selection never installs by itself;
 /// replacement remains explicit through `cua-driver update --apply`.
 pub fn run_channel_cmd(subcommand: &str, value: Option<&str>, json: bool) {
-    if crate::updater::is_pacman_managed() {
+    if let Some(owner) = crate::updater::update_owner() {
         if json {
             let current =
                 crate::release_channel::ReleaseChannel::from_version(env!("CARGO_PKG_VERSION"));
@@ -4258,11 +4418,11 @@ pub fn run_channel_cmd(subcommand: &str, value: Option<&str>, json: bool) {
                     "selected_channel": null,
                     "current_channel": current.map(|channel| channel.as_str()),
                     "current_version": env!("CARGO_PKG_VERSION"),
-                    "error": crate::updater::PACMAN_UPDATE_GUIDANCE,
+                    "error": owner.guidance(),
                 })
             );
         } else {
-            eprintln!("{}", crate::updater::PACMAN_UPDATE_GUIDANCE);
+            eprintln!("{}", owner.guidance());
         }
         process::exit(1);
     }
@@ -4538,7 +4698,6 @@ fn cli_docs_literal() -> serde_json::Value {
                 ],
                 "flags": [
                     {"name":"direct","short_name":null,"help":"Own the runtime in this MCP process; mutually exclusive with --socket.","default_value":false},
-                    {"name":"claude-code-computer-use-compat","short_name":null,"help":"Accepted for older Claude Code setup snippets; there is no standalone screenshot tool; use get_window_state for window screenshots.","default_value":false},
                     {"name":"embedded","short_name":null,"help":"Declare embedding-host mode. Without --direct, require the host's private service through --socket instead of auto-launching the standalone app.","default_value":false}
                 ],
                 "subcommands": no_subcommands
@@ -4587,21 +4746,16 @@ fn cli_docs_literal() -> serde_json::Value {
                     {"name":"permission-mode","short_name":null,"help":"Immutable agent authorization mode: standard, bounded, or unrestricted.","type":"String","default_value":"standard","is_optional":true},
                     {"name":"grant","short_name":null,"help":"Pre-authorize a residual standard-mode boundary. Repeatable; supported value: existing-profile.","type":"String","default_value":null,"is_optional":true,"is_repeatable":true},
                     {"name":"capability-manifest","short_name":null,"help":"Optional narrow-only tool/resource ceiling; required in bounded mode.","type":"Path","default_value":null,"is_optional":true},
-                    {"name":"session-policy","short_name":null,"help":"Deprecated alias for capability-manifest.","type":"Path","default_value":null,"is_optional":true},
                     {"name":"host-bundle-id","short_name":null,"help":"Advisory host bundle id label echoed in check_permissions output (embedded mode).","type":"String","default_value":null,"is_optional":true},
                     {"name":"cursor-theme","short_name":null,"help":"Installed cursor theme id for the agent cursor overlay.","type":"String","default_value":"cua.default","is_optional":true},
                     {"name":"cursor-reduced-motion","short_name":null,"help":"Agent cursor motion: auto follows the OS setting, on forces still frames, off allows animation.","type":"String","default_value":"auto","is_optional":true},
                     {"name":"glide-ms","short_name":null,"help":"Override the agent cursor glide duration, in milliseconds.","type":"Number","default_value":null,"is_optional":true},
                     {"name":"dwell-ms","short_name":null,"help":"Override how long the agent cursor dwells after a click, in milliseconds.","type":"Number","default_value":null,"is_optional":true},
-                    {"name":"idle-hide-ms","short_name":null,"help":"Override how long an idle agent cursor stays visible, in milliseconds.","type":"Number","default_value":null,"is_optional":true},
-                    {"name":"experimental-pip-geometry","short_name":null,"help":"Size and optional top-left origin of the experimental preview window: WxH or WxH+X+Y (default 480x360, top-right of the main display).","type":"String","default_value":null,"is_optional":true}
+                    {"name":"idle-hide-ms","short_name":null,"help":"Override how long an idle agent cursor stays visible, in milliseconds.","type":"Number","default_value":null,"is_optional":true}
                 ],
                 "flags": [
-                    {"name":"claude-code-computer-use-compat","short_name":null,"help":"Legacy compatibility flag forwarded by `mcp` when it launches the daemon; no current tool-surface effect.","default_value":false},
-                    {"name":"experimental-pip","short_name":null,"help":"Show a small always-on-top window with the latest post-action screenshot and a one-line label (macOS only).","default_value":false},
                     {"name":"dangerously-bypass-approvals","short_name":null,"help":"Select unrestricted mode and acknowledge its risk.","default_value":false},
                     {"name":"approve-capability-manifest","short_name":null,"help":"Trusted-launcher confirmation that the exact capability manifest was reviewed.","default_value":false},
-                    {"name":"approve-session-policy","short_name":null,"help":"Deprecated alias for approve-capability-manifest.","default_value":false},
                     {"name":"no-permissions-gate","short_name":null,"help":"Skip the macOS first-launch permissions gate.","default_value":false},
                     {"name":"no-automation-prompts","short_name":null,"help":"Refuse scripting actions without granted macOS Automation consent.","default_value":false},
                     {"name":"embedded","short_name":null,"help":"Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1.","default_value":false},
@@ -4692,17 +4846,17 @@ fn cli_docs_literal() -> serde_json::Value {
             },
             {
                 "name": "connect",
-                "abstract": "Connect Claude Code, Codex and Cursor to Cua Driver: add it to each agent that is installed and install the skill pack.",
-                "discussion": "Registers one server named cua-driver with each agent found (through the agent's own CLI, or by merging into Cursor's mcp.json without touching other entries) and installs the skill pack. An agent already connected, including under the older Claude Code name cua-computer-use, is left alone, so it is safe to run again. One agent failing does not stop the others; the exit code is non-zero only when an agent was found and none could be connected.",
+                "abstract": "Connect Claude Code, Codex, Cursor and Factory Droid to Cua Driver: add it to each agent that is installed and install the skill pack.",
+                "discussion": "Registers one server named cua-driver with each agent found (through the agent's own CLI, or by merging into Cursor's or Droid's mcp.json without touching other entries) and installs the skill pack. For Droid it also rates each action tool medium in ~/.factory/settings.json, so `droid exec --auto medium` runs them. An agent already connected, including under the older Claude Code name cua-computer-use, is left alone, so it is safe to run again. An agent whose cua-driver server launches a different Cua Driver, such as the one inside Cua Spaces, is reported as using another Cua Driver and left as is; --replace switches Claude Code, Codex and Cursor to this one the way Set up in Cua Spaces does, backing up the config file first. One agent failing does not stop the others; the exit code is non-zero only when an agent was found and none could be connected.",
                 "arguments": no_args,
-                "options": [{"name":"client","short_name":null,"help":"Connect only this agent (claude, codex or cursor). Repeat for several.","type":"String","default_value":null,"is_optional":true}],
-                "flags": [{"name":"dry-run","short_name":null,"help":"Show what would be connected without changing anything.","default_value":false},{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}],
+                "options": [{"name":"client","short_name":null,"help":"Connect only this agent (claude, codex, cursor or droid). Repeat for several.","type":"String","default_value":null,"is_optional":true}],
+                "flags": [{"name":"dry-run","short_name":null,"help":"Show what would be connected without changing anything.","default_value":false},{"name":"replace","short_name":null,"help":"Switch an agent that uses another Cua Driver, such as the one inside Cua Spaces, to this one.","default_value":false},{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}],
                 "subcommands": no_subcommands
             },
             {
                 "name": "mcp-config",
                 "abstract": "Print client-specific connection guidance (MCP config where supported) and install the skill pack for that agent.",
-                "discussion": "Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, and zcode. With --client, the cua-driver skill pack is also installed for that agent (not for qwen, droid or zcode, which have no skills folder), and one line on stderr says where; --no-skills skips it.",
+                "discussion": "Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, zcode, and deepseek-harness. With --client, the cua-driver skill pack is also installed for that agent (not for qwen, droid or zcode, which have no skills folder), and one line on stderr says where; --no-skills skips it.",
                 "arguments": no_args,
                 "options": [{"name":"client","short_name":null,"help":"Client name to print configuration for.","type":"String","default_value":null,"is_optional":true}],
                 "flags": [{"name":"no-skills","short_name":null,"help":"With --client, do not install the cua-driver skill pack for that agent.","default_value":false}],
@@ -4767,7 +4921,7 @@ fn cli_docs_literal() -> serde_json::Value {
                 "subcommands": [
                     {"name":"show","abstract":"Print the full config.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
                     {"name":"get","abstract":"Print one config key.","discussion":"","arguments":[{"name":"key","help":"Config key to read.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
-                    {"name":"set","abstract":"Set one config key.","discussion":"Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default. cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on, off or default and on by default; cursor.marks (action marks) is on, off or default and off by default; cursor.rotate is heading (default), lean, off or default. All apply to every cursor at once.","arguments":[{"name":"key","help":"Config key to write.","type":"String","is_optional":false},{"name":"value","help":"Value to store.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"set","abstract":"Set one config key.","discussion":"Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default. cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on, off or default and on by default; cursor.rotate is heading (default), lean, off or default. All apply to every cursor at once.","arguments":[{"name":"key","help":"Config key to write.","type":"String","is_optional":false},{"name":"value","help":"Value to store.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
                     {"name":"reset","abstract":"Reset config to defaults.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]}
                 ]
             },
@@ -5016,6 +5170,7 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
         ("cua-driver connect", "Connect every agent found on this computer"),
         ("cua-driver connect --client claude --dry-run", "Show what would change for Claude Code"),
         ("cua-driver connect --json", "Print the result for each agent as JSON"),
+        ("cua-driver connect --replace", "Switch agents that use another Cua Driver to this one"),
     ]),
     ("mcp-config", &[
         ("cua-driver mcp-config", "Print a generic mcpServers entry"),
@@ -5184,9 +5339,10 @@ pub fn run_dump_docs_with_type(tools_list: &serde_json::Value, pretty: bool, doc
     println!("{}", out.unwrap_or_else(|_| "{}".into()));
 }
 
-/// `cua-driver diagnose` — print a paste-able bundle-path / install-layout / TCC report.
+/// `cua-driver diagnose` — print a paste-able platform diagnostic report.
 ///
-/// Mirrors Swift `DiagnoseCommand`. Covers:
+/// Windows reuses the native doctor probes and reports named-pipe availability.
+/// The macOS report mirrors Swift `DiagnoseCommand`. Covers:
 ///   - running process identity (path, pid, version)
 ///   - codesign info (cdhash, team-id, authority) via `codesign -dvvv`
 ///   - AX + screen recording TCC status (check_permissions tool)
@@ -5194,15 +5350,56 @@ pub fn run_dump_docs_with_type(tools_list: &serde_json::Value, pretty: bool, doc
 ///   - TCC DB rows for com.trycua.driver (sqlite3, best-effort)
 ///   - config + state paths with existence booleans
 pub fn run_diagnose_cmd() {
-    let sections = [
-        diagnose_runtime_section(),
-        diagnose_signature_section(),
-        diagnose_tcc_section(),
-        diagnose_install_layout_section(),
-        diagnose_tcc_db_section(),
-        diagnose_config_paths_section(),
-    ];
-    println!("{}", sections.join("\n\n"));
+    #[cfg(target_os = "windows")]
+    {
+        let socket = crate::serve::default_socket_path();
+        println!(
+            "{}",
+            windows_diagnose_report(
+                &diagnose_runtime_section(),
+                &crate::doctor::run(false),
+                &socket,
+                crate::serve::is_daemon_listening(&socket),
+            )
+        );
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let sections = [
+            diagnose_runtime_section(),
+            diagnose_signature_section(),
+            diagnose_tcc_section(),
+            diagnose_install_layout_section(),
+            diagnose_tcc_db_section(),
+            diagnose_config_paths_section(),
+        ];
+        println!("{}", sections.join("\n\n"));
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_diagnose_report(
+    runtime: &str,
+    report: &crate::doctor::Report,
+    socket: &str,
+    pipe_available: bool,
+) -> String {
+    // WaitNamedPipe only establishes whether an instance is available. It does
+    // not prove daemon health, and a busy pipe is not an absent daemon.
+    let availability = if pipe_available {
+        "available"
+    } else {
+        "not available (absent, busy, or inaccessible)"
+    };
+    format!(
+        "{runtime}\n\n\
+         ## daemon endpoint\n\
+         named pipe: {socket}\n\
+         pipe instance: {availability}\n\n\
+         ## Windows diagnostics\n\
+         {}",
+        report.to_text().trim_end()
+    )
 }
 
 fn diagnose_runtime_section() -> String {
@@ -5224,6 +5421,7 @@ fn diagnose_runtime_section() -> String {
     )
 }
 
+#[cfg(not(target_os = "windows"))]
 fn diagnose_signature_section() -> String {
     let exe = std::env::current_exe()
         .ok()
@@ -5263,6 +5461,7 @@ fn diagnose_signature_section() -> String {
     )
 }
 
+#[cfg(not(target_os = "windows"))]
 fn diagnose_tcc_section() -> String {
     let socket = crate::serve::default_socket_path();
     let status = crate::serve::is_daemon_listening(&socket)
@@ -5304,6 +5503,7 @@ fn diagnose_tcc_section() -> String {
     )
 }
 
+#[cfg(not(target_os = "windows"))]
 fn diagnose_install_layout_section() -> String {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     let mut lines = vec!["## install layout".to_owned()];
@@ -5360,6 +5560,7 @@ fn diagnose_install_layout_section() -> String {
     lines.join("\n")
 }
 
+#[cfg(not(target_os = "windows"))]
 fn diagnose_tcc_db_section() -> String {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     let db = format!("{home}/Library/Application Support/com.apple.TCC/TCC.db");
@@ -5400,6 +5601,7 @@ fn diagnose_tcc_db_section() -> String {
     lines.join("\n")
 }
 
+#[cfg(not(target_os = "windows"))]
 fn diagnose_config_paths_section() -> String {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     let paths: &[(&str, String)] = &[
@@ -5526,7 +5728,7 @@ pub fn run_config_cmd(
                 Some(k) => k,
                 None => {
                     eprintln!("Usage: cua-driver config get <key>");
-                    eprintln!("Keys: capture_mode, max_image_dimension, version, platform, cursor.motion.style, cursor.motion.timing, cursor.badges, cursor.marks, cursor.float, cursor.halo, cursor.rotate");
+                    eprintln!("Keys: capture_mode, max_image_dimension, version, platform, cursor.motion.style, cursor.motion.timing, cursor.badges, cursor.float, cursor.halo, cursor.rotate");
                     process::exit(64);
                 }
             };
@@ -5555,7 +5757,7 @@ pub fn run_config_cmd(
                 );
             } else {
                 eprintln!("Unknown config key: {key}");
-                eprintln!("Available keys: capture_mode, max_image_dimension, version, platform, agent_cursor.enabled, cursor.motion.style, cursor.motion.timing, cursor.motion.effects, cursor.badges, cursor.marks, cursor.float, cursor.halo, cursor.rotate");
+                eprintln!("Available keys: capture_mode, max_image_dimension, version, platform, agent_cursor.enabled, cursor.motion.style, cursor.motion.timing, cursor.motion.effects, cursor.badges, cursor.float, cursor.halo, cursor.rotate");
                 process::exit(64);
             }
         }
@@ -5611,7 +5813,6 @@ pub fn run_config_cmd(
                 serde_json::json!({
                     "cursor.motion": "default",
                     "cursor.badges": "default",
-                    "cursor.marks": "default",
                     "cursor.float": "default",
                     "cursor.halo": "default",
                     "cursor.rotate": "default",
@@ -5723,6 +5924,59 @@ mod tests {
             socket.to_str().unwrap(),
             0
         ));
+    }
+
+    #[test]
+    fn windows_diagnose_preserves_native_probes_and_pipe_uncertainty() {
+        use crate::doctor::{Probe, Report};
+
+        let mut report = Report::default();
+        report.push(Probe::ok("home dir", r"C:\Users\Test User\.cua-driver"));
+        report.push(
+            Probe::warn(
+                "UI Automation",
+                "UI Automation desktop enumeration exceeded 4000ms",
+            )
+            .with_detail("Window tools will fall back to Win32-only enumeration."),
+        );
+        report.push(Probe::err("Screen capture", "D3D11 device unavailable"));
+
+        for (available, expected) in [
+            (true, "pipe instance: available"),
+            (
+                false,
+                "pipe instance: not available (absent, busy, or inaccessible)",
+            ),
+        ] {
+            let text = super::windows_diagnose_report(
+                "## running process\nversion: test",
+                &report,
+                r"\\.\pipe\cua-driver-local",
+                available,
+            );
+            assert!(text.contains(r"named pipe: \\.\pipe\cua-driver-local"));
+            assert!(text.contains(expected));
+            assert!(text.contains(r"[ok  ] home dir: C:\Users\Test User\.cua-driver"));
+            assert!(text.contains(
+                "[warn] UI Automation: UI Automation desktop enumeration exceeded 4000ms"
+            ));
+            assert!(text.contains("Window tools will fall back to Win32-only enumeration."));
+            assert!(text.contains("[err ] Screen capture: D3D11 device unavailable"));
+            for macos_only in [
+                "/Applications/",
+                "/tmp/",
+                "TCC",
+                "codesign",
+                "LaunchAgents",
+                "daemon unavailable",
+                "permissions grant",
+            ] {
+                assert!(
+                    !text.contains(macos_only),
+                    "Windows report contains {macos_only}: {text}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -6003,7 +6257,6 @@ mod tests {
             approve_capability_manifest: true,
             no_permissions_gate: true,
             no_automation_prompts: true,
-            claude_code_compat: true,
             grants,
         };
         #[cfg(target_os = "macos")]
@@ -6036,7 +6289,6 @@ mod tests {
         let restored: crate::history_runtime::DaemonLaunchState =
             serde_json::from_value(legacy).unwrap();
         assert!(!restored.no_automation_prompts);
-        assert!(launch.contains(&"--claude-code-computer-use-compat".to_owned()));
         assert!(launch.contains(&"--experimental-history".to_owned()));
         assert!(launch
             .windows(2)
@@ -6071,6 +6323,219 @@ mod tests {
         assert!(!launch.contains(&"CuaDriver".to_owned()));
     }
 
+    fn options_error(values: &[&str]) -> Option<String> {
+        let argv = args(values);
+        check_options(&argv, &positional_args(&argv)).err()
+    }
+
+    #[test]
+    fn launcher_argv_passes_the_option_check() {
+        let accepted: &[&[&str]] = &[
+            // EmbeddedCuaDriverHost::serve_args and the Spaces supervisor.
+            &[
+                "serve",
+                "--embedded",
+                "--parent-liveness-stdio",
+                "--no-permissions-gate",
+                "--socket",
+                "/s",
+                "--host-bundle-id",
+                "com.example",
+                "--permission-mode",
+                "standard",
+                "--capability-manifest",
+                "/m.yaml",
+                "--approve-capability-manifest",
+                "--dangerously-bypass-approvals",
+                "--no-overlay",
+            ],
+            // append_daemon_launch_state.
+            &[
+                "serve",
+                "--no-automation-prompts",
+                "--experimental-history",
+                "--grant",
+                "existing-profile",
+            ],
+            &[
+                "serve",
+                "--experimental-pip",
+                "--experimental-pip-geometry",
+                "320x200",
+            ],
+            &["serve", "-psn_0_12345"],
+            &[
+                "mcp",
+                "--embedded",
+                "--socket",
+                "/s",
+                "--host-bundle-id",
+                "com.example",
+            ],
+            &["mcp", "--direct", "--no-overlay", "--glide-ms", "200"],
+            &["--socket", "/s"],
+            &["status", "--socket", "/s", "--pid-file", "/p"],
+            &["--pid-file=/p", "status", "--socket=/s"],
+            &["stop", "--socket", "/s", "--expected-pid", "42"],
+            &["sessions", "--json"],
+            &["sessions", "list", "--socket", "/s"],
+            &["channel", "--json"],
+            &["channel", "set", "nightly", "--json"],
+            &[
+                "call",
+                "click",
+                "{}",
+                "--socket",
+                "/s",
+                "--screenshot-out-file",
+                "a.png",
+            ],
+            &["get_window_state", "{}", "--screenshot-out-file", "a.png"],
+            &[
+                "cursor",
+                "motion",
+                "--session",
+                "demo",
+                "--style",
+                "magnetic",
+                "--glide-ms",
+                "0",
+            ],
+            &["config", "set", "max_image_dimension", "-1"],
+            &["mcp", "--direct", "--glide-ms", "-1"],
+            &["status", "--socket=-odd"],
+            &[
+                "skills",
+                "install",
+                "--from",
+                "main",
+                "--force",
+                "--all-platforms",
+            ],
+            &["skills", "install", "--from=main"],
+            &["skills", "uninstall", "--all"],
+            &[
+                "recording",
+                "render",
+                "in",
+                "out.mp4",
+                "--scale",
+                "2",
+                "--no-zoom",
+            ],
+            &["history", "delete", "--yes"],
+            &["history", "show", "42", "--json"],
+            &["permissions", "--json"],
+            // The hosted macOS release gate polls the daemon this way.
+            &["--socket", "/s", "permissions", "status", "--json"],
+            &["permissions", "status", "--socket", "/s", "--json"],
+            &["kwin-capture", "on", "--override-portal-deny"],
+            &["dump-docs", "--type", "cli", "-p"],
+            &["telemetry", "inspect", "cua_driver_cli_completed", "--json"],
+            &["update", "--apply", "--json"],
+            &[
+                "connect",
+                "--client",
+                "claude",
+                "--client",
+                "codex",
+                "--dry-run",
+                "--replace",
+                "--json",
+            ],
+            &["extension", "status", "--self-test"],
+            &[
+                "perception",
+                "parse",
+                "--image",
+                "a.png",
+                "--capture",
+                "c.json",
+                "--json",
+            ],
+            &[
+                "cursor-theme",
+                "build",
+                "a.lottie",
+                "--output",
+                "t.cua-theme",
+            ],
+        ];
+        for argv in accepted {
+            assert_eq!(options_error(argv), None, "{argv:?}");
+        }
+    }
+
+    #[test]
+    fn an_option_the_command_does_not_take_is_rejected() {
+        let rejected: &[(&[&str], &str)] = &[
+            (
+                &["status", "--sokcet", "/s"],
+                "cua-driver status: unknown option '--sokcet'",
+            ),
+            (
+                &["status", "--json"],
+                "cua-driver status: unknown option '--json'",
+            ),
+            (
+                &["stop", "--expected-pidd", "1"],
+                "cua-driver stop: unknown option '--expected-pidd'",
+            ),
+            (
+                &["serve", "--permision-mode", "bounded"],
+                "cua-driver serve: unknown option '--permision-mode'",
+            ),
+            (
+                &["channel", "status", "--bogus"],
+                "cua-driver channel status: unknown option '--bogus'",
+            ),
+            (
+                &["skills", "path", "--force"],
+                "cua-driver skills path: unknown option '--force'",
+            ),
+            (
+                &["click", "{}", "--sockt", "/s"],
+                "cua-driver click: unknown option '--sockt'",
+            ),
+            (
+                &["status", "--socket"],
+                "cua-driver status: option '--socket' needs a value",
+            ),
+            (
+                &["stop", "--socket", "/s", "--socket", "--expected-pidd", "1"],
+                "cua-driver stop: option '--socket' needs a value",
+            ),
+            (
+                &["stop", "--socket", "/s", "-psn_expected-pidd", "1"],
+                "cua-driver stop: unknown option '-psn_expected-pidd'",
+            ),
+            (
+                &["--bogus", "extension", "status"],
+                "cua-driver extension: unknown option '--bogus'",
+            ),
+            (
+                &["--json", "perception", "parse"],
+                "cua-driver perception: unknown option '--json'",
+            ),
+            (
+                &["serve", "--socket", "--bogus"],
+                "cua-driver serve: option '--socket' needs a value",
+            ),
+            (
+                &["sessions", "--json=yes"],
+                "cua-driver sessions: unknown option '--json=yes'",
+            ),
+            (&["--bogus"], "cua-driver mcp: unknown option '--bogus'"),
+        ];
+        for (argv, message) in rejected {
+            let error = options_error(argv);
+            assert!(
+                error.as_deref().is_some_and(|e| e.starts_with(message)),
+                "{argv:?}: {error:?}"
+            );
+        }
+    }
+
     #[test]
     fn automation_prompt_flag_is_serve_only() {
         assert_eq!(
@@ -6094,26 +6559,6 @@ mod tests {
         assert!(launch.contains(&"--dangerously-bypass-approvals".to_owned()));
         assert!(!state.no_automation_prompts);
         assert!(!launch.contains(&"--no-automation-prompts".to_owned()));
-    }
-
-    #[test]
-    fn deprecated_session_policy_flag_remains_a_capability_manifest_alias() {
-        let argv = args(&["serve", "--session-policy", "/tmp/legacy.yaml"]);
-        assert_eq!(
-            aliased_flag_value(&argv, "--capability-manifest", "--session-policy"),
-            Some("/tmp/legacy.yaml".to_owned())
-        );
-
-        let identical = args(&[
-            "serve",
-            "--capability-manifest=/tmp/shared.yaml",
-            "--session-policy",
-            "/tmp/shared.yaml",
-        ]);
-        assert_eq!(
-            aliased_flag_value(&identical, "--capability-manifest", "--session-policy"),
-            Some("/tmp/shared.yaml".to_owned())
-        );
     }
 
     #[test]
@@ -6186,8 +6631,8 @@ mod tests {
         ])));
         assert!(finite_computer_action_from_args(&args(&[
             "call",
-            "page",
-            r#"{"action":"insert_text","text":"private"}"#,
+            "browser_pointer",
+            r#"{"action":"hover","text":"private"}"#,
         ])));
         assert!(!finite_computer_action_from_args(&args(&[
             "call",
@@ -6261,6 +6706,10 @@ mod tests {
         assert_eq!(
             finite_client_kind_from_args(&args(&["mcp-config", "--client", "prime-agent"])),
             "prime_agent"
+        );
+        assert_eq!(
+            finite_client_kind_from_args(&args(&["mcp-config", "--client", "deepseek-harness"])),
+            "deepseek_harness"
         );
         assert_eq!(
             finite_client_kind_from_args(&args(&["mcp-config", "--client", "/private/client"])),
@@ -6346,6 +6795,59 @@ mod tests {
         assert!(!answers_for_cua_driver(&host));
         // No per-app permissions (not macOS): nothing to misattribute.
         assert!(answers_for_cua_driver(&serde_json::json!({})));
+    }
+
+    #[test]
+    fn permission_status_text_says_when_direct_capture_was_last_verified() {
+        let verified = serde_json::json!({
+            "accessibility": true,
+            "screen_recording": true,
+            "screen_recording_capturable": null,
+            "direct_capture_status": "not_checked",
+            "direct_capture_verification": {
+                "source": "permissions_grant",
+                "verified_at": "2026-08-05T09:30:00Z",
+                "bundle_id": "com.trycua.driver.local"
+            },
+            "source": {"attribution": "driver-daemon"},
+        });
+        let text = permission_status_text(&verified, "cua-driver-local");
+        assert!(
+            text.contains(
+                "Test screenshot:                             ✅ worked on 2026-08-05 \
+                 (checked by `cua-driver-local permissions grant`)"
+            ),
+            "{text}"
+        );
+
+        let unverified = serde_json::json!({
+            "accessibility": true,
+            "screen_recording": true,
+            "screen_recording_capturable": null,
+            "direct_capture_status": "not_checked",
+        });
+        let text = permission_status_text(&unverified, "cua-driver-local");
+        assert!(text.contains("Test screenshot:                             not checked yet"));
+        assert!(text.contains("Next: run `cua-driver-local permissions grant`."));
+    }
+
+    #[test]
+    fn permission_grant_says_whether_direct_capture_was_verified_before() {
+        let earlier = serde_json::json!({
+            "direct_capture_verification": {
+                "source": "permissions_grant",
+                "verified_at": "2026-08-05T09:30:00Z",
+                "bundle_id": "com.trycua.driver"
+            }
+        });
+        assert_eq!(
+            permission_grant_direct_capture_history(&earlier),
+            "A test screenshot had already worked on 2026-08-05, so macOS may not have asked again."
+        );
+        assert_eq!(
+            permission_grant_direct_capture_history(&serde_json::json!({})),
+            "This is the first working test screenshot recorded for this Cua Driver."
+        );
     }
 
     #[test]

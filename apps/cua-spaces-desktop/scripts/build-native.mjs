@@ -217,7 +217,11 @@ function generate(into) {
   try {
     const ubrn = join(typescriptRoot, "node_modules", ".bin", process.platform === "win32" ? "ubrn.cmd" : "ubrn");
     // UBRN reads `cargo metadata` in its working directory.
-    run(ubrn, ["generate", "napi", "bindings", "--library", library, "--ts-dir", raw, "--lib-package-base", "@cua/cua-spaces-", "--lib-node-triple", "--no-format"], { cwd: cuaRoot });
+    run(
+      ubrn,
+      ["generate", "napi", "bindings", "--library", library, "--ts-dir", raw, "--lib-package-base", "@cua/cua-spaces-", "--lib-node-triple", "--no-format"],
+      { cwd: cuaRoot },
+    );
     const names = readdirSync(raw).filter((n) => n.endsWith(".ts"));
     const foreign = names.map((n) => n.replace(/(-ffi)?\.ts$/, "")).filter((ns) => ns !== "index" && !NAMESPACES.includes(ns));
     const files = {};
@@ -225,7 +229,10 @@ function generate(into) {
       const source = readFileSync(join(raw, name), "utf8");
       if (name === "index.ts") {
         // The two namespaces this app uses; the others linked into the library are left out.
-        const kept = source.split("\n").filter((line) => !foreign.some((ns) => line.includes(ns))).join("\n");
+        const kept = source
+          .split("\n")
+          .filter((line) => !foreign.some((ns) => line.includes(ns)))
+          .join("\n");
         files[name] = postprocess(name, kept);
       } else if (NAMESPACES.some((ns) => name === `${ns}.ts` || name === `${ns}-ffi.ts`)) {
         files[name] = postprocess(name, source);
@@ -243,7 +250,9 @@ function generate(into) {
 
 function writeBindings() {
   const previous = existsSync(join(generatedDir, INVENTORY))
-    ? readFileSync(join(generatedDir, INVENTORY), "utf8").split("\n").filter((l) => l && !l.startsWith("#"))
+    ? readFileSync(join(generatedDir, INVENTORY), "utf8")
+        .split("\n")
+        .filter((l) => l && !l.startsWith("#"))
     : [];
   const files = generate(generatedDir);
   for (const old of previous) if (!(old in files)) rmSync(join(generatedDir, old), { force: true });

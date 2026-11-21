@@ -13,7 +13,7 @@ dependencies = [
     "uvicorn>=0.30.0",
     "pydantic>=2.0",
     "requests>=2.28",
-    "aiohttp>=3.9.0",
+    "aiohttp>=3.14.4",
     "numpy>=2.0.0",
     "pillow>=11.0.0",
 ]
@@ -23,7 +23,7 @@ dependencies = [
 torch = [
     "torch>=2.12.1",
     "torchvision>=0.27.1",
-    "transformers>=5.0.0rc3,<6.0",
+    "transformers>=5.10.1,<6.0",
 ]
 # trainer/off_policy/tinker (the Tinker GRPO loop)
 tinker = [

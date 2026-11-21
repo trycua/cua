@@ -123,7 +123,7 @@ pub mod state {
     pub const DELETED: &str = "deleted";
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Row {
     name: String,
     spec: DurableSpec,
@@ -153,6 +153,34 @@ pub(crate) struct Row {
     /// The generation the setup state is about.
     #[serde(default)]
     setup_generation: u32,
+}
+
+impl std::fmt::Debug for Row {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Row")
+            .field("name", &self.name)
+            .field("spec", &self.spec)
+            .field("state", &self.state)
+            .field("node", &self.node)
+            .field("local_space", &self.local_space)
+            .field("id", &self.id)
+            .field("token", &"<redacted>")
+            .field("kind", &self.kind)
+            .field("generation", &self.generation)
+            .field("restored", &self.restored)
+            .field("holder", &self.holder)
+            .field("lease_token", &format_args!("<redacted>"))
+            .field("lease_expires_ms", &self.lease_expires_ms)
+            .field("fence", &self.fence)
+            .field("error", &self.error)
+            .field("created_ms", &self.created_ms)
+            .field("updated_ms", &self.updated_ms)
+            .field("stale", &self.stale)
+            .field("setup", &self.setup)
+            .field("setup_note", &self.setup_note)
+            .field("setup_generation", &self.setup_generation)
+            .finish()
+    }
 }
 
 impl Row {
@@ -212,7 +240,7 @@ impl Row {
 }
 
 /// A durable Space as anyone with the admin token sees it (no secrets).
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DurableView {
     /// Its stable name.
     pub name: String,
@@ -256,9 +284,32 @@ pub struct DurableView {
     pub setup_note: String,
 }
 
+impl std::fmt::Debug for DurableView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DurableView")
+            .field("name", &self.name)
+            .field("spec", &self.spec)
+            .field("state", &self.state)
+            .field("node", &self.node)
+            .field("kind", &self.kind)
+            .field("generation", &self.generation)
+            .field("restored", &self.restored)
+            .field("holder", &self.holder)
+            .field("lease_expires_in_secs", &self.lease_expires_in_secs)
+            .field("error", &self.error)
+            .field("created_ms", &self.created_ms)
+            .field("updated_ms", &self.updated_ms)
+            .field("space", &self.space)
+            .field("token", &"<redacted>")
+            .field("setup", &self.setup)
+            .field("setup_note", &self.setup_note)
+            .finish()
+    }
+}
+
 /// What the lease holder gets: the fencing token and how to reach the
 /// Space now.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DurableConnection {
     /// Its name.
     pub name: String,
@@ -286,6 +337,24 @@ pub struct DurableConnection {
     /// What the setup said.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub setup_note: String,
+}
+
+impl std::fmt::Debug for DurableConnection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DurableConnection")
+            .field("name", &self.name)
+            .field("state", &self.state)
+            .field("lease_token", &format_args!("<redacted>"))
+            .field("lease_expires_in_secs", &self.lease_expires_in_secs)
+            .field("generation", &self.generation)
+            .field("restored", &self.restored)
+            .field("node", &self.node)
+            .field("id", &self.id)
+            .field("token", &"<redacted>")
+            .field("setup", &self.setup)
+            .field("setup_note", &self.setup_note)
+            .finish()
+    }
 }
 
 pub(crate) fn init(c: &Connection) -> rusqlite::Result<()> {

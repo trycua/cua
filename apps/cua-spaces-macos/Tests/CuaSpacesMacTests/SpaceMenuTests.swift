@@ -21,7 +21,7 @@ struct SpaceMenuTests {
                     osName: "Ubuntu", osPrettyName: nil, image: nil, imageDigest: nil, kind: .container,
                     arch: "arm64", hidden: false, reachable: running, error: nil, host: nil, hostName: hostName,
                     power: "stop", powerState: running ? "running" : "stopped", cloud: nil, cloudPlace: nil,
-                    cloudDelete: nil, stopReason: nil, sharing: sharing)
+                    cloudDelete: nil, stopReason: nil, sharing: sharing, parent: nil)
     }
 
     static func facts(role: String, owner: String = "sam", editors: [String] = [], team: String? = nil)

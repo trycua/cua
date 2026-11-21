@@ -399,7 +399,7 @@ fn restore_front_app_if_browser_front(previous_pid: i64, browser_pid: i64) -> bo
     crate::apps::reactivate_app(previous)
 }
 
-fn is_chromium(name: &str, bundle_id: &str) -> bool {
+pub(crate) fn is_chromium(name: &str, bundle_id: &str) -> bool {
     let value = format!("{name} {bundle_id}").to_ascii_lowercase();
     let products = [
         "chrome", "chromium", "electron", "brave", "edge", "vivaldi", "opera", "arc", "thorium",
@@ -531,6 +531,7 @@ fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
         BrowserProduct::GoogleChrome => "Library/Application Support/Google/Chrome",
         BrowserProduct::MicrosoftEdge => "Library/Application Support/Microsoft Edge",
         BrowserProduct::Chromium => "Library/Application Support/Chromium",
+        BrowserProduct::Brave => "Library/Application Support/BraveSoftware/Brave-Browser",
         _ => return None,
     };
     Some(home.join(relative))
@@ -768,6 +769,27 @@ async fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
     )))
 }
 
+/// macOS 27 and later answer EPERM when an app without Full Disk Access or a
+/// per-app grant reads a protected browser profile folder, root and
+/// LaunchAgents included.
+const PROFILE_PROTECTION_HINT: &str = "on macOS 27 and later, reading this browser's profile folder needs Full Disk Access or a per-app grant; grant Full Disk Access to CuaDriver.app and restart the daemon, or attach from `cua-driver mcp --direct` in an app that has it";
+
+fn devtools_active_port_read_refusal(error: &std::io::Error) -> BrowserRefusal {
+    let message = format!("could not read the browser's DevToolsActivePort file: {error}");
+    if error.raw_os_error() != Some(libc::EPERM) {
+        return BrowserRefusal::new(BrowserRefusalCode::BrowserRouteUnavailable, message);
+    }
+    BrowserRefusal::new(
+        BrowserRefusalCode::BrowserRouteUnavailable,
+        format!("{message}; {PROFILE_PROTECTION_HINT}"),
+    )
+    .with_detail(serde_json::json!({
+        "resource": "browser_profile",
+        "os_error": libc::EPERM,
+        "hint": PROFILE_PROTECTION_HINT,
+    }))
+}
+
 async fn active_port_endpoint(
     pid: i64,
     product: BrowserProduct,
@@ -791,12 +813,7 @@ async fn active_port_endpoint_with_relative_fallback(
     let text = match tokio::fs::read_to_string(user_data_dir.join("DevToolsActivePort")).await {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(BrowserRefusal::new(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not read the browser's DevToolsActivePort file: {error}"),
-            ))
-        }
+        Err(error) => return Err(devtools_active_port_read_refusal(&error)),
     };
     let Some((port, path)) = parse_devtools_active_port(&text) else {
         return Err(BrowserRefusal::new(
@@ -847,6 +864,14 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             BrowserRefusalCode::BrowserRouteUnavailable,
             "no vendor-signed system Chromium executable is available for isolated launch",
         ))
+    }
+
+    fn managed_extension_policy(&self, executable: &str) -> Option<String> {
+        super::managed_policy::managed_extension_policy(executable)
+    }
+
+    fn security_prompt_open(&self) -> bool {
+        crate::security_prompt::security_prompt_on_screen()
     }
 
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
@@ -964,16 +989,21 @@ impl BrowserPlatform for MacOsBrowserPlatform {
     }
 
     async fn classify_browser(&self, pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
-        let (app, fallback_name, fallback_bundle_id) = tokio::task::spawn_blocking(move || {
-            let app = crate::apps::list_running_apps()
-                .into_iter()
-                .find(|app| i64::from(app.pid) == pid);
-            let fallback_name = crate::apps::get_app_name_for_pid(pid as i32);
-            let fallback_bundle_id = crate::apps::bundle_id_for_pid(pid as i32);
-            (app, fallback_name, fallback_bundle_id)
-        })
-        .await
-        .unwrap_or((None, None, None));
+        let (app, fallback_name, fallback_bundle_id, electron_app) =
+            tokio::task::spawn_blocking(move || {
+                let app = crate::apps::list_running_apps()
+                    .into_iter()
+                    .find(|app| i64::from(app.pid) == pid);
+                let fallback_name = crate::apps::get_app_name_for_pid(pid as i32);
+                let fallback_bundle_id = crate::apps::bundle_id_for_pid(pid as i32);
+                // Electron apps ship under their own name and bundle id
+                // (Obsidian is md.obsidian), so the bundled Electron Framework
+                // is what identifies them.
+                let electron_app = super::ElectronJs::is_electron(pid as i32);
+                (app, fallback_name, fallback_bundle_id, electron_app)
+            })
+            .await
+            .unwrap_or((None, None, None, false));
         let name = app
             .as_ref()
             .map(|app| app.name.as_str())
@@ -984,10 +1014,14 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             .and_then(|app| app.bundle_id.as_deref())
             .or(fallback_bundle_id.as_deref())
             .unwrap_or("");
-        let chromium = is_chromium(name, bundle_id);
+        let chromium = electron_app || is_chromium(name, bundle_id);
         let webkit = bundle_id == "com.apple.Safari" || name.eq_ignore_ascii_case("Safari");
         let gecko = is_firefox(&format!("{name} {bundle_id}"));
-        let product_kind = browser_product(name, bundle_id);
+        let product_kind = if electron_app {
+            BrowserProduct::Electron
+        } else {
+            browser_product(name, bundle_id)
+        };
         let helper = name.to_ascii_lowercase().contains("helper")
             || bundle_id.to_ascii_lowercase().contains(".helper")
             || process_arguments(pid).ok().is_some_and(|args| {
@@ -1430,6 +1464,24 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         })
     }
 
+    async fn dismiss_abandoned_existing_profile_consent(
+        &self,
+        pid: i64,
+        window_id: u64,
+    ) -> Result<bool, BrowserRefusal> {
+        let (Ok(pid), Ok(window_id)) = (i32::try_from(pid), u32::try_from(window_id)) else {
+            return Ok(false);
+        };
+        tokio::task::spawn_blocking(move || super::consent_ui::dismiss(pid, window_id))
+            .await
+            .unwrap_or_else(|join_error| {
+                Err(BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not close the abandoned browser consent prompt: {join_error}"),
+                ))
+            })
+    }
+
     async fn handle_existing_profile_consent(
         &self,
         request: BrowserConsentRequest,
@@ -1477,6 +1529,15 @@ impl BrowserPlatform for MacOsBrowserPlatform {
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn brave_default_user_data_dir_is_its_brave_software_profile_root() {
+        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap();
+        assert_eq!(
+            default_user_data_dir(browser_product("Brave Browser", "com.brave.Browser")),
+            Some(home.join("Library/Application Support/BraveSoftware/Brave-Browser"))
+        );
+    }
 
     fn consent_surface(window_id: u32) -> ConsentSurfaceEvidence {
         ConsentSurfaceEvidence {
@@ -1762,7 +1823,7 @@ mod tests {
                 height: 780.0,
             },
             layer: 0,
-            z_index: 0,
+            z_index: Some(0),
             is_on_screen: true,
             current_space_id: None,
             on_current_space: Some(true),
@@ -1852,21 +1913,55 @@ mod tests {
     }
 
     #[test]
+    fn devtools_active_port_read_refusal_names_the_macos_profile_protection() {
+        let protected =
+            devtools_active_port_read_refusal(&std::io::Error::from_raw_os_error(libc::EPERM));
+        assert_eq!(protected.code, BrowserRefusalCode::BrowserRouteUnavailable);
+        assert!(protected
+            .message
+            .starts_with("could not read the browser's DevToolsActivePort file: "));
+        assert!(
+            protected.message.contains("Full Disk Access"),
+            "{}",
+            protected.message
+        );
+        let detail = protected.detail.expect("an EPERM denial carries detail");
+        assert_eq!(detail["resource"], "browser_profile");
+        assert_eq!(detail["os_error"], libc::EPERM);
+        assert_eq!(detail["hint"], PROFILE_PROTECTION_HINT);
+
+        let mode_bits =
+            devtools_active_port_read_refusal(&std::io::Error::from_raw_os_error(libc::EACCES));
+        assert_eq!(mode_bits.code, BrowserRefusalCode::BrowserRouteUnavailable);
+        assert!(!mode_bits.message.contains("Full Disk Access"));
+        assert!(mode_bits.detail.is_none());
+    }
+
+    #[test]
     fn lsof_parser_accepts_only_loopback_listeners() {
         let input = "n127.0.0.1:9222\nn*:9333\nn[::1]:9444\nn0.0.0.0:9555\n";
         assert_eq!(parse_loopback_lsof_ports(input), vec![9222, 9444]);
     }
 
     async fn assert_owned_discovery_profile_case(case: &str) {
+        use std::ffi::CString;
         use std::os::fd::AsRawFd;
-        use std::os::unix::process::CommandExt;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        struct ChildGuard(std::process::Child);
+        unsafe extern "C" {
+            // In <spawn.h> since macOS 10.7; the libc crate does not bind it.
+            fn posix_spawn_file_actions_addinherit_np(
+                actions: *mut libc::posix_spawn_file_actions_t,
+                fd: libc::c_int,
+            ) -> libc::c_int;
+        }
+        struct ChildGuard(libc::pid_t);
         impl Drop for ChildGuard {
             fn drop(&mut self) {
-                let _ = self.0.kill();
-                let _ = self.0.wait();
+                unsafe {
+                    libc::kill(self.0, libc::SIGKILL);
+                    libc::waitpid(self.0, std::ptr::null_mut(), 0);
+                }
             }
         }
         let mut listeners = (0..3)
@@ -1908,38 +2003,83 @@ mod tests {
             .unwrap(),
             _ => {}
         }
-        let descriptors = listeners.iter().map(AsRawFd::as_raw_fd).collect::<Vec<_>>();
-        let mut command = std::process::Command::new("/bin/sh");
-        command
-            .args(["-c", "read -r line", "endpoint-fixture"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+        let mut args = vec![
+            "/bin/sh".to_owned(),
+            "-c".to_owned(),
+            "read -r line".to_owned(),
+            "endpoint-fixture".to_owned(),
+        ];
         match case {
-            "relative" => {
-                command.arg("--user-data-dir=relative-profile");
-            }
+            "relative" => args.push("--user-data-dir=relative-profile".to_owned()),
             "absent_profile" => {}
-            "conflicting" => {
-                command.args(["--user-data-dir=/tmp/one", "--user-data-dir=/tmp/two"]);
-            }
-            _ => {
-                command.arg(format!("--user-data-dir={}", profile.path().display()));
-            }
+            "conflicting" => args.extend([
+                "--user-data-dir=/tmp/one".to_owned(),
+                "--user-data-dir=/tmp/two".to_owned(),
+            ]),
+            _ => args.push(format!("--user-data-dir={}", profile.path().display())),
         }
-        // Only the child's explicitly named listeners lose CLOEXEC.
-        unsafe {
-            command.pre_exec(move || {
-                for &fd in &descriptors {
-                    if libc::fcntl(fd, libc::F_SETFD, 0) == -1 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                }
-                Ok(())
-            });
-        }
-        let child = ChildGuard(command.spawn().unwrap());
-        let pid = i64::from(child.0.id());
+        let args = args
+            .into_iter()
+            .map(|arg| CString::new(arg).unwrap())
+            .collect::<Vec<_>>();
+        let mut argv = args
+            .iter()
+            .map(|arg| arg.as_ptr().cast_mut())
+            .collect::<Vec<_>>();
+        argv.push(std::ptr::null_mut());
+        // `read` blocks until the guard kills the child: the test holds the writer.
+        let (stdin, _stdin_writer) = std::io::pipe().unwrap();
+        // The child must own exactly the named listeners. CLOEXEC_DEFAULT keeps
+        // a socket a parallel test has not yet marked CLOEXEC out of the child,
+        // and posix_spawn avoids fork, whose child-side atfork handlers can crash
+        // while another test thread is inside libnotify.
+        let pid = unsafe {
+            let mut actions = std::ptr::null_mut();
+            let mut attributes = std::ptr::null_mut();
+            assert_eq!(libc::posix_spawn_file_actions_init(&mut actions), 0);
+            assert_eq!(libc::posix_spawnattr_init(&mut attributes), 0);
+            assert_eq!(
+                libc::posix_spawnattr_setflags(
+                    &mut attributes,
+                    libc::POSIX_SPAWN_CLOEXEC_DEFAULT as libc::c_short
+                ),
+                0
+            );
+            for fd in [1, 2] {
+                assert_eq!(
+                    libc::posix_spawn_file_actions_addopen(
+                        &mut actions,
+                        fd,
+                        c"/dev/null".as_ptr(),
+                        libc::O_WRONLY,
+                        0
+                    ),
+                    0
+                );
+            }
+            assert_eq!(
+                libc::posix_spawn_file_actions_adddup2(&mut actions, stdin.as_raw_fd(), 0),
+                0
+            );
+            for fd in listeners.iter().map(AsRawFd::as_raw_fd) {
+                assert_eq!(posix_spawn_file_actions_addinherit_np(&mut actions, fd), 0);
+            }
+            let mut pid = 0;
+            let spawned = libc::posix_spawn(
+                &mut pid,
+                args[0].as_ptr(),
+                &actions,
+                &attributes,
+                argv.as_ptr(),
+                *libc::_NSGetEnviron(),
+            );
+            libc::posix_spawn_file_actions_destroy(&mut actions);
+            libc::posix_spawnattr_destroy(&mut attributes);
+            assert_eq!(spawned, 0, "posix_spawn fixture");
+            pid
+        };
+        let _child = ChildGuard(pid);
+        let pid = i64::from(pid);
         assert_eq!(loopback_ports_for_pid(pid).await.unwrap(), ports);
         let counts = Arc::new([
             AtomicUsize::new(0),

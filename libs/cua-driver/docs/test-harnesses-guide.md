@@ -799,8 +799,9 @@ return that size with `frame_suppressed` unset, and window-coordinate typing
 and clicking must reach the app. On 26.04 the capture takes the screenshot
 fallback: `CUA_LOG=platform_linux=debug` must log
 `screenshotted window <id> by id into a driver-owned file`, no file may appear
-in niri's `screenshot-path`, and no `cua-driver-niri-*.png` may be left in
-`$TMPDIR`. `get_window_state` and a coordinate click
+in niri's `screenshot-path`, no `cua-driver-niri-*` directory may be left in
+`$TMPDIR`, focus must not move, and clipboard text set before the call must
+read back unchanged after it. `get_window_state` and a coordinate click
 must share a `session` label.
 
 The same niri build carries `ext_foreign_toplevel_image_capture_source_manager_v1`

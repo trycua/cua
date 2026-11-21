@@ -156,113 +156,129 @@ fn screen_frame_in(scene: &Scene) -> Result<super::hyprland::DesktopFrame> {
 
 /// Capture one window through niri's own screenshot action. This is the
 /// fallback for niri releases before #4711, where a tiled window has no IPC
-/// position to crop from. The action takes the window by id and, on releases
-/// with `--path`, writes a file the driver owns, so focus does not change.
-/// Older releases write to the configured screenshot directory, where the
-/// driver focuses the target, waits for the new file, and restores focus.
-/// Either way the temporary file is removed. niri also puts the screenshot
-/// on the clipboard; its screenshot actions have no opt-out.
-pub fn screenshot_window(id: u64) -> Result<Vec<u8>> {
-    use std::time::{Duration, Instant, SystemTime};
-
-    let window = window_for_id(id)?;
+/// position to crop from. The action takes the window by id, so focus does
+/// not move, and writes to a file in a directory only this process can
+/// read; the file and directory are removed afterwards. niri also puts the
+/// screenshot on the clipboard, with no opt-out, so the previous clipboard
+/// text is put back, and a clipboard holding non-text content refuses
+/// before the action runs.
+pub fn screenshot_window(window: &Window) -> Result<Vec<u8>> {
     if !window.on_screen {
         bail!("niri screenshot fallback: the window is not on screen");
     }
     let size = window
         .size
         .ok_or_else(|| anyhow!("niri reports no window size"))?;
-
-    if let Ok(bytes) = screenshot_window_to_path(id) {
-        tracing::debug!("niri: screenshotted window {id} by id into a driver-owned file");
-        return fit_window_png(bytes, size);
+    let version = version()?;
+    if !writes_screenshot_to_path(&version) {
+        bail!(
+            "niri {version} cannot write a window screenshot to a path of the driver's \
+             (niri 25.11 or later is required)"
+        );
     }
-    tracing::debug!("niri: screenshotted window {id} through the configured screenshot directory");
-
-    let previous = focused_window_id();
-    let dir = screenshot_dir()?;
-    let before: std::collections::HashSet<std::path::PathBuf> = std::fs::read_dir(&dir)
-        .map(|entries| {
-            entries
-                .flatten()
-                .map(|entry| entry.path())
-                .filter(|path| path.extension().is_some_and(|ext| ext == "png"))
-                .collect()
-        })
-        .unwrap_or_default();
-    let started = SystemTime::now();
-
-    if previous != Some(id) {
-        run_niri_action(&["focus-window", "--id", &id.to_string()])?;
-        wait_for_focus(id, Duration::from_millis(800));
-    }
-    let result = (|| -> Result<Vec<u8>> {
-        run_niri_action(&["screenshot-window"])?;
-        let deadline = Instant::now() + Duration::from_secs(3);
-        loop {
-            if let Some(path) = newest_screenshot(&dir, &before, started) {
-                let bytes = std::fs::read(&path)?;
-                let _ = std::fs::remove_file(&path);
-                return fit_window_png(bytes, size);
-            }
-            if Instant::now() >= deadline {
-                bail!(
-                    "niri screenshot fallback: no new PNG appeared in {}",
-                    dir.display()
-                );
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    })();
-    if let Some(previous) = previous.filter(|previous| *previous != id) {
-        let _ = run_niri_action(&["focus-window", "--id", &previous.to_string()]);
-    }
-    result
+    let clipboard = crate::clipboard::LinuxClipboard::new();
+    let bytes = with_clipboard_restored(&clipboard, || screenshot_window_to_path(window.id))?;
+    tracing::debug!(
+        "niri: screenshotted window {} by id into a driver-owned file",
+        window.id
+    );
+    fit_window_png(bytes, size)
 }
 
-/// Screenshot a window by id into a temporary file the driver owns. niri
-/// >= 26.04 accepts `--path`; older releases reject it and the caller uses
-/// the configured screenshot directory instead. `--id` keeps focus where it
-/// is, so the window does not need to be brought forward.
+/// `ScreenshotWindow` gained `path` in niri 25.11. Older releases ignore the
+/// field and save into the user's screenshot directory.
+fn writes_screenshot_to_path(version: &str) -> bool {
+    let mut parts = version
+        .split(|c: char| !c.is_ascii_digit())
+        .map(str::parse::<u32>);
+    match (parts.next(), parts.next()) {
+        (Some(Ok(major)), Some(Ok(minor))) => (major, minor) >= (25, 11),
+        _ => false,
+    }
+}
+
+/// Run `screenshot`, which replaces the clipboard with an image, then put the
+/// previous clipboard text back. Only text can be put back, so a clipboard
+/// that holds anything else refuses before `screenshot` runs.
+fn with_clipboard_restored(
+    clipboard: &dyn cua_driver_core::clipboard::ClipboardBackend,
+    screenshot: impl FnOnce() -> Result<Vec<u8>>,
+) -> Result<Vec<u8>> {
+    let previous = clipboard.read_text().map_err(|error| {
+        anyhow!("niri screenshot fallback: the clipboard could not be read: {error}")
+    })?;
+    if previous.is_none() && !clipboard.available_formats().unwrap_or_default().is_empty() {
+        bail!(
+            "niri screenshot fallback: niri's window screenshot replaces the clipboard, \
+             which holds non-text content that cannot be put back; nothing was captured"
+        );
+    }
+    let shot = screenshot();
+    // niri sets its selection from its main loop while a worker writes the
+    // file, so the selection can land after the file. Wait for it first.
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < deadline
+        && !clipboard
+            .available_formats()
+            .unwrap_or_default()
+            .iter()
+            .any(|format| format == "image/png")
+    {
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let _ = clipboard.write_text(previous.unwrap_or_default());
+    shot
+}
+
+/// Screenshot a window by id into a fresh directory only this process can
+/// read, then remove both.
 fn screenshot_window_to_path(id: u64) -> Result<Vec<u8>> {
+    use std::os::unix::fs::DirBuilderExt as _;
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_nanos())
         .unwrap_or_default();
-    let path = std::env::temp_dir().join(format!(
-        "cua-driver-niri-{}-{unique}.png",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_file(&path);
-    let path_arg = path.to_string_lossy().into_owned();
+    let dir = std::env::temp_dir().join(format!("cua-driver-niri-{}-{unique}", std::process::id()));
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&dir)
+        .with_context(|| {
+            format!(
+                "niri screenshot fallback: could not create {}",
+                dir.display()
+            )
+        })?;
+    let path = dir.join("window.png");
     let result = (|| -> Result<Vec<u8>> {
-        run_niri_action(&[
-            "screenshot-window",
-            "--id",
-            &id.to_string(),
-            "--path",
-            &path_arg,
-        ])?;
-        // niri replies before it finishes writing the file, so wait for a
-        // size that stopped growing instead of reading a partial PNG.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        let mut previous_len = 0;
-        while std::time::Instant::now() < deadline {
-            if let Ok(metadata) = std::fs::metadata(&path) {
-                let len = metadata.len();
-                if len > 0 && len == previous_len {
-                    return Ok(std::fs::read(&path)?);
+        let path_arg = path
+            .to_str()
+            .ok_or_else(|| anyhow!("temporary path {} is not UTF-8", path.display()))?;
+        ipc().action(serde_json::json!({ "ScreenshotWindow": {
+            "id": id,
+            "write_to_disk": true,
+            "show_pointer": false,
+            "path": path_arg,
+        }}))?;
+        // niri answers before its worker has written the file, and the
+        // write is not atomic: wait until the file decodes as a whole PNG.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            if let Ok(bytes) = std::fs::read(&path) {
+                if image::load_from_memory_with_format(&bytes, image::ImageFormat::Png).is_ok() {
+                    return Ok(bytes);
                 }
-                previous_len = len;
             }
-            std::thread::sleep(std::time::Duration::from_millis(25));
+            if Instant::now() >= deadline {
+                bail!(
+                    "niri screenshot fallback: no complete screenshot appeared at {}",
+                    path.display()
+                );
+            }
+            std::thread::sleep(Duration::from_millis(25));
         }
-        bail!(
-            "niri screenshot fallback: no screenshot appeared at {}",
-            path.display()
-        );
     })();
     let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_dir(&dir);
     result
 }
 
@@ -277,91 +293,6 @@ fn fit_window_png(bytes: Vec<u8>, size: (u32, u32)) -> Result<Vec<u8>> {
     let mut out = std::io::Cursor::new(Vec::new());
     image.write_to(&mut out, image::ImageFormat::Png)?;
     Ok(out.into_inner())
-}
-
-fn focused_window_id() -> Option<u64> {
-    let output = std::process::Command::new("niri")
-        .args(["msg", "--json", "focused-window"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    serde_json::from_slice::<serde_json::Value>(&output.stdout)
-        .ok()?
-        .get("id")?
-        .as_u64()
-}
-
-fn run_niri_action(args: &[&str]) -> Result<()> {
-    let output = std::process::Command::new("niri")
-        .args(["msg", "action"])
-        .args(args)
-        .output()?;
-    if !output.status.success() {
-        bail!(
-            "niri action {args:?} failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    Ok(())
-}
-
-fn wait_for_focus(id: u64, budget: std::time::Duration) {
-    let deadline = std::time::Instant::now() + budget;
-    while std::time::Instant::now() < deadline {
-        if focused_window_id() == Some(id) {
-            return;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(25));
-    }
-}
-
-fn screenshot_dir() -> Result<std::path::PathBuf> {
-    if let Some(home) = std::env::var_os("HOME") {
-        let config = std::env::var_os("NIRI_CONFIG")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| std::path::PathBuf::from(&home).join(".config/niri/config.kdl"));
-        if let Ok(text) = std::fs::read_to_string(config) {
-            for line in text.lines() {
-                let line = line.trim();
-                if let Some(rest) = line.strip_prefix("screenshot-path") {
-                    let rest = rest.trim();
-                    if let Some(value) = rest.strip_prefix('"').and_then(|v| v.split('"').next()) {
-                        let expanded = value.replace("~", &home.to_string_lossy());
-                        let path = std::path::PathBuf::from(expanded);
-                        let parent = path.parent().map(std::path::Path::to_path_buf);
-                        return Ok(parent.unwrap_or(path));
-                    }
-                }
-            }
-        }
-        return Ok(std::path::PathBuf::from(home).join("Pictures/Screenshots"));
-    }
-    bail!("niri screenshot fallback: HOME is not set")
-}
-
-fn newest_screenshot(
-    dir: &std::path::Path,
-    before: &std::collections::HashSet<std::path::PathBuf>,
-    started: std::time::SystemTime,
-) -> Option<std::path::PathBuf> {
-    let entries = std::fs::read_dir(dir).ok()?;
-    let mut best: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().is_none_or(|ext| ext != "png") || before.contains(&path) {
-            continue;
-        }
-        let modified = entry.metadata().ok()?.modified().ok()?;
-        if modified < started {
-            continue;
-        }
-        if best.as_ref().is_none_or(|(time, _)| modified > *time) {
-            best = Some((modified, path));
-        }
-    }
-    best.map(|(_, path)| path)
 }
 
 /// Compose every output's capture into the bounding-box desktop frame niri
@@ -585,20 +516,67 @@ mod tests {
     }
 
     #[test]
-    fn newest_screenshot_skips_existing_files_and_returns_the_new_one() {
-        let dir = std::env::temp_dir().join(format!("niri-shot-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let old = dir.join("old.png");
-        std::fs::write(&old, b"old").unwrap();
-        let before: std::collections::HashSet<_> = [old.clone()].into_iter().collect();
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        let started = std::time::SystemTime::now();
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        let new = dir.join("new.png");
-        std::fs::write(&new, b"new").unwrap();
-        assert_eq!(newest_screenshot(&dir, &before, started), Some(new));
-        let _ = std::fs::remove_dir_all(&dir);
+    fn screenshot_path_needs_niri_25_11() {
+        assert!(writes_screenshot_to_path("26.04 (8ed0da4)"));
+        assert!(writes_screenshot_to_path("25.11"));
+        assert!(!writes_screenshot_to_path("25.08 (unknown commit)"));
+        assert!(!writes_screenshot_to_path("unknown"));
+    }
+
+    struct FakeClipboard {
+        text: Option<String>,
+        formats: Vec<String>,
+        writes: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl cua_driver_core::clipboard::ClipboardBackend for FakeClipboard {
+        fn available_formats(&self) -> Result<Vec<String>, String> {
+            Ok(self.formats.clone())
+        }
+        fn read_text(&self) -> Result<Option<String>, String> {
+            Ok(self.text.clone())
+        }
+        fn write_text(&self, text: String) -> Result<(), String> {
+            self.writes.lock().unwrap().push(text);
+            Ok(())
+        }
+        fn write_image(&self, _: &str) -> Result<(), String> {
+            Err("unused".into())
+        }
+        fn write_file_url(&self, _: &str) -> Result<(), String> {
+            Err("unused".into())
+        }
+    }
+
+    #[test]
+    fn window_screenshot_puts_the_clipboard_text_back() {
+        let clipboard = FakeClipboard {
+            text: Some("KEEP-ME".into()),
+            formats: vec!["image/png".into()],
+            writes: Default::default(),
+        };
+        assert_eq!(
+            with_clipboard_restored(&clipboard, || Ok(vec![1])).unwrap(),
+            vec![1]
+        );
+        assert_eq!(
+            *clipboard.writes.lock().unwrap(),
+            vec!["KEEP-ME".to_owned()]
+        );
+    }
+
+    #[test]
+    fn window_screenshot_refuses_a_clipboard_it_cannot_put_back() {
+        let clipboard = FakeClipboard {
+            text: None,
+            formats: vec!["image/png".into()],
+            writes: Default::default(),
+        };
+        let error = with_clipboard_restored(&clipboard, || panic!("must not screenshot"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("non-text content"), "{error}");
+        assert!(clipboard.writes.lock().unwrap().is_empty());
     }
 
     #[test]

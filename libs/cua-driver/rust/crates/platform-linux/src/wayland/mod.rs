@@ -1374,17 +1374,28 @@ fn niri_display_capture(wanted: Option<&str>) -> anyhow::Result<niri::DisplayCap
     })
 }
 
-/// niri has no per-toplevel capture protocol: crop a settled display capture
-/// to a placed, unoverlapped floating window and scale it to the window's
-/// logical size, the window-local coordinate frame input uses. A tiled
-/// window refuses: niri does not report where it is.
 /// Capture one niri output by name as its oriented PNG, for the multi-output
 /// composer.
 pub(crate) fn niri_capture_output_png(name: &str) -> anyhow::Result<Vec<u8>> {
     niri_display_capture(Some(name)).map(|capture| capture.png)
 }
 
+/// Capture one niri window: through its toplevel image source when niri
+/// advertises one, else by cropping a settled display capture to the placed,
+/// unoverlapped window and scaling it to the window's logical size, the
+/// window-local coordinate frame input uses. A tiled window on a niri that
+/// reports no tiled position uses niri's own window screenshot.
 fn niri_window_capture(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
+    // The two routes below take the window by id alone, so prove its owner
+    // first, as the crop route does.
+    let window = niri::window_for_id(xid)
+        .map_err(|e| surface_identity_unproven(xid, format!("niri: {e:#}")))?;
+    if pid.is_some_and(|pid| window.pid != Some(pid)) {
+        return Err(surface_identity_unproven(
+            xid,
+            "niri: niri reports the window belongs to a different process".to_owned(),
+        ));
+    }
     // niri captures a toplevel directly once it ships
     // ext_foreign_toplevel_image_capture_source_manager_v1 (niri #4599,
     // merged for the release after 26.04). The toplevel identifier is the
@@ -1409,8 +1420,8 @@ fn niri_window_capture(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
         {
             // niri before #4711 has no tiled-window position to crop from.
             // Use the compositor's own focused-window screenshot instead.
-            return niri::screenshot_window(xid)
-                .map_err(|error| surface_identity_unproven(xid, format!("niri: {error}")));
+            return niri::screenshot_window(&window)
+                .map_err(|error| surface_identity_unproven(xid, format!("niri: {error:#}")));
         }
         Err(reason) => {
             return Err(surface_identity_unproven(xid, format!("niri: {reason}")));

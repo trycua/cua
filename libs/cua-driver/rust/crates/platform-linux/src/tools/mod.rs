@@ -4,7 +4,8 @@
 //! Linux tool implementations.
 //!
 //! On Linux: delegates to real x11/atspi/input/capture implementations.
-//! On other platforms: returns "not implemented" stubs so the crate compiles.
+//! On other platforms: builds the contract-only registry from
+//! `cua_driver_core::unsupported_platform` so the crate compiles.
 
 use cua_driver_core::tool::ToolRegistry;
 
@@ -73,12 +74,7 @@ mod set_window_frame;
 #[cfg(target_os = "linux")]
 mod type_text;
 #[cfg(target_os = "linux")]
-mod type_text_chars;
-#[cfg(target_os = "linux")]
 mod zoom;
-
-#[cfg(not(target_os = "linux"))]
-mod stubs;
 
 pub fn build_registry(compat: bool) -> ToolRegistry {
     build_registry_with_provider(compat, None)
@@ -102,7 +98,10 @@ pub fn build_registry_with_provider(
     {
         let _ = compat;
         let _ = provider;
-        stubs::build_registry()
+        cua_driver_core::unsupported_platform::registry(
+            cua_driver_contract::Platform::Linux,
+            "Linux",
+        )
     }
 }
 

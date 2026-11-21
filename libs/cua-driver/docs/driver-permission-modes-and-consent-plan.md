@@ -12,8 +12,7 @@
 - **Related:**
   [existing-profile attachment plan](browser-existing-profile-attachment-plan.md),
   [browser tool implementation plan](browser-tool-implementation-plan.md),
-  [permission-policy concept](../../../docs/content/docs/concepts/how-permission-policies-work.mdx),
-  and [permission-policy reference](../../../docs/content/docs/reference/cua-driver/permission-policies.mdx)
+  and [permissions guide](../../../docs/content/docs/cua-driver/guides/permissions.mdx)
 
 ### Implemented contract amendment
 

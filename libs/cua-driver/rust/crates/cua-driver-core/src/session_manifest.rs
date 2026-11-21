@@ -282,7 +282,11 @@ impl SessionManifest {
                 "browser_target" | "authenticated_browser_tab" => {
                     self.authorize_resource_origin(resource)
                 }
-                "session_trajectory_recording" => Ok(()),
+                // Attested as the driver-owned headless browser this session
+                // launched. The bind records a tab outside the manifest's
+                // origins only by its handle, and each tab observation and
+                // input after it is still bounded by its live origin.
+                "session_trajectory_recording" | "driver_owned_headless_browser" => Ok(()),
                 _ => refused(),
             },
             "desktop_input" => match kind {

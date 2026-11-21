@@ -289,6 +289,14 @@ pub(crate) async fn browser_resource_ownership(
             .and_then(Value::as_str)
             .and_then(|target_id| engine.store.get_target(&runtime_session, target_id).ok())
             .map(|target| target.pid)
+            .or_else(|| {
+                let target = args.get("headless_target").and_then(Value::as_str)?;
+                engine
+                    .session_headless_launch(&runtime_session, target)
+                    .or_else(|_| engine.session_headless_launch(session, target))
+                    .ok()
+                    .map(|(pid, _)| pid)
+            })
     });
     let Some(pid) = pid else {
         return ProtectedResourceOwnership::UserOwned;
@@ -302,6 +310,42 @@ pub(crate) async fn browser_resource_ownership(
     } else {
         ProtectedResourceOwnership::UserOwned
     }
+}
+
+/// The resource a `headless_target` bind observes: the driver-owned headless
+/// browser this session launched. It has no native window or tab yet, so its
+/// launch record and live process identity attest it.
+async fn headless_protected_resource_scope(
+    engine: &BrowserEngine,
+    args: &Value,
+) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
+    let session = args
+        .get("session")
+        .and_then(Value::as_str)
+        .filter(|session| !session.is_empty())
+        .ok_or_else(|| "the browser operation requires an explicit session".to_owned())?;
+    let target = args
+        .get("headless_target")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "headless_target must be a string".to_owned())?;
+    let runtime_session = crate::tool::current_dispatch_authorization_context()
+        .map(|context| context.runtime_session_key(session))
+        .unwrap_or_else(|| session.to_owned());
+    let (pid, launch) = engine.session_headless_launch(&runtime_session, target)?;
+    let live = engine.platform.process_fingerprint(pid).await?;
+    if !launch.fingerprint.matches(&live) {
+        return Err(BrowserRefusal::new(
+            BrowserRefusalCode::BrowserBindingStale,
+            "the driver-owned headless browser process exited or was replaced; prepare it again",
+        )
+        .into());
+    }
+    Ok(Some(json!({
+        "kind": "driver_owned_headless_browser",
+        "pid": pid,
+        "process_fingerprint": launch.fingerprint,
+        "action_class": "page_observation",
+    })))
 }
 
 pub(crate) async fn browser_protected_resource_scope(
@@ -434,7 +478,10 @@ impl GetBrowserStateTool {
             description: "Read-only browser inspection. Mode 1 (bind): pass pid + \
                 window_id of a native browser window to classify it, correlate it to \
                 a CDP target (exact-or-refuse), and mint a session-scoped target id \
-                plus tab ids. Mode 2 (snapshot): pass target_id + tab_id. The \
+                plus tab ids. Alternatively bind a driver-owned headless browser with \
+                the headless_target that browser_prepare(headless=true) returned to \
+                this same session (binding_route=driver_owned_headless; no native \
+                window). Mode 2 (snapshot): pass target_id + tab_id. The \
                 dom_refs_v1 compatibility format returns composed DOM refs. \
                 semantic_v2 joins accessibility, DOM, layout, and viewport state; \
                 ranks visible content before retained/offscreen state; and returns a \
@@ -450,6 +497,7 @@ impl GetBrowserStateTool {
                 "properties": {
                     "pid": { "type": "integer", "description": "Native browser process id (bind mode)." },
                     "window_id": { "type": "integer", "description": "Native window id owned by pid (bind mode)." },
+                    "headless_target": { "type": "string", "description": "Opaque anchor from browser_prepare(headless=true) in this session; binds that driver-owned headless browser instead of pid + window_id." },
                     "target_id": schema_target_id(),
                     "tab_id": schema_tab_id(),
                     "session": schema_session(),
@@ -510,10 +558,12 @@ impl Tool for GetBrowserStateTool {
         adapter_id: &str,
         args: &Value,
     ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
-        if adapter_id == "private_observation"
-            && args.get("target_id").and_then(Value::as_str).is_some()
-        {
+        if adapter_id != "private_observation" {
+            Ok(None)
+        } else if args.get("target_id").and_then(Value::as_str).is_some() {
             browser_protected_resource_scope(&self.engine, args, "get_browser_state").await
+        } else if args.get("headless_target").is_some() {
+            headless_protected_resource_scope(&self.engine, args).await
         } else {
             Ok(None)
         }
@@ -700,6 +750,59 @@ impl Tool for GetBrowserStateTool {
             return snapshot;
         }
 
+        if let Some(headless_target) = args.get("headless_target") {
+            let Some(headless_target) = headless_target.as_str() else {
+                return ToolResult::error("headless_target must be a string");
+            };
+            if args.get("pid").is_some() || args.get("window_id").is_some() {
+                return ToolResult::error(
+                    "headless_target binds without pid or window_id; pass only one bind anchor",
+                );
+            }
+            let session = match require_explicit_session(&args) {
+                Ok(s) => s,
+                Err(e) => return e,
+            };
+            let transport_session = args.opt_str("_transport_session_id");
+            return match self
+                .engine
+                .bind_headless(&session, transport_session.as_deref(), headless_target)
+                .await
+            {
+                Ok((target_id, record)) => {
+                    let tabs: Vec<Value> = record
+                        .tabs
+                        .values()
+                        .map(|t| {
+                            json!({
+                                "tab_id": t.tab_id,
+                                "title": t.title,
+                                "url": t.url,
+                                "active": t.active,
+                            })
+                        })
+                        .collect();
+                    ToolResult::text(format!(
+                        "bound headless target {target_id} (exact) with {} tab(s)",
+                        tabs.len()
+                    ))
+                    .with_structured(json!({
+                        "status": "ok",
+                        "mode": "bind",
+                        "target_id": target_id,
+                        "binding_quality": "exact",
+                        "binding_route": "driver_owned_headless",
+                        "endpoint_transport": record.endpoint_transport,
+                        "endpoint_access_class": record.endpoint_access_class,
+                        "mutation_allowed": true,
+                        "native_title": Value::Null,
+                        "tabs": tabs,
+                    }))
+                }
+                Err(refusal) => refusal.to_tool_result(),
+            };
+        }
+
         // Bind mode: pid + window_id.
         let pid = match args.require_i64("pid") {
             Ok(v) => v,
@@ -812,7 +915,13 @@ impl BrowserPrepareTool {
                 result carries an advisory lifecycle object: the browser process ends with the \
                 calling session after idle_expires_in_seconds without session activity, an \
                 isolated_named profile persists after the session and an isolated_new profile \
-                does not, and explicit end, disconnect, revocation or shutdown end it earlier."
+                does not, and explicit end, disconnect, revocation or shutdown end it earlier. \
+                headless=true (only with allow_launch=true and \
+                profile.mode=isolated_new, without pid/window_id/strategy) launches the \
+                driver-owned browser with --headless=new: no window, display, or desktop \
+                input. It returns attachment.headless_target, an opaque anchor that only \
+                this session can pass to get_browser_state; session end kills the \
+                browser and deletes its profile."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -822,6 +931,10 @@ impl BrowserPrepareTool {
                     "allow_launch": {
                         "type": "boolean",
                         "description": "Allow a separate driver-owned isolated Chromium process to be launched (default false)."
+                    },
+                    "headless": {
+                        "type": "boolean",
+                        "description": "Launch the driver-owned isolated_new browser headless (--headless=new), with no native window or display. Requires allow_launch=true and profile.mode=isolated_new; refused for isolated_named, existing_profile, pid, or window_id. Default false."
                     },
                     "profile": {
                         "type": "object",
@@ -903,6 +1016,11 @@ impl Tool for BrowserPrepareTool {
             Ok(foreground) => foreground,
             Err(error) => return ToolResult::error(error),
         };
+        let headless = match args.get("headless") {
+            None | Some(Value::Null) => false,
+            Some(Value::Bool(headless)) => *headless,
+            Some(_) => return ToolResult::error("headless must be a boolean"),
+        };
         let pid = match args.get("pid") {
             None => None,
             Some(_) => match args.require_i64("pid") {
@@ -910,7 +1028,8 @@ impl Tool for BrowserPrepareTool {
                 Err(error) => return error,
             },
         };
-        let pid_optional = strategy.is_none() && profile.is_some() && allow_launch;
+        // A headless request never takes a pid; core gives it a precise refusal.
+        let pid_optional = (strategy.is_none() && profile.is_some() && allow_launch) || headless;
         if pid.is_none() && !pid_optional {
             return match args.require_i64("pid") {
                 Ok(_) => unreachable!("pid was already parsed"),
@@ -932,6 +1051,7 @@ impl Tool for BrowserPrepareTool {
             profile,
             allow_launch,
             foreground,
+            headless,
         };
         match self.engine.prepare_browser(request).await {
             Ok(outcome) => {
@@ -4591,7 +4711,8 @@ mod tests {
             crate::browser::store::TargetRecord {
                 target_id: String::new(),
                 pid: 1,
-                window_id: 7,
+                window_id: Some(7),
+                headless_target: None,
                 ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
                 endpoint_owner_pid: 1,
                 endpoint_transport: crate::browser::types::EndpointTransport::LegacyJsonVersion,
@@ -4653,7 +4774,8 @@ mod tests {
             crate::browser::store::TargetRecord {
                 target_id: String::new(),
                 pid: 1,
-                window_id: 7,
+                window_id: Some(7),
+                headless_target: None,
                 ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
                 endpoint_owner_pid: 1,
                 endpoint_transport: crate::browser::types::EndpointTransport::LegacyJsonVersion,
@@ -4698,7 +4820,8 @@ mod tests {
             crate::browser::store::TargetRecord {
                 target_id: String::new(),
                 pid: 1,
-                window_id: 7,
+                window_id: Some(7),
+                headless_target: None,
                 ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
                 endpoint_owner_pid: 1,
                 endpoint_transport: crate::browser::types::EndpointTransport::LegacyJsonVersion,

@@ -24,6 +24,7 @@ use super::platform::{
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::types::{
     BrowserEngineFamily, EndpointOwnershipMethod, EndpointOwnershipProof, OwnedEndpoint,
+    ProcessFingerprint,
 };
 use super::BrowserEngine;
 
@@ -193,6 +194,43 @@ where
             "driver_cause": cause,
         }))),
         Err(_) => Err(unanswered_consent_refusal(person_wait, cause)),
+    }
+}
+
+/// `headless` is an opt-in variant of the driver-owned isolated_new launch
+/// only. isolated_named is refused because its profile outlives the session,
+/// so cleanup could not remove it; existing profiles, pid-selected launches,
+/// and window anchors are refused because they reach a browser or window the
+/// driver did not create.
+fn validate_headless_request(request: &PrepareRequest) -> Result<(), BrowserRefusal> {
+    if request.strategy.is_some() {
+        return Err(BrowserRefusal::new(
+            BrowserRefusalCode::BrowserConsentRequired,
+            "headless=true is only for a driver-owned isolated_new launch; it cannot be combined with strategy (existing_profile)",
+        ));
+    }
+    if request.pid.is_some() || request.window_id.is_some() {
+        return Err(BrowserRefusal::new(
+            BrowserRefusalCode::BrowserConsentRequired,
+            "headless=true launches a new driver-owned browser; omit pid and window_id",
+        ));
+    }
+    if !request.allow_launch {
+        return Err(BrowserRefusal::new(
+            BrowserRefusalCode::BrowserConsentRequired,
+            "headless=true requires allow_launch=true",
+        ));
+    }
+    match request.profile.as_ref().map(|profile| profile.mode) {
+        Some(PrepareProfileMode::IsolatedNew) => Ok(()),
+        Some(PrepareProfileMode::IsolatedNamed) => Err(BrowserRefusal::new(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "headless=true is not supported with profile.mode=isolated_named: a named profile outlives the session and is not removed at cleanup; use isolated_new",
+        )),
+        None => Err(BrowserRefusal::new(
+            BrowserRefusalCode::BrowserConsentRequired,
+            "headless=true requires profile.mode=isolated_new",
+        )),
     }
 }
 
@@ -489,29 +527,38 @@ pub(crate) struct ManagedBrowser {
     delete_profile: bool,
     marker: ProfileMarker,
     owner_sessions: Vec<String>,
+    headless: Option<HeadlessLaunch>,
+}
+
+/// Launch record of a driver-owned headless browser. `target` is the opaque,
+/// unguessable bind anchor (122 random bits). It names exactly this launch, so
+/// it doubles as the launch generation: a relaunch mints a new one. It is
+/// valid only for the public session and private transport that prepared it.
+#[derive(Clone, Debug)]
+pub(crate) struct HeadlessLaunch {
+    pub(crate) target: String,
+    pub(crate) fingerprint: ProcessFingerprint,
+    pub(crate) ws_url: String,
+    session: String,
+    transport_session: Option<String>,
 }
 
 impl Drop for ManagedBrowser {
     fn drop(&mut self) {
-        #[cfg(unix)]
-        unsafe {
-            // The isolated browser is spawned as its own process group. Chrome
-            // fans out into renderer/utility descendants, so killing only the
-            // root Child can leave profile writers alive after cleanup.
-            libc::kill(-(self.child.id() as i32), libc::SIGKILL);
-        }
+        // The isolated browser is spawned as its own process group. Chrome
+        // fans out into renderer/utility descendants, so killing only the
+        // root Child can leave profile writers alive after cleanup.
+        signal_group_if_unreaped(self.child.as_mut());
         #[cfg(target_os = "windows")]
-        if self.owned_pid != i64::from(self.child.id()) {
+        if self.owned_pid != i64::from(self.child.id()) || self.headless.is_some() {
             // Edge on Windows ARM may use a short-lived launcher process and
             // transfer the browser role to a descendant. The listener owner
             // was attested inside that driver-spawned process tree, so reap
-            // that exact process tree when its owning session ends.
-            let _ = Command::new("taskkill.exe")
-                .args(["/PID", &self.owned_pid.to_string(), "/T", "/F"])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
+            // that exact process tree when its owning session ends. Windows
+            // has no process group to signal, so a headless launch reaps its
+            // tree the same way: its contract is that no descendant outlives
+            // the session.
+            kill_process_tree(self.owned_pid);
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -523,7 +570,19 @@ impl Drop for ManagedBrowser {
 
 pub(crate) type ManagedBrowsers = Mutex<Vec<ManagedBrowser>>;
 
+#[cfg(test)]
+thread_local! {
+    /// Test seam: keeps launch tests out of the user's real profile root
+    /// without mutating process-global environment.
+    pub(super) static TEST_PROFILE_ROOT: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 fn profile_root() -> Result<PathBuf, BrowserRefusal> {
+    #[cfg(test)]
+    if let Some(root) = TEST_PROFILE_ROOT.with(|root| root.borrow().clone()) {
+        return Ok(root);
+    }
     if let Some(root) = std::env::var_os("CUA_DRIVER_BROWSER_PROFILE_ROOT") {
         return Ok(PathBuf::from(root));
     }
@@ -595,10 +654,50 @@ fn remove_owned_profile_as_browser(
     });
 }
 
+/// Signal the driver-launched process group only while its leader is
+/// unreaped, running or exited: until then its id cannot be reused. Once the
+/// leader has been reaped (for example by a launch-time `try_wait`), the
+/// numeric group id may already belong to an unrelated process, so it is
+/// never signalled.
+pub(super) fn signal_group_if_unreaped(browser: &mut dyn IsolatedBrowserProcess) -> bool {
+    if browser.leader_unreaped() {
+        browser.kill_process_group();
+        return true;
+    }
+    false
+}
+
+/// Reap a driver-launched process tree on Windows, which has no process
+/// group to signal. Call it while the launched `Child` handle is held, so the
+/// pid cannot have been reused.
+#[cfg(target_os = "windows")]
+fn kill_process_tree(pid: i64) {
+    let _ = Command::new("taskkill.exe")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+/// `leader_reaped` is true once launch polling has reaped the leader, after
+/// which its pid, and so its group id, may belong to another process.
+/// `headless` refusals also reap the tree on Windows, as session cleanup does.
 fn cleanup_created_profile_as_browser(
     browser: &mut dyn IsolatedBrowserProcess,
     profile: &PreparedProfile,
+    leader_reaped: bool,
+    headless: bool,
 ) {
+    if !leader_reaped {
+        signal_group_if_unreaped(browser);
+        #[cfg(target_os = "windows")]
+        if headless {
+            kill_process_tree(i64::from(browser.id()));
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = headless;
     let _ = browser.kill();
     let _ = browser.wait();
     if profile.delete_on_cleanup {
@@ -690,6 +789,7 @@ fn driver_owned_browser_command(
     executable: &str,
     root: &Path,
     profile: &PreparedProfile,
+    headless: bool,
     managed_extensions: bool,
 ) -> Result<Command, BrowserRefusal> {
     let under_root = profile.path.parent() == Some(root);
@@ -703,6 +803,7 @@ fn driver_owned_browser_command(
     Ok(isolated_browser_command(
         executable,
         &profile.path,
+        headless,
         managed_extensions,
     ))
 }
@@ -840,7 +941,12 @@ const EXTENSION_AND_BACKGROUND_SWITCHES: [&str; 3] = [
 
 /// `managed_extensions` is true when the administrator forces extensions on
 /// this browser ([`super::platform::BrowserPlatform::managed_extension_policy`]).
-fn isolated_browser_command(executable: &str, profile: &Path, managed_extensions: bool) -> Command {
+fn isolated_browser_command(
+    executable: &str,
+    profile: &Path,
+    headless: bool,
+    managed_extensions: bool,
+) -> Command {
     let mut command = Command::new(executable);
     #[cfg(unix)]
     {
@@ -856,14 +962,19 @@ fn isolated_browser_command(executable: &str, profile: &Path, managed_extensions
     if !managed_extensions {
         command.args(EXTENSION_AND_BACKGROUND_SWITCHES);
     }
+    if headless {
+        command.arg("--headless=new");
+    }
     #[cfg(target_os = "windows")]
     command
         .arg("--window-position=40,40")
         .arg("--window-size=900,640");
     #[cfg(target_os = "linux")]
     {
-        let native_wayland = std::env::var("XDG_SESSION_TYPE")
-            .is_ok_and(|session| session.eq_ignore_ascii_case("wayland"))
+        // Headless Chromium uses its own ozone backend and no display.
+        let native_wayland = !headless
+            && std::env::var("XDG_SESSION_TYPE")
+                .is_ok_and(|session| session.eq_ignore_ascii_case("wayland"))
             && std::env::var_os("WAYLAND_DISPLAY").is_some()
             && std::env::var_os("DISPLAY").is_none();
         let sandbox = linux_browser_sandbox(|name| std::env::var(name).ok());
@@ -1024,6 +1135,7 @@ async fn wait_for_spawned_endpoint(
     child: &mut dyn IsolatedBrowserProcess,
     profile: &Path,
     security_prompt_open: &(dyn Fn() -> bool + Send + Sync),
+    leader_reaped: &mut bool,
 ) -> Result<OwnedEndpoint, BrowserRefusal> {
     let deadline = Instant::now() + Duration::from_secs(20);
     let port_file = profile.join("DevToolsActivePort");
@@ -1040,6 +1152,7 @@ async fn wait_for_spawned_endpoint(
                 format!("could not inspect the isolated browser process: {error}"),
             )
         })? {
+            *leader_reaped = true;
             if clean_spawn_exit_can_be_launcher_handoff(&status) {
                 // Edge on Windows ARM can transfer the browser role to a
                 // descendant and let its launcher exit successfully. Keep
@@ -1209,7 +1322,57 @@ impl BrowserEngine {
                 name: None,
             },
             owner_sessions: vec![session.to_owned()],
+            headless: None,
         });
+    }
+
+    /// Resolve a headless bind anchor. Unknown, forged, ended, and
+    /// other-session anchors all refuse identically.
+    pub(crate) fn headless_launch(
+        &self,
+        session: &str,
+        transport_session: Option<&str>,
+        target: &str,
+    ) -> Result<(i64, HeadlessLaunch), BrowserRefusal> {
+        self.find_headless_launch(target, |launch| {
+            launch.session == session && launch.transport_session.as_deref() == transport_session
+        })
+    }
+
+    /// The headless launch `target` names in `session`, from any transport.
+    /// Authorization attests the resource with it before dispatch, where the
+    /// trusted transport is not among the public arguments; the bind and
+    /// every mutation still resolve the anchor with the exact transport.
+    pub(crate) fn session_headless_launch(
+        &self,
+        session: &str,
+        target: &str,
+    ) -> Result<(i64, HeadlessLaunch), BrowserRefusal> {
+        self.find_headless_launch(target, |launch| launch.session == session)
+    }
+
+    fn find_headless_launch(
+        &self,
+        target: &str,
+        owned: impl Fn(&HeadlessLaunch) -> bool,
+    ) -> Result<(i64, HeadlessLaunch), BrowserRefusal> {
+        self.managed_browsers
+            .lock()
+            .unwrap()
+            .iter()
+            .find_map(|browser| {
+                browser
+                    .headless
+                    .as_ref()
+                    .filter(|launch| launch.target == target && owned(launch))
+                    .map(|launch| (browser.owned_pid, launch.clone()))
+            })
+            .ok_or_else(|| {
+                BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserBindingStale,
+                    "headless_target is not a live driver-owned headless launch of this session; run browser_prepare with headless=true again",
+                )
+            })
     }
 
     pub(crate) fn cleanup_prepared_session(&self, session: &str) {
@@ -1241,6 +1404,9 @@ impl BrowserEngine {
         &self,
         request: PrepareRequest,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
+        if request.headless {
+            validate_headless_request(&request)?;
+        }
         if request.strategy == Some(PrepareStrategy::ExistingProfile) {
             return self.attach_existing_profile(request).await;
         }
@@ -1323,6 +1489,7 @@ impl BrowserEngine {
             &executable,
             &profile_root()?,
             &prepared_profile,
+            request.headless,
             managed_extension_policy.is_some(),
         ) {
             Ok(command) => command,
@@ -1348,10 +1515,12 @@ impl BrowserEngine {
         };
         let platform = self.platform.clone();
         let security_prompt_open = move || platform.security_prompt_open();
+        let mut leader_reaped = false;
         let launched = match wait_for_spawned_endpoint(
             child.as_mut(),
             &prepared_profile.path,
             &security_prompt_open,
+            &mut leader_reaped,
         )
         .await
         {
@@ -1369,12 +1538,14 @@ impl BrowserEngine {
             Err(error) => Err(error),
         };
         let endpoint = match launched {
-            Ok(endpoint) => {
-                self.isolated_launch_breaker.record_success();
-                endpoint
-            }
+            Ok(endpoint) => endpoint,
             Err(error) => {
-                cleanup_created_profile_as_browser(child.as_mut(), &prepared_profile);
+                cleanup_created_profile_as_browser(
+                    child.as_mut(),
+                    &prepared_profile,
+                    leader_reaped,
+                    request.headless,
+                );
                 let failure = if error
                     .detail
                     .as_ref()
@@ -1394,19 +1565,61 @@ impl BrowserEngine {
             }
         };
         let prepared_pid = endpoint.ownership.owner_pid;
+        let fingerprint = self.platform.process_fingerprint(prepared_pid).await;
+        let headless = if request.headless {
+            // Headless binding has no native window to re-prove, so the
+            // process start identity is mandatory rather than best-effort.
+            match &fingerprint {
+                Ok(fingerprint) if fingerprint.start_time.is_some() => Some(HeadlessLaunch {
+                    target: format!("hl-{}", uuid::Uuid::new_v4()),
+                    fingerprint: fingerprint.clone(),
+                    ws_url: endpoint.ws_url.clone(),
+                    session: request.session.clone(),
+                    transport_session: request.transport_session.clone(),
+                }),
+                _ => {
+                    cleanup_created_profile_as_browser(
+                        child.as_mut(),
+                        &prepared_profile,
+                        leader_reaped,
+                        true,
+                    );
+                    let error = BrowserRefusal::new(
+                        BrowserRefusalCode::BrowserRouteUnavailable,
+                        "could not prove the headless browser's process start identity",
+                    );
+                    self.isolated_launch_breaker.record_failure(
+                        Instant::now(),
+                        LaunchFailure::Browser,
+                        &error.message,
+                    );
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
+        self.isolated_launch_breaker.record_success();
         let mut owner_sessions = vec![request.session];
         if let Some(transport_session) = request.transport_session {
             if !owner_sessions.contains(&transport_session) {
                 owner_sessions.push(transport_session);
             }
         }
-        let fingerprint = self.platform.process_fingerprint(prepared_pid).await.ok();
+        let fingerprint = fingerprint.ok();
         if let Some(fingerprint) = &fingerprint {
             for owner in &owner_sessions {
                 self.protected_resource_ownership
                     .mark_driver_owned_process(owner, fingerprint.clone());
             }
         }
+        let attachment = headless.as_ref().map(|launch| PrepareAttachment {
+            kind: PrepareAttachmentKind::DriverOwnedHeadless,
+            browser: "chromium".to_owned(),
+            capabilities_invalidated: false,
+            next_action: "get_browser_state".to_owned(),
+            headless_target: Some(launch.target.clone()),
+        });
         self.managed_browsers.lock().unwrap().push(ManagedBrowser {
             child,
             owned_pid: prepared_pid,
@@ -1415,11 +1628,16 @@ impl BrowserEngine {
             delete_profile: prepared_profile.delete_on_cleanup,
             marker: prepared_profile.marker,
             owner_sessions,
+            headless,
         });
         Ok(PrepareOutcome {
             action: PrepareAction::LaunchedIsolatedBrowser,
             endpoint: Some(endpoint),
-            message: "Launched a separate driver-owned isolated Chromium process; no existing browser process was modified or terminated.".to_owned(),
+            message: if attachment.is_some() {
+                "Launched a separate driver-owned headless Chromium process with a fresh isolated profile; bind it with get_browser_state headless_target.".to_owned()
+            } else {
+                "Launched a separate driver-owned isolated Chromium process; no existing browser process was modified or terminated.".to_owned()
+            },
             prepared_pid: Some(prepared_pid),
             side_effects: PrepareSideEffects {
                 launched_browser: true,
@@ -1427,7 +1645,7 @@ impl BrowserEngine {
                 reused_driver_profile: !prepared_profile.created,
                 ..PrepareSideEffects::default()
             },
-            attachment: None,
+            attachment,
         })
     }
 
@@ -1982,6 +2200,7 @@ impl BrowserEngine {
                 browser: "chromium".to_owned(),
                 capabilities_invalidated: true,
                 next_action: "get_browser_state".to_owned(),
+                headless_target: None,
             }),
         })
     }
@@ -2659,7 +2878,7 @@ mod tests {
     #[test]
     fn isolated_launch_uses_a_deterministic_clean_profile() {
         let profile = Path::new("profile-under-test");
-        let command = isolated_browser_command("chromium-under-test", profile, false);
+        let command = isolated_browser_command("chromium-under-test", profile, false, false);
         let args = command
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
@@ -2724,9 +2943,14 @@ mod tests {
             marker: marker.clone(),
         };
 
-        let command =
-            driver_owned_browser_command("chromium-under-test", &root, &profile(&owned), false)
-                .expect("a marked profile under the root launches");
+        let command = driver_owned_browser_command(
+            "chromium-under-test",
+            &root,
+            &profile(&owned),
+            false,
+            false,
+        )
+        .expect("a marked profile under the root launches");
         let args = command_args(&command);
         assert!(args.contains(&format!("--user-data-dir={}", owned.display())));
         assert_eq!(
@@ -2748,6 +2972,7 @@ mod tests {
                 "chromium-under-test",
                 &root,
                 &profile(refused),
+                false,
                 false,
             )
             .expect_err("not a driver-owned profile");
@@ -2841,6 +3066,38 @@ mod tests {
             assert!(refusal.message.contains("Keychain"));
             assert!(refusal.message.contains("never answers"));
         }
+    }
+
+    #[test]
+    fn headless_launch_adds_only_the_headless_flag_when_requested() {
+        let args = |headless| {
+            isolated_browser_command("chromium-under-test", Path::new("p"), headless, false)
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .filter(|arg| arg != "--ozone-platform=wayland")
+                .collect::<Vec<_>>()
+        };
+        let windowed = args(false);
+        let headless = args(true);
+        assert!(!windowed.iter().any(|arg| arg.starts_with("--headless")));
+        for required in [
+            "--headless=new",
+            "--remote-debugging-port=0",
+            "--user-data-dir=p",
+        ] {
+            assert!(
+                headless.iter().any(|arg| arg == required),
+                "missing {required}"
+            );
+        }
+        let without_flag: Vec<_> = headless
+            .into_iter()
+            .filter(|arg| arg != "--headless=new")
+            .collect();
+        assert_eq!(without_flag, windowed);
+        assert!(!isolated_browser_command("c", Path::new("p"), true, false)
+            .get_args()
+            .any(|arg| arg == "--ozone-platform=wayland"));
     }
 
     #[test]

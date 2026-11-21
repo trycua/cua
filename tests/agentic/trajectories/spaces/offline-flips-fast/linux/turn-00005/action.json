@@ -1,0 +1,38 @@
+{
+  "action_truth": {
+    "actual_delivery": "foreground",
+    "attempts": [],
+    "delivered_count": null,
+    "detail": null,
+    "effect": "unverifiable",
+    "escalation": null,
+    "evidence": [
+      {
+        "detail": "real input delivered to the activated window (focus_after=target); no window change observed",
+        "kind": "native_api_result"
+      }
+    ],
+    "fallbacks": [],
+    "refusal": null,
+    "requested_delivery": "foreground",
+    "route": "global_input",
+    "transport": "linux_x_test"
+  },
+  "arguments": {
+    "delivery_mode": "foreground",
+    "pid": 71756,
+    "window_id": 46137348,
+    "x": 400,
+    "y": 200
+  },
+  "click_point": {
+    "x": 400.0,
+    "y": 200.0
+  },
+  "result_error": false,
+  "result_summary": "Clicked at (400.0, 200.0) × 1 (delivery_mode=foreground, path=x11_xtest_fg); not verified — confirm with a screenshot. [window_point=(400, 200) screen_point=(720, 343)]",
+  "t_ms_from_session_start": 25043,
+  "t_start_ms_from_session_start": 21940,
+  "timestamp": "2026-11-06T00:11:43.379Z",
+  "tool": "click"
+}

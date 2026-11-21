@@ -1,0 +1,9 @@
+{
+  "test": "spaces/offline-flips-fast",
+  "os": "linux",
+  "model": "claude-sonnet-5-5",
+  "build": "release:cua-spaces-nightly",
+  "recorded_at": "2026-11-06T00:13:27Z",
+  "run_url": "",
+  "steps": 31
+}

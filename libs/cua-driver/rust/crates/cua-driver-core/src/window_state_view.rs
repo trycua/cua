@@ -278,12 +278,15 @@ pub fn apply(
 ) {
     // Publish identity even for full_output and empty trees. It comes from the
     // completed structured result, never a guessed or not-yet-published id.
-    let capture_id_early = registered_capture_id(structured);
     let mut identity_extra = String::new();
     if let Some(sid) = structured.get("snapshot_id").and_then(Value::as_str) {
         identity_extra.push_str(&format!(" snapshot_id={sid}"));
     }
-    if let Some(cid) = &capture_id_early {
+    if let Some(cid) = structured
+        .get("capture_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+    {
         identity_extra.push_str(&format!(" capture_id={cid}"));
     }
     if !identity_extra.is_empty() {
@@ -443,8 +446,6 @@ pub fn apply(
         }
     }
 
-    // A capture-only or empty-tree read has no tree block to rewrite. The
-    // capture and snapshot ids were already stamped on the header above.
     rewrite_tree_block(content, &md, &header_extra, &body);
     drop_walk_diagnostics(opts, structured);
 }
@@ -489,15 +490,6 @@ fn append_to_tree_block(content: &mut [Content], line: &str) {
         }
         text.push_str(line);
     }
-}
-
-/// `capture_id` already published on this observation, when it is a non-empty string.
-fn registered_capture_id(structured: &Value) -> Option<String> {
-    structured
-        .get("capture_id")
-        .and_then(Value::as_str)
-        .filter(|id| !id.is_empty())
-        .map(str::to_owned)
 }
 
 /// Add ` capture_id=<id>` to the first line of an observation summary.
@@ -596,9 +588,9 @@ fn fallback_text(reason: &str) -> &'static str {
 
 /// Replace the markdown inside the platform's text block with `body`, and add
 /// `header_extra` to the end of that block's first line.
-fn rewrite_tree_block(content: &mut [Content], md: &str, header_extra: &str, body: &str) -> bool {
+fn rewrite_tree_block(content: &mut [Content], md: &str, header_extra: &str, body: &str) {
     if md.is_empty() {
-        return false;
+        return;
     }
     for part in content.iter_mut() {
         let Content::Text { text, .. } = part else {
@@ -623,9 +615,8 @@ fn rewrite_tree_block(content: &mut [Content], md: &str, header_extra: &str, bod
         out.push_str(body);
         out.push_str(suffix);
         *text = out;
-        return true;
+        return;
     }
-    false
 }
 
 fn trim_metadata(opts: &ViewOptions, structured: &mut Value) {

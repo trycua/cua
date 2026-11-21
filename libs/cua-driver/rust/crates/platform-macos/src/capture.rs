@@ -39,7 +39,7 @@
 //! `screencapture -x <file>` captures the full main display. The agent-facing
 //! desktop capture instead uses a ScreenCaptureKit display filter that leaves
 //! the Driver's cursor overlay window out
-//! ([`screenshot_display_bytes_excluding_overlay`]); `screencapture` remains
+//! ([`screenshot_display_image_excluding_overlay`]); `screencapture` remains
 //! its fallback and reports that it could not exclude the overlay.
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
@@ -610,14 +610,6 @@ fn capture_window_from_plan(
 }
 
 /// Encode a ScreenCaptureKit `CGImage` as PNG after checking its geometry.
-fn cgimage_to_png(
-    image: &screencapturekit::screenshot_manager::CGImage,
-    label: &str,
-) -> anyhow::Result<Vec<u8>> {
-    let frame = cgimage_to_rgba(image, label)?;
-    cua_driver_core::image_utils::encode_rgba_to_png(&frame.rgba, frame.width, frame.height)
-}
-
 /// Read a ScreenCaptureKit `CGImage`'s RGBA pixels after checking its geometry.
 fn cgimage_to_rgba(
     image: &screencapturekit::screenshot_manager::CGImage,
@@ -1103,8 +1095,8 @@ impl cursor_overlay::capture_exclusion::OverlayCaptureExcluder for OverlayExclud
 ///
 /// `screencapture` cannot leave a window out and costs a process and a file,
 /// so it is only the fallback when ScreenCaptureKit fails.
-pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
-    Vec<u8>,
+pub fn screenshot_display_image_excluding_overlay() -> anyhow::Result<(
+    CapturedImage,
     cursor_overlay::capture_exclusion::AgentOverlayCapture,
 )> {
     use cursor_overlay::capture_exclusion::{capture_excluding_overlays, ResidualCheck};
@@ -1116,10 +1108,13 @@ pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
                 DISPLAY_CAPTURE_NATIVE_TIMEOUT,
                 || screenshot_main_display_sck(None),
             ) {
-                Ok(bytes) => Ok((bytes, ResidualCheck::Clean)),
+                Ok(frame) => Ok((CapturedImage::Rgba(frame), ResidualCheck::Clean)),
                 Err(error) => {
                     tracing::warn!("ScreenCaptureKit display capture failed: {error:#}");
-                    Ok((screenshot_display_bytes()?, ResidualCheck::Clean))
+                    Ok((
+                        CapturedImage::Png(screenshot_display_bytes()?),
+                        ResidualCheck::Clean,
+                    ))
                 }
             };
         };
@@ -1128,14 +1123,14 @@ pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
             DISPLAY_CAPTURE_NATIVE_TIMEOUT,
             move || screenshot_main_display_sck(Some(overlay_window_id)),
         ) {
-            Ok(bytes) => Ok((bytes, ResidualCheck::Clean)),
+            Ok(frame) => Ok((CapturedImage::Rgba(frame), ResidualCheck::Clean)),
             Err(error) => {
                 tracing::warn!(
                     "ScreenCaptureKit display capture without the overlay failed: {error:#}"
                 );
                 let bytes = screenshot_display_bytes()?;
                 Ok((
-                    bytes,
+                    CapturedImage::Png(bytes),
                     ResidualCheck::Residual {
                         reason: format!(
                             "ScreenCaptureKit could not capture the display without the \
@@ -1149,30 +1144,107 @@ pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
     })
 }
 
+/// Owned ScreenCaptureKit filter + stream config for the main display.
+struct DisplayCapturePlan {
+    filter: screencapturekit::prelude::SCContentFilter,
+    config: screencapturekit::prelude::SCStreamConfiguration,
+    identity: DisplayCaptureIdentity,
+}
+
+/// What a display plan was built for. A display filter keeps showing windows
+/// that open, move or close after it was built, so only a change here makes
+/// the plan stale.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DisplayCaptureIdentity {
+    display_id: u32,
+    bounds: [u64; 4],
+    pixels: Option<(u64, u64)>,
+    excluded_window_id: Option<u32>,
+}
+
+fn current_display_capture_identity(excluded_window_id: Option<u32>) -> DisplayCaptureIdentity {
+    let display = core_graphics::display::CGDisplay::main();
+    let bounds = display.bounds();
+    DisplayCaptureIdentity {
+        display_id: display.id,
+        bounds: [
+            bounds.origin.x.to_bits(),
+            bounds.origin.y.to_bits(),
+            bounds.size.width.to_bits(),
+            bounds.size.height.to_bits(),
+        ],
+        pixels: display
+            .display_mode()
+            .map(|mode| (mode.pixel_width(), mode.pixel_height())),
+        excluded_window_id,
+    }
+}
+
+/// Capture with the kept plan while `is_current` accepts it; build a new one
+/// when it does not or when its capture fails.
+fn capture_with_kept_plan<P, T>(
+    kept: &Mutex<Option<std::sync::Arc<P>>>,
+    is_current: impl Fn(&P) -> bool,
+    build: impl FnOnce() -> anyhow::Result<P>,
+    capture: impl Fn(&P) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    let lock = || kept.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let current = lock().clone().filter(|plan| is_current(plan));
+    if let Some(plan) = current {
+        match capture(&plan) {
+            Ok(captured) => return Ok(captured),
+            Err(error) => {
+                tracing::debug!("kept capture plan failed, building a new one: {error:#}")
+            }
+        }
+    }
+    *lock() = None;
+    let plan = std::sync::Arc::new(build()?);
+    let captured = capture(&plan)?;
+    *lock() = Some(plan);
+    Ok(captured)
+}
+
 /// Main display at native pixel size through a ScreenCaptureKit display
 /// filter, with `excluded_window_id` (the overlay) left out. Requires macOS 14
 /// for `SCScreenshotManager`.
 ///
+/// The filter is kept between captures: building one needs the
+/// shareable-content query, which takes as long as the capture itself.
+///
 /// `SCScreenshotManager.captureImage(in:)` would skip the shareable-content
 /// query, but macOS keeps the `CGImage` and `IOSurface` of every call alive
 /// for the life of the process.
-fn screenshot_main_display_sck(excluded_window_id: Option<u32>) -> anyhow::Result<Vec<u8>> {
-    use core_graphics::display::CGMainDisplayID;
+fn screenshot_main_display_sck(excluded_window_id: Option<u32>) -> anyhow::Result<RgbaFrame> {
+    static KEPT: Mutex<Option<std::sync::Arc<DisplayCapturePlan>>> = Mutex::new(None);
+    let identity = current_display_capture_identity(excluded_window_id);
+    capture_with_kept_plan(
+        &KEPT,
+        |plan| plan.identity == identity,
+        || build_display_capture_plan(identity),
+        capture_display_from_plan,
+    )
+}
+
+fn build_display_capture_plan(
+    identity: DisplayCaptureIdentity,
+) -> anyhow::Result<DisplayCapturePlan> {
     use screencapturekit::prelude::{SCContentFilter, SCShareableContent, SCStreamConfiguration};
-    use screencapturekit::screenshot_manager::SCScreenshotManager;
 
     let content = SCShareableContent::get()
         .map_err(|e| anyhow::anyhow!("SCShareableContent::get failed: {e}"))?;
-    // SAFETY: CGMainDisplayID takes no arguments and only reads WindowServer state.
-    let main_display_id = unsafe { CGMainDisplayID() };
     let display = content
         .displays()
         .into_iter()
-        .find(|display| display.display_id() == main_display_id)
+        .find(|display| display.display_id() == identity.display_id)
         .ok_or_else(|| {
-            anyhow::anyhow!("ScreenCaptureKit does not list the main display {main_display_id}")
+            anyhow::anyhow!(
+                "ScreenCaptureKit does not list the main display {}",
+                identity.display_id
+            )
         })?;
-    let overlay = excluded_window_id
+    let overlay = identity
+        .excluded_window_id
         .map(|window_id| {
             content
                 .windows()
@@ -1204,10 +1276,19 @@ fn screenshot_main_display_sck(excluded_window_id: Option<u32>) -> anyhow::Resul
         .with_height(rounded_pixel_dim(height_pts * scale, "height")?)
         // `screencapture -x` leaves the hardware pointer out too.
         .with_shows_cursor(false);
+    Ok(DisplayCapturePlan {
+        filter,
+        config,
+        identity,
+    })
+}
 
-    let image = SCScreenshotManager::capture_image(&filter, &config)
+fn capture_display_from_plan(plan: &DisplayCapturePlan) -> anyhow::Result<RgbaFrame> {
+    use screencapturekit::screenshot_manager::SCScreenshotManager;
+
+    let image = SCScreenshotManager::capture_image(&plan.filter, &plan.config)
         .map_err(|e| anyhow::anyhow!("SCScreenshotManager::capture_image failed: {e}"))?;
-    cgimage_to_png(&image, "main display")
+    cgimage_to_rgba(&image, "main display")
 }
 
 /// Skip an implicit capture that would make macOS show its one-time
@@ -1295,6 +1376,37 @@ pub fn png_dimensions(data: &[u8]) -> anyhow::Result<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_capture_plan_is_kept_until_it_is_stale_or_its_capture_fails() {
+        let kept: Mutex<Option<std::sync::Arc<(u32, u32)>>> = Mutex::new(None);
+        let builds = std::cell::Cell::new(0_u32);
+        let broken = std::cell::Cell::new(None::<u32>);
+        let capture = |identity: u32| {
+            capture_with_kept_plan(
+                &kept,
+                |plan| plan.0 == identity,
+                || {
+                    builds.set(builds.get() + 1);
+                    Ok((identity, builds.get()))
+                },
+                |plan| {
+                    if broken.get() == Some(plan.1) {
+                        anyhow::bail!("plan {} no longer captures", plan.1)
+                    }
+                    Ok(plan.1)
+                },
+            )
+            .unwrap()
+        };
+
+        assert_eq!(capture(1), 1);
+        assert_eq!(capture(1), 1, "the plan is kept");
+        assert_eq!(capture(2), 2, "a stale plan is replaced");
+        broken.set(Some(2));
+        assert_eq!(capture(2), 3, "a plan whose capture fails is replaced");
+        assert_eq!(capture(2), 3);
+    }
     use std::cell::Cell;
     use std::rc::Rc;
     use std::sync::Arc;

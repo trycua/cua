@@ -152,10 +152,12 @@ mod tests {
     }
 
     /// The testkit's isolated home, with Windows' profile variables inside it.
+    /// `USERPROFILE` differs from `HOME` so the tests see which one each
+    /// location reads.
     fn isolated_vars(root: &cua_driver_testkit::IsolatedStateRoot) -> Vars {
         let mut vars: Vars = root.env().into_iter().collect();
         if cfg!(windows) {
-            vars.insert("USERPROFILE", root.path().to_owned());
+            vars.insert("USERPROFILE", root.path().join("profile"));
             vars.insert("LOCALAPPDATA", root.path().join("AppData").join("Local"));
         }
         vars
@@ -214,6 +216,13 @@ mod tests {
             home.join(".local/state")
         };
 
+        // Skills alone read `USERPROFILE` on Windows even when `HOME` is set.
+        let skills_home = if cfg!(windows) {
+            home.join("profile")
+        } else {
+            home.to_owned()
+        };
+
         for namespace in [RELEASE_NAMESPACE, LOCAL_NAMESPACE] {
             let product_home = home.join(format!(".{namespace}"));
             let (cache, socket, pid) = daemon_files(&base, namespace);
@@ -233,7 +242,7 @@ mod tests {
                 pid_file: pid,
                 pipe_lock,
                 telemetry_dir: Some(product_home.clone()),
-                skills_dir: Some(product_home.join("skills")),
+                skills_dir: Some(skills_home.join(format!(".{namespace}")).join("skills")),
                 history_root: state_dir.join("computer-history"),
             };
             assert_eq!(
@@ -251,6 +260,43 @@ mod tests {
                 resolve(namespace, &isolated),
                 overridden,
                 "{namespace} under CUA_DRIVER_RS_HOME"
+            );
+
+            // Skills take an empty override as given; history ignores it.
+            let mut empty_override = defaults.clone();
+            empty_override.insert("CUA_DRIVER_RS_HOME", std::path::PathBuf::new());
+            assert_eq!(
+                resolve(namespace, &empty_override),
+                AppPaths {
+                    skills_dir: Some(std::path::PathBuf::from("skills")),
+                    ..expected.clone()
+                },
+                "{namespace} under an empty CUA_DRIVER_RS_HOME"
+            );
+
+            // Only Linux reads `XDG_STATE_HOME`, and only when it is not empty.
+            let mut xdg_state = defaults.clone();
+            xdg_state.insert("XDG_STATE_HOME", home.join("xdg-state"));
+            let xdg_expected = if cfg!(target_os = "linux") {
+                let state_dir = home.join("xdg-state").join(namespace);
+                AppPaths {
+                    history_root: state_dir.join("computer-history"),
+                    state_dir,
+                    ..expected.clone()
+                }
+            } else {
+                expected.clone()
+            };
+            assert_eq!(
+                resolve(namespace, &xdg_state),
+                xdg_expected,
+                "{namespace} under XDG_STATE_HOME"
+            );
+            xdg_state.insert("XDG_STATE_HOME", std::path::PathBuf::new());
+            assert_eq!(
+                resolve(namespace, &xdg_state),
+                expected,
+                "{namespace} under an empty XDG_STATE_HOME"
             );
 
             let mut telemetry = defaults.clone();

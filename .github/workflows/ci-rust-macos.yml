@@ -102,6 +102,9 @@ jobs:
       - name: Run daemon presence regressions on macOS
         working-directory: libs/cua-driver/rust
         run: "cargo test --locked -p cua-driver --bin cua-driver serve::presence_tests::"
+      - name: Run app path parity on macOS
+        working-directory: libs/cua-driver/rust
+        run: "cargo test --locked -p cua-driver --bin cua-driver bundle::tests::"
       # Desktop E2E suites are #[ignore] and run in the Lume harness. Their
       # hermetic oracle and parser tests run here as a whole crate, including
       # the macOS-gated ones that have no other runner: the harness's FIFO

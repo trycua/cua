@@ -233,6 +233,81 @@ fn wait_named_pipe(socket_path: &str) -> std::io::Result<()> {
     }
 }
 
+/// One connection attempt to the Unix socket at `socket_path` that never
+/// waits. A listener whose accept queue is full answers `WouldBlock` rather
+/// than holding the caller, as a blocking connect does on Linux. The stream it
+/// returns is blocking.
+#[cfg(unix)]
+pub fn try_connect_unix(socket_path: &str) -> std::io::Result<std::os::unix::net::UnixStream> {
+    use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
+
+    let path = socket_path.as_bytes();
+    // SAFETY: an all-zero sockaddr_un is a valid empty address.
+    let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    if path.len() >= address.sun_path.len() {
+        return Err(std::io::Error::from_raw_os_error(libc::ENAMETOOLONG));
+    }
+    address.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    for (slot, byte) in address.sun_path.iter_mut().zip(path) {
+        *slot = libc::c_char::from_ne_bytes([*byte]);
+    }
+    // SAFETY: plain socket creation; the descriptor is owned right away.
+    let raw = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0) };
+    if raw < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `raw` is a fresh descriptor nothing else owns.
+    let socket = unsafe { OwnedFd::from_raw_fd(raw) };
+    // SAFETY: fcntl on a descriptor this function owns.
+    let ready = unsafe {
+        libc::fcntl(raw, libc::F_SETFD, libc::FD_CLOEXEC) == 0
+            && libc::fcntl(raw, libc::F_SETFL, libc::O_NONBLOCK) == 0
+    };
+    if !ready {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `address` is a valid, NUL-terminated sockaddr_un of the length
+    // passed.
+    let connected = unsafe {
+        libc::connect(
+            socket.as_raw_fd(),
+            (&address as *const libc::sockaddr_un).cast(),
+            std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t,
+        )
+    };
+    if connected != 0 {
+        let error = std::io::Error::last_os_error();
+        return Err(match error.raw_os_error() {
+            Some(libc::EAGAIN | libc::EINPROGRESS) => std::io::ErrorKind::WouldBlock.into(),
+            _ => error,
+        });
+    }
+    let stream = std::os::unix::net::UnixStream::from(socket);
+    stream.set_nonblocking(false)?;
+    Ok(stream)
+}
+
+/// Connect to the Unix socket at `socket_path`, waiting at most `deadline`
+/// for room in a full accept queue.
+#[cfg(unix)]
+pub fn connect_unix_within(
+    socket_path: &str,
+    deadline: Duration,
+) -> std::io::Result<std::os::unix::net::UnixStream> {
+    let started = std::time::Instant::now();
+    loop {
+        match try_connect_unix(socket_path) {
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock
+                    && started.elapsed() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            result => return result,
+        }
+    }
+}
+
 /// Whether a serving daemon runs tool calls yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolGate {
@@ -330,7 +405,13 @@ fn probe_metadata(socket_path: &str) -> Option<DaemonMetadata> {
         client_kind: None,
     };
     #[cfg(unix)]
-    let response = exchange(socket_path, &request, PRESENCE_REPLY_DEADLINE).ok()?;
+    let response = exchange(
+        socket_path,
+        &request,
+        PRESENCE_REPLY_DEADLINE,
+        Some(PRESENCE_REPLY_DEADLINE),
+    )
+    .ok()?;
     #[cfg(not(unix))]
     let response = {
         // Opening a pipe that has no instance retries for seconds, so check
@@ -353,10 +434,19 @@ fn probe_metadata(socket_path: &str) -> Option<DaemonMetadata> {
     serde_json::from_value(response.result?).ok()
 }
 
+/// Only a regular file counts as a lock. On Unix the file opens without
+/// blocking, so a FIFO left at the lock path cannot hang the probe.
 fn lock_is_held(lock_path: &std::path::Path) -> bool {
-    let Ok(lock) = std::fs::File::open(lock_path) else {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK);
+    let Ok(lock) = options.open(lock_path) else {
         return false;
     };
+    if !lock.metadata().is_ok_and(|metadata| metadata.is_file()) {
+        return false;
+    }
     matches!(lock.try_lock(), Err(std::fs::TryLockError::WouldBlock))
 }
 
@@ -377,14 +467,18 @@ pub const REPLY_DEADLINE: Duration = Duration::from_millis(crate::tool_schema::T
 /// slow accessibility walks and large screenshots are supported.
 #[cfg(unix)]
 pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
-    exchange(socket_path, request, REPLY_DEADLINE)
+    exchange(socket_path, request, REPLY_DEADLINE, None)
 }
 
+/// One request and its reply. With `connect_within`, the connection itself is
+/// bounded too: a listener whose accept queue is full would otherwise hold a
+/// blocking connect on Linux indefinitely.
 #[cfg(unix)]
 fn exchange(
     socket_path: &str,
     request: &DaemonRequest,
     reply_deadline: Duration,
+    connect_within: Option<Duration>,
 ) -> anyhow::Result<DaemonResponse> {
     use std::io::Read;
     use std::os::unix::net::UnixStream;
@@ -392,8 +486,11 @@ fn exchange(
 
     const READ_POLL: Duration = Duration::from_secs(10);
 
-    let mut stream = UnixStream::connect(socket_path)
-        .map_err(|error| anyhow::anyhow!("connect to {socket_path}: {error}"))?;
+    let mut stream = match connect_within {
+        Some(deadline) => connect_unix_within(socket_path, deadline),
+        None => UnixStream::connect(socket_path),
+    }
+    .map_err(|error| anyhow::anyhow!("connect to {socket_path}: {error}"))?;
     // macOS rejects setsockopt with EINVAL once the peer has closed its end,
     // even when the peer's reply is still buffered for us to read. Treat that
     // as "peer already gone": the read below still drains buffered data and

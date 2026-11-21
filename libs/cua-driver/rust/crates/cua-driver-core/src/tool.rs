@@ -7380,7 +7380,7 @@ pub fn session_ended_refusal(public_label: Option<&str>) -> ToolResult {
 /// `cua-driver call` then names. The session has not ended, so the
 /// `session_ended` recovery (`start_session` with the same label) would be
 /// refused too.
-fn session_owned_by_other_transport_refusal(
+pub(crate) fn session_owned_by_other_transport_refusal(
     public_label: Option<&str>,
     holder: crate::session::SessionTransport,
 ) -> ToolResult {

@@ -4467,6 +4467,8 @@ mod session_boundary_tests {
 
     #[test]
     fn browser_download_approval_requires_a_live_proxy_session() {
+        // Daemon shutdown tests clear the shared proxy-session set.
+        let _guard = crate::test_runtime_lock().blocking_lock();
         let session = "approval-boundary-test";
         let mut raw_download = json!({"destination_root": "/private/path"});
         inject_browser_approvals("browser_download", &mut raw_download, Some(session));

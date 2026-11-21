@@ -169,6 +169,9 @@ fn standalone_browser_completeness_html() -> String {
   <span id="standalone-upload-state" data-cua-id="standalone-upload-state">upload=0</span>
   <a id="standalone-download" data-cua-id="standalone-download" aria-label="standalone-download" href="/download" download>Download fixture</a>
   <span id="standalone-hover-state" data-cua-id="standalone-hover-state">hover=false</span>
+  <button id="reject-drop" aria-label="reject-drop">No drop</button>
+  <button id="veto-drop" aria-label="veto-drop">Explicitly refuse drop</button>
+  <span id="reject-drop-state" data-cua-id="reject-drop-state">idle</span>
 </fieldset>
 <script>
   const dialogState = document.getElementById('standalone-dialog-state');
@@ -194,6 +197,29 @@ fn standalone_browser_completeness_html() -> String {
     document.getElementById('standalone-hover-state').textContent = 'hover=true';
   });
   document.getElementById('drop-target').addEventListener('dragover', event => event.preventDefault());
+  const rejectState = document.getElementById('reject-drop-state');
+  let rejectedEvents;
+  for (const id of ['reject-drop', 'veto-drop']) {
+    const target = document.getElementById(id);
+    target.addEventListener('dragover', event => {
+      rejectedEvents = [id, 'dragover'];
+      if (id === 'veto-drop') {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'none';
+      }
+    });
+    for (const type of ['dragleave', 'drop', 'mouseup', 'pointerup']) {
+      target.addEventListener(type, () => {
+        if (!rejectedEvents) return;
+        rejectedEvents.push(type);
+        rejectState.textContent = rejectedEvents.join(',');
+        if (type === 'pointerup') rejectedEvents = null;
+      });
+    }
+  }
+  document.getElementById('drag-source').addEventListener('dragend', event => {
+    if (rejectedEvents) rejectedEvents.push('dragend=' + event.dataTransfer.dropEffect);
+  });
   document.getElementById('drop-target').addEventListener('drop', event => {
     event.preventDefault();
     document.getElementById('drag-status').textContent = 'drag_status=dropped';
@@ -5570,6 +5596,37 @@ fn run_pointer_actions(spec: &BrowserSpec) {
                 dragged.raw
             );
             wait_for_text(&fixture.server, "drag-status", "drag_status=dropped");
+            for name in ["reject-drop", "veto-drop"] {
+                let rejected = fixture.driver.call(
+                    "browser_pointer",
+                    serde_json::json!({
+                        "target_id": target,
+                        "tab_id": tab,
+                        "ref": semantic_ref_by_name(&snapshot, "drag-source", "pointer"),
+                        "destination_ref": semantic_ref_by_name(&snapshot, name, "pointer"),
+                        "action": "drag",
+                        "input_route": "dom_event",
+                        "session": session,
+                    }),
+                );
+                assert_eq!(
+                    rejected.action_effect(),
+                    Some("refused"),
+                    "{}",
+                    rejected.raw
+                );
+                assert_eq!(
+                    rejected.structured()["refusal"]["code"],
+                    "browser_action_unavailable",
+                    "{}",
+                    rejected.raw
+                );
+                wait_for_text(
+                    &fixture.server,
+                    "reject-drop-state",
+                    &format!("{name},dragover,dragleave,dragend=none,mouseup,pointerup"),
+                );
+            }
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         })
     });

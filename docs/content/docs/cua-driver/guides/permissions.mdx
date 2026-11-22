@@ -303,7 +303,7 @@ absent, and a constraint on an absent field fails unless it sets
 | Field | Value |
 |---|---|
 | `kind` | `window` (the call names a window, or an `element_token` from a window's snapshot), `application` (a `pid` alone; the platform picks its window), or `desktop` (no app, so app fields are absent) |
-| `pid`, `window_id` | The window's owner as the OS reports it, and the window |
+| `pid`, `window_id` | The window's owner as the OS verifies it, and the window. On X11 the owner comes from the X server's X-Resource extension, never the `_NET_WM_PID` a client sets; a window whose owner the server cannot report (a remote client, no XRes 1.2) has no attested target. Wayland sessions cannot verify window owners yet, so only `pid`-only targets attest there |
 | `executable`, `process_start_time` | The process instance, read from the OS for that pid. On Windows a packaged app's window belongs to `ApplicationFrameHost.exe`; the driver reports the hosted app's process instead |
 
 App names and bundle ids are not attested fields. `list_apps` matches running
@@ -321,9 +321,9 @@ tool, stops the daemon from starting.
 Before it checks the policy, the driver refuses with
 `target_identity_unavailable` when the named window is closed or belongs to
 another pid, an `element_token` names no live snapshot window, or the process
-cannot be identified. After consent, once the call holds its input lane and
-just before the platform tool runs, it attests the target again and refuses
-with `target_identity_changed` if anything differs, for example a pid reused by a
+cannot be identified. As the last step before the platform tool runs, after
+consent, input-lane admission, and any recording capture, it attests the
+target again and refuses with `target_identity_changed` if anything differs, for example a pid reused by a
 new process. A window or process that disappeared by then refuses with
 `target_identity_unavailable`. The OS can still change focus or close a window
 between that last check and input delivery; the check narrows that window,

@@ -4914,8 +4914,9 @@
       "properties": {
         "action": {
           "enum": [
-            "install-docker",
-            "start-docker",
+            "setup-wsl",
+            "restart-app",
+            "open-windows-features",
             null
           ]
         },

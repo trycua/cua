@@ -531,6 +531,15 @@
     }
    },
    {
+    "id": "form_labels",
+    "kind": "title_ui_element_label",
+    "description": "SwiftUI grouped Form Toggle whose checkbox has no AXTitle or AXDescription and is named only by AXTitleUIElement. Tests that get_window_state labels it and run_steps finds it by name. launch_at_login= label.",
+    "controls": {
+     "toggle_label": "Launch at login",
+     "state_label_aid": "lbl-form-toggle-state"
+    }
+   },
+   {
     "id": "context_menu",
     "kind": "context_menu",
     "description": "SwiftUI Button with .contextMenu (Cut/Copy/Paste). Right-click opens the context menu; selecting an item sets menu_action=. menu_action= label.",

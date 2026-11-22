@@ -325,7 +325,7 @@ fn focused_document_matches_target(
 
 fn exact_foreground_target(target: HWND, expected_pid: Option<u32>) -> bool {
     !target.0.is_null()
-        && unsafe { IsWindow(target) }.as_bool()
+        && unsafe { IsWindow(Some(target)) }.as_bool()
         && unsafe { GetForegroundWindow() } == target
         && crate::win32::windows::window_owner_pid(target.0 as usize as u64)
             .is_some_and(|pid| expected_pid.is_none_or(|expected| expected == pid))

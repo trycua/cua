@@ -66,14 +66,20 @@ impl Tool for ListWindowsTool {
         let own_pid = std::process::id() as i32;
         windows.retain(|w| w.pid != own_pid);
         if let Some(filter) = args.opt_str("app") {
-            let mut bundle_ids = std::collections::HashMap::new();
+            let mut owners = std::collections::HashMap::new();
             windows.retain(|w| {
-                let bundle_id = bundle_ids
-                    .entry(w.pid)
-                    .or_insert_with(|| crate::apps::bundle_id_for_pid(w.pid));
+                let (bundle_id, bundle_names) = owners.entry(w.pid).or_insert_with(|| {
+                    (
+                        crate::apps::bundle_id_for_pid(w.pid),
+                        crate::apps::bundle_names_for_pid(w.pid),
+                    )
+                });
+                let names: Vec<&str> = std::iter::once(w.app_name.as_str())
+                    .chain(bundle_names.iter().map(String::as_str))
+                    .collect();
                 cua_driver_core::tool_args::app_filter_matches(
                     &filter,
-                    &w.app_name,
+                    &names,
                     bundle_id.as_deref(),
                 )
             });

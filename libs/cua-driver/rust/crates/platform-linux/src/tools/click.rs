@@ -367,15 +367,19 @@ fn atspi_input_that_may_have_landed_is_reported_without_a_retry_hint() {
     ));
     for (result, route) in [
         (
-            atspi_text_outcome_unknown(DeliveryMode::Background, &sent),
+            atspi_text_outcome_unknown(DeliveryMode::BackgroundPreferred, &sent),
             "accessibility",
         ),
         (
-            atspi_click_outcome_unknown("the point (4.0, 5.0)", DeliveryMode::Background, &sent),
+            atspi_click_outcome_unknown(
+                "the point (4.0, 5.0)",
+                DeliveryMode::BackgroundPreferred,
+                &sent,
+            ),
             "accessibility",
         ),
         (
-            menu_command_outcome_unknown(DeliveryMode::Background, &sent),
+            menu_command_outcome_unknown(DeliveryMode::BackgroundPreferred, &sent),
             "accessibility",
         ),
         (element_ax_timeout(3), ""),

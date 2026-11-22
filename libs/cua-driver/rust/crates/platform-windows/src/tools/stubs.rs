@@ -282,6 +282,7 @@ stub_tool!(
 
 mod move_cursor_m {
     use super::*;
+    use cua_driver_core::action_record::{ActionExecutionRecord, ActionTransport};
     pub struct MoveCursorTool;
     static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
     impl MoveCursorTool {
@@ -318,6 +319,10 @@ mod move_cursor_m {
             );
             ToolResult::text(format!(
                 "Agent cursor '{cursor_id}' moved to ({x:.1}, {y:.1})."
+            ))
+            .with_action_record(ActionExecutionRecord::cursor_move(
+                ActionTransport::AgentCursorOverlay,
+                &args,
             ))
         }
     }

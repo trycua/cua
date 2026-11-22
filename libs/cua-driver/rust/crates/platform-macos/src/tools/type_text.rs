@@ -1322,8 +1322,7 @@ const FRONT_SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_mill
 ///
 /// With `exact_keys_window`, no key is sent while another window of the app
 /// holds the focus, since the pid-routed keys would reach it instead. A send
-/// stopped before its first key is refused; one stopped later is unverified
-/// with no delivered count, since a posted key is not proof it landed.
+/// stopped that way is an error that says whether part of the text went out.
 #[allow(clippy::too_many_arguments)]
 fn cgevent_type_verified(
     pid: i32,
@@ -1372,11 +1371,12 @@ fn cgevent_type_verified(
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
     let sent = send(text, delay_ms)?;
-    if sent < text.chars().count() {
-        return match exact_keys_window {
-            Some(wid) if sent == 0 => Err(crate::input::skylight::sibling_focus_refusal(pid, wid)),
-            _ => Ok((false, None)),
-        };
+    if let Some(wid) = exact_keys_window.filter(|_| sent < text.chars().count()) {
+        return Err(crate::input::skylight::sibling_focus_refusal(
+            pid,
+            wid,
+            sent > 0,
+        ));
     }
     let batched = delay_ms == 0;
 
@@ -1407,8 +1407,10 @@ fn cgevent_type_verified(
             }
             let tail: String = text.chars().skip(done).collect();
             let sent = send(&tail, RETYPE_TAIL_DELAY_MS)?;
-            if sent < tail.chars().count() {
-                return Ok((false, None));
+            if let Some(wid) = exact_keys_window.filter(|_| sent < tail.chars().count()) {
+                return Err(crate::input::skylight::sibling_focus_refusal(
+                    pid, wid, true,
+                ));
             }
             let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
             return Ok(await_typed_delivery(

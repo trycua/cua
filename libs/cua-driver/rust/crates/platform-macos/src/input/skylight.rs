@@ -1533,13 +1533,21 @@ pub fn sibling_window_focused(pid: libc::pid_t, target_wid: u32) -> bool {
     )
 }
 
-/// The refusal for keys withheld because [`sibling_window_focused`].
-pub fn sibling_focus_refusal(pid: libc::pid_t, target_wid: u32) -> anyhow::Error {
-    anyhow::anyhow!(
-        "exact target window did not become focused for foreground keyboard delivery, \
-         so nothing was typed{}",
-        focus_failure_hint(pid, target_wid)
-    )
+/// The error for keys withheld because [`sibling_window_focused`]: before
+/// the first key, or after `partly_typed` text already went to the target.
+pub fn sibling_focus_refusal(
+    pid: libc::pid_t,
+    target_wid: u32,
+    partly_typed: bool,
+) -> anyhow::Error {
+    let outcome = if partly_typed {
+        "the focus moved during foreground keyboard delivery, so typing stopped after part \
+         of the text"
+    } else {
+        "exact target window did not become focused for foreground keyboard delivery, so \
+         nothing was typed"
+    };
+    anyhow::anyhow!("{outcome}{}", focus_failure_hint(pid, target_wid))
 }
 
 fn sibling_holds_focus(

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.19](https://github.com/trycua/cua/compare/bench-v0.4.18...bench-v0.4.19) (2026-11-22)
+
+
+### Bug Fixes
+
+* **cua-bench:** correct "successfully" spelling in file-removal log ([#8201](https://github.com/trycua/cua/issues/8201)) ([0887c9b](https://github.com/trycua/cua/commit/0887c9b9fad653f3a026708c035932ef7e142e93))
+
 ## [0.4.18](https://github.com/trycua/cua/compare/bench-v0.4.17...bench-v0.4.18) (2026-11-22)
 
 

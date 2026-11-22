@@ -1597,8 +1597,8 @@ impl ToolRegistry {
         serde_json::from_value(scope.get("fingerprint")?.clone()).ok()
     }
 
-    /// Resolve the call's target from OS state: who owns the named window,
-    /// which process instance that is, and which installed app it belongs to.
+    /// Resolve the call's target from OS state: who owns the named window and
+    /// which process instance that is.
     /// A named window that is gone or owned by another pid, a token whose
     /// snapshot window is unknown, or a process that cannot be fingerprinted
     /// is an error, never a partial descriptor.
@@ -1640,36 +1640,31 @@ impl ToolRegistry {
             .attest_process_fingerprint(identity_pid)
             .await
             .ok_or_else(|| format!("process {identity_pid} cannot be attested"))?;
-        let app = match self.tools.get("list_apps") {
-            Some(tool) => tool
-                .invoke(serde_json::json!({}))
-                .await
-                .structured_content
-                .and_then(|value| value.get("apps").cloned())
-                .and_then(|apps| {
-                    apps.as_array()?
-                        .iter()
-                        .find(|app| app.get("pid").and_then(Value::as_i64) == Some(identity_pid))
-                        .cloned()
-                }),
-            None => None,
-        };
-        let app_field = |key: &str| {
-            app.as_ref()
-                .and_then(|app| app.get(key))
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        };
         Ok(AttestedTarget {
             kind,
             pid: Some(pid),
             window_id: declared.window_id,
             executable: fingerprint.executable,
             process_start_time: fingerprint.start_time,
-            bundle_id: app_field("bundle_id"),
-            app_name: app_field("name"),
-            launch_path: app_field("launch_path"),
         })
+    }
+
+    /// Prove an authorized target again, returning the refusal when it
+    /// changed or can no longer be attested.
+    async fn reattest_desktop_target(
+        &self,
+        approved: Option<&crate::attested_target::AttestedTarget>,
+        args: &Value,
+    ) -> Option<ToolResult> {
+        let approved = approved?;
+        match self.attest_desktop_target(args).await {
+            Ok(current) if current == *approved => None,
+            Ok(_) => Some(protected_refusal(
+                "target_identity_changed",
+                "Permission denied: the action's target changed after it was authorized",
+            )),
+            Err(detail) => Some(target_unattested_refusal(&detail)),
+        }
     }
 
     async fn enrich_application_resource(&self, resource: &mut Value, pid: i64) {
@@ -2652,21 +2647,6 @@ impl ToolRegistry {
             }
         }
 
-        // Consent prompts and input lanes above can wait. The policy decision
-        // holds only for the target it saw, so prove that target again now.
-        if let Some(approved) = &attested_target {
-            match self.attest_desktop_target(&public_args).await {
-                Ok(current) if current == *approved => {}
-                Ok(_) => {
-                    return protected_refusal(
-                        "target_identity_changed",
-                        "Permission denied: the action's target changed after it was authorized",
-                    )
-                }
-                Err(detail) => return target_unattested_refusal(&detail),
-            }
-        }
-
         if let Err(error) = context.commit_authorized_dispatch() {
             return permission_denied_result(error);
         }
@@ -2753,6 +2733,16 @@ impl ToolRegistry {
             input_admission.admit(Lane::Desktop).await.err()
         } else {
             None
+        };
+        // Consent prompts and the input lanes above can wait. The policy
+        // decision holds only for the target it saw, so prove that target
+        // again once this call owns its lane.
+        let lane_refusal = match lane_refusal {
+            Some(refusal) => Some(refusal),
+            None => {
+                self.reattest_desktop_target(attested_target.as_ref(), &public_args)
+                    .await
+            }
         };
         let pending_turn = should_record
             .then(|| {

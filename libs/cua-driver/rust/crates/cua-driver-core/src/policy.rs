@@ -1176,23 +1176,22 @@ allow:
       constraints:
         pid: { min: 1 }
       target:
-        bundle_id: { allowed: [com.example.Editor] }
+        executable: { allowed: [/apps/Editor] }
 "#,
         );
-        let editor =
-            serde_json::json!({"kind": "window", "pid": 7, "bundle_id": "com.example.Editor"});
+        let editor = serde_json::json!({"kind": "window", "pid": 7, "executable": "/apps/Editor"});
         let terminal =
-            serde_json::json!({"kind": "window", "pid": 7, "bundle_id": "com.example.Terminal"});
+            serde_json::json!({"kind": "window", "pid": 7, "executable": "/apps/Terminal"});
         // The caller declares the same arguments either way; only the
         // attested target differs.
-        let args = serde_json::json!({"pid": 7, "bundle_id": "com.example.Editor"});
+        let args = serde_json::json!({"pid": 7, "executable": "/apps/Editor"});
         assert_eq!(
             policy.evaluate("click", &args, PolicyTarget::Attested(Some(&editor))),
             PolicyDecision::Allow
         );
         assert!(matches!(
             policy.evaluate("click", &args, PolicyTarget::Attested(Some(&terminal))),
-            PolicyDecision::Deny(reason) if reason.contains("'target.bundle_id' is not in the allowed values")
+            PolicyDecision::Deny(reason) if reason.contains("'target.executable' is not in the allowed values")
         ));
         assert!(matches!(
             policy.evaluate("click", &args, NO_TARGET),
@@ -1201,7 +1200,7 @@ allow:
         let desktop = serde_json::json!({"kind": "desktop"});
         assert!(matches!(
             policy.evaluate("click", &args, PolicyTarget::Attested(Some(&desktop))),
-            PolicyDecision::Deny(reason) if reason.contains("target field 'bundle_id' was not attested")
+            PolicyDecision::Deny(reason) if reason.contains("target field 'executable' was not attested")
         ));
         // A transport pre-check defers the target to the daemon but still
         // enforces the caller-argument constraints.
@@ -1230,7 +1229,7 @@ allow:
         .unwrap_err();
         assert!(format!("{error:#}").contains("unknown target field 'click.bundle'"));
         let error = YamlPolicy::from_str(
-            "allow:\n  rules:\n    - tool: launch_app\n      target:\n        bundle_id: { allowed: [x] }\n",
+            "allow:\n  rules:\n    - tool: launch_app\n      target:\n        executable: { allowed: [x] }\n",
         )
         .unwrap_err();
         assert!(format!("{error:#}").contains("tool 'launch_app' has no driver-attested target"));
@@ -1325,7 +1324,7 @@ default allow = false
 
 allow if {
     input.tool == "click"
-    input.target.bundle_id == "com.example.Editor"
+    input.target.executable == "/apps/Editor"
 }
 
 allow if {
@@ -1336,9 +1335,9 @@ allow if {
         )
         .unwrap();
         let policy = PolicyEngine::load(&path).unwrap().unwrap();
-        let args = serde_json::json!({"bundle_id": "com.example.Editor"});
-        let editor = serde_json::json!({"kind": "window", "bundle_id": "com.example.Editor"});
-        let terminal = serde_json::json!({"kind": "window", "bundle_id": "com.example.Terminal"});
+        let args = serde_json::json!({"executable": "/apps/Editor"});
+        let editor = serde_json::json!({"kind": "window", "executable": "/apps/Editor"});
+        let terminal = serde_json::json!({"kind": "window", "executable": "/apps/Terminal"});
         assert_eq!(
             policy.evaluate("click", &args, PolicyTarget::Attested(Some(&editor))),
             PolicyDecision::Allow

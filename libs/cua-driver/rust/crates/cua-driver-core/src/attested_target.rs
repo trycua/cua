@@ -6,10 +6,15 @@
 //! A policy that limits input or capture to one application cannot trust the
 //! `pid` or `window_id` a caller declares: those are numbers the caller chose.
 //! For the tools listed here the dispatch boundary resolves the call's target
-//! from operating-system state (window ownership, process instance, installed
-//! application identity), hands that descriptor to policy separately from the
-//! caller's arguments, and re-attests it immediately before the platform tool
-//! runs. Any difference refuses the call.
+//! from operating-system state (window ownership and the owning process
+//! instance), hands that descriptor to policy separately from the caller's
+//! arguments, and re-attests it immediately before the platform tool runs.
+//! Any difference refuses the call.
+//!
+//! Application names and bundle ids are deliberately absent: `list_apps`
+//! pairs running processes with installed apps by executable or command-line
+//! basename on Linux and Windows, which is discovery, not identity. The
+//! executable path is what each OS reports for the exact pid.
 
 use serde::Serialize;
 use serde_json::Value;
@@ -44,9 +49,6 @@ pub const ATTESTED_TARGET_FIELDS: &[&str] = &[
     "window_id",
     "executable",
     "process_start_time",
-    "bundle_id",
-    "app_name",
-    "launch_path",
 ];
 
 pub fn supports_attested_target(tool: &str) -> bool {
@@ -77,12 +79,6 @@ pub struct AttestedTarget {
     pub executable: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub process_start_time: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bundle_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub app_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub launch_path: Option<String>,
 }
 
 impl AttestedTarget {
@@ -93,9 +89,6 @@ impl AttestedTarget {
             window_id: None,
             executable: None,
             process_start_time: None,
-            bundle_id: None,
-            app_name: None,
-            launch_path: None,
         }
     }
 

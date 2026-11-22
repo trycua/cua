@@ -7,8 +7,8 @@
 //! The policy is configured the way an operator does it, through
 //! `CUA_DRIVER_POLICY_FILE`, which the driver reads once per process; this
 //! test binary is that process. The platform is a fake desktop of
-//! `list_windows`, `list_apps` and `kill_app` tools whose state can change
-//! between the policy decision and the dispatch.
+//! `list_windows` and `kill_app` tools whose state can change between the
+//! policy decision and the dispatch.
 
 #![cfg(feature = "yaml")]
 
@@ -28,11 +28,11 @@ allow:
   rules:
     - tool: click
       target:
-        bundle_id: { allowed: [com.example.Editor] }
+        executable: { allowed: [/apps/Editor] }
     - tool: type_text
       target:
         kind: { allowed: [window] }
-        bundle_id: { allowed: [com.example.Editor] }
+        executable: { allowed: [/apps/Editor] }
 "#;
 
 const EDITOR: i64 = 42;
@@ -52,7 +52,7 @@ fn configure_policy() {
 struct Process {
     pid: i64,
     start_time: u64,
-    bundle_id: &'static str,
+    executable: &'static str,
 }
 
 #[derive(Clone)]
@@ -69,28 +69,30 @@ fn desktop() -> DesktopState {
             Process {
                 pid: EDITOR,
                 start_time: 1,
-                bundle_id: "com.example.Editor",
+                executable: "/apps/Editor",
             },
             Process {
                 pid: TERMINAL,
                 start_time: 1,
-                bundle_id: "com.example.Terminal",
+                executable: "/apps/Terminal",
             },
         ],
     }
 }
 
-/// The OS as the driver sees it: `before` until the first attestation round
-/// finishes (`list_apps` is its last read), `after` from then on.
+/// The OS as the driver sees it: `before` until `switch_at` attestation
+/// rounds have finished (the process fingerprint is a round's last read),
+/// `after` from then on.
 struct FakeDesktop {
     before: DesktopState,
     after: DesktopState,
     rounds: AtomicUsize,
+    switch_at: AtomicUsize,
 }
 
 impl FakeDesktop {
     fn state(&self) -> &DesktopState {
-        if self.rounds.load(Ordering::SeqCst) == 0 {
+        if self.rounds.load(Ordering::SeqCst) < self.switch_at.load(Ordering::SeqCst) {
             &self.before
         } else {
             &self.after
@@ -132,29 +134,6 @@ impl Tool for ListWindows {
     }
 }
 
-struct ListApps(Arc<FakeDesktop>, ToolDef);
-
-#[async_trait::async_trait]
-impl Tool for ListApps {
-    fn def(&self) -> &ToolDef {
-        &self.1
-    }
-
-    async fn invoke(&self, _args: Value) -> ToolResult {
-        let apps: Vec<Value> = self
-            .0
-            .state()
-            .processes
-            .iter()
-            .map(|process| {
-                json!({"pid": process.pid, "bundle_id": process.bundle_id, "name": process.bundle_id})
-            })
-            .collect();
-        self.0.rounds.fetch_add(1, Ordering::SeqCst);
-        ToolResult::text("apps").with_structured(json!({ "apps": apps }))
-    }
-}
-
 struct KillApp(Arc<FakeDesktop>, ToolDef);
 
 #[async_trait::async_trait]
@@ -169,7 +148,7 @@ impl Tool for KillApp {
         args: &Value,
     ) -> Result<Option<Value>, ProtectedResourceScopeError> {
         let pid = args.get("pid").and_then(Value::as_i64);
-        Ok(self
+        let scope = self
             .0
             .state()
             .processes
@@ -181,10 +160,12 @@ impl Tool for KillApp {
                     "fingerprint": {
                         "pid": process.pid,
                         "start_time": process.start_time,
-                        "executable": format!("/apps/{}", process.bundle_id),
+                        "executable": process.executable,
                     }
                 })
-            }))
+            });
+        self.0.rounds.fetch_add(1, Ordering::SeqCst);
+        Ok(scope)
     }
 
     async fn invoke(&self, _args: Value) -> ToolResult {
@@ -192,26 +173,46 @@ impl Tool for KillApp {
     }
 }
 
-struct Action(Arc<AtomicUsize>, ToolDef);
+/// Counts deliveries. With `hold`, each delivery waits for a permit, so the
+/// action keeps the desktop input lane until the test releases it.
+struct Action {
+    hits: Arc<AtomicUsize>,
+    hold: Option<Arc<tokio::sync::Semaphore>>,
+    def: ToolDef,
+}
 
 #[async_trait::async_trait]
 impl Tool for Action {
     fn def(&self) -> &ToolDef {
-        &self.1
+        &self.def
     }
 
     async fn invoke(&self, _args: Value) -> ToolResult {
-        self.0.fetch_add(1, Ordering::SeqCst);
+        self.hits.fetch_add(1, Ordering::SeqCst);
+        if let Some(hold) = &self.hold {
+            hold.acquire().await.unwrap().forget();
+        }
         ToolResult::text("delivered")
     }
 }
 
-fn registry(before: DesktopState, after: DesktopState) -> (ToolRegistry, Arc<AtomicUsize>) {
+struct Fixture {
+    registry: Arc<ToolRegistry>,
+    desktop: Arc<FakeDesktop>,
+    hits: Arc<AtomicUsize>,
+}
+
+fn fixture(
+    before: DesktopState,
+    after: DesktopState,
+    hold: Option<Arc<tokio::sync::Semaphore>>,
+) -> Fixture {
     configure_policy();
     let desktop = Arc::new(FakeDesktop {
         before,
         after,
         rounds: AtomicUsize::new(0),
+        switch_at: AtomicUsize::new(1),
     });
     let hits = Arc::new(AtomicUsize::new(0));
     let mut registry = ToolRegistry::new();
@@ -219,12 +220,24 @@ fn registry(before: DesktopState, after: DesktopState) -> (ToolRegistry, Arc<Ato
         desktop.clone(),
         def("list_windows", true),
     )));
-    registry.register(Box::new(ListApps(desktop.clone(), def("list_apps", true))));
-    registry.register(Box::new(KillApp(desktop, def("kill_app", false))));
+    registry.register(Box::new(KillApp(desktop.clone(), def("kill_app", false))));
     for name in ["click", "type_text"] {
-        registry.register(Box::new(Action(hits.clone(), def(name, false))));
+        registry.register(Box::new(Action {
+            hits: hits.clone(),
+            hold: hold.clone(),
+            def: def(name, false),
+        }));
     }
-    (registry, hits)
+    Fixture {
+        registry: Arc::new(registry),
+        desktop,
+        hits,
+    }
+}
+
+fn registry(before: DesktopState, after: DesktopState) -> (Arc<ToolRegistry>, Arc<AtomicUsize>) {
+    let fixture = fixture(before, after, None);
+    (fixture.registry, fixture.hits)
 }
 
 fn standard_context() -> Arc<EffectiveAuthorizationContext> {
@@ -281,7 +294,7 @@ async fn a_window_of_another_app_is_denied_by_its_attested_identity() {
         "{result:?}"
     );
     assert!(
-        format!("{result:?}").contains("'target.bundle_id' is not in the allowed values"),
+        format!("{result:?}").contains("'target.executable' is not in the allowed values"),
         "{result:?}"
     );
     assert_eq!(hits.load(Ordering::SeqCst), 0);
@@ -314,7 +327,7 @@ async fn a_desktop_action_has_no_app_identity_and_is_denied() {
         "{result:?}"
     );
     assert!(
-        format!("{result:?}").contains("target field 'bundle_id' was not attested"),
+        format!("{result:?}").contains("target field 'executable' was not attested"),
         "{result:?}"
     );
     assert_eq!(hits.load(Ordering::SeqCst), 0);
@@ -389,7 +402,7 @@ async fn a_process_replaced_under_the_same_pid_after_authorization_is_refused() 
     after.processes[0] = Process {
         pid: EDITOR,
         start_time: 2,
-        bundle_id: "com.example.Editor",
+        executable: "/apps/Editor",
     };
     let (registry, hits) = registry(desktop(), after);
     let result = call(&registry, "click", json!({"pid": EDITOR, "x": 1, "y": 2})).await;
@@ -418,4 +431,57 @@ async fn a_window_closed_after_authorization_is_refused() {
         "{result:?}"
     );
     assert_eq!(hits.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_target_replaced_while_the_action_waits_for_the_input_lane_is_refused() {
+    let mut after = desktop();
+    after.processes[0].start_time = 2;
+    let hold = Arc::new(tokio::sync::Semaphore::new(0));
+    let fixture = fixture(desktop(), after, Some(hold.clone()));
+    fixture
+        .desktop
+        .switch_at
+        .store(usize::MAX, Ordering::SeqCst);
+    let args = json!({"pid": EDITOR, "window_id": 7, "x": 1, "y": 2});
+
+    // The first click is authorized, re-attested, and holds the desktop
+    // input lane while it delivers.
+    let first = tokio::spawn({
+        let registry = fixture.registry.clone();
+        let args = args.clone();
+        async move { call(&registry, "click", args).await }
+    });
+    wait_until(|| fixture.hits.load(Ordering::SeqCst) == 1).await;
+    let rounds = fixture.desktop.rounds.load(Ordering::SeqCst);
+
+    // The second is authorized against the same window, then queues for
+    // the lane. The process behind the window is replaced while it waits.
+    let second = tokio::spawn({
+        let registry = fixture.registry.clone();
+        async move { call(&registry, "click", args).await }
+    });
+    wait_until(|| fixture.desktop.rounds.load(Ordering::SeqCst) > rounds).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    fixture.desktop.switch_at.store(0, Ordering::SeqCst);
+    hold.add_permits(2);
+
+    assert_ne!(first.await.unwrap().is_error, Some(true));
+    let result = second.await.unwrap();
+    assert_eq!(
+        refusal_code(&result),
+        Some("target_identity_changed"),
+        "{result:?}"
+    );
+    assert_eq!(fixture.hits.load(Ordering::SeqCst), 1);
+}
+
+async fn wait_until(condition: impl Fn() -> bool) {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !condition() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("condition reached");
 }

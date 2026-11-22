@@ -1945,9 +1945,26 @@ mod tests {
     fn frontmost_target_can_raise_overlay_without_covering_another_app() {
         let target_pid = 100;
         let mut windows = vec![window(10, target_pid, 20), window(11, 200, 10)];
-        // WindowServer may retain another app's window ahead in its global
-        // list; the active app identity is the authoritative cross-app guard.
+        assert!(target_is_frontmost_visible_window(
+            10,
+            Some(target_pid),
+            &windows,
+        ));
+
+        // A background click's focus-without-raise prologue makes NSWorkspace
+        // report the target app active while another app's window still
+        // covers the target (#3332). Raising the overlay then paints the agent
+        // cursor over the user's foreground window.
         windows[1].z_index = Some(30);
+        assert!(!target_is_frontmost_visible_window(
+            10,
+            Some(target_pid),
+            &windows,
+        ));
+
+        // Another app's window ahead that does not overlap the target leaves
+        // nothing for the overlay to paint over.
+        windows[1].bounds.x = 900.0;
         assert!(target_is_frontmost_visible_window(
             10,
             Some(target_pid),

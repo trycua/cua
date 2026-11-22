@@ -208,6 +208,8 @@ struct Fixture {
 struct Options {
     hold: Option<Arc<tokio::sync::Semaphore>>,
     owner: Option<WindowOwnerResolver>,
+    /// The `(pid, window_id)` every `element_token` belongs to.
+    token_window: Option<(i32, u64)>,
     record_to: Option<std::path::PathBuf>,
 }
 
@@ -235,6 +237,11 @@ fn fixture(before: DesktopState, after: DesktopState, options: Options) -> Fixtu
     }
     if let Some(owner) = options.owner {
         registry.set_window_owner_resolver(owner);
+    }
+    if let Some(token_window) = options.token_window {
+        registry.set_token_window_resolver(Arc::new(move |args| {
+            args.get("element_token").map(|_| token_window)
+        }));
     }
     if let Some(directory) = &options.record_to {
         registry
@@ -388,37 +395,61 @@ async fn keystrokes_a_policy_binds_to_one_window_cannot_follow_focus() {
 }
 
 #[tokio::test]
-async fn a_window_named_without_its_pid_is_never_attested_as_that_window() {
+async fn selectors_that_could_name_different_targets_are_refused() {
     let (registry, hits) = registry(desktop(), desktop());
-    // Without a pid, a desktop-frame call types into the focused app, so the
-    // window it names is not its target.
-    let result = call(
-        &registry,
-        "type_text",
+    // Without a pid, a desktop-frame call reaches the focused app on one
+    // platform and the named window on another. Neither is attested.
+    for args in [
         json!({"window_id": 7, "scope": "desktop", "text": "hi"}),
-    )
-    .await;
-    assert_eq!(
-        refusal_code(&result),
-        Some("permission_denied"),
-        "{result:?}"
-    );
-    assert!(
-        format!("{result:?}").contains("target field 'executable' was not attested"),
-        "{result:?}"
-    );
-    let result = call(
-        &registry,
-        "type_text",
         json!({"window_id": 7, "text": "hi"}),
-    )
-    .await;
-    assert_eq!(
-        refusal_code(&result),
-        Some("target_identity_unavailable"),
-        "{result:?}"
-    );
+    ] {
+        let result = call(&registry, "type_text", args.clone()).await;
+        assert_eq!(
+            refusal_code(&result),
+            Some("target_identity_unavailable"),
+            "{args}: {result:?}"
+        );
+        assert!(
+            format!("{result:?}").contains("a window_id target must also name the window's pid"),
+            "{result:?}"
+        );
+    }
     assert_eq!(hits.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn an_element_token_is_attested_as_its_snapshot_window_only_when_selectors_agree() {
+    let fixture = fixture(
+        desktop(),
+        desktop(),
+        Options {
+            token_window: Some((EDITOR as i32, 7)),
+            ..Options::default()
+        },
+    );
+    let result = call(&fixture.registry, "click", json!({"element_token": "s:1"})).await;
+    assert_ne!(result.is_error, Some(true), "{result:?}");
+    assert_eq!(fixture.hits.load(Ordering::SeqCst), 1);
+
+    for (args, detail) in [
+        (
+            json!({"element_token": "s:1", "scope": "desktop"}),
+            "an element_token cannot be combined with a desktop frame and no pid",
+        ),
+        (
+            json!({"element_token": "s:1", "pid": TERMINAL}),
+            "the element_token belongs to pid 42 window 7, not the declared target",
+        ),
+    ] {
+        let result = call(&fixture.registry, "click", args.clone()).await;
+        assert_eq!(
+            refusal_code(&result),
+            Some("target_identity_unavailable"),
+            "{args}: {result:?}"
+        );
+        assert!(format!("{result:?}").contains(detail), "{result:?}");
+    }
+    assert_eq!(fixture.hits.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

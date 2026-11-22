@@ -105,45 +105,53 @@ pub struct DeclaredTarget {
 }
 
 impl DeclaredTarget {
-    /// Read the declared target from normalized call arguments, the way
-    /// platform adapters read them. A desktop-frame call without a pid goes
-    /// to the focused application whatever else it names, so it is a desktop
-    /// target. A window must come with its pid, since adapters differ on a
-    /// bare `window_id`. A call that names only an `element_token` takes its
-    /// pid and window from `token_window`, the snapshot the token belongs to.
+    /// Read the declared target from normalized call arguments. Platform
+    /// adapters disagree on calls whose selectors conflict (a desktop-frame
+    /// call without a pid goes to the focused app on one platform and to an
+    /// `element_token`'s window on another), so any call whose selectors could
+    /// name different targets is refused rather than guessed:
+    ///
+    /// - an `element_token` must name a live snapshot window that agrees with
+    ///   any declared `pid` and `window_id`, and cannot be combined with a
+    ///   pid-less desktop frame;
+    /// - a `window_id` must come with its `pid`;
+    /// - a call with neither is a desktop target.
     pub fn from_args(args: &Value, token_window: Option<(i32, u64)>) -> Result<Self, String> {
         let pid = args.get("pid").and_then(Value::as_i64);
         let window_id = args.get("window_id").and_then(Value::as_u64);
         let desktop_frame = args.get("scope").and_then(Value::as_str) == Some("desktop")
             || args.get("coordinate_frame").and_then(Value::as_str) == Some("desktop");
-        if pid.is_none() && desktop_frame {
-            return Ok(Self {
-                pid: None,
-                window_id: None,
-            });
-        }
-        if pid.is_some() {
-            return Ok(Self { pid, window_id });
-        }
-        if window_id.is_some() {
-            return Err("a window_id target must also name the window's pid".to_owned());
-        }
         if args
             .get("element_token")
             .is_some_and(|value| !value.is_null())
         {
-            let (pid, window_id) = token_window.ok_or_else(|| {
+            let (token_pid, token_window) = token_window.ok_or_else(|| {
                 "the element_token does not name a live snapshot window".to_owned()
             })?;
+            let token_pid = i64::from(token_pid);
+            if pid.is_none() && desktop_frame {
+                return Err(
+                    "an element_token cannot be combined with a desktop frame and no pid"
+                        .to_owned(),
+                );
+            }
+            if pid.is_some_and(|pid| pid != token_pid)
+                || window_id.is_some_and(|window_id| window_id != token_window)
+            {
+                return Err(format!(
+                    "the element_token belongs to pid {token_pid} window {token_window}, \
+                     not the declared target"
+                ));
+            }
             return Ok(Self {
-                pid: Some(i64::from(pid)),
-                window_id: Some(window_id),
+                pid: Some(token_pid),
+                window_id: Some(token_window),
             });
         }
-        Ok(Self {
-            pid: None,
-            window_id: None,
-        })
+        if pid.is_none() && window_id.is_some() {
+            return Err("a window_id target must also name the window's pid".to_owned());
+        }
+        Ok(Self { pid, window_id })
     }
 }
 
@@ -183,47 +191,65 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn declared_target_prefers_explicit_fields_and_falls_back_to_the_token_window() {
-        assert_eq!(
-            DeclaredTarget::from_args(&json!({"pid": 7, "window_id": 9}), Some((1, 2))).unwrap(),
-            DeclaredTarget {
-                pid: Some(7),
-                window_id: Some(9)
-            }
-        );
-        assert_eq!(
-            DeclaredTarget::from_args(&json!({"element_token": "s:1"}), Some((1, 2))).unwrap(),
-            DeclaredTarget {
-                pid: Some(1),
-                window_id: Some(2)
-            }
-        );
-        assert!(DeclaredTarget::from_args(&json!({"element_token": "s:1"}), None).is_err());
-        assert_eq!(
-            DeclaredTarget::from_args(&json!({"window_id": 9}), None).unwrap_err(),
-            "a window_id target must also name the window's pid"
-        );
-        // Adapters send a pid-less desktop-frame call to the focused app.
-        for args in [
-            json!({"window_id": 9, "scope": "desktop"}),
-            json!({"window_id": 9, "coordinate_frame": "desktop"}),
-            json!({"element_token": "s:1", "scope": "desktop"}),
+    fn declared_target_refuses_selectors_that_could_name_different_targets() {
+        let target = |pid, window_id| DeclaredTarget { pid, window_id };
+        let token = Some((1, 2));
+        for (args, expected) in [
+            (json!({"pid": 7, "window_id": 9}), target(Some(7), Some(9))),
+            (json!({"pid": 7}), target(Some(7), None)),
+            (json!({"x": 1, "y": 2}), target(None, None)),
+            (json!({"scope": "desktop"}), target(None, None)),
+            (json!({"element_token": "s:1"}), target(Some(1), Some(2))),
+            (
+                json!({"element_token": "s:1", "pid": 1, "window_id": 2}),
+                target(Some(1), Some(2)),
+            ),
+            (
+                json!({"element_token": "s:1", "pid": 1, "scope": "desktop"}),
+                target(Some(1), Some(2)),
+            ),
         ] {
             assert_eq!(
-                DeclaredTarget::from_args(&args, Some((1, 2))).unwrap(),
-                DeclaredTarget {
-                    pid: None,
-                    window_id: None
-                },
+                DeclaredTarget::from_args(&args, token).unwrap(),
+                expected,
+                "{args}"
+            );
+        }
+        for (args, error) in [
+            (
+                json!({"window_id": 9}),
+                "a window_id target must also name the window's pid",
+            ),
+            (
+                json!({"window_id": 9, "scope": "desktop"}),
+                "a window_id target must also name the window's pid",
+            ),
+            (
+                json!({"element_token": "s:1", "scope": "desktop"}),
+                "an element_token cannot be combined with a desktop frame and no pid",
+            ),
+            (
+                json!({"element_token": "s:1", "coordinate_frame": "desktop"}),
+                "an element_token cannot be combined with a desktop frame and no pid",
+            ),
+            (
+                json!({"element_token": "s:1", "pid": 7}),
+                "the element_token belongs to pid 1 window 2, not the declared target",
+            ),
+            (
+                json!({"element_token": "s:1", "pid": 1, "window_id": 3}),
+                "the element_token belongs to pid 1 window 2, not the declared target",
+            ),
+        ] {
+            assert_eq!(
+                DeclaredTarget::from_args(&args, token).unwrap_err(),
+                error,
                 "{args}"
             );
         }
         assert_eq!(
-            DeclaredTarget::from_args(&json!({"x": 1, "y": 2}), None).unwrap(),
-            DeclaredTarget {
-                pid: None,
-                window_id: None
-            }
+            DeclaredTarget::from_args(&json!({"element_token": "s:1"}), None).unwrap_err(),
+            "the element_token does not name a live snapshot window"
         );
     }
 

@@ -156,15 +156,12 @@ fn wait_for_editor_text(
     }
 }
 
-/// The editor's current value, from a fresh snapshot.
-fn editor_text(driver: &mut McpDriver, document: &TextEditDocument) -> String {
+/// The editor's current value in TextEdit window `window_id`, from a fresh
+/// snapshot.
+fn editor_text(driver: &mut McpDriver, pid: i64, window_id: u64) -> String {
     let state = driver.call(
         "get_window_state",
-        serde_json::json!({
-            "pid": document.pid,
-            "window_id": document.window_id,
-            "capture_mode": "ax"
-        }),
+        serde_json::json!({ "pid": pid, "window_id": window_id, "capture_mode": "ax" }),
     );
     state.structured()["elements"]
         .as_array()
@@ -178,22 +175,40 @@ fn editor_text(driver: &mut McpDriver, document: &TextEditDocument) -> String {
         .to_owned()
 }
 
-/// The value of the search field in TextEdit's front window (the Open panel),
-/// focusing it first when `focus` is set. Fails when the panel has none.
-fn open_panel_search_field(focus: bool) -> String {
-    osascript(&format!(
-        r#"tell application "System Events" to tell process "TextEdit"
-            repeat with element in (entire contents of front window)
-                try
-                    if subrole of element is "AXSearchField" then
-                        if {focus} then set value of attribute "AXFocused" of element to true
-                        return "value:" & (value of element as text)
-                    end if
-                end try
-            end repeat
-            error "the Open panel has no search field"
-        end tell"#
-    ))
+/// The window id of TextEdit's window titled `title`.
+fn textedit_window_titled(driver: &mut McpDriver, pid: i64, title: &str) -> u64 {
+    let listed = driver.call("list_windows", serde_json::json!({ "pid": pid }));
+    listed.structured()["windows"]
+        .as_array()
+        .and_then(|windows| {
+            windows
+                .iter()
+                .find(|window| window["title"] == title)
+                .and_then(|window| window["window_id"].as_u64())
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "TextEdit has no window titled {title:?}:\n{}",
+                listed.text()
+            )
+        })
+}
+
+/// Dismisses TextEdit's Open panel when dropped, so a failed check does not
+/// leave it over the next test's document.
+struct OpenPanel;
+
+impl Drop for OpenPanel {
+    fn drop(&mut self) {
+        let _ = Command::new("osascript")
+            .args([
+                "-e",
+                &format!(r#"tell application id "{TEXTEDIT_BUNDLE}" to activate"#),
+                "-e",
+                r#"tell application "System Events" to key code 53"#,
+            ])
+            .status();
+    }
 }
 
 fn osascript(script: &str) -> String {
@@ -296,12 +311,6 @@ fn open_sibling_document(text: &str) -> String {
     );
     std::fs::remove_file(path).expect("remove sibling document fixture");
     sibling_title
-}
-
-fn textedit_document_text(name: &str) -> String {
-    osascript(&format!(
-        r#"tell application id "{TEXTEDIT_BUNDLE}" to get text of document "{name}""#
-    ))
 }
 
 // ── End-to-end ladder behavior (interactive; needs a GUI session) ────────────
@@ -584,6 +593,8 @@ fn foreground_window_type_text_never_lands_in_the_focused_sibling() {
 
         let sibling_text = unique_marker("sibling");
         let sibling = open_sibling_document(&sibling_text);
+        let sibling_window = textedit_window_titled(&mut driver, document.pid, &sibling);
+        let sibling_before = editor_text(&mut driver, document.pid, sibling_window);
         driver.start_behavior_recording();
         let typed = driver.call(
             "type_text",
@@ -592,13 +603,16 @@ fn foreground_window_type_text_never_lands_in_the_focused_sibling() {
                 "text": marker, "delivery_mode": "foreground"
             }),
         );
-        let sibling_after = textedit_document_text(&sibling);
+        let sibling_after = editor_text(&mut driver, document.pid, sibling_window);
         assert!(
             !sibling_after.contains(&marker),
             "keys addressed at window {} typed into the focused sibling {sibling:?}: {sibling_after:?}",
             document.window_id
         );
-        assert_eq!(sibling_after, sibling_text, "the sibling document changed");
+        assert_eq!(
+            sibling_after, sibling_before,
+            "the sibling document changed"
+        );
         assert!(
             !typed.is_error(),
             "foreground type_text failed: {}",
@@ -620,7 +634,9 @@ fn foreground_window_type_text_never_lands_in_the_focused_sibling() {
 /// A window-only `delivery_mode:"foreground"` type_text addressed at a
 /// document is refused, with nothing typed, while the app's modal Open panel
 /// keeps the keyboard focus (#3574). The keys are pid-routed, so they would
-/// otherwise reach the panel's focused field.
+/// otherwise go to the panel. TextEdit is sandboxed, so the panel's controls
+/// run out of process and are not in its accessibility tree: the oracles are
+/// the exact refusal and the document's unchanged value.
 ///
 /// Asserts through System Events and AX read-back rather than a typed matrix
 /// result.
@@ -648,11 +664,12 @@ fn foreground_window_type_text_refuses_while_a_sibling_keeps_focus() {
         |value| value.contains(&seed),
         &format!("held the seed {seed:?}"),
     );
-    let before = editor_text(&mut driver, &document);
+    let before = editor_text(&mut driver, document.pid, document.window_id);
 
     ensure_frontmost(TEXTEDIT_BUNDLE);
     let document_title = focused_textedit_window_title();
     osascript(r#"tell application "System Events" to keystroke "o" using command down"#);
+    let panel = OpenPanel;
     let deadline = Instant::now() + Duration::from_secs(5);
     while focused_textedit_window_title() == document_title {
         assert!(
@@ -661,9 +678,6 @@ fn foreground_window_type_text_refuses_while_a_sibling_keeps_focus() {
         );
         std::thread::sleep(Duration::from_millis(200));
     }
-    // Focus the panel's search field so leaked keys would land in a field
-    // whose exact value can be compared.
-    let panel_before = open_panel_search_field(true);
 
     let typed = driver.call(
         "type_text",
@@ -673,13 +687,7 @@ fn foreground_window_type_text_refuses_while_a_sibling_keeps_focus() {
         }),
     );
     let panel_title = focused_textedit_window_title();
-    let panel_after = open_panel_search_field(false);
-    ensure_frontmost(TEXTEDIT_BUNDLE);
-    osascript(r#"tell application "System Events" to key code 53"#);
-    assert_eq!(
-        panel_after, panel_before,
-        "keys addressed at the document reached the search field of {panel_title:?}"
-    );
+    drop(panel);
     assert!(
         typed.is_error()
             && typed.text().contains(
@@ -690,7 +698,7 @@ fn foreground_window_type_text_refuses_while_a_sibling_keeps_focus() {
         typed.text()
     );
     assert_eq!(
-        editor_text(&mut driver, &document),
+        editor_text(&mut driver, document.pid, document.window_id),
         before,
         "the document changed although the call was refused"
     );

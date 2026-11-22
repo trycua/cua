@@ -38,8 +38,8 @@ use uuid::Uuid;
 use crate::session::register_scoped_fallible_session_end_hook;
 
 use super::binding::{
-    cardinality_exact_candidate, correlate, selected_tab_target_id, BindingOutcome,
-    CdpWindowCandidate,
+    cardinality_exact_candidate, correlate, selected_tab_target_id, title_broke_a_bounds_tie,
+    BindingOutcome, CdpWindowCandidate,
 };
 use super::cdp_ws::{CdpConnection, CdpPool, SharedSocketRelease};
 use super::grant::{ExistingProfileGrant, ExistingProfileGrants, GrantLookup};
@@ -1487,11 +1487,17 @@ impl BrowserEngine {
         // target is only a window handle and must never be reported as active.
         // The window title proves the selected tab when exactly one tab's title is in it. When none or several are
         // (tabs with the same title, such as restored ones never loaded, or a page whose title is still its URL),
-        // the browser's own tab strip says which tab is selected.
+        // the browser's own tab strip says which tab is selected. It is asked only when the window is proven without
+        // its title (an exact bind that no title tie-break chose), since asking attaches to that window's selected tab.
+        let window_proven = quality == BindingQuality::Exact
+            && !title_broke_a_bounds_tie(&native, &candidates, BOUNDS_TOLERANCE_PX);
         let selected_cdp_target_id =
             match selected_tab_target_id(&native.title, &candidates, candidate.cdp_window_id) {
                 Some(selected) => Some(selected.to_owned()),
-                None => tab_strip_selected_page(&conn, &candidates, candidate.cdp_window_id).await,
+                None if window_proven => {
+                    tab_strip_selected_page(&conn, &candidates, candidate.cdp_window_id).await
+                }
+                None => None,
             };
         let mut tabs = IndexMap::new();
         for c in candidates.iter().filter(|c| match candidate.cdp_window_id {
@@ -3036,8 +3042,9 @@ const TAB_STRIP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1)
 /// The page of the tab selected in `cdp_window_id`'s tab strip, as the browser says it: the one `tab` target of that
 /// window whose `embedderData.tabActive` is true (Chromium exposes it), and the page that tab holds, found by
 /// auto-attaching that tab's page without pausing it, then detaching. Nothing runs in a page and no tab is
-/// selected; attaching is what a read of that page does too. None when the browser does not say (no tab targets, or not exactly one selected tab in the window) or
-/// when the page is not one of `candidates` in that window.
+/// selected; attaching is what a read of that page does too. None when the browser does not say (no tab targets,
+/// none marked `tabActive`, or not exactly one selected tab in the window) or when the page is not one of
+/// `candidates` in that window.
 async fn tab_strip_selected_page(
     conn: &Arc<CdpConnection>,
     candidates: &[CdpWindowCandidate],

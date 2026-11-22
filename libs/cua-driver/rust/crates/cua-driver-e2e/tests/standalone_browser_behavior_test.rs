@@ -659,6 +659,16 @@ fn harness_cdp_call_at_url(
     method: &str,
     params: serde_json::Value,
 ) -> serde_json::Value {
+    harness_cdp_try_call_at_url(ws_url, method, params)
+        .unwrap_or_else(|reply| panic!("CDP {method}: {reply}"))
+}
+
+/// A harness CDP command whose error reply is returned, not a failure of the test.
+fn harness_cdp_try_call_at_url(
+    ws_url: &str,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, serde_json::Value> {
     let ws_url = ws_url.to_owned();
     let method = method.to_owned();
     tokio::runtime::Runtime::new()
@@ -681,8 +691,10 @@ fn harness_cdp_call_at_url(
                 let value: serde_json::Value =
                     serde_json::from_str(&text).expect("parse harness CDP response");
                 if value["id"] == 1 {
-                    assert!(value.get("error").is_none(), "CDP {method}: {value}");
-                    return value["result"].clone();
+                    return match value.get("error") {
+                        Some(_) => Err(value),
+                        None => Ok(value["result"].clone()),
+                    };
                 }
             }
             panic!("browser websocket closed before CDP {method} replied")
@@ -4241,19 +4253,46 @@ fn run_same_title_tabs(spec: &BrowserSpec) {
                     .iter()
                     .any(|tab| tab["url"] == second_server.page_url()));
                 // The title cannot tell the two apart. Where the browser's tab strip says
-                // which tab is selected, the one brought to the front is named and its
-                // sibling is not; where it does not, selection stays unknown, never guessed.
+                // which tab of this window is selected (exactly one of its tabs marked
+                // `tabActive: true`), the one brought to the front is named and its sibling
+                // is not; where it does not, selection stays unknown, never guessed.
+                // A tab of another window can close between the listing and its lookup.
+                let window_of = |target: &str| {
+                    harness_cdp_try_call_at_url(
+                        &browser_endpoint_url(fixture.cdp_port),
+                        "Browser.getWindowForTarget",
+                        serde_json::json!({ "targetId": target }),
+                    )
+                    .ok()?["windowId"]
+                        .as_i64()
+                };
+                let pages =
+                    harness_cdp_call(fixture.cdp_port, "Target.getTargets", serde_json::json!({}));
+                let front_window = pages["targetInfos"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|target| {
+                        target["type"] == "page" && target["url"] == fixture.server.page_url()
+                    })
+                    .and_then(|target| target["targetId"].as_str())
+                    .and_then(window_of);
                 let strip = harness_cdp_call(
                     fixture.cdp_port,
                     "Target.getTargets",
                     serde_json::json!({ "filter": [{ "type": "tab" }] }),
                 );
-                let strip_says = strip["targetInfos"].as_array().is_some_and(|tabs| {
-                    tabs.iter().any(|tab| {
-                        tab.pointer("/embedderData/tabActive")
-                            .is_some_and(|v| v.is_boolean())
+                let selected_in_window = strip["targetInfos"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|tab| {
+                        tab.pointer("/embedderData/tabActive") == Some(&serde_json::json!(true))
                     })
-                });
+                    .filter_map(|tab| tab["targetId"].as_str())
+                    .filter(|tab| front_window.is_some() && window_of(tab) == front_window)
+                    .count();
+                let strip_says = selected_in_window == 1;
                 let active = |url: &str| {
                     tabs.iter()
                         .find(|tab| tab["url"] == url)

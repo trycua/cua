@@ -443,30 +443,69 @@ fn moveresize_window_flags() -> u32 {
 /// if any: the focus usually sits on a child of the client window, so the
 /// ancestors are walked until one of `candidates` is met.
 pub fn focused_window_among(candidates: &[u64]) -> Option<u64> {
-    try_focused_window_among(candidates).ok().flatten()
+    match try_focus_holder(candidates) {
+        Ok(Some(FocusHolder::Listed(window))) => Some(window),
+        _ => None,
+    }
 }
 
-/// [`focused_window_among`], with a failed read kept apart from a focus that
-/// sits on none of `candidates`.
-pub fn try_focused_window_among(candidates: &[u64]) -> Result<Option<u64>> {
+/// The window holding the core keyboard focus, as [`try_focus_holder`] finds
+/// it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusHolder {
+    /// One of the candidates: the focus or one of its ancestors.
+    Listed(u64),
+    /// No candidate holds it, but the nearest ancestor of the focus with a
+    /// `WM_TRANSIENT_FOR` does: a dialog the window list left out, such as an
+    /// untitled transient under a window manager without EWMH.
+    Transient { window: u64, owner: u64 },
+}
+
+/// Which window holds the core keyboard focus, with a failed read kept apart
+/// from a focus that sits nowhere near `candidates`.
+pub fn try_focus_holder(candidates: &[u64]) -> Result<Option<FocusHolder>> {
     let (conn, screen_num) = RustConnection::connect(None)?;
     let root = conn.setup().roots[screen_num].root;
     let focus = conn.get_input_focus()?.reply()?.focus;
+    focus_holder(
+        focus,
+        root,
+        candidates,
+        |window| Ok(conn.query_tree(window)?.reply()?.parent),
+        |window| try_transient_for(u64::from(window)),
+    )
+}
+
+fn focus_holder(
+    focus: Window,
+    root: Window,
+    candidates: &[u64],
+    parent: impl Fn(Window) -> Result<Window>,
+    transient_for: impl Fn(Window) -> Result<Option<u64>>,
+) -> Result<Option<FocusHolder>> {
+    // 0 is None and 1 is PointerRoot: no window holds the focus.
     if focus <= 1 {
         return Ok(None);
     }
     let mut current = focus;
+    let mut transient = None;
     for _ in 0..32 {
         if candidates.contains(&u64::from(current)) {
-            return Ok(Some(u64::from(current)));
+            return Ok(Some(FocusHolder::Listed(u64::from(current))));
         }
-        let tree = conn.query_tree(current)?.reply()?;
-        if tree.parent == 0 || tree.parent == root {
-            return Ok(None);
+        if transient.is_none() {
+            transient = transient_for(current)?.map(|owner| FocusHolder::Transient {
+                window: u64::from(current),
+                owner,
+            });
         }
-        current = tree.parent;
+        let next = parent(current)?;
+        if next == 0 || next == root {
+            break;
+        }
+        current = next;
     }
-    Ok(None)
+    Ok(transient)
 }
 
 /// `WM_TRANSIENT_FOR` of a toplevel: the window it is a dialog of. `None`
@@ -923,6 +962,47 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn focus_holder_finds_a_listed_window_or_an_unlisted_transient() {
+        const ROOT: Window = 1000;
+        const APP: Window = 50;
+        // APP's child 51; an unlisted, untitled transient 300 of APP framed
+        // by 200, with the focus on its child 301; 400 belongs to nobody.
+        let parent = |window: Window| -> Result<Window> {
+            Ok(match window {
+                51 => APP,
+                301 => 300,
+                300 => 200,
+                _ => ROOT,
+            })
+        };
+        let transient_for = |window: Window| -> Result<Option<u64>> {
+            Ok((window == 300).then_some(u64::from(APP)))
+        };
+        let candidates = [u64::from(APP)];
+        let holder = |focus| focus_holder(focus, ROOT, &candidates, parent, transient_for).unwrap();
+        assert_eq!(holder(51), Some(FocusHolder::Listed(50)));
+        assert_eq!(
+            holder(301),
+            Some(FocusHolder::Transient {
+                window: 300,
+                owner: 50
+            })
+        );
+        assert_eq!(holder(400), None);
+        // PointerRoot.
+        assert_eq!(holder(1), None);
+        // A failed read is not "no holder".
+        assert!(focus_holder(
+            301,
+            ROOT,
+            &candidates,
+            |_| anyhow::bail!("gone"),
+            transient_for
+        )
+        .is_err());
+    }
 
     #[test]
     fn empty_present_client_list_allows_tree_fallback() {

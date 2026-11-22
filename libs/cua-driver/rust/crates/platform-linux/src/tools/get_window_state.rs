@@ -254,32 +254,55 @@ fn window_overlays(pid: u32, xid: u64, observe_relations: bool) -> WindowOverlay
             .collect();
         // The core keyboard focus decides which window takes keys; a window
         // manager may never publish `_NET_ACTIVE_WINDOW`, so it only fills in
-        // when the focus sits outside these windows. A focus that could not
-        // be read, like an owner or modality read that failed (an unreadable
-        // `_NET_WM_STATE` must not make a modal dialog look modeless), leaves
-        // the relation unobservable.
+        // when the focus sits outside these windows. A transient of one of
+        // them holding the focus counts even when the list left it out. A
+        // focus that could not be read, like an owner or modality read that
+        // failed (an unreadable `_NET_WM_STATE` must not make a modal dialog
+        // look modeless), leaves the relation unobservable.
         let candidates: Vec<u64> = std::iter::once(xid)
             .chain(visible.iter().map(|window| window.xid))
             .collect();
-        let focused = crate::x11::try_focused_window_among(&candidates).map(|focused| {
-            focused.or_else(|| {
-                crate::x11::active_window().filter(|active| candidates.contains(active))
-            })
-        });
-        let owned: anyhow::Result<Vec<_>> = focused.and_then(|focused| {
-            visible
-                .iter()
-                .map(|window| {
-                    Ok(cua_driver_core::window_inspection::OwnedWindow {
-                        pid: i64::from(window.pid.unwrap_or(pid)),
-                        window_id: window.xid,
-                        owner: crate::x11::try_transient_for(window.xid)?,
-                        modal: crate::x11::try_window_is_modal(window.xid)?,
-                        focused: focused == Some(window.xid),
+        let owned: anyhow::Result<Vec<_>> =
+            crate::x11::try_focus_holder(&candidates).and_then(|holder| {
+                let (focused, unlisted) = match holder {
+                    Some(crate::x11::FocusHolder::Listed(window)) => (Some(window), None),
+                    Some(crate::x11::FocusHolder::Transient { window, owner })
+                        if candidates.contains(&owner) =>
+                    {
+                        (Some(window), Some((window, owner)))
+                    }
+                    _ => (
+                        crate::x11::active_window().filter(|active| candidates.contains(active)),
+                        None,
+                    ),
+                };
+                let mut owned = visible
+                    .iter()
+                    .map(|window| {
+                        Ok(cua_driver_core::window_inspection::OwnedWindow {
+                            pid: i64::from(window.pid.unwrap_or(pid)),
+                            window_id: window.xid,
+                            owner: crate::x11::try_transient_for(window.xid)?,
+                            modal: crate::x11::try_window_is_modal(window.xid)?,
+                            focused: focused == Some(window.xid),
+                        })
                     })
-                })
-                .collect()
-        });
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                if let Some((window, owner)) = unlisted {
+                    owned.push(cua_driver_core::window_inspection::OwnedWindow {
+                        pid: i64::from(
+                            crate::x11::window_info(window)
+                                .and_then(|info| info.pid)
+                                .unwrap_or(pid),
+                        ),
+                        window_id: window,
+                        owner: Some(owner),
+                        modal: crate::x11::try_window_is_modal(window)?,
+                        focused: true,
+                    });
+                }
+                Ok(owned)
+            });
         out.related = owned
             .ok()
             .map(|owned| cua_driver_core::window_inspection::related_by_owner_chain(xid, &owned));

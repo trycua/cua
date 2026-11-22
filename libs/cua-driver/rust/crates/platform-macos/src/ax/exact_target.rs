@@ -833,9 +833,11 @@ unsafe fn read_surfaces(window: AXUIElementRef, surfaces: &mut Vec<AxSurface>) -
             break;
         }
         for sheet in &next {
+            // A sheet that answers only to its parent's id cannot be told
+            // apart from the parent, nor addressed by `next_call`.
             match owning_window_id(*sheet) {
-                Some(ids) => surfaces.push(AxSurface { ids, modal: true }),
-                None => complete = false,
+                Some(ids) if ids.own != ids.root => surfaces.push(AxSurface { ids, modal: true }),
+                _ => complete = false,
             }
         }
         owned.extend(next.iter().copied());

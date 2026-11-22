@@ -13,7 +13,8 @@ use async_trait::async_trait;
 use cua_driver_core::browser::platform::{
     select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
     BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
-    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
+    ExistingProfileSetupRequest, IsolatedBrowserProcess, PrepareAction, PrepareOutcome,
+    PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -312,7 +313,7 @@ impl SelfActivationGuard {
         let user_front = crate::apps::frontmost_pid().filter(|front| *front != pid);
         std::thread::spawn(move || {
             if let Some(front) = user_front {
-                watch_self_activation(pid, front, &flag);
+                watch_self_activation(pid, front, crate::focus_arbiter::UndoWatch::arm(), &flag);
             }
         });
         Self { stop }
@@ -326,7 +327,53 @@ impl Drop for SelfActivationGuard {
     }
 }
 
-fn watch_self_activation(pid: i32, front: i32, stop: &std::sync::atomic::AtomicBool) {
+const ISOLATED_LAUNCH_GUARD_WINDOW: Duration = Duration::from_millis(2800);
+const ISOLATED_LAUNCH_GUARD_SLICE: Duration = Duration::from_millis(10);
+
+struct GuardedIsolatedBrowserChild {
+    child: std::process::Child,
+    stop: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl IsolatedBrowserProcess for GuardedIsolatedBrowserChild {
+    fn id(&self) -> u32 {
+        self.child.id()
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        let status = self.child.try_wait()?;
+        if status.is_some() {
+            self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        Ok(status)
+    }
+
+    fn kill(&mut self) -> std::io::Result<()> {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.child.kill()
+    }
+
+    fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        let status = self.child.wait();
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        status
+    }
+}
+
+impl Drop for GuardedIsolatedBrowserChild {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// `undo` is the watch it starts under, so a decision made before it started
+/// still holds.
+fn watch_self_activation(
+    pid: i32,
+    front: i32,
+    undo: crate::focus_arbiter::UndoWatch,
+    stop: &std::sync::atomic::AtomicBool,
+) {
     use crate::focus_arbiter::{Decision, UndoWatch};
     use std::sync::atomic::Ordering;
     use std::time::Instant;
@@ -342,7 +389,7 @@ fn watch_self_activation(pid: i32, front: i32, stop: &std::sync::atomic::AtomicB
     // The watch outlives single driver activations and user switches: once
     // the driver or the user has put Chrome in front, it leaves Chrome alone
     // until Chrome is no longer in front, then holds off briefly and re-arms.
-    let mut undo = UndoWatch::arm();
+    let mut undo = undo;
     let mut quiet_until = Instant::now();
     while !stop.load(Ordering::SeqCst) {
         if (undo.has_left() || !undo.epoch().is_current())
@@ -872,6 +919,71 @@ impl BrowserPlatform for MacOsBrowserPlatform {
 
     fn security_prompt_open(&self) -> bool {
         crate::security_prompt::security_prompt_on_screen()
+    }
+
+    fn spawn_isolated_browser(
+        &self,
+        mut command: std::process::Command,
+        _profile: &std::path::Path,
+    ) -> Result<Box<dyn IsolatedBrowserProcess>, BrowserRefusal> {
+        // Standalone Chromium on macOS calls NSApp.activate during
+        // applicationDidFinishLaunching even when spawned directly via
+        // std::process::Command with --no-startup-window / background posture.
+        // Pair FocusStealPreventer suppression with a bounded SkyLight
+        // self-activation watcher across cold launch so the user's frontmost
+        // window keeps key focus and z-order. One watch covers the whole
+        // launch: once the driver or the user brings the browser forward, no
+        // lease, watcher or final restore undoes it.
+        let undo = crate::focus_arbiter::UndoWatch::arm();
+        let prior_front = crate::apps::frontmost_pid();
+        let pre_lease = prior_front.map(|prior| {
+            crate::focus_steal::FocusStealPreventer::begin_suppression_for(
+                None,
+                prior,
+                "BrowserPrepare.isolated.pre",
+                undo.clone(),
+            )
+        });
+        let child = command.spawn().map_err(|error| {
+            BrowserRefusal::new(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not launch an isolated browser process: {error}"),
+            )
+        })?;
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        if let (Some(prior), Ok(child_pid)) = (prior_front, i32::try_from(child.id())) {
+            if prior != child_pid {
+                let post_lease = crate::focus_steal::FocusStealPreventer::begin_suppression_for(
+                    Some(child_pid),
+                    prior,
+                    "BrowserPrepare.isolated.post",
+                    undo.clone(),
+                );
+                drop(pre_lease);
+                let guard_stop = Arc::clone(&stop);
+                std::thread::spawn(move || {
+                    let deadline = std::time::Instant::now() + ISOLATED_LAUNCH_GUARD_WINDOW;
+                    std::thread::scope(|s| {
+                        s.spawn(|| {
+                            watch_self_activation(child_pid, prior, undo.clone(), &guard_stop)
+                        });
+                        while !guard_stop.load(std::sync::atomic::Ordering::SeqCst)
+                            && std::time::Instant::now() < deadline
+                        {
+                            std::thread::sleep(ISOLATED_LAUNCH_GUARD_SLICE);
+                        }
+                        guard_stop.store(true, std::sync::atomic::Ordering::SeqCst);
+                    });
+                    drop(post_lease);
+                    if crate::apps::frontmost_pid() == Some(child_pid)
+                        && undo.decide() == crate::focus_arbiter::Decision::Undo
+                    {
+                        restore_front_app_if_browser_front(i64::from(prior), i64::from(child_pid));
+                    }
+                });
+            }
+        }
+        Ok(Box::new(GuardedIsolatedBrowserChild { child, stop }))
     }
 
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
@@ -2377,5 +2489,52 @@ mod tests {
             42,
         );
         assert_eq!(ids, vec![7, 8]);
+    }
+
+    fn guarded_true_child() -> (
+        GuardedIsolatedBrowserChild,
+        Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let child = std::process::Command::new("/usr/bin/true")
+            .spawn()
+            .expect("spawn /usr/bin/true");
+        (
+            GuardedIsolatedBrowserChild {
+                child,
+                stop: Arc::clone(&stop),
+            },
+            stop,
+        )
+    }
+
+    #[test]
+    fn guarded_isolated_child_stops_launch_guard_when_it_exits_or_is_dropped() {
+        use std::sync::atomic::Ordering;
+
+        let (mut child, stop) = guarded_true_child();
+        assert!(!stop.load(Ordering::SeqCst));
+        assert!(child.wait().expect("wait on /usr/bin/true").success());
+        assert!(stop.load(Ordering::SeqCst));
+
+        let (mut child, stop) = guarded_true_child();
+        while child
+            .try_wait()
+            .expect("try_wait on /usr/bin/true")
+            .is_none()
+        {
+            assert!(!stop.load(Ordering::SeqCst));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(stop.load(Ordering::SeqCst));
+
+        let (mut child, stop) = guarded_true_child();
+        let _ = child.kill();
+        assert!(stop.load(Ordering::SeqCst));
+        let _ = child.wait();
+
+        let (child, stop) = guarded_true_child();
+        drop(child);
+        assert!(stop.load(Ordering::SeqCst));
     }
 }

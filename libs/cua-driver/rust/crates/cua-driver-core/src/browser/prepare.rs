@@ -325,6 +325,35 @@ where
     }
 }
 
+/// Record the foreground effects of an existing-profile attachment on its
+/// outcome, or on its refusal's detail: whether the browser came to the front
+/// during the call, and whether the user's previous app was brought back
+/// (`None` when no restore was attempted).
+fn note_attach_foreground(
+    result: &mut Result<PrepareOutcome, BrowserRefusal>,
+    came_forward: bool,
+    restored: Option<bool>,
+) {
+    match result {
+        Ok(outcome) => {
+            outcome.side_effects.foregrounded_window |= came_forward;
+            if let Some(restored) = restored {
+                outcome.side_effects.restored_frontmost_app = restored;
+            }
+        }
+        Err(error) => {
+            if let Some(serde_json::Value::Object(detail)) = error.detail.as_mut() {
+                if came_forward {
+                    detail.insert("foregrounded_window".to_owned(), true.into());
+                }
+                if let Some(restored) = restored {
+                    detail.insert("restored_frontmost_app".to_owned(), restored.into());
+                }
+            }
+        }
+    }
+}
+
 fn with_setup_side_effects(
     mut error: BrowserRefusal,
     setup: &ExistingProfileSetupOutcome,
@@ -1495,22 +1524,27 @@ impl BrowserEngine {
                 .filter(|front| *front != pid),
             _ => None,
         };
+        // The browser may bring itself forward on its own (Chrome does to show
+        // its consent prompt), outside any setup step that reports it. That
+        // includes a browser that was in front when the call started, if the
+        // user switches away before it comes forward again.
+        let foreground_watch =
+            browser_pid.and_then(|pid| self.platform.watch_browser_foreground(pid));
         let mut result = self.attach_existing_profile_checked(request, guarded).await;
-        drop(background_guard);
-        if let (Some(previous), Some(pid)) = (previous_front, browser_pid) {
-            let restored = self.platform.restore_frontmost_app(previous, pid);
-            match &mut result {
-                Ok(outcome) => outcome.side_effects.restored_frontmost_app = restored,
-                Err(error) => {
-                    if let Some(serde_json::Value::Object(detail)) = error.detail.as_mut() {
-                        detail.insert(
-                            "restored_frontmost_app".to_owned(),
-                            serde_json::Value::Bool(restored),
-                        );
-                    }
-                }
-            }
+        // The guard knows of every activation it reverted; the watch also sees
+        // ones that ended without it.
+        let mut came_forward = false;
+        for watch in [background_guard, foreground_watch].into_iter().flatten() {
+            came_forward |= watch.finish();
         }
+        let restored = match (previous_front, browser_pid) {
+            (Some(previous), Some(pid)) => {
+                came_forward |= self.platform.frontmost_app_pid() == Some(pid);
+                Some(self.platform.restore_frontmost_app(previous, pid))
+            }
+            _ => None,
+        };
+        note_attach_foreground(&mut result, came_forward, restored);
         result
     }
 

@@ -2046,7 +2046,7 @@ fn harness_appkit_scroll_background() {
 #[ignore]
 fn harness_appkit_scroll_uses_the_containers_ax_page_action() {
     run_background_case(
-        "page_scroll",
+        "scroll_page_action",
         DriverRoute::MacosAxAction,
         |pid, wid, driver| {
             let mut scroll = |direction: &str, amount: u64| {

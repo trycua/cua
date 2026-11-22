@@ -286,7 +286,14 @@ impl Tool for ScrollTool {
                             "✅ Scrolled native macOS control {direction} by {by} × {amount} \
                                  through AX."
                         ),
-                        AxScrollRoute::PageAction(action) => format!(
+                        AxScrollRoute::PageAction { action, performed } if performed < amount => {
+                            format!(
+                                "⚠️ Scrolled {direction} by page × {performed} of {amount} through \
+                                 AX ({action}, advertised by the target or its scroll container); \
+                                 the app refused the next {action}."
+                            )
+                        }
+                        AxScrollRoute::PageAction { action, .. } => format!(
                             "✅ Scrolled {direction} by page × {amount} through AX \
                                  ({action}, advertised by the target or its scroll container)."
                         ),
@@ -782,7 +789,10 @@ async fn electron_reveal_scroll(
 /// Which semantic AX route a scroll went through.
 enum AxScrollRoute {
     ScrollBarButtons,
-    PageAction(&'static str),
+    PageAction {
+        action: &'static str,
+        performed: usize,
+    },
 }
 
 /// How many ancestors above the target are searched for a page action. A
@@ -810,16 +820,20 @@ unsafe fn scroll_through_ax(
         return Some(AxScrollRoute::ScrollBarButtons);
     }
     let action = page_action_for(direction)?;
-    perform_page_action(element, action, amount).then_some(AxScrollRoute::PageAction(action))
+    match perform_page_action(element, action, amount) {
+        0 => None,
+        performed => Some(AxScrollRoute::PageAction { action, performed }),
+    }
 }
 
-/// Perform `action` `amount` times on the target or the nearest ancestor that
-/// advertises it. Stops at the window: a page action there would scroll
-/// whatever the window chooses, not the container under the target.
-unsafe fn perform_page_action(element: AXUIElementRef, action: &str, amount: usize) -> bool {
+/// Perform `action` up to `amount` times on the target or the nearest
+/// ancestor that advertises it, and return how many succeeded. Stops at the
+/// window: a page action there would scroll whatever the window chooses, not
+/// the container under the target.
+unsafe fn perform_page_action(element: AXUIElementRef, action: &str, amount: usize) -> usize {
     let mut current = element;
     let mut owned = false;
-    let mut delivered = false;
+    let mut performed = 0;
     for _ in 0..=PAGE_ACTION_ANCESTOR_DEPTH {
         let role = copy_string_attr(current, "AXRole");
         if matches!(role.as_deref(), Some("AXWindow" | "AXApplication")) {
@@ -830,7 +844,7 @@ unsafe fn perform_page_action(element: AXUIElementRef, action: &str, amount: usi
                 if perform_action(current, action) != kAXErrorSuccess {
                     break;
                 }
-                delivered = true;
+                performed += 1;
                 std::thread::sleep(std::time::Duration::from_millis(30));
             }
             break;
@@ -840,7 +854,7 @@ unsafe fn perform_page_action(element: AXUIElementRef, action: &str, amount: usi
             CFRelease(current as CFTypeRef);
         }
         let Some(parent) = parent else {
-            return delivered;
+            return performed;
         };
         current = parent;
         owned = true;
@@ -848,7 +862,7 @@ unsafe fn perform_page_action(element: AXUIElementRef, action: &str, amount: usi
     if owned {
         CFRelease(current as CFTypeRef);
     }
-    delivered
+    performed
 }
 
 unsafe fn scroll_native_text_area(

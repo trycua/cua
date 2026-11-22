@@ -178,6 +178,24 @@ fn editor_text(driver: &mut McpDriver, document: &TextEditDocument) -> String {
         .to_owned()
 }
 
+/// The value of the search field in TextEdit's front window (the Open panel),
+/// focusing it first when `focus` is set. Fails when the panel has none.
+fn open_panel_search_field(focus: bool) -> String {
+    osascript(&format!(
+        r#"tell application "System Events" to tell process "TextEdit"
+            repeat with element in (entire contents of front window)
+                try
+                    if subrole of element is "AXSearchField" then
+                        if {focus} then set value of attribute "AXFocused" of element to true
+                        return "value:" & (value of element as text)
+                    end if
+                end try
+            end repeat
+            error "the Open panel has no search field"
+        end tell"#
+    ))
+}
+
 fn osascript(script: &str) -> String {
     let output = Command::new("osascript")
         .args(["-e", script])
@@ -643,6 +661,9 @@ fn foreground_window_type_text_refuses_while_a_sibling_keeps_focus() {
         );
         std::thread::sleep(Duration::from_millis(200));
     }
+    // Focus the panel's search field so leaked keys would land in a field
+    // whose exact value can be compared.
+    let panel_before = open_panel_search_field(true);
 
     let typed = driver.call(
         "type_text",
@@ -652,22 +673,12 @@ fn foreground_window_type_text_refuses_while_a_sibling_keeps_focus() {
         }),
     );
     let panel_title = focused_textedit_window_title();
-    let panel_fields = osascript(
-        r#"tell application "System Events" to tell process "TextEdit"
-            set fieldValues to ""
-            repeat with element in (entire contents of front window)
-                try
-                    if class of element is text field then set fieldValues to fieldValues & (value of element as text) & linefeed
-                end try
-            end repeat
-            fieldValues
-        end tell"#,
-    );
+    let panel_after = open_panel_search_field(false);
     ensure_frontmost(TEXTEDIT_BUNDLE);
     osascript(r#"tell application "System Events" to key code 53"#);
-    assert!(
-        !panel_fields.contains(&marker),
-        "keys addressed at the document reached {panel_title:?}: {panel_fields:?}"
+    assert_eq!(
+        panel_after, panel_before,
+        "keys addressed at the document reached the search field of {panel_title:?}"
     );
     assert!(
         typed.is_error()

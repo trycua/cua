@@ -1321,7 +1321,9 @@ const FRONT_SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_mill
 /// an existing value merely because AX cannot read that value back.
 ///
 /// With `exact_keys_window`, no key is sent while another window of the app
-/// holds the focus, since the pid-routed keys would reach it instead.
+/// holds the focus, since the pid-routed keys would reach it instead. A send
+/// stopped before its first key is refused; one stopped later reports the
+/// characters it sent.
 #[allow(clippy::too_many_arguments)]
 fn cgevent_type_verified(
     pid: i32,
@@ -1334,28 +1336,14 @@ fn cgevent_type_verified(
     is_terminal_target: bool,
     exact_keys_window: Option<u32>,
 ) -> anyhow::Result<(bool, Option<usize>)> {
-    let refuse_misdirected_keys = || match exact_keys_window {
-        Some(wid) => crate::input::skylight::refuse_keys_while_sibling_focused(pid, wid),
-        None => Ok(()),
-    };
-    // Paced keys can outlast a focus change, so each one is checked; sending
-    // stops once the focus has moved and the read-back reports what landed.
-    let send = |text: &str, delay_ms: u64| -> anyhow::Result<()> {
-        refuse_misdirected_keys()?;
-        if exact_keys_window.is_none() || delay_ms == 0 {
-            return crate::input::keyboard::type_text_with_delay(pid, text, delay_ms);
-        }
-        for (sent, ch) in text.chars().enumerate() {
-            if sent > 0 && refuse_misdirected_keys().is_err() {
-                break;
-            }
-            crate::input::keyboard::type_text_with_delay(
-                pid,
-                ch.encode_utf8(&mut [0; 4]),
-                delay_ms,
-            )?;
-        }
-        Ok(())
+    // Every key press first checks that no sibling window holds the focus; a
+    // send stopped that way returns how many characters it got out.
+    let send = |text: &str, delay_ms: u64| match exact_keys_window {
+        Some(wid) => crate::input::keyboard::type_text_while(pid, text, delay_ms, || {
+            !crate::input::skylight::sibling_window_focused(pid, wid)
+        }),
+        None => crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)
+            .map(|()| text.chars().count()),
     };
     // Focus the target element so the keystrokes land in IT. Critical in
     // foreground mode: a freshly-fronted window's keyboard focus may be on the
@@ -1383,7 +1371,13 @@ fn cgevent_type_verified(
     if settle_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
-    send(text, delay_ms)?;
+    let sent = send(text, delay_ms)?;
+    if sent < text.chars().count() {
+        return match exact_keys_window {
+            Some(wid) if sent == 0 => Err(crate::input::skylight::sibling_focus_refusal(pid, wid)),
+            _ => Ok((false, Some(sent))),
+        };
+    }
     let batched = delay_ms == 0;
 
     // CGEvent posting is asynchronous with respect to the renderer. In
@@ -1412,11 +1406,10 @@ fn cgevent_type_verified(
                 return Ok((false, None));
             }
             let tail: String = text.chars().skip(done).collect();
-            // Focus moved away after the first send: report what landed.
-            if refuse_misdirected_keys().is_err() {
-                return Ok((false, Some(done)));
+            let sent = send(&tail, RETYPE_TAIL_DELAY_MS)?;
+            if sent < tail.chars().count() {
+                return Ok((false, Some(done + sent)));
             }
-            send(&tail, RETYPE_TAIL_DELAY_MS)?;
             let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
             return Ok(await_typed_delivery(
                 before,

@@ -1522,22 +1522,24 @@ fn focus_failure_hint_from(
     }
 }
 
-/// Refuse pid-routed keys addressed to `target_wid` while another window of
-/// the same app holds the keyboard focus. AppKit hands such keys to its key
-/// window, so they would type into that sibling instead (#3574). An app that
+/// Whether another window of `pid` than `target_wid` holds the keyboard focus.
+/// AppKit hands pid-routed keys to its key window, so keys meant for
+/// `target_wid` would type into that sibling instead (#3574). An app that
 /// reports no focused window keeps best-effort delivery.
-pub fn refuse_keys_while_sibling_focused(pid: libc::pid_t, target_wid: u32) -> anyhow::Result<()> {
-    if sibling_holds_focus(
+pub fn sibling_window_focused(pid: libc::pid_t, target_wid: u32) -> bool {
+    sibling_holds_focus(
         crate::ax::bindings::focused_window_id_of_pid(pid),
         target_wid,
-    ) {
-        anyhow::bail!(
-            "exact target window did not become focused for foreground keyboard delivery, \
-             so nothing was typed{}",
-            focus_failure_hint(pid, target_wid)
-        );
-    }
-    Ok(())
+    )
+}
+
+/// The refusal for keys withheld because [`sibling_window_focused`].
+pub fn sibling_focus_refusal(pid: libc::pid_t, target_wid: u32) -> anyhow::Error {
+    anyhow::anyhow!(
+        "exact target window did not become focused for foreground keyboard delivery, \
+         so nothing was typed{}",
+        focus_failure_hint(pid, target_wid)
+    )
 }
 
 fn sibling_holds_focus(

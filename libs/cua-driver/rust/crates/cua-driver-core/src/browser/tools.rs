@@ -1987,11 +1987,11 @@ fn dialog_block(dialog: &super::cdp_ws::CdpDialogState) -> Value {
 /// The press count covers `pointerdown` and `mousedown`, then focus moves; the
 /// release count covers `pointerup`, `mouseup` and `click`. Each count is the
 /// DOM mutations on nodes still in the page, outside the node's own subtree
-/// and its ancestors' attributes (across shadow roots to their hosts), from
-/// the phase's first event until the microtasks its handlers queued ran. No
-/// other task can run in that span, so those mutations are the handlers' own,
-/// for example a button that reveals fields elsewhere without changing its
-/// own state. Each count waits a bounded 256 microtask turns, not for a later
+/// and its ancestors' attributes (across shadow roots to their hosts, as the
+/// node sits when the phase starts), from the phase's first event until the
+/// microtasks its handlers queued ran. No other task can run in that span, so
+/// those mutations are the handlers' own, for example a button that reveals
+/// fields elsewhere without changing its own state. Each count waits a bounded 256 microtask turns, not for a later
 /// task: a task boundary would let unrelated timers and network callbacks
 /// change the page inside the count. A handler whose change comes later than
 /// that leaves the click `unverifiable`, never falsely `confirmed`.
@@ -2020,12 +2020,12 @@ const DOM_EVENT_CLICK_SEQUENCE: &str = "async function() { \
         channel.port1.onmessage = () => { channel.port1.close(); resolve(); }; \
         channel.port2.postMessage(null); \
     }); \
-    const ancestors = new Set(); \
-    for (let node = el; node; node = node.parentNode || node.host) ancestors.add(node); \
     const counted = async phase => { \
+        const ancestors = new Set(); \
+        for (let node = el; node; node = node.parentNode || node.host) ancestors.add(node); \
         const records = []; \
         const observer = new view.MutationObserver(batch => { records.push(...batch); }); \
-        for (const scope of new Set([doc, root])) observer.observe(scope, \
+        for (const scope of new Set([el.ownerDocument, el.getRootNode()])) observer.observe(scope, \
             { subtree: true, childList: true, attributes: true, characterData: true }); \
         const result = phase(); \
         for (let turn = 0; turn < 256; turn++) await null; \

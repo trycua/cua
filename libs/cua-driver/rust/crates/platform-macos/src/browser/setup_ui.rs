@@ -2030,10 +2030,13 @@ pub fn disable(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cua_driver_core::browser::{existing_profile_setup_descriptor, BrowserProduct};
+    use cua_driver_core::browser::{
+        existing_profile_setup_descriptor, BrowserProduct, SetupPlatform,
+    };
 
     fn chrome() -> &'static BrowserSetupDescriptor {
-        existing_profile_setup_descriptor(BrowserProduct::GoogleChrome).unwrap()
+        existing_profile_setup_descriptor(BrowserProduct::GoogleChrome, SetupPlatform::MacOS)
+            .unwrap()
     }
 
     fn node(role: &str, title: Option<&str>, value: Option<&str>, actions: &[&str]) -> AXNode {

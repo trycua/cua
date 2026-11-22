@@ -27,7 +27,7 @@ use cua_driver_core::browser::types::{
 };
 use cua_driver_core::browser::{
     existing_profile_setup_descriptor, fetch_json_version_ws_url, is_electron_app_layout,
-    is_firefox, parse_devtools_active_port, BrowserCursorTracker,
+    is_firefox, parse_devtools_active_port, BrowserCursorTracker, SetupPlatform,
 };
 
 use crate::browser_installation_path::{
@@ -2369,15 +2369,16 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         &self,
         request: ExistingProfileSetupRequest,
     ) -> Result<ExistingProfileSetupOutcome, BrowserRefusal> {
-        let descriptor = existing_profile_setup_descriptor(request.browser).ok_or_else(|| {
-            BrowserRefusal::new(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!(
-                    "approved existing-profile setup is not implemented for {:?}",
-                    request.browser
-                ),
-            )
-        })?;
+        let descriptor = existing_profile_setup_descriptor(request.browser, SetupPlatform::Windows)
+            .ok_or_else(|| {
+                BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!(
+                        "approved existing-profile setup is not implemented for {:?}",
+                        request.browser
+                    ),
+                )
+            })?;
         let pid_u32 = u32::try_from(request.pid).map_err(|_| {
             BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -2559,15 +2560,16 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         &self,
         request: ExistingProfileSetupRequest,
     ) -> Result<bool, BrowserRefusal> {
-        let descriptor = existing_profile_setup_descriptor(request.browser).ok_or_else(|| {
-            BrowserRefusal::new(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!(
-                    "existing-profile cleanup is not implemented for {:?}",
-                    request.browser
-                ),
-            )
-        })?;
+        let descriptor = existing_profile_setup_descriptor(request.browser, SetupPlatform::Windows)
+            .ok_or_else(|| {
+                BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!(
+                        "existing-profile cleanup is not implemented for {:?}",
+                        request.browser
+                    ),
+                )
+            })?;
         let pid = u32::try_from(request.pid).map_err(|_| {
             BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,

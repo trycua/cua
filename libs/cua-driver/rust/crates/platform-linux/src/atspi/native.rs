@@ -1606,23 +1606,42 @@ async fn collect_visited_bounded_opts<'a>(
     // Wake the application once, then settle each window once. A concurrent
     // walk of the same pid or window waits for these, within half its own
     // budget, instead of walking a tree that is still empty.
-    let _ = within_half_budget(once_per(pid, None).get_or_init(|| async {
-        let _ = call(app.get_attributes()).await;
-    }))
-    .await;
-    let root = match scoped_frame {
-        Some(ordinal) => seeds[ordinal].clone(),
-        None => RawObjectRef {
-            name: app.inner().destination().to_string(),
-            path: app.inner().path().to_string(),
-        },
+    let app_ref = RawObjectRef {
+        name: app.inner().destination().to_string(),
+        path: app.inner().path().to_string(),
     };
-    // A settle the budget cut short is not cached, so a later walk retries it.
-    let _ = within_half_budget(
-        once_per(pid, Some(&root))
-            .get_or_try_init(|| settle_woken_chromium_tree(conn, &app, &root)),
-    )
-    .await;
+    let mut woken = wake_once(pid, || {
+        let (zconn, app_ref) = (zconn.clone(), app_ref.clone());
+        async move {
+            let _ = tokio::time::timeout(
+                CALL_TIMEOUT,
+                zconn.call_method(
+                    Some(app_ref.name.as_str()),
+                    app_ref.path.as_str(),
+                    Some("org.a11y.atspi.Accessible"),
+                    "GetAttributes",
+                    &(),
+                ),
+            )
+            .await;
+        }
+    });
+    // A walk that gave up waiting on the wake skips the settle: it would
+    // poll a tree that is not on yet.
+    if within_half_budget(woken.wait_for(|done| *done))
+        .await
+        .is_some()
+    {
+        let root = match scoped_frame {
+            Some(ordinal) => seeds[ordinal].clone(),
+            None => app_ref,
+        };
+        // A settle the budget cut short is not cached, so a later walk retries it.
+        let _ = within_half_budget(
+            once_per(pid, &root).get_or_try_init(|| settle_woken_chromium_tree(conn, &app, &root)),
+        )
+        .await;
+    }
 
     // Walk the caller's window FIRST when it was resolved: under a short
     // budget an application-wide pre-order (main window, then dialogs) could
@@ -2724,14 +2743,40 @@ fn still_unresponsive(pid: u32) -> bool {
     unresponsive_pids().lock().unwrap().contains(&pid)
 }
 
-/// A step that runs once per process: its accessibility wake (`root` None),
-/// or the settle of one window or application root.
-type OnceKey = (u32, Option<(String, String)>);
+/// Send `pid`'s accessibility wake once per process, on its own task, and
+/// return a flag that turns true once it is answered or timed out. A walk
+/// whose budget runs out first leaves the wake in flight for the next walk
+/// instead of sending it again.
+fn wake_once<F>(pid: u32, wake: impl FnOnce() -> F) -> tokio::sync::watch::Receiver<bool>
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    static WAKES: OnceLock<Mutex<HashMap<u32, tokio::sync::watch::Receiver<bool>>>> =
+        OnceLock::new();
+    WAKES
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap()
+        .entry(pid)
+        .or_insert_with(|| {
+            let (done, woken) = tokio::sync::watch::channel(false);
+            let wake = wake();
+            tokio::spawn(async move {
+                wake.await;
+                let _ = done.send(true);
+            });
+            woken
+        })
+        .clone()
+}
 
-fn once_per(pid: u32, root: Option<&RawObjectRef>) -> std::sync::Arc<tokio::sync::OnceCell<()>> {
+/// The settle of one window or application root of a process, run once.
+type OnceKey = (u32, String, String);
+
+fn once_per(pid: u32, root: &RawObjectRef) -> std::sync::Arc<tokio::sync::OnceCell<()>> {
     static ONCE: OnceLock<Mutex<HashMap<OnceKey, std::sync::Arc<tokio::sync::OnceCell<()>>>>> =
         OnceLock::new();
-    let key = (pid, root.map(|root| (root.name.clone(), root.path.clone())));
+    let key = (pid, root.name.clone(), root.path.clone());
     ONCE.get_or_init(Default::default)
         .lock()
         .unwrap()
@@ -9332,29 +9377,31 @@ mod coord_tests {
 mod budget_tests {
     use super::*;
 
-    #[tokio::test]
-    async fn concurrent_first_walks_of_a_pid_share_one_wake() {
+    #[tokio::test(start_paused = true)]
+    async fn a_walk_that_gives_up_on_the_wake_leaves_it_in_flight() {
         use std::sync::atomic::{AtomicUsize, Ordering};
-        let wakes = AtomicUsize::new(0);
-        let settled = AtomicUsize::new(0);
-        let wake = || async {
-            wakes.fetch_add(1, Ordering::SeqCst);
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            settled.fetch_add(1, Ordering::SeqCst);
+        static SENT: AtomicUsize = AtomicUsize::new(0);
+        let slow_wake = || async {
+            SENT.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(300)).await;
         };
-        let (cell_a, cell_b) = (once_per(u32::MAX, None), once_per(u32::MAX, None));
-        let first = cell_a.get_or_init(wake);
-        let second = async {
-            cell_b.get_or_init(wake).await;
-            settled.load(Ordering::SeqCst)
+        let walk = move |budget: Duration| {
+            OP_DEADLINE.scope(tokio::time::Instant::now() + budget, async move {
+                let mut woken = wake_once(u32::MAX, slow_wake);
+                within_half_budget(woken.wait_for(|done| *done))
+                    .await
+                    .is_some()
+            })
         };
-        let ((), seen_by_second) = tokio::join!(first, second);
-        assert_eq!(wakes.load(Ordering::SeqCst), 1);
-        assert_eq!(
-            seen_by_second, 1,
-            "the second walk ran before the wake settled"
+        assert!(
+            !walk(Duration::from_millis(200)).await,
+            "the first walk outlasted its half budget"
         );
-        assert!(!once_per(u32::MAX - 1, None).initialized());
+        assert!(
+            walk(Duration::from_secs(2)).await,
+            "the next walk did not see the in-flight wake finish"
+        );
+        assert_eq!(SENT.load(Ordering::SeqCst), 1, "the wake was sent again");
     }
 
     #[tokio::test(start_paused = true)]
@@ -9364,12 +9411,12 @@ mod budget_tests {
             path: "/frame/1".to_owned(),
         };
         let pid = u32::MAX - 4;
-        let owner = once_per(pid, Some(&root));
+        let owner = once_per(pid, &root);
         let settling = owner.get_or_try_init(|| async {
             tokio::time::sleep(Duration::from_secs(5)).await;
             Ok::<(), ()>(())
         });
-        let joiner = once_per(pid, Some(&root));
+        let joiner = once_per(pid, &root);
         let waiter = OP_DEADLINE.scope(
             tokio::time::Instant::now() + Duration::from_millis(400),
             async {
@@ -9395,13 +9442,12 @@ mod budget_tests {
             path: path.to_owned(),
         };
         let pid = u32::MAX - 2;
-        once_per(pid, None).get_or_init(|| async {}).await;
-        once_per(pid, Some(&window("/frame/1")))
+        once_per(pid, &window("/frame/1"))
             .get_or_init(|| async {})
             .await;
-        assert!(once_per(pid, Some(&window("/frame/1"))).initialized());
+        assert!(once_per(pid, &window("/frame/1")).initialized());
         assert!(
-            !once_per(pid, Some(&window("/frame/2"))).initialized(),
+            !once_per(pid, &window("/frame/2")).initialized(),
             "a second window of a woken pid must still get its own settle"
         );
     }
@@ -9413,14 +9459,14 @@ mod budget_tests {
             path: "/frame/1".to_owned(),
         };
         let pid = u32::MAX - 3;
-        let _ = once_per(pid, Some(&root))
+        let _ = once_per(pid, &root)
             .get_or_try_init(|| async { Err::<(), ()>(()) })
             .await;
-        assert!(!once_per(pid, Some(&root)).initialized());
-        let _ = once_per(pid, Some(&root))
+        assert!(!once_per(pid, &root).initialized());
+        let _ = once_per(pid, &root)
             .get_or_try_init(|| async { Ok::<(), ()>(()) })
             .await;
-        assert!(once_per(pid, Some(&root)).initialized());
+        assert!(once_per(pid, &root).initialized());
     }
 
     #[test]

@@ -1940,6 +1940,7 @@ async fn existing_profile_reconnect_stalls_in_a_process_check(case: ReconnectSta
     let mut other_dial = None;
     stalls.hold_cleanup.store(true, Ordering::SeqCst);
     let calls_before = stalls.fingerprint_calls.load(Ordering::SeqCst);
+    let started = tokio::time::Instant::now();
     let bind = tokio::spawn({
         let engine = f.engine.clone();
         async move { bind_existing_profile(&engine, TRANSPORT).await }
@@ -1971,25 +1972,31 @@ async fn existing_profile_reconnect_stalls_in_a_process_check(case: ReconnectSta
         None
     };
     tokio::time::pause();
-    for second in 0..120 {
+    for tenth in 0..1200 {
         if bind.is_finished() {
             break;
         }
-        if second == 28 && case == ReconnectStall::AfterADialWhileAnotherDials {
+        if tenth == 280 && case == ReconnectStall::AfterADialWhileAnotherDials {
             let pool = f.engine.pool.clone();
             let url = grant.endpoint_ws_url.clone();
             other_dial = Some(tokio::spawn(async move {
                 pool.claim_existing(&url, u64::MAX).await
             }));
         }
-        tokio::time::advance(std::time::Duration::from_secs(1)).await;
+        tokio::time::advance(std::time::Duration::from_millis(100)).await;
     }
+    let elapsed = started.elapsed();
     if let Some(other_dial) = other_dial {
         other_dial.abort();
     }
     assert!(
         bind.is_finished(),
         "a stalled reconnect must not hang the bind"
+    );
+    assert!(
+        elapsed
+            <= super::engine::EXISTING_PROFILE_RECONNECT_BOUND + std::time::Duration::from_secs(1),
+        "the refusal must arrive within the reconnect bound, not after its cleanup: {elapsed:?}"
     );
     let state = bind.await.unwrap();
     assert_eq!(

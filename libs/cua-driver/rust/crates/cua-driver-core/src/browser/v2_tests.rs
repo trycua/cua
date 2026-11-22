@@ -58,6 +58,8 @@ pub(super) struct FixtureState {
     main_loader: String,
     iframe_loader: String,
     oopif_loader: String,
+    /// The tab stops answering `Page.getFrameTree` (method not found).
+    tab_frame_tree_unsupported: bool,
     tab_sessions: u64,
     oopif_sessions: u64,
     fail_key_down_after: Option<usize>,
@@ -178,6 +180,7 @@ impl Default for FixtureState {
             main_loader: "L_MAIN_1".into(),
             iframe_loader: "L_IFRAME_1".into(),
             oopif_loader: "L_OOPIF_1".into(),
+            tab_frame_tree_unsupported: false,
             tab_sessions: 0,
             oopif_sessions: 0,
             fail_key_down_after: None,
@@ -804,6 +807,9 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     }]);
                 }
                 reply
+            }
+            "Page.getFrameTree" if is_tab && st.tab_frame_tree_unsupported => {
+                MockReply::method_not_found("Page.getFrameTree")
             }
             "Page.getFrameTree" if is_tab && st.dialog_open => MockReply::err(
                 -32000,
@@ -3398,6 +3404,24 @@ async fn semantic_ancestor_continuation_refuses_when_oopif_proof_becomes_unsuppo
     let (target, tab) = bind(&f).await;
     let token = ancestor_scope_continuation(&f, &target, &tab, "oopif").await;
     f.state.lock().unwrap().oopif_supported = false;
+
+    let unavailable =
+        semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})).await;
+    assert_eq!(unavailable["status"], "refused", "{unavailable}");
+    assert_eq!(unavailable["refusal"]["code"], "browser_scope_unavailable");
+    assert_eq!(unavailable["refusal"]["detail"]["reason"], "unproven_frame");
+}
+
+#[tokio::test]
+async fn semantic_ancestor_continuation_refuses_when_tab_frame_tree_becomes_unsupported() {
+    let f = fixture_with(|state| {
+        state.semantic_scoped_rows = true;
+        state.oopif_present = false;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let token = ancestor_scope_continuation(&f, &target, &tab, "main").await;
+    f.state.lock().unwrap().tab_frame_tree_unsupported = true;
 
     let unavailable =
         semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})).await;

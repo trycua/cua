@@ -2808,12 +2808,17 @@ impl BrowserEngine {
                 let conn = self.connection_for_record(session, &record).await?;
                 let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
                 let tree = self.local_frame_tree(&conn, &cdp_session).await.map_err(|error| {
-                    match error {
-                        FrameTreeError::Unsupported => refuse(
+                    match (error, &scope_anchor) {
+                        (FrameTreeError::Unsupported, Some(anchor)) => semantic_scope_refusal(
+                            &anchor.source_ref,
+                            &anchor.role,
+                            SemanticScopeFailure::UnprovenFrame,
+                        ),
+                        (FrameTreeError::Unsupported, None) => refuse(
                             BrowserRefusalCode::BrowserRouteUnavailable,
                             "the browser no longer reports its frame tree, so the semantic \n+                             continuation's document identity cannot be re-proven",
                         ),
-                        FrameTreeError::Failed(error) => route_err(
+                        (FrameTreeError::Failed(error), _) => route_err(
                             "Page.getFrameTree failed during semantic continuation revalidation",
                             error,
                         ),

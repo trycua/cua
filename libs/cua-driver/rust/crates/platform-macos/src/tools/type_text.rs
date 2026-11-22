@@ -1758,6 +1758,11 @@ fn type_text_in_key_window(
                     pid as libc::pid_t,
                     wid,
                     || {
+                        // Making the window key alone can leave a sibling
+                        // document focused.
+                        if crate::input::skylight::sibling_window_focused(pid, wid) {
+                            crate::input::skylight::focus_exact_window(pid, wid);
+                        }
                         typed_delivery = do_type(element_ptr_and_idx, Some(wid))?;
                         Ok(())
                     },

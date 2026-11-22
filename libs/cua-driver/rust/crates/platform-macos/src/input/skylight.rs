@@ -1533,6 +1533,20 @@ pub fn sibling_window_focused(pid: libc::pid_t, target_wid: u32) -> bool {
     )
 }
 
+/// Take the focus from a sibling for `target_wid` by the exact-window
+/// sequence [`with_foreground_hid_activation`] uses: make it key, raise it,
+/// and ask once more for a slow app. Returns whether the focus was observed.
+pub fn focus_exact_window(pid: libc::pid_t, target_wid: u32) -> bool {
+    for _ in 0..2 {
+        make_exact_window_key(pid, target_wid);
+        crate::ax::bindings::raise_exact_window_of_pid(pid, target_wid);
+        if await_window_focused(pid, target_wid) {
+            return true;
+        }
+    }
+    false
+}
+
 /// The error for keys withheld because [`sibling_window_focused`]: before
 /// the first key, or once delivery had already `started`.
 pub fn sibling_focus_refusal(pid: libc::pid_t, target_wid: u32, started: bool) -> anyhow::Error {

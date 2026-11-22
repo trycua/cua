@@ -176,8 +176,8 @@ export const MCP_CATEGORIES: Array<McpCategory & { tools: string[] }> = [
   {
     slug: 'screen',
     title: 'Screen tools',
-    summary: 'The desktop, screen size, cursor position and zoomed crops',
-    tools: ['get_desktop_state', 'get_screen_size', 'get_cursor_position', 'zoom'],
+    summary: 'The desktop, screen size, cursor position, zoomed crops and agent displays',
+    tools: ['get_desktop_state', 'get_screen_size', 'get_cursor_position', 'zoom', 'agent_display'],
   },
   {
     slug: 'click',

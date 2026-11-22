@@ -1160,6 +1160,7 @@ fi
         self.assertEqual(
             expected["platformTools"],
             {
+                "darwin": ["agent_display"],
                 "linux": [
                     "mouse_button_down",
                     "mouse_button_up",

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.11.17](https://github.com/trycua/cua/compare/sandbox-v0.11.16...sandbox-v0.11.17) (2026-11-22)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** accept cua-driver 0.58 ([#8502](https://github.com/trycua/cua/issues/8502)) ([2a15e14](https://github.com/trycua/cua/commit/2a15e141e23d72eb3c73df9a289d2cf079033516))
+
+## [0.11.16](https://github.com/trycua/cua/compare/sandbox-v0.11.15...sandbox-v0.11.16) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-sandbox:** accept cua-driver 0.57 ([#8496](https://github.com/trycua/cua/issues/8496)) ([559d62c](https://github.com/trycua/cua/commit/559d62cff589da10caef3f7e868fc6bd8e621212))
+
 ## [0.11.15](https://github.com/trycua/cua/compare/sandbox-v0.11.14...sandbox-v0.11.15) (2026-11-20)
 
 

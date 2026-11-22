@@ -1175,7 +1175,7 @@
        "type": "String"
       }
      ],
-     "discussion": "Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default. cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on, off or default and on by default; cursor.rotate is heading (default), lean, off or default. All apply to every cursor at once.",
+     "discussion": "Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default. cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on, off or default and on by default; cursor.rotate is heading (default), lean, off or default. All apply to every cursor at once. get_window_state.max_elements and get_window_state.max_depth save the node budget and depth cap for get_window_state reads that omit them and pass no query or full_output; each is bounded by the platform walk cap (max_elements 2000 on macOS, 5000 on Windows and Linux; max_depth 25 on macOS and Windows, uncapped on Linux), and default clears it. A value passed on the call always wins.",
      "examples": [
       {
        "command": "cua-driver config set max_image_dimension 1568",
@@ -1196,6 +1196,10 @@
       {
        "command": "cua-driver config set cursor.motion.effects.trail true",
        "description": "Turn the cursor trail on by default"
+      },
+      {
+       "command": "cua-driver config set get_window_state.max_elements 2000",
+       "description": "Walk up to 2000 nodes when a read omits max_elements"
       }
      ],
      "flags": [],

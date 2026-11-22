@@ -16,7 +16,7 @@
 //! app and starts it again with no arguments.
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::permissions::gate::MissingPermission;
 use crate::permissions::status::PermissionsStatus;
@@ -160,7 +160,7 @@ impl GuideMachine {
         }
     }
 
-    /// Feed a fresh status (the guide checks every second). Returns what to
+    /// Feed a fresh status (see [`PollSchedule`]). Returns what to
     /// do, in order. Requests are marked as made.
     pub fn on_status(&mut self, status: PermissionsStatus) -> Vec<GuideEffect> {
         let mut effects = Vec::new();
@@ -200,6 +200,84 @@ pub fn next_request(
         return Some(MissingPermission::ScreenRecording);
     }
     None
+}
+
+// ── When to check the switches again ───────────────────────────────────────
+
+/// How often the guide and the terminal wait check the switches. Each check
+/// starts a fresh helper process, because macOS caches a "no" in the process
+/// that asked. So checks are quick only for a while after something happens
+/// (the wait starts, a switch turns on, the person opens System Settings) and
+/// slower the rest of the time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PollCadence {
+    /// Time between checks right after something happens.
+    pub quick: Duration,
+    /// How long checks stay quick after something happens.
+    pub quick_for: Duration,
+    /// Time between checks the rest of the time.
+    pub settled: Duration,
+}
+
+impl PollCadence {
+    /// While the guide or the terminal text is up and someone may be in
+    /// System Settings.
+    pub const INTERACTIVE: Self = Self {
+        quick: Duration::from_secs(1),
+        quick_for: Duration::from_secs(30),
+        settled: Duration::from_secs(5),
+    };
+
+    /// One check every `every`, whatever happens.
+    pub const fn steady(every: Duration) -> Self {
+        Self {
+            quick: every,
+            quick_for: Duration::ZERO,
+            settled: every,
+        }
+    }
+}
+
+/// When the next check is due under a [`PollCadence`].
+#[derive(Debug, Clone, Copy)]
+pub struct PollSchedule {
+    cadence: PollCadence,
+    active_since: Instant,
+    last_check: Option<Instant>,
+}
+
+impl PollSchedule {
+    pub fn new(cadence: PollCadence, now: Instant) -> Self {
+        Self {
+            cadence,
+            active_since: now,
+            last_check: None,
+        }
+    }
+
+    /// Something happened: check quickly again for a while.
+    pub fn note_activity(&mut self, now: Instant) {
+        self.active_since = now;
+    }
+
+    /// Record a check made at `now`.
+    pub fn checked(&mut self, now: Instant) {
+        self.last_check = Some(now);
+    }
+
+    /// How long until the next check is due; zero when it is due now.
+    pub fn wait(&self, now: Instant) -> Duration {
+        let Some(last) = self.last_check else {
+            return Duration::ZERO;
+        };
+        let quick = now.saturating_duration_since(self.active_since) < self.cadence.quick_for;
+        let interval = if quick {
+            self.cadence.quick
+        } else {
+            self.cadence.settled
+        };
+        interval.saturating_sub(now.saturating_duration_since(last))
+    }
 }
 
 // ── Resuming after "Quit & Reopen" ─────────────────────────────────────────
@@ -390,6 +468,40 @@ mod tests {
             accessibility,
             screen_recording,
         }
+    }
+
+    /// Seconds between the checks a schedule makes over `span`, with
+    /// `activity_at` seconds where something happens.
+    fn check_gaps(cadence: PollCadence, span: u64, activity_at: &[u64]) -> Vec<u64> {
+        let start = Instant::now();
+        let mut schedule = PollSchedule::new(cadence, start);
+        let mut checks = Vec::new();
+        for second in 0..=span {
+            let now = start + Duration::from_secs(second);
+            if activity_at.contains(&second) {
+                schedule.note_activity(now);
+            }
+            if schedule.wait(now).is_zero() {
+                schedule.checked(now);
+                checks.push(second);
+            }
+        }
+        checks.windows(2).map(|pair| pair[1] - pair[0]).collect()
+    }
+
+    #[test]
+    fn checks_are_quick_only_for_a_while_after_something_happens() {
+        let gaps = check_gaps(PollCadence::INTERACTIVE, 120, &[60]);
+        // Every second for the first 30 s, then every 5 s until the activity
+        // at 60 s makes them quick again for 30 s, then every 5 s.
+        let mut expected = vec![1; 29];
+        expected.extend([5; 6]);
+        expected.extend([1; 30]);
+        expected.extend([5; 6]);
+        assert_eq!(gaps, expected);
+
+        let gaps = check_gaps(PollCadence::steady(Duration::from_secs(30)), 120, &[45]);
+        assert_eq!(gaps, vec![30, 30, 30, 30]);
     }
 
     #[test]

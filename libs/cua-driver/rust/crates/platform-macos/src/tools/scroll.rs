@@ -14,8 +14,8 @@ use std::sync::Arc;
 
 use crate::apps;
 use crate::ax::bindings::{
-    copy_children, copy_element_attr, copy_string_attr, element_screen_center, kAXErrorSuccess,
-    perform_action, AXUIElementRef,
+    copy_action_names, copy_children, copy_element_attr, copy_string_attr, element_screen_center,
+    kAXErrorSuccess, perform_action, AXUIElementRef,
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
@@ -79,6 +79,7 @@ fn def() -> &'static ToolDef {
         name: "scroll".into(),
         description: "Scroll the target pid.\n\
             - Targeted wheel: pass `element_token` (preferred) or window-local `x, y`. Sends a real wheel event at that point, so it scrolls whatever is under it. The only way to scroll nested `overflow:auto` regions in web views.\n\
+            - AX page action: with `element_token`, when the element or its nearest scroll container advertises `AXScroll<Direction>ByPage`, performs it `amount` times instead of the wheel (one page each, whatever `by` says).\n\
             - Keystroke: no target, just pid + direction. PageDown/PageUp (by='page') or arrows (by='line') on the focused scroller.\n\
             \n\
             Electron/Chromium windows drop background wheel events: there a background scroll reveals the content just past the edge of the scroll container under the target through accessibility (about `amount` notches); `delivery_mode:\"foreground\"` is the fallback.\n\
@@ -215,94 +216,93 @@ impl Tool for ScrollTool {
 
         let mut _mutation_lease: Option<super::BackgroundMutationLease> = None;
 
-        // AppKit exposes vertical scroll-bar buttons beneath the text area's
-        // AXScrollArea parent. Pressing those controls is a true
-        // background-safe scroll: no activation, z-order change, or cursor move.
-        if matches!(direction.as_str(), "up" | "down") {
-            if let (Some(element_guard), Some(wid)) = (pre_focus_guard.clone(), window_id) {
-                if !delivery_mode.is_foreground() {
-                    if let Some(lease) = _mutation_lease.as_ref() {
-                        if let Err(refusal_result) = lease
-                            .gate_again(
-                                wid,
-                                pre_focus_ptr,
-                                cua_driver_core::background_input::BackgroundAction::AxSemantic,
-                            )
-                            .await
-                        {
-                            return refusal_result;
-                        }
-                    } else {
-                        match super::gate_background_window_action(
-                            pid,
+        // Semantic AX routes come first: AppKit's scroll-bar buttons beneath a
+        // text area's AXScrollArea parent, then the page action the element or
+        // its nearest scrollable ancestor advertises (Catalyst lists that drop
+        // arrow keys and wheel events still honor it). Both are true
+        // background-safe scrolls: no activation, z-order change, or cursor move.
+        if let (Some(element_guard), Some(wid)) = (pre_focus_guard.clone(), window_id) {
+            if !delivery_mode.is_foreground() {
+                if let Some(lease) = _mutation_lease.as_ref() {
+                    if let Err(refusal_result) = lease
+                        .gate_again(
                             wid,
                             pre_focus_ptr,
                             cua_driver_core::background_input::BackgroundAction::AxSemantic,
                         )
                         .await
-                        {
-                            Ok(lease) => _mutation_lease = Some(lease),
-                            Err(refusal_result) => return refusal_result,
-                        }
+                    {
+                        return refusal_result;
+                    }
+                } else {
+                    match super::gate_background_window_action(
+                        pid,
+                        wid,
+                        pre_focus_ptr,
+                        cua_driver_core::background_input::BackgroundAction::AxSemantic,
+                    )
+                    .await
+                    {
+                        Ok(lease) => _mutation_lease = Some(lease),
+                        Err(refusal_result) => return refusal_result,
                     }
                 }
-                let direction_for_ax = direction.clone();
-                let by_for_ax = by.clone();
-                let foreground = delivery_mode.is_foreground();
-                let ax_result =
-                    tokio::task::spawn_blocking(move || -> anyhow::Result<(bool, bool)> {
-                        if foreground {
-                            let mut delivered = false;
-                            let fronted = crate::input::skylight::with_foreground_assist(
-                                pid as libc::pid_t,
-                                wid,
-                                || {
-                                    delivered = unsafe {
-                                        scroll_native_text_area(
-                                            element_guard.as_ptr() as AXUIElementRef,
-                                            &direction_for_ax,
-                                            &by_for_ax,
-                                            amount,
-                                        )
-                                    };
-                                    std::thread::sleep(std::time::Duration::from_millis(100));
-                                    Ok(())
-                                },
-                            )?;
-                            Ok((delivered, fronted))
-                        } else {
-                            Ok((
-                                unsafe {
-                                    scroll_native_text_area(
-                                        element_guard.as_ptr() as AXUIElementRef,
-                                        &direction_for_ax,
-                                        &by_for_ax,
-                                        amount,
-                                    )
-                                },
-                                false,
-                            ))
-                        }
-                    })
-                    .await;
-                match ax_result {
-                    Ok(Ok((true, fronted))) => {
-                        return ToolResult::text(format!(
-                        "✅ Scrolled native macOS control {direction} by {by} × {amount} through AX."
-                    ))
-                    .with_structured(serde_json::json!({
+            }
+            let direction_for_ax = direction.clone();
+            let by_for_ax = by.clone();
+            let foreground = delivery_mode.is_foreground();
+            let ax_result = tokio::task::spawn_blocking(
+                move || -> anyhow::Result<(Option<AxScrollRoute>, bool)> {
+                    let scroll = || unsafe {
+                        scroll_through_ax(
+                            element_guard.as_ptr() as AXUIElementRef,
+                            &direction_for_ax,
+                            &by_for_ax,
+                            amount,
+                        )
+                    };
+                    if foreground {
+                        let mut route = None;
+                        let fronted = crate::input::skylight::with_foreground_assist(
+                            pid as libc::pid_t,
+                            wid,
+                            || {
+                                route = scroll();
+                                std::thread::sleep(std::time::Duration::from_millis(100));
+                                Ok(())
+                            },
+                        )?;
+                        Ok((route, fronted))
+                    } else {
+                        Ok((scroll(), false))
+                    }
+                },
+            )
+            .await;
+            match ax_result {
+                Ok(Ok((Some(route), fronted))) => {
+                    let text = match route {
+                        AxScrollRoute::ScrollBarButtons => format!(
+                            "✅ Scrolled native macOS control {direction} by {by} × {amount} \
+                                 through AX."
+                        ),
+                        AxScrollRoute::PageAction(action) => format!(
+                            "✅ Scrolled {direction} by page × {amount} through AX \
+                                 ({action}, advertised by the target or its scroll container)."
+                        ),
+                    };
+                    return ToolResult::text(text).with_structured(serde_json::json!({
                         "path": if fronted { "ax_fg" } else { "ax" },
                         "verified": false,
                         "effect": "unverifiable"
                     }));
-                    }
-                    Ok(Ok((false, _))) => {}
-                    Ok(Err(error)) => {
-                        return ToolResult::error(format!("Native AX scroll failed: {error}"));
-                    }
-                    Err(error) => {
-                        return ToolResult::error(format!("Native AX scroll task failed: {error}"));
-                    }
+                }
+                Ok(Ok((None, _))) => {}
+                Ok(Err(error)) => {
+                    return ToolResult::error(format!("Native AX scroll failed: {error}"));
+                }
+                Err(error) => {
+                    return ToolResult::error(format!("Native AX scroll task failed: {error}"));
                 }
             }
         }
@@ -779,6 +779,78 @@ async fn electron_reveal_scroll(
     }
 }
 
+/// Which semantic AX route a scroll went through.
+enum AxScrollRoute {
+    ScrollBarButtons,
+    PageAction(&'static str),
+}
+
+/// How many ancestors above the target are searched for a page action. A
+/// message row sits a few levels below its list; the window is far above.
+const PAGE_ACTION_ANCESTOR_DEPTH: usize = 8;
+
+fn page_action_for(direction: &str) -> Option<&'static str> {
+    match direction {
+        "up" => Some("AXScrollUpByPage"),
+        "down" => Some("AXScrollDownByPage"),
+        "left" => Some("AXScrollLeftByPage"),
+        "right" => Some("AXScrollRightByPage"),
+        _ => None,
+    }
+}
+
+unsafe fn scroll_through_ax(
+    element: AXUIElementRef,
+    direction: &str,
+    by: &str,
+    amount: usize,
+) -> Option<AxScrollRoute> {
+    if matches!(direction, "up" | "down") && scroll_native_text_area(element, direction, by, amount)
+    {
+        return Some(AxScrollRoute::ScrollBarButtons);
+    }
+    let action = page_action_for(direction)?;
+    perform_page_action(element, action, amount).then_some(AxScrollRoute::PageAction(action))
+}
+
+/// Perform `action` `amount` times on the target or the nearest ancestor that
+/// advertises it. Stops at the window: a page action there would scroll
+/// whatever the window chooses, not the container under the target.
+unsafe fn perform_page_action(element: AXUIElementRef, action: &str, amount: usize) -> bool {
+    let mut current = element;
+    let mut owned = false;
+    let mut delivered = false;
+    for _ in 0..=PAGE_ACTION_ANCESTOR_DEPTH {
+        let role = copy_string_attr(current, "AXRole");
+        if matches!(role.as_deref(), Some("AXWindow" | "AXApplication")) {
+            break;
+        }
+        if copy_action_names(current).iter().any(|name| name == action) {
+            for _ in 0..amount.max(1) {
+                if perform_action(current, action) != kAXErrorSuccess {
+                    break;
+                }
+                delivered = true;
+                std::thread::sleep(std::time::Duration::from_millis(30));
+            }
+            break;
+        }
+        let parent = copy_element_attr(current, "AXParent");
+        if owned {
+            CFRelease(current as CFTypeRef);
+        }
+        let Some(parent) = parent else {
+            return delivered;
+        };
+        current = parent;
+        owned = true;
+    }
+    if owned {
+        CFRelease(current as CFTypeRef);
+    }
+    delivered
+}
+
 unsafe fn scroll_native_text_area(
     element: AXUIElementRef,
     direction: &str,
@@ -857,5 +929,14 @@ mod tests {
         assert_eq!(clamp_amount(1100), AMOUNT_MAX as usize);
         assert_eq!(clamp_amount(0), AMOUNT_MIN as usize);
         assert_eq!(clamp_amount(3), 3);
+    }
+
+    #[test]
+    fn every_direction_maps_to_its_ax_page_action() {
+        assert_eq!(page_action_for("up"), Some("AXScrollUpByPage"));
+        assert_eq!(page_action_for("down"), Some("AXScrollDownByPage"));
+        assert_eq!(page_action_for("left"), Some("AXScrollLeftByPage"));
+        assert_eq!(page_action_for("right"), Some("AXScrollRightByPage"));
+        assert_eq!(page_action_for("sideways"), None);
     }
 }

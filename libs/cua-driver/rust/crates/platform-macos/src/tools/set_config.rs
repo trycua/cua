@@ -107,6 +107,12 @@ impl Tool for SetConfigTool {
 
         // Cursor motion defaults are a driver-wide saved setting, so they are
         // validated and persisted like the other config.json keys.
+        if let Err(message) = cua_driver_core::walk_defaults::check_config_args(
+            &args,
+            super::get_window_state::WALK_LIMITS,
+        ) {
+            return ToolResult::error(message);
+        }
         let motion_keys = match cursor_overlay::motion_defaults::apply_config_args(&args) {
             Ok(keys) => keys,
             Err(message) => return ToolResult::error(message),

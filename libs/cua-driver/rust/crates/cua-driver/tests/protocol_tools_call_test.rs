@@ -285,16 +285,28 @@ fn get_window_state_walk_defaults_persist_across_daemons() {
         })
     );
 
+    // A refused walk value refuses the whole call: the cursor key beside it
+    // is not saved either.
     let refused = call(
         &mut d,
         3,
         "set_config",
-        serde_json::json!({"get_window_state.max_depth": 0}),
+        serde_json::json!({"get_window_state.max_depth": 0, "cursor.halo": "off"}),
     );
     assert_eq!(refused["isError"], true, "{refused}");
     assert_eq!(
         refused["content"][0]["text"],
         "get_window_state.max_depth must be a whole number from 1 to 25, or default; got 0"
+    );
+    let unchanged = call(&mut d, 5, "get_config", serde_json::json!({}));
+    assert_eq!(
+        unchanged["structuredContent"]["cursor"]["halo"],
+        built_in["structuredContent"]["cursor"]["halo"],
+        "a refused set_config saved cursor.halo"
+    );
+    assert_eq!(
+        unchanged["structuredContent"]["get_window_state"],
+        built_in["structuredContent"]["get_window_state"]
     );
 
     let set = call(

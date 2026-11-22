@@ -188,6 +188,18 @@ pub fn load_active(limits: WalkLimits) -> WalkDefaults {
     defaults
 }
 
+/// Validate the walk-default keys in a `set_config` call without writing
+/// anything. `set_config` runs this before any other key is saved, so a
+/// refused value refuses the whole call.
+pub fn check_config_args(args: &Value, limits: WalkLimits) -> Result<(), String> {
+    for key in KEYS {
+        if let Some(value) = args.get(key) {
+            parse(key, value, limits)?;
+        }
+    }
+    Ok(())
+}
+
 /// Apply the walk-default writes in a `set_config` call: validate, persist,
 /// and switch `get_window_state` at once. Returns `key=value` for each key
 /// written.

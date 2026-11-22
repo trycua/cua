@@ -1724,12 +1724,17 @@ fn type_text_in_key_window(
                 // Front → type → restore. The closure returns the read-back
                 // result; with_foreground_assist returns whether it actually
                 // fronted (Ok(false) when the fronting SPIs are unavailable —
-                // the keystrokes still ran, just as background input).
+                // the keystrokes still ran, just as background input). Either
+                // way no key is sent while a sibling window keeps the focus.
                 let mut typed_delivery = (false, None);
                 let fronted = crate::input::skylight::with_foreground_assist(
                     pid as libc::pid_t,
                     wid,
                     || {
+                        crate::input::skylight::refuse_keys_while_sibling_focused(
+                            pid as libc::pid_t,
+                            wid,
+                        )?;
                         typed_delivery = do_type(element_ptr_and_idx)?;
                         Ok(())
                     },

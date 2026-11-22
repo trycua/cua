@@ -1522,6 +1522,31 @@ fn focus_failure_hint_from(
     }
 }
 
+/// Refuse pid-routed keys addressed to `target_wid` while another window of
+/// the same app holds the keyboard focus. AppKit hands such keys to its key
+/// window, so they would type into that sibling instead (#3574). An app that
+/// reports no focused window keeps best-effort delivery.
+pub fn refuse_keys_while_sibling_focused(pid: libc::pid_t, target_wid: u32) -> anyhow::Result<()> {
+    if sibling_holds_focus(
+        crate::ax::bindings::focused_window_id_of_pid(pid),
+        target_wid,
+    ) {
+        anyhow::bail!(
+            "exact target window did not become focused for foreground keyboard delivery, \
+             so nothing was typed{}",
+            focus_failure_hint(pid, target_wid)
+        );
+    }
+    Ok(())
+}
+
+fn sibling_holds_focus(
+    focused: Option<crate::ax::exact_target::AxWindowId>,
+    target_wid: u32,
+) -> bool {
+    focused.is_some_and(|window| !window.is(target_wid))
+}
+
 /// Deliver a HID event to a window that is already the focused front window,
 /// then re-order the agent cursor overlay above it.
 ///
@@ -1635,7 +1660,7 @@ mod tests {
     use super::{
         focus_failure_hint_from, foreground_turn, make_key_window_record, note_post_status,
         preserves_exact_existing_focus, reset_windowserver_connection_invalid_for_test,
-        windowserver_connection_invalid, WINDOWSERVER_INVALID_CONNECTION,
+        sibling_holds_focus, windowserver_connection_invalid, WINDOWSERVER_INVALID_CONNECTION,
     };
     use crate::ax::exact_target::AxWindowId;
 
@@ -1664,6 +1689,19 @@ mod tests {
         assert!(hint.contains("window_id 2497"), "{hint}");
         assert_eq!(focus_failure_hint_from(Some(true), None), "");
         assert_eq!(focus_failure_hint_from(None, None), "");
+    }
+
+    #[test]
+    fn keys_are_refused_only_while_a_sibling_window_holds_focus() {
+        assert!(sibling_holds_focus(Some(AxWindowId::window(237)), 235));
+        assert!(!sibling_holds_focus(Some(AxWindowId::window(235)), 235));
+        // A sheet attached to the target answers to the target's id.
+        let sheet = AxWindowId {
+            own: 240,
+            root: 235,
+        };
+        assert!(!sibling_holds_focus(Some(sheet), 235));
+        assert!(!sibling_holds_focus(None, 235));
     }
 
     #[test]

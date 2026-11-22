@@ -1100,6 +1100,9 @@ struct FixtureFocus {
     /// The user switches to this app after the browser came forward, before
     /// the attach returns.
     user_switches_to: Option<i64>,
+    /// The user switches to this app while the attach is pending, before the
+    /// browser brings itself forward.
+    user_switched_away_to: Option<i64>,
 }
 
 /// Clears `live` when dropped.
@@ -1295,13 +1298,21 @@ impl BrowserPlatform for FixturePlatform {
         // With `attach_activates_browser`, the browser brings itself to the
         // front during setup, the way Chrome does to show its consent prompt.
         if self.focus.attach_activates_browser {
-            if self.focus.watch_live.load(Ordering::SeqCst) && !self.focus.activation_notice_late {
+            if let Some(app) = self.focus.user_switched_away_to {
+                *self.focus.frontmost.lock().unwrap() = Some(app);
+            }
+            // A browser already in front is not activated again.
+            let activates = *self.focus.frontmost.lock().unwrap() != Some(request.pid);
+            if activates
+                && self.focus.watch_live.load(Ordering::SeqCst)
+                && !self.focus.activation_notice_late
+            {
                 self.focus
                     .watch_saw_activation
                     .store(true, Ordering::SeqCst);
             }
             // A live guard puts the user's app straight back.
-            if self.focus.guard_live.load(Ordering::SeqCst) {
+            if activates && self.focus.guard_live.load(Ordering::SeqCst) {
                 self.focus
                     .guard_saw_activation
                     .store(true, Ordering::SeqCst);
@@ -2326,6 +2337,30 @@ async fn existing_profile_attach_proceeds_when_the_browser_is_already_in_front()
     // Already in front, so the attach did not bring it forward.
     assert_eq!(prepared["side_effects"]["foregrounded_window"], false);
     assert!(focus.restores.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn existing_profile_attach_reports_a_browser_that_came_forward_again() {
+    // The browser is in front when the call starts, the user switches away
+    // while it is pending, and the browser brings itself forward again.
+    let (f, _, _) = attach_fixture(FixtureFocus {
+        attach_activates_browser: true,
+        frontmost: StdMutex::new(Some(1)),
+        user_switched_away_to: Some(99),
+        ..FixtureFocus::default()
+    })
+    .await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let prepared = structured(&result);
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    assert_eq!(prepared["side_effects"]["foregrounded_window"], true);
 }
 
 #[tokio::test]

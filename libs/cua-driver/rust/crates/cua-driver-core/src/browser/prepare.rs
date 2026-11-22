@@ -1525,11 +1525,11 @@ impl BrowserEngine {
             _ => None,
         };
         // The browser may bring itself forward on its own (Chrome does to show
-        // its consent prompt), outside any setup step that reports it.
-        let foreground_watch = match (previous_front, browser_pid) {
-            (Some(_), Some(pid)) => self.platform.watch_browser_foreground(pid),
-            _ => None,
-        };
+        // its consent prompt), outside any setup step that reports it. That
+        // includes a browser that was in front when the call started, if the
+        // user switches away before it comes forward again.
+        let foreground_watch =
+            browser_pid.and_then(|pid| self.platform.watch_browser_foreground(pid));
         let mut result = self.attach_existing_profile_checked(request, guarded).await;
         // The guard knows of every activation it reverted; the watch also sees
         // ones that ended without it.

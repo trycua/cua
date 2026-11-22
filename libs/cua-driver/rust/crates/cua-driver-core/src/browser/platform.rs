@@ -441,11 +441,12 @@ pub trait BrowserPlatform: Send + Sync {
         None
     }
 
-    /// Watch whether `browser_pid` comes to the front during a foreground or
-    /// guarded existing-profile attachment, so the result reports it even
-    /// when the browser loses the front before the call returns. `None` (the
-    /// default) leaves the guard's own report and the end-of-call
-    /// [`Self::frontmost_app_pid`] check.
+    /// Watch whether `browser_pid` comes to the front during an
+    /// existing-profile attachment, so the result reports it even when the
+    /// browser loses the front before the call returns. A browser already in
+    /// front when the watch starts has not come forward unless it is
+    /// activated again. `None` (the default) leaves the guard's own report
+    /// and the end-of-call [`Self::frontmost_app_pid`] check.
     fn watch_browser_foreground(
         &self,
         _browser_pid: i64,

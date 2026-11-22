@@ -28,6 +28,9 @@ fn with_cursor_motion_properties(mut schema: Value) -> Value {
         properties.extend(cursor_overlay::motion_defaults::config_schema_properties());
         properties.extend(cursor_overlay::badge_mode::config_schema_properties());
         properties.extend(cursor_overlay::cursor_options::config_schema_properties());
+        properties.extend(cua_driver_core::walk_defaults::config_schema_properties(
+            super::get_window_state::WALK_LIMITS,
+        ));
     }
     cua_driver_core::fast_path::wire::with_config_property(schema)
 }
@@ -51,7 +54,13 @@ fn def() -> &'static ToolDef {
             glow) are on (default), off or default; cursor.rotate is heading \
             (default), lean, off or default. The cursor never draws action marks \
             (cursor.marks is retired and ignored). All are saved to \
-            ~/.cua-driver/config.json and applied to every cursor at once."
+            ~/.cua-driver/config.json and applied to every cursor at once.\n\n\
+            get_window_state walk defaults: get_window_state.max_elements (1 to \
+            2000) and get_window_state.max_depth (1 to 25) replace the built-in \
+            250 nodes and 25 levels on reads that omit the argument and pass no \
+            query or full_output; default clears them. A per-call argument always \
+            wins. Saved to ~/.cua-driver/config.json and applied to every session \
+            at once."
             .into(),
         input_schema: with_cursor_motion_properties(serde_json::json!({
             "type": "object",
@@ -112,6 +121,14 @@ impl Tool for SetConfigTool {
             Err(message) => return ToolResult::error(message),
         };
 
+        let walk_keys = match cua_driver_core::walk_defaults::apply_config_args(
+            &args,
+            super::get_window_state::WALK_LIMITS,
+        ) {
+            Ok(keys) => keys,
+            Err(message) => return ToolResult::error(message),
+        };
+
         let fast_path = match cua_driver_core::fast_path::wire::apply_config_args(&args) {
             Ok(mode) => mode,
             Err(message) => return ToolResult::error(message),
@@ -165,7 +182,7 @@ impl Tool for SetConfigTool {
                 mode.as_str()
             ));
         }
-        for key in badge_key.into_iter().chain(option_keys) {
+        for key in badge_key.into_iter().chain(option_keys).chain(walk_keys) {
             note.push_str(&format!(" — saved {key} (applies now)"));
         }
         let scope_note = if session_id.is_some() {
@@ -181,6 +198,9 @@ impl Tool for SetConfigTool {
             "version": env!("CARGO_PKG_VERSION"),
             "platform": "macos",
             "max_image_dimension": effective_dim,
+            "get_window_state": cua_driver_core::walk_defaults::config_json(
+                super::get_window_state::WALK_LIMITS,
+            ),
             "fast_path": cua_driver_core::fast_path::wire::config_value(),
         }))
     }

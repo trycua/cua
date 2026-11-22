@@ -373,6 +373,7 @@ pub fn load_driver_config() -> DriverConfig {
             cfg.max_image_dimension = v32;
         }
     }
+    cua_driver_core::walk_defaults::load_active(super::get_window_state::WALK_LIMITS);
     cfg
 }
 

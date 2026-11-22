@@ -301,6 +301,14 @@ const COLD_START_WALK_TIMEOUT_MS: u64 = 2_000;
 /// The AT-SPI walker's own node budget when the caller gives none.
 const LINUX_DEFAULT_MAX_ELEMENTS: usize = 5_000;
 
+/// The AT-SPI walker's own caps, which bound the saved walk defaults. It has
+/// no depth cap.
+pub(crate) const WALK_LIMITS: cua_driver_core::walk_defaults::WalkLimits =
+    cua_driver_core::walk_defaults::WalkLimits {
+        max_elements: LINUX_DEFAULT_MAX_ELEMENTS,
+        max_depth: None,
+    };
+
 fn linux_snapshot_timeout_ms(timeout: Option<&Value>, has_prior_snapshot: bool) -> u64 {
     cua_driver_core::tool_schema::resolve_timeout_ms_with_first_snapshot_grace(
         timeout,
@@ -327,7 +335,9 @@ impl Tool for GetWindowStateTool {
                 both (about twice the size). Set `query` to project the tree to matching rows \
                 plus their ancestor chain while preserving original indices; \
                 `total_element_count` reports the complete snapshot.\n\n\
-                Size: a read is bounded by default (`max_elements` 250 actionable nodes). \
+                Size: a read is bounded by default (`max_elements` 250 actionable nodes, or \
+                the saved `get_window_state.max_elements` from `set_config`; `get_config` \
+                shows it). \
                 When the walk stops at that budget the response says `Tree truncated at \
                 max_elements=…` and `truncated: true`; pass a larger `max_elements`, or \
                 `query` / `max_depth`, to reach the rest. `_note` is omitted unless \
@@ -360,7 +370,8 @@ impl Tool for GetWindowStateTool {
                 thumbnail.\n\n\
                 Optional `max_elements` / `max_depth` bound the AT-SPI walk \
                 (Electron / large web apps produce 10k+ element trees). Markdown and \
-                structured elements are truncated identically. Default: `max_elements` 250.\n\n\
+                structured elements are truncated identically. Default: `max_elements` 250, \
+                or the saved `get_window_state.max_elements` / `get_window_state.max_depth`.\n\n\
                 TIME BUDGET: `timeout_ms` (default 1000) bounds the whole AT-SPI \
                 walk. When omitted, a window's first snapshot gets a 2000 ms \
                 cold-start budget so Chromium/Electron can finish publishing its \
@@ -398,8 +409,8 @@ impl Tool for GetWindowStateTool {
                 "screenshot_out_file":{"type":"string",
                     "description":"When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output carries screenshot_file_path instead."},
                 "query":{"type":"string","description":"Optional case-insensitive substring; `a|b` matches either. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count. A query that matches nothing says `0 of N elements match`."},
-                "max_elements":{"type":"integer","minimum":1,"description":"Cap on total AT-SPI nodes walked. Default 250 (5 000 with full_output:true); the response states when the tree was cut. Raise it to read further into a large window."},
-                "max_depth":{"type":"integer","minimum":1,"description":"Cap on the AT-SPI tree walk depth. Omit for the default (uncapped). Lower for deeply nested apps."},
+                "max_elements":{"type":"integer","minimum":1,"description":"Cap on total AT-SPI nodes walked. Default 250, or the saved get_window_state.max_elements (5 000 with query or full_output:true); the response states when the tree was cut. Raise it to read further into a large window."},
+                "max_depth":{"type":"integer","minimum":1,"description":"Cap on the AT-SPI tree walk depth. Omit for the default (uncapped, or the saved get_window_state.max_depth on a read without query or full_output). Lower for deeply nested apps."},
                 "timeout_ms": cua_driver_core::tool_schema::timeout_ms_schema(),
                 "max_dimension":{"type":"integer","minimum":1,"description":"Legacy optional cap on the returned screenshot's long edge. Applied on top of the configured max_image_dimension ceiling when max_image_dimension is omitted."},
                 "max_image_dimension":{"type":"integer","minimum":0,"description":"Per-call long-edge override. This value wins over configured and legacy limits; 0 returns native-resolution PNG bytes. Omit to preserve configured behavior."}
@@ -525,21 +536,18 @@ impl Tool for GetWindowStateTool {
                 s
             }
         });
-        // Optional caps — when omitted, the AT-SPI walker uses its built-in
-        // defaults (#22865).
-        let max_elements = view.max_elements(
-            &args,
-            LINUX_DEFAULT_MAX_ELEMENTS,
-            display_only
-                || args
-                    .get("_observation_only")
-                    .and_then(|value| value.as_bool())
-                    == Some(true),
-        );
-        let max_depth = args
-            .get("max_depth")
-            .and_then(|v| v.as_u64())
-            .map(|v| v.max(1) as usize);
+        // Optional caps — when omitted, the saved defaults or the AT-SPI
+        // walker's built-in ones apply (#22865). `display_only` is the public
+        // form of the internal observation-only read: pixels for a preview,
+        // with no snapshot or capture change.
+        let observation_only = display_only
+            || args
+                .get("_observation_only")
+                .and_then(|value| value.as_bool())
+                == Some(true);
+        let walk_defaults = cua_driver_core::walk_defaults::active();
+        let max_elements = view.max_elements(&args, WALK_LIMITS, walk_defaults, observation_only);
+        let max_depth = view.max_depth(&args, WALK_LIMITS, walk_defaults, observation_only);
         let timeout_ms = linux_snapshot_timeout_ms(
             args.get("timeout_ms"),
             self.state
@@ -610,13 +618,6 @@ impl Tool for GetWindowStateTool {
                  screenshot_out_file to force a capture.",
             );
         }
-        // `display_only` is the public form of the internal observation-only
-        // read: pixels for a preview, with no snapshot or capture change.
-        let observation_only = display_only
-            || args
-                .get("_observation_only")
-                .and_then(|value| value.as_bool())
-                == Some(true);
         let state = self.state.clone();
         let state_for_capture = state.clone();
         let query_for_walk = query.clone();

@@ -1341,7 +1341,10 @@ mod tests {
         );
         assert_eq!(o.max_elements(&json!({}), MAC, NONE_SAVED, true), 2000);
         let full = opts(json!({"full_output": true}));
-        assert_eq!(full.max_elements(&json!({}), LINUX, NONE_SAVED, false), 5000);
+        assert_eq!(
+            full.max_elements(&json!({}), LINUX, NONE_SAVED, false),
+            5000
+        );
     }
 
     /// A saved default replaces the built-in one on a plain read and nowhere

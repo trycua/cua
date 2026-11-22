@@ -195,8 +195,8 @@ pub fn apply_config_args(args: &Value, limits: WalkLimits) -> Result<Vec<String>
     if !KEYS.iter().any(|key| args.get(*key).is_some()) {
         return Ok(Vec::new());
     }
-    let path = crate::config_file::default_config_path()
-        .ok_or_else(|| "$HOME is not set".to_string())?;
+    let path =
+        crate::config_file::default_config_path().ok_or_else(|| "$HOME is not set".to_string())?;
     let (defaults, keys) = set_at(&path, args, limits)?;
     set_active(defaults);
     Ok(keys
@@ -317,7 +317,12 @@ mod tests {
     fn default_and_null_clear_the_saved_value() {
         let dir = tempfile::tempdir().unwrap();
         let path = config_path(&dir);
-        set_at(&path, &json!({MAX_ELEMENTS_KEY: 800, MAX_DEPTH_KEY: 12}), MAC).unwrap();
+        set_at(
+            &path,
+            &json!({MAX_ELEMENTS_KEY: 800, MAX_DEPTH_KEY: 12}),
+            MAC,
+        )
+        .unwrap();
 
         let (saved, _) = set_at(&path, &json!({MAX_ELEMENTS_KEY: "default"}), MAC).unwrap();
         assert_eq!(saved.max_elements, None);
@@ -387,7 +392,12 @@ mod tests {
     fn a_saved_value_out_of_range_for_this_platform_reads_as_unset() {
         let dir = tempfile::tempdir().unwrap();
         let path = config_path(&dir);
-        set_at(&path, &json!({MAX_ELEMENTS_KEY: 4000, MAX_DEPTH_KEY: 40}), LINUX).unwrap();
+        set_at(
+            &path,
+            &json!({MAX_ELEMENTS_KEY: 4000, MAX_DEPTH_KEY: 40}),
+            LINUX,
+        )
+        .unwrap();
         assert_eq!(load_from(&path, MAC), WalkDefaults::default());
         std::fs::write(&path, r#"{"get_window_state": {"max_elements": "x"}}"#).unwrap();
         assert_eq!(load_from(&path, MAC), WalkDefaults::default());

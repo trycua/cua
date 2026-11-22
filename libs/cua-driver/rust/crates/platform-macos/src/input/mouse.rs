@@ -612,6 +612,16 @@ fn window_location_is_window_local() -> bool {
     })
 }
 
+/// Settle after the route's stamped `mouseMoved`, so the target updates its
+/// cursor state before the primer (Swift `MouseInput.swift`, v0.1: "one
+/// frame+ after mouseMoved"). Not bisected.
+const CHROMIUM_MOVE_SETTLE_MS: u64 = 15;
+/// Gap between the off-screen primer and the target pair, so Chromium sees
+/// two gestures rather than one run-on (Swift `MouseInput.swift`, v0.1:
+/// "≥1 frame"). The bound is one frame; this keeps Swift's margin, since it
+/// was never bisected on Chrome, Electron and GPUI.
+const CHROMIUM_PRIMER_GAP_MS: u64 = 100;
+
 fn chromium_click_route_plan(
     screen_x: f64,
     screen_y: f64,
@@ -637,7 +647,7 @@ fn chromium_click_route_plan(
             phase: 2,
             button_number: 0,
             subtype: 3,
-            delay_after_ms: 15,
+            delay_after_ms: CHROMIUM_MOVE_SETTLE_MS,
         },
         ChromiumClickRouteStep {
             kind: ChromiumClickEventKind::Down,
@@ -659,7 +669,7 @@ fn chromium_click_route_plan(
             phase: 2,
             button_number: 0,
             subtype: 3,
-            delay_after_ms: 100,
+            delay_after_ms: CHROMIUM_PRIMER_GAP_MS,
         },
     ];
 

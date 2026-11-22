@@ -82,7 +82,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["from_x", "from_y", "to_x", "to_y"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "pid": { "type": "integer", "description": "Target process ID." },
                 "window_id": {
                     "type": "integer",
@@ -318,8 +318,14 @@ impl Tool for DragTool {
         // mouse events (LibreOffice VCL) cannot take a background gesture;
         // refuse before any activation or dispatch.
         if !fg {
-            if let Err(refusal) =
-                super::pixel_route::resolve(pid, false, window_id, "mouse_drag").await
+            if let Err(refusal) = super::pixel_route::resolve(
+                pid,
+                false,
+                window_id,
+                "mouse_drag",
+                super::pixel_route::PointerGesture::Other,
+            )
+            .await
             {
                 return refusal;
             }
@@ -583,7 +589,7 @@ impl Tool for DragTool {
         match result {
             Ok(Ok(BackgroundDrag::SessionOpen))
                 if cua_driver_core::delivery::brief_foreground_allowed()
-                    && !cua_driver_core::delivery::background_requested_explicitly(&args) =>
+                    && delivery_mode.allows_escalation() =>
             {
                 self.brief_foreground_drag(&args, pid, wid, prior_front)
                     .await

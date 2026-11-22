@@ -96,7 +96,10 @@ through the app's scripting interface instead, still in the background, and the
 result says so; TextEdit disables Save whenever it is behind the user's window.
 A Save is verified on disk. A background `hotkey` whose combo is a menu item's
 key equivalent (⌘S, ⌘W, ⌘C, ...) in a native app takes the same route, because
-background key events never reach an app's menus; no keys are sent. By default,
+background key events never reach an app's menus; no keys are sent. With `x`,`y`
+or an element in web content, the field is focused by a pixel focus click
+first, so a background ⌘V in a WebKit app (Tauri, WKWebView) pastes into it
+through Edit > Paste. By default,
 macOS may prompt for Automation consent on first use; unanswered prompts can
 recur. Denied consent refuses the scripting action.
 
@@ -410,16 +413,16 @@ Use this only when both hold:
 - You can reach that host's screen through its own VNC or Screen Sharing
   server, with credentials the owner gave you.
 
-If either is missing, use (c). Cua Driver cannot approve its own prompts, so
-the click has to come from outside the host, over VNC.
+If either is missing, use (c). Cua Driver cannot approve its own prompts with
+its native input, so the click goes through the host's VNC server instead.
+`cua-driver permissions vnc` is that VNC client. It needs no permissions of its
+own and runs on macOS, Linux or Windows, on any computer that can reach the
+host's VNC port.
 
-**1. Install the VNC client** in a throwaway virtual environment, and make a
-private folder for screenshots and the approval log:
+**1. Make a private folder** for screenshots:
 
 ```bash
-python3 -m venv ~/.cache/cua-vnc
-~/.cache/cua-vnc/bin/pip install vncdotool
-mkdir -p -m 700 ~/.cache/cua-vnc/shots
+mkdir -p -m 700 ~/.cache/cua-driver/vnc-shots
 ```
 
 **2. Find the endpoint and credentials without printing them.**
@@ -431,95 +434,44 @@ Parse it straight into the environment:
 eval "$(lume get "$VM" --format json | python3 -c '
 import json, shlex, sys, urllib.parse as u
 p = u.urlparse(json.load(sys.stdin)[0]["vncUrl"])
-print("export CUA_VNC_SERVER=" + shlex.quote(f"{p.hostname}::{p.port}"))
+print("export CUA_VNC_SERVER=" + shlex.quote(f"{p.hostname}:{p.port}"))
 print("export CUA_VNC_PASSWORD=" + shlex.quote(p.password or ""))')"
 ```
 
 For a Mac with Screen Sharing on (System Settings, General, Sharing):
-set `CUA_VNC_SERVER=<host>::5900`, plus `CUA_VNC_USER` and `CUA_VNC_PASSWORD`
-from the owner's secret store. These are a macOS account name and its password,
-or only a VNC password where the owner enabled "VNC viewers may control screen
-with password".
+set `CUA_VNC_SERVER=<host>` (port 5900 by default), plus `CUA_VNC_USER` and
+`CUA_VNC_PASSWORD` from the owner's secret store. These are a macOS account
+name and its password, or only a VNC password where the owner enabled "VNC
+viewers may control screen with password".
 
-Never echo, log, paste or commit these values, and never put the password in a
-command line, a PR, a comment or a report.
+The command reads credentials only from these variables. Never echo, log,
+paste or commit them, and never put the password in a command line, a PR, a
+comment or a report.
 
-**3. Save this helper** as `~/.cache/cua-vnc/cua_vnc.py`. `shot` saves a
-screenshot, `click` clicks and logs a labelled approval, and `type-env` types a
-secret from an environment variable, then presses Return (read the
-[guardrails](#guardrails-for-approving-prompts) before using it). Run it as
-`~/.cache/cua-vnc/bin/python -I ~/.cache/cua-vnc/cua_vnc.py`, written
-`cua_vnc.py` below.
+VNC encrypts only the account credentials, not the session: screenshots and
+typed text cross the network in the clear. For a Mac that is not this one,
+connect through an SSH tunnel (`ssh -L 5901:127.0.0.1:5900 <host>`, then
+`CUA_VNC_SERVER=127.0.0.1:5901`) or over a network you trust, and never use
+`type-env` over an untrusted network.
 
-```python
-#!/usr/bin/env python3
-"""Screenshot and click on a host through its VNC server.
+On macOS 15 and later, Local Network privacy can block a connection to
+another computer on the local network: it fails with "No route to host" until
+the app you run the command from is allowed under Privacy & Security, Local
+Network. Connections to `127.0.0.1` are not affected.
 
-Environment: CUA_VNC_SERVER (host::port), CUA_VNC_PASSWORD, optional CUA_VNC_USER
-and CUA_VNC_LOG (approval log, default ~/.cache/cua-vnc/approvals.log).
-
-Usage:  cua_vnc.py shot OUT.png
-        cua_vnc.py click X Y "what this click approves"
-        cua_vnc.py type-env NAME     # types $NAME, then Return
-
-X and Y are pixels in the screenshot (the VNC framebuffer).
-"""
-import datetime
-import os
-import sys
-
-from vncdotool import api
-
-OPERANDS = {"shot": 1, "click": 3, "type-env": 1}
-
-
-def record(entry):
-    path = os.path.expanduser(os.environ.get("CUA_VNC_LOG", "~/.cache/cua-vnc/approvals.log"))
-    stamp = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
-    with open(path, "a") as out:
-        out.write(f"{stamp} {entry}\n")
-
-
-def main(argv):
-    cmd = argv[1] if len(argv) > 1 else ""
-    if cmd not in OPERANDS or len(argv) - 2 != OPERANDS[cmd]:
-        sys.exit(__doc__)
-    with api.connect(
-        os.environ["CUA_VNC_SERVER"],
-        password=os.environ.get("CUA_VNC_PASSWORD"),
-        username=os.environ.get("CUA_VNC_USER"),
-        timeout=30,
-    ) as client:
-        if cmd == "shot":
-            client.captureScreen(argv[2])
-        elif cmd == "click":
-            x, y, label = int(argv[2]), int(argv[3]), argv[4]
-            client.mouseMove(x, y)
-            client.pause(0.3)
-            client.mousePress(1)
-            record(f"click {x},{y} {label}")
-        else:
-            for char in os.environ[argv[2]]:
-                client.keyPress(char)
-            client.keyPress("enter")
-            record(f"typed ${argv[2]} (value not logged)")
-    api.shutdown()
-
-
-if __name__ == "__main__":
-    main(sys.argv)
-```
-
-**4. Raise the prompts.** In a shell on the host, start the daemon and run
+**3. Raise the prompts.** In a shell on the host, start the daemon and run
 `cua-driver permissions grant` (see [Prerequisites](#prerequisites-macos)). It
 launches the CuaDriver app, so CuaDriver's permissions window and the macOS
-prompts appear on that host's desktop. In a VM, prefer a Terminal in the VM
-display over SSH for this first run.
+prompts appear on that host's desktop. It waits up to 3 minutes for the
+switches, so keep it running and approve from a second shell. In a VM, prefer
+a Terminal in the VM display over SSH for this first run.
 
-**5. Approve one prompt at a time.** For each prompt:
+**4. Approve one prompt at a time.** For each prompt:
 
-1. Take a screenshot: `cua_vnc.py shot ~/.cache/cua-vnc/shots/1.png`. It shows
-   the host's whole screen, so keep it in that folder and out of public places.
+1. Take a screenshot:
+   `cua-driver permissions vnc shot ~/.cache/cua-driver/vnc-shots/1.png`. It
+   shows the host's whole screen, so it is written readable only by you; keep
+   it in that folder and out of public places.
 2. Read it. Continue only if the dialog names **CuaDriver** (Cua Driver) as the
    app asking, and asks for Accessibility, Screen & System Audio Recording,
    Automation of System Events, or direct screen capture. If it names another
@@ -527,18 +479,25 @@ display over SSH for this first run.
 3. Click the button that grants access: **Allow**, or **Open System Settings**
    and then the **CuaDriver** row's switch under Accessibility and under
    Screen & System Audio Recording (add `/Applications/CuaDriver.app` with
-   **+** if the row is missing). Click through the helper so the approval is
-   logged: `cua_vnc.py click X Y "CuaDriver: Accessibility"`.
+   **+** if the row is missing). X and Y are pixels in the screenshot. `--label`
+   is required and goes to the approval log:
+   `cua-driver permissions vnc click X Y --label "CuaDriver: Accessibility"`.
 4. Take another screenshot and confirm that the dialog is gone or the switch is on.
 5. If macOS offers **Quit & Reopen** for CuaDriver, accept it, then restart the
    daemon (`cua-driver permissions grant`).
 6. If macOS asks for an administrator password or Touch ID, that credential
    belongs to the owner: stop and ask them to enter it. Only when they gave you
    a disposable VM's password for this task, put it in an environment variable
-   (from their secret store) and run `cua_vnc.py type-env NAME`.
+   (from their secret store) and run `cua-driver permissions vnc type-env NAME`,
+   which types it and presses Return without printing or logging it.
 
-**6. Verify and report.** Run `cua-driver permissions status --json`. Expect
-`accessibility: true` and `screen_recording: true`. Finish by reporting the
+Every click and typed variable is appended to `$CUA_VNC_LOG`, by default
+`~/.cache/cua-driver/vnc-approvals.log`, with the time and the server, before
+it is sent. If the log cannot be written, the command sends nothing.
+
+**5. Verify and report.** Run `cua-driver permissions status --json`. Expect
+`accessibility: true` and `screen_recording: true`. From then on Cua Driver
+uses its own input and capture; it needs no VNC. Finish by reporting the
 lines of the approval log: which prompts you approved, when, and on which host.
 
 #### (c) Otherwise: ask the user to click
@@ -659,6 +618,22 @@ key focus back within a few tens of milliseconds. Prefer routes that do
 not ask the app to come forward: `set_value` on the address field or
 `browser_navigate` instead of `cmd+L`, and `AXOpen` through
 `double_click` on an element instead of a pixel double-click.
+
+### Work off the user's screen: `agent_display`
+
+`agent_display({action:"create", width, height})` adds a virtual display
+and returns its `display_id`, `x`, `y`, `width` and `height`. Move a
+window there with `set_window_frame` inside that rectangle, so the app,
+and any window it brings forward, stays off the user's screen. The
+calling session owns the display: `agent_display({action:"remove",
+display_id})`, `end_session`, the idle timeout or the daemon exiting
+removes it, and macOS moves its windows back to the main screen.
+`{action:"list"}` returns the displays this daemon created. Screenshots of
+a virtual display are 1:1 pixels, not Retina. The tool uses private
+CoreGraphics classes and returns an error, rather than a display, on a
+macOS build that lacks them. It is macOS only: Linux and Windows do not
+register `agent_display`.
+
 ### Hover in the background
 
 macOS apps track hover and show tooltips (help tags) from the real

@@ -445,7 +445,7 @@ async fn real_proxies_recover_from_control_loss_without_waiting_for_stdin() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn idle_reclaimed_unnamed_session_is_recreated_through_the_daemon() {
+async fn idle_reclaimed_sessions_are_recreated_through_the_daemon() {
     #[cfg(unix)]
     let directory = tempfile::Builder::new()
         .prefix("cua-idle-")
@@ -494,6 +494,10 @@ async fn idle_reclaimed_unnamed_session_is_recreated_through_the_daemon() {
     }
 
     client.call("get_config", json!({}));
+    client.call("get_config", json!({"session": "named-idle"}));
+
+    // Only end_session makes the label refuse, with its working recovery.
+    client.call("end_session", json!({"session": "named-idle"}));
     let named = client.request(
         "tools/call",
         json!({"name": "get_config", "arguments": {"session": "named-idle"}}),

@@ -29,9 +29,11 @@ with this message:
 Cua Cloud has ended; use a local sandbox or your own computer. See https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended
 ```
 
-`Cua.fleet()`, `cua fleet`, `cua pools`, `--pool`, `FLEETS_TOKEN`, cloud image
+`Cua.fleet()`, `cua fleet`, `cua pools`, the hosted `--pool` flag, `FLEETS_TOKEN`, cloud image
 listings and cloud suspend, resume and extend-lease are removed from the SDKs and
-the `cua` CLI.
+the `cua` CLI. The local `cua sb create --pool NAME` flag and the `cua sb pool`
+commands are not part of Cua Cloud and still work. See the
+[sandbox reference](/cua-cli/reference/cli/sandboxes).
 
 Replace `on="cloud"` with a local runtime or your own cloud. Sidecars,
 services, secrets and images work the same way there:

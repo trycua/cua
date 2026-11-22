@@ -161,8 +161,9 @@ pub struct CreateArgs {
     #[arg(long)]
     memory: Option<String>,
     /// Guest network: `default` (outbound network, like a Docker container)
-    /// or `none` (no egress; published ports still work). `none` needs a
-    /// local QEMU VM; containers and Lume reject it.
+    /// or `none` (no egress; published ports still work). `none` runs on a
+    /// local QEMU VM, and on a container under the default Secure network
+    /// mode; containers reject it in legacy mode, and Lume rejects it.
     #[arg(long, value_parser = ["default", "none"])]
     network: Option<String>,
     /// Disk size (accepted; the image decides today).
@@ -3160,7 +3161,7 @@ async fn space_for(cua: &Cua, name: &str) -> Result<Option<Arc<cua_sdk::Space>>,
 }
 
 /// The remembered spacesd token of a direct sandbox (saved under its name
-/// and its `direct:<host:port>` ref), or `CUA_ENV_TOKEN`.
+/// and its `direct:<host:port>` ref), `CUA_ENV_TOKEN`, or the local host's token.
 fn direct_token(info: &SandboxInfo) -> Option<String> {
     let tokens = load_tokens();
     [&info.id, &info.name]
@@ -3179,6 +3180,20 @@ fn direct_token(info: &SandboxInfo) -> Option<String> {
             std::env::var("CUA_ENV_TOKEN")
                 .ok()
                 .filter(|t| !t.is_empty())
+        })
+        .or_else(|| {
+            // The host token belongs only to this machine's configured
+            // listener, never a custom `CUA_HOST_ENV_URL` or another sandbox.
+            if info.name != "host"
+                || info.endpoints.get("env") != Some(&crate::do_cmd::default_host_env_url())
+                || !crate::do_cmd::consent_path().exists()
+            {
+                return None;
+            }
+            std::fs::read_to_string(cua_host::HostPaths::new(&util::cua_home()).env_token())
+                .ok()
+                .map(|token| token.trim().to_string())
+                .filter(|token| !token.is_empty())
         })
 }
 

@@ -16,6 +16,17 @@ pub struct WindowBounds {
     pub height: f64,
 }
 
+/// The area two window bounds share; zero when they only touch or are apart.
+pub(crate) fn overlap_area(left: &WindowBounds, right: &WindowBounds) -> f64 {
+    let width = (left.x + left.width).min(right.x + right.width) - left.x.max(right.x);
+    let height = (left.y + left.height).min(right.y + right.height) - left.y.max(right.y);
+    if width > 0.0 && height > 0.0 {
+        width * height
+    } else {
+        0.0
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowInfo {
     pub window_id: u32,
@@ -24,7 +35,7 @@ pub struct WindowInfo {
     pub title: String,
     pub bounds: WindowBounds,
     pub layer: i32,
-    pub z_index: usize,
+    pub z_index: Option<usize>,
     pub is_on_screen: bool,
     /// Active Space on the display WindowServer associates with this window.
     /// This can differ between windows when displays use independent Spaces.
@@ -500,7 +511,7 @@ fn enumerate_windows(
             title,
             bounds,
             layer,
-            z_index: 0,
+            z_index: None,
             is_on_screen,
             current_space_id: None,
             on_current_space: None,
@@ -508,6 +519,12 @@ fn enumerate_windows(
         });
     }
 
+    let live_front_to_back = if options & kCGWindowListOptionOnScreenOnly == 0 {
+        on_screen_window_ids(options)
+    } else {
+        results.iter().map(|w| w.window_id).collect()
+    };
+    apply_live_z_order(&mut results, &live_front_to_back);
     normalize_z_indices(&mut results);
 
     if let Some(query) = &space_query {
@@ -526,13 +543,54 @@ fn enumerate_windows(
     }
 }
 
-/// Number a front-to-back window list with the shared `z_index` contract.
-/// Run it after every filter so the returned values stay contiguous.
+/// Window ids from one on-screen pass, front to back. Unlike the all-windows
+/// list, this order follows a raise (#3471).
+fn on_screen_window_ids(options: u32) -> Vec<u32> {
+    enumerate_windows(
+        options | kCGWindowListOptionOnScreenOnly,
+        LayerFilter::AnyLayer,
+        None,
+        false,
+    )
+    .windows
+    .into_iter()
+    .map(|window| window.window_id)
+    .collect()
+}
+
+/// Rank windows by their place in the live on-screen order. A window missing
+/// from it is off-screen, so its stacking is unknown and `z_index` is null.
+fn apply_live_z_order(windows: &mut [WindowInfo], on_screen_front_to_back: &[u32]) {
+    let total = on_screen_front_to_back.len();
+    let positions: std::collections::HashMap<u32, usize> = on_screen_front_to_back
+        .iter()
+        .enumerate()
+        .map(|(position, &window_id)| (window_id, position))
+        .collect();
+    for window in windows {
+        window.z_index = positions.get(&window.window_id).map(|&position| {
+            cua_driver_core::window_target::z_index_from_front_to_back(total, position)
+        });
+    }
+}
+
+/// Renumber the windows with a known `z_index` to the shared contract:
+/// zero-based and contiguous, highest in front, relative order kept. Null
+/// stays null. Run it after every filter so the returned values stay
+/// contiguous.
 pub(crate) fn normalize_z_indices(windows: &mut [WindowInfo]) {
-    let total = windows.len();
-    for (position, window) in windows.iter_mut().enumerate() {
-        window.z_index =
-            cua_driver_core::window_target::z_index_from_front_to_back(total, position);
+    let mut ranked: Vec<(usize, usize)> = windows
+        .iter()
+        .enumerate()
+        .filter_map(|(slot, window)| Some((window.z_index?, slot)))
+        .collect();
+    // Highest first; equal values keep array order, which is front to back.
+    ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    let total = ranked.len();
+    for (position, (_, slot)) in ranked.into_iter().enumerate() {
+        windows[slot].z_index = Some(cua_driver_core::window_target::z_index_from_front_to_back(
+            total, position,
+        ));
     }
 }
 
@@ -977,7 +1035,7 @@ mod tests {
                 height: 500.,
             },
             layer: 0,
-            z_index: 1,
+            z_index: Some(1),
             is_on_screen: true,
             current_space_id: None,
             on_current_space: None,
@@ -1090,6 +1148,41 @@ mod tests {
             surface_over_in(vec![transparent, helper, chrome_main()], 42, 10, 150., 80.),
             None
         );
+    }
+
+    #[test]
+    fn z_index_follows_on_screen_order_when_all_windows_order_disagrees() {
+        let mut windows = [30, 20, 40, 10].map(|id| window(id, 800, "TextEdit"));
+        apply_live_z_order(&mut windows, &[10, 20]);
+        let z: Vec<_> = windows.iter().map(|w| (w.window_id, w.z_index)).collect();
+        assert_eq!(z, [(30, None), (20, Some(0)), (40, None), (10, Some(1))]);
+    }
+
+    #[test]
+    fn normalizing_keeps_null_and_renumbers_the_rest_contiguously() {
+        let mut windows = [1, 2, 3, 4].map(|id| window(id, 800, "TextEdit"));
+        for (window, z) in windows.iter_mut().zip([Some(5), None, Some(2), Some(9)]) {
+            window.z_index = z;
+        }
+        normalize_z_indices(&mut windows);
+        assert_eq!(
+            windows.map(|w| w.z_index),
+            [Some(1), None, Some(0), Some(2)]
+        );
+    }
+
+    #[test]
+    fn app_with_no_on_screen_windows_has_no_z_index() {
+        let mut windows = [5, 6].map(|id| window(id, 900, "TextEdit"));
+        apply_live_z_order(&mut windows, &[1, 2]);
+        assert!(windows.iter().all(|w| w.z_index.is_none()));
+    }
+
+    #[test]
+    fn on_screen_enumeration_keeps_its_own_order() {
+        let mut windows = [7, 3, 5].map(|id| window(id, 800, "TextEdit"));
+        apply_live_z_order(&mut windows, &[7, 3, 5]);
+        assert_eq!(windows.map(|w| w.z_index), [Some(2), Some(1), Some(0)]);
     }
 
     #[test]

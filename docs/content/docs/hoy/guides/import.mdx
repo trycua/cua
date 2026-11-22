@@ -1,0 +1,64 @@
+---
+title: Import VMs from Tart, UTM and Lume
+description: 'Bring a macOS VM from Tart, UTM or Lume into Hoy with hoy import: an instant APFS clone, a new identity, and the source left untouched.'
+---
+
+If you already run macOS VMs in Tart, Lume or UTM, you do not need to rebuild
+them to try Hoy.
+
+```bash skip="no-runner"
+hoy import tart my-vm
+hoy import lume my-vm
+hoy import utm ~/path/to/my-vm.utm
+```
+
+Stop the source VM first. Hoy reads the source's files directly, so none of the
+three tools needs to be installed or running.
+
+## What it does
+
+- The disk is an APFS clone, so it is instant and uses no extra space until the
+  guest writes.
+- The source is never changed.
+- The VM gets a new MAC address and machine identity. With `--move` it keeps the
+  source's instead.
+- No guest is booted.
+
+Where Hoy looks:
+
+| Tool | Default location |
+|---|---|
+| Tart | `~/.tart/vms/<name>` (or `$TART_HOME/vms/<name>`) |
+| Lume | `~/.lume/<name>` |
+| UTM | A `.utm` bundle, Apple backend only |
+
+You can pass a name or a path. Saved RAM state is not imported, so the imported
+VM cold-boots.
+
+## Flags
+
+| Flag | Meaning |
+|---|---|
+| `--name VM` | The name of the new VM. |
+| `--engine hoy-native` | The engine. This is the default. |
+| `--move` | Keep the source's machine identity. |
+| `--force` | Import even if the source looks like it is running. |
+| `--cpu N`, `--memory 8G`, `--disk 150G` | Override the source's resources. |
+| `--macos-guest 26\|27` | The guest macOS version. |
+| `--ssh-user U`, `--ssh-key PATH` | The ssh user and key `hoy ssh` and `hoy exec` use. |
+| `--vnc` | Give the VM a VNC console. |
+
+Only macOS guests import. Linux guests and UTM's QEMU backend are refused. A
+disk in Apple Sparse Image Format (Tart `diskFormat: asif`, UTM `.asif`) is not
+a raw disk, and Hoy's own engine reads raw disks only, so such a source cannot be
+imported.
+
+## Check the result
+
+```bash skip="no-runner"
+hoy inspect my-vm
+hoy start my-vm --wait ready
+```
+
+A macOS VM counts toward the [two-VM limit](/hoy/concepts/two-vm-limit) like any
+other once it runs.

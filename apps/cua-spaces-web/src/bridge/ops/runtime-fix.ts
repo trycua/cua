@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * New Space's runtime fix on Windows: local Spaces run in Docker Desktop,
- * which a clean PC doesn't have. The Electron host says what is missing in
+ * New Space's runtime fix on Windows: local Spaces run in a runtime Cua Spaces
+ * sets up itself on WSL 2, which a clean PC may not have turned on yet. The Electron host says what is missing in
  * `spaces.createOptions` (`local.error`, and `local.fix` for what it can do)
  * and runs the fix in the background; the page reads the options again
  * until the engine answers.
@@ -18,7 +18,7 @@ import type { OpCoverage } from "../coverage";
 import type { RuntimeFixAction } from "../contracts/new-space";
 
 export interface RuntimeFixOps {
-  /** Starts `action` ("install-docker", "start-docker"); it runs on in the host. */
+  /** Starts `action` ("setup-wsl", "open-windows-features"); it runs on in the host. */
   "spaces.fixRuntime": { args: { action: RuntimeFixAction }; result: null };
 }
 
@@ -45,5 +45,5 @@ export function unsupportedRuntimeFixOps(mode: BridgeMode) {
 
 /** Arguments that take it down its usual path (coverage tests). */
 export const RUNTIME_FIX_ARGS = {
-  "spaces.fixRuntime": { action: "start-docker" as RuntimeFixAction },
+  "spaces.fixRuntime": { action: "setup-wsl" as RuntimeFixAction },
 };

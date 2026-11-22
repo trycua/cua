@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.58.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.58.0...cua-driver-rs-v0.58.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep the macOS agent cursor under a window covering its background target ([#8511](https://github.com/trycua/cua/issues/8511)) ([ff020d1](https://github.com/trycua/cua/commit/ff020d192b86e18ed9a90f963103a6a3a9a95bf3)), closes [#3332](https://github.com/trycua/cua/issues/3332)
+
 ## [0.58.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.57.0...cua-driver-rs-v0.58.0) (2026-11-22)
 
 

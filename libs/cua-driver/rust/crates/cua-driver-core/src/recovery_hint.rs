@@ -233,6 +233,17 @@ impl<'a> Ctx<'a> {
 
     /// The `browser_prepare` call that attaches the user's own browser. It
     /// refuses with nothing changed when it cannot attach.
+    /// The `browser_prepare` call a browser refusal names in
+    /// `detail.next_call`, kept with its exact arguments.
+    fn named_prepare_call(&self) -> Option<NextCall> {
+        let call = self.refusal_detail()?.get("next_call")?;
+        let arguments = call.get("arguments")?.as_object()?.clone();
+        (call.get("tool")?.as_str()? == "browser_prepare").then_some(NextCall {
+            tool: "browser_prepare",
+            arguments,
+        })
+    }
+
     fn attach_browser(&self) -> Option<NextCall> {
         let mut arguments = self.window_args()?;
         arguments.insert("strategy".into(), json!({ "kind": "existing_profile" }));
@@ -716,12 +727,20 @@ static RULES: &[Rule] = &[
     Rule {
         codes: &["browser_requires_setup"],
         build: |c| {
-            RecoveryHint::new(
+            match c.named_prepare_call() {
+            Some(named) => RecoveryHint::new(
+                "No browser endpoint is attached to this window yet. Make the browser_prepare call in \
+                 next_call; it attaches, or refuses with nothing changed and says why. Do not switch \
+                 to desktop pointer tools.",
+            )
+            .call(Some(named)),
+            None => RecoveryHint::new(
                 "No browser endpoint is attached to this window yet. Call browser_prepare with this pid \
                  and window_id; it attaches, or refuses with nothing changed and says why. Do not switch \
                  to desktop pointer tools.",
             )
-            .call(c.attach_browser())
+            .call(c.attach_browser()),
+        }
         },
     },
     Rule {
@@ -935,6 +954,18 @@ fn background_unavailable(c: &Ctx) -> RecoveryHint {
 }
 
 fn browser_consent_required(c: &Ctx) -> RecoveryHint {
+    let reason = c
+        .refusal_detail()
+        .and_then(|detail| detail.get("reason"))
+        .and_then(Value::as_str);
+    if c.tool == "browser_prepare" && reason == Some("browser_consent_unanswered") {
+        return RecoveryHint::new(
+            "Nobody answered the browser's \"Allow remote debugging?\" prompt in time, so the driver \
+             closed it. Ask the user to click Allow, then retry browser_prepare once. Meanwhile read \
+             the page with get_window_state.",
+        )
+        .call(c.attach_browser());
+    }
     if c.tool == "browser_prepare" {
         return RecoveryHint::new(
             "Attaching to this browser needs authorization from the user or the host. Retrying will not \
@@ -943,17 +974,7 @@ fn browser_consent_required(c: &Ctx) -> RecoveryHint {
         )
         .call(c.read_window());
     }
-    // A producer that already names the attach call keeps its exact arguments.
-    let named = c
-        .refusal_detail()
-        .and_then(|detail| detail.get("next_call"))
-        .and_then(|call| {
-            let arguments = call.get("arguments")?.as_object()?.clone();
-            (call.get("tool")?.as_str()? == "browser_prepare").then_some(NextCall {
-                tool: "browser_prepare",
-                arguments,
-            })
-        });
+    let named = c.named_prepare_call();
     RecoveryHint::new(
         "Attach to this browser window first: make the browser_prepare call in next_call. It attaches, \
          or refuses with nothing changed and says why. Do not switch to desktop pointer tools; they move \

@@ -52,6 +52,18 @@ explicit `ActionTarget`, and an explicit `InputDeliveryMode`, and returns
 See the [0.8 SDK contract migration](../docs/native-window-sdk-migration.md)
 for the intentional SDK break and unchanged CLI/MCP wire forms.
 
+On macOS, an element's application-defined actions are published in the optional
+`custom_actions` output field as `{name, raw}` records. `name` is the readable
+action label; `raw` is the exact action envelope supplied by the application.
+Either can be passed as `click.action`. Standard AX actions remain in `actions`.
+Windows and Linux do not emit `custom_actions`. This additive element output
+does not change `ActionResult` or the RFC #4009 action-outcome contract.
+
+macOS retains groups and scroll areas whose batched attributes contain a title,
+description, value, or help. Empty layout containers still collapse before the
+action-name request, including containers exposing only actions, so layout-only
+nodes do not acquire an additional AX round trip.
+
 The canonical session-owned cursor slice is shared exactly by MCP and both
 generated SDKs:
 
@@ -110,7 +122,7 @@ Compatibility is tracked separately at each boundary:
 
 | Field | Current | Meaning |
 | --- | --- | --- |
-| `contract_version` | `0.8.0` | Generated manifest and typed SDK shape |
+| `contract_version` | `0.9.0` | Generated manifest and typed SDK shape |
 | `tools_list_schema_version` | `1` | cua-driver `tools/list` extension shape |
 | `capability_version` | `1` | Additive capability-token vocabulary |
 | `mcp_protocol_version` | `2025-06-18` | Legacy `initialize.params.protocolVersion` and loopback HTTP compatibility version; modern stdio negotiation is endpoint-owned |
@@ -138,3 +150,12 @@ SDK loader tests live in `python/tests/test_uniffi_loader.py` and
 deterministically regenerates both UniFFI binding sets, verifies parity against
 the live tool registry, and crosses the real Python and Node FFI loaders into a
 deterministic daemon-socket fixture.
+
+## Runtime conformance witness
+
+The generated manifest and live `tools/list` surface describe advertised
+contract shape. A separate experimental typed
+[`RuntimeWitnessV0`](../docs/runtime-conformance-witness-v0.md) records
+metadata-only evidence that one concrete build/platform actually exercised a
+small read-only probe set. It consumes the existing capability vocabulary and
+output validators; it is not another capability registry.

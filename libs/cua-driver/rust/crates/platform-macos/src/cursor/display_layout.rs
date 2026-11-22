@@ -9,6 +9,7 @@
 //! AppKit window frames use a bottom-left origin. Keeping both frames here
 //! prevents either convention from leaking into cursor state or rendering.
 
+use cursor_overlay::{ScreenFrame, SurfaceGeometry};
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 
 pub(crate) type DisplayId = u32;
@@ -35,6 +36,14 @@ impl DisplayGeometry {
         (
             (self.width * scale).round().max(1.0) as u32,
             (self.height * scale).round().max(1.0) as u32,
+        )
+    }
+
+    /// The overlay surface that covers this display.
+    pub(crate) fn surface_geometry(self) -> SurfaceGeometry {
+        SurfaceGeometry::new(
+            ScreenFrame::new(self.x, self.y, self.width, self.height),
+            self.backing_scale,
         )
     }
 
@@ -178,6 +187,56 @@ mod tests {
             pixel_sizes,
             vec![(1, (2880, 1800)), (2, (1920, 1080)), (3, (1800, 1800))]
         );
+    }
+
+    /// The layout from trycua/cua#4907: a 1728x1117 @2x primary below a
+    /// 5120x1440 @1x display at (-4333, -1440). Each surface must sit at its
+    /// own display's AppKit frame, as `NSScreen.screens` reports it, not at the
+    /// primary's origin with the other display's size.
+    #[test]
+    fn upper_left_mixed_scale_display_keeps_its_own_appkit_frame() {
+        let layout = DisplayLayout {
+            generation: 0,
+            displays: vec![
+                DisplayGeometry {
+                    id: 1,
+                    x: 0.0,
+                    y: 0.0,
+                    width: 1728.0,
+                    height: 1117.0,
+                    backing_scale: 2.0,
+                    is_primary: true,
+                },
+                DisplayGeometry {
+                    id: 2,
+                    x: -4333.0,
+                    y: -1440.0,
+                    width: 5120.0,
+                    height: 1440.0,
+                    backing_scale: 1.0,
+                    is_primary: false,
+                },
+            ],
+        };
+        let primary_height = layout.primary_height().unwrap();
+        let frames = layout
+            .displays
+            .iter()
+            .map(|d| {
+                let f = d.appkit_frame(primary_height);
+                (f.origin.x, f.origin.y, f.size.width, f.size.height)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            frames,
+            vec![
+                (0.0, 0.0, 1728.0, 1117.0),
+                (-4333.0, 1117.0, 5120.0, 1440.0)
+            ]
+        );
+        assert_eq!(layout.display_at(800.0, 500.0).unwrap().id, 1);
+        assert_eq!(layout.display_at(-2000.0, -700.0).unwrap().id, 2);
+        assert_eq!(layout.display_at(700.0, -1.0).unwrap().id, 2);
     }
 
     #[test]

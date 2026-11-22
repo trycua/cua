@@ -135,25 +135,10 @@ impl NodeAttributes {
     /// `element` must be a valid, live `AXUIElementRef` for as long as the
     /// returned value is used.
     pub(crate) unsafe fn read(element: AXUIElementRef) -> Self {
-        let mut values: CFArrayRef = std::ptr::null();
-        let error = ATTRIBUTE_NAMES.with(|names| {
-            AXUIElementCopyMultipleAttributeValues(
-                element,
-                names.as_concrete_TypeRef(),
-                0,
-                &mut values,
-            )
-        });
-        if error == kAXErrorSuccess && !values.is_null() {
-            if CFArrayGetCount(values) == NodeAttr::ALL.len() as isize {
-                return NodeAttributes::Batch(values);
-            }
-            CFRelease(values as CFTypeRef);
-        }
-        if error == AX_ERROR_CANNOT_COMPLETE {
-            NodeAttributes::Unanswered
-        } else {
-            NodeAttributes::Single(element)
+        match ATTRIBUTE_NAMES.with(|names| copy_multiple(element, names)) {
+            Reply::Values(values) => NodeAttributes::Batch(values),
+            Reply::Refused => NodeAttributes::Single(element),
+            Reply::Unanswered => NodeAttributes::Unanswered,
         }
     }
 
@@ -175,11 +160,7 @@ impl NodeAttributes {
         match *self {
             NodeAttributes::Single(element) => copy_string_attr(element, attr.name()),
             NodeAttributes::Unanswered => None,
-            NodeAttributes::Batch(_) => {
-                let value = self.raw(attr)?;
-                (CFGetTypeID(value) == CFString::type_id())
-                    .then(|| CFString::wrap_under_get_rule(value as _).to_string())
-            }
+            NodeAttributes::Batch(_) => string_value(self.raw(attr)?),
         }
     }
 
@@ -306,6 +287,79 @@ impl NodeAttributes {
     }
 }
 
+/// The reply to one `AXUIElementCopyMultipleAttributeValues` request.
+enum Reply {
+    /// One value per requested name, owned by the caller.
+    Values(CFArrayRef),
+    /// The application refused the batch; single reads may still answer.
+    Refused,
+    /// The application did not answer in time; single reads would not either.
+    Unanswered,
+}
+
+unsafe fn copy_multiple(element: AXUIElementRef, names: &CFArray<CFString>) -> Reply {
+    let mut values: CFArrayRef = std::ptr::null();
+    let error = AXUIElementCopyMultipleAttributeValues(
+        element,
+        names.as_concrete_TypeRef(),
+        0,
+        &mut values,
+    );
+    if error == kAXErrorSuccess && !values.is_null() {
+        if CFArrayGetCount(values) == names.len() {
+            return Reply::Values(values);
+        }
+        CFRelease(values as CFTypeRef);
+    }
+    if error == AX_ERROR_CANNOT_COMPLETE {
+        Reply::Unanswered
+    } else {
+        Reply::Refused
+    }
+}
+
+/// [`copy_string_attr`] of one batched slot: a CFString, empty included;
+/// anything else (an AXError value, kCFNull, a number) is `None`.
+unsafe fn string_value(value: CFTypeRef) -> Option<String> {
+    (CFGetTypeID(value) == CFString::type_id())
+        .then(|| CFString::wrap_under_get_rule(value as _).to_string())
+}
+
+unsafe fn string_values<const N: usize>(values: CFArrayRef) -> [Option<String>; N] {
+    std::array::from_fn(|index| {
+        let value = CFArrayGetValueAtIndex(values, index as isize) as CFTypeRef;
+        if value.is_null() {
+            None
+        } else {
+            string_value(value)
+        }
+    })
+}
+
+/// [`copy_string_attr`] of each of `names`, in one round trip instead of one
+/// per name. An application that refuses the batch is read name by name; one
+/// that does not answer in time reads as every attribute missing, as each
+/// single read would after waiting out the same timeout.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
+pub(crate) unsafe fn copy_string_attrs<const N: usize>(
+    element: AXUIElementRef,
+    names: [&str; N],
+) -> [Option<String>; N] {
+    let cf_names = CFArray::from_CFTypes(&names.map(CFString::new));
+    match copy_multiple(element, &cf_names) {
+        Reply::Values(values) => {
+            let strings = string_values(values);
+            CFRelease(values as CFTypeRef);
+            strings
+        }
+        Reply::Refused => names.map(|name| copy_string_attr(element, name)),
+        Reply::Unanswered => std::array::from_fn(|_| None),
+    }
+}
+
 /// Whether an AXError in a batched reply means the read failed, as opposed to
 /// the element having no such attribute or no value for it.
 fn is_failed_read(error: AXError) -> bool {
@@ -396,6 +450,38 @@ mod tests {
         drop(attrs);
         // The reply outlives the drop with exactly the reference we kept.
         assert_eq!(reply.retain_count(), 1);
+    }
+
+    #[test]
+    fn string_slots_read_like_single_string_reads() {
+        use super::super::bindings::*;
+        use core_foundation::{
+            array::CFArray,
+            base::{CFRelease, CFTypeRef, TCFType},
+            number::CFNumber,
+            string::CFString,
+        };
+        let label = CFString::new("Submit");
+        let empty = CFString::new("");
+        let number = CFNumber::from(8);
+        let error = kAXErrorAttributeUnsupported;
+        let unsupported = unsafe { AXValueCreate(5, (&error as *const AXError).cast()) };
+        assert!(!unsupported.is_null());
+        let reply = CFArray::from_copyable(&[
+            label.as_CFTypeRef(),
+            empty.as_CFTypeRef(),
+            unsupported as CFTypeRef,
+            number.as_CFTypeRef(),
+        ]);
+        let strings: [Option<String>; 4] =
+            unsafe { super::string_values(reply.as_concrete_TypeRef()) };
+        unsafe { CFRelease(unsupported as CFTypeRef) };
+        // A present-but-empty label stays distinct from a missing one, and a
+        // non-string value is missing, exactly as `copy_string_attr` reads them.
+        assert_eq!(
+            strings,
+            [Some("Submit".into()), Some(String::new()), None, None]
+        );
     }
 
     #[test]

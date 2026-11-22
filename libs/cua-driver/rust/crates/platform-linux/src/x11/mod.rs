@@ -443,24 +443,30 @@ fn moveresize_window_flags() -> u32 {
 /// if any: the focus usually sits on a child of the client window, so the
 /// ancestors are walked until one of `candidates` is met.
 pub fn focused_window_among(candidates: &[u64]) -> Option<u64> {
-    let (conn, screen_num) = RustConnection::connect(None).ok()?;
+    try_focused_window_among(candidates).ok().flatten()
+}
+
+/// [`focused_window_among`], with a failed read kept apart from a focus that
+/// sits on none of `candidates`.
+pub fn try_focused_window_among(candidates: &[u64]) -> Result<Option<u64>> {
+    let (conn, screen_num) = RustConnection::connect(None)?;
     let root = conn.setup().roots[screen_num].root;
-    let focus = conn.get_input_focus().ok()?.reply().ok()?.focus;
+    let focus = conn.get_input_focus()?.reply()?.focus;
     if focus <= 1 {
-        return None;
+        return Ok(None);
     }
     let mut current = focus;
     for _ in 0..32 {
         if candidates.contains(&u64::from(current)) {
-            return Some(u64::from(current));
+            return Ok(Some(u64::from(current)));
         }
-        let tree = conn.query_tree(current).ok()?.reply().ok()?;
+        let tree = conn.query_tree(current)?.reply()?;
         if tree.parent == 0 || tree.parent == root {
-            return None;
+            return Ok(None);
         }
         current = tree.parent;
     }
-    None
+    Ok(None)
 }
 
 /// `WM_TRANSIENT_FOR` of a toplevel: the window it is a dialog of. `None`

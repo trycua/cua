@@ -247,23 +247,39 @@ fn window_overlays(pid: u32, xid: u64, observe_relations: bool) -> WindowOverlay
         cross_pid.map(|(windows, _)| windows).unwrap_or_default(),
     );
     if observe_relations && listed {
-        let active = crate::x11::active_window();
-        // So does an owner or modality read that failed: an unreadable
-        // `_NET_WM_STATE` must not make a modal dialog look modeless.
-        let owned: anyhow::Result<Vec<_>> = own_windows
+        let visible: Vec<_> = own_windows
             .iter()
             .chain(&cross_pid)
             .filter(|window| window.is_on_screen && window.width > 0 && window.height > 0)
-            .map(|window| {
-                Ok(cua_driver_core::window_inspection::OwnedWindow {
-                    pid: i64::from(window.pid.unwrap_or(pid)),
-                    window_id: window.xid,
-                    owner: crate::x11::try_transient_for(window.xid)?,
-                    modal: crate::x11::try_window_is_modal(window.xid)?,
-                    focused: active == Some(window.xid),
-                })
-            })
             .collect();
+        // The core keyboard focus decides which window takes keys; a window
+        // manager may never publish `_NET_ACTIVE_WINDOW`, so it only fills in
+        // when the focus sits outside these windows. A focus that could not
+        // be read, like an owner or modality read that failed (an unreadable
+        // `_NET_WM_STATE` must not make a modal dialog look modeless), leaves
+        // the relation unobservable.
+        let candidates: Vec<u64> = std::iter::once(xid)
+            .chain(visible.iter().map(|window| window.xid))
+            .collect();
+        let focused = crate::x11::try_focused_window_among(&candidates).map(|focused| {
+            focused.or_else(|| {
+                crate::x11::active_window().filter(|active| candidates.contains(active))
+            })
+        });
+        let owned: anyhow::Result<Vec<_>> = focused.and_then(|focused| {
+            visible
+                .iter()
+                .map(|window| {
+                    Ok(cua_driver_core::window_inspection::OwnedWindow {
+                        pid: i64::from(window.pid.unwrap_or(pid)),
+                        window_id: window.xid,
+                        owner: crate::x11::try_transient_for(window.xid)?,
+                        modal: crate::x11::try_window_is_modal(window.xid)?,
+                        focused: focused == Some(window.xid),
+                    })
+                })
+                .collect()
+        });
         out.related = owned
             .ok()
             .map(|owned| cua_driver_core::window_inspection::related_by_owner_chain(xid, &owned));

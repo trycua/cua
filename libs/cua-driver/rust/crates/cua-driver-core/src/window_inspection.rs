@@ -87,63 +87,93 @@ pub enum WindowOwnership {
     Unowned,
     /// Its owner chain reaches the requested window.
     Target,
+    /// The requested window's own owner chain reaches it: a sheet's parent,
+    /// a dialog's owner. It never blocks the window attached to it.
+    Ancestor,
     /// Attached to some other window of the application.
     OtherWindow,
 }
 
-/// One other window as an owner-chain platform reads it: X11
+/// One top-level window as an owner-chain platform enumerates it: X11
 /// `WM_TRANSIENT_FOR`, Win32 `GW_OWNER`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct OwnedWindow {
-    pub pid: i64,
+pub struct ListedWindow {
     pub window_id: u64,
+    /// The owning process, `None` when it cannot be attributed.
+    pub pid: Option<u32>,
     /// The window it is transient for or owned by.
     pub owner: Option<u64>,
     pub modal: bool,
-    pub focused: bool,
+    /// Mapped and shown. A hidden window is kept as a link of an owner chain
+    /// but is never a surface to act on.
+    pub viewable: bool,
 }
 
 /// Bound on an owner-chain walk; a misbehaving client can create a cycle.
 const MAX_OWNER_CHAIN: usize = 16;
 
-/// Resolve each window's owner chain against `target`: a dialog of a dialog
-/// of the target is still the target's. A chain that leaves `windows` without
-/// reaching the target belongs to another window.
-pub fn related_by_owner_chain(target: u64, windows: &[OwnedWindow]) -> Vec<RelatedWindowFacts> {
-    let owner_of = |id: u64| {
-        windows
-            .iter()
-            .find(|window| window.window_id == id)
-            .and_then(|window| window.owner)
+/// The windows [`interaction_context`] weighs for `target`, owned by `pid`:
+/// every viewable window of `pid`, and every viewable window of another
+/// process whose owner chain reaches one of `pid`'s (a dialog can run in
+/// another process), each with its owner chain resolved against `target`:
+/// a dialog of a dialog of the target is still the target's.
+///
+/// A link outside `windows` (an unmapped or unlisted owner) is read with
+/// `lookup` as `(owner, pid)`. `None`, so the relation is unobservable, when
+/// a link could not be read or a weighed window has no attributable pid.
+pub fn related_by_owner_chain(
+    target: u64,
+    pid: u32,
+    windows: &[ListedWindow],
+    focused: Option<u64>,
+    lookup: impl Fn(u64) -> Option<(Option<u64>, Option<u32>)>,
+) -> InteractionFacts {
+    let read = |id: u64| match windows.iter().find(|window| window.window_id == id) {
+        Some(window) => Some((window.owner, window.pid)),
+        None => lookup(id),
     };
-    windows
+    // The links above `start`'s window, each with its pid.
+    let chain = |from: u64, start: Option<u64>| -> Option<Vec<(u64, Option<u32>)>> {
+        let mut links: Vec<(u64, Option<u32>)> = Vec::new();
+        let mut next = start;
+        while let Some(id) = next {
+            if id == from || links.len() >= MAX_OWNER_CHAIN || links.iter().any(|l| l.0 == id) {
+                break;
+            }
+            let (owner, owner_pid) = read(id)?;
+            links.push((id, owner_pid));
+            next = owner;
+        }
+        Some(links)
+    };
+    let ancestors = chain(target, read(target)?.0)?;
+    let mut related = Vec::new();
+    for window in windows
         .iter()
-        .filter(|window| window.window_id != target)
-        .map(|window| {
-            let mut owner = WindowOwnership::Unowned;
-            let mut next = window.owner;
-            for _ in 0..MAX_OWNER_CHAIN {
-                match next {
-                    None => break,
-                    Some(id) if id == target => {
-                        owner = WindowOwnership::Target;
-                        break;
-                    }
-                    Some(id) => {
-                        owner = WindowOwnership::OtherWindow;
-                        next = owner_of(id).filter(|_| id != window.window_id);
-                    }
-                }
-            }
-            RelatedWindowFacts {
-                pid: window.pid,
-                window_id: window.window_id,
-                owner,
-                modal: window.modal,
-                focused: window.focused,
-            }
-        })
-        .collect()
+        .filter(|window| window.viewable && window.window_id != target)
+    {
+        let links = chain(window.window_id, window.owner)?;
+        if window.pid != Some(pid) && !links.iter().any(|link| link.1 == Some(pid)) {
+            continue;
+        }
+        let owner = if ancestors.iter().any(|link| link.0 == window.window_id) {
+            WindowOwnership::Ancestor
+        } else if links.iter().any(|link| link.0 == target) {
+            WindowOwnership::Target
+        } else if window.owner.is_none() {
+            WindowOwnership::Unowned
+        } else {
+            WindowOwnership::OtherWindow
+        };
+        related.push(RelatedWindowFacts {
+            pid: i64::from(window.pid?),
+            window_id: window.window_id,
+            owner,
+            modal: window.modal,
+            focused: focused == Some(window.window_id),
+        });
+    }
+    Some(related)
 }
 
 /// Which owned windows are modal on Win32, where `DialogBox` and an owned
@@ -158,13 +188,8 @@ pub fn modal_by_disabled_owner(
     target: u64,
     windows: &[(u64, Option<u64>)],
     enabled: impl Fn(u64) -> bool,
+    owner_of: impl Fn(u64) -> Option<u64>,
 ) -> Option<Vec<u64>> {
-    let owner_of = |id: u64| {
-        windows
-            .iter()
-            .find(|(hwnd, _)| *hwnd == id)
-            .and_then(|(_, owner)| *owner)
-    };
     let reaches_target = |mut id: u64| {
         for _ in 0..MAX_OWNER_CHAIN {
             if id == target {
@@ -258,8 +283,9 @@ fn relation(window: &RelatedWindowFacts) -> Option<SurfaceRelation> {
         (WindowOwnership::Target, true, _) => Some(SurfaceRelation::ModalChild),
         (WindowOwnership::Unowned, true, _) => Some(SurfaceRelation::BlocksTarget),
         (WindowOwnership::Target, false, true) => Some(SurfaceRelation::SupersedesTarget),
-        // A modal attached to a sibling blocks only that sibling, and an
-        // ordinary sibling is not this window's business, focused or not.
+        // A modal attached to a sibling blocks only that sibling, an
+        // ordinary sibling is not this window's business, focused or not,
+        // and the window the target is attached to never blocks it.
         _ => None,
     }
 }
@@ -450,40 +476,67 @@ mod tests {
         );
     }
 
-    #[test]
-    fn owner_chains_resolve_nested_dialogs_and_stop_on_cycles() {
-        let owned = |window_id, owner, modal| OwnedWindow {
-            pid: 7,
+    fn listed(window_id: u64, pid: Option<u32>, owner: Option<u64>, modal: bool) -> ListedWindow {
+        ListedWindow {
             window_id,
+            pid,
             owner,
             modal,
-            focused: false,
-        };
+            viewable: true,
+        }
+    }
+
+    /// Owners of windows outside the list: 9 belongs to pid 7, 30 hides the
+    /// target's dialog chain, and 99 cannot be read.
+    fn lookup(id: u64) -> Option<(Option<u64>, Option<u32>)> {
+        match id {
+            9 => Some((None, Some(7))),
+            30 => Some((Some(1), Some(7))),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn owner_chains_resolve_nested_dialogs_and_stop_on_cycles() {
         let windows = [
-            owned(1, None, false),    // the target
-            owned(2, Some(1), false), // its dialog
-            owned(3, Some(2), true),  // a modal dialog of that dialog
-            owned(4, Some(9), true),  // a modal of a window not listed
-            owned(5, Some(6), false), // a cycle that never reaches the target
-            owned(6, Some(5), false),
-            owned(8, None, true), // application-modal
+            listed(1, Some(7), None, false),    // the target
+            listed(2, Some(7), Some(1), false), // its dialog
+            listed(3, Some(7), Some(2), true),  // a modal dialog of that dialog
+            listed(4, Some(7), Some(9), true),  // a modal of a window not listed
+            listed(5, Some(7), Some(6), false), // a cycle that never reaches the target
+            listed(6, Some(7), Some(5), false),
+            listed(8, Some(7), None, true), // application-modal
+            // Another process's modal on the target's dialog, and one on a
+            // hidden dialog of the target.
+            listed(20, Some(8), Some(2), true),
+            listed(21, Some(8), Some(30), true),
+            // An unrelated app's modal.
+            listed(40, Some(9), None, true),
+            // A hidden window is a link, never a surface.
+            ListedWindow {
+                viewable: false,
+                ..listed(41, Some(7), Some(1), true)
+            },
         ];
-        let owners: Vec<(u64, WindowOwnership)> = related_by_owner_chain(1, &windows)
-            .into_iter()
-            .map(|facts| (facts.window_id, facts.owner))
+        let related = related_by_owner_chain(1, 7, &windows, Some(3), lookup).unwrap();
+        let owners: Vec<(u64, i64, WindowOwnership)> = related
+            .iter()
+            .map(|facts| (facts.window_id, facts.pid, facts.owner))
             .collect();
         assert_eq!(
             owners,
             vec![
-                (2, WindowOwnership::Target),
-                (3, WindowOwnership::Target),
-                (4, WindowOwnership::OtherWindow),
-                (5, WindowOwnership::OtherWindow),
-                (6, WindowOwnership::OtherWindow),
-                (8, WindowOwnership::Unowned),
+                (2, 7, WindowOwnership::Target),
+                (3, 7, WindowOwnership::Target),
+                (4, 7, WindowOwnership::OtherWindow),
+                (5, 7, WindowOwnership::OtherWindow),
+                (6, 7, WindowOwnership::OtherWindow),
+                (8, 7, WindowOwnership::Unowned),
+                (20, 8, WindowOwnership::Target),
+                (21, 8, WindowOwnership::Target),
             ]
         );
-        let context = interaction_context(&Some(related_by_owner_chain(1, &windows)));
+        let context = interaction_context(&Some(related));
         let relations: Vec<(u64, &str)> = context["related_surfaces"]
             .as_array()
             .unwrap()
@@ -495,7 +548,66 @@ mod tests {
                 )
             })
             .collect();
-        assert_eq!(relations, vec![(3, "modal_child"), (8, "blocks_target")]);
+        assert_eq!(
+            relations,
+            vec![
+                (3, "modal_child"),
+                (8, "blocks_target"),
+                (20, "modal_child"),
+                (21, "modal_child")
+            ]
+        );
+        assert_eq!(context["next_call"]["arguments"]["window_id"], 3);
+    }
+
+    #[test]
+    fn a_window_the_target_is_attached_to_never_blocks_it() {
+        // Target 2 is a modal dialog of the application-modal window 8.
+        let windows = [
+            listed(8, Some(7), None, true),
+            listed(2, Some(7), Some(8), true),
+        ];
+        let related = related_by_owner_chain(2, 7, &windows, None, lookup).unwrap();
+        assert_eq!(related[0].owner, WindowOwnership::Ancestor);
+        assert_eq!(
+            interaction_context(&Some(related))["status"],
+            "none_observed"
+        );
+        // And from 8, its dialog is the blocker: no loop between the two.
+        let related = related_by_owner_chain(8, 7, &windows, None, lookup).unwrap();
+        assert_eq!(
+            interaction_context(&Some(related))["next_call"]["arguments"]["window_id"],
+            2
+        );
+    }
+
+    #[test]
+    fn an_unreadable_link_or_unattributed_window_is_unobservable() {
+        let unreadable = [
+            listed(1, Some(7), None, false),
+            listed(5, Some(8), Some(99), true),
+        ];
+        assert_eq!(
+            related_by_owner_chain(1, 7, &unreadable, None, lookup),
+            None
+        );
+        let unattributed = [
+            listed(1, Some(7), None, false),
+            listed(5, None, Some(1), true),
+        ];
+        assert_eq!(
+            related_by_owner_chain(1, 7, &unattributed, None, lookup),
+            None
+        );
+    }
+
+    fn owner_in(windows: &[(u64, Option<u64>)]) -> impl Fn(u64) -> Option<u64> + '_ {
+        move |id| {
+            windows
+                .iter()
+                .find(|(hwnd, _)| *hwnd == id)
+                .and_then(|(_, owner)| *owner)
+        }
     }
 
     #[test]
@@ -504,28 +616,34 @@ mod tests {
         // enabled top-level window.
         let windows = [(1, None), (3, Some(1)), (5, None)];
         assert_eq!(
-            modal_by_disabled_owner(1, &windows, |hwnd| hwnd != 1),
+            modal_by_disabled_owner(1, &windows, |hwnd| hwnd != 1, owner_in(&windows)),
             Some(vec![3])
         );
         // An enabled owner's tool window is not modal.
-        assert_eq!(modal_by_disabled_owner(1, &windows, |_| true), Some(vec![]));
+        assert_eq!(
+            modal_by_disabled_owner(1, &windows, |_| true, owner_in(&windows)),
+            Some(vec![])
+        );
     }
 
     #[test]
     fn a_dialog_beside_a_palette_or_an_unseen_blocker_is_unknown() {
         // Disabled owner 1 owns dialog 3 and modeless palette 2.
         let windows = [(1, None), (2, Some(1)), (3, Some(1))];
-        assert_eq!(modal_by_disabled_owner(1, &windows, |hwnd| hwnd != 1), None);
+        assert_eq!(
+            modal_by_disabled_owner(1, &windows, |hwnd| hwnd != 1, owner_in(&windows)),
+            None
+        );
         // A disabled sibling 4 with a dialog and a palette leaves the
         // enabled target 1 unaffected.
         let siblings = [(1, None), (4, None), (5, Some(4)), (6, Some(4))];
         assert_eq!(
-            modal_by_disabled_owner(1, &siblings, |hwnd| hwnd != 4),
+            modal_by_disabled_owner(1, &siblings, |hwnd| hwnd != 4, owner_in(&siblings)),
             Some(vec![])
         );
         // The target is disabled but owns nothing visible.
         assert_eq!(
-            modal_by_disabled_owner(1, &[(1, None)], |hwnd| hwnd != 1),
+            modal_by_disabled_owner(1, &[(1, None)], |hwnd| hwnd != 1, |_| None),
             None
         );
     }

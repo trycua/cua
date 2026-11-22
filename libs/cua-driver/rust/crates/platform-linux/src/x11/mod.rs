@@ -504,6 +504,13 @@ fn read_transient_for(conn: &RustConnection, root: Window, xid: Window) -> Resul
             1,
         )?
         .reply()?;
+    if reply.type_ == x11rb::NONE {
+        return Ok(None);
+    }
+    anyhow::ensure!(
+        reply.type_ == u32::from(AtomEnum::WINDOW) && reply.format == 32,
+        "malformed WM_TRANSIENT_FOR on window {xid}"
+    );
     Ok(reply
         .value32()
         .and_then(|mut owners| owners.next())
@@ -511,109 +518,77 @@ fn read_transient_for(conn: &RustConnection, root: Window, xid: Window) -> Resul
         .map(u64::from))
 }
 
-/// The windows `get_window_state`'s `interaction_context` weighs for `pid`:
-/// every viewable client in `_NET_CLIENT_LIST`, titled or not, that `pid`
-/// owns or whose `WM_TRANSIENT_FOR` chain reaches one it owns (a dialog can
-/// run in another process), with its owner, modality and whether it holds
-/// the keyboard focus. Owners resolve as [`window_belongs_to_pid`] does, so
-/// each window can be addressed by its pid.
+/// The facts behind `get_window_state`'s `interaction_context` for `pid`'s
+/// window `target`, from every client in `_NET_CLIENT_LIST`, titled or not:
+/// its owner, `WM_TRANSIENT_FOR`, modality and whether it holds the keyboard
+/// focus, resolved by `related_by_owner_chain`. Owners resolve as
+/// [`window_belongs_to_pid`] does, so each window can be addressed by its
+/// pid.
 ///
-/// `Err` when a read fails, when a window manager publishes no client list
-/// (without one an untitled dialog cannot be told from a popup), or when a
-/// related window has no attributable owner: each could hide a blocker.
-pub fn try_interaction_windows(
+/// `None` when a read fails or when the window manager publishes no client
+/// list (without one an untitled dialog cannot be told from a popup): each
+/// could hide a blocker.
+pub fn interaction_facts(
     pid: u32,
-) -> Result<Vec<cua_driver_core::window_inspection::OwnedWindow>> {
-    let (conn, screen_num) = RustConnection::connect(None)?;
+    target: u64,
+) -> cua_driver_core::window_inspection::InteractionFacts {
+    let (conn, screen_num) = RustConnection::connect(None).ok()?;
     let root = conn.setup().roots[screen_num].root;
-    let list = get_atom(&conn, "_NET_CLIENT_LIST")?;
+    let windows = client_list_facts(&conn, root).ok()?;
+    let owners = OwnerResolver::new(&conn);
+    let ids: Vec<u64> = windows
+        .iter()
+        .filter(|window| window.viewable)
+        .map(|window| window.window_id)
+        .collect();
+    // The core keyboard focus decides which window takes keys; a window
+    // manager need not publish `_NET_ACTIVE_WINDOW`, so it only fills in
+    // when the focus sits on no client.
+    let focused = match read_focused_window_among(&conn, root, &ids).ok()? {
+        Some(window) => Some(window),
+        None => active_window().filter(|active| ids.contains(active)),
+    };
+    cua_driver_core::window_inspection::related_by_owner_chain(
+        target,
+        pid,
+        &windows,
+        focused,
+        |id| {
+            let window = u32::try_from(id).ok()?;
+            let owner = read_transient_for(&conn, root, window).ok()?;
+            Some((owner, owners.owner_pid(window)))
+        },
+    )
+}
+
+/// Every client in `_NET_CLIENT_LIST`, mapped or not, with its owner pid,
+/// `WM_TRANSIENT_FOR` and modality.
+fn client_list_facts(
+    conn: &RustConnection,
+    root: Window,
+) -> Result<Vec<cua_driver_core::window_inspection::ListedWindow>> {
+    let list = get_atom(conn, "_NET_CLIENT_LIST")?;
     let reply = conn
         .get_property(false, root, list, AtomEnum::WINDOW, 0, u32::MAX)?
         .reply()?;
     anyhow::ensure!(
-        reply.type_ != x11rb::NONE,
+        reply.type_ == u32::from(AtomEnum::WINDOW) && reply.format == 32,
         "the window manager publishes no _NET_CLIENT_LIST"
     );
-    let listed: Vec<Window> = reply
+    anyhow::ensure!(reply.bytes_after == 0, "_NET_CLIENT_LIST was truncated");
+    let owners = OwnerResolver::new(conn);
+    reply
         .value32()
-        .map(|windows| windows.collect())
-        .unwrap_or_default();
-    let owners = OwnerResolver::new(&conn);
-    let mut clients = Vec::new();
-    for window in listed {
-        if conn.get_window_attributes(window)?.reply()?.map_state != MapState::VIEWABLE {
-            continue;
-        }
-        clients.push(ClientFacts {
-            window: u64::from(window),
-            pid: owners.owner_pid(window),
-            owner: read_transient_for(&conn, root, window)?,
-            modal: read_window_is_modal(&conn, window)?,
-        });
-    }
-    let ids: Vec<u64> = clients.iter().map(|client| client.window).collect();
-    // The core keyboard focus decides which window takes keys; a window
-    // manager need not publish `_NET_ACTIVE_WINDOW`, so it only fills in
-    // when the focus sits on no client.
-    let focused = match read_focused_window_among(&conn, root, &ids)? {
-        Some(window) => Some(window),
-        None => active_window().filter(|active| ids.contains(active)),
-    };
-    related_clients(pid, &clients, focused)
-}
-
-/// One viewable client as [`try_interaction_windows`] reads it.
-struct ClientFacts {
-    window: u64,
-    pid: Option<u32>,
-    owner: Option<u64>,
-    modal: bool,
-}
-
-fn related_clients(
-    pid: u32,
-    clients: &[ClientFacts],
-    focused: Option<u64>,
-) -> Result<Vec<cua_driver_core::window_inspection::OwnedWindow>> {
-    let own: std::collections::HashSet<u64> = clients
-        .iter()
-        .filter(|client| client.pid == Some(pid))
-        .map(|client| client.window)
-        .collect();
-    let owner_of = |id: u64| {
-        clients
-            .iter()
-            .find(|client| client.window == id)
-            .and_then(|client| client.owner)
-    };
-    // Bounded: a misbehaving client can create a cycle.
-    let reaches_own = |client: &ClientFacts| {
-        let mut next = client.owner;
-        for _ in 0..16 {
-            match next {
-                Some(id) if own.contains(&id) => return true,
-                Some(id) if id != client.window => next = owner_of(id),
-                _ => return false,
-            }
-        }
-        false
-    };
-    clients
-        .iter()
-        .filter(|client| own.contains(&client.window) || reaches_own(*client))
-        .map(|client| {
-            let owner_pid = client.pid.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "window {} has no verifiable owner pid ({UNATTRIBUTED_OWNER})",
-                    client.window
-                )
-            })?;
-            Ok(cua_driver_core::window_inspection::OwnedWindow {
-                pid: i64::from(owner_pid),
-                window_id: client.window,
-                owner: client.owner,
-                modal: client.modal,
-                focused: focused == Some(client.window),
+        .into_iter()
+        .flatten()
+        .map(|window| {
+            Ok(cua_driver_core::window_inspection::ListedWindow {
+                window_id: u64::from(window),
+                pid: owners.owner_pid(window),
+                owner: read_transient_for(conn, root, window)?,
+                modal: read_window_is_modal(conn, window)?,
+                viewable: conn.get_window_attributes(window)?.reply()?.map_state
+                    == MapState::VIEWABLE,
             })
         })
         .collect()
@@ -798,6 +773,13 @@ fn read_window_is_modal(conn: &RustConnection, xid: Window) -> Result<bool> {
     let reply = conn
         .get_property(false, xid, state_atom, AtomEnum::ATOM, 0, 64)?
         .reply()?;
+    if reply.type_ == x11rb::NONE {
+        return Ok(false);
+    }
+    anyhow::ensure!(
+        reply.type_ == u32::from(AtomEnum::ATOM) && reply.format == 32 && reply.bytes_after == 0,
+        "malformed or truncated _NET_WM_STATE on window {xid}"
+    );
     Ok(reply
         .value32()
         .is_some_and(|mut atoms| atoms.any(|atom| atom == modal_atom)))
@@ -1061,45 +1043,6 @@ mod tests {
             None
         );
         assert!(focused_ancestor(51, ROOT, &[], |_| anyhow::bail!("gone")).is_err());
-    }
-
-    #[test]
-    fn related_clients_follow_untitled_and_cross_pid_transient_chains() {
-        let client = |window, pid, owner, modal| ClientFacts {
-            window,
-            pid,
-            owner,
-            modal,
-        };
-        let clients = [
-            client(1, Some(7), None, false),    // the target
-            client(2, Some(7), Some(1), false), // its dialog
-            client(3, Some(8), Some(2), true),  // another process's modal on it
-            client(4, Some(8), Some(3), false), // a dialog of that one
-            client(5, Some(9), None, true),     // an unrelated app's modal
-            client(6, Some(9), Some(5), false), // and its dialog
-        ];
-        let related = related_clients(7, &clients, Some(4)).unwrap();
-        assert_eq!(
-            related
-                .iter()
-                .map(|window| (window.window_id, window.pid, window.focused))
-                .collect::<Vec<_>>(),
-            vec![(1, 7, false), (2, 7, false), (3, 8, false), (4, 8, true)]
-        );
-        // A related window that cannot be attributed cannot be addressed.
-        let unattributed = [
-            client(1, Some(7), None, false),
-            client(2, None, Some(1), true),
-        ];
-        assert!(related_clients(7, &unattributed, None).is_err());
-        // A cycle that never reaches the pid ends.
-        let cycle = [
-            client(1, Some(7), None, false),
-            client(2, Some(8), Some(3), false),
-            client(3, Some(8), Some(2), false),
-        ];
-        assert_eq!(related_clients(7, &cycle, None).unwrap().len(), 1);
     }
 
     #[test]

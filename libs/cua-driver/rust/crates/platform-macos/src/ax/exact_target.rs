@@ -710,13 +710,20 @@ fn related_windows(
     focused: Option<AxWindowId>,
 ) -> Vec<cua_driver_core::window_inspection::RelatedWindowFacts> {
     use cua_driver_core::window_inspection::{RelatedWindowFacts, WindowOwnership};
+    let requested_surface = surfaces
+        .iter()
+        .find(|surface| surface.ids.own == requested && surface.parent != requested);
     surfaces
         .iter()
         .filter(|surface| surface.ids.own != requested)
         .map(|surface| RelatedWindowFacts {
             pid: i64::from(pid),
             window_id: u64::from(surface.ids.own),
-            owner: if surface.parent == surface.ids.own {
+            owner: if requested_surface
+                .is_some_and(|requested| attached_to(requested, surface.ids.own, surfaces))
+            {
+                WindowOwnership::Ancestor
+            } else if surface.parent == surface.ids.own {
                 WindowOwnership::Unowned
             } else if attached_to(surface, requested, surfaces) {
                 WindowOwnership::Target
@@ -756,7 +763,9 @@ pub fn interaction_facts(
     pid: i32,
     window_id: u32,
 ) -> cua_driver_core::window_inspection::InteractionFacts {
-    use super::bindings::{copy_ax_windows_or_error, AXUIElementSetMessagingTimeout};
+    use super::bindings::{
+        copy_ax_windows_or_error, copy_element_attr_or_error, AXUIElementSetMessagingTimeout,
+    };
     // SAFETY: the application element and every copied window and sheet are
     // released before return.
     unsafe {
@@ -766,13 +775,27 @@ pub fn interaction_facts(
         }
         AXUIElementSetMessagingTimeout(app, INTERACTION_AX_TIMEOUT_S);
         let windows = copy_ax_windows_or_error(app);
-        let focused = copy_element_attr(app, "AXFocusedWindow").and_then(|window| {
-            let ids = owning_window_id(window);
-            CFRelease(window as CFTypeRef);
-            ids
+        // No focused window is an answer; a read that failed, or a focused
+        // window that cannot be named, is not.
+        let focused = copy_element_attr_or_error(app, "AXFocusedWindow").map(|window| {
+            window.map(|window| {
+                let ids = owning_window_id(window);
+                CFRelease(window as CFTypeRef);
+                ids
+            })
         });
         CFRelease(app as CFTypeRef);
         let windows = windows.ok()?;
+        let focused = match focused {
+            Ok(Some(None)) | Err(_) => {
+                for window in windows {
+                    CFRelease(window as CFTypeRef);
+                }
+                return None;
+            }
+            Ok(Some(ids)) => ids,
+            Ok(None) => None,
+        };
         let mut surfaces = Some(Vec::new());
         for window in &windows {
             if let Some(list) = surfaces.as_mut() {
@@ -1357,7 +1380,7 @@ mod tests {
         assert_eq!(
             owners,
             vec![
-                (10, WindowOwnership::Unowned),
+                (10, WindowOwnership::Ancestor),
                 (12, WindowOwnership::Target)
             ]
         );

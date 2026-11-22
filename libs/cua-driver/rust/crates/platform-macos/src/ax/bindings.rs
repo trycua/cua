@@ -844,6 +844,35 @@ pub unsafe fn copy_element_attr(
     Some(value as AXUIElementRef)
 }
 
+/// [`copy_element_attr`], with a failed read kept apart from an attribute
+/// the element does not have or has no element value for.
+///
+/// # Safety
+///
+/// `element` must be valid; the caller must release a returned element.
+pub unsafe fn copy_element_attr_or_error(
+    element: AXUIElementRef,
+    attr_name: &str,
+) -> Result<Option<AXUIElementRef>, AXError> {
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if err == kAXErrorNoValue || err == kAXErrorAttributeUnsupported {
+        return Ok(None);
+    }
+    if err != kAXErrorSuccess {
+        return Err(err);
+    }
+    if value.is_null() {
+        return Ok(None);
+    }
+    if core_foundation::base::CFGetTypeID(value) != AXUIElementGetTypeID() {
+        CFRelease(value);
+        return Ok(None);
+    }
+    Ok(Some(value as AXUIElementRef))
+}
+
 /// Whether `element` answers a read of `attr_name` with no value or as
 /// unsupported. A failed read is not an absence.
 ///

@@ -238,9 +238,7 @@ fn window_overlays(pid: u32, xid: u64, observe_relations: bool) -> WindowOverlay
     // An unreadable window set hides any blocker: it stays unobservable
     // rather than reading as "nothing related".
     if observe_relations {
-        out.related = crate::x11::try_interaction_windows(pid)
-            .ok()
-            .map(|owned| cua_driver_core::window_inspection::related_by_owner_chain(xid, &owned));
+        out.related = crate::x11::interaction_facts(pid, xid);
     }
     for window in crate::x11::list_windows(Some(pid)) {
         if window.xid == xid || !window.is_on_screen || window.width == 0 || window.height == 0 {

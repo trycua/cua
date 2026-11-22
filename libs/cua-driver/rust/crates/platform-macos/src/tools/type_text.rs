@@ -1319,6 +1319,9 @@ const FRONT_SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_mill
 /// Type via CGEvent keystrokes at the current insertion point, then verify by
 /// read-back. `type_text` is deliberately non-idempotent: it must never clear
 /// an existing value merely because AX cannot read that value back.
+///
+/// With `exact_keys_window`, no key is sent while another window of the app
+/// holds the focus, since the pid-routed keys would reach it instead.
 #[allow(clippy::too_many_arguments)]
 fn cgevent_type_verified(
     pid: i32,
@@ -1329,7 +1332,12 @@ fn cgevent_type_verified(
     settle_ms: u64,
     window_id: Option<u32>,
     is_terminal_target: bool,
+    exact_keys_window: Option<u32>,
 ) -> anyhow::Result<(bool, Option<usize>)> {
+    let refuse_misdirected_keys = || match exact_keys_window {
+        Some(wid) => crate::input::skylight::refuse_keys_while_sibling_focused(pid, wid),
+        None => Ok(()),
+    };
     // Focus the target element so the keystrokes land in IT. Critical in
     // foreground mode: a freshly-fronted window's keyboard focus may be on the
     // search box or nowhere, so without this the text goes into the void (or the
@@ -1356,6 +1364,7 @@ fn cgevent_type_verified(
     if settle_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
+    refuse_misdirected_keys()?;
     crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)?;
     let batched = delay_ms == 0;
 
@@ -1385,6 +1394,10 @@ fn cgevent_type_verified(
                 return Ok((false, None));
             }
             let tail: String = text.chars().skip(done).collect();
+            // Focus moved away after the first send: report what landed.
+            if refuse_misdirected_keys().is_err() {
+                return Ok((false, Some(done)));
+            }
             crate::input::keyboard::type_text_with_delay(pid, &tail, RETYPE_TAIL_DELAY_MS)?;
             let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
             return Ok(await_typed_delivery(
@@ -1618,7 +1631,7 @@ fn type_text_in_key_window(
             ),
             None => Ok(()),
         };
-        let do_type = |element: Option<(usize, Option<usize>)>| {
+        let do_type = |element: Option<(usize, Option<usize>)>, exact_keys_window: Option<u32>| {
             ensure_enabled()?;
             cgevent_type_verified(
                 pid,
@@ -1629,6 +1642,7 @@ fn type_text_in_key_window(
                 foreground_settle_ms,
                 window_id,
                 is_terminal_target,
+                exact_keys_window,
             )
         };
         let ((verified, delivered_chars), fronted) = match window_id {
@@ -1704,7 +1718,7 @@ fn type_text_in_key_window(
                         }
                         // The remembered field is focused again; the read-back
                         // follows the focused element.
-                        typed_delivery = do_type(element_ptr_and_idx)?;
+                        typed_delivery = do_type(element_ptr_and_idx, None)?;
                         Ok(())
                     });
                 unsafe {
@@ -1731,18 +1745,14 @@ fn type_text_in_key_window(
                     pid as libc::pid_t,
                     wid,
                     || {
-                        crate::input::skylight::refuse_keys_while_sibling_focused(
-                            pid as libc::pid_t,
-                            wid,
-                        )?;
-                        typed_delivery = do_type(element_ptr_and_idx)?;
+                        typed_delivery = do_type(element_ptr_and_idx, Some(wid))?;
                         Ok(())
                     },
                 )?;
                 (typed_delivery, fronted)
             }
             // No window to front — best-effort background keystrokes instead.
-            None => (do_type(element_ptr_and_idx)?, false),
+            None => (do_type(element_ptr_and_idx, None)?, false),
         };
         // Only claim the `_fg` path when a front actually happened; when no
         // foregrounding occurred (no window, or SPIs unavailable) these were
@@ -1776,6 +1786,7 @@ fn type_text_in_key_window(
             /*settle_ms=*/ 0,
             window_id,
             true,
+            None,
         )?;
         return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
             detail: format!(" via CGEvent (terminal emulator, {delay_ms}ms delay)"),
@@ -2019,6 +2030,7 @@ fn type_text_in_key_window(
         /*settle_ms=*/ 0,
         window_id,
         false,
+        None,
     )?;
     Ok(TypeTextDelivery::Typed(TypeTextOutcome {
         detail: format!(" via CGEvent ({delay_ms}ms delay)"),

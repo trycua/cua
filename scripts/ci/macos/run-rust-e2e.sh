@@ -409,6 +409,11 @@ EOF
     run_test installed-app-textedit-type-text-sibling cargo test -p cua-driver-e2e --test installed_app_textedit_macos_test -- \
       --ignored --exact foreground_window_type_text_never_lands_in_the_focused_sibling \
       --nocapture --test-threads=1
+    # Asserts through System Events and AX read-back, not a typed matrix result.
+    run_test installed-app-textedit-type-text-sibling-refusal env -u CUA_E2E_RECORDINGS_ROOT \
+      cargo test -p cua-driver-e2e --test installed_app_textedit_macos_test -- \
+      --ignored --exact foreground_window_type_text_refuses_while_a_sibling_keeps_focus \
+      --nocapture --test-threads=1
     run_test installed-app-calculator env -u CUA_E2E_RECORDINGS_ROOT \
       cargo test -p cua-driver-e2e --test installed_app_calculator_macos_test -- \
       --ignored --nocapture --test-threads=1

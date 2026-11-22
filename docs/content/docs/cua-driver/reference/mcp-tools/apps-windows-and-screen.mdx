@@ -29,6 +29,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 | [`get_screen_size`](#get_screen_size) | Return the logical size of the main display in points plus its backing scale factor. | macOS, Linux, Windows |
 | [`get_cursor_position`](#get_cursor_position) | Return the current mouse cursor position in screen points (origin top-left). | macOS, Linux, Windows |
 | [`zoom`](#zoom) | Capture a cropped JPEG of a window region (x1,y1)–(x2,y2) in screenshot pixel coordinates, with 20% padding added on each side. | macOS, Linux, Windows |
+| [`agent_display`](#agent_display) | Create, list or remove a virtual display the agent works on, so app windows can be moved off the user's screen with set_window_frame (use the returned x, y, width, height as the target area; screenshots of a virtual display are 1:1, not Retina). | macOS |
 | [`start_session`](#start_session) | Optionally create or return a lifecycle session before acting. | macOS, Linux, Windows |
 | [`get_session`](#get_session) | Read content-free lifecycle, cursor, recording, and idle status for one session visible to this authenticated transport. | macOS, Linux, Windows |
 | [`list_sessions`](#list_sessions) | List content-free lifecycle summaries attached to this authenticated transport lease. | macOS, Linux, Windows |
@@ -622,7 +623,7 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 
 ## Screen tools
 
-The desktop, screen size, cursor position and zoomed crops.
+The desktop, screen size, cursor position, zoomed crops and agent displays.
 
 ### `get_desktop_state`
 
@@ -769,6 +770,27 @@ Windows-specific: `window_id` is the canonical addressing field (HWND). `pid` is
 
 ```json
 {"window_id":1,"x1":100,"y1":200,"x2":100,"y2":200}
+```
+
+### `agent_display`
+
+Create, list or remove a virtual display the agent works on, so app windows can be moved off the user's screen with set_window_frame (use the returned x, y, width, height as the target area; screenshots of a virtual display are 1:1, not Retina). `create` adds an extra display of width x height pixels owned by the calling session, removed by `remove`, when that session ends or idles out, or when the daemon exits; `list` returns the displays this daemon created; `remove` needs a display_id. Requires no TCC permissions.
+
+Effect: mutating. Platforms: macOS.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="agent_display--action"></span>`action` | `"create" \| "list" \| "remove"` | required | create a display, list this daemon's displays, or remove one. |
+| <span id="agent_display--display_id"></span>`display_id` | `integer` |  | remove: id returned by create or list. |
+| <span id="agent_display--height"></span>`height` | `integer` |  | create: pixels, default 1080. |
+| <span id="agent_display--name"></span>`name` | `string` |  | create: display name, default "Agent Desktop". |
+| <span id="agent_display--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
+| <span id="agent_display--width"></span>`width` | `integer` |  | create: pixels, default 1920. |
+
+**Example arguments**
+
+```json
+{"action":"create"}
 ```
 
 ## Session tools

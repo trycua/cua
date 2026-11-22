@@ -117,6 +117,10 @@ impl Tool for MoveCursorTool {
             Err(e) => return e,
         };
         let cursor_id = super::cursor_tools::resolve_cursor_key(&args);
+        crate::cursor::overlay::send_command(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::Unpin,
+        );
 
         self.state.cursor_registry.update_position(&cursor_id, x, y);
         // Drive the DRAWN cursor via the same path as click's animation. A raw

@@ -56,7 +56,13 @@ function Get-PageFileState {
     $usage = @(Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue |
         ForEach-Object { "{0} alloc={1}MB temp={2}" -f $_.Name, $_.AllocatedBaseSize, $_.TempPageFile })
     $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
-    "PagingFiles=[$($reg.PagingFiles -join ';')] TempPageFile=$($reg.TempPageFile) " +
+    # The registry value exists only after Windows created a temporary page
+    # file, and strict mode throws on a missing property, so read it only when
+    # present. Win32_PageFileUsage.TempPageFile (usage=[...]) stays the source
+    # of truth.
+    $regTemp = if ($reg -and $reg.PSObject.Properties['TempPageFile']) { $reg.TempPageFile } else { '<absent>' }
+    $regPaging = if ($reg -and $reg.PSObject.Properties['PagingFiles']) { $reg.PagingFiles -join ';' } else { '' }
+    "PagingFiles=[$regPaging] TempPageFile=$regTemp " +
         "AutomaticManagedPagefile=$($cs.AutomaticManagedPagefile) usage=[$($usage -join '; ')]"
 }
 

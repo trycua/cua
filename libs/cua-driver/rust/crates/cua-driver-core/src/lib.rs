@@ -136,6 +136,7 @@ pub mod type_pacing;
 pub mod video;
 pub mod video_ffmpeg;
 pub mod walk_budget;
+pub mod walk_defaults;
 pub mod window_inspection;
 pub mod window_observation;
 pub mod window_state_view;

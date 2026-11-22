@@ -23,6 +23,7 @@
 //! (static text) that the structured `elements` array omits.
 
 use crate::protocol::{Content, ToolResult};
+use crate::walk_defaults::{WalkDefaults, WalkLimits};
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::sync::{Mutex, OnceLock};
@@ -206,41 +207,66 @@ impl ViewOptions {
     }
 
     /// Node budget for the walk. An explicit `max_elements` always wins;
-    /// otherwise a model-facing read gets [`DEFAULT_MAX_ELEMENTS`], while
-    /// `full_output` and internal observation reads keep the platform default.
+    /// otherwise a plain model-facing read gets the saved
+    /// `get_window_state.max_elements` default, or [`DEFAULT_MAX_ELEMENTS`]
+    /// when none is saved, while `full_output` and internal observation reads
+    /// keep the platform cap.
     ///
     /// A `query` read filters the walked rows afterwards, so a small node
     /// budget would hide matches that sit past it (an Electron form field
     /// after a long list read back as zero matches). The filter already keeps
     /// the response small, so a query searches with at least the platform
-    /// default budget.
+    /// cap.
     pub fn max_elements(
         &self,
         args: &Value,
-        platform_default: usize,
+        limits: WalkLimits,
+        saved: WalkDefaults,
         observation_only: bool,
     ) -> usize {
-        let has_query = args
-            .get("query")
-            .and_then(Value::as_str)
-            .is_some_and(|q| !q.trim().is_empty());
+        let has_query = has_query(args);
         if let Some(n) = args.get("max_elements").and_then(Value::as_u64) {
             let n = n.max(1) as usize;
             return if has_query {
-                n.max(platform_default)
+                n.max(limits.max_elements)
             } else {
                 n
             };
         }
-        if has_query {
-            return platform_default;
+        if has_query || self.full_output || observation_only {
+            return limits.max_elements;
         }
-        if self.full_output || observation_only {
-            platform_default
-        } else {
-            DEFAULT_MAX_ELEMENTS.min(platform_default)
-        }
+        saved
+            .max_elements
+            .unwrap_or(DEFAULT_MAX_ELEMENTS.min(limits.max_elements))
     }
+
+    /// Depth cap for the walk, `None` for no cap. An explicit `max_depth`
+    /// always wins; otherwise a plain model-facing read gets the saved
+    /// `get_window_state.max_depth` default, and every other read the
+    /// platform cap. A saved depth never narrows a `query` read, for the same
+    /// reason as [`ViewOptions::max_elements`].
+    pub fn max_depth(
+        &self,
+        args: &Value,
+        limits: WalkLimits,
+        saved: WalkDefaults,
+        observation_only: bool,
+    ) -> Option<usize> {
+        if let Some(n) = args.get("max_depth").and_then(Value::as_u64) {
+            return Some(n.max(1) as usize);
+        }
+        if has_query(args) || self.full_output || observation_only {
+            return limits.max_depth;
+        }
+        saved.max_depth.or(limits.max_depth)
+    }
+}
+
+fn has_query(args: &Value) -> bool {
+    args.get("query")
+        .and_then(Value::as_str)
+        .is_some_and(|q| !q.trim().is_empty())
 }
 
 /// What a `since` read resolved to.
@@ -1285,37 +1311,113 @@ mod tests {
             .is_none());
     }
 
+    const MAC: WalkLimits = WalkLimits {
+        max_elements: 2000,
+        max_depth: Some(25),
+    };
+    const LINUX: WalkLimits = WalkLimits {
+        max_elements: 5000,
+        max_depth: None,
+    };
+    const NONE_SAVED: WalkDefaults = WalkDefaults {
+        max_elements: None,
+        max_depth: None,
+    };
+    const SAVED: WalkDefaults = WalkDefaults {
+        max_elements: Some(800),
+        max_depth: Some(10),
+    };
+
     #[test]
     fn max_elements_precedence() {
         let o = opts(json!({}));
         assert_eq!(
-            o.max_elements(&json!({}), 2000, false),
+            o.max_elements(&json!({}), MAC, NONE_SAVED, false),
             DEFAULT_MAX_ELEMENTS
         );
         assert_eq!(
-            o.max_elements(&json!({"max_elements": 900}), 2000, false),
+            o.max_elements(&json!({"max_elements": 900}), MAC, NONE_SAVED, false),
             900
         );
-        assert_eq!(o.max_elements(&json!({}), 2000, true), 2000);
+        assert_eq!(o.max_elements(&json!({}), MAC, NONE_SAVED, true), 2000);
         let full = opts(json!({"full_output": true}));
-        assert_eq!(full.max_elements(&json!({}), 5000, false), 5000);
+        assert_eq!(full.max_elements(&json!({}), LINUX, NONE_SAVED, false), 5000);
+    }
+
+    /// A saved default replaces the built-in one on a plain read and nowhere
+    /// else: the call's own argument wins, even a smaller one, and query,
+    /// full_output and observation reads keep the platform cap (#6345).
+    #[test]
+    fn a_saved_default_applies_only_where_the_argument_is_omitted() {
+        let o = opts(json!({}));
+        assert_eq!(o.max_elements(&json!({}), MAC, SAVED, false), 800);
+        assert_eq!(o.max_depth(&json!({}), MAC, SAVED, false), Some(10));
+        assert_eq!(o.max_depth(&json!({}), LINUX, SAVED, false), Some(10));
+
+        let explicit = json!({"max_elements": 40, "max_depth": 3});
+        assert_eq!(o.max_elements(&explicit, MAC, SAVED, false), 40);
+        assert_eq!(o.max_depth(&explicit, MAC, SAVED, false), Some(3));
+        let explicit_large = json!({"max_elements": 4000, "max_depth": 60});
+        assert_eq!(o.max_elements(&explicit_large, MAC, SAVED, false), 4000);
+        assert_eq!(o.max_depth(&explicit_large, MAC, SAVED, false), Some(60));
+
+        let query = json!({"query": "Send"});
+        assert_eq!(o.max_elements(&query, MAC, SAVED, false), 2000);
+        assert_eq!(o.max_depth(&query, MAC, SAVED, false), Some(25));
+        assert_eq!(o.max_depth(&query, LINUX, SAVED, false), None);
+
+        let full = opts(json!({"full_output": true}));
+        assert_eq!(full.max_elements(&json!({}), MAC, SAVED, false), 2000);
+        assert_eq!(full.max_depth(&json!({}), MAC, SAVED, false), Some(25));
+
+        assert_eq!(o.max_elements(&json!({}), MAC, SAVED, true), 2000);
+        assert_eq!(o.max_depth(&json!({}), MAC, SAVED, true), Some(25));
+    }
+
+    #[test]
+    fn max_depth_without_a_saved_default_is_the_platform_cap() {
+        let o = opts(json!({}));
+        assert_eq!(o.max_depth(&json!({}), MAC, NONE_SAVED, false), Some(25));
+        assert_eq!(o.max_depth(&json!({}), LINUX, NONE_SAVED, false), None);
+        assert_eq!(
+            o.max_depth(&json!({"max_depth": 0}), LINUX, NONE_SAVED, false),
+            Some(1)
+        );
     }
 
     #[test]
     fn query_reads_search_past_a_small_node_budget() {
         let o = opts(json!({}));
-        assert_eq!(o.max_elements(&json!({"query": "Log"}), 2000, false), 2000);
         assert_eq!(
-            o.max_elements(&json!({"query": "Log", "max_elements": 80}), 2000, false),
+            o.max_elements(&json!({"query": "Log"}), MAC, NONE_SAVED, false),
             2000
         );
         assert_eq!(
-            o.max_elements(&json!({"query": "Log", "max_elements": 3000}), 2000, false),
+            o.max_elements(
+                &json!({"query": "Log", "max_elements": 80}),
+                MAC,
+                NONE_SAVED,
+                false
+            ),
+            2000
+        );
+        assert_eq!(
+            o.max_elements(
+                &json!({"query": "Log", "max_elements": 3000}),
+                MAC,
+                NONE_SAVED,
+                false
+            ),
             3000
         );
         // A blank query is no query.
         assert_eq!(
-            o.max_elements(&json!({"query": "  ", "max_elements": 80}), 2000, false),
+            o.max_elements(
+                &json!({"query": "  ", "max_elements": 80}),
+                MAC,
+                NONE_SAVED,
+                false
+            ),
             80
         );
     }

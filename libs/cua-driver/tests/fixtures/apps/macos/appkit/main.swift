@@ -28,6 +28,10 @@
 //   scroll_target  — NSScrollView with a tall body and offset label
 //   ns_menubar     — main menu item with known title (Mac-specific)
 //   exit           — NSButton terminates the app
+//   status_item    — opt-in (CUA_APPKIT_STATUS_ITEM=1): an NSStatusItem in the
+//                    menu bar extras whose menu has Mark Done (menu_action=
+//                    status_item_done), two items both titled Twin, and a
+//                    disabled Unavailable item (#3301)
 //   save_sheet     — opt-in (CUA_APPKIT_SAVE_SHEET=1): a button that opens an
 //                    NSSavePanel as a sheet on the main window; the label
 //                    records what the panel returned (#3351, #4392)
@@ -98,6 +102,8 @@ let kSaveSheetButtonAID = "btn-save-sheet"
 let kSaveSheetStateAID = "lbl-save-sheet"
 let kSaveSheetDefaultName = "harness-untitled"
 let kTaskStateEnv = "CUA_APPKIT_TASK_STATE"
+let kStatusItemEnv = "CUA_APPKIT_STATUS_ITEM"
+let kStatusItemTitle = "Cua Harness Extra"
 let kTaskStateSchema = "cua.appkit_task_state_v1"
 let kNoteFieldAID = "txt-note"
 let kSaveNoteButtonAID = "btn-save-note"
@@ -930,6 +936,14 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         popupValueLabel.stringValue = "popup_value=\(sender.titleOfSelectedItem ?? "")"
     }
 
+    @objc func onStatusItemDone(_ sender: NSMenuItem) {
+        menuActionLabel.stringValue = "menu_action=status_item_done"
+    }
+
+    @objc func onStatusItemTwin(_ sender: NSMenuItem) {
+        menuActionLabel.stringValue = "menu_action=status_item_twin"
+    }
+
     @objc func onArrangeLeft(_ sender: NSMenuItem) {
         menuActionLabel.stringValue = "menu_action=window_arrange_left"
     }
@@ -1179,6 +1193,41 @@ func installMenuBar(target: HarnessWindowController) {
     NSApp.windowsMenu = windowMenu
 }
 
+// MARK: - Menu extra (opt-in scenario: status_item)
+
+func installStatusItem(target: HarnessWindowController) -> NSStatusItem {
+    let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    item.button?.title = kStatusItemTitle
+    let menu = NSMenu(title: kStatusItemTitle)
+    menu.autoenablesItems = false
+    let done = NSMenuItem(
+        title: "Mark Done",
+        action: #selector(HarnessWindowController.onStatusItemDone(_:)),
+        keyEquivalent: ""
+    )
+    done.target = target
+    menu.addItem(done)
+    for _ in 0..<2 {
+        let twin = NSMenuItem(
+            title: "Twin",
+            action: #selector(HarnessWindowController.onStatusItemTwin(_:)),
+            keyEquivalent: ""
+        )
+        twin.target = target
+        menu.addItem(twin)
+    }
+    let unavailable = NSMenuItem(
+        title: "Unavailable",
+        action: #selector(HarnessWindowController.onStatusItemDone(_:)),
+        keyEquivalent: ""
+    )
+    unavailable.target = target
+    unavailable.isEnabled = false
+    menu.addItem(unavailable)
+    item.menu = menu
+    return item
+}
+
 // MARK: - Entry
 
 final class SingleClickReceiver: NSView {
@@ -1237,6 +1286,9 @@ struct CuaAppKitHarness {
         }
         let controller = HarnessWindowController()
         installMenuBar(target: controller)
+        let statusItem = ProcessInfo.processInfo.environment[kStatusItemEnv] == "1"
+            ? installStatusItem(target: controller)
+            : nil
         controller.show()
         if ProcessInfo.processInfo.environment["CUA_APPKIT_KEEP_ORDERED_FRONT"] == "1" {
             _ = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { [weak window = controller.window] _ in
@@ -1300,5 +1352,6 @@ struct CuaAppKitHarness {
         app.run()
         _ = matrixWindows
         _ = popupWindow
+        _ = statusItem
     }
 }

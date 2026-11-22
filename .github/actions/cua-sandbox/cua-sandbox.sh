@@ -92,8 +92,8 @@ install_cua() {
     local version="$1" os arch platform url dir
     os="$(uname -s)"; arch="$(uname -m)"
     case "$os/$arch" in
-        Linux/x86_64) platform=linux-x64-gnu ;;
-        Linux/aarch64 | Linux/arm64) platform=linux-arm64-gnu ;;
+        Linux/x86_64) platform=linux-x64 ;;
+        Linux/aarch64 | Linux/arm64) platform=linux-arm64 ;;
         Darwin/arm64) platform=darwin-arm64 ;;
         Darwin/x86_64) platform=darwin-x64 ;;
         *) die "no cua CLI release for $os/$arch; build it (cargo build -p cua-cli) and pass cua-bin" ;;
@@ -101,12 +101,21 @@ install_cua() {
     dir="$state/cua-$version"
     mkdir -p "$dir"
     url="https://github.com/trycua/cua/releases/download/cua-sdk-v$version"
-    log "installing cua $version ($platform)"
-    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 -o "$dir/cua.tar.gz" "$url/cua-cli-$version-$platform.tar.gz" \
-        || die "cua $version is not released for $platform ($url); pin another cua-version or pass cua-bin"
     curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 -o "$dir/checksums.txt" "$url/checksums.txt" || die "no checksums.txt in $url"
-    local want got
-    want="$(awk -v f="cua-cli-$version-$platform.tar.gz" '$2 == f || $2 == "*"f {print $1}' "$dir/checksums.txt")"
+    # CLI archives use plain Linux names; older releases may use -gnu.
+    # Select a published, checksummed name before downloading any archive.
+    local platforms=("$platform")
+    case "$platform" in linux-*) platforms+=("$platform-gnu") ;; esac
+    local archive want="" got
+    for platform in "${platforms[@]}"; do
+        archive="cua-cli-$version-$platform.tar.gz"
+        want="$(awk -v f="$archive" '$2 == f || $2 == "*"f {print $1}' "$dir/checksums.txt")"
+        [ -z "$want" ] || break
+    done
+    [ -n "$want" ] || die "no checksum for cua $version on ${platforms[0]} ($url); pin another cua-version or pass cua-bin"
+    log "installing cua $version ($platform)"
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 -o "$dir/cua.tar.gz" "$url/$archive" \
+        || die "cua $version is not released for $platform ($url); pin another cua-version or pass cua-bin"
     if command -v sha256sum >/dev/null 2>&1; then
         got="$(sha256sum "$dir/cua.tar.gz" | cut -d' ' -f1)"
     else

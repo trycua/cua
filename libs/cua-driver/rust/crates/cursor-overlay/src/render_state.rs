@@ -17,7 +17,8 @@
 //!   (so the caller can fire arrival signals).
 //! - [`RenderStateCore::apply_command_base`] — the OverlayCommand match arms
 //!   that all three platforms implement identically (MoveTo / ClickPulse /
-//!   SetEnabled / SetMotion / SetTheme / semantic action events / PinAbove).
+//!   SetEnabled / SetMotion / SetTheme / semantic action events / PinAbove /
+//!   Unpin).
 //!   Returns `false` for variants the core doesn't handle so platforms can
 //!   layer their own behaviour on top (e.g. macOS ShowFocusRect).
 //! - [`render_frame`] — the tiny-skia paint of the selected cursor theme.
@@ -1064,6 +1065,11 @@ impl RenderStateCore {
                 self.pinned_wid = Some(wid);
                 true
             }
+            OverlayCommand::Unpin => {
+                self.pinned_wid = None;
+                self.pinned_target_off_workspace = false;
+                true
+            }
             OverlayCommand::BeginAction {
                 action,
                 delivery,
@@ -1540,6 +1546,19 @@ pub fn paint_cursor_with_badge(
 mod glide_duration_tests {
     use super::*;
     use crate::{CursorConfig, MotionStyle, MotionTiming};
+
+    /// A click pins the cursor to its target window; a later move with no
+    /// target must drop that pin, or the overlay stays ordered under every
+    /// window covering the old target and the moved cursor is hidden (#2993).
+    #[test]
+    fn unpin_drops_the_window_an_earlier_action_pinned() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.apply_command_base(OverlayCommand::PinAbove(42), true, true);
+        core.pinned_target_off_workspace = true;
+        core.apply_command_base(OverlayCommand::Unpin, true, true);
+        assert_eq!(core.pinned_wid, None);
+        assert!(!core.pinned_target_off_workspace);
+    }
 
     #[test]
     fn unplaced_coordinates_do_not_reveal_or_schedule_idle_fade() {

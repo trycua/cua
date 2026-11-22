@@ -3,14 +3,10 @@
 
 //! Shared contract for read-only accessibility surfaces without native window identity.
 
-use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::sync::OnceLock;
 
-use crate::{
-    protocol::ToolResult,
-    tool::{Tool, ToolDef},
-};
+use crate::tool::ToolDef;
 
 pub const TOOL_NAME: &str = "get_accessibility_surfaces";
 pub const CAPABILITY: &str = "accessibility.observation.ax_window";
@@ -57,35 +53,6 @@ pub fn capability(status: &str, platform: &str) -> Value {
     })
 }
 
-pub struct UnsupportedAccessibilitySurfaceTool {
-    platform: &'static str,
-}
-
-impl UnsupportedAccessibilitySurfaceTool {
-    pub const fn new(platform: &'static str) -> Self {
-        Self { platform }
-    }
-}
-
-#[async_trait]
-impl Tool for UnsupportedAccessibilitySurfaceTool {
-    fn def(&self) -> &ToolDef {
-        tool_def()
-    }
-
-    async fn invoke(&self, _args: Value) -> ToolResult {
-        ToolResult::error(format!(
-            "{TOOL_NAME}: accessibility-only window surfaces are unsupported on {}",
-            self.platform
-        ))
-        .with_structured(json!({
-            "code": "unsupported_capability",
-            "effect": "refused",
-            "capability": capability("unsupported", self.platform),
-        }))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,17 +86,5 @@ mod tests {
         let window = crate::tool::default_capabilities_for("get_window_state");
         assert!(window.iter().any(|cap| cap == "accessibility.tree.bounded"));
         assert!(window.iter().any(|cap| cap == "screen.capture.window"));
-    }
-
-    #[tokio::test]
-    async fn unsupported_platform_refuses_explicitly() {
-        let result = UnsupportedAccessibilitySurfaceTool::new("windows")
-            .invoke(json!({}))
-            .await;
-        assert_eq!(result.is_error, Some(true));
-        let structured = result.structured_content.expect("structured refusal");
-        assert_eq!(structured["code"], "unsupported_capability");
-        assert_eq!(structured["effect"], "refused");
-        assert_eq!(structured["capability"]["actions_supported"], false);
     }
 }

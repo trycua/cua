@@ -133,19 +133,24 @@ impl DeclaredTarget {
     }
 }
 
-/// The owner of `window_id` in a `list_windows` result, or why it has none.
-pub fn window_owner(
-    windows: &Value,
-    window_id: u64,
-    declared_pid: Option<i64>,
-) -> Result<i64, String> {
-    let owner = windows
+/// The owner `list_windows` reports for `window_id`.
+pub fn listed_window_owner(windows: &Value, window_id: u64) -> Option<i64> {
+    windows
         .get("windows")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .find(|window| window.get("window_id").and_then(Value::as_u64) == Some(window_id))
-        .and_then(|window| window.get("pid").and_then(Value::as_i64));
+        .and_then(|window| window.get("pid").and_then(Value::as_i64))
+}
+
+/// Accept `owner` as the target's pid only when it agrees with what the
+/// caller declared.
+pub fn check_window_owner(
+    window_id: u64,
+    owner: Option<i64>,
+    declared_pid: Option<i64>,
+) -> Result<i64, String> {
     match (owner, declared_pid) {
         (Some(owner), Some(pid)) if owner != pid => Err(format!(
             "window {window_id} belongs to pid {owner}, not pid {pid}"
@@ -192,18 +197,20 @@ mod tests {
     #[test]
     fn window_owner_refuses_a_missing_or_foreign_window() {
         let windows = json!({"windows": [{"window_id": 9, "pid": 7}]});
-        assert_eq!(window_owner(&windows, 9, Some(7)).unwrap(), 7);
-        assert_eq!(window_owner(&windows, 9, None).unwrap(), 7);
+        assert_eq!(listed_window_owner(&windows, 9), Some(7));
+        assert_eq!(listed_window_owner(&windows, 10), None);
+        assert_eq!(check_window_owner(9, Some(7), Some(7)).unwrap(), 7);
+        assert_eq!(check_window_owner(9, Some(7), None).unwrap(), 7);
         assert_eq!(
-            window_owner(&windows, 9, Some(8)).unwrap_err(),
+            check_window_owner(9, Some(7), Some(8)).unwrap_err(),
             "window 9 belongs to pid 7, not pid 8"
         );
         assert_eq!(
-            window_owner(&windows, 10, Some(7)).unwrap_err(),
+            check_window_owner(10, None, Some(7)).unwrap_err(),
             "window 10 is not an open window of pid 7"
         );
         assert_eq!(
-            window_owner(&windows, 10, None).unwrap_err(),
+            check_window_owner(10, None, None).unwrap_err(),
             "window 10 is not open"
         );
     }

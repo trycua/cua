@@ -1427,6 +1427,7 @@ pub struct ToolRegistry {
     /// belongs to; set by a platform whose windows can be hosted by another
     /// process.
     window_identity_resolver: Option<WindowIdentityResolver>,
+    window_owner_resolver: Option<WindowOwnerResolver>,
 }
 
 /// Call arguments (carrying an `element_token`) -> the `(pid, window_id)` of
@@ -1438,6 +1439,10 @@ pub type TokenWindowResolver = Arc<dyn Fn(&Value) -> Option<(i32, u64)> + Send +
 /// app's frame is owned by `ApplicationFrameHost.exe`). `None` keeps the
 /// owning pid as the window's identity.
 pub type WindowIdentityResolver = Arc<dyn Fn(i64, u64) -> Option<i64> + Send + Sync + 'static>;
+
+/// `window_id` -> the pid the OS verifies owns it, or why it cannot. Runs on
+/// a blocking thread.
+pub type WindowOwnerResolver = Arc<dyn Fn(u64) -> Result<i64, String> + Send + Sync + 'static>;
 
 impl ToolRegistry {
     pub fn new() -> Self {
@@ -1521,6 +1526,7 @@ impl ToolRegistry {
             protected_resource_ownership,
             token_window_resolver: None,
             window_identity_resolver: None,
+            window_owner_resolver: None,
         }
     }
 
@@ -1534,6 +1540,15 @@ impl ToolRegistry {
     /// a manifest app grant matches the app rather than its shared host.
     pub fn set_window_identity_resolver(&mut self, resolver: WindowIdentityResolver) {
         self.window_identity_resolver = Some(resolver);
+    }
+
+    /// Install the resolver that attests a window's owner for policy targets.
+    /// A platform whose `list_windows` can report a client-claimed owner (an
+    /// X11 `_NET_WM_PID`) must install one; without it the owner comes from
+    /// `list_windows`, which macOS WindowServer and Win32 report from OS
+    /// state.
+    pub fn set_window_owner_resolver(&mut self, resolver: WindowOwnerResolver) {
+        self.window_owner_resolver = Some(resolver);
     }
 
     /// The `(pid, window_id)` a live `element_token` in `args` names.
@@ -1610,25 +1625,10 @@ impl ToolRegistry {
         let declared = DeclaredTarget::from_args(args, self.window_for_token(args))?;
         let (pid, kind) = match (declared.pid, declared.window_id) {
             (None, None) => return Ok(AttestedTarget::desktop()),
-            (pid, Some(window_id)) => {
-                let tool = self
-                    .tools
-                    .get("list_windows")
-                    .ok_or_else(|| "window ownership cannot be attested".to_owned())?;
-                let filter = match pid {
-                    Some(pid) => serde_json::json!({"pid": pid}),
-                    None => serde_json::json!({}),
-                };
-                let windows = tool.invoke(filter).await;
-                if windows.is_error == Some(true) {
-                    return Err(format!("window {window_id} could not be listed"));
-                }
-                let windows = windows.structured_content.unwrap_or(Value::Null);
-                (
-                    crate::attested_target::window_owner(&windows, window_id, pid)?,
-                    AttestedTargetKind::Window,
-                )
-            }
+            (pid, Some(window_id)) => (
+                self.attest_window_owner(window_id, pid).await?,
+                AttestedTargetKind::Window,
+            ),
             (Some(pid), None) => (pid, AttestedTargetKind::Application),
         };
         let identity_pid = declared
@@ -1647,6 +1647,33 @@ impl ToolRegistry {
             executable: fingerprint.executable,
             process_start_time: fingerprint.start_time,
         })
+    }
+
+    async fn attest_window_owner(&self, window_id: u64, pid: Option<i64>) -> Result<i64, String> {
+        if let Some(resolve) = self.window_owner_resolver.clone() {
+            let owner = tokio::task::spawn_blocking(move || resolve(window_id))
+                .await
+                .map_err(|error| format!("window {window_id} owner lookup failed: {error}"))??;
+            return crate::attested_target::check_window_owner(window_id, Some(owner), pid);
+        }
+        let tool = self
+            .tools
+            .get("list_windows")
+            .ok_or_else(|| "window ownership cannot be attested".to_owned())?;
+        let filter = match pid {
+            Some(pid) => serde_json::json!({"pid": pid}),
+            None => serde_json::json!({}),
+        };
+        let windows = tool.invoke(filter).await;
+        if windows.is_error == Some(true) {
+            return Err(format!("window {window_id} could not be listed"));
+        }
+        let windows = windows.structured_content.unwrap_or(Value::Null);
+        crate::attested_target::check_window_owner(
+            window_id,
+            crate::attested_target::listed_window_owner(&windows, window_id),
+            pid,
+        )
     }
 
     /// Prove an authorized target again, returning the refusal when it
@@ -2734,16 +2761,6 @@ impl ToolRegistry {
         } else {
             None
         };
-        // Consent prompts and the input lanes above can wait. The policy
-        // decision holds only for the target it saw, so prove that target
-        // again once this call owns its lane.
-        let lane_refusal = match lane_refusal {
-            Some(refusal) => Some(refusal),
-            None => {
-                self.reattest_desktop_target(attested_target.as_ref(), &public_args)
-                    .await
-            }
-        };
         let pending_turn = should_record
             .then(|| {
                 // Use the same trusted identities the recording owner was minted from.
@@ -2786,6 +2803,16 @@ impl ToolRegistry {
         if has_adapter(crate::security_prompt::ADAPTER_ID) {
             crate::security_prompt::PromptInput::for_mode(context.mode()).stamp(&mut args);
         }
+        // Consent prompts, the input lanes, and pre-action recording capture
+        // above can wait. The policy decision holds only for the target it
+        // saw, so prove that target again as the last step before dispatch.
+        let lane_refusal = match lane_refusal {
+            Some(refusal) => Some(refusal),
+            None => {
+                self.reattest_desktop_target(attested_target.as_ref(), &public_args)
+                    .await
+            }
+        };
         crate::tool_activity::note_tool_activity();
         let invoke = tool.invoke(args.clone());
         let mut result =

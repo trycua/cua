@@ -127,8 +127,8 @@ deny:
 A rule's `target` block constrains the driver-attested target of an input or
 capture call (`kind`, `pid`, `window_id`, `executable`, `process_start_time`)
 rather than caller arguments. The
-driver resolves it from OS state before the policy runs and re-attests it
-immediately before dispatch, refusing with `target_identity_unavailable` or
+driver resolves it from OS state before the policy runs and re-attests it as
+the last step before dispatch, refusing with `target_identity_unavailable` or
 `target_identity_changed`. See the permissions guide for the field contract.
 
 Rego policies must expose a boolean rule at `data.cua.policy.allow`. The input

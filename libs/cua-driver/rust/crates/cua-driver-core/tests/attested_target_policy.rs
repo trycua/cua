@@ -17,10 +17,12 @@ use cua_driver_core::protocol::ToolResult;
 use cua_driver_core::session_authorization::{
     EffectiveAuthorizationContext, SessionAuthorizationRegistry, SessionModeCeiling,
 };
-use cua_driver_core::tool::{ProtectedResourceScopeError, Tool, ToolDef, ToolRegistry};
+use cua_driver_core::tool::{
+    ProtectedResourceScopeError, Tool, ToolDef, ToolRegistry, WindowOwnerResolver,
+};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Once};
+use std::sync::{Arc, Mutex, Once};
 use std::time::Duration;
 
 const POLICY: &str = r#"
@@ -202,11 +204,14 @@ struct Fixture {
     hits: Arc<AtomicUsize>,
 }
 
-fn fixture(
-    before: DesktopState,
-    after: DesktopState,
+#[derive(Default)]
+struct Options {
     hold: Option<Arc<tokio::sync::Semaphore>>,
-) -> Fixture {
+    owner: Option<WindowOwnerResolver>,
+    record_to: Option<std::path::PathBuf>,
+}
+
+fn fixture(before: DesktopState, after: DesktopState, options: Options) -> Fixture {
     configure_policy();
     let desktop = Arc::new(FakeDesktop {
         before,
@@ -224,9 +229,18 @@ fn fixture(
     for name in ["click", "type_text"] {
         registry.register(Box::new(Action {
             hits: hits.clone(),
-            hold: hold.clone(),
+            hold: options.hold.clone(),
             def: def(name, false),
         }));
+    }
+    if let Some(owner) = options.owner {
+        registry.set_window_owner_resolver(owner);
+    }
+    if let Some(directory) = &options.record_to {
+        registry
+            .recording
+            .start(directory.to_str().unwrap(), false, None)
+            .unwrap();
     }
     Fixture {
         registry: Arc::new(registry),
@@ -236,7 +250,7 @@ fn fixture(
 }
 
 fn registry(before: DesktopState, after: DesktopState) -> (Arc<ToolRegistry>, Arc<AtomicUsize>) {
-    let fixture = fixture(before, after, None);
+    let fixture = fixture(before, after, Options::default());
     (fixture.registry, fixture.hits)
 }
 
@@ -438,7 +452,14 @@ async fn a_target_replaced_while_the_action_waits_for_the_input_lane_is_refused(
     let mut after = desktop();
     after.processes[0].start_time = 2;
     let hold = Arc::new(tokio::sync::Semaphore::new(0));
-    let fixture = fixture(desktop(), after, Some(hold.clone()));
+    let fixture = fixture(
+        desktop(),
+        after,
+        Options {
+            hold: Some(hold.clone()),
+            ..Options::default()
+        },
+    );
     fixture
         .desktop
         .switch_at
@@ -474,6 +495,109 @@ async fn a_target_replaced_while_the_action_waits_for_the_input_lane_is_refused(
         "{result:?}"
     );
     assert_eq!(fixture.hits.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn an_owner_the_platform_verifies_overrides_a_claimed_one() {
+    // list_windows says window 7 is the editor's (an X11 client can claim
+    // any pid); the platform's verified owner says it is the terminal's.
+    let fixture = fixture(
+        desktop(),
+        desktop(),
+        Options {
+            owner: Some(Arc::new(|_| Ok(TERMINAL))),
+            ..Options::default()
+        },
+    );
+    let result = call(
+        &fixture.registry,
+        "click",
+        json!({"pid": EDITOR, "window_id": 7, "x": 1, "y": 2}),
+    )
+    .await;
+    assert_eq!(
+        refusal_code(&result),
+        Some("target_identity_unavailable"),
+        "{result:?}"
+    );
+    assert!(
+        format!("{result:?}").contains("window 7 belongs to pid 43, not pid 42"),
+        "{result:?}"
+    );
+    assert_eq!(fixture.hits.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_window_owner_the_platform_cannot_verify_is_refused() {
+    let fixture = fixture(
+        desktop(),
+        desktop(),
+        Options {
+            owner: Some(Arc::new(|window_id| {
+                Err(format!("owner of window {window_id} is unverifiable"))
+            })),
+            ..Options::default()
+        },
+    );
+    let result = call(
+        &fixture.registry,
+        "click",
+        json!({"pid": EDITOR, "window_id": 7, "x": 1, "y": 2}),
+    )
+    .await;
+    assert_eq!(
+        refusal_code(&result),
+        Some("target_identity_unavailable"),
+        "{result:?}"
+    );
+    assert!(
+        format!("{result:?}").contains("owner of window 7 is unverifiable"),
+        "{result:?}"
+    );
+    assert_eq!(fixture.hits.load(Ordering::SeqCst), 0);
+}
+
+/// The desktop whose process the recording screenshot hook replaces. The
+/// hook is process-global, so only the recording test sets it.
+static REPLACED_DURING_CAPTURE: Mutex<Option<Arc<FakeDesktop>>> = Mutex::new(None);
+
+#[tokio::test]
+async fn a_target_replaced_during_pre_action_recording_capture_is_refused() {
+    cua_driver_core::recording::set_screenshot_fn(|_, _| {
+        if let Some(desktop) = REPLACED_DURING_CAPTURE.lock().unwrap().as_ref() {
+            desktop.switch_at.store(0, Ordering::SeqCst);
+        }
+        None
+    });
+    let mut after = desktop();
+    after.processes[0].start_time = 2;
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = fixture(
+        desktop(),
+        after,
+        Options {
+            record_to: Some(directory.path().to_owned()),
+            ..Options::default()
+        },
+    );
+    fixture
+        .desktop
+        .switch_at
+        .store(usize::MAX, Ordering::SeqCst);
+    *REPLACED_DURING_CAPTURE.lock().unwrap() = Some(fixture.desktop.clone());
+
+    let result = call(
+        &fixture.registry,
+        "click",
+        json!({"pid": EDITOR, "window_id": 7, "x": 1, "y": 2}),
+    )
+    .await;
+    assert_eq!(
+        refusal_code(&result),
+        Some("target_identity_changed"),
+        "{result:?}"
+    );
+    assert_eq!(fixture.hits.load(Ordering::SeqCst), 0);
 }
 
 async fn wait_until(condition: impl Fn() -> bool) {

@@ -13,6 +13,7 @@
 
 #![cfg(target_os = "windows")]
 
+use windows::Win32::Foundation::CO_E_NOTINITIALIZED;
 use windows::Win32::System::Com::{
     CoGetApartmentType, CoInitializeEx, CoUninitialize, APTTYPE, APTTYPEQUALIFIER,
     APTTYPEQUALIFIER_IMPLICIT_MTA, APTTYPE_MTA, COINIT_MULTITHREADED,
@@ -41,9 +42,15 @@ fn enter_and_leave_mta() {
 
 #[test]
 fn registry_keeps_the_mta_alive_after_every_member_thread_leaves() {
+    // Registry construction reads per-user config; keep it off the real home.
+    let home = tempfile::tempdir().unwrap();
+    std::env::set_var("HOME", home.path());
+    std::env::set_var("USERPROFILE", home.path());
+
     enter_and_leave_mta();
-    assert!(
-        fresh_thread_apartment().is_err(),
+    assert_eq!(
+        fresh_thread_apartment().unwrap_err().code(),
+        CO_E_NOTINITIALIZED,
         "no MTA should exist before the registry is built"
     );
 

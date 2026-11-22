@@ -29,6 +29,19 @@ use serde::Serialize;
 
 const CONSENT_CLEANUP_PASSES: usize = 20;
 
+/// Brave's macOS setup has turned remote debugging on, refused, and then
+/// failed to turn it back off (Brave 1.87, macOS 27), so setup refuses before
+/// touching Brave's UI until a refusal run proves the rollback. A Brave whose
+/// remote debugging is already on still attaches.
+fn unproven_setup_refusal(product: BrowserProduct) -> Option<BrowserRefusal> {
+    (product == BrowserProduct::Brave).then(|| {
+        BrowserRefusal::new(
+            BrowserRefusalCode::BrowserRequiresSetup,
+            "the driver does not turn on Brave's remote debugging on macOS: open brave://inspect/#remote-debugging in Brave, turn on Allow remote debugging for this browser instance, then call browser_prepare again",
+        )
+    })
+}
+
 #[derive(Clone, Debug, Serialize)]
 struct ConsentSurfaceEvidence {
     window_id: u32,
@@ -452,6 +465,11 @@ fn isolated_browser_candidates() -> Vec<(PathBuf, &'static str, &'static str)> {
             PathBuf::from("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
             "com.microsoft.edgemac",
             "UBF8T346G9",
+        ),
+        (
+            PathBuf::from("/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"),
+            "com.brave.Browser",
+            "KL8N8XSYF4",
         ),
     ]
 }
@@ -1199,6 +1217,9 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         &self,
         request: ExistingProfileSetupRequest,
     ) -> Result<ExistingProfileSetupOutcome, BrowserRefusal> {
+        if let Some(refusal) = unproven_setup_refusal(request.browser) {
+            return Err(refusal);
+        }
         let descriptor = existing_profile_setup_descriptor(request.browser).ok_or_else(|| {
             BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
@@ -1759,7 +1780,7 @@ mod tests {
     #[test]
     fn isolated_browser_candidates_are_vendor_attested_system_installs() {
         let candidates = isolated_browser_candidates();
-        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates.len(), 3);
         assert_eq!(candidates[0].1, "com.google.Chrome");
         assert_eq!(candidates[0].2, "EQHXZ8M8AV");
         assert!(candidates[0]
@@ -1770,6 +1791,11 @@ mod tests {
         assert!(candidates[1]
             .0
             .ends_with("Microsoft Edge.app/Contents/MacOS/Microsoft Edge"));
+        assert_eq!(candidates[2].1, "com.brave.Browser");
+        assert_eq!(candidates[2].2, "KL8N8XSYF4");
+        assert!(candidates[2]
+            .0
+            .ends_with("Brave Browser.app/Contents/MacOS/Brave Browser"));
         assert!(candidates
             .iter()
             .all(|(candidate, _, _)| candidate.is_absolute()));
@@ -1935,6 +1961,38 @@ mod tests {
         assert_eq!(mode_bits.code, BrowserRefusalCode::BrowserRouteUnavailable);
         assert!(!mode_bits.message.contains("Full Disk Access"));
         assert!(mode_bits.detail.is_none());
+    }
+
+    #[test]
+    fn default_user_data_dir_covers_existing_profile_products() {
+        for product in [
+            BrowserProduct::GoogleChrome,
+            BrowserProduct::Chromium,
+            BrowserProduct::MicrosoftEdge,
+            BrowserProduct::Brave,
+        ] {
+            assert!(
+                existing_profile_setup_descriptor(product).is_some()
+                    == default_user_data_dir(product).is_some(),
+                "{product:?}: setup descriptor and profile root must be supported together"
+            );
+        }
+    }
+
+    #[test]
+    fn brave_setup_refuses_before_touching_its_ui() {
+        let refusal = unproven_setup_refusal(BrowserProduct::Brave).expect("Brave setup refuses");
+        assert_eq!(refusal.code, BrowserRefusalCode::BrowserRequiresSetup);
+        assert!(refusal
+            .message
+            .contains("brave://inspect/#remote-debugging"));
+        for product in [
+            BrowserProduct::GoogleChrome,
+            BrowserProduct::Chromium,
+            BrowserProduct::MicrosoftEdge,
+        ] {
+            assert!(unproven_setup_refusal(product).is_none(), "{product:?}");
+        }
     }
 
     #[test]

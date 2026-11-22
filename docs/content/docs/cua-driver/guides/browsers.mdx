@@ -88,6 +88,17 @@ browser_prepare({
 })
 ```
 
+Without a `pid`, the driver launches the first browser it finds, in the order
+Chrome, Edge, Brave (on Linux: Chrome, Chromium, Edge, Brave), from a system
+install a standard user cannot modify. You cannot choose the browser, so Brave
+starts only when no earlier browser in that order passes these checks. On macOS
+and Windows the install must carry its vendor's signature: Brave from
+`/Applications` on macOS, or from an all-users install under Program Files on
+Windows. On Linux the binary and its folders must be owned by root and writable
+by no one else: Brave from its own package under `/opt/brave.com`. Brave's
+default Windows installer installs per user, and Snap and Flatpak installs are
+not covered; the driver refuses those.
+
 Bind the window of the returned `prepared_pid`. An `isolated_new` profile is
 deleted when the session ends; use `{"mode": "isolated_named", "name": "research"}`
 to keep it. Do not pass remote-debugging flags through `launch_app`: they are
@@ -207,7 +218,7 @@ browser_prepare({
 ```
 
 If the browser has no DevTools endpoint, the driver opens a temporary tab at
-`chrome://inspect/#remote-debugging` (or `edge://…`), turns on **Allow remote
+`chrome://inspect/#remote-debugging` (or `edge://…`, `brave://…`), turns on **Allow remote
 debugging for this browser instance**, proves the new listener is loopback and
 owned by that process, and closes the tab. It presses only the browser's own
 consent button. On Chrome 144 and later it connects through the running
@@ -223,10 +234,15 @@ ids are invalid. The grant lives in memory: it expires after 30 minutes idle or
 off Chrome's remote-debugging setting; do that in Chrome.
 
 Supported: Chrome and Edge on macOS, Windows, and Linux X11; Chrome on GNOME
-Wayland; Chrome, Edge, and Chromium on Sway. On Linux, start the browser
+Wayland; Chrome, Edge, and Chromium on Sway; Brave on Windows and Linux X11.
+On macOS the driver attaches to Brave only when its remote debugging is
+already on: it does not run setup for Brave there, because a refused setup
+could leave remote debugging on. Turn on **Allow remote debugging for this
+browser instance** at `brave://inspect/#remote-debugging` yourself, then call
+`browser_prepare` again. On Linux, start the browser
 with `--force-renderer-accessibility`. On macOS, setup recognizes English UI labels only. On Windows, setup does not depend on the UI language. On Linux, setup accepts a localized browser, but the browser's internal setup page must show its English heading and checkbox.
 
-On macOS 27 and later, reading the Chrome and Edge profile folders needs Full
+On macOS 27 and later, reading the Chrome, Edge, and Brave profile folders needs Full
 Disk Access or a per-app grant, so attachment through the daemon refuses with
 `browser_route_unavailable` until CuaDriver.app has that access. Grant it Full
 Disk Access in System Settings, then restart the daemon. A runtime started with

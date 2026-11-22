@@ -330,6 +330,10 @@ if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
       --test cross_platform_behavior_test -- \
       --ignored --exact embedded_browser_routes_are_exact_or_refused \
       --nocapture --test-threads=1
+  run_test chromium-tree-wake \
+    cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test chromium_tree_wake_linux_test -- \
+      --ignored --nocapture --test-threads=1
 fi
 
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then

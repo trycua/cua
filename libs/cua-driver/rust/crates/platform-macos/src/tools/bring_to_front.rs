@@ -22,7 +22,7 @@ use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
 use serde_json::{json, Value};
 
 use crate::ax::bindings::raise_exact_window_of_pid;
-use crate::windows::{WindowBounds, WindowInfo};
+use crate::windows::{overlap_area, WindowBounds, WindowInfo};
 
 pub struct BringToFrontTool;
 
@@ -242,16 +242,6 @@ fn active_display_bounds() -> Vec<WindowBounds> {
             }
         })
         .collect()
-}
-
-fn overlap_area(left: &WindowBounds, right: &WindowBounds) -> f64 {
-    let width = (left.x + left.width).min(right.x + right.width) - left.x.max(right.x);
-    let height = (left.y + left.height).min(right.y + right.height) - left.y.max(right.y);
-    if width > 0.0 && height > 0.0 {
-        width * height
-    } else {
-        0.0
-    }
 }
 
 fn display_holding(bounds: &WindowBounds, displays: &[WindowBounds]) -> Option<usize> {

@@ -1,5 +1,70 @@
 # Changelog
 
+## [0.59.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.59.1...cua-driver-rs-v0.59.2) (2026-11-22)
+
+
+### Bug Fixes
+
+* **cua-driver:** refuse macOS clicks on controls behind an attached sheet ([#7798](https://github.com/trycua/cua/issues/7798)) ([0240a51](https://github.com/trycua/cua/commit/0240a510b3e3917a21135cfdebb2dfef7cba50d1))
+* **cua-driver:** wait for a woken Chromium AT-SPI tree before the first Linux walk ([#7886](https://github.com/trycua/cua/issues/7886)) ([da8fbb9](https://github.com/trycua/cua/commit/da8fbb9f32a3049c2b1d033649f045a5afec5944))
+
+## [0.59.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.59.0...cua-driver-rs-v0.59.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **cua-driver:** answer sent messages while attached to the target input queue on Windows ([#8522](https://github.com/trycua/cua/issues/8522)) ([e2dcfbd](https://github.com/trycua/cua/commit/e2dcfbdd36b0da1adf84c07bae51a58c82076279))
+* **cua-driver:** tell apps how many wheel clicks a Hyprland scroll was ([#8351](https://github.com/trycua/cua/issues/8351)) ([0a70e8e](https://github.com/trycua/cua/commit/0a70e8ee20cb801fe3f56289300536cf6e484a0a))
+
+## [0.59.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.58.2...cua-driver-rs-v0.59.0) (2026-11-22)
+
+
+### Features
+
+* **cua-driver:** add metadata-only RuntimeWitnessV0 contract ([#7952](https://github.com/trycua/cua/issues/7952)) ([d4408c5](https://github.com/trycua/cua/commit/d4408c55de191e850dde7d68dabb9050ec0df375))
+
+## [0.58.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.58.1...cua-driver-rs-v0.58.2) (2026-11-22)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep foreground type_text out of sibling windows ([#8515](https://github.com/trycua/cua/issues/8515)) ([3d43490](https://github.com/trycua/cua/commit/3d434907b732cfcbd6f70ad2fcdb9cc4e4b26bf0))
+* **cua-driver:** raise the agent cursor after an untargeted move that follows a click ([#8521](https://github.com/trycua/cua/issues/8521)) ([7a96d50](https://github.com/trycua/cua/commit/7a96d50efe6389c31747a03635faf4f4dfb5b1a8)), closes [#2993](https://github.com/trycua/cua/issues/2993)
+
+## [0.58.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.58.0...cua-driver-rs-v0.58.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep the macOS agent cursor under a window covering its background target ([#8511](https://github.com/trycua/cua/issues/8511)) ([ff020d1](https://github.com/trycua/cua/commit/ff020d192b86e18ed9a90f963103a6a3a9a95bf3)), closes [#3332](https://github.com/trycua/cua/issues/3332)
+
+## [0.58.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.57.0...cua-driver-rs-v0.58.0) (2026-11-22)
+
+
+### Features
+
+* **cua-driver:** add agent_display, a session-owned virtual display on macOS ([#8146](https://github.com/trycua/cua/issues/8146)) ([f4b3a18](https://github.com/trycua/cua/commit/f4b3a18fcc062e406fb107fbeac8f016e59429f8))
+* **cua-driver:** approve macOS permission prompts over Screen Sharing with `permissions vnc` ([#8141](https://github.com/trycua/cua/issues/8141)) ([8fac005](https://github.com/trycua/cua/commit/8fac005bb14de0b8749af91e36e07d7457945bb5))
+
+
+### Bug Fixes
+
+* **cua-driver:** capture ext-listed Wayland windows by their toplevel ([#8144](https://github.com/trycua/cua/issues/8144)) ([4ca7c40](https://github.com/trycua/cua/commit/4ca7c405865b857ea92a8f9e6edc1ba60a4a0e0a))
+
+## [0.57.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.9...cua-driver-rs-v0.57.0) (2026-11-21)
+
+
+### Features
+
+* **cua-driver:** sample the Hyprland cursor during recording ([#8084](https://github.com/trycua/cua/issues/8084)) ([e7fbec3](https://github.com/trycua/cua/commit/e7fbec35bf6db7d8771a5b8bccc01516ee58f63f))
+
+
+### Bug Fixes
+
+* **cua-driver:** export EmbeddedDriverDiagnostics from the embedded subpath ([#8068](https://github.com/trycua/cua/issues/8068)) ([69b8f4e](https://github.com/trycua/cua/commit/69b8f4e9b943bdd185deba7963a53f01bea50263))
+* **cua-driver:** label macOS controls through AXTitleUIElement ([#8114](https://github.com/trycua/cua/issues/8114)) ([53430b5](https://github.com/trycua/cua/commit/53430b5b59e33eaeac4c6597d217702d8f39006a))
+* **cua-driver:** print get_guide text from the call command ([#8106](https://github.com/trycua/cua/issues/8106)) ([34217ee](https://github.com/trycua/cua/commit/34217eeb29e2b33215d44379906ad407cdf75430))
+
 ## [0.56.9](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.8...cua-driver-rs-v0.56.9) (2026-11-21)
 
 

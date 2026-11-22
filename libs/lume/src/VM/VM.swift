@@ -228,7 +228,8 @@ class VM {
         usbMassStoragePaths: [Path]? = nil, additionalDiskPaths: [Path]? = nil,
         networkMode: NetworkMode? = nil, clipboard: Bool = false,
         vncPolicy: VNCPolicy = .enabled, forwards: [UInt16] = [],
-        hostDevices: HostDeviceOptions = .all
+        hostDevices: HostDeviceOptions = .all,
+        guestTimePort: UInt32? = nil
     ) async throws {
         // Defense in depth: the CLI and the controller reject these combinations
         // first, but no caller may reach a VNC-dependent path with VNC disabled.
@@ -357,9 +358,11 @@ class VM {
             activeNetworkMode = config.networkMode
             // A saved state restores only into the devices it was saved
             // with: one saved without the socket device resumes without
-            // forwards (the client then uses the VM's address).
+            // forwards (the client then uses the VM's address), and one
+            // saved with it keeps it even when this run asks for neither.
             activeSocketDevice = Self.usesSocketDevice(
                 forwards: forwards,
+                guestTimePort: guestTimePort,
                 hasSavedState: !recoveryMode && vmDirContext.dir.hasSavedState(),
                 savedStateHasVsock: vmDirContext.dir.savedStateHasVsock())
             config.socketDevice = activeSocketDevice
@@ -367,6 +370,15 @@ class VM {
             // taken with a different set fails to restore into it, and the
             // VM then boots fresh with this set (`restoreOrBoot`).
             config.hostDevices = hostDevices
+            if let guestTimePort {
+                if activeSocketDevice {
+                    config.guestTimePort = guestTimePort
+                } else {
+                    Logger.info(
+                        "The saved state has no virtio socket device; resuming without the guest time service",
+                        metadata: ["name": vmDirContext.name])
+                }
+            }
             vmDirContext.dir.clearVsockSession()
             Logger.info(
                 "Successfully created virtualization service context",
@@ -458,7 +470,7 @@ class VM {
                 try await service.start()
             }
             Logger.info("VM started successfully", metadata: ["name": vmDirContext.name])
-            if activeSocketDevice {
+            if activeSocketDevice && !forwards.isEmpty {
                 startVsockForwards(forwards, service: service)
             }
             if let telemetryTransport {
@@ -1476,12 +1488,16 @@ class VM {
 
     // MARK: - Host port forwards over vsock
 
-    /// Whether a run with `forwards` gets a virtio socket device: always on
-    /// a cold boot; on a resume only when the state was saved with one.
+    /// Whether the VM gets a virtio socket device. A resume follows the saved
+    /// state, which restores only into the devices it was saved with, whatever
+    /// this run asks for; a cold boot gets one for `forwards` or a guest time
+    /// service.
     nonisolated static func usesSocketDevice(
-        forwards: [UInt16], hasSavedState: Bool, savedStateHasVsock: Bool
+        forwards: [UInt16], guestTimePort: UInt32? = nil,
+        hasSavedState: Bool, savedStateHasVsock: Bool
     ) -> Bool {
-        !forwards.isEmpty && (!hasSavedState || savedStateHasVsock)
+        if hasSavedState { return savedStateHasVsock }
+        return !forwards.isEmpty || guestTimePort != nil
     }
 
     /// Publishes `forwards` on host loopback ports through the guest agent

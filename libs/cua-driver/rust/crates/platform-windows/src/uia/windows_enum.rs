@@ -51,6 +51,16 @@ pub(crate) enum UiaDeadlineError {
     Unavailable,
 }
 
+impl UiaDeadlineError {
+    pub(crate) fn status(&self) -> &'static str {
+        match self {
+            Self::Timeout => "timeout",
+            Self::Busy => "busy",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
 /// Process-wide gate for blocking UIA calls.
 ///
 /// Windows offers no safe way to cancel a COM provider call in another thread.
@@ -159,6 +169,24 @@ where
         FOCUSED_DOCUMENT_PROBE_TIMEOUT,
         "native typing if no write started; otherwise an unknown-effect result without retry",
         f,
+    )
+}
+
+/// Run a pattern call on a retained element under the shared UIA gate, so a
+/// provider that never answers cannot pin the caller (#2207).
+pub(crate) fn run_element_activation<T, F>(f: F) -> Result<T, UiaDeadlineError>
+where
+    T: Send + 'static,
+    F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
+{
+    run_uia_with_deadline_cancelable(
+        "element activation",
+        SUBTREE_OP_TIMEOUT,
+        "an unknown-effect error without another input attempt",
+        move |cancelled| {
+            let _com = ComInit::new();
+            f(cancelled)
+        },
     )
 }
 

@@ -18,12 +18,25 @@ static LAUNCH_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 /// Spawn a launcher command line (an executable plus arguments, e.g. an XDG
 /// `Exec=` value with field codes stripped) in the background and return the
 /// child pid.
+///
+/// The line is split with shell quoting rules, which cover the XDG `Exec=`
+/// quoting, and run directly rather than through a shell. Splitting on bare
+/// whitespace broke every quoted argument: `sh -c 'kill -9 42'` reached `sh`
+/// as `-c`, `'kill`, `-9`, `42'` (#2661).
 fn spawn_launch_command(cmd: &str, additional_arguments: &[String]) -> std::io::Result<u32> {
-    let mut parts = cmd.split_whitespace();
-    let prog = parts.next().unwrap_or(cmd);
-    let mut rest: Vec<String> = parts.map(str::to_owned).collect();
+    let mut parts = shlex::split(cmd)
+        .filter(|parts| !parts.is_empty())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("launch command `{cmd}` is empty or has unbalanced quotes"),
+            )
+        })?
+        .into_iter();
+    let prog = parts.next().unwrap_or_default();
+    let mut rest: Vec<String> = parts.collect();
     rest.extend(additional_arguments.iter().cloned());
-    let mut launch = std::process::Command::new(prog);
+    let mut launch = std::process::Command::new(&prog);
     launch
         .args(&rest)
         // The child must not inherit the driver's stdio: in private-worker mode
@@ -38,7 +51,7 @@ fn spawn_launch_command(cmd: &str, additional_arguments: &[String]) -> std::io::
         // toolkits ignore these when they do not need them.
         .env("ACCESSIBILITY_ENABLED", "1")
         .env("NO_AT_BRIDGE", "0");
-    if chromium_family_program(prog)
+    if chromium_family_program(&prog)
         && !rest
             .iter()
             .any(|arg| arg == "--force-renderer-accessibility")
@@ -214,7 +227,10 @@ mod launch_app_tests {
         // body never ran (#2661).
         let dir = tempfile::tempdir().expect("tempdir");
         let marker = dir.path().join("ran");
-        let cmd = format!("/bin/sh -c 'echo quoted body > \"$0\"' {}", marker.display());
+        let cmd = format!(
+            "/bin/sh -c 'echo quoted body > \"$0\"' {}",
+            marker.display()
+        );
         spawn_launch_command(&cmd, &[]).expect("/bin/sh should spawn");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         loop {
@@ -298,7 +314,7 @@ impl Tool for LaunchAppTool {
                 URLs to open). Resolution precedence: launch_path > name > bundle_id. Errors \
                 when the name resolves to nothing launchable.".into(),
             input_schema: json!({"type":"object","properties":{
-                "launch_path":{"type":"string","description":"Round-trip the `launch_path` returned by `list_apps` — the Exec= command from the .desktop file with XDG field codes already stripped. Highest precedence on Linux; spawned directly via the system shell."},
+                "launch_path":{"type":"string","description":"Round-trip the `launch_path` returned by `list_apps` — the Exec= command from the .desktop file with XDG field codes already stripped. Highest precedence on Linux; split with shell quoting rules and run directly, not through a shell."},
                 "name":{"type":"string","description":"App name or command to launch. Tried as a direct command first, then matched against installed .desktop applications (exact display name, desktop-file id, or Exec basename; else an unambiguous display-name substring)."},
                 "bundle_id":{"type":"string","description":"Ignored on Linux (macOS/Windows concept)."},
                 "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open via xdg-open."},

@@ -155,6 +155,11 @@ pub enum Command {
         subcommand: String,
         json: bool,
     },
+    /// `cua-driver permissions vnc shot|click|type-env`: approve the
+    /// permission prompts through the Mac's Screen Sharing (VNC) server.
+    PermissionsVnc {
+        args: Vec<String>,
+    },
     Config {
         /// `show` | `get` | `set` | `reset` (None → show)
         subcommand: Option<String>,
@@ -272,6 +277,9 @@ const VALUE_FLAGS: &[&str] = &[
     "--style",
     "--timing",
     "--effects",
+    // `permissions vnc` options.
+    "--server",
+    "--label",
 ];
 
 /// Authorization selectors are trusted-daemon startup inputs. Direct MCP
@@ -476,6 +484,7 @@ fn finite_operation_from_args(args: &[String]) -> &'static str {
         Some("permissions") => match subcommand.unwrap_or("status") {
             "status" => "status",
             "grant" => "grant",
+            "vnc" => "vnc",
             _ => "other",
         },
         Some("config") => match subcommand.unwrap_or("show") {
@@ -619,6 +628,14 @@ pub fn parse_command() -> Command {
         println!("                                  the answer is Cua Driver's own, not your terminal's. Add --json for data.");
         println!("  cua-driver permissions grant    Open a short guide that walks you through both switches in System");
         println!("                                  Settings, one at a time, then takes a test screenshot to confirm.");
+        println!("  cua-driver permissions vnc      For a Mac nobody is sitting at: screenshot, click and type through its");
+        println!("                                  Screen Sharing (VNC) server, so the owner (or an agent they authorize)");
+        println!("                                  can approve the prompts that `permissions grant` raises. Runs on any OS:");
+        println!("    shot <out.png>                Save the screen. Coordinates below are pixels in this image.");
+        println!("    click <x> <y> --label <text>  Click, and log what the click approves.");
+        println!("    type-env <NAME>               Type the value of environment variable NAME, then Return.");
+        println!("    --server <host[:port]>        Default $CUA_VNC_SERVER, port 5900. Credentials come only from");
+        println!("                                  CUA_VNC_USER and CUA_VNC_PASSWORD, never from the command line.");
         println!();
         println!("Updating cua-driver:");
         println!("  cua-driver check-update         Ask GitHub whether a newer release is available. Read-only.");
@@ -1016,8 +1033,18 @@ pub fn parse_command() -> Command {
         },
         Some("permissions") => {
             let subcommand = pos.next().unwrap_or("status").to_string();
-            let json = args.iter().any(|a| a == "--json");
-            Command::Permissions { subcommand, json }
+            if subcommand == "vnc" {
+                let index = args
+                    .iter()
+                    .position(|value| value == "vnc")
+                    .expect("vnc positional is present");
+                Command::PermissionsVnc {
+                    args: args[index + 1..].to_vec(),
+                }
+            } else {
+                let json = args.iter().any(|a| a == "--json");
+                Command::Permissions { subcommand, json }
+            }
         }
         Some("config") => {
             let subcommand = pos.next().map(str::to_owned);
@@ -2298,8 +2325,10 @@ pub fn build_manifest() -> serde_json::Value {
             { "name": "permissions",
               "description": "Inspect / raise TCC permission grants (macOS).",
               "args": [
-                  { "name": "subcommand", "type": "positional-string", "description": "status | grant" },
-                  { "name": "--json", "type": "flag", "description": "Machine-readable payload." }
+                  { "name": "subcommand", "type": "positional-string", "description": "status | grant | vnc shot <out.png> | vnc click <x> <y> --label <text> | vnc type-env <NAME>" },
+                  { "name": "--json", "type": "flag", "description": "Machine-readable payload." },
+                  { "name": "--server", "type": "string", "description": "vnc: the Mac's Screen Sharing server, host[:port]. Default $CUA_VNC_SERVER." },
+                  { "name": "--label", "type": "string", "description": "vnc click: what the click approves, written to the approval log." }
               ] },
             { "name": "config",
               "description": "Read / write the persistent driver config.",
@@ -3761,7 +3790,7 @@ pub fn run_permissions_cmd(subcommand: &str, json: bool) {
         "status" => run_permissions_status(json),
         "grant" => run_permissions_grant(),
         other => {
-            eprintln!("unknown permissions subcommand '{other}'. Valid: status, grant.");
+            eprintln!("unknown permissions subcommand '{other}'. Valid: status, grant, vnc.");
             process::exit(64);
         }
     }
@@ -4371,6 +4400,10 @@ fn run_permissions_grant() {
                      choose {app_path}, and turn it on."
                 );
             }
+            println!(
+                "Nobody at this Mac? With Screen Sharing on, `{cli_name} permissions vnc` \
+                 can approve the prompts from here or another computer."
+            );
             process::exit(1);
         }
 
@@ -4964,7 +4997,12 @@ fn cli_docs_literal() -> serde_json::Value {
                 "flags": [],
                 "subcommands": [
                     {"name": "status", "abstract": "Show whether Cua Driver can use your mouse and keyboard (Accessibility) and see your screen (Screen Recording), read-only and without prompts. The default subcommand.", "discussion": "", "arguments": [], "options": [], "flags": [{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}], "subcommands": []},
-                    {"name": "grant", "abstract": "Walk through the Accessibility and Screen Recording switches one at a time, then confirm with a test screenshot.", "discussion": "", "arguments": [], "options": [], "flags": [], "subcommands": []}
+                    {"name": "grant", "abstract": "Walk through the Accessibility and Screen Recording switches one at a time, then confirm with a test screenshot.", "discussion": "", "arguments": [], "options": [], "flags": [], "subcommands": []},
+                    {"name": "vnc", "abstract": "Approve the permission prompts through the Mac's Screen Sharing (VNC) server, for a Mac nobody is sitting at.", "discussion": "Screen Sharing input does not depend on Cua Driver's own permissions, so this works before they are granted, from this Mac or another computer. Run `permissions grant` on the Mac to raise the prompts, approve each one from screenshots, then check with `permissions status`; once both are on, Cua Driver works natively. Credentials come only from the environment: CUA_VNC_USER and CUA_VNC_PASSWORD for a macOS account (Apple Remote Desktop authentication), or CUA_VNC_PASSWORD alone for a VNC password. Clicks and typing are logged to $CUA_VNC_LOG, default ~/.cache/cua-driver/vnc-approvals.log. Only with the owner's authorization; see the macOS permissions reference.", "arguments": [], "options": [], "flags": [], "subcommands": [
+                        {"name": "shot", "abstract": "Save a PNG of the whole screen, readable only by you.", "discussion": "", "arguments": [{"name": "out", "help": "PNG path to write.", "type": "Path", "is_optional": false}], "options": [{"name":"server","short_name":null,"help":"The Mac's Screen Sharing server, host[:port]. Default $CUA_VNC_SERVER, port 5900.","type":"String","default_value":null,"is_optional":true}], "flags": [], "subcommands": []},
+                        {"name": "click", "abstract": "Click at a pixel of the screenshot and log what the click approves.", "discussion": "", "arguments": [{"name": "x", "help": "Pixel column in the screenshot.", "type": "Number", "is_optional": false}, {"name": "y", "help": "Pixel row in the screenshot.", "type": "Number", "is_optional": false}], "options": [{"name":"server","short_name":null,"help":"The Mac's Screen Sharing server, host[:port]. Default $CUA_VNC_SERVER, port 5900.","type":"String","default_value":null,"is_optional":true}, {"name":"label","short_name":null,"help":"What the click approves, such as 'CuaDriver: Accessibility'. Required.","type":"String","default_value":null,"is_optional":false}], "flags": [], "subcommands": []},
+                        {"name": "type-env", "abstract": "Type the value of an environment variable, then press Return. The value is never printed or logged.", "discussion": "", "arguments": [{"name": "name", "help": "Environment variable that holds the text.", "type": "String", "is_optional": false}], "options": [{"name":"server","short_name":null,"help":"The Mac's Screen Sharing server, host[:port]. Default $CUA_VNC_SERVER, port 5900.","type":"String","default_value":null,"is_optional":true}], "flags": [], "subcommands": []}
+                    ]}
                 ]
             },
             {
@@ -5290,6 +5328,10 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
     ("permissions", &[("cua-driver permissions", "Report Accessibility and Screen Recording status")]),
     ("permissions status", &[("cua-driver permissions status --json", "Report the grants as JSON")]),
     ("permissions grant", &[("cua-driver permissions grant", "Request the grants for CuaDriver.app")]),
+    ("permissions vnc", &[("cua-driver permissions vnc shot screen.png", "Save the screen of $CUA_VNC_SERVER")]),
+    ("permissions vnc shot", &[("cua-driver permissions vnc shot screen.png --server mac.local", "Save the remote Mac's screen")]),
+    ("permissions vnc click", &[("cua-driver permissions vnc click 640 412 --label \"CuaDriver: Accessibility\"", "Turn on a switch and log it")]),
+    ("permissions vnc type-env", &[("cua-driver permissions vnc type-env VM_PASSWORD", "Type a password the owner gave you")]),
     ("connect", &[
         ("cua-driver connect", "Connect every agent found on this computer"),
         ("cua-driver connect --client claude --dry-run", "Show what would change for Claude Code"),
@@ -6627,6 +6669,18 @@ mod tests {
             // The hosted macOS release gate polls the daemon this way.
             &["--socket", "/s", "permissions", "status", "--json"],
             &["permissions", "status", "--socket", "/s", "--json"],
+            &[
+                "permissions",
+                "vnc",
+                "click",
+                "10",
+                "20",
+                "--label",
+                "CuaDriver: Accessibility",
+                "--server",
+                "mac.local:5901",
+            ],
+            &["permissions", "vnc", "shot", "s.png", "--server=mac.local"],
             &["kwin-capture", "on", "--override-portal-deny"],
             &["dump-docs", "--type", "cli", "-p"],
             &["telemetry", "inspect", "cua_driver_cli_completed", "--json"],
@@ -6722,6 +6776,14 @@ mod tests {
             (
                 &["sessions", "--json=yes"],
                 "cua-driver sessions: unknown option '--json=yes'",
+            ),
+            (
+                &["permissions", "vnc", "shot", "s.png", "--password", "x"],
+                "cua-driver permissions vnc shot: unknown option '--password'",
+            ),
+            (
+                &["permissions", "status", "--label", "x"],
+                "cua-driver permissions status: unknown option '--label'",
             ),
             (&["--bogus"], "cua-driver mcp: unknown option '--bogus'"),
         ];
@@ -6884,6 +6946,18 @@ mod tests {
         assert_eq!(
             finite_operation_from_args(&args(&["recording", "private-value"])),
             "other"
+        );
+        assert_eq!(
+            finite_operation_from_args(&args(&[
+                "permissions",
+                "vnc",
+                "click",
+                "1",
+                "2",
+                "--label",
+                "private-value"
+            ])),
+            "vnc"
         );
     }
 

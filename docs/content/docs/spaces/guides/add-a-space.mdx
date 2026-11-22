@@ -240,7 +240,9 @@ cua spaces rm studio
 
 A [Tailscale](https://tailscale.com) address works here too (its IP or
 MagicDNS name as the host:port): `cua spaces add` reaches it like any other
-address and the Space registers as `direct:<addr>`. That only attaches one
+address and the Space registers as `direct:<addr>`. Its video comes over QUIC
+on UDP 3212 of the same host when that port is reachable, and over the TCP
+port otherwise. That only attaches one
 already-running Space. To host Spaces for `on="host:<name>"`, set the computer up
 with [`cua host setup`](/spaces/guides/add-a-computer#use-a-spare-mac-to-host-spaces).
 

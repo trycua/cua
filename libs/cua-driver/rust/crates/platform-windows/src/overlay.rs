@@ -365,7 +365,7 @@ fn wake_overlay() {
         use windows::Win32::Foundation::HWND;
         use windows::Win32::UI::WindowsAndMessaging::SetTimer;
         let hwnd = HWND(hwnd_isize as *mut _);
-        SetTimer(hwnd, TIMER_ID, TIMER_MS_ACTIVE, None);
+        SetTimer(Some(hwnd), TIMER_ID, TIMER_MS_ACTIVE, None);
     }
 }
 
@@ -538,11 +538,19 @@ pub fn run_on_thread() {
         return;
     }
 
+    let work = move || run_overlay_thread(cfg, rx);
+    #[cfg(target_os = "windows")]
+    let work = crate::dpi::owned_thread(work);
     std::thread::Builder::new()
         .name("cua-overlay-win".into())
         .spawn(move || {
             // Windows message loops must run on the same thread that created the window.
-            run_overlay_thread(cfg, rx);
+            #[cfg(target_os = "windows")]
+            if let Err(error) = work() {
+                tracing::error!("Windows overlay thread refused: {error}");
+            }
+            #[cfg(not(target_os = "windows"))]
+            work();
         })
         .expect("spawn overlay thread");
 }
@@ -716,7 +724,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
             virt_h,
             None,
             None,
-            hinstance,
+            Some(hinstance.into()),
             None,
         )
     };
@@ -737,7 +745,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     // to the slow IDLE cadence as soon as every cursor goes quiescent and
     // re-arms ACTIVE the instant a command arrives (issue #1808).
     unsafe {
-        SetTimer(hwnd, TIMER_ID, TIMER_MS_ACTIVE, None);
+        SetTimer(Some(hwnd), TIMER_ID, TIMER_MS_ACTIVE, None);
     }
     TIMER_PERIOD_MS.store(TIMER_MS_ACTIVE, std::sync::atomic::Ordering::Relaxed);
     // Timer starts ACTIVE, so the 1 ms resolution is needed until the first
@@ -971,7 +979,7 @@ impl WinSurface {
 
         let pixmap = tiny_skia::Pixmap::new(w.max(1) as u32, h.max(1) as u32)?;
         let hdc_screen = GetDC(None);
-        let hdc_mem = CreateCompatibleDC(hdc_screen);
+        let hdc_mem = CreateCompatibleDC(Some(hdc_screen));
         let bmi = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
@@ -985,18 +993,18 @@ impl WinSurface {
             ..Default::default()
         };
         let mut bits_ptr = std::ptr::null_mut::<std::ffi::c_void>();
-        let hbmp = CreateDIBSection(hdc_mem, &bmi, DIB_RGB_COLORS, &mut bits_ptr, None, 0);
+        let hbmp = CreateDIBSection(Some(hdc_mem), &bmi, DIB_RGB_COLORS, &mut bits_ptr, None, 0);
         ReleaseDC(None, hdc_screen);
         let Ok(hbmp) = hbmp else {
             let _ = DeleteDC(hdc_mem);
             return None;
         };
         if bits_ptr.is_null() {
-            let _ = DeleteObject(hbmp);
+            let _ = DeleteObject(hbmp.into());
             let _ = DeleteDC(hdc_mem);
             return None;
         }
-        SelectObject(hdc_mem, hbmp);
+        SelectObject(hdc_mem, hbmp.into());
         Some(WinSurface {
             pixmap,
             hdc_mem: hdc_mem.0 as isize,
@@ -1049,7 +1057,7 @@ impl Drop for WinSurface {
     fn drop(&mut self) {
         use windows::Win32::Graphics::Gdi::{DeleteDC, DeleteObject, HBITMAP, HDC};
         unsafe {
-            let _ = DeleteObject(HBITMAP(self.hbmp as *mut _));
+            let _ = DeleteObject(HBITMAP(self.hbmp as *mut _).into());
             let _ = DeleteDC(HDC(self.hdc_mem as *mut _));
         }
     }
@@ -1492,7 +1500,7 @@ unsafe extern "system" fn wnd_proc(
             if TIMER_PERIOD_MS.swap(desired_ms, std::sync::atomic::Ordering::Relaxed) != desired_ms
             {
                 unsafe {
-                    SetTimer(hwnd, TIMER_ID, desired_ms, None);
+                    SetTimer(Some(hwnd), TIMER_ID, desired_ms, None);
                 }
                 if desired_ms == TIMER_MS_IDLE {
                     // Parked: free the render surface (pixmap + DIB, tens of
@@ -1560,7 +1568,7 @@ impl ZOrderEnforcer for WinZOrderEnforcer {
 
             let pinned_target = target.and_then(|wid| {
                 let h = HWND(wid as *mut _);
-                if IsWindow(h).as_bool() {
+                if IsWindow(Some(h)).as_bool() {
                     Some(h)
                 } else {
                     None
@@ -1598,7 +1606,7 @@ impl ZOrderEnforcer for WinZOrderEnforcer {
                     // topmost band, then insert exactly one slot above target.
                     let _ = SetWindowPos(
                         hwnd,
-                        HWND_NOTOPMOST,
+                        Some(HWND_NOTOPMOST),
                         0,
                         0,
                         0,
@@ -1609,7 +1617,7 @@ impl ZOrderEnforcer for WinZOrderEnforcer {
                     let insert_after = if !prev.0.is_null() { prev } else { HWND_TOP };
                     let _ = SetWindowPos(
                         hwnd,
-                        insert_after,
+                        Some(insert_after),
                         0,
                         0,
                         0,
@@ -1633,8 +1641,8 @@ impl ZOrderEnforcer for WinZOrderEnforcer {
                         | SWP_NOACTIVATE
                         | SWP_SHOWWINDOW
                         | SWP_NOOWNERZORDER;
-                    let _ = SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags);
-                    let _ = SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, flags);
+                    let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, flags);
+                    let _ = SetWindowPos(hwnd, Some(HWND_NOTOPMOST), 0, 0, 0, 0, flags);
                 }
             }
 

@@ -1158,6 +1158,9 @@ pub fn failed_step(
             | "runtime_not_running"
             | "runtime_permission" => Some("start_runtime"),
             "virtualization_unavailable" | "host_capacity" => Some("check_host"),
+            // An engine API error before any image work is about getting the
+            // engine ready (its socket, its ping, its info), not a create.
+            "engine_error" if phase == "preparing" => Some("start_runtime"),
             // The checks before anything starts refuse these in `preparing`.
             "local_network" | "insufficient_disk" if phase == "preparing" => Some("check_host"),
             "vm_boot_timeout" => Some("start_vm"),

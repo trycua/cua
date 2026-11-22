@@ -1,0 +1,29 @@
+name: "CI: Squash message"
+
+# Release Please drops a commit it cannot parse, and the change then never
+# reaches a changelog or release PR. Parse the message GitHub will build for the
+# squash merge, with Release Please's own parser, before the PR can merge.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  parses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Parse the squash message
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 .github/scripts/check_squash_message_parses.py --title "$TITLE" --base "$BASE_SHA" --head "$HEAD_SHA"

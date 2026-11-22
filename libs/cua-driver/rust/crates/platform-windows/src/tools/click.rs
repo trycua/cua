@@ -159,6 +159,7 @@ fn activate_retained_element(
                 &elem,
                 UIA_InvokePatternId,
                 hwnd,
+                cancelled,
                 |p: &IUIAutomationInvokePattern| unsafe { p.Invoke() },
             )
         }),
@@ -167,6 +168,7 @@ fn activate_retained_element(
                 &elem,
                 UIA_TogglePatternId,
                 hwnd,
+                cancelled,
                 |p: &IUIAutomationTogglePattern| unsafe { p.Toggle() },
             )
         }),
@@ -178,6 +180,7 @@ fn activate_retained_element(
                     &elem,
                     UIA_SelectionItemPatternId,
                     hwnd,
+                    cancelled,
                     |p: &IUIAutomationSelectionItemPattern| unsafe { p.Select() },
                 )
             },
@@ -190,6 +193,7 @@ fn activate_retained_element(
                     &elem,
                     UIA_ExpandCollapsePatternId,
                     hwnd,
+                    cancelled,
                     |p: &IUIAutomationExpandCollapsePattern| unsafe { p.Expand() },
                 )
             },
@@ -233,18 +237,31 @@ fn try_element_pattern<P: windows::core::Interface>(
     elem: &windows::Win32::UI::Accessibility::IUIAutomationElement,
     pattern_id: windows::Win32::UI::Accessibility::UIA_PATTERN_ID,
     hwnd: u64,
+    cancelled: &std::sync::atomic::AtomicBool,
     call: impl FnOnce(&P) -> windows::core::Result<()>,
 ) -> Option<bool> {
     use windows::core::Interface;
     let pattern = unsafe { elem.GetCurrentPattern(pattern_id) }.ok()?;
     let pattern = pattern.cast::<P>().ok()?;
-    match crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || call(&pattern)) {
-        Ok(()) => Some(true),
-        Err(e) => {
-            tracing::debug!(target: "click", "UIA pattern {pattern_id:?}: {e}");
-            Some(false)
-        }
+    let result = call_pattern_unless_cancelled(hwnd, cancelled, || call(&pattern))?;
+    if let Err(e) = &result {
+        tracing::debug!(target: "click", "UIA pattern {pattern_id:?}: {e}");
     }
+    Some(result.is_ok())
+}
+
+/// The pattern lookup and the shield's `EnableWindow` can themselves outlive
+/// the deadline, so check it again right before the provider call. `None`
+/// when it has fired.
+fn call_pattern_unless_cancelled<E>(
+    hwnd: u64,
+    cancelled: &std::sync::atomic::AtomicBool,
+    call: impl FnOnce() -> Result<(), E>,
+) -> Option<Result<(), E>> {
+    use std::sync::atomic::Ordering;
+    crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || {
+        (!cancelled.load(Ordering::Acquire)).then(call)
+    })
 }
 
 fn background_element_click_result(
@@ -1405,7 +1422,7 @@ impl Tool for ClickTool {
 
 #[cfg(test)]
 mod element_activation_tests {
-    use super::{run_activation_steps, ActivationStep};
+    use super::{call_pattern_unless_cancelled, run_activation_steps, ActivationStep};
     use cua_driver_core::action_record::ActionTransport;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -1464,6 +1481,25 @@ mod element_activation_tests {
         ];
         let outcome = run_activation_steps(&steps, &cancelled);
         assert_eq!(outcome.activated, None);
+        assert_eq!(calls.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn pattern_call_is_skipped_when_the_deadline_fired_during_lookup() {
+        let calls = AtomicUsize::new(0);
+        let call = || {
+            calls.fetch_add(1, Ordering::AcqRel);
+            Ok::<(), ()>(())
+        };
+        assert_eq!(
+            call_pattern_unless_cancelled(0, &AtomicBool::new(true), call),
+            None
+        );
+        assert_eq!(calls.load(Ordering::Acquire), 0);
+        assert_eq!(
+            call_pattern_unless_cancelled(0, &AtomicBool::new(false), call),
+            Some(Ok(()))
+        );
         assert_eq!(calls.load(Ordering::Acquire), 1);
     }
 }

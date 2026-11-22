@@ -587,6 +587,29 @@ pub(crate) fn compose_accessibility_tree(
 }
 
 fn apply_page_occlusion(nodes: &mut [SemanticNode], dom: &DomIndex, layout: &LayoutIndex) {
+    // The layout nodes that can occlude anything: painted, fixed or absolute, taking pointer
+    // events, not hidden, and with an area. Few nodes qualify, so collect them once and scan
+    // only them per target, walking the DOM only for an overlay that covers the target.
+    let overlays: Vec<(i64, i64, Rect)> = layout
+        .nodes
+        .iter()
+        .filter_map(|(&backend, overlay)| {
+            let paint = overlay.paint_order?;
+            let bounds = overlay.bounds.filter(|bounds| bounds.has_area())?;
+            let positioned = overlay
+                .styles
+                .get("position")
+                .is_some_and(|position| matches!(position.as_str(), "fixed" | "absolute"));
+            let pointer = overlay
+                .styles
+                .get("pointer-events")
+                .is_none_or(|value| value != "none");
+            (positioned && pointer && !layout_hidden(overlay)).then_some((backend, paint, bounds))
+        })
+        .collect();
+    if overlays.is_empty() {
+        return;
+    }
     for node in nodes {
         if node.visibility != BrowserVisibility::InViewport {
             continue;
@@ -600,27 +623,11 @@ fn apply_page_occlusion(nodes: &mut [SemanticNode], dom: &DomIndex, layout: &Lay
         let (Some(target_bounds), Some(target_paint)) = (target.bounds, target.paint_order) else {
             continue;
         };
-        let covered = layout.nodes.iter().any(|(&backend, overlay)| {
-            if backend == target_backend
-                || dom.shares_dom_branch(backend, target_backend)
-                || overlay
-                    .paint_order
-                    .is_none_or(|paint| paint <= target_paint)
-                || !overlay
-                    .styles
-                    .get("position")
-                    .is_some_and(|position| matches!(position.as_str(), "fixed" | "absolute"))
-                || overlay
-                    .styles
-                    .get("pointer-events")
-                    .is_some_and(|value| value == "none")
-                || layout_hidden(overlay)
-            {
-                return false;
-            }
-            overlay
-                .bounds
-                .is_some_and(|bounds| bounds.has_area() && bounds.covers(target_bounds))
+        let covered = overlays.iter().any(|&(backend, paint, bounds)| {
+            backend != target_backend
+                && paint > target_paint
+                && bounds.covers(target_bounds)
+                && !dom.shares_dom_branch(backend, target_backend)
         });
         if covered {
             node.visibility = BrowserVisibility::PageOccluded;
@@ -1487,6 +1494,124 @@ mod tests {
         let page = document.page(0, 1, None, None);
         assert_eq!(page.selected[0].name.as_deref(), Some("Reply"));
         assert_eq!(page.next_offset, Some(1));
+    }
+
+    #[test]
+    fn page_occlusion_tests_each_control_against_the_boxes_that_can_cover_it() {
+        let mut dom = DomIndex::default();
+        let mut layout = LayoutIndex::default();
+        let positioned = |position: &str, extra: &[(&str, &str)]| {
+            let mut styles = HashMap::from([("position".to_owned(), position.to_owned())]);
+            styles.extend(
+                extra
+                    .iter()
+                    .map(|(k, v)| ((*k).to_owned(), (*v).to_owned())),
+            );
+            styles
+        };
+        let mut add = |backend: i64, parent: Option<i64>, bounds: Rect, paint: i64, styles| {
+            dom.nodes.insert(
+                backend,
+                DomMeta {
+                    parent_backend_node_id: parent,
+                    ..Default::default()
+                },
+            );
+            layout.nodes.insert(
+                backend,
+                LayoutMeta {
+                    bounds: Some(bounds),
+                    paint_order: Some(paint),
+                    styles,
+                    ..Default::default()
+                },
+            );
+        };
+        let rect = |x: f64, y: f64, width: f64, height: f64| Rect {
+            x,
+            y,
+            width,
+            height,
+        };
+        // A deep page of static boxes painted above every control: none can cover one.
+        for backend in 1..=4096 {
+            let parent = (backend % 32 != 1).then_some(backend - 1);
+            add(
+                backend,
+                parent,
+                rect(0.0, 0.0, 800.0, 2000.0),
+                2,
+                positioned("static", &[]),
+            );
+        }
+        // A fixed header over the first controls; a fixed box that lets the pointer through; an absolute box over one
+        // control further down; and an absolute box around the last control that is its own ancestor.
+        add(
+            20_000,
+            None,
+            rect(0.0, 0.0, 800.0, 300.0),
+            9,
+            positioned("fixed", &[]),
+        );
+        add(
+            20_002,
+            None,
+            rect(0.0, 400.0, 800.0, 10.0),
+            9,
+            positioned("absolute", &[]),
+        );
+        add(
+            20_001,
+            None,
+            rect(0.0, 0.0, 800.0, 2000.0),
+            9,
+            positioned("fixed", &[("pointer-events", "none")]),
+        );
+        add(
+            30_000,
+            None,
+            rect(0.0, 640.0, 800.0, 10.0),
+            9,
+            positioned("absolute", &[]),
+        );
+        let mut nodes = Vec::new();
+        for i in 1..=64_i64 {
+            let backend = 10_000 + i;
+            let parent = if i == 64 { 30_000 } else { 4096 };
+            add(
+                backend,
+                Some(parent),
+                rect(0.0, (i * 10) as f64, 100.0, 8.0),
+                1,
+                positioned("static", &[]),
+            );
+            nodes.push(SemanticNode {
+                ax_id: backend.to_string(),
+                parent_ax_id: None,
+                child_ax_ids: Vec::new(),
+                backend_node_id: Some(backend),
+                role: "button".to_owned(),
+                name: Some(format!("Control {i}")),
+                value: None,
+                states: BTreeMap::new(),
+                frame: frame(),
+                visibility: BrowserVisibility::InViewport,
+                actions: vec![BrowserActionKind::Click],
+                document_order: i as usize,
+            });
+        }
+        apply_page_occlusion(&mut nodes, &dom, &layout);
+        for (i, node) in (1..=64_i64).zip(&nodes) {
+            // Wholly under the header (its top at i * 10, its bottom 8 below, the header ending at 300), or under the
+            // absolute box at 400.
+            let covered = i * 10 + 8 <= 300 || i == 40;
+            let expected = if covered {
+                BrowserVisibility::PageOccluded
+            } else {
+                BrowserVisibility::InViewport
+            };
+            assert_eq!(node.visibility, expected, "control {i}");
+        }
     }
 
     #[test]

@@ -3347,6 +3347,65 @@ async fn semantic_ancestor_continuation_revalidates_the_oopif_loader() {
     assert_eq!(stale["refusal"]["detail"]["reason"], "scope_frame_changed");
 }
 
+async fn ancestor_scope_continuation(f: &Fixture, target: &str, tab: &str, frame: &str) -> String {
+    let seeded = semantic_snapshot_with(f, target, tab, json!({"query": "0.19.89"})).await;
+    let source_ref = seeded["refs"]
+        .as_array()
+        .and_then(|refs| {
+            refs.iter()
+                .find(|entry| entry["role"] == "link" && entry["frame"] == frame)
+        })
+        .and_then(|entry| entry["ref"].as_str())
+        .unwrap_or_else(|| panic!("{frame} version link ref: {seeded}"))
+        .to_owned();
+    let first = semantic_snapshot_with(
+        f,
+        target,
+        tab,
+        json!({
+            "scope_ref": source_ref,
+            "scope_ancestor_role": "row",
+            "query": "View release options"
+        }),
+    )
+    .await;
+    first["snapshot"]["continuation"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{frame} scoped continuation: {first}"))
+        .to_owned()
+}
+
+#[tokio::test]
+async fn semantic_ancestor_continuation_after_main_navigation_names_the_scope_frame() {
+    let f = fixture_with(|state| {
+        state.semantic_scoped_rows = true;
+        state.oopif_present = false;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let token = ancestor_scope_continuation(&f, &target, &tab, "main").await;
+    f.state.lock().unwrap().main_loader = "L_MAIN_2".into();
+
+    let stale = semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})).await;
+    assert_eq!(stale["status"], "refused", "{stale}");
+    assert_eq!(stale["refusal"]["code"], "browser_ref_stale");
+    assert_eq!(stale["refusal"]["detail"]["reason"], "scope_frame_changed");
+}
+
+#[tokio::test]
+async fn semantic_ancestor_continuation_refuses_when_oopif_proof_becomes_unsupported() {
+    let f = fixture_with(|state| state.semantic_scoped_rows = true).await;
+    let (target, tab) = bind(&f).await;
+    let token = ancestor_scope_continuation(&f, &target, &tab, "oopif").await;
+    f.state.lock().unwrap().oopif_supported = false;
+
+    let unavailable =
+        semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})).await;
+    assert_eq!(unavailable["status"], "refused", "{unavailable}");
+    assert_eq!(unavailable["refusal"]["code"], "browser_scope_unavailable");
+    assert_eq!(unavailable["refusal"]["detail"]["reason"], "unproven_frame");
+}
+
 #[tokio::test]
 async fn legacy_direct_scope_missing_from_fresh_semantics_stays_empty_and_ok() {
     let f = fixture().await;

@@ -2035,19 +2035,21 @@ impl BrowserEngine {
         &self,
         conn: &CdpConnection,
         tab_session: &str,
-        frame: &FrameRef,
+        anchor: &SemanticScopeAnchor,
     ) -> Result<bool, BrowserRefusal> {
+        let unproven = || {
+            semantic_scope_refusal(
+                &anchor.source_ref,
+                &anchor.role,
+                SemanticScopeFailure::UnprovenFrame,
+            )
+        };
+        let frame = &anchor.identity.frame;
         let Some(identity) = frame.identity.as_ref() else {
-            return Err(refuse(
-                BrowserRefusalCode::BrowserScopeUnavailable,
-                "the semantic scope has no frame/document identity to re-prove",
-            ));
+            return Err(unproven());
         };
         let tree_error = |error| match error {
-            FrameTreeError::Unsupported => refuse(
-                BrowserRefusalCode::BrowserScopeUnavailable,
-                "the browser no longer reports the semantic scope's frame tree",
-            ),
+            FrameTreeError::Unsupported => unproven(),
             FrameTreeError::Failed(error) => route_err(
                 "Page.getFrameTree failed during semantic scope revalidation",
                 error,
@@ -2066,10 +2068,7 @@ impl BrowserEngine {
             .attached_iframe_children(conn, tab_session)
             .await
             .map_err(|error| match error {
-                AttachError::Unsupported => refuse(
-                    BrowserRefusalCode::BrowserScopeUnavailable,
-                    "the browser can no longer re-prove the semantic scope's OOPIF frame",
-                ),
+                AttachError::Unsupported => unproven(),
                 AttachError::Failed(error) => route_err(
                     "Target.setAutoAttach failed during semantic scope revalidation",
                     error,
@@ -2823,18 +2822,27 @@ impl BrowserEngine {
                 if !tree.proves(identity) {
                     self.store
                         .invalidate_tab_snapshots(session, target_id, tab_id);
-                    return Err(refuse(
+                    let refusal = refuse(
                         BrowserRefusalCode::BrowserRefStale,
                         "the page navigated since this semantic continuation was minted; \
                          re-run get_browser_state to start a fresh snapshot",
-                    ));
+                    );
+                    // A main-document navigation replaces every frame, so an
+                    // ancestor scope's frame is gone with it.
+                    return Err(match &scope_anchor {
+                        Some(anchor) => refusal.with_detail(json!({
+                            "reason": "scope_frame_changed",
+                            "scope_ref": anchor.source_ref,
+                        })),
+                        None => refusal,
+                    });
                 }
             }
             if let Some(anchor) = &scope_anchor {
                 let conn = self.connection_for_record(session, &record).await?;
                 let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
                 if !self
-                    .semantic_scope_frame_is_live(&conn, &cdp_session, &anchor.identity.frame)
+                    .semantic_scope_frame_is_live(&conn, &cdp_session, anchor)
                     .await?
                 {
                     self.store

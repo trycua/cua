@@ -76,7 +76,7 @@ Screenshots, accessibility trees, verification and visual regions of a window. [
 
 ## Screen tools
 
-The desktop, screen size, cursor position and zoomed crops. [Reference](/cua-driver/reference/mcp-tools/apps-windows-and-screen#screen-tools).
+The desktop, screen size, cursor position, zoomed crops and agent displays. [Reference](/cua-driver/reference/mcp-tools/apps-windows-and-screen#screen-tools).
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
@@ -84,6 +84,7 @@ The desktop, screen size, cursor position and zoomed crops. [Reference](/cua-dri
 | <span id="get_screen_size"></span>[`get_screen_size`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#get_screen_size) | Return the logical size of the main display in points plus its backing scale factor. | macOS, Linux, Windows |
 | <span id="get_cursor_position"></span>[`get_cursor_position`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#get_cursor_position) | Return the current mouse cursor position in screen points (origin top-left). | macOS, Linux, Windows |
 | <span id="zoom"></span>[`zoom`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#zoom) | Capture a cropped JPEG of a window region (x1,y1)–(x2,y2) in screenshot pixel coordinates, with 20% padding added on each side. | macOS, Linux, Windows |
+| <span id="agent_display"></span>[`agent_display`](/cua-driver/reference/mcp-tools/apps-windows-and-screen#agent_display) | Create, list or remove a virtual display the agent works on, so app windows can be moved off the user's screen with set_window_frame (use the returned x, y, width, height as the target area; screenshots of a virtual display are 1:1, not Retina). | macOS |
 
 ## Click tool
 

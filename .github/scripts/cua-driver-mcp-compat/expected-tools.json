@@ -70,6 +70,7 @@
   ],
   "platformTools": {
     "darwin": [
+      "agent_display",
       "get_accessibility_surfaces"
     ],
     "linux": [

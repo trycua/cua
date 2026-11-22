@@ -1037,6 +1037,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "launch_app" => &["app.launch"],
         "list_apps" => &["app.list"],
         "kill_app" => &["app.kill"],
+        "agent_display" => &["display.virtual"],
         "list_windows" => &["window.list"],
         "bring_to_front" => &["window.activate"],
         "set_window_frame" => &["window.frame.set"],
@@ -7965,6 +7966,7 @@ mod capability_tests {
         "history_status",
         "history_query",
         "parse_visual_regions",
+        "agent_display",
     ];
 
     /// All capability tokens in the canonical vocabulary. Any token
@@ -8009,6 +8011,7 @@ mod capability_tests {
         "app.launch",
         "app.list",
         "app.kill",
+        "display.virtual",
         "window.list",
         "window.activate",
         "window.frame.set",

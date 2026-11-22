@@ -184,19 +184,7 @@ pub fn plan_chunks(text: &str) -> Vec<TypingChunk<'_>> {
 /// [`TypingChunk`] instead of per character, with no inter-character sleep.
 /// A 100-character string costs about 7 pairs rather than 100.
 pub fn type_text_batched(pid: i32, text: &str) -> anyhow::Result<()> {
-    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
-    for chunk in plan_chunks(text) {
-        let (down, up) = match chunk {
-            TypingChunk::Text(run) => key_events(&source, 0, Some(run))?,
-            TypingChunk::Control(ch) => char_key_events(&source, ch)?,
-        };
-        post_keyboard_event(pid, &down);
-        key_gap_sleep();
-        post_keyboard_event(pid, &up);
-        key_gap_sleep();
-    }
-    Ok(())
+    type_text_while(pid, text, 0, || true).map(drop)
 }
 
 /// The down and up events of a background PID-routed key press, with their
@@ -235,26 +223,58 @@ pub fn type_text(pid: i32, text: &str) -> anyhow::Result<()> {
 /// for no pacing gets the fast path; any positive delay keeps one event pair
 /// per character so debounce-sensitive fields see each key.
 pub fn type_text_with_delay(pid: i32, text: &str, inter_char_delay_ms: u64) -> anyhow::Result<()> {
-    if inter_char_delay_ms == 0 {
-        return type_text_batched(pid, text);
-    }
+    type_text_while(pid, text, inter_char_delay_ms, || true).map(drop)
+}
+
+/// [`type_text_with_delay`] that asks `may_send` before every key press (each
+/// batched chunk, or each paced character) and stops at the first `false`.
+/// Returns how many characters were sent.
+pub fn type_text_while(
+    pid: i32,
+    text: &str,
+    inter_char_delay_ms: u64,
+    mut may_send: impl FnMut() -> bool,
+) -> anyhow::Result<usize> {
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+    let mut sent = 0;
+    if inter_char_delay_ms == 0 {
+        for chunk in plan_chunks(text) {
+            if !may_send() {
+                return Ok(sent);
+            }
+            let (down, up, chars) = match chunk {
+                TypingChunk::Text(run) => {
+                    let (down, up) = key_events(&source, 0, Some(run))?;
+                    (down, up, run.chars().count())
+                }
+                TypingChunk::Control(ch) => {
+                    let (down, up) = char_key_events(&source, ch)?;
+                    (down, up, 1)
+                }
+            };
+            post_keyboard_event(pid, &down);
+            key_gap_sleep();
+            post_keyboard_event(pid, &up);
+            key_gap_sleep();
+            sent += chars;
+        }
+        return Ok(sent);
+    }
 
     for ch in text.chars() {
+        if !may_send() {
+            return Ok(sent);
+        }
         let (down, up) = char_key_events(&source, ch)?;
         post_keyboard_event(pid, &down);
         key_gap_sleep();
         post_keyboard_event(pid, &up);
-
         // Additional inter-character delay on top of the internal key gap.
-        if inter_char_delay_ms > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(inter_char_delay_ms));
-        } else {
-            key_gap_sleep();
-        }
+        std::thread::sleep(std::time::Duration::from_millis(inter_char_delay_ms));
+        sent += 1;
     }
-    Ok(())
+    Ok(sent)
 }
 
 /// Send a key combination (hotkey) to `pid`.

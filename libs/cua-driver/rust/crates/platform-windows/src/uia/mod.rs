@@ -1399,7 +1399,10 @@ mod tests {
             Some(false),
             "an unreadable target under a disabled ancestor is disabled"
         );
-        assert_eq!(live_scope(&[("Button", None), ("Window", Some(true))]), None);
+        assert_eq!(
+            live_scope(&[("Button", None), ("Window", Some(true))]),
+            None
+        );
         assert_eq!(live_scope(&[("Window", None), disabled_owner]), None);
         assert_eq!(live_scope(&[("Window", Some(false))]), Some(false));
     }

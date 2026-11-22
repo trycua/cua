@@ -687,14 +687,17 @@ fn applies_write_before_axvalue_updates(bundle_id: &str) -> bool {
     bundle_id.starts_with("org.mozilla.") || GECKO_BUNDLE_IDS.contains(&bundle_id)
 }
 
-/// `progress` is `None` when the write was refused. `unchanged_web_readback`
-/// is an unchanged read-back from inside an `AXWebArea`.
+/// `progress` is `None` when the write was refused. `write_applies_late` is
+/// an accepted write into a Gecko browser's `AXWebArea`, whose read-back
+/// proves nothing either way until the page applies it.
 fn after_unlanded_ax_write(
     progress: Option<TypedProgress>,
-    unchanged_web_readback: bool,
+    write_applies_late: bool,
 ) -> UnlandedAxWrite {
     match progress {
-        Some(TypedProgress::Unchanged) if unchanged_web_readback => UnlandedAxWrite::MayHaveLanded,
+        Some(TypedProgress::Unchanged | TypedProgress::Unverifiable) if write_applies_late => {
+            UnlandedAxWrite::MayHaveLanded
+        }
         Some(TypedProgress::Unchanged) => UnlandedAxWrite::TypeKeys(AxAttempt::Unchanged),
         Some(TypedProgress::Unverifiable) => UnlandedAxWrite::TypeKeys(AxAttempt::Unverifiable),
         None => UnlandedAxWrite::TypeKeys(AxAttempt::Rejected),
@@ -1886,14 +1889,17 @@ fn type_text_in_key_window(
         } else {
             None
         };
-        // AXValue is not renderer evidence in web content. An unchanged echo
-        // there cannot prove that zero characters landed, so blind retry is
-        // unsafe even though no synthesis has run yet.
-        let unchanged_web_readback = ax_progress == Some(TypedProgress::Unchanged)
-            && target_in_web_area(pid, Some((element as usize, idx_opt)), window_id)
-            && crate::apps::bundle_id_for_pid(pid)
-                .as_deref()
-                .is_some_and(applies_write_before_axvalue_updates);
+        // AXValue is not renderer evidence in web content. An unchanged or
+        // unreadable echo there cannot prove that zero characters landed, so
+        // blind retry is unsafe even though no synthesis has run yet.
+        let write_applies_late =
+            matches!(
+                ax_progress,
+                Some(TypedProgress::Unchanged | TypedProgress::Unverifiable)
+            ) && target_in_web_area(pid, Some((element as usize, idx_opt)), window_id)
+                && crate::apps::bundle_id_for_pid(pid)
+                    .as_deref()
+                    .is_some_and(applies_write_before_axvalue_updates);
         // An AX insert bypasses NSTextView's edit model, so a document is
         // not marked edited and would never save the new text (DS-07).
         let document = if ax_progress == Some(TypedProgress::Complete) {
@@ -1987,7 +1993,7 @@ fn type_text_in_key_window(
                 delivered_chars: Some(delivered_chars),
             }));
         }
-        ax_attempt = match after_unlanded_ax_write(ax_progress, unchanged_web_readback) {
+        ax_attempt = match after_unlanded_ax_write(ax_progress, write_applies_late) {
             UnlandedAxWrite::TypeKeys(attempt) => attempt,
             // Firefox accepts the write but updates AXValue later (#5383).
             UnlandedAxWrite::MayHaveLanded => {
@@ -2490,6 +2496,12 @@ mod tests {
         assert_eq!(
             after_unlanded_ax_write(Some(Unchanged), false),
             UnlandedAxWrite::TypeKeys(AxAttempt::Unchanged)
+        );
+        // An unreadable AXValue there is no evidence either: Zen doubled
+        // "BONSAI_TOKEN abc123" the same way (#6269).
+        assert_eq!(
+            after_unlanded_ax_write(Some(Unverifiable), true),
+            UnlandedAxWrite::MayHaveLanded
         );
         assert_eq!(
             after_unlanded_ax_write(Some(Unverifiable), false),

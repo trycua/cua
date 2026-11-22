@@ -208,6 +208,37 @@ mod launch_app_tests {
     }
 
     #[test]
+    fn launch_command_keeps_quoted_arguments_whole() {
+        // `sh -c '<body>'` must reach sh as one `-c` body. Splitting on bare
+        // whitespace handed sh `'echo` as its script, a syntax error, so the
+        // body never ran (#2661).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let marker = dir.path().join("ran");
+        let cmd = format!("/bin/sh -c 'echo quoted body > \"$0\"' {}", marker.display());
+        spawn_launch_command(&cmd, &[]).expect("/bin/sh should spawn");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let body = std::fs::read_to_string(&marker).unwrap_or_default();
+            if body == "quoted body\n" {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the quoted -c body never ran (marker holds {body:?})"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    }
+
+    #[test]
+    fn launch_command_with_unbalanced_quotes_is_refused() {
+        let err = spawn_launch_command("/bin/sh -c 'exit", &[]).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        let err = spawn_launch_command("   ", &[]).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
     fn matches_exact_display_name_case_insensitively() {
         let apps = fixture();
         let hit = match_installed_app(&apps, "google chrome").expect("should match");

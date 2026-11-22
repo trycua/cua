@@ -243,24 +243,35 @@ fn try_element_pattern<P: windows::core::Interface>(
     use windows::core::Interface;
     let pattern = unsafe { elem.GetCurrentPattern(pattern_id) }.ok()?;
     let pattern = pattern.cast::<P>().ok()?;
-    let result = call_pattern_unless_cancelled(hwnd, cancelled, || call(&pattern))?;
+    let result = call_pattern_unless_cancelled(
+        cancelled,
+        |run| crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, run),
+        || call(&pattern),
+    )?;
     if let Err(e) = &result {
         tracing::debug!(target: "click", "UIA pattern {pattern_id:?}: {e}");
     }
     Some(result.is_ok())
 }
 
-/// The pattern lookup and the shield's `EnableWindow` can themselves outlive
-/// the deadline, so check it again right before the provider call. `None`
-/// when it has fired.
-fn call_pattern_unless_cancelled<E>(
-    hwnd: u64,
+/// The pattern lookup can outlive the deadline, and so can the shield's
+/// `EnableWindow`, so check it before entering `shield` and again right before
+/// the provider call. `None` when it has fired.
+fn call_pattern_unless_cancelled<R>(
     cancelled: &std::sync::atomic::AtomicBool,
-    call: impl FnOnce() -> Result<(), E>,
-) -> Option<Result<(), E>> {
+    shield: impl FnOnce(&mut dyn FnMut() -> Option<R>) -> Option<R>,
+    call: impl FnOnce() -> R,
+) -> Option<R> {
     use std::sync::atomic::Ordering;
-    crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || {
-        (!cancelled.load(Ordering::Acquire)).then(call)
+    if cancelled.load(Ordering::Acquire) {
+        return None;
+    }
+    let mut call = Some(call);
+    shield(&mut || {
+        if cancelled.load(Ordering::Acquire) {
+            return None;
+        }
+        call.take().map(|call| call())
     })
 }
 
@@ -1485,21 +1496,41 @@ mod element_activation_tests {
     }
 
     #[test]
-    fn pattern_call_is_skipped_when_the_deadline_fired_during_lookup() {
+    fn pattern_call_rechecks_the_deadline_before_and_inside_the_shield() {
+        let shields = AtomicUsize::new(0);
         let calls = AtomicUsize::new(0);
-        let call = || {
-            calls.fetch_add(1, Ordering::AcqRel);
-            Ok::<(), ()>(())
-        };
-        assert_eq!(
-            call_pattern_unless_cancelled(0, &AtomicBool::new(true), call),
-            None
+        let call = || calls.fetch_add(1, Ordering::AcqRel);
+
+        // Deadline fired during the pattern lookup: the shield is never set up.
+        let fired = AtomicBool::new(true);
+        let outcome = call_pattern_unless_cancelled(
+            &fired,
+            |run| {
+                shields.fetch_add(1, Ordering::AcqRel);
+                run()
+            },
+            call,
         );
+        assert_eq!(outcome, None);
+        assert_eq!(shields.load(Ordering::Acquire), 0);
+
+        // Deadline fired while the shield was being set up: no provider call.
+        let racing = AtomicBool::new(false);
+        let outcome = call_pattern_unless_cancelled(
+            &racing,
+            |run| {
+                shields.fetch_add(1, Ordering::AcqRel);
+                racing.store(true, Ordering::Release);
+                run()
+            },
+            call,
+        );
+        assert_eq!(outcome, None);
+        assert_eq!(shields.load(Ordering::Acquire), 1);
         assert_eq!(calls.load(Ordering::Acquire), 0);
-        assert_eq!(
-            call_pattern_unless_cancelled(0, &AtomicBool::new(false), call),
-            Some(Ok(()))
-        );
+
+        let outcome = call_pattern_unless_cancelled(&AtomicBool::new(false), |run| run(), call);
+        assert_eq!(outcome, Some(0));
         assert_eq!(calls.load(Ordering::Acquire), 1);
     }
 }

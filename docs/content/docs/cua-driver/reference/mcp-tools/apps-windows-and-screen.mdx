@@ -29,6 +29,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 | [`get_screen_size`](#get_screen_size) | Return the logical size of the main display in points plus its backing scale factor. | macOS, Linux, Windows |
 | [`get_cursor_position`](#get_cursor_position) | Return the current mouse cursor position in screen points (origin top-left). | macOS, Linux, Windows |
 | [`zoom`](#zoom) | Capture a cropped JPEG of a window region (x1,y1)–(x2,y2) in screenshot pixel coordinates, with 20% padding added on each side. | macOS, Linux, Windows |
+| [`agent_display`](#agent_display) | Create, list or remove a virtual display the agent works on, so app windows can be moved off the user's screen with set_window_frame (use the returned x, y, width, height as the target area; screenshots of a virtual display are 1:1, not Retina). | macOS |
 | [`start_session`](#start_session) | Optionally create or return a lifecycle session before acting. | macOS, Linux, Windows |
 | [`get_session`](#get_session) | Read content-free lifecycle, cursor, recording, and idle status for one session visible to this authenticated transport. | macOS, Linux, Windows |
 | [`list_sessions`](#list_sessions) | List content-free lifecycle summaries attached to this authenticated transport lease. | macOS, Linux, Windows |
@@ -91,7 +92,7 @@ List Windows apps, both currently running and installed-but-not-running, with pe
 * uwp: `shell:appsFolder\{PackageFamilyName}!{AppId}` where `{AppId}` falls back to `App` when the package manifest does not expose a specific Application.Id.
 - last_used: RFC3339 mtime of the launcher (`.lnk` for desktop, package install location for UWP), when readable.
 
-Running apps are derived from visible top-level windows + the foreground pid (mirrors NSApplicationActivationPolicyRegular's intent: background services and console processes are excluded). Installed apps are merged from Start-Menu `.lnk` enumeration and the WinRT PackageManager: running processes whose executable matches a Start-Menu target are folded into a single entry with `running: true`.
+Running apps are derived from visible top-level windows + the foreground pid (mirrors NSApplicationActivationPolicyRegular's intent: background services and console processes are excluded). Installed apps are merged from Start-Menu `.lnk` enumeration and the WinRT PackageManager: running processes whose executable matches a Start-Menu target, and running packaged apps whose package identity matches a `uwp` entry, are folded into a single entry with `running: true`.
 
 Use this for "is X installed?" as well as "is X running?". For per-window state, on-screen, minimized, window titles, call list_windows instead. For just opening an app, running or not, call launch_app(&#123;path: ...&#125;) directly; list_apps is not a prerequisite.
 
@@ -159,7 +160,7 @@ Inputs: pid (optional pid filter), app (app-name filter), on_screen_only (bool, 
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="list_windows--app"></span>`app` | `string` |  | Only windows of apps whose name contains this text (case-insensitive), or whose bundle id equals it. Prefer this or `pid` over an unfiltered call, which returns every window on the host. |
+| <span id="list_windows--app"></span>`app` | `string` |  | Only windows of apps with a name that contains this text (case-insensitive), or whose bundle id equals it. On macOS an app answers to its shown, possibly localized name and to its bundle's own name, so `Calculator` matches on every system language. Prefer this or `pid` over an unfiltered call, which returns every window on the host. |
 | <span id="list_windows--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 
 ### `launch_app`
@@ -290,7 +291,7 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Persistently activate an app and leave it in the foreground. Most input does not need this; use it only for a focus-proxy surface that must remain foreground across interactions. With window_id, success means the exact ordinary macOS window was independently verified as the frontmost process's focused window and the front window of that process on the display it sits on. `exact_window_effect.frontmost_ordinary` additionally reports whether it is first in the global WindowServer layer-0 order; another application (an always-raised utility window, another display's front window) can hold that spot without the requested window losing keyboard focus, so it is reported and not required. Request acceptance alone is reported as a partial result, never as activation. This DOES steal foreground and does NOT restore the previously frontmost application.
+Persistently activate an app and leave it in the foreground. Most input does not need this; use it only for a focus-proxy surface that must remain foreground across interactions. With window_id, success means the exact ordinary macOS window was independently verified as the frontmost process's focused window and the front window of that process on the display it sits on. `exact_window_effect.frontmost_ordinary` additionally reports whether it is first in the global WindowServer layer-0 order; another application (an always-raised utility window, another display's front window) can hold that spot without the requested window losing keyboard focus, so it is reported and not required. `exact_window_effect.unobstructed` is false when another ordinary (layer-0) window lies over part of the target, and `observed.occluding_window` names the frontmost one. It may intercept desktop pointer input at a covered point, even after a verified activation. Request acceptance alone is reported as a partial result, never as activation. This DOES steal foreground and does NOT restore the previously frontmost application.
 
 **macOS parameters**
 
@@ -620,7 +621,7 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 
 ## Screen tools
 
-The desktop, screen size, cursor position and zoomed crops.
+The desktop, screen size, cursor position, zoomed crops and agent displays.
 
 ### `get_desktop_state`
 
@@ -767,6 +768,27 @@ Windows-specific: `window_id` is the canonical addressing field (HWND). `pid` is
 
 ```json
 {"window_id":1,"x1":100,"y1":200,"x2":100,"y2":200}
+```
+
+### `agent_display`
+
+Create, list or remove a virtual display the agent works on, so app windows can be moved off the user's screen with set_window_frame (use the returned x, y, width, height as the target area; screenshots of a virtual display are 1:1, not Retina). `create` adds an extra display of width x height pixels owned by the calling session, removed by `remove`, when that session ends or idles out, or when the daemon exits; `list` returns the displays this daemon created; `remove` needs a display_id. Requires no TCC permissions.
+
+Effect: mutating. Platforms: macOS.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="agent_display--action"></span>`action` | `"create" \| "list" \| "remove"` | required | create a display, list this daemon's displays, or remove one. |
+| <span id="agent_display--display_id"></span>`display_id` | `integer` |  | remove: id returned by create or list. |
+| <span id="agent_display--height"></span>`height` | `integer` |  | create: pixels, default 1080. |
+| <span id="agent_display--name"></span>`name` | `string` |  | create: display name, default "Agent Desktop". |
+| <span id="agent_display--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
+| <span id="agent_display--width"></span>`width` | `integer` |  | create: pixels, default 1920. |
+
+**Example arguments**
+
+```json
+{"action":"create"}
 ```
 
 ## Session tools

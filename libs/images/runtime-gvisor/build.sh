@@ -79,6 +79,51 @@ if [ "$arch" = arm64 ]; then
     grep -q 'arm64.nopauth' "$boot/grub/grub.cfg"
     umount "$boot"
 fi
+# amd64: Hyper-V boots this disk too (the Windows runtime, cua_vmm::managed::hyperv).
+# Its disk controller is the synthetic SCSI one (a module, hv_storvsc) and the image has
+# no initramfs: its kernel finds the root disk only through drivers built into it, so
+# on Hyper-V it panics with "VFS: Cannot open root device". (On a generation 1 machine
+# the emulated IDE disk is ignored by ata_piix on purpose.) Give it a small initramfs
+# that carries the Hyper-V drivers (MODULES=list: only those, so the result does not
+# depend on the machine that builds it), and let update-grub load it. The drivers are
+# inert elsewhere. The arm64 disk, built without emulation, is left as it is.
+if [ "$arch" = amd64 ]; then
+    echo "==> initramfs with the Hyper-V drivers"
+    mount "${loop}p16" "$mnt/boot"
+    mount "${loop}p15" "$mnt/boot/efi"
+    mount --bind /dev "$mnt/dev"
+    mount -t proc proc "$mnt/proc"
+    mount -t sysfs sysfs "$mnt/sys"
+    cp /etc/resolv.conf "$mnt/etc/resolv.conf.cua-build"
+    mv "$mnt/etc/resolv.conf" "$mnt/etc/resolv.conf.cua-orig" 2>/dev/null || true
+    cp "$mnt/etc/resolv.conf.cua-build" "$mnt/etc/resolv.conf"
+    chroot "$mnt" env DEBIAN_FRONTEND=noninteractive apt-get update -qq
+    chroot "$mnt" env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends initramfs-tools
+    sed -i 's/^MODULES=.*/MODULES=list/' "$mnt/etc/initramfs-tools/initramfs.conf"
+    printf 'hv_vmbus\nhv_storvsc\n' >> "$mnt/etc/initramfs-tools/modules"
+    chroot "$mnt" update-initramfs -c -k all
+    # The cloud image tells grub to boot without an initrd (GRUB_FORCE_PARTUUID);
+    # without that file grub loads the one just made.
+    rm -f "$mnt/etc/default/grub.d/40-force-partuuid.cfg"
+    chroot "$mnt" update-grub
+    initrd="$(ls "$mnt"/boot/initrd.img-* | head -1)"
+    contents="$(lsinitramfs "$initrd")"
+    case "$contents" in *hv_storvsc*) ;; *) echo "$initrd has no hv_storvsc" >&2; exit 1 ;; esac
+    grep -q '^[[:space:]]*initrd[[:space:]]' "$mnt/boot/grub/grub.cfg" || { echo "grub.cfg loads no initrd" >&2; exit 1; }
+    ! grep -q 'initrdless' "$mnt/boot/grub/grub.cfg" || echo "note: grub.cfg still mentions initrdless" >&2
+    chroot "$mnt" env DEBIAN_FRONTEND=noninteractive apt-get clean
+    rm -rf "$mnt"/var/lib/apt/lists/*
+    # The files just removed leave their blocks behind and gzip cannot shrink them:
+    # fill what is free with zeros so the image compresses as it did before.
+    dd if=/dev/zero of="$mnt/zero.fill" bs=1M 2>/dev/null || true
+    dd if=/dev/zero of="$mnt/boot/zero.fill" bs=1M 2>/dev/null || true
+    sync
+    rm -f "$mnt/zero.fill" "$mnt/boot/zero.fill"
+    rm -f "$mnt/etc/resolv.conf"
+    mv "$mnt/etc/resolv.conf.cua-orig" "$mnt/etc/resolv.conf" 2>/dev/null || true
+    rm -f "$mnt/etc/resolv.conf.cua-build"
+    umount "$mnt/sys" "$mnt/proc" "$mnt/dev" "$mnt/boot/efi" "$mnt/boot"
+fi
 # The baked files are the verified ones.
 cmp "$work/gvisor/runsc" "$mnt/usr/local/bin/runsc"
 cmp "$work/gvisor/gvisor-bin/gvisor_sentry" "$mnt/usr/local/bin/gvisor-bin/gvisor_sentry"

@@ -662,6 +662,22 @@ key focus back within a few tens of milliseconds. Prefer routes that do
 not ask the app to come forward: `set_value` on the address field or
 `browser_navigate` instead of `cmd+L`, and `AXOpen` through
 `double_click` on an element instead of a pixel double-click.
+
+### Work off the user's screen: `agent_display`
+
+`agent_display({action:"create", width, height})` adds a virtual display
+and returns its `display_id`, `x`, `y`, `width` and `height`. Move a
+window there with `set_window_frame` inside that rectangle, so the app,
+and any window it brings forward, stays off the user's screen. The
+calling session owns the display: `agent_display({action:"remove",
+display_id})`, `end_session`, the idle timeout or the daemon exiting
+removes it, and macOS moves its windows back to the main screen.
+`{action:"list"}` returns the displays this daemon created. Screenshots of
+a virtual display are 1:1 pixels, not Retina. The tool uses private
+CoreGraphics classes and returns an error, rather than a display, on a
+macOS build that lacks them. It is macOS only: Linux and Windows do not
+register `agent_display`.
+
 ### Hover in the background
 
 macOS apps track hover and show tooltips (help tags) from the real

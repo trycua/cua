@@ -961,6 +961,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "get_accessibility_tree"
         | "verify_state"
         | "set_config"
+        | "agent_display"
         | "start_recording"
         | "get_browser_state"
         | "browser_prepare"

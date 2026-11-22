@@ -1509,6 +1509,9 @@ async fn collect_visited_bounded_opts<'a>(
     max_depth: Option<usize>,
     walk_closed_menus: bool,
 ) -> Result<Option<Collected<'a>>> {
+    if still_unresponsive(pid) {
+        return Ok(Some(unresponsive_collected()));
+    }
     let ResolvedApp {
         app,
         children: probed,
@@ -1564,15 +1567,24 @@ async fn collect_visited_bounded_opts<'a>(
         // modal-grabbed app. Report it as unresponsive rather than as an
         // application without windows — the caller can retry later.
         dlog!("application for pid {pid} did not answer GetChildren");
-        return Ok(Some(Collected {
-            visited: Vec::new(),
-            scoped_frame: None,
-            truncation: Some(Truncation {
-                reason: "app_unresponsive",
-                visited: 0,
-                pending: 0,
-            }),
-        }));
+        let bus = app.inner().destination().to_string();
+        let path = app.inner().path().to_string();
+        mark_unresponsive_until(pid, async move {
+            if let Ok(conn) = shared_connection().await {
+                let _ = tokio::time::timeout(
+                    OP_TIMEOUT,
+                    conn.connection().call_method(
+                        Some(bus.as_str()),
+                        path.as_str(),
+                        Some("org.a11y.atspi.Accessible"),
+                        "GetState",
+                        &(),
+                    ),
+                )
+                .await;
+            }
+        });
+        return Ok(Some(unresponsive_collected()));
     }
 
     // Resolve which seed is the caller's window before walking, from the same
@@ -2560,6 +2572,43 @@ fn is_indexable_capabilities(
 }
 
 // ── Public (sync) entry points ───────────────────────────────────────────────
+
+fn unresponsive_pids() -> &'static Mutex<HashSet<u32>> {
+    static PIDS: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
+    PIDS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn unresponsive_collected<'a>() -> Collected<'a> {
+    Collected {
+        visited: Vec::new(),
+        scoped_frame: None,
+        truncation: Some(Truncation {
+            reason: "app_unresponsive",
+            visited: 0,
+            pending: 0,
+        }),
+    }
+}
+
+/// Mark `pid` unresponsive until `probe` ends. A probe that ends without a
+/// reply also clears the mark, so a walk after an app resumes reads it again
+/// instead of reporting a stale `app_unresponsive`.
+fn mark_unresponsive_until(
+    pid: u32,
+    probe: impl std::future::Future<Output = ()> + Send + 'static,
+) {
+    if !unresponsive_pids().lock().unwrap().insert(pid) {
+        return;
+    }
+    runtime().spawn(async move {
+        probe.await;
+        unresponsive_pids().lock().unwrap().remove(&pid);
+    });
+}
+
+fn still_unresponsive(pid: u32) -> bool {
+    unresponsive_pids().lock().unwrap().contains(&pid)
+}
 
 fn first_application_walk(pid: u32) -> bool {
     static PIDS: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
@@ -7124,6 +7173,10 @@ fn native_wayland_origin_attested(pid: u32, xid: u64) -> bool {
 }
 
 pub(crate) fn x11_window_origin(xid: u64) -> Option<(i32, i32)> {
+    x11_window_geometry(xid).map(|(x, y, _, _)| (x, y))
+}
+
+fn x11_window_geometry(xid: u64) -> Option<(i32, i32, i32, i32)> {
     use x11rb::protocol::xproto::*;
     use x11rb::rust_connection::RustConnection;
 
@@ -7135,7 +7188,12 @@ pub(crate) fn x11_window_origin(xid: u64) -> Option<(i32, i32)> {
         .ok()?
         .reply()
         .ok()?;
-    Some((trans.dst_x as i32, trans.dst_y as i32))
+    Some((
+        trans.dst_x as i32,
+        trans.dst_y as i32,
+        i32::from(geom.width),
+        i32::from(geom.height),
+    ))
 }
 
 fn x11_top_level_geometry(xid: u64) -> Option<(i32, i32, i32, i32)> {
@@ -7481,7 +7539,7 @@ async fn web_document_origin_for_visited(
 }
 
 fn screen_extent_rebase(
-    x11_origin: (i32, i32),
+    x11_window: (i32, i32, i32, i32),
     accessible_frame_extents: (i32, i32, i32, i32),
     top_level: Option<(i32, i32, i32, i32)>,
 ) -> Option<(i32, i32)> {
@@ -7493,11 +7551,16 @@ fn screen_extent_rebase(
     // origin. A legitimate screen provider may differ from the X11 client
     // origin by title-bar/CSD extents; rebasing that small decoration delta
     // would move otherwise-correct GTK coordinates off their controls.
-    if top_level == Some(accessible_frame_extents) {
+    // A frame whose size differs from the target X11 window belongs to
+    // another window (or is in DIPs under a device scale), so it is not
+    // this window's renderer origin.
+    if top_level == Some(accessible_frame_extents)
+        || (accessible_frame_extents.2, accessible_frame_extents.3) != (x11_window.2, x11_window.3)
+    {
         return None;
     }
     if frame_x.abs() <= 2 && frame_y.abs() <= 2 {
-        Some((x11_origin.0 - frame_x, x11_origin.1 - frame_y))
+        Some((x11_window.0 - frame_x, x11_window.1 - frame_y))
     } else {
         None
     }
@@ -7901,7 +7964,7 @@ async fn element_bounds_for_visited(
     // required window-origin delta. GTK's explicit Window-coordinate
     // path above remains authoritative when available.
     let screen_rebase = if offset.is_none() && !crate::wayland::is_wayland() && xid != 0 {
-        let x11_origin = bounded_blocking(move || x11_window_origin(xid))
+        let x11_window = bounded_blocking(move || x11_window_geometry(xid))
             .await
             .flatten();
         let top_level = bounded_blocking(move || x11_top_level_geometry(xid))
@@ -7915,7 +7978,7 @@ async fn element_bounds_for_visited(
                     "frame" | "window" | "dialog" | "alert" | "file chooser"
                 )
         });
-        if let (Some(origin), Some(frame)) = (x11_origin, frame) {
+        if let (Some(window), Some(frame)) = (x11_window, frame) {
             let accessible_frame = match call(frame.acc.proxies()).await {
                 Some(Ok(proxies)) => match call(proxies.component()).await {
                     Some(Ok(component)) => {
@@ -7928,8 +7991,7 @@ async fn element_bounds_for_visited(
                 },
                 _ => None,
             };
-            accessible_frame
-                .and_then(|frame_extents| screen_extent_rebase(origin, frame_extents, top_level))
+            accessible_frame.and_then(|frame| screen_extent_rebase(window, frame, top_level))
         } else {
             None
         }
@@ -8700,15 +8762,15 @@ mod coord_tests {
     fn screen_extents_are_rebased_from_accessible_frame_to_x11_origin() {
         let frame = Some((600, 50, 800, 600));
         assert_eq!(
-            screen_extent_rebase((604, 80), (0, 0, 792, 566), frame),
+            screen_extent_rebase((604, 80, 792, 566), (0, 0, 792, 566), frame),
             Some((604, 80))
         );
         assert_eq!(
-            screen_extent_rebase((604, 100), (604, 80, 792, 566), frame),
+            screen_extent_rebase((604, 100, 792, 566), (604, 80, 792, 566), frame),
             None
         );
         assert_eq!(
-            screen_extent_rebase((604, 80), (604, 80, 792, 566), frame),
+            screen_extent_rebase((604, 80, 792, 566), (604, 80, 792, 566), frame),
             None
         );
     }
@@ -8716,24 +8778,28 @@ mod coord_tests {
     #[test]
     fn sentinel_frame_extents_are_not_a_renderer_origin() {
         assert_eq!(
-            screen_extent_rebase((155, 149), (-1, -1, -1, -1), None),
+            screen_extent_rebase((155, 149, 800, 600), (-1, -1, -1, -1), None),
             None
         );
-        assert_eq!(screen_extent_rebase((155, 149), (0, 0, 0, 0), None), None);
+        assert_eq!(
+            screen_extent_rebase((155, 149, 800, 600), (0, 0, 0, 0), None),
+            None
+        );
     }
 
     #[test]
     fn a_renderer_local_frame_at_the_corner_keeps_its_rebase() {
+        let window = (5, 29, 640, 480);
         assert_eq!(
-            screen_extent_rebase((5, 29), (0, 0, 640, 480), Some((0, 0, 650, 514))),
+            screen_extent_rebase(window, (0, 0, 640, 480), Some((0, 0, 650, 514))),
             Some((5, 29))
         );
         assert_eq!(
-            screen_extent_rebase((5, 56), (0, 0, 640, 480), Some((0, 27, 650, 514))),
+            screen_extent_rebase((5, 56, 640, 480), (0, 0, 640, 480), Some((0, 27, 650, 514))),
             Some((5, 56))
         );
         assert_eq!(
-            screen_extent_rebase((5, 29), (0, 0, 640, 480), None),
+            screen_extent_rebase(window, (0, 0, 640, 480), None),
             Some((5, 29))
         );
     }
@@ -8741,9 +8807,33 @@ mod coord_tests {
     #[test]
     fn a_gtk_frame_matching_its_window_manager_frame_at_the_corner_is_not_rebased() {
         assert_eq!(
-            screen_extent_rebase((5, 29), (0, 0, 650, 514), Some((0, 0, 650, 514))),
+            screen_extent_rebase((5, 29, 640, 480), (0, 0, 650, 514), Some((0, 0, 650, 514))),
             None
         );
+    }
+
+    #[test]
+    fn a_frame_of_another_window_is_not_rebased_onto_a_popup() {
+        let popup = (171, 205, 155, 33);
+        assert_eq!(
+            screen_extent_rebase(popup, (0, 0, 1280, 27), Some(popup)),
+            None
+        );
+        let popup = (1086, 513, 173, 287);
+        assert_eq!(
+            screen_extent_rebase(popup, (0, 0, 1280, 800), Some(popup)),
+            None
+        );
+    }
+
+    #[test]
+    fn a_chromium_frame_in_dips_under_device_scale_2_is_not_rebased() {
+        let window = (604, 80, 1584, 1132);
+        assert_eq!(
+            screen_extent_rebase(window, (0, 0, 792, 566), Some((600, 50, 1600, 1200))),
+            None
+        );
+        assert_eq!(screen_extent_rebase(window, (0, 0, 792, 566), None), None);
     }
 
     #[test]
@@ -9954,5 +10044,29 @@ mod editable_insert_length_tests {
         // GTK reads bytes (8) and Qt UTF-16 units (5): either guess breaks one.
         assert_eq!(editable_insert_length(None, "ñ🙂ab"), None);
         assert_eq!(editable_insert_length(None, "abc"), Some(3));
+    }
+}
+
+#[cfg(test)]
+mod unresponsive_tests {
+    use super::{mark_unresponsive_until, still_unresponsive};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_pid_stays_unresponsive_only_while_its_probe_is_pending() {
+        let pid = u32::MAX;
+        let (end_probe, probe_ended) = tokio::sync::oneshot::channel::<()>();
+        mark_unresponsive_until(pid, async move {
+            let _ = probe_ended.await;
+        });
+        mark_unresponsive_until(pid, std::future::ready(()));
+        assert!(still_unresponsive(pid));
+
+        end_probe.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while still_unresponsive(pid) {
+            assert!(Instant::now() < deadline, "the mark outlived its probe");
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 }

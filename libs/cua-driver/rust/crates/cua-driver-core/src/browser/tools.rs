@@ -2052,12 +2052,28 @@ fn enter_key_event(phase: &str) -> Value {
     event
 }
 
+/// How far a trailing Enter got. A failed key event may still have reached
+/// the page (a reply timeout or a dropped socket looks the same as a refusal),
+/// so once one is sent a failure is uncertain, never "not delivered".
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EnterDelivery {
+    NotSent,
+    Uncertain,
+    Pressed,
+}
+
 /// Press Enter as a complete keyDown/char/keyUp sequence.
-async fn press_enter(conn: &CdpConnection, cdp: &str) -> anyhow::Result<()> {
+async fn press_enter(
+    conn: &CdpConnection,
+    cdp: &str,
+    delivery: &mut EnterDelivery,
+) -> anyhow::Result<()> {
+    *delivery = EnterDelivery::Uncertain;
     for phase in ["keyDown", "char", "keyUp"] {
         conn.call(Some(cdp), "Input.dispatchKeyEvent", enter_key_event(phase))
             .await?;
     }
+    *delivery = EnterDelivery::Pressed;
     Ok(())
 }
 
@@ -2409,13 +2425,22 @@ impl Tool for BrowserTypeTool {
                         }),
                     )
                     .await;
-                if matches!(
-                    single_line,
-                    Ok(ref value) if value["result"]["value"].as_bool() == Some(true)
-                ) {
-                    (rest.to_string(), true)
-                } else {
-                    (text, false)
+                // Guessing "multiline" on a failed probe would send the newline
+                // through insertText, which a single-line input drops silently.
+                match single_line
+                    .ok()
+                    .and_then(|value| value["result"]["value"].as_bool())
+                {
+                    Some(true) => (rest.to_string(), true),
+                    Some(false) => (text, false),
+                    None => {
+                        return BrowserRefusal::new(
+                            BrowserRefusalCode::BrowserInputTrustUnavailable,
+                            "could not tell whether the ref is a single-line field, so the \
+                             trailing newline was not sent; nothing was typed",
+                        )
+                        .to_tool_result()
+                    }
                 }
             }
             None => (text, false),
@@ -2438,20 +2463,23 @@ impl Tool for BrowserTypeTool {
 
         let requested_chars = text.chars().count();
         let mut replaced_chars = 0usize;
-        let mut enter_pressed = false;
+        let mut enter = EnterDelivery::NotSent;
         let (typed, delivered_chars) = if mode == "insert_text" {
-            if replace {
+            // Replacement and the trailing Enter are key-path input, which an
+            // inactive tab drops without focus emulation.
+            let emulate_focus = replace || submit_enter;
+            if emulate_focus {
                 if let Err(detail) =
                     enter_focus_emulation(conn, cdp, entry.backend_node_id, &object_id).await
                 {
                     return BrowserRefusal::new(
                         BrowserRefusalCode::BrowserInputTrustUnavailable,
-                        format!(
-                            "the inactive tab could not prepare trusted replacement input: {detail}"
-                        ),
+                        format!("the inactive tab could not prepare trusted key input: {detail}"),
                     )
                     .to_tool_result();
                 }
+            }
+            if replace {
                 match select_all_in_element(conn, cdp, &object_id).await {
                     Ok(n) => replaced_chars = n,
                     Err(detail) => {
@@ -2514,12 +2542,11 @@ impl Tool for BrowserTypeTool {
             };
             let inserted = call.is_ok();
             if inserted && submit_enter {
-                match press_enter(conn, cdp).await {
-                    Ok(()) => enter_pressed = true,
-                    Err(error) => call = Err(error),
+                if let Err(error) = press_enter(conn, cdp, &mut enter).await {
+                    call = Err(error);
                 }
             }
-            if replace {
+            if emulate_focus {
                 if let Err(error) = conn
                     .call(
                         Some(cdp),
@@ -2721,9 +2748,8 @@ impl Tool for BrowserTypeTool {
                 tokio::time::sleep(std::time::Duration::from_millis(15)).await;
             }
             if result.is_ok() && submit_enter {
-                match press_enter(conn, cdp).await {
-                    Ok(()) => enter_pressed = true,
-                    Err(error) => result = Err(error),
+                if let Err(error) = press_enter(conn, cdp, &mut enter).await {
+                    result = Err(error);
                 }
             }
             if let Err(error) = conn
@@ -2739,6 +2765,7 @@ impl Tool for BrowserTypeTool {
             (result, delivered)
         };
 
+        let enter_pressed = enter == EnterDelivery::Pressed;
         match typed {
             Ok(()) => ToolResult::text(format!(
                 "typed {requested_chars} char(s) into {tab_id}{}{}",
@@ -2770,10 +2797,17 @@ impl Tool for BrowserTypeTool {
             })),
             Err(e) => BrowserRefusal::new(
                 BrowserRefusalCode::BrowserInputIncomplete,
-                if submit_enter && delivered_chars == requested_chars {
+                if enter == EnterDelivery::Uncertain {
                     format!(
-                        "trusted Input typed all {requested_chars} character(s) but the \
-                         trailing Enter was not delivered: {e}"
+                        "trusted Input typed all {requested_chars} character(s), but the \
+                         trailing Enter key press failed partway, so the page may or may not \
+                         have acted on it; read the page before retrying: {e}"
+                    )
+                } else if enter_pressed {
+                    // Only the focus-emulation cleanup after the Enter failed.
+                    format!(
+                        "trusted Input typed all {requested_chars} character(s) and pressed \
+                         Enter, but focus emulation could not be turned off: {e}"
                     )
                 } else {
                     format!(
@@ -2785,6 +2819,7 @@ impl Tool for BrowserTypeTool {
                 "requested_chars": requested_chars,
                 "delivered_chars": delivered_chars,
                 "enter_pressed": enter_pressed,
+                "enter_uncertain": enter == EnterDelivery::Uncertain,
                 "retryable": false,
             }))
             .to_tool_result(),
@@ -3491,6 +3526,10 @@ mod tests {
         /// Each launched browser raises a prompt, as a Chromium that reads
         /// its keychain secret does.
         prompt_on_launch: std::sync::atomic::AtomicBool,
+        /// What `managed_extension_policy` reports for every executable.
+        managed_extension_policy: std::sync::Mutex<Option<String>>,
+        /// The arguments of each isolated browser command core built.
+        launched_args: std::sync::Mutex<Vec<Vec<String>>>,
     }
 
     impl MockPlatform {
@@ -3655,14 +3694,28 @@ mod tests {
                 .load(std::sync::atomic::Ordering::SeqCst)
         }
 
+        fn managed_extension_policy(&self, _executable: &str) -> Option<String> {
+            self.launches
+                .managed_extension_policy
+                .lock()
+                .unwrap()
+                .clone()
+        }
+
         fn spawn_isolated_browser(
             &self,
-            _command: std::process::Command,
+            command: std::process::Command,
             profile: &std::path::Path,
         ) -> Result<Box<dyn crate::browser::platform::IsolatedBrowserProcess>, BrowserRefusal>
         {
             use std::sync::atomic::Ordering;
             self.launches.spawned.fetch_add(1, Ordering::SeqCst);
+            self.launches.launched_args.lock().unwrap().push(
+                command
+                    .get_args()
+                    .map(|arg| arg.to_string_lossy().into_owned())
+                    .collect(),
+            );
             if self.launches.prompt_on_launch.load(Ordering::SeqCst) {
                 self.launches.prompt_open.store(true, Ordering::SeqCst);
             }
@@ -4156,6 +4209,49 @@ mod tests {
             0,
             "the user's own profile must never be launched or relaunched"
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn isolated_launch_keeps_extensions_only_under_managed_extension_policy() {
+        let launches = Arc::new(LaunchSignals::default());
+        let engine = observed_launching_engine(std::time::Duration::ZERO, launches.clone());
+        // One named profile, launched and then relaunched under the policy.
+        let name = format!("managed-extensions-{}", uuid::Uuid::new_v4().simple());
+        let switches = [
+            "--disable-background-networking",
+            "--disable-component-update",
+            "--disable-extensions",
+        ];
+        for (policy, kept) in [
+            (None, true),
+            (
+                Some("/etc/opt/chrome/policies/managed/extensions.json".to_owned()),
+                false,
+            ),
+        ] {
+            *launches.managed_extension_policy.lock().unwrap() = policy;
+            let (session, owner) = start_lifecycle_session(None);
+            prepare_isolated(
+                &engine,
+                &session,
+                &owner,
+                json!({ "mode": "isolated_named", "name": name }),
+            )
+            .await;
+            crate::session::end_session(&session);
+            let args = launches.launched_args.lock().unwrap().pop().unwrap();
+            for switch in switches {
+                assert_eq!(
+                    args.iter().any(|arg| arg == switch),
+                    kept,
+                    "{switch}: {args:?}"
+                );
+            }
+            assert!(args.iter().any(|arg| arg == "--disable-default-apps"));
+        }
+        let root = std::env::var_os("CUA_DRIVER_BROWSER_PROFILE_ROOT").unwrap();
+        std::fs::remove_dir_all(std::path::Path::new(&root).join(name)).unwrap();
     }
 
     #[cfg(unix)]

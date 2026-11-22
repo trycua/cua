@@ -274,7 +274,9 @@ impl Tool for GetWindowStateTool {
         // Fast path `on`: re-reads skip the screenshot unless asked for one.
         let should_capture = should_capture
             && !cua_driver_core::fast_path::wire::skip_reread_screenshot(
+                &self.state.guard_store,
                 &args,
+                session_id.as_deref(),
                 pid,
                 u64::from(window_id),
             );
@@ -456,6 +458,7 @@ impl Tool for GetWindowStateTool {
                     u32,
                     crate::windows::WindowBounds,
                     f64,
+                    Option<cua_driver_core::fast_path::store::ReadImage>,
                 ),
                 super::px_frame::PxFrameError,
             > {
@@ -468,7 +471,9 @@ impl Tool for GetWindowStateTool {
                     &bounds,
                     || crate::capture::screenshot_window_image(window_id),
                 )?;
-                crate::fast_path_guard::record_read_image(pid, window_id, &raw, &bounds);
+                // Published after the join, while this call still holds its
+                // session, so a cancelled read cannot outlive session_end.
+                let guard_read = crate::fast_path_guard::read_image(pid, window_id, &raw, &bounds);
                 // Resize and encode once from the raw pixels; the PNG bytes
                 // are identical to the former encode-decode-resize round trip.
                 let (png, w, h) = raw.encode(max_dim, encoding).map_err(|e| {
@@ -493,6 +498,7 @@ impl Tool for GetWindowStateTool {
                         orig_h,
                         bounds,
                         scale,
+                        guard_read,
                     ))
                 } else {
                     Ok((
@@ -504,11 +510,17 @@ impl Tool for GetWindowStateTool {
                         orig_h,
                         bounds,
                         scale,
+                        guard_read,
                     ))
                 }
             }).await;
             match res {
-                Ok(Ok((png, file_path, w, h, orig_w, orig_h, bounds, scale))) => {
+                Ok(Ok((png, file_path, w, h, orig_w, orig_h, bounds, scale, guard_read))) => {
+                    if let Some(read) = guard_read {
+                        self.state
+                            .guard_store
+                            .put_image(session_id.as_deref(), pid, read);
+                    }
                     if !observation_only {
                         screenshot_resize_scale = Some(orig_w as f64 / w as f64);
                     }
@@ -638,13 +650,20 @@ impl Tool for GetWindowStateTool {
         if let (Some(sid), Some(tree)) = (snapshot_id, tree_result.as_ref()) {
             if !observation_only {
                 crate::fast_path_guard::record_snapshot(
+                    &self.state.guard_store,
+                    session_id.as_deref(),
                     pid,
                     u64::from(window_id),
                     sid,
                     &tree.nodes,
                 );
                 if screenshot.is_none() {
-                    crate::fast_path_guard::record_window(pid, window_id);
+                    crate::fast_path_guard::record_window(
+                        &self.state.guard_store,
+                        session_id.as_deref(),
+                        pid,
+                        window_id,
+                    );
                 }
             }
         }
@@ -1332,6 +1351,19 @@ fn element_entry(node: &crate::ax::tree::AXNode, snapshot_id: Option<u32>) -> se
     if !node.actions.is_empty() {
         entry["actions"] = serde_json::json!(node.actions);
     }
+    if !node.custom_actions.is_empty() {
+        entry["custom_actions"] = serde_json::Value::Array(
+            node.custom_actions
+                .iter()
+                .map(|action| {
+                    serde_json::json!({
+                        "name": action.name,
+                        "raw": action.raw,
+                    })
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
     if node.in_web_content {
         entry["in_web_content"] = serde_json::Value::Bool(true);
     }
@@ -1822,6 +1854,7 @@ mod tests {
             identifier: None,
             help: None,
             actions,
+            custom_actions: vec![],
             element_ptr: 0,
             depth,
             parent_element_index: parent,

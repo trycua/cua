@@ -16,7 +16,6 @@
 //! whole display (the display is listed as a pseudo-window).
 
 use std::collections::{HashMap, VecDeque};
-use std::net::SocketAddr;
 
 use std::time::{Duration, Instant};
 
@@ -25,7 +24,7 @@ use cua_media_protocol::{
     ClientMessage, Hello, ServerMessage, SessionOpened, SurfaceGeometry, TargetEpoch, TargetHandle,
     VideoCodec, WindowDescriptor, WindowGeometryControl, WireHeader,
 };
-use cua_media_transport::VideoDatagramReassembler;
+use cua_media_transport::quic::{MediaQuic, QuicItem};
 use cua_proto::env::v1 as pb;
 use futures_util::{SinkExt as _, StreamExt as _};
 use tokio_tungstenite::tungstenite::Message;
@@ -130,16 +129,7 @@ type Socket =
 
 enum Media {
     Ws(Box<Socket>),
-    Quic(Box<QuicMedia>),
-}
-
-struct QuicMedia {
-    _endpoint: quinn::Endpoint,
-    connection: quinn::Connection,
-    send: quinn::SendStream,
-    reliable: tokio::sync::mpsc::UnboundedReceiver<Option<Vec<u8>>>,
-    reassembler: VideoDatagramReassembler,
-    pending: VecDeque<Vec<u8>>,
+    Quic(Box<MediaQuic>),
 }
 
 /// Raw media-plane input before translation.
@@ -209,7 +199,7 @@ impl V2Link {
 
     pub fn rtt(&self) -> Option<Duration> {
         match &self.media {
-            Some(Media::Quic(quic)) => Some(quic.connection.rtt()),
+            Some(Media::Quic(quic)) => Some(quic.rtt()),
             _ => None,
         }
     }
@@ -409,11 +399,12 @@ impl V2Link {
             Some(quic) => {
                 let port = u16::try_from(quic.port)?;
                 Media::Quic(Box::new(
-                    connect_quic(
+                    MediaQuic::connect(
                         &self.options.host,
                         port,
                         &quic.certificate_sha256,
                         &opened.ticket,
+                        Duration::from_secs(10),
                     )
                     .await?,
                 ))
@@ -468,7 +459,7 @@ impl V2Link {
                 Media::Ws(mut socket) => {
                     let _ = futures_util::SinkExt::close(&mut *socket).await;
                 }
-                Media::Quic(quic) => quic.connection.close(0u32.into(), b"client closed"),
+                Media::Quic(quic) => quic.close(),
             }
         }
         if let Some(id) = self.media_session_id.take() {
@@ -485,9 +476,7 @@ impl V2Link {
         let text = encode_client_text(message);
         match self.media.as_mut().ok_or("no media session is open")? {
             Media::Ws(socket) => socket.send(Message::Text(text)).await?,
-            Media::Quic(quic) => {
-                cua_media_transport::quic::write_message(&mut quic.send, text.as_bytes()).await?
-            }
+            Media::Quic(quic) => quic.send_text(&text).await?,
         }
         Ok(())
     }
@@ -511,43 +500,18 @@ impl V2Link {
                     Message::Pong(_) | Message::Frame(_) => {}
                 }
             },
-            Media::Quic(quic) => {
-                if let Some(packet) = quic.pending.pop_front() {
-                    return Ok(Raw::Binary(packet));
-                }
-                loop {
-                    tokio::select! {
-                        message = quic.reliable.recv() => {
-                            return Ok(match message.flatten() {
-                                Some(bytes) if bytes.first() == Some(&b'{') => Raw::Text(String::from_utf8(bytes)?),
-                                Some(bytes) => Raw::Binary(bytes),
-                                None => Raw::Closed(quic_close_code(&quic.connection)),
-                            });
-                        }
-                        datagram = quic.connection.read_datagram() => {
-                            let Ok(datagram) = datagram else {
-                                return Ok(Raw::Closed(quic_close_code(&quic.connection)));
-                            };
-                            if cua_media_transport::audio::is_audio_packet(&datagram) {
-                                return Ok(Raw::Binary(datagram.to_vec()));
-                            }
-                            let update = quic.reassembler.push(&datagram, Instant::now())?;
-                            if let Some(packet) = update.packet {
-                                quic.pending.push_back(packet);
-                            }
-                            if update.dropped_incomplete > 0 {
-                                return Ok(Raw::Loss {
-                                    incomplete_frames: update.dropped_incomplete,
-                                    lost_keyframe: update.lost_keyframe,
-                                });
-                            }
-                            if let Some(packet) = quic.pending.pop_front() {
-                                return Ok(Raw::Binary(packet));
-                            }
-                        }
-                    }
-                }
-            }
+            Media::Quic(quic) => Ok(match quic.next().await? {
+                QuicItem::Text(text) => Raw::Text(text),
+                QuicItem::Binary(bytes) => Raw::Binary(bytes),
+                QuicItem::Loss {
+                    incomplete_frames,
+                    lost_keyframe,
+                } => Raw::Loss {
+                    incomplete_frames,
+                    lost_keyframe,
+                },
+                QuicItem::Closed(code) => Raw::Closed(code),
+            }),
         }
     }
 
@@ -621,22 +585,6 @@ impl V2Link {
     }
 }
 
-fn quic_close_code(connection: &quinn::Connection) -> Option<u16> {
-    match connection.close_reason() {
-        Some(quinn::ConnectionError::ApplicationClosed(close)) => {
-            // 0x401 -> 4401: the hex digits read as decimal after "4".
-            let code = close.error_code.into_inner();
-            let digits = format!("{code:x}");
-            digits
-                .parse::<u16>()
-                .ok()
-                .filter(|value| *value < 1000)
-                .map(|value| 4000 + value)
-        }
-        _ => None,
-    }
-}
-
 fn v1_opened(session: v2::SessionOpened, hello: &v2::Hello) -> SessionOpened {
     let mut capabilities = session.capabilities;
     for capability in &hello.capabilities {
@@ -688,54 +636,6 @@ async fn connect_ws(options: &V2Options, ws_path: &str, ticket: &str) -> V2Resul
     .await
     .map_err(|_| "media WebSocket connect timed out")??;
     Ok(socket)
-}
-
-async fn connect_quic(host: &str, port: u16, pin: &str, ticket: &str) -> V2Result<QuicMedia> {
-    let pin = cua_media_transport::quic::parse_sha256(pin)
-        .ok_or("QuicEndpoint has no valid certificate_sha256")?;
-    let server: SocketAddr = tokio::net::lookup_host((host, port))
-        .await?
-        .next()
-        .ok_or("QUIC host resolved to no addresses")?;
-    let bind: SocketAddr = if server.is_ipv4() {
-        "0.0.0.0:0".parse()?
-    } else {
-        "[::]:0".parse()?
-    };
-    let mut endpoint = quinn::Endpoint::client(bind)?;
-    endpoint.set_default_client_config(cua_media_transport::quic::client_config(pin)?);
-    let connection = tokio::time::timeout(
-        Duration::from_secs(10),
-        endpoint.connect(server, "cua-spacesd.local")?,
-    )
-    .await
-    .map_err(|_| "QUIC connect timed out")??;
-    let (mut send, mut receive) = connection.open_bi().await?;
-    let ticket = encode_client_text(&v2::ClientMessage::Ticket {
-        ticket: ticket.to_owned(),
-    });
-    cua_media_transport::quic::write_message(&mut send, ticket.as_bytes()).await?;
-    let (sender, reliable) = tokio::sync::mpsc::unbounded_channel();
-    tokio::spawn(async move {
-        loop {
-            let message = cua_media_transport::quic::read_message(&mut receive)
-                .await
-                .ok()
-                .flatten();
-            let end = message.is_none();
-            if sender.send(message).is_err() || end {
-                return;
-            }
-        }
-    });
-    Ok(QuicMedia {
-        _endpoint: endpoint,
-        connection,
-        send,
-        reliable,
-        reassembler: VideoDatagramReassembler::default(),
-        pending: VecDeque::new(),
-    })
 }
 
 /// Audio counters (for stats and tests).

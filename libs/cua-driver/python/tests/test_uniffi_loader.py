@@ -62,6 +62,7 @@ class GeneratedOptionsTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             ClickInput(x=10.0, y=20.0)
         for name in (
+            "ActionCommit",
             "AppInfo", "ClickPosition", "ElementFrame", "GetWindowStateInput",
             "InputDeliveryMode", "ListAppsInput", "ListAppsOutput", "ListWindowsInput",
             "ListWindowsOutput", "SnapshotImage", "WindowBounds", "WindowElement",

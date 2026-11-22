@@ -59,6 +59,18 @@ const CHROMIUM: BrowserSetupDescriptor = BrowserSetupDescriptor {
     tab_close_labels: CHROME_TAB_CLOSE_LABELS,
 };
 
+// Brave ships Chromium's inspect page unchanged: same title, heading, checkbox
+// and tab close label (read from Brave 1.99 on Linux). Only the scheme differs.
+const BRAVE: BrowserSetupDescriptor = BrowserSetupDescriptor {
+    product: BrowserProduct::Brave,
+    product_name: "Brave",
+    setup_url: "brave://inspect/#remote-debugging",
+    page_titles: CHROME_TITLES,
+    page_heading: "Remote debugging",
+    checkbox_label: "Allow remote debugging for this browser instance",
+    tab_close_labels: CHROME_TAB_CLOSE_LABELS,
+};
+
 const EDGE: BrowserSetupDescriptor = BrowserSetupDescriptor {
     product: BrowserProduct::MicrosoftEdge,
     product_name: "Microsoft Edge",
@@ -76,6 +88,7 @@ pub fn existing_profile_setup_descriptor(
         BrowserProduct::GoogleChrome => Some(&CHROME),
         BrowserProduct::Chromium => Some(&CHROMIUM),
         BrowserProduct::MicrosoftEdge => Some(&EDGE),
+        BrowserProduct::Brave => Some(&BRAVE),
         _ => None,
     }
 }
@@ -104,8 +117,13 @@ mod tests {
                 .product,
             BrowserProduct::Chromium
         );
+        assert_eq!(
+            existing_profile_setup_descriptor(BrowserProduct::Brave)
+                .unwrap()
+                .setup_url,
+            "brave://inspect/#remote-debugging"
+        );
         for product in [
-            BrowserProduct::Brave,
             BrowserProduct::Firefox,
             BrowserProduct::Safari,
             BrowserProduct::Electron,

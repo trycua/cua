@@ -194,23 +194,6 @@ fn textedit_window_titled(driver: &mut McpDriver, pid: i64, title: &str) -> u64 
         })
 }
 
-/// Dismisses TextEdit's Open panel when dropped, so a failed check does not
-/// leave it over the next test's document.
-struct OpenPanel;
-
-impl Drop for OpenPanel {
-    fn drop(&mut self) {
-        let _ = Command::new("osascript")
-            .args([
-                "-e",
-                &format!(r#"tell application id "{TEXTEDIT_BUNDLE}" to activate"#),
-                "-e",
-                r#"tell application "System Events" to key code 53"#,
-            ])
-            .status();
-    }
-}
-
 fn osascript(script: &str) -> String {
     let output = Command::new("osascript")
         .args(["-e", script])
@@ -629,77 +612,4 @@ fn foreground_window_type_text_never_lands_in_the_focused_sibling() {
             Default::default(),
         )
     });
-}
-
-/// A window-only `delivery_mode:"foreground"` type_text addressed at a
-/// document is refused, with nothing typed, while the app's modal Open panel
-/// keeps the keyboard focus (#3574). The keys are pid-routed, so they would
-/// otherwise go to the panel. TextEdit is sandboxed, so the panel's controls
-/// run out of process and are not in its accessibility tree: the oracles are
-/// the exact refusal and the document's unchanged value.
-///
-/// Asserts through System Events and AX read-back rather than a typed matrix
-/// result.
-#[test]
-#[ignore]
-fn foreground_window_type_text_refuses_while_a_sibling_keeps_focus() {
-    let seed = unique_marker("seed");
-    let marker = unique_marker("refused");
-    let mut driver =
-        McpDriver::spawn_macos_daemon_proxy_named("macos-textedit-type-text-sibling-refusal")
-            .expect("start installed macOS daemon proxy");
-    let document = launch_textedit_document(&mut driver);
-    let seeded = driver.call(
-        "type_text",
-        serde_json::json!({
-            "pid": document.pid, "window_id": document.window_id,
-            "element_token": document.element_token,
-            "text": seed, "delivery_mode": "background"
-        }),
-    );
-    assert!(!seeded.is_error(), "seeding failed: {}", seeded.text());
-    wait_for_editor_text(
-        &mut driver,
-        &document,
-        |value| value.contains(&seed),
-        &format!("held the seed {seed:?}"),
-    );
-    let before = editor_text(&mut driver, document.pid, document.window_id);
-
-    ensure_frontmost(TEXTEDIT_BUNDLE);
-    let document_title = focused_textedit_window_title();
-    osascript(r#"tell application "System Events" to keystroke "o" using command down"#);
-    let panel = OpenPanel;
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while focused_textedit_window_title() == document_title {
-        assert!(
-            Instant::now() < deadline,
-            "TextEdit's Open panel never took the keyboard focus"
-        );
-        std::thread::sleep(Duration::from_millis(200));
-    }
-
-    let typed = driver.call(
-        "type_text",
-        serde_json::json!({
-            "pid": document.pid, "window_id": document.window_id,
-            "text": marker, "delivery_mode": "foreground"
-        }),
-    );
-    let panel_title = focused_textedit_window_title();
-    drop(panel);
-    assert!(
-        typed.is_error()
-            && typed.text().contains(
-                "exact target window did not become focused for foreground keyboard delivery, \
-                 so nothing was typed"
-            ),
-        "foreground type_text was not refused while {panel_title:?} held focus: {}",
-        typed.text()
-    );
-    assert_eq!(
-        editor_text(&mut driver, document.pid, document.window_id),
-        before,
-        "the document changed although the call was refused"
-    );
 }

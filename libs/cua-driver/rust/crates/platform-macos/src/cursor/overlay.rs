@@ -113,6 +113,80 @@ pub(crate) fn request_repin() {
     }
 }
 
+/// Re-order the overlay when the active application actually changes.
+///
+/// A foreground input raises the target window over the normal-level overlay
+/// and hands the front back to the previous app. Both are asynchronous
+/// WindowServer changes, so one re-order issued by the caller can land before
+/// they finish and leave the overlay behind the target (a hosted macOS run
+/// hid the agent cursor for the rest of a clip). The overlay stays at the
+/// normal window level on purpose: it is ordered directly above its target
+/// window so it never paints over an unrelated foreground app, and it must
+/// appear in `list_windows` (CGWindowList layer 0). So the order is repaired
+/// on the event that changes it, not on a timer: every application
+/// activation requests a repin, after the activation has completed.
+///
+/// An activation of this process never moves another window over the overlay.
+fn repin_on_application_activation(activated_pid: i32, own_pid: i32) {
+    if activated_pid != own_pid {
+        request_repin();
+    }
+}
+
+/// Observe `NSWorkspaceDidActivateApplicationNotification` for the process
+/// lifetime. The block runs on a private background queue, so it needs no
+/// running main run loop, and `request_repin` is thread-safe.
+fn install_activation_repin_observer() {
+    use block2::RcBlock;
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    use objc2_app_kit::{
+        NSWorkspace, NSWorkspaceApplicationKey, NSWorkspaceDidActivateApplicationNotification,
+    };
+    use objc2_foundation::{NSNotification, NSOperationQueue};
+    use std::ptr::NonNull;
+
+    let own_pid = std::process::id() as i32;
+    let block = RcBlock::new(move |note: NonNull<NSNotification>| {
+        // SAFETY: AppKit lends the notification for the duration of the block.
+        let note = unsafe { note.as_ref() };
+        let Some(info) = (unsafe { note.userInfo() }) else {
+            return;
+        };
+        let app: *mut AnyObject =
+            unsafe { msg_send![&*info, objectForKey: NSWorkspaceApplicationKey] };
+        if app.is_null() {
+            return;
+        }
+        let pid: i32 = unsafe { msg_send![app, processIdentifier] };
+        repin_on_application_activation(pid, own_pid);
+    });
+    unsafe {
+        let center = NSWorkspace::sharedWorkspace().notificationCenter();
+        let queue = NSOperationQueue::new();
+        queue.setMaxConcurrentOperationCount(1);
+        let token = center.addObserverForName_object_queue_usingBlock(
+            Some(NSWorkspaceDidActivateApplicationNotification),
+            None,
+            Some(&queue),
+            &block,
+        );
+        // Process-lifetime observer: never torn down.
+        std::mem::forget(token);
+        std::mem::forget(queue);
+    }
+}
+
+/// Serialises tests that read or clear the process-wide repin request.
+#[cfg(test)]
+pub(crate) static REPIN_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+/// Read and clear the pending repin request.
+#[cfg(test)]
+pub(crate) fn take_repin_request() -> bool {
+    REPIN_REQUESTED.swap(false, Ordering::AcqRel)
+}
+
 /// Whether the render loop re-orders the overlay above `pinned` this frame.
 fn should_repin(
     pinned: Option<u64>,
@@ -861,10 +935,7 @@ unsafe fn create_surface(
     let _: () = msg_send![tile_layer, release]; // owned by the root layer
     let _: () = msg_send![win, orderFrontRegardless];
     Some(DisplaySurface {
-        geometry: SurfaceGeometry::new(
-            ScreenFrame::new(d.x, d.y, d.width, d.height),
-            d.backing_scale,
-        ),
+        geometry: d.surface_geometry(),
         win_ptr: win as usize,
         layer_ptr: tile_layer as usize,
         window_id: u32::try_from(number).ok()?,
@@ -957,6 +1028,8 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         render_loop(surfaces, layout, rx);
         RENDER_LOOP_RUNNING.store(false, Ordering::Release);
     });
+
+    install_activation_repin_observer();
 
     // ---- NSApplication run loop (blocks until process exits) ----
     let _: () = msg_send![app, run];
@@ -1527,6 +1600,16 @@ mod tests {
     /// even with no pin change and a parked render loop; nothing re-orders
     /// an overlay that has no pin target.
     #[test]
+    fn another_apps_activation_requests_a_repin_and_our_own_does_not() {
+        let _serial = REPIN_TEST_LOCK.lock().unwrap();
+        REPIN_REQUESTED.store(false, Ordering::Release);
+        repin_on_application_activation(100, 100);
+        assert!(!REPIN_REQUESTED.load(Ordering::Acquire));
+        repin_on_application_activation(200, 100);
+        assert!(REPIN_REQUESTED.swap(false, Ordering::AcqRel));
+    }
+
+    #[test]
     fn a_requested_repin_reorders_the_overlay_above_its_target() {
         assert!(should_repin(Some(7), false, true, 0));
         assert!(should_repin(Some(7), true, false, 0));
@@ -1669,7 +1752,7 @@ mod tests {
                 height: 600.0,
             },
             layer: 0,
-            z_index,
+            z_index: Some(z_index),
             is_on_screen: true,
             current_space_id: None,
             on_current_space: None,
@@ -1790,13 +1873,96 @@ mod tests {
         }
     }
 
+    /// trycua/cua#5336: on each reported layout, every active display gets a
+    /// surface, and a cursor at a target paints only on the surface of the
+    /// display holding that target, at the target.
+    #[test]
+    fn each_reported_layout_draws_the_cursor_on_the_display_holding_the_target() {
+        use super::super::display_layout::{DisplayGeometry, DisplayLayout};
+        let display = |id, x, y, width, height, backing_scale| DisplayGeometry {
+            id,
+            x,
+            y,
+            width,
+            height,
+            backing_scale,
+            is_primary: id == 1,
+        };
+        let layouts = [
+            // The issue: a display below the main one and a portrait one left.
+            vec![
+                display(1, 0.0, 0.0, 3008.0, 1692.0, 1.0),
+                display(2, 0.0, 1692.0, 1800.0, 1169.0, 2.0),
+                display(3, -1080.0, -200.0, 1080.0, 1920.0, 1.0),
+            ],
+            // A wider display to the right of a 2x main display.
+            vec![
+                display(1, 0.0, 0.0, 1728.0, 1117.0, 2.0),
+                display(2, 1728.0, 0.0, 3008.0, 1692.0, 1.0),
+            ],
+            // A display above the main one, partly at negative X.
+            vec![
+                display(1, 0.0, 0.0, 1470.0, 956.0, 2.0),
+                display(2, -227.0, -1080.0, 1920.0, 1080.0, 1.0),
+            ],
+            // Taller portrait displays on both sides, offset upward.
+            vec![
+                display(1, 0.0, 0.0, 3072.0, 1728.0, 2.0),
+                display(2, 3072.0, -430.0, 1440.0, 2560.0, 2.0),
+                display(3, -1440.0, -467.0, 1440.0, 2560.0, 2.0),
+            ],
+        ];
+        for displays in layouts {
+            let layout = DisplayLayout {
+                generation: 0,
+                displays,
+            };
+            let surfaces: Vec<SurfaceGeometry> = layout
+                .displays
+                .iter()
+                .map(|d| d.surface_geometry())
+                .collect();
+            for d in &layout.displays {
+                // The centre, and a point near the bottom edge.
+                for target in [
+                    (d.x + d.width / 2.0, d.y + d.height / 2.0),
+                    (d.x + d.width / 2.0, d.y + d.height - 200.0),
+                ] {
+                    assert_eq!(layout.display_at(target.0, target.1), Some(*d));
+                    let mut map = empty_map();
+                    let core = &mut placed(&mut map, "sessA").core;
+                    core.pos = cursor_overlay::anchor_for_pointer(target.0, target.1, core.heading);
+                    for (other, surface) in layout.displays.iter().zip(&surfaces) {
+                        let tile = paint_tile_for(&map, *surface);
+                        if other.id != d.id {
+                            assert!(tile.is_none(), "display {} paints {target:?}", other.id);
+                            continue;
+                        }
+                        let tile = tile.expect("the display holding the target paints");
+                        assert_eq!(tile.scale, d.backing_scale);
+                        let (left, top) = (d.x + tile.frame[0], d.y + tile.frame[1]);
+                        assert!(
+                            left <= target.0
+                                && target.0 < left + tile.frame[2]
+                                && top <= target.1
+                                && target.1 < top + tile.frame[3],
+                            "tile {:?} on display {} misses {target:?}",
+                            tile.frame,
+                            d.id
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn frontmost_target_can_raise_overlay_without_covering_another_app() {
         let target_pid = 100;
         let mut windows = vec![window(10, target_pid, 20), window(11, 200, 10)];
         // WindowServer may retain another app's window ahead in its global
         // list; the active app identity is the authoritative cross-app guard.
-        windows[1].z_index = 30;
+        windows[1].z_index = Some(30);
         assert!(target_is_frontmost_visible_window(
             10,
             Some(target_pid),

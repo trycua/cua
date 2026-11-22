@@ -6,8 +6,8 @@ use core_foundation::base::CFRelease;
 use cua_driver_contract::PressKeyInput;
 use cua_driver_core::{
     action_record::{
-        ActionEffect, ActionEvidence, ActionExecutionRecord, ActionTransport, ActualDelivery,
-        EvidenceKind, RequestedDelivery,
+        ActionEffect, ActionEscalation, ActionEvidence, ActionExecutionRecord, ActionTransport,
+        ActualDelivery, EscalationKind, EvidenceKind, RequestedDelivery,
     },
     protocol::ToolResult,
     tool::{Tool, ToolDef},
@@ -159,7 +159,29 @@ fn ax_state_changed(before: &AxKeyState, after: &AxKeyState) -> bool {
         || matches!((before.selected, after.selected), (Some(before), Some(after)) if before != after)
 }
 
-fn action_record(confirmed: bool, foreground: bool) -> ActionExecutionRecord {
+/// The legacy payload of a delivered key, with the foreground escalation when an
+/// unverifiable background key went to a Chromium or Electron app.
+fn delivered_structured(confirmed: bool, foreground: bool, chromium_embedder: bool) -> Value {
+    let mut structured = serde_json::json!({
+        "path": if foreground { "key_events_fg" } else { "key_events" },
+        "verified": confirmed,
+        "effect": if confirmed { "confirmed" } else { "unverifiable" },
+    });
+    if !confirmed {
+        if let Some(escalation) =
+            super::chromium_background_key_escalation(foreground, chromium_embedder)
+        {
+            structured["escalation"] = escalation;
+        }
+    }
+    structured
+}
+
+fn action_record(
+    confirmed: bool,
+    foreground: bool,
+    chromium_embedder: bool,
+) -> ActionExecutionRecord {
     let effect = if confirmed {
         ActionEffect::Confirmed
     } else {
@@ -197,45 +219,22 @@ fn action_record(confirmed: bool, foreground: bool) -> ActionExecutionRecord {
                 "the key events were constructed and the PID-routed post was attempted".into()
             },
         });
-    }
-    record.build().expect("press_key record is valid")
-}
-
-#[derive(Debug, thiserror::Error)]
-#[error("the addressed element did not acquire keyboard focus; no key was dispatched")]
-struct KeyFocusUnconfirmed;
-
-fn with_confirmed_key_focus<T>(
-    target: Option<usize>,
-    mut focus: impl FnMut(usize) -> anyhow::Result<()>,
-    mut is_focused: impl FnMut(usize) -> bool,
-    dispatch: impl FnOnce() -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
-    if let Some(target) = target {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
-        loop {
-            focus(target)?;
-            if is_focused(target) {
-                break;
-            }
-            if std::time::Instant::now() >= deadline {
-                return Err(KeyFocusUnconfirmed.into());
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+        if super::chromium_background_key_escalation(foreground, chromium_embedder).is_some() {
+            record = record.escalation(ActionEscalation {
+                kind: EscalationKind::RetryWithForegroundDelivery,
+                detail: Some(super::CHROMIUM_BACKGROUND_KEY_NOTE.into()),
+            });
         }
     }
-    dispatch()
+    record.build().expect("press_key record is valid")
 }
 
 fn delivery_failed(error: anyhow::Error) -> ToolResult {
     if let Some(refusal) = crate::security_prompt::tool_result(&error) {
         return refusal;
     }
-    if error.is::<KeyFocusUnconfirmed>() {
-        return ToolResult::error(error.to_string()).with_structured(serde_json::json!({
-            "code": "target_focus_unconfirmed", "effect": "refused", "dispatched": false,
-            "message": error.to_string(),
-        }));
+    if let Some(refusal) = super::key_focus_unconfirmed_error(&error) {
+        return refusal;
     }
     let message = format!("press_key delivery failed: {error}");
     ToolResult::error(&message).with_structured(serde_json::json!({
@@ -504,7 +503,7 @@ impl Tool for PressKeyTool {
                                 wid,
                                 || {
                                     // Activation may replace the first responder; confirm inside the HID guard.
-                                    with_confirmed_key_focus(
+                                    crate::input::ax_actions::with_confirmed_key_focus(
                                         pre_focus_ptr,
                                         crate::input::ax_actions::focus_element,
                                         |target| {
@@ -524,7 +523,7 @@ impl Tool for PressKeyTool {
                     }
                     // background (default): auth-envelope post, no raise.
                     dispatch_with_ax_oracle(pid, window_id, pre_focus_ptr, || {
-                        with_confirmed_key_focus(
+                        crate::input::ax_actions::with_confirmed_key_focus(
                             pre_focus_ptr,
                             crate::input::ax_actions::focus_element,
                             |target| {
@@ -557,18 +556,30 @@ impl Tool for PressKeyTool {
                 } else {
                     ""
                 };
-                let mut structured = serde_json::json!({
-                    "path": if fg { "key_events_fg" } else { "key_events" },
-                    "verified": confirmed,
-                    "effect": if confirmed { "confirmed" } else { "unverifiable" },
-                });
+                let chromium_embedder = !fg
+                    && !confirmed
+                    && tokio::task::spawn_blocking(move || {
+                        super::type_text::is_chromium_embedder(pid)
+                    })
+                    .await
+                    .unwrap_or(false);
+                let mut structured = delivered_structured(confirmed, fg, chromium_embedder);
+                let note = if structured.get("escalation").is_some() {
+                    format!(" {}", super::CHROMIUM_BACKGROUND_KEY_NOTE)
+                } else {
+                    String::new()
+                };
                 changes.add_window_identity(&mut structured);
                 ToolResult::text(format!(
-                    "✅ Pressed {display_key} on pid {pid}{label}.{}",
+                    "✅ Pressed {display_key} on pid {pid}{label}.{note}{}",
                     changes.result_suffix()
                 ))
                 .with_structured(structured)
-                .with_action_record(action_record(confirmed, fg))
+                .with_action_record(action_record(
+                    confirmed,
+                    fg,
+                    chromium_embedder,
+                ))
             }
             PressKeyDeliveryOutcome::Failed(error) => delivery_failed(error),
         }
@@ -604,7 +615,7 @@ mod tests {
     fn targeted_key_requires_focus_readback_before_dispatch() {
         use std::cell::RefCell;
         let events = RefCell::new(Vec::new());
-        let result = with_confirmed_key_focus(
+        let result = crate::input::ax_actions::with_confirmed_key_focus(
             Some(42),
             |target| {
                 events.borrow_mut().push(("focus", target));
@@ -640,7 +651,7 @@ mod tests {
         use std::cell::RefCell;
         let events = RefCell::new(Vec::new());
         let mut checks = 0;
-        with_confirmed_key_focus(
+        crate::input::ax_actions::with_confirmed_key_focus(
             Some(42),
             |target| {
                 events.borrow_mut().push(("focus", target));
@@ -674,7 +685,7 @@ mod tests {
         use std::cell::Cell;
         let sent = Cell::new(0);
         for target in [Some(42), None] {
-            with_confirmed_key_focus(
+            crate::input::ax_actions::with_confirmed_key_focus(
                 target,
                 |_| Ok(()),
                 |_| true,
@@ -686,14 +697,14 @@ mod tests {
             .unwrap();
         }
         assert_eq!(sent.get(), 2);
-        let failed = with_confirmed_key_focus(
+        let failed = crate::input::ax_actions::with_confirmed_key_focus(
             Some(42),
             |_| anyhow::bail!("focus unavailable"),
             |_| panic!("must not confirm failed focus"),
             || -> anyhow::Result<()> { panic!("must not dispatch") },
         );
         assert_eq!(failed.unwrap_err().to_string(), "focus unavailable");
-        with_confirmed_key_focus(
+        crate::input::ax_actions::with_confirmed_key_focus(
             None,
             |_| panic!("window key has no element"),
             |_| panic!("window key has no element"),
@@ -718,7 +729,7 @@ mod tests {
 
     #[test]
     fn accepted_without_oracle_has_no_escalation_but_ax_change_confirms() {
-        let unverifiable = action_record(false, false).public_result().unwrap();
+        let unverifiable = action_record(false, false, false).public_result().unwrap();
         assert_eq!(
             unverifiable.effect,
             cua_driver_contract::ActionEffect::Unverifiable
@@ -729,13 +740,72 @@ mod tests {
         );
         assert!(unverifiable.escalation.is_none());
 
-        let confirmed = action_record(true, false).public_result().unwrap();
+        let confirmed = action_record(true, false, false).public_result().unwrap();
         assert_eq!(
             confirmed.effect,
             cua_driver_contract::ActionEffect::Confirmed
         );
         assert_eq!(confirmed.evidence.unwrap().len(), 1);
         assert!(confirmed.escalation.is_none());
+    }
+
+    #[test]
+    fn a_background_key_to_a_chromium_app_recommends_foreground() {
+        assert_eq!(
+            delivered_structured(false, false, true),
+            serde_json::json!({
+                "path": "key_events",
+                "verified": false,
+                "effect": "unverifiable",
+                "escalation": {
+                    "recommended": "foreground",
+                    "reason": super::super::CHROMIUM_BACKGROUND_KEY_NOTE,
+                    "requires": ["window_id"]
+                }
+            })
+        );
+        let public = action_record(false, false, true).public_result().unwrap();
+        assert_eq!(
+            public.effect,
+            cua_driver_contract::ActionEffect::Unverifiable
+        );
+        assert_eq!(
+            public.escalation.unwrap().target,
+            cua_driver_contract::ActionEscalationTarget::Foreground
+        );
+    }
+
+    #[test]
+    fn other_key_results_carry_no_escalation() {
+        for (confirmed, foreground, chromium_embedder, expected) in [
+            (
+                false,
+                false,
+                false,
+                serde_json::json!({"path": "key_events", "verified": false, "effect": "unverifiable"}),
+            ),
+            (
+                false,
+                true,
+                true,
+                serde_json::json!({"path": "key_events_fg", "verified": false, "effect": "unverifiable"}),
+            ),
+            (
+                true,
+                false,
+                true,
+                serde_json::json!({"path": "key_events", "verified": true, "effect": "confirmed"}),
+            ),
+        ] {
+            assert_eq!(
+                delivered_structured(confirmed, foreground, chromium_embedder),
+                expected
+            );
+            let public = action_record(confirmed, foreground, chromium_embedder)
+                .public_result()
+                .unwrap();
+            assert!(public.escalation.is_none());
+        }
     }
 
     #[test]

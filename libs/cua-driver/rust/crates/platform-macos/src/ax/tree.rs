@@ -76,6 +76,7 @@ pub struct AXNode {
     pub identifier: Option<String>,
     pub help: Option<String>,
     pub actions: Vec<String>,
+    pub custom_actions: Vec<super::actions::CustomAction>,
     /// The raw AXUIElementRef pointer value, for caching.
     pub element_ptr: usize,
     /// Depth in the rendered markdown tree (matches the indent level used in
@@ -158,6 +159,41 @@ fn read_identity_attrs(
             None
         },
     }
+}
+
+/// AXTitle, or, for a control with neither AXTitle nor AXDescription, the
+/// text of its AXTitleUIElement. A SwiftUI grouped `Form` names its toggles
+/// only through that separate label (#6697), and VoiceOver reads it the same
+/// way. Following it costs round trips only for unnamed controls.
+pub(crate) fn title_or_title_element(
+    title: Option<&str>,
+    description: Option<&str>,
+    title_element_text: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    let named = |text: Option<&str>| text.is_some_and(|t| !t.trim().is_empty());
+    if named(title) || named(description) {
+        return title.map(str::to_owned);
+    }
+    title_element_text()
+        .map(|text| text.trim().to_owned())
+        .filter(|text| !text.is_empty())
+}
+
+/// The text of `element`'s AXTitleUIElement: its AXValue (a static text
+/// label), else its AXTitle.
+///
+/// # Safety
+///
+/// `element` must be a valid `AXUIElementRef`.
+pub(crate) unsafe fn copy_title_element_text(
+    element: AXUIElementRef,
+    timeout_seconds: f32,
+) -> Option<String> {
+    let label = copy_element_attr(element, "AXTitleUIElement")?;
+    AXUIElementSetMessagingTimeout(label, timeout_seconds);
+    let [value, title] = copy_string_attrs(label, ["AXValue", "AXTitle"]);
+    CFRelease(label as CFTypeRef);
+    value.filter(|v| !v.trim().is_empty()).or(title)
 }
 
 fn role_supports_value_addressing(role: &str) -> bool {
@@ -582,14 +618,56 @@ fn is_layout_container(role: &str) -> bool {
     matches!(role, "AXGroup" | "AXScrollArea")
 }
 
-/// Whether an AXGroup/AXScrollArea is only a layout wrapper to collapse. A
-/// named one (AXTitle or AXDescription, such as a "Profile" or "Billing"
-/// section) keeps its row, so identical controls in different sections can be
-/// told apart.
-fn collapse_layout_container(role: &str, title: Option<&str>, description: Option<&str>) -> bool {
+/// Whether an AXGroup/AXScrollArea is only a layout wrapper to collapse. One
+/// that carries content (AXTitle or AXDescription, such as a "Profile" or
+/// "Billing" section, or a non-empty AXValue or AXHelp) keeps its row, so
+/// identical controls in different sections can be told apart, and its own
+/// actions (a SwiftUI row's press or custom actions) stay addressable.
+fn collapse_layout_container(
+    role: &str,
+    title: Option<&str>,
+    description: Option<&str>,
+    has_value_or_help: bool,
+) -> bool {
     is_layout_container(role)
         && title.is_none_or(|text| text.trim().is_empty())
         && description.is_none_or(|text| text.trim().is_empty())
+        && !has_value_or_help
+}
+
+/// Whether a node gets a row of its own. A node with no action and nothing to
+/// show collapses into its parent, except a window or sheet, and a group or
+/// scroll area kept for its help: with no action it is an unindexed display
+/// row, and its help is the content that row shows.
+fn keeps_row(role: &str, is_actionable: bool, has_content: bool, has_help: bool) -> bool {
+    is_actionable
+        || has_content
+        || role == "AXWindow"
+        || role == "AXSheet"
+        || (has_help && is_layout_container(role))
+}
+
+/// The actions a node is addressable by. A named group or scroll area whose
+/// only actions are the generic menu and scroll ones every section carries
+/// (SwiftUI, Catalyst and web content) is a section label, not a target, so
+/// it stays an unindexed display row and indexes after it do not shift. One
+/// with an action of its own (a press, an app's custom action) is a target,
+/// and so is a group kept for its value or help, which only an indexed row
+/// shows.
+fn layout_group_actions(
+    role: &str,
+    named: bool,
+    mut advertised: super::actions::ElementActions,
+) -> super::actions::ElementActions {
+    let generic = |action: &String| action == "AXShowMenu" || action.starts_with("AXScroll");
+    if is_layout_container(role)
+        && named
+        && advertised.custom.is_empty()
+        && advertised.standard.iter().all(generic)
+    {
+        advertised.standard.clear();
+    }
+    advertised
 }
 
 /// `max_depth` budget a node's children are walked at. A named layout group
@@ -644,11 +722,30 @@ unsafe fn walk_element(
         return;
     }
 
-    // Names decide whether a group is only a layout wrapper; a kept node
-    // reuses them below.
+    // Keep AXTitle and AXDescription SEPARATE so that the tree format matches
+    // the Swift reference: title → "title", description → (description).
+    // This is critical for Calculator where AXTitle="" but AXDescription="2"
+    // (digit buttons). Merging them would produce "2" (quoted) instead of (2)
+    // (parens), breaking _find_calc_button which searches for "(2)".
     let title = attrs.string(NodeAttr::Title);
+    // Read AXValue once with enough type information to preserve the existing
+    // string-only markdown while also exposing numeric/boolean control state.
+    let copied_value = attrs.stringish(NodeAttr::Value);
+    let value = copied_value
+        .as_ref()
+        .and_then(|copied| copied.string_value.clone());
+    let value = value.filter(|v| !v.trim().is_empty());
     let description = attrs.string(NodeAttr::Description);
-    if collapse_layout_container(&role, title.as_deref(), description.as_deref()) {
+    let identifier = attrs.string(NodeAttr::Identifier);
+    let help = attrs
+        .string(NodeAttr::Help)
+        .filter(|h| !h.trim().is_empty());
+    if collapse_layout_container(
+        &role,
+        title.as_deref(),
+        description.as_deref(),
+        value.is_some() || help.is_some(),
+    ) {
         // Still recurse — children may be interesting. Layout containers
         // collapse, so children inherit the parent's depth AND the same
         // parent_index (no actionable node was emitted here).
@@ -675,32 +772,13 @@ unsafe fn walk_element(
         }
         return;
     }
-
-    // Keep AXTitle and AXDescription SEPARATE so that the tree format matches
-    // the Swift reference: title → "title", description → (description).
-    // This is critical for Calculator where AXTitle="" but AXDescription="2"
-    // (digit buttons). Merging them would produce "2" (quoted) instead of (2)
-    // (parens), breaking _find_calc_button which searches for "(2)".
-    // Read AXValue once with enough type information to preserve the existing
-    // string-only markdown while also exposing numeric/boolean control state.
-    let copied_value = attrs.stringish(NodeAttr::Value);
-    let value = copied_value
-        .as_ref()
-        .and_then(|copied| copied.string_value.clone());
-    let value = value.filter(|v| !v.trim().is_empty());
-    let identifier = attrs.string(NodeAttr::Identifier);
-    let help = attrs
-        .string(NodeAttr::Help)
-        .filter(|h| !h.trim().is_empty());
-    // A named group or scroll area kept above is a section label, not a
-    // target: its actions are generic scroll and menu ones (SwiftUI and
-    // Catalyst sections carry them), and indexing it would renumber every
-    // element after it. It stays a display row, as unaddressable as before.
-    let actions = if is_layout_container(&role) {
-        Vec::new()
-    } else {
-        copy_action_names(element)
-    };
+    let named = !title.as_deref().unwrap_or("").trim().is_empty()
+        || !description.as_deref().unwrap_or("").trim().is_empty();
+    let advertised = layout_group_actions(
+        &role,
+        named,
+        super::actions::split(copy_action_names(element)),
+    );
 
     // Some native controls expose no AX action names but do expose a writable
     // AXValue. Finder's transient inline-rename field is the important case:
@@ -708,7 +786,7 @@ unsafe fn walk_element(
     // field but unable to call set_value on it. Probe writability only for the
     // small family of value controls so arbitrary display nodes do not pay an
     // extra AX round trip.
-    let value_settable = actions.is_empty()
+    let value_settable = advertised.is_empty()
         && role_supports_value_addressing(&role)
         && is_attribute_settable(element, "AXValue");
     // A disabled control is still indexed and published with `enabled: false`:
@@ -717,12 +795,19 @@ unsafe fn walk_element(
     // click, right_click, double_click, set_value and type_text re-read
     // AXEnabled before dispatch and refuse a disabled token target with
     // `element_disabled` (`tools::refuse_if_disabled`).
-    let enabled = if !actions.is_empty() || value_settable {
+    let enabled = if !advertised.is_empty() || value_settable {
         attrs.bool(NodeAttr::Enabled)
     } else {
         None
     };
-    let is_actionable = is_addressable(!actions.is_empty(), value_settable);
+    let is_actionable = is_addressable(!advertised.is_empty(), value_settable);
+    let title = if is_actionable {
+        title_or_title_element(title.as_deref(), description.as_deref(), || {
+            copy_title_element_text(element, AX_MESSAGING_TIMEOUT_SECONDS)
+        })
+    } else {
+        title
+    };
     let identity = read_identity_attrs(is_actionable, value.is_none(), |attr| attrs.string(attr));
     let value = value.or_else(|| identity.placeholder.clone());
 
@@ -733,7 +818,12 @@ unsafe fn walk_element(
     let has_content =
         !visible_title.is_empty() || !visible_description.is_empty() || !visible_value.is_empty();
 
-    if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
+    if !keeps_row(&role, is_actionable, has_content, help.is_some()) {
+        let (child_depth, child_walk_depth) = if is_layout_container(&role) {
+            (depth, walk_depth)
+        } else {
+            (depth + 1, walk_depth + 1)
+        };
         let children = attrs.children();
         drop(attrs);
         let shares = SiblingShares::reserve(budget, in_web_content, children.len());
@@ -741,8 +831,8 @@ unsafe fn walk_element(
             budget.release(shares.of(position));
             walk_element(
                 child,
-                depth + 1,
-                walk_depth + 1,
+                child_depth,
+                child_walk_depth,
                 parent_index,
                 in_web_content,
                 nodes,
@@ -806,7 +896,8 @@ unsafe fn walk_element(
             subrole: identity.subrole,
             identifier: identifier.clone(),
             help: help.clone(),
-            actions: actions.clone(),
+            actions: advertised.standard,
+            custom_actions: advertised.custom,
             element_ptr,
             depth,
             parent_element_index: parent_index,
@@ -843,6 +934,7 @@ unsafe fn walk_element(
             identifier: identifier.clone(),
             help: help.clone(),
             actions: vec![],
+            custom_actions: vec![],
             element_ptr,
             depth,
             parent_element_index: parent_index,
@@ -1048,8 +1140,14 @@ fn format_node_line(node: &AXNode) -> String {
         parts.push_str(&format!(" ({})", d));
     }
 
-    // Bracketed metadata block (identifier, help, actions).
-    if node.element_index.is_some() {
+    // Bracketed metadata block (identifier, help, actions). An unindexed row
+    // shows only its help, which a group kept for its help has no other way
+    // to show.
+    if node.element_index.is_none() {
+        if let Some(h) = &node.help {
+            parts.push_str(&format!(" [help=\"{}\"]", h));
+        }
+    } else {
         let mut attrs: Vec<String> = Vec::new();
         if let Some(id) = node
             .identifier
@@ -1072,6 +1170,15 @@ fn format_node_line(node: &AXNode) -> String {
             .collect();
         if !shown.is_empty() {
             attrs.push(format!("actions=[{}]", shown.join(",")));
+        }
+        if !node.custom_actions.is_empty() {
+            let action_str = node
+                .custom_actions
+                .iter()
+                .map(|action| serde_json::to_string(&action.name).expect("string serialization"))
+                .collect::<Vec<_>>()
+                .join(",");
+            attrs.push(format!("custom_actions=[{}]", action_str));
         }
         if !attrs.is_empty() {
             parts.push_str(" [");
@@ -1206,22 +1313,113 @@ mod tests {
     #[test]
     fn named_layout_groups_keep_their_row_and_unnamed_wrappers_collapse() {
         for role in ["AXGroup", "AXScrollArea"] {
-            assert!(!collapse_layout_container(role, Some("Billing"), None));
-            assert!(!collapse_layout_container(role, None, Some("Profile")));
+            assert!(!collapse_layout_container(
+                role,
+                Some("Billing"),
+                None,
+                false
+            ));
+            assert!(!collapse_layout_container(
+                role,
+                None,
+                Some("Profile"),
+                false
+            ));
             assert!(!collapse_layout_container(
                 role,
                 Some("  "),
-                Some("Billing")
+                Some("Billing"),
+                false
             ));
-            assert!(collapse_layout_container(role, None, None));
-            assert!(collapse_layout_container(role, Some(" "), Some("\n\t")));
+            // An unnamed group with its own value or help is content, not a
+            // wrapper.
+            assert!(!collapse_layout_container(role, None, None, true));
+            assert!(collapse_layout_container(role, None, None, false));
+            assert!(collapse_layout_container(
+                role,
+                Some(" "),
+                Some("\n\t"),
+                false
+            ));
         }
-        assert!(!collapse_layout_container("AXButton", None, None));
-        assert!(!collapse_layout_container("AXWebArea", None, None));
-        // A kept group is a display row: its actions are not read, so it gets
-        // no element_index and indexes after it do not shift.
+        assert!(!collapse_layout_container("AXButton", None, None, false));
+        assert!(!collapse_layout_container("AXWebArea", None, None, false));
         assert!(is_layout_container("AXGroup") && is_layout_container("AXScrollArea"));
         assert!(!is_layout_container("AXButton"));
+    }
+
+    #[test]
+    fn a_kept_group_is_addressable_only_by_an_action_of_its_own() {
+        let actions = |names: &[&str]| {
+            super::super::actions::split(names.iter().map(|n| (*n).to_owned()).collect())
+        };
+        // Web and SwiftUI sections advertise only menu and scroll actions:
+        // the group stays a display row, so an echoing text child keeps
+        // its own index (#7780).
+        for generic in [
+            &["AXShowMenu", "AXScrollToVisible"][..],
+            &["AXScrollUpByPage", "AXScrollDownByPage"][..],
+            &[][..],
+        ] {
+            assert!(layout_group_actions("AXGroup", true, actions(generic)).is_empty());
+            assert!(layout_group_actions("AXScrollArea", true, actions(generic)).is_empty());
+        }
+        let pressable = layout_group_actions("AXGroup", true, actions(&["AXPress", "AXShowMenu"]));
+        assert_eq!(pressable.standard, ["AXPress", "AXShowMenu"]);
+        let custom = layout_group_actions(
+            "AXGroup",
+            true,
+            actions(&["AXShowMenu", "Name:Pin List\nTarget:0x0\nSelector:(null)"]),
+        );
+        assert_eq!(custom.standard, ["AXShowMenu"]);
+        assert_eq!(custom.custom.len(), 1);
+        // A group kept for its help or value has no name to show as a
+        // display row, so it keeps its actions and its index.
+        let help_only = layout_group_actions("AXGroup", false, actions(&["AXShowMenu"]));
+        assert_eq!(help_only.standard, ["AXShowMenu"]);
+        // Other roles keep every action they advertise.
+        let menu_only = layout_group_actions("AXImage", true, actions(&["AXShowMenu"]));
+        assert_eq!(menu_only.standard, ["AXShowMenu"]);
+    }
+
+    #[test]
+    fn a_help_only_group_with_no_action_keeps_an_unindexed_row() {
+        for role in ["AXGroup", "AXScrollArea"] {
+            assert!(keeps_row(role, false, false, true));
+            assert!(!keeps_row(role, false, false, false));
+        }
+        // Help alone does not keep a row for another role's empty node.
+        assert!(!keeps_row("AXImage", false, false, true));
+        assert!(keeps_row("AXWindow", false, false, false));
+
+        let node = AXNode {
+            element_index: None,
+            role: "AXGroup".into(),
+            title: None,
+            value: None,
+            description: None,
+            placeholder: None,
+            subrole: None,
+            identifier: Some("grp-help-only".into()),
+            help: Some("Swipe left to archive.".into()),
+            actions: vec![],
+            custom_actions: vec![],
+            element_ptr: 0,
+            depth: 1,
+            parent_element_index: None,
+            frame: None,
+            value_state: None,
+            value_description: None,
+            min_value: None,
+            max_value: None,
+            enabled: None,
+            selected: None,
+            in_web_content: false,
+        };
+        assert_eq!(
+            format_node_line(&node),
+            "- AXGroup [help=\"Swipe left to archive.\"]"
+        );
     }
 
     #[test]
@@ -1247,6 +1445,7 @@ mod tests {
             identifier: None,
             help: None,
             actions: vec!["AXPress".into()],
+            custom_actions: vec![],
             element_ptr: 0,
             depth: 2,
             parent_element_index: None,
@@ -1263,6 +1462,46 @@ mod tests {
             format_node_line(&node),
             "- [7] AXCheckBox \"Reset\" [enabled=false actions=[press]]"
         );
+    }
+
+    #[test]
+    fn a_custom_action_name_cannot_add_tree_rows() {
+        let node = AXNode {
+            element_index: Some(4),
+            role: "AXCell".into(),
+            title: None,
+            value: None,
+            description: None,
+            placeholder: None,
+            subrole: None,
+            identifier: None,
+            help: None,
+            actions: vec!["AXPress".into()],
+            custom_actions: crate::ax::actions::split(vec![
+                "Name:Pin List\nTarget:0x0\nSelector:(null)".into(),
+                "Name:Move Down\nTarget:0x0\nSelector:(null)".into(),
+            ])
+            .custom,
+            element_ptr: 0,
+            depth: 0,
+            parent_element_index: None,
+            frame: None,
+            value_state: None,
+            value_description: None,
+            min_value: None,
+            max_value: None,
+            enabled: Some(true),
+            selected: None,
+            in_web_content: false,
+        };
+        let rendered = format_node_line(&node);
+        assert_eq!(rendered.lines().count(), 1, "{rendered}");
+        assert!(rendered.contains("actions=[press]"), "{rendered}");
+        assert!(
+            rendered.contains("custom_actions=[\"Pin List\",\"Move Down\"]"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("Selector"), "{rendered}");
     }
 
     #[test]
@@ -1333,6 +1572,34 @@ mod tests {
             Some("raw AXPlaceholderValue")
         );
         assert_eq!(identity.subrole, None);
+    }
+
+    #[test]
+    fn an_unnamed_control_takes_its_title_element_text() {
+        let label = || Some(" Launch at login ".to_owned());
+        assert_eq!(
+            title_or_title_element(None, None, label).as_deref(),
+            Some("Launch at login")
+        );
+        assert_eq!(
+            title_or_title_element(Some(" "), Some(""), label).as_deref(),
+            Some("Launch at login")
+        );
+        assert_eq!(title_or_title_element(None, None, || None), None);
+        assert_eq!(
+            title_or_title_element(None, None, || Some("  ".into())),
+            None
+        );
+    }
+
+    #[test]
+    fn a_named_control_never_reads_its_title_element() {
+        let unread = || -> Option<String> { panic!("AXTitleUIElement read for a named control") };
+        assert_eq!(
+            title_or_title_element(Some("Save"), None, unread).as_deref(),
+            Some("Save")
+        );
+        assert_eq!(title_or_title_element(None, Some("2"), unread), None);
     }
 
     #[test]

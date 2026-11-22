@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cua-driver"
-version = "0.54.0"
+version = "0.56.9"
 description = "Rust-backed Cua Driver SDK and bundled executable for client applications"
 readme = "README.md"
 license = { text = "MIT" }
@@ -12,7 +12,7 @@ authors = [
     { name = "TryCua", email = "hello@trycua.com" }
 ]
 keywords = [
-    "mcp",
+    "mcp>=1.30.0",
     "computer-use",
     "automation",
     "accessibility",

@@ -2607,7 +2607,7 @@
       "type": "string"
      },
      "input_route": {
-      "description": "\"trusted\" (default): Input.dispatchMouseEvent. It refuses rather than foregrounding a standalone browser. \"dom_event\": synthetic full-background DOM click, only when explicitly requested. Dispatch does not prove the control activated; refresh page state and verify the expected postcondition.",
+      "description": "\"trusted\" (default): Input.dispatchMouseEvent. It refuses rather than foregrounding a standalone browser. \"dom_event\": synthetic full-background DOM click, only when explicitly requested. Its effect is confirmed when the target's own state changes or the click's handlers change the page; otherwise refresh page state and verify the expected postcondition.",
       "enum": [
        "trusted",
        "dom_event"

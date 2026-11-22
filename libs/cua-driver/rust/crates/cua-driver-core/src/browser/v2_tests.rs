@@ -25,8 +25,9 @@ use crate::tool::Tool;
 use super::engine::BrowserEngine;
 use super::mock_cdp::{MockCdpServer, MockEvent, MockHandler, MockReply};
 use super::platform::{
-    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, ExistingProfileSetupOutcome,
-    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
+    BrowserConsentOutcome, BrowserConsentRequest, BrowserForegroundWatch, BrowserPlatform,
+    ExistingProfileSetupOutcome, ExistingProfileSetupRequest, PrepareAction, PrepareOutcome,
+    PrepareRequest,
 };
 use super::pointer::BrowserPointerTool;
 use super::refusal::BrowserRefusal;
@@ -141,6 +142,10 @@ pub(super) struct FixtureState {
     /// dialog it has not yet announced).
     page_enable_hangs: bool,
     dom_click_changes_readback: bool,
+    /// DOM mutations the synthetic click sequence reports outside its target.
+    dom_click_page_mutations: u64,
+    /// The synthetic click sequence throws after reporting its mutations.
+    dom_click_throws: bool,
     /// A trusted `mouseReleased` changes the target's semantic readback.
     trusted_click_changes_readback: bool,
     dom_click_readback_available: bool,
@@ -211,6 +216,8 @@ impl Default for FixtureState {
             tab_visible: true,
             select_outcome: Value::Null,
             dom_click_changes_readback: true,
+            dom_click_page_mutations: 0,
+            dom_click_throws: false,
             trusted_click_changes_readback: false,
             dom_click_readback_available: true,
             resolve_node_fails: false,
@@ -1011,7 +1018,7 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 let declaration = call.params["functionDeclaration"]
                     .as_str()
                     .unwrap_or_default();
-                if st.click_opens_dialog && declaration.contains("const el = this;") {
+                if st.click_opens_dialog && declaration.contains("'pointerdown'") {
                     let events = st
                         .page_sessions
                         .iter()
@@ -1027,6 +1034,15 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                         })
                         .collect();
                     return MockReply::hang().with_events(events);
+                }
+                if declaration.contains("'pointerdown'") {
+                    let mut reply = json!({
+                        "result": { "value": { "pageMutations": st.dom_click_page_mutations } }
+                    });
+                    if st.dom_click_throws {
+                        reply["exceptionDetails"] = json!({ "text": "Uncaught" });
+                    }
+                    return MockReply::ok(reply);
                 }
                 MockReply::ok(json!({ "result": { "value": true } }))
             }
@@ -1086,6 +1102,49 @@ struct FixtureFocus {
     /// can guard a background attach.
     browser_off_space: bool,
     guards: StdMutex<Vec<(i64, u64)>>,
+    /// A live background guard puts the user's app straight back when the
+    /// browser brings itself forward, and records that it did.
+    guard_live: Arc<AtomicBool>,
+    guard_saw_activation: Arc<AtomicBool>,
+    /// A live foreground watch, and whether it saw the browser come forward.
+    watch_live: Arc<AtomicBool>,
+    watch_saw_activation: Arc<AtomicBool>,
+    /// The platform's activation notice reaches the watch only after the
+    /// attach returned.
+    activation_notice_late: bool,
+    /// The user switches to this app after the browser came forward, before
+    /// the attach returns.
+    user_switches_to: Option<i64>,
+    /// The user switches to this app while the attach is pending, before the
+    /// browser brings itself forward.
+    user_switched_away_to: Option<i64>,
+}
+
+/// Clears `live` when dropped.
+struct FixtureLive(Arc<AtomicBool>);
+
+impl FixtureLive {
+    fn start(live: &Arc<AtomicBool>) -> Self {
+        live.store(true, Ordering::SeqCst);
+        Self(live.clone())
+    }
+}
+
+impl Drop for FixtureLive {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+struct FixtureWatch {
+    _live: FixtureLive,
+    saw_activation: Arc<AtomicBool>,
+}
+
+impl BrowserForegroundWatch for FixtureWatch {
+    fn finish(self: Box<Self>) -> bool {
+        self.saw_activation.load(Ordering::SeqCst)
+    }
 }
 
 #[async_trait]
@@ -1109,7 +1168,7 @@ impl BrowserPlatform for FixturePlatform {
         &self,
         browser_pid: i64,
         window_id: u64,
-    ) -> Option<Box<dyn std::any::Any + Send>> {
+    ) -> Option<Box<dyn BrowserForegroundWatch>> {
         if !self.focus.browser_off_space {
             return None;
         }
@@ -1118,7 +1177,20 @@ impl BrowserPlatform for FixturePlatform {
             .lock()
             .unwrap()
             .push((browser_pid, window_id));
-        Some(Box::new(()))
+        Some(Box::new(FixtureWatch {
+            _live: FixtureLive::start(&self.focus.guard_live),
+            saw_activation: self.focus.guard_saw_activation.clone(),
+        }))
+    }
+
+    fn watch_browser_foreground(
+        &self,
+        _browser_pid: i64,
+    ) -> Option<Box<dyn BrowserForegroundWatch>> {
+        Some(Box::new(FixtureWatch {
+            _live: FixtureLive::start(&self.focus.watch_live),
+            saw_activation: self.focus.watch_saw_activation.clone(),
+        }))
     }
 
     fn restore_frontmost_app(&self, previous_pid: i64, browser_pid: i64) -> bool {
@@ -1235,9 +1307,37 @@ impl BrowserPlatform for FixturePlatform {
 
     async fn setup_existing_profile_endpoint(
         &self,
-        _request: ExistingProfileSetupRequest,
+        request: ExistingProfileSetupRequest,
     ) -> Result<ExistingProfileSetupOutcome, BrowserRefusal> {
         self.setup_invoked.store(true, Ordering::SeqCst);
+        // With `attach_activates_browser`, the browser brings itself to the
+        // front during setup, the way Chrome does to show its consent prompt.
+        if self.focus.attach_activates_browser {
+            if let Some(app) = self.focus.user_switched_away_to {
+                *self.focus.frontmost.lock().unwrap() = Some(app);
+            }
+            // A browser already in front is not activated again.
+            let activates = *self.focus.frontmost.lock().unwrap() != Some(request.pid);
+            if activates
+                && self.focus.watch_live.load(Ordering::SeqCst)
+                && !self.focus.activation_notice_late
+            {
+                self.focus
+                    .watch_saw_activation
+                    .store(true, Ordering::SeqCst);
+            }
+            // A live guard puts the user's app straight back.
+            if activates && self.focus.guard_live.load(Ordering::SeqCst) {
+                self.focus
+                    .guard_saw_activation
+                    .store(true, Ordering::SeqCst);
+            } else {
+                *self.focus.frontmost.lock().unwrap() = Some(request.pid);
+                if let Some(app) = self.focus.user_switches_to {
+                    *self.focus.frontmost.lock().unwrap() = Some(app);
+                }
+            }
+        }
         Ok(ExistingProfileSetupOutcome {
             opened_setup_page: true,
             closed_setup_page: false,
@@ -1482,17 +1582,22 @@ async fn attach_fixture_with_space(
     frontmost: i64,
     browser_off_space: bool,
 ) -> (Fixture, Arc<FixtureFocus>, Arc<FixtureProtectedProvider>) {
+    attach_fixture(FixtureFocus {
+        attach_activates_browser: true,
+        frontmost: StdMutex::new(Some(frontmost)),
+        browser_off_space,
+        ..FixtureFocus::default()
+    })
+    .await
+}
+
+async fn attach_fixture(
+    focus: FixtureFocus,
+) -> (Fixture, Arc<FixtureFocus>, Arc<FixtureProtectedProvider>) {
     let state = Arc::new(StdMutex::new(FixtureState::default()));
     let server = MockCdpServer::start(fixture_handler(state.clone())).await;
     let setup_invoked = Arc::new(AtomicBool::new(false));
-    let focus = Arc::new(FixtureFocus {
-        attach_activates_browser: true,
-        frontmost: StdMutex::new(Some(frontmost)),
-        restores: StdMutex::new(Vec::new()),
-        browser_off_space,
-        guards: StdMutex::new(Vec::new()),
-        ..Default::default()
-    });
+    let focus = Arc::new(focus);
     let provider = Arc::new(FixtureProtectedProvider {
         consent_seen: AtomicBool::new(false),
     });
@@ -2163,6 +2268,33 @@ async fn background_existing_profile_attach_runs_guarded_when_the_browser_is_off
     // The user's app is brought back if the browser is left in front.
     assert_eq!(*focus.restores.lock().unwrap(), vec![(99, 1)]);
     assert_eq!(prepared["side_effects"]["restored_frontmost_app"], true);
+    // The browser came forward on its own while the guard ran (trycua/cua#4810).
+    assert_eq!(prepared["side_effects"]["foregrounded_window"], true);
+}
+
+#[tokio::test]
+async fn guarded_existing_profile_attach_reports_a_reverted_activation_without_its_notice() {
+    // The guard reverted the browser's activation before the platform's
+    // activation notice arrived.
+    let (f, _, _) = attach_fixture(FixtureFocus {
+        attach_activates_browser: true,
+        frontmost: StdMutex::new(Some(99)),
+        browser_off_space: true,
+        activation_notice_late: true,
+        ..FixtureFocus::default()
+    })
+    .await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let prepared = structured(&result);
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    assert_eq!(prepared["side_effects"]["foregrounded_window"], true);
 }
 
 #[tokio::test]
@@ -2217,7 +2349,33 @@ async fn existing_profile_attach_proceeds_when_the_browser_is_already_in_front()
     assert_eq!(prepared["status"], "ok", "{prepared}");
     assert!(f.setup_invoked.load(Ordering::SeqCst));
     assert_eq!(prepared["side_effects"]["restored_frontmost_app"], false);
+    // Already in front, so the attach did not bring it forward.
+    assert_eq!(prepared["side_effects"]["foregrounded_window"], false);
     assert!(focus.restores.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn existing_profile_attach_reports_a_browser_that_came_forward_again() {
+    // The browser is in front when the call starts, the user switches away
+    // while it is pending, and the browser brings itself forward again.
+    let (f, _, _) = attach_fixture(FixtureFocus {
+        attach_activates_browser: true,
+        frontmost: StdMutex::new(Some(1)),
+        user_switched_away_to: Some(99),
+        ..FixtureFocus::default()
+    })
+    .await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let prepared = structured(&result);
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    assert_eq!(prepared["side_effects"]["foregrounded_window"], true);
 }
 
 #[tokio::test]
@@ -2236,7 +2394,35 @@ async fn foreground_existing_profile_attach_brings_the_previous_app_back() {
     assert_eq!(prepared["status"], "ok", "{prepared}");
     assert!(f.setup_invoked.load(Ordering::SeqCst));
     assert_eq!(prepared["side_effects"]["restored_frontmost_app"], true);
+    // The browser came to the front during setup, outside any setup step
+    // that reports it (trycua/cua#4810).
+    assert_eq!(prepared["side_effects"]["foregrounded_window"], true);
     assert_eq!(*focus.restores.lock().unwrap(), vec![(99, 1)]);
+}
+
+#[tokio::test]
+async fn foreground_existing_profile_attach_reports_a_browser_that_lost_the_front_again() {
+    // The browser comes forward during setup, then the user switches to
+    // another app before the attach returns.
+    let (f, _, _) = attach_fixture(FixtureFocus {
+        attach_activates_browser: true,
+        frontmost: StdMutex::new(Some(99)),
+        user_switches_to: Some(42),
+        ..FixtureFocus::default()
+    })
+    .await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "delivery_mode": "foreground",
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let prepared = structured(&result);
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    assert_eq!(prepared["side_effects"]["foregrounded_window"], true);
 }
 
 #[tokio::test]
@@ -4141,11 +4327,21 @@ async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable
     assert!(public["escalation"].is_null(), "{public}");
     assert!(public.get("status").is_none(), "{public}");
     let dispatches = recorded_calls(&f, "Runtime.callFunctionOn");
-    let click_sequence = dispatches
+    let sequences: Vec<&Value> = dispatches
         .iter()
-        .filter_map(|(_, params)| params["functionDeclaration"].as_str())
-        .find(|declaration| declaration.contains("'pointerdown'"))
-        .expect("dom_event click dispatches a pointer sequence, not a bare click()");
+        .map(|(_, params)| params)
+        .filter(|params| {
+            params["functionDeclaration"]
+                .as_str()
+                .is_some_and(|declaration| declaration.contains("dispatchEvent"))
+        })
+        .collect();
+    // One call carries the whole sequence, so a dialog a handler opens pauses
+    // it and the rest still runs once the dialog is dismissed.
+    assert_eq!(sequences.len(), 1, "{sequences:?}");
+    assert_eq!(sequences[0]["awaitPromise"], true, "{sequences:?}");
+    assert_eq!(sequences[0]["returnByValue"], true, "{sequences:?}");
+    let click_sequence = sequences[0]["functionDeclaration"].as_str().unwrap();
     // Apps that open rows from pointer/mouse down+up ignore a bare click(),
     // so the synthetic route must replay the whole primary-button sequence
     // at the element's center, in order.
@@ -4214,6 +4410,85 @@ async fn dom_event_click_remains_unverifiable_when_only_focus_changes() {
         public["escalation"]["reason"], "effect_unconfirmed",
         "{public}"
     );
+}
+
+#[tokio::test]
+async fn dom_event_click_confirms_when_its_handlers_change_the_page() {
+    // A button that reveals fields elsewhere keeps its own state, so only the
+    // page mutations its handlers caused can confirm the click (#5253).
+    let f = fixture_with(|state| {
+        state.dom_click_changes_readback = false;
+        state.dom_click_page_mutations = 3;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": main_ref,
+            "input_route": "dom_event",
+            "session": SESSION,
+        }))
+        .await;
+
+    assert!(result.content.iter().any(|content| matches!(
+        content,
+        Content::Text { text, .. }
+            if text.contains("its own handlers changed the page outside the target")
+    )));
+    let public = result
+        .action_record
+        .as_ref()
+        .expect("typed browser click action record")
+        .public_result()
+        .expect("public browser click result");
+    let public = serde_json::to_value(public).expect("serialize public result");
+    assert_eq!(public["effect"], "confirmed", "{public}");
+    assert_eq!(public["evidence"][0]["kind"], "value_readback", "{public}");
+    assert!(public["escalation"].is_null(), "{public}");
+}
+
+#[tokio::test]
+async fn dom_event_click_counts_no_page_change_when_its_sequence_throws() {
+    // A sequence that threw part way may not have dispatched the click, so
+    // the mutations it reports cannot confirm it.
+    let f = fixture_with(|state| {
+        state.dom_click_changes_readback = false;
+        state.dom_click_page_mutations = 3;
+        state.dom_click_throws = true;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": main_ref,
+            "input_route": "dom_event",
+            "session": SESSION,
+        }))
+        .await;
+
+    assert!(result.content.iter().any(|content| matches!(
+        content,
+        Content::Text { text, .. }
+            if text.contains("target state remained unchanged; application effect is unverifiable")
+    )));
+    let public = result
+        .action_record
+        .as_ref()
+        .expect("typed browser click action record")
+        .public_result()
+        .expect("public browser click result");
+    let public = serde_json::to_value(public).expect("serialize public result");
+    assert_eq!(public["effect"], "unverifiable", "{public}");
 }
 
 #[tokio::test]
@@ -4912,7 +5187,7 @@ async fn dom_event_click_returns_when_its_handler_opens_a_dialog() {
                 m == "Runtime.callFunctionOn"
                     && p["functionDeclaration"]
                         .as_str()
-                        .is_some_and(|d| d.contains("const el = this;"))
+                        .is_some_and(|d| d.contains("'pointerdown'"))
             })
             .expect("click recorded");
         assert!(enable_at < click_at, "Page.enable must precede the click");
@@ -4991,7 +5266,7 @@ async fn dom_event_click_refuses_while_a_dialog_is_already_open() {
         .filter(|(_, p)| {
             p["functionDeclaration"]
                 .as_str()
-                .is_some_and(|d| d.contains("const el = this;"))
+                .is_some_and(|d| d.contains("'pointerdown'"))
         })
         .count();
     assert_eq!(

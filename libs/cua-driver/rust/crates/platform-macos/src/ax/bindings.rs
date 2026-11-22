@@ -752,26 +752,25 @@ fn is_inline_editor(
 ///
 /// `element` must be valid, and the caller must release every returned element.
 pub unsafe fn copy_children(element: AXUIElementRef) -> Vec<AXUIElementRef> {
-    copy_children_or_error(element).unwrap_or_default()
+    copy_children_checked(element).unwrap_or_default()
 }
 
-/// [`copy_children`], with a failed read kept apart from no children: an
-/// element without children answers `kAXErrorNoValue` or an empty array.
+/// Copy children while preserving read failures for mutation admission.
 ///
 /// # Safety
-///
-/// `element` must be valid, and the caller must release every returned element.
-pub unsafe fn copy_children_or_error(
+/// `element` must be valid; release every element in a successful result.
+pub unsafe fn copy_children_checked(
     element: AXUIElementRef,
 ) -> Result<Vec<AXUIElementRef>, AXError> {
     let attr = CFStr::new("AXChildren");
     let mut value: CFTypeRef = std::ptr::null();
     let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
-    if err == kAXErrorNoValue || (err == kAXErrorSuccess && value.is_null()) {
-        return Ok(vec![]);
-    }
-    if err != kAXErrorSuccess {
-        return Err(err);
+    if err != kAXErrorSuccess || value.is_null() {
+        return Err(if err == kAXErrorSuccess {
+            kAXErrorFailure
+        } else {
+            err
+        });
     }
     retained_elements(value)
 }
@@ -804,7 +803,7 @@ unsafe fn retained_elements(value: CFTypeRef) -> Result<Vec<AXUIElementRef>, AXE
     let cf_array_type_id = CFArray::<CFTypeRef>::type_id();
     if core_foundation::base::CFGetTypeID(value) != cf_array_type_id {
         CFRelease(value);
-        return Err(kAXErrorIllegalArgument);
+        return Err(kAXErrorFailure);
     }
     let arr = CFArray::<CFTypeRef>::wrap_under_create_rule(value as _);
     let ax_type_id = AXUIElementGetTypeID();

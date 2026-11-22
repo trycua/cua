@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.59.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.59.1...cua-driver-rs-v0.59.2) (2026-11-22)
+
+
+### Bug Fixes
+
+* **cua-driver:** refuse macOS clicks on controls behind an attached sheet ([#7798](https://github.com/trycua/cua/issues/7798)) ([0240a51](https://github.com/trycua/cua/commit/0240a510b3e3917a21135cfdebb2dfef7cba50d1))
+* **cua-driver:** wait for a woken Chromium AT-SPI tree before the first Linux walk ([#7886](https://github.com/trycua/cua/issues/7886)) ([da8fbb9](https://github.com/trycua/cua/commit/da8fbb9f32a3049c2b1d033649f045a5afec5944))
+
+## [0.59.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.59.0...cua-driver-rs-v0.59.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **cua-driver:** answer sent messages while attached to the target input queue on Windows ([#8522](https://github.com/trycua/cua/issues/8522)) ([e2dcfbd](https://github.com/trycua/cua/commit/e2dcfbdd36b0da1adf84c07bae51a58c82076279))
+* **cua-driver:** tell apps how many wheel clicks a Hyprland scroll was ([#8351](https://github.com/trycua/cua/issues/8351)) ([0a70e8e](https://github.com/trycua/cua/commit/0a70e8ee20cb801fe3f56289300536cf6e484a0a))
+
+## [0.59.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.58.2...cua-driver-rs-v0.59.0) (2026-11-22)
+
+
+### Features
+
+* **cua-driver:** add metadata-only RuntimeWitnessV0 contract ([#7952](https://github.com/trycua/cua/issues/7952)) ([d4408c5](https://github.com/trycua/cua/commit/d4408c55de191e850dde7d68dabb9050ec0df375))
+
+## [0.58.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.58.1...cua-driver-rs-v0.58.2) (2026-11-22)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep foreground type_text out of sibling windows ([#8515](https://github.com/trycua/cua/issues/8515)) ([3d43490](https://github.com/trycua/cua/commit/3d434907b732cfcbd6f70ad2fcdb9cc4e4b26bf0))
+* **cua-driver:** raise the agent cursor after an untargeted move that follows a click ([#8521](https://github.com/trycua/cua/issues/8521)) ([7a96d50](https://github.com/trycua/cua/commit/7a96d50efe6389c31747a03635faf4f4dfb5b1a8)), closes [#2993](https://github.com/trycua/cua/issues/2993)
+
 ## [0.58.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.58.0...cua-driver-rs-v0.58.1) (2026-11-22)
 
 

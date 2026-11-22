@@ -156,6 +156,28 @@ fn wait_for_editor_text(
     }
 }
 
+/// The editor's current value, from a fresh snapshot.
+fn editor_text(driver: &mut McpDriver, document: &TextEditDocument) -> String {
+    let state = driver.call(
+        "get_window_state",
+        serde_json::json!({
+            "pid": document.pid,
+            "window_id": document.window_id,
+            "capture_mode": "ax"
+        }),
+    );
+    state.structured()["elements"]
+        .as_array()
+        .and_then(|elements| {
+            elements
+                .iter()
+                .find(|element| element["role"] == "AXTextArea")
+                .and_then(|element| element["value"].as_str())
+        })
+        .unwrap_or_else(|| panic!("TextEdit exposed no AXTextArea value:\n{}", state.text()))
+        .to_owned()
+}
+
 fn osascript(script: &str) -> String {
     let output = Command::new("osascript")
         .args(["-e", script])
@@ -608,6 +630,7 @@ fn foreground_window_type_text_refuses_while_a_sibling_keeps_focus() {
         |value| value.contains(&seed),
         &format!("held the seed {seed:?}"),
     );
+    let before = editor_text(&mut driver, &document);
 
     ensure_frontmost(TEXTEDIT_BUNDLE);
     let document_title = focused_textedit_window_title();
@@ -629,8 +652,23 @@ fn foreground_window_type_text_refuses_while_a_sibling_keeps_focus() {
         }),
     );
     let panel_title = focused_textedit_window_title();
+    let panel_fields = osascript(
+        r#"tell application "System Events" to tell process "TextEdit"
+            set fieldValues to ""
+            repeat with element in (entire contents of front window)
+                try
+                    if class of element is text field then set fieldValues to fieldValues & (value of element as text) & linefeed
+                end try
+            end repeat
+            fieldValues
+        end tell"#,
+    );
     ensure_frontmost(TEXTEDIT_BUNDLE);
     osascript(r#"tell application "System Events" to key code 53"#);
+    assert!(
+        !panel_fields.contains(&marker),
+        "keys addressed at the document reached {panel_title:?}: {panel_fields:?}"
+    );
     assert!(
         typed.is_error()
             && typed.text().contains(
@@ -640,10 +678,9 @@ fn foreground_window_type_text_refuses_while_a_sibling_keeps_focus() {
         "foreground type_text was not refused while {panel_title:?} held focus: {}",
         typed.text()
     );
-    wait_for_editor_text(
-        &mut driver,
-        &document,
-        |value| value.contains(&seed) && !value.contains(&marker),
-        &format!("kept only the seed {seed:?} after the refusal"),
+    assert_eq!(
+        editor_text(&mut driver, &document),
+        before,
+        "the document changed although the call was refused"
     );
 }

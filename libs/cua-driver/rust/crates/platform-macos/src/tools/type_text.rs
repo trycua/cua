@@ -2491,6 +2491,12 @@ mod tests {
             after_unlanded_ax_write(Some(Unchanged), false),
             UnlandedAxWrite::TypeKeys(AxAttempt::Unchanged)
         );
+        // An unreadable AXValue there is no evidence either: Zen doubled
+        // "BONSAI_TOKEN abc123" the same way (#6269).
+        assert_eq!(
+            after_unlanded_ax_write(Some(Unverifiable), true),
+            UnlandedAxWrite::MayHaveLanded
+        );
         assert_eq!(
             after_unlanded_ax_write(Some(Unverifiable), false),
             UnlandedAxWrite::TypeKeys(AxAttempt::Unverifiable)

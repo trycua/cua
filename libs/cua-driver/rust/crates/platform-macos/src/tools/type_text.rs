@@ -1322,8 +1322,8 @@ const FRONT_SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_mill
 ///
 /// With `exact_keys_window`, no key is sent while another window of the app
 /// holds the focus, since the pid-routed keys would reach it instead. A send
-/// stopped before its first key is refused; one stopped later reports the
-/// characters it sent.
+/// stopped before its first key is refused; one stopped later is unverified
+/// with no delivered count, since a posted key is not proof it landed.
 #[allow(clippy::too_many_arguments)]
 fn cgevent_type_verified(
     pid: i32,
@@ -1337,7 +1337,7 @@ fn cgevent_type_verified(
     exact_keys_window: Option<u32>,
 ) -> anyhow::Result<(bool, Option<usize>)> {
     // Every key press first checks that no sibling window holds the focus; a
-    // send stopped that way returns how many characters it got out.
+    // send stopped that way returns how many characters it posted.
     let send = |text: &str, delay_ms: u64| match exact_keys_window {
         Some(wid) => crate::input::keyboard::type_text_while(pid, text, delay_ms, || {
             !crate::input::skylight::sibling_window_focused(pid, wid)
@@ -1375,7 +1375,7 @@ fn cgevent_type_verified(
     if sent < text.chars().count() {
         return match exact_keys_window {
             Some(wid) if sent == 0 => Err(crate::input::skylight::sibling_focus_refusal(pid, wid)),
-            _ => Ok((false, Some(sent))),
+            _ => Ok((false, None)),
         };
     }
     let batched = delay_ms == 0;
@@ -1408,7 +1408,7 @@ fn cgevent_type_verified(
             let tail: String = text.chars().skip(done).collect();
             let sent = send(&tail, RETYPE_TAIL_DELAY_MS)?;
             if sent < tail.chars().count() {
-                return Ok((false, Some(done + sent)));
+                return Ok((false, None));
             }
             let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
             return Ok(await_typed_delivery(

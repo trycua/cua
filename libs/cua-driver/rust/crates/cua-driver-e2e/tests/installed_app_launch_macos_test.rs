@@ -20,7 +20,7 @@ use cua_driver_testkit::e2e::{
     execute_case, recording_evidence, CaseSpec, Delivery, DriverRoute, Observation, OracleKind,
     Scope, Targeting,
 };
-use cua_driver_testkit::{Driver, McpDriver};
+use cua_driver_testkit::{Driver, InstalledMacosDaemon, McpDriver};
 
 const FINDER_BUNDLE: &str = "com.apple.finder";
 const CALCULATOR_BUNDLE: &str = "com.apple.calculator";
@@ -228,12 +228,31 @@ fn calculator_launch_preserves_finder_frontmost() {
     );
 }
 
-/// Close the Finder windows showing `folder`.
+/// Close the Finder windows showing `folder`, waiting briefly for Finder to
+/// open them after the handoff.
 fn close_finder_windows_for(folder: &std::path::Path) {
-    let _ = osascript(&format!(
-        r#"tell application "Finder" to close (every Finder window whose target is (POSIX file "{}" as alias))"#,
+    let script = format!(
+        r#"set closed to 0
+tell application "Finder"
+    repeat with w in (every Finder window)
+        try
+            if POSIX path of (target of w as alias) is "{}/" then
+                close w
+                set closed to closed + 1
+            end if
+        end try
+    end repeat
+end tell
+return closed"#,
         folder.display()
-    ));
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if osascript(&script).is_some_and(|closed| closed != "0") {
+            return;
+        }
+        sleep(Duration::from_millis(250));
+    }
 }
 
 /// Issue #7613: the Finder folder handoff waits on the main dispatch queue, so
@@ -252,12 +271,20 @@ fn finder_folder_launch_works_without_overlay() {
         DriverRoute::Composite,
         vec![OracleKind::Protocol],
     );
-    execute_case(case, |_| {
+    execute_case(case, |evidence| {
         let temp = tempfile::tempdir().expect("create temp folder");
         let folder = temp.path().canonicalize().expect("canonical temp folder");
-        // The testkit's own daemon runs `serve --no-overlay`. It holds no
-        // Screen Recording grant, so the case records no video.
-        let mut driver = McpDriver::spawn().expect("start test-owned no-overlay daemon");
+        let home = tempfile::tempdir().expect("create daemon home");
+        // A dedicated `--no-overlay` instance of the installed app, so the row
+        // keeps its Screen Recording grant for the behavior video.
+        let daemon = InstalledMacosDaemon::start(home.path());
+        let mut driver = McpDriver::spawn_daemon_proxy_named(
+            daemon.socket(),
+            "macos-finder-folder-launch-no-overlay",
+        )
+        .expect("connect to the dedicated no-overlay daemon");
+        *evidence = recording_evidence(driver.recording_dir());
+        driver.start_behavior_recording();
 
         let launch = driver.call(
             "launch_app",

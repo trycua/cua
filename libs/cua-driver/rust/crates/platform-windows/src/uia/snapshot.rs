@@ -152,21 +152,28 @@ pub struct UiaSnapshot {
 }
 
 impl UiaSnapshot {
-    pub fn from_nodes(nodes: &[UiaNode], kind: SnapshotKind) -> Self {
-        Self {
-            elements: nodes
-                .iter()
-                .filter(|node| node.element_index.is_some())
-                .map(|node| RetainedElement {
-                    ptr: node.element_ptr,
-                    kind,
-                    center: (node.center_x, node.center_y),
-                    rect: node.rect,
-                    msaa_role: node.msaa_role,
-                    read_while_minimized: false,
-                })
-                .collect(),
+    /// Take every walker reference out of `nodes`. Indexed nodes become the
+    /// snapshot's elements; the rest (content-only rows) are released here.
+    /// Each `element_ptr` is zeroed, so the nodes no longer own anything.
+    pub fn from_nodes(nodes: &mut [UiaNode], kind: SnapshotKind) -> Self {
+        let mut elements = Vec::new();
+        for node in nodes.iter_mut() {
+            let ptr = std::mem::take(&mut node.element_ptr);
+            let element = RetainedElement {
+                ptr,
+                kind,
+                center: (node.center_x, node.center_y),
+                rect: node.rect,
+                msaa_role: node.msaa_role,
+                read_while_minimized: false,
+            };
+            if node.element_index.is_some() {
+                elements.push(element);
+            } else {
+                drop(element);
+            }
         }
+        Self { elements }
     }
 
     pub fn with_read_while_minimized(mut self, minimized: bool) -> Self {

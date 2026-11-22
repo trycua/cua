@@ -782,9 +782,7 @@ impl Tool for ClickTool {
             // left falls through to the UIA Invoke path below (already drives
             // WinUI3). Double-left lands via a double UIA Invoke; right/middle
             // can't both land and hold the contract → structured error.
-            if delivery == DeliveryMode::Background
-                && (count > 1 || btn == "right" || btn == "middle")
-            {
+            if delivery.is_background() && (count > 1 || btn == "right" || btn == "middle") {
                 if let Some(r) =
                     winui3_background_gesture(&admitted, pid, hwnd, Some(idx), count, &btn).await
                 {
@@ -796,7 +794,7 @@ impl Tool for ClickTool {
             // changing foreground, z-order, or the real cursor. Keep AX for
             // target resolution and use the posted-message transport only for
             // the empirically verified single-left-click shape.
-            if delivery == DeliveryMode::Background
+            if delivery.is_background()
                 && btn == "left"
                 && count == 1
                 && crate::input::is_chromium_target_window(hwnd)
@@ -861,7 +859,7 @@ impl Tool for ClickTool {
                 // DOM event while occluded. Try the honest coordinate actuator
                 // first: it lands while visible and reports occlusion without
                 // raising the window when hidden.
-                if delivery == DeliveryMode::Background
+                if delivery.is_background()
                     && crate::input::is_chromium_target_window(hwnd)
                 {
                     let (cx, cy) = resolve_onscreen_point_with_scroll(
@@ -965,7 +963,7 @@ impl Tool for ClickTool {
                         std::mem::forget(elem);
                     }
                 }
-                if delivery == DeliveryMode::Background
+                if delivery.is_background()
                     && crate::input::delivery::would_be_silently_dropped(
                         hwnd,
                         EventKind::MouseClick,
@@ -1161,9 +1159,7 @@ impl Tool for ClickTool {
             // path, no element_token → no cached element to UIA-Invoke): these
             // can't both land and hold the contract on WinUI3 (posted input is
             // ignored, the pen injector steals foreground) → structured error.
-            if delivery == DeliveryMode::Background
-                && (count > 1 || btn == "right" || btn == "middle")
-            {
+            if delivery.is_background() && (count > 1 || btn == "right" || btn == "middle") {
                 if let Some(r) =
                     winui3_background_gesture(&admitted, pid, hwnd, None, count, &btn).await
                 {
@@ -1173,7 +1169,7 @@ impl Tool for ClickTool {
             // Match the AX-addressed Chromium route above: the point remains
             // PX-resolved, but transport uses the background-safe posted
             // message path proven against the fully occluded fixture.
-            if delivery == DeliveryMode::Background
+            if delivery.is_background()
                 && btn == "left"
                 && count == 1
                 && crate::input::is_chromium_target_window(hwnd)
@@ -1204,8 +1200,7 @@ impl Tool for ClickTool {
             // the coordinate actuator before attempting any accessibility hit
             // test. The actuator itself distinguishes visible delivery from a
             // fully occluded structured refusal.
-            if delivery == DeliveryMode::Background && crate::input::is_chromium_target_window(hwnd)
-            {
+            if delivery.is_background() && crate::input::is_chromium_target_window(hwnd) {
                 let btn2 = btn.clone();
                 let inj = tokio::task::spawn_blocking({
                     let admitted = admitted.clone();
@@ -1250,7 +1245,7 @@ impl Tool for ClickTool {
 
             // UIA completed with a miss or was not applicable. Known dropped surfaces other than direct
             // Chromium (handled above) get one targeted injection attempt.
-            if delivery == DeliveryMode::Background
+            if delivery.is_background()
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
                 let btn2 = btn.clone();

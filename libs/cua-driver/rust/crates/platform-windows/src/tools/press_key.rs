@@ -250,7 +250,7 @@ impl Tool for PressKeyTool {
         } else {
             EventKind::KeyCombo
         };
-        if delivery == DeliveryMode::Background
+        if delivery.is_background()
             && crate::input::delivery::would_be_silently_dropped(hwnd, event_kind)
         {
             return crate::input::delivery::background_unavailable_error(hwnd, event_kind);
@@ -272,7 +272,7 @@ impl Tool for PressKeyTool {
         // focus with a posted click, so reuse that route at the AX element's
         // cached center.
         let background_webview_focus = elem_idx.is_some()
-            && delivery == DeliveryMode::Background
+            && delivery.is_background()
             && crate::input::has_chromium_descendant(hwnd)
             && tokio::task::spawn_blocking({
                 let admitted = admitted.clone();
@@ -376,7 +376,7 @@ impl Tool for PressKeyTool {
                 let _admission = &admitted;
                 let m: Vec<&str> = mods.iter().map(String::as_str).collect();
                 if elem_idx.is_some()
-                    && delivery == DeliveryMode::Background
+                    && delivery.is_background()
                     && !background_webview_focus
                 {
                     let element = admitted.as_ref().ok_or_else(|| {

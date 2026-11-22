@@ -3,8 +3,6 @@
 
 /** Why New Space cannot run anything on this machine, in the words of its OS. */
 
-const DOCKER_DESKTOP_URL = "https://docs.docker.com/desktop/setup/install/windows-install/";
-
 /**
  * The line New Space shows when no local runtime is ready. `containerDetail`
  * is the runtime doctor's detail for the container engine, when it gave one
@@ -18,10 +16,8 @@ export function noLocalRuntimeReason(platform: string, containerDetail?: string,
   const detail = (containerDetail ?? "").toLowerCase();
   const installedButStopped = /not running|did not answer|not listening|start |socket not found|pipe\/dockerdesktop/.test(detail);
   if (platform === "win32") {
-    if (installedButStopped) {
-      return "Docker Desktop isn't running. Start it and wait for “Engine running”, then try again.";
-    }
-    return `Cua runs local Spaces in Docker Desktop (WSL 2 alone isn't enough). Install it from ${DOCKER_DESKTOP_URL}, start it, then try again.`;
+    // Cua Spaces manages its own runtime; the person never has to install Docker.
+    return "Local Spaces run on Windows' built-in Linux support (WSL 2), which isn't set up on this PC yet. You can also choose your own engine in Settings, Runtimes.";
   }
   if (/permission denied/.test(detail)) {
     return "Docker is installed, but your account isn't allowed to use it yet. Run `sudo usermod -aG docker $USER` in a terminal, then reopen Cua Spaces.";

@@ -272,6 +272,69 @@ async fn dropping_the_host_closes_and_terminates_the_private_worker() {
     }
 }
 
+/// A host without a console (a GUI app such as Electron) must not make the
+/// worker open a visible console window (#8192).
+#[cfg(target_os = "windows")]
+#[test]
+fn private_worker_opens_no_console_window_for_a_host_without_one() {
+    use std::os::windows::process::CommandExt as _;
+    // Same "no console" host as the embedded daemon test: GetConsoleCP() == 0.
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--ignored",
+            "--exact",
+            "consoleless_host_private_worker_probe",
+            "--nocapture",
+        ])
+        .creation_flags(DETACHED_PROCESS)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "{stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Hosts a private worker from a process with no console and checks that the
+/// worker's console, if it has one, has no window.
+#[cfg(target_os = "windows")]
+#[tokio::test]
+#[ignore = "subprocess-only probe for a host without a console"]
+async fn consoleless_host_private_worker_probe() {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetConsoleCP() -> u32;
+        fn AttachConsole(pid: u32) -> i32;
+        fn GetConsoleWindow() -> *mut std::ffi::c_void;
+        fn FreeConsole() -> i32;
+    }
+    assert_eq!(
+        unsafe { GetConsoleCP() },
+        0,
+        "the probe host must have no console"
+    );
+
+    let state = IsolatedStateRoot::new().unwrap();
+    let driver = cua_driver_sdk::CuaDriver::create_private_worker(worker_options(&state)).unwrap();
+    let pid = driver.metadata().await.unwrap().pid;
+    // A worker with no console at all fails to attach, which is also fine.
+    let window = if unsafe { AttachConsole(pid) } != 0 {
+        let window = unsafe { GetConsoleWindow() };
+        unsafe { FreeConsole() };
+        window
+    } else {
+        std::ptr::null_mut()
+    };
+    driver.shutdown().await.unwrap();
+    assert!(
+        window.is_null(),
+        "a console window was opened for the private worker"
+    );
+}
+
 #[tokio::test]
 async fn embedded_service_binds_authority_to_the_original_host_connection() {
     let state = IsolatedStateRoot::new().unwrap();

@@ -197,6 +197,8 @@ impl PrivateWorkerClient {
         for variable in safe_environment(&options.environment) {
             command.env(variable.name, variable.value);
         }
+        #[cfg(target_os = "windows")]
+        crate::embedded::prevent_console_window(&mut command);
 
         let mut child = command.spawn().map_err(|error| DriverError::Worker {
             reason: format!("spawn private worker {}: {error}", options.binary_path),

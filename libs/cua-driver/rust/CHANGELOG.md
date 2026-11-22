@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.58.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.58.1...cua-driver-rs-v0.58.2) (2026-11-22)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep foreground type_text out of sibling windows ([#8515](https://github.com/trycua/cua/issues/8515)) ([3d43490](https://github.com/trycua/cua/commit/3d434907b732cfcbd6f70ad2fcdb9cc4e4b26bf0))
+* **cua-driver:** raise the agent cursor after an untargeted move that follows a click ([#8521](https://github.com/trycua/cua/issues/8521)) ([7a96d50](https://github.com/trycua/cua/commit/7a96d50efe6389c31747a03635faf4f4dfb5b1a8)), closes [#2993](https://github.com/trycua/cua/issues/2993)
+
 ## [0.58.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.58.0...cua-driver-rs-v0.58.1) (2026-11-22)
 
 

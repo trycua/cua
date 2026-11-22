@@ -235,79 +235,14 @@ fn window_overlays(pid: u32, xid: u64, observe_relations: bool) -> WindowOverlay
             .is_some_and(|target| rects_intersect(rect, target))
     };
     let mut covers = false;
-    // A window list that could not be read hides any blocker: it stays
-    // unobservable rather than reading as "nothing related".
-    let own_windows = crate::x11::try_list_windows(Some(pid));
-    let cross_pid = crate::x11::try_list_cross_pid_transient_windows(pid);
-    // A cross-pid dialog dropped by a failed `WM_TRANSIENT_FOR` read hides
-    // one too; the overlays below still list what was read.
-    let listed = own_windows.is_ok() && matches!(cross_pid, Ok((_, true)));
-    let (own_windows, cross_pid) = (
-        own_windows.unwrap_or_default(),
-        cross_pid.map(|(windows, _)| windows).unwrap_or_default(),
-    );
-    if observe_relations && listed {
-        let visible: Vec<_> = own_windows
-            .iter()
-            .chain(&cross_pid)
-            .filter(|window| window.is_on_screen && window.width > 0 && window.height > 0)
-            .collect();
-        // The core keyboard focus decides which window takes keys; a window
-        // manager may never publish `_NET_ACTIVE_WINDOW`, so it only fills in
-        // when the focus sits outside these windows. A transient of one of
-        // them holding the focus counts even when the list left it out. A
-        // focus that could not be read, like an owner or modality read that
-        // failed (an unreadable `_NET_WM_STATE` must not make a modal dialog
-        // look modeless), leaves the relation unobservable.
-        let candidates: Vec<u64> = std::iter::once(xid)
-            .chain(visible.iter().map(|window| window.xid))
-            .collect();
-        let owned: anyhow::Result<Vec<_>> =
-            crate::x11::try_focus_holder(&candidates).and_then(|holder| {
-                let (focused, unlisted) = match holder {
-                    Some(crate::x11::FocusHolder::Listed(window)) => (Some(window), None),
-                    Some(crate::x11::FocusHolder::Transient { window, owner })
-                        if candidates.contains(&owner) =>
-                    {
-                        (Some(window), Some((window, owner)))
-                    }
-                    _ => (
-                        crate::x11::active_window().filter(|active| candidates.contains(active)),
-                        None,
-                    ),
-                };
-                let mut owned = visible
-                    .iter()
-                    .map(|window| {
-                        Ok(cua_driver_core::window_inspection::OwnedWindow {
-                            pid: i64::from(window.pid.unwrap_or(pid)),
-                            window_id: window.xid,
-                            owner: crate::x11::try_transient_for(window.xid)?,
-                            modal: crate::x11::try_window_is_modal(window.xid)?,
-                            focused: focused == Some(window.xid),
-                        })
-                    })
-                    .collect::<anyhow::Result<Vec<_>>>()?;
-                if let Some((window, owner)) = unlisted {
-                    owned.push(cua_driver_core::window_inspection::OwnedWindow {
-                        pid: i64::from(
-                            crate::x11::window_info(window)
-                                .and_then(|info| info.pid)
-                                .unwrap_or(pid),
-                        ),
-                        window_id: window,
-                        owner: Some(owner),
-                        modal: crate::x11::try_window_is_modal(window)?,
-                        focused: true,
-                    });
-                }
-                Ok(owned)
-            });
-        out.related = owned
+    // An unreadable window set hides any blocker: it stays unobservable
+    // rather than reading as "nothing related".
+    if observe_relations {
+        out.related = crate::x11::try_interaction_windows(pid)
             .ok()
             .map(|owned| cua_driver_core::window_inspection::related_by_owner_chain(xid, &owned));
     }
-    for window in own_windows {
+    for window in crate::x11::list_windows(Some(pid)) {
         if window.xid == xid || !window.is_on_screen || window.width == 0 || window.height == 0 {
             continue;
         }
@@ -331,7 +266,7 @@ fn window_overlays(pid: u32, xid: u64, observe_relations: bool) -> WindowOverlay
     // resolving to one of pid's own windows is the correlation signal (see
     // `list_cross_pid_transient_windows`); such entries are tagged with
     // `owning_pid` so callers can tell it apart from a same-process dialog.
-    for window in cross_pid {
+    for window in crate::x11::list_cross_pid_transient_windows(pid) {
         if window.xid == xid || !window.is_on_screen || window.width == 0 || window.height == 0 {
             continue;
         }

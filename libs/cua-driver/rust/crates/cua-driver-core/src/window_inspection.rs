@@ -148,21 +148,43 @@ pub fn related_by_owner_chain(target: u64, windows: &[OwnedWindow]) -> Vec<Relat
 
 /// Which owned windows are modal on Win32, where `DialogBox` and an owned
 /// `MessageBox` disable their owner while they run: a disabled owner with
-/// exactly one visible owned window is blocked by that window. With several
-/// (a dialog beside a modeless palette), Win32 does not say which one is
-/// modal, and a disabled target owning none is blocked by something not
-/// listed: both are `None`, so the caller reports the relation as
-/// unobservable.
+/// exactly one visible owned window is blocked by that window. Only owners
+/// that are the target or a dialog of it are weighed: a modal of an
+/// unrelated sibling blocks only that sibling. With several owned windows (a
+/// dialog beside a modeless palette), Win32 does not say which one is modal,
+/// and a disabled target owning none is blocked by something not listed:
+/// both are `None`, so the caller reports the relation as unobservable.
 pub fn modal_by_disabled_owner(
     target: u64,
     windows: &[(u64, Option<u64>)],
     enabled: impl Fn(u64) -> bool,
 ) -> Option<Vec<u64>> {
+    let owner_of = |id: u64| {
+        windows
+            .iter()
+            .find(|(hwnd, _)| *hwnd == id)
+            .and_then(|(_, owner)| *owner)
+    };
+    let reaches_target = |mut id: u64| {
+        for _ in 0..MAX_OWNER_CHAIN {
+            if id == target {
+                return true;
+            }
+            match owner_of(id) {
+                Some(owner) if owner != id => id = owner,
+                _ => return false,
+            }
+        }
+        false
+    };
     let mut owners: Vec<u64> = windows.iter().filter_map(|(_, owner)| *owner).collect();
     owners.sort_unstable();
     owners.dedup();
     let mut modal = Vec::new();
-    for owner in owners.into_iter().filter(|owner| !enabled(*owner)) {
+    for owner in owners
+        .into_iter()
+        .filter(|owner| !enabled(*owner) && reaches_target(*owner))
+    {
         let mut owned = windows
             .iter()
             .filter(|(_, window_owner)| *window_owner == Some(owner));
@@ -494,6 +516,13 @@ mod tests {
         // Disabled owner 1 owns dialog 3 and modeless palette 2.
         let windows = [(1, None), (2, Some(1)), (3, Some(1))];
         assert_eq!(modal_by_disabled_owner(1, &windows, |hwnd| hwnd != 1), None);
+        // A disabled sibling 4 with a dialog and a palette leaves the
+        // enabled target 1 unaffected.
+        let siblings = [(1, None), (4, None), (5, Some(4)), (6, Some(4))];
+        assert_eq!(
+            modal_by_disabled_owner(1, &siblings, |hwnd| hwnd != 4),
+            Some(vec![])
+        );
         // The target is disabled but owns nothing visible.
         assert_eq!(
             modal_by_disabled_owner(1, &[(1, None)], |hwnd| hwnd != 1),

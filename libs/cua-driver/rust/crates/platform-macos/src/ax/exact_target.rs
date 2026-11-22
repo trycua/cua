@@ -693,6 +693,8 @@ pub fn gather_background_facts(
 /// [`related_window_facts`] reads it.
 struct AxSurface {
     ids: AxWindowId,
+    /// The window or sheet a sheet is attached to; a window's own id.
+    parent: u32,
     /// `AXSheet` role, or `AXModal` true on a window.
     modal: bool,
 }
@@ -714,9 +716,9 @@ fn related_windows(
         .map(|surface| RelatedWindowFacts {
             pid: i64::from(pid),
             window_id: u64::from(surface.ids.own),
-            owner: if surface.ids.root == surface.ids.own {
+            owner: if surface.parent == surface.ids.own {
                 WindowOwnership::Unowned
-            } else if surface.ids.root == requested {
+            } else if attached_to(surface, requested, surfaces) {
                 WindowOwnership::Target
             } else {
                 WindowOwnership::OtherWindow
@@ -725,6 +727,22 @@ fn related_windows(
             focused: focused.is_some_and(|focused| focused.own == surface.ids.own),
         })
         .collect()
+}
+
+/// Whether `surface` is attached to `requested`, directly or through the
+/// sheets it sits on: a sheet on a sheet blocks that sheet too.
+fn attached_to(surface: &AxSurface, requested: u32, surfaces: &[AxSurface]) -> bool {
+    let mut parent = surface.parent;
+    for _ in 0..=MAX_SHEET_NESTING {
+        if parent == requested {
+            return true;
+        }
+        match surfaces.iter().find(|other| other.ids.own == parent) {
+            Some(other) if other.parent != other.ids.own => parent = other.parent,
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// Read which of `pid`'s windows and sheets could block or supersede
@@ -778,7 +796,8 @@ pub fn interaction_facts(
 /// `window` must be a valid AX window element.
 unsafe fn read_surfaces(window: AXUIElementRef, surfaces: &mut Vec<AxSurface>) -> bool {
     use super::bindings::{
-        copy_children_or_error, AXUIElementCopyAttributeValue, AXUIElementSetMessagingTimeout,
+        copy_children_or_error, copy_string_attr_or_error, AXUIElementCopyAttributeValue,
+        AXUIElementSetMessagingTimeout,
     };
     use core_foundation::{base::TCFType, boolean::CFBoolean, string::CFString};
     AXUIElementSetMessagingTimeout(window, INTERACTION_AX_TIMEOUT_S);
@@ -802,46 +821,62 @@ unsafe fn read_surfaces(window: AXUIElementRef, surfaces: &mut Vec<AxSurface>) -
     match ax_get_window_id(window) {
         Some(own) => surfaces.push(AxSurface {
             ids: AxWindowId::window(own),
+            parent: own,
             modal,
         }),
         // A modal window that cannot be named cannot be reported.
         None if modal => return false,
         None => {}
     }
-    // Sheets, and sheets on sheets, to the same bound as attached_sheets.
-    let mut parents = vec![window];
+    // Sheets, and sheets on sheets, to the same bound as attached_sheets,
+    // each beside the id of the window or sheet it is attached to.
+    let mut parents = vec![(window, ax_get_window_id(window))];
     let mut owned = Vec::new();
     let mut complete = true;
     for _ in 0..MAX_SHEET_NESTING {
         let mut next = Vec::new();
-        for parent in &parents {
+        for (parent, parent_id) in &parents {
             match copy_children_or_error(*parent) {
                 Ok(children) => {
                     for child in children {
-                        if copy_string_attr(child, "AXRole").as_deref() == Some("AXSheet") {
-                            next.push(child);
-                        } else {
-                            CFRelease(child as CFTypeRef);
+                        // A role that could not be read may be a sheet's.
+                        match copy_string_attr_or_error(child, "AXRole") {
+                            Ok(Some(role)) if role == "AXSheet" => next.push((child, *parent_id)),
+                            Ok(_) => CFRelease(child as CFTypeRef),
+                            Err(_) => {
+                                complete = false;
+                                CFRelease(child as CFTypeRef);
+                            }
                         }
                     }
                 }
                 Err(_) => complete = false,
             }
         }
+        owned.extend(next.iter().map(|(sheet, _)| *sheet));
         if next.is_empty() || !complete {
-            owned.extend(next);
             break;
         }
-        for sheet in &next {
+        let mut level = Vec::new();
+        for (sheet, parent_id) in next {
             // A sheet that answers only to its parent's id cannot be told
             // apart from the parent, nor addressed by `next_call`.
-            match owning_window_id(*sheet) {
-                Some(ids) if ids.own != ids.root => surfaces.push(AxSurface { ids, modal: true }),
+            match (owning_window_id(sheet), parent_id) {
+                (Some(ids), Some(parent)) if ids.own != ids.root && ids.own != parent => {
+                    surfaces.push(AxSurface {
+                        ids,
+                        parent,
+                        modal: true,
+                    });
+                    level.push((sheet, Some(ids.own)));
+                }
                 _ => complete = false,
             }
         }
-        owned.extend(next.iter().copied());
-        parents = next;
+        if !complete {
+            break;
+        }
+        parents = level;
     }
     for element in owned {
         CFRelease(element as CFTypeRef);
@@ -1225,6 +1260,7 @@ mod tests {
         let surfaces = [
             AxSurface {
                 ids: AxWindowId::window(target),
+                parent: target,
                 modal: false,
             },
             // A sheet on the target.
@@ -1233,15 +1269,18 @@ mod tests {
                     own: 11,
                     root: target,
                 },
+                parent: target,
                 modal: true,
             },
             // A sheet on a sibling window.
             AxSurface {
                 ids: AxWindowId { own: 21, root: 20 },
+                parent: 20,
                 modal: true,
             },
             AxSurface {
                 ids: AxWindowId::window(20),
+                parent: 20,
                 modal: false,
             },
         ];
@@ -1290,5 +1329,43 @@ mod tests {
         let context = interaction_context(&Some(sibling));
         assert_eq!(context["next_call"]["arguments"]["window_id"], 21);
         assert_eq!(context["related_surfaces"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_sheet_on_a_sheet_blocks_that_sheet() {
+        use cua_driver_core::window_inspection::{interaction_context, WindowOwnership};
+        let surfaces = [
+            AxSurface {
+                ids: AxWindowId::window(10),
+                parent: 10,
+                modal: false,
+            },
+            // Sheet A on the window, and sheet B on sheet A.
+            AxSurface {
+                ids: AxWindowId { own: 11, root: 10 },
+                parent: 10,
+                modal: true,
+            },
+            AxSurface {
+                ids: AxWindowId { own: 12, root: 10 },
+                parent: 11,
+                modal: true,
+            },
+        ];
+        let on_a = related_windows(42, 11, &surfaces, None);
+        let owners: Vec<_> = on_a.iter().map(|w| (w.window_id, w.owner)).collect();
+        assert_eq!(
+            owners,
+            vec![
+                (10, WindowOwnership::Unowned),
+                (12, WindowOwnership::Target)
+            ]
+        );
+        let context = interaction_context(&Some(on_a));
+        assert_eq!(context["status"], "blocked");
+        assert_eq!(context["next_call"]["arguments"]["window_id"], 12);
+        // From the window, both sheets are its own.
+        let on_window = related_windows(42, 10, &surfaces, None);
+        assert!(on_window.iter().all(|w| w.owner == WindowOwnership::Target));
     }
 }

@@ -369,7 +369,7 @@ pub(crate) fn interaction_facts(
     let foreground = unsafe { GetForegroundWindow() }.0 as usize as u64;
     // Every visible top-level window of the pid, titled or not: an untitled
     // dialog is as modal as a titled one.
-    let hwnds = visible_top_level_windows(pid);
+    let hwnds = visible_top_level_windows(pid)?;
     let enabled = |hwnd: u64| unsafe { IsWindowEnabled(HWND(hwnd as *mut _)) }.as_bool();
     let owned: Vec<(u64, Option<u64>)> = hwnds
         .into_iter()
@@ -403,8 +403,9 @@ pub(crate) fn interaction_facts(
 }
 
 /// Every visible, non-minimized top-level HWND of `pid`, in z-order. Unlike
-/// [`list_windows_via_win32`], untitled windows are kept.
-fn visible_top_level_windows(pid: u32) -> Vec<u64> {
+/// [`list_windows_via_win32`], untitled windows are kept. `None` when the
+/// enumeration failed, which could leave a blocker out.
+fn visible_top_level_windows(pid: u32) -> Option<Vec<u64>> {
     struct Collect {
         pid: u32,
         hwnds: Vec<u64>,
@@ -424,10 +425,8 @@ fn visible_top_level_windows(pid: u32) -> Vec<u64> {
         pid,
         hwnds: Vec::new(),
     };
-    unsafe {
-        let _ = EnumWindows(Some(collect), LPARAM(&mut state as *mut Collect as isize));
-    }
-    state.hwnds
+    unsafe { EnumWindows(Some(collect), LPARAM(&mut state as *mut Collect as isize)) }.ok()?;
+    Some(state.hwnds)
 }
 
 pub(crate) fn list_windows_via_win32(filter_pid: Option<u32>) -> Vec<WindowInfo> {

@@ -1629,61 +1629,25 @@ impl Tool for BrowserClickTool {
             }
             let before =
                 read_dom_click_state(conn, cdp, &object_id, DOM_CLICK_BASELINE_DEADLINE).await;
-            let hover = conn.call(
+            let click = conn.call(
                 Some(cdp),
                 "Runtime.callFunctionOn",
                 json!({
                     "objectId": object_id,
-                    "functionDeclaration": DOM_EVENT_HOVER_SEQUENCE,
+                    "functionDeclaration": DOM_EVENT_CLICK_SEQUENCE,
+                    "awaitPromise": true,
+                    "returnByValue": true,
                 }),
             );
-            let page_mutations = |reply: &Value| {
-                reply
+            // A sequence that threw counts nothing: its handlers' mutations
+            // may not include the click's.
+            let outcome = match call_until_dialog(conn, cdp_target_id, click).await {
+                Ok(Ok(reply)) if reply.get("exceptionDetails").is_none() => Ok(reply
                     .pointer("/result/value/pageMutations")
                     .and_then(Value::as_u64)
-            };
-            let outcome = match call_until_dialog(conn, cdp_target_id, hover).await {
-                Ok(Ok(_)) => {
-                    let press = conn.call(
-                        Some(cdp),
-                        "Runtime.callFunctionOn",
-                        json!({
-                            "objectId": object_id,
-                            "functionDeclaration": DOM_EVENT_PRESS_SEQUENCE,
-                            "awaitPromise": true,
-                            "returnByValue": true,
-                        }),
-                    );
-                    match call_until_dialog(conn, cdp_target_id, press).await {
-                        Ok(Ok(pressed)) => {
-                            let compat = pressed
-                                .pointer("/result/value/compat")
-                                .and_then(Value::as_bool)
-                                .unwrap_or(true);
-                            let release = conn.call(
-                                Some(cdp),
-                                "Runtime.callFunctionOn",
-                                json!({
-                                    "objectId": object_id,
-                                    "functionDeclaration": DOM_EVENT_RELEASE_SEQUENCE,
-                                    "arguments": [{ "value": compat }],
-                                    "awaitPromise": true,
-                                    "returnByValue": true,
-                                }),
-                            );
-                            match call_until_dialog(conn, cdp_target_id, release).await {
-                                Ok(Ok(released)) => Ok(page_mutations(&pressed).unwrap_or(0)
-                                    + page_mutations(&released).unwrap_or(0)),
-                                Ok(Err(error)) => Err(error),
-                                Err(_) => Ok(0),
-                            }
-                        }
-                        Ok(Err(error)) => Err(error),
-                        Err(_) => Ok(0),
-                    }
-                }
+                    .unwrap_or(0)),
+                Ok(Ok(_)) | Err(_) => Ok(0),
                 Ok(Err(error)) => Err(error),
-                Err(_) => Ok(0),
             };
             return match (outcome, conn.dialog_state(cdp_target_id)) {
                 (Ok(count), None) => {
@@ -2012,38 +1976,37 @@ fn dialog_block(dialog: &super::cdp_ws::CdpDialogState) -> Value {
 /// compatibility mouse events, and on `mousedown` suppresses the focus move.
 /// The events stay untrusted (`isTrusted === false`).
 ///
-/// The sequence goes out in three calls, all at the point and on the
-/// descendant the hover call hit-tested, which it keeps on the node until the
-/// release call. Hover and move go first, in [`DOM_EVENT_HOVER_SEQUENCE`]. [`DOM_EVENT_PRESS_SEQUENCE`] sends
-/// `pointerdown` and `mousedown`, counts their handlers' page mutations, then
-/// moves focus. [`DOM_EVENT_RELEASE_SEQUENCE`] sends `pointerup`, `mouseup`
-/// and `click`, and counts theirs. The renderer runs every microtask a call's
-/// handlers queue before it answers, so hover and focus handlers, however deep
-/// their promise chains, settle outside both counts.
+/// The phases run in one call, with a task boundary between hover, press and
+/// release. The microtask checkpoint before each boundary runs every microtask
+/// the previous phase's handlers queued, so hover and focus handlers, however
+/// deep their promise chains, settle outside both counts. A handler that
+/// re-renders between phases cannot move the press or click: all of them go
+/// to the point and descendant hit-tested first. A dialog a handler opens
+/// pauses the call, and the rest of the sequence runs once it is dismissed.
 ///
-/// Each count is the DOM mutations outside the node's own subtree and its
-/// ancestors' attributes, across shadow roots to their hosts, from the call's
-/// first event until the microtasks its handlers queued ran. No other task can
-/// run in that span, so those mutations are the handlers' own, for example a
-/// button that reveals fields elsewhere without changing its own state. Each
-/// call waits a bounded 256 microtask turns, not for a later task: a task
-/// boundary would let unrelated timers and network callbacks change the page
-/// inside the count. A handler whose change comes later than that leaves the
-/// click `unverifiable`, never falsely `confirmed`.
-macro_rules! dom_event_pointer_prelude {
-    () => {
-        "const el = this; \
+/// The press count covers `pointerdown` and `mousedown`, then focus moves; the
+/// release count covers `pointerup`, `mouseup` and `click`. Each count is the
+/// DOM mutations on nodes still in the page, outside the node's own subtree
+/// and its ancestors' attributes (across shadow roots to their hosts), from
+/// the phase's first event until the microtasks its handlers queued ran. No
+/// other task can run in that span, so those mutations are the handlers' own,
+/// for example a button that reveals fields elsewhere without changing its
+/// own state. Each count waits a bounded 256 microtask turns, not for a later
+/// task: a task boundary would let unrelated timers and network callbacks
+/// change the page inside the count. A handler whose change comes later than
+/// that leaves the click `unverifiable`, never falsely `confirmed`.
+///
+/// The boundary is a `MessageChannel` message, which background-tab timer
+/// throttling does not delay.
+const DOM_EVENT_CLICK_SEQUENCE: &str = "async function() { \
+    const el = this; \
     const doc = el.ownerDocument; \
     const view = doc.defaultView; \
+    const r = el.getBoundingClientRect(); \
+    const x = r.left + r.width / 2, y = r.top + r.height / 2; \
     const root = el.getRootNode(); \
-    const pointerKey = Symbol.for('cua.domEventPointer'); \
-    const { target, x, y } = el[pointerKey] || (() => { \
-        const r = el.getBoundingClientRect(); \
-        const x = r.left + r.width / 2, y = r.top + r.height / 2; \
-        const hit = ('elementFromPoint' in root) ? root.elementFromPoint(x, y) : null; \
-        return { target: (hit && el.contains(hit)) ? hit : el, x, y }; \
-    })(); \
-    el[pointerKey] = { target, x, y }; \
+    const hit = ('elementFromPoint' in root) ? root.elementFromPoint(x, y) : null; \
+    const target = (hit && el.contains(hit)) ? hit : el; \
     const sx = x + (view.screenX || 0), sy = y + (view.screenY || 0); \
     const base = { bubbles: true, cancelable: true, composed: true, view, \
         clientX: x, clientY: y, screenX: sx, screenY: sy, button: 0 }; \
@@ -2051,63 +2014,48 @@ macro_rules! dom_event_pointer_prelude {
         { ...base, buttons, pointerId: 1, pointerType: 'mouse', isPrimary: true, \
           width: 1, height: 1, pressure: buttons ? 0.5 : 0, ...extra })); \
     const M = (type, buttons, extra) => target.dispatchEvent(new view.MouseEvent(type, \
-        { ...base, buttons, detail: 0, ...extra })); "
-    };
-}
-
-const DOM_EVENT_HOVER_SEQUENCE: &str = concat!(
-    "function() { delete this[Symbol.for('cua.domEventPointer')]; ",
-    dom_event_pointer_prelude!(),
-    "P('pointerover', 0); P('pointerenter', 0, { bubbles: false, cancelable: false }); \
-    M('mouseover', 0); M('mouseenter', 0, { bubbles: false, cancelable: false }); \
-    P('pointermove', 0); M('mousemove', 0); \
-    return true; \
-}"
-);
-
-macro_rules! dom_event_mutation_counter {
-    () => {
-        "const ancestors = new Set(); \
+        { ...base, buttons, detail: 0, ...extra })); \
+    const nextTask = () => new Promise(resolve => { \
+        const channel = new view.MessageChannel(); \
+        channel.port1.onmessage = () => { channel.port1.close(); resolve(); }; \
+        channel.port2.postMessage(null); \
+    }); \
+    const ancestors = new Set(); \
     for (let node = el; node; node = node.parentNode || node.host) ancestors.add(node); \
-    const records = []; \
-    const observer = new view.MutationObserver(batch => { records.push(...batch); }); \
-    for (const scope of new Set([doc, root])) observer.observe(scope, \
-        { subtree: true, childList: true, attributes: true, characterData: true }); \
-    const settle = async () => { \
+    const counted = async phase => { \
+        const records = []; \
+        const observer = new view.MutationObserver(batch => { records.push(...batch); }); \
+        for (const scope of new Set([doc, root])) observer.observe(scope, \
+            { subtree: true, childList: true, attributes: true, characterData: true }); \
+        const result = phase(); \
         for (let turn = 0; turn < 256; turn++) await null; \
         records.push(...observer.takeRecords()); \
         observer.disconnect(); \
-        return records.filter(m => !el.contains(m.target) \
+        const mutations = records.filter(m => m.target.isConnected && !el.contains(m.target) \
             && !(m.type === 'attributes' && ancestors.has(m.target))).length; \
-    }; "
-    };
-}
-
-const DOM_EVENT_PRESS_SEQUENCE: &str = concat!(
-    "async function() { ",
-    dom_event_pointer_prelude!(),
-    dom_event_mutation_counter!(),
-    "const compat = P('pointerdown', 1); \
-    const focusable = (compat && M('mousedown', 1, { detail: 1 })) \
-        ? target.closest('a[href],button,input,select,textarea,summary,[tabindex],[contenteditable=\"\"],[contenteditable=\"true\"]') \
-        : null; \
-    const pageMutations = await settle(); \
+        return { result, mutations }; \
+    }; \
+    P('pointerover', 0); P('pointerenter', 0, { bubbles: false, cancelable: false }); \
+    M('mouseover', 0); M('mouseenter', 0, { bubbles: false, cancelable: false }); \
+    P('pointermove', 0); M('mousemove', 0); \
+    await nextTask(); \
+    const press = await counted(() => { \
+        const compat = P('pointerdown', 1); \
+        const focusable = (compat && M('mousedown', 1, { detail: 1 })) \
+            ? target.closest('a[href],button,input,select,textarea,summary,[tabindex],[contenteditable=\"\"],[contenteditable=\"true\"]') \
+            : null; \
+        return { compat, focusable }; \
+    }); \
+    const { compat, focusable } = press.result; \
     if (focusable && typeof focusable.focus === 'function') focusable.focus({ preventScroll: true }); \
-    return { pageMutations, compat }; \
-}"
-);
-
-const DOM_EVENT_RELEASE_SEQUENCE: &str = concat!(
-    "async function(compat) { ",
-    dom_event_pointer_prelude!(),
-    dom_event_mutation_counter!(),
-    "P('pointerup', 0); \
-    if (compat) M('mouseup', 0, { detail: 1 }); \
-    M('click', 0, { detail: 1 }); \
-    delete el[pointerKey]; \
-    return { pageMutations: await settle() }; \
-}"
-);
+    await nextTask(); \
+    const release = await counted(() => { \
+        P('pointerup', 0); \
+        if (compat) M('mouseup', 0, { detail: 1 }); \
+        M('click', 0, { detail: 1 }); \
+    }); \
+    return { pageMutations: press.mutations + release.mutations }; \
+}";
 
 // ── browser_type ─────────────────────────────────────────────────────────────
 

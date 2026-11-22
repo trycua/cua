@@ -946,7 +946,8 @@ fn effective_enabled(
 
 /// The live counterpart of [`effective_enabled`]: `false` when the element or
 /// any control-view ancestor up to the nearest `Window` reports
-/// `IsEnabled=false`. `None` when the element's own state cannot be read.
+/// `IsEnabled=false`. `None` when no ancestor is disabled and the element's
+/// own state cannot be read.
 pub(crate) unsafe fn live_effective_enabled(element: &IUIAutomationElement) -> Option<bool> {
     let walker = ensure_com()
         .ok()
@@ -975,14 +976,16 @@ pub(crate) unsafe fn live_effective_enabled(element: &IUIAutomationElement) -> O
 /// disabled element. A `Window` starts its own scope, so the climb ends at the
 /// first `Window`, the target included, as in [`effective_enabled`]. An
 /// unreadable ancestor counts as enabled and the climb goes on past it; a
-/// missing parent ends it.
+/// missing parent ends it. An unreadable target still climbs, and is `None`
+/// only when nothing above it is disabled.
 fn scoped_enabled<E>(
     element: E,
     enabled: impl Fn(&E) -> Option<bool>,
     is_window: impl Fn(&E) -> bool,
     parent: impl Fn(&E) -> Option<E>,
 ) -> Option<bool> {
-    if !enabled(&element)? {
+    let own = enabled(&element);
+    if own == Some(false) {
         return Some(false);
     }
     let mut current = element;
@@ -995,7 +998,7 @@ fn scoped_enabled<E>(
         }
         current = next;
     }
-    Some(true)
+    own
 }
 
 /// Keep `IsPassword` where it carries information: always when it is true,
@@ -1391,7 +1394,13 @@ mod tests {
             Some(false),
             "an unreadable ancestor must not hide a disabled one above it"
         );
-        assert_eq!(live_scope(&[("Button", None), disabled_owner]), None);
+        assert_eq!(
+            live_scope(&[("Button", None), disabled_owner]),
+            Some(false),
+            "an unreadable target under a disabled ancestor is disabled"
+        );
+        assert_eq!(live_scope(&[("Button", None), ("Window", Some(true))]), None);
+        assert_eq!(live_scope(&[("Window", None), disabled_owner]), None);
         assert_eq!(live_scope(&[("Window", Some(false))]), Some(false));
     }
 

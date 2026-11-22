@@ -54,10 +54,13 @@ impl std::error::Error for SheetBlockedTarget {}
 
 fn ensure_sheet_target(element: &crate::ax::snapshot::RetainedElement) -> anyhow::Result<()> {
     // SAFETY: a RetainedElement holds a +1 reference on a live element.
-    let blocked = unsafe {
-        crate::ax::exact_target::element_blocked_by_sheet(element.as_ptr() as AXUIElementRef)
-    };
-    if blocked != Some(false) {
+    unsafe { ensure_sheet_clear(element.as_ptr() as AXUIElementRef) }
+}
+
+/// # Safety
+/// `element` must be a live AXUIElementRef.
+unsafe fn ensure_sheet_clear(element: AXUIElementRef) -> anyhow::Result<()> {
+    if crate::ax::exact_target::element_blocked_by_sheet(element) != Some(false) {
         anyhow::bail!(SheetBlockedTarget);
     }
     Ok(())
@@ -2342,6 +2345,8 @@ fn perform_ax_click(
         let deadline = std::time::Instant::now() + MENU_OPEN_TIMEOUT;
         unsafe { !menu_beside(element, deadline) }
     };
+    // Making the window key, or the menu wait, can let the app open a sheet.
+    unsafe { ensure_sheet_clear(element) }?;
     let pressed_at = std::time::Instant::now();
     let err = unsafe { crate::ax::bindings::perform_action(element, ax_action) };
     if err != crate::ax::bindings::kAXErrorSuccess {

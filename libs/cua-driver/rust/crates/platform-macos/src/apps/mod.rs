@@ -81,29 +81,35 @@ pub fn list_running_apps() -> Vec<AppInfo> {
     apps
 }
 
-/// Return every live process with exactly this bundle identifier, including
-/// accessory and background-only applications omitted from `list_running_apps`.
+/// Every live process with exactly this bundle identifier, read from the
+/// process table, including the accessory and background-only applications
+/// `list_running_apps` leaves out.
 pub fn running_pids_for_bundle(bundle_id: &str) -> Vec<i32> {
-    use objc2::rc::Retained;
-    use objc2_app_kit::NSRunningApplication;
-    use objc2_foundation::NSString;
-
-    let bundle_id = NSString::from_str(bundle_id);
-    let running: Retained<objc2_foundation::NSArray<NSRunningApplication>> =
-        unsafe { NSRunningApplication::runningApplicationsWithBundleIdentifier(&bundle_id) };
-    let mut pids = Vec::new();
-    unsafe {
-        for index in 0..running.count() {
-            let app = running.objectAtIndex(index);
-            let pid = app.processIdentifier();
-            if pid > 0 && !app.isTerminated() {
-                pids.push(pid);
-            }
-        }
-    }
+    let mut ids: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
+    let mut pids: Vec<i32> = all_pids()
+        .into_iter()
+        .filter(|pid| {
+            let Some(path) = path_of_pid(*pid) else {
+                return false;
+            };
+            let Some(app_path) = bundle_root_of_executable(&path) else {
+                return false;
+            };
+            ids.entry(app_path.to_owned())
+                .or_insert_with(|| bundle_id_for_app_path(app_path))
+                .as_deref()
+                == Some(bundle_id)
+        })
+        .collect();
     pids.sort_unstable();
-    pids.dedup();
     pids
+}
+
+/// The bundle identifier of the `.app` a live process runs from, read from
+/// the process table and the bundle's `Info.plist`.
+pub fn bundle_id_of_process(pid: i32) -> Option<String> {
+    bundle_id_for_app_path(bundle_root_of_executable(&path_of_pid(pid)?)?)
 }
 
 /// Every pid the kernel currently has, via `proc_listallpids` (libproc, in

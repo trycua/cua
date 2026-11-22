@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use core_foundation::base::{CFRelease, CFTypeRef};
 use cua_driver_contract::{
@@ -98,7 +101,7 @@ fn resolve_target(target: MenuExtraTarget) -> Result<ResolvedTarget, MenuExtraEr
             let pid = i32::try_from(pid).map_err(|_| {
                 MenuExtraError::new("target_unavailable", "pid is outside the macOS range")
             })?;
-            let bundle_id = crate::apps::bundle_id_for_pid(pid).ok_or_else(|| {
+            let bundle_id = crate::apps::bundle_id_of_process(pid).ok_or_else(|| {
                 MenuExtraError::new(
                     "target_unavailable",
                     format!("pid {pid} is not a running bundled application"),

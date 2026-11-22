@@ -27,7 +27,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
-use super::semantic::SemanticDocument;
+use super::semantic::{SemanticDocument, SemanticScopeAnchor};
 use super::types::{
     BindingQuality, EndpointAccessClass, EndpointTransport, ProcessFingerprint, Rect,
 };
@@ -86,7 +86,7 @@ impl BrowserVisibility {
 /// Which frame kind a ref was minted in. Exposed on the wire as a
 /// stable string via [`FrameKind::as_str`]; everything else about the
 /// frame stays internal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrameKind {
     /// The tab's main frame (including composed shadow DOM inside it).
     Main,
@@ -111,7 +111,7 @@ impl FrameKind {
 /// `loader_id` changes on every document load, so equality against the
 /// live frame tree proves the ref's document is still the one that was
 /// snapshotted.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FrameIdentity {
     pub frame_id: String,
     pub loader_id: String,
@@ -122,7 +122,7 @@ pub struct FrameIdentity {
 /// - `kind != Main` ⇒ `identity` is `Some` (unprovable frames are
 ///   omitted from snapshots, never guessed).
 /// - `kind == Oopif` ⇔ `oopif_target_id` is `Some`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FrameRef {
     pub kind: FrameKind,
     /// CDP target id of the OOPIF child target (contained beneath the
@@ -182,6 +182,9 @@ pub struct SnapshotRecord {
     pub(crate) semantic: Option<SemanticDocument>,
     pub(crate) semantic_root_identity: Option<FrameIdentity>,
     pub(crate) continuations: HashMap<String, SemanticContinuation>,
+    /// The `scope_ancestor_role` anchor each continuation token pages,
+    /// keyed like `continuations`.
+    pub(crate) continuation_anchors: HashMap<String, SemanticScopeAnchor>,
 }
 
 #[derive(Debug, Clone)]
@@ -542,6 +545,7 @@ mod tests {
                             semantic: None,
                             semantic_root_identity: None,
                             continuations: HashMap::new(),
+                            continuation_anchors: HashMap::new(),
                         },
                     )]),
                 },

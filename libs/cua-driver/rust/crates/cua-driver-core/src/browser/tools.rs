@@ -394,6 +394,24 @@ fn semantic_ref_value(listed: &super::engine::SemanticListedRef) -> Value {
     })
 }
 
+/// Add `scope_anchor` to a semantic snapshot that `scope_ancestor_role`
+/// scoped. Other snapshots keep their shape.
+fn with_scope_anchor(
+    mut snapshot: Value,
+    anchor: Option<&super::semantic::SemanticScopeAnchor>,
+) -> Value {
+    if let Some(anchor) = anchor {
+        snapshot["scope_anchor"] = json!({
+            "requested_ref": anchor.source_ref,
+            "role": anchor.role,
+            "name": anchor.name,
+            "frame": anchor.identity.frame.kind.as_str(),
+            "distance": anchor.distance,
+        });
+    }
+    snapshot
+}
+
 fn with_tab_screenshot(mut result: ToolResult, screenshot: BrowserTabScreenshot) -> ToolResult {
     if let Some(structured) = result.structured_content.as_mut() {
         structured["screenshot"] = json!({
@@ -462,6 +480,13 @@ impl GetBrowserStateTool {
                         "type": "string",
                         "description": "Current semantic/content ref whose subtree should be observed."
                     },
+                    "scope_ancestor_role": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^[A-Za-z][A-Za-z0-9_-]*$",
+                        "description": "Resolve scope_ref to its nearest strict ancestor in the same frame whose accessibility role matches this one (case-insensitive), then apply query inside that ancestor's subtree. Requires scope_ref and query with snapshot_format semantic_v2."
+                    },
                     "query": {
                         "type": "string",
                         "description": "Read-only semantic match over role, accessible name, and visible text."
@@ -520,6 +545,9 @@ impl Tool for GetBrowserStateTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        if args.opt_str("target_id").is_none() && args.get("scope_ancestor_role").is_some() {
+            return ToolResult::error("scope_ancestor_role is valid only in snapshot mode");
+        }
         // Snapshot mode: target_id (+ tab_id) — uses existing capabilities.
         if let Some(target_id) = args.opt_str("target_id") {
             let session = match require_explicit_session(&args) {
@@ -555,23 +583,60 @@ impl Tool for GetBrowserStateTool {
             }
             if snapshot_format == "dom_refs_v1"
                 && (args.opt_str("scope_ref").is_some()
+                    || args.get("scope_ancestor_role").is_some()
                     || args.opt_str("query").is_some()
                     || args.opt_str("continuation").is_some())
             {
                 return ToolResult::error(
-                    "scope_ref, query, and continuation require snapshot_format=\"semantic_v2\"",
+                    "scope_ref, scope_ancestor_role, query, and continuation require snapshot_format=\"semantic_v2\"",
                 );
             }
             if snapshot_format == "semantic_v2" {
+                let scope_ancestor_role = match args.get("scope_ancestor_role") {
+                    None => None,
+                    Some(Value::String(role)) => {
+                        if role.is_empty()
+                            || role.len() > 128
+                            || !role.is_ascii()
+                            || !role.as_bytes()[0].is_ascii_alphabetic()
+                            || !role.bytes().all(|byte| {
+                                byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')
+                            })
+                        {
+                            return ToolResult::error(
+                                "scope_ancestor_role must be an ASCII accessibility role of 1 to 128 bytes",
+                            );
+                        }
+                        Some(role.to_ascii_lowercase())
+                    }
+                    Some(_) => {
+                        return ToolResult::error(
+                            "Field scope_ancestor_role has wrong type: expected string",
+                        )
+                    }
+                };
+                // With a continuation, the engine refuses the combination
+                // as browser_ref_stale like any other new scope or query.
+                if scope_ancestor_role.is_some()
+                    && args.opt_str("continuation").is_none()
+                    && (args.opt_str("scope_ref").is_none() || args.opt_str("query").is_none())
+                {
+                    return ToolResult::error(
+                        "scope_ancestor_role requires both scope_ref and query",
+                    );
+                }
                 let snapshot = match self
                     .engine
                     .snapshot_tab_semantic(
                         &session,
                         &target_id,
                         &tab_id,
-                        args.opt_str("scope_ref").as_deref(),
-                        args.opt_str("query").as_deref(),
-                        args.opt_str("continuation").as_deref(),
+                        super::engine::SemanticSnapshotRequest {
+                            scope_ref: args.opt_str("scope_ref").as_deref(),
+                            scope_ancestor_role: scope_ancestor_role.as_deref(),
+                            query: args.opt_str("query").as_deref(),
+                            continuation: args.opt_str("continuation").as_deref(),
+                        },
                     )
                     .await
                 {
@@ -598,7 +663,7 @@ impl Tool for GetBrowserStateTool {
                             "mode": "snapshot",
                             "target_id": target_id,
                             "tab_id": tab_id,
-                            "snapshot": {
+                            "snapshot": with_scope_anchor(json!({
                                 "id": format!("p{}", outcome.snapshot_id),
                                 "format": "semantic_v2",
                                 "complete": outcome.complete,
@@ -618,7 +683,7 @@ impl Tool for GetBrowserStateTool {
                                 },
                                 "continuation": outcome.continuation,
                                 "hint": (outcome.omissions.not_rendered > 0).then_some("Chrome has not rendered this background tab, so this tree is partial. Bring the tab to the front in the browser, then re-run get_browser_state; observation never activates tabs."),
-                            },
+                            }), outcome.scope_anchor.as_ref()),
                             "page": {
                                 "url": outcome.url,
                                 "title": outcome.title,

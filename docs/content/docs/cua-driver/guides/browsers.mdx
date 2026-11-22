@@ -53,6 +53,23 @@ read-only `content_refs` for `scope_ref`. Narrow it with `query` or
 a newer snapshot, navigation, or reconnect: snapshot again after
 `browser_ref_stale`.
 
+When rows repeat the same action, pass a ref inside the row you want with
+`scope_ancestor_role` and `query`. The driver walks up to the nearest strict
+ancestor with that role in the ref's own frame and runs `query` inside it:
+
+```jsonc skip="pseudo"
+get_browser_state({
+  "target_id": "<target_id>", "tab_id": "<tab_id>",
+  "session": "research-1", "snapshot_format": "semantic_v2",
+  "scope_ref": "p1:4", "scope_ancestor_role": "row", "query": "Options"
+})
+```
+
+The result reports `snapshot.scope: "ancestor_subtree"` and a
+`snapshot.scope_anchor` with the `requested_ref`, the anchor's `role`, `name`,
+`frame`, and `distance`. If the ancestor cannot be proven, the call refuses
+with `browser_scope_unavailable` and never widens to a page-wide query.
+
 ## Act
 
 ```jsonc skip="pseudo"
@@ -251,6 +268,7 @@ Disk Access in System Settings, then restart the daemon. A runtime started with
 | `browser_route_unavailable` | No typed route for this engine or platform. |
 | `browser_origin_outside_scope` | The tab left the manifest's origins; mutation pauses. |
 | `browser_action_unavailable` | The ref does not declare the needed action. |
+| `browser_scope_unavailable` | `scope_ancestor_role` found no provable ancestor; `detail.reason` says why. Snapshot again for a new ref. |
 
 The legacy `page` tool keeps its read-only `get_text` and `query_dom` actions,
 which are the way to read Safari and Firefox pages. Its page actions (run

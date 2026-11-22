@@ -539,6 +539,7 @@ pub fn tool_arguments(data: &[u8]) {
     let _ = cua_driver_core::authorization::authorize_tool_call_with_context(
         &tool,
         &normalised,
+        cua_driver_core::policy::PolicyTarget::Pending,
         context.as_ref(),
     );
     let _ = cua_driver_core::authorization::classify_tool_call(&tool, &normalised);

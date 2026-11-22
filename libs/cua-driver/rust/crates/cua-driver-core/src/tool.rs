@@ -1597,6 +1597,81 @@ impl ToolRegistry {
         serde_json::from_value(scope.get("fingerprint")?.clone()).ok()
     }
 
+    /// Resolve the call's target from OS state: who owns the named window,
+    /// which process instance that is, and which installed app it belongs to.
+    /// A named window that is gone or owned by another pid, a token whose
+    /// snapshot window is unknown, or a process that cannot be fingerprinted
+    /// is an error, never a partial descriptor.
+    async fn attest_desktop_target(
+        &self,
+        args: &Value,
+    ) -> Result<crate::attested_target::AttestedTarget, String> {
+        use crate::attested_target::{AttestedTarget, AttestedTargetKind, DeclaredTarget};
+        let declared = DeclaredTarget::from_args(args, self.window_for_token(args))?;
+        let (pid, kind) = match (declared.pid, declared.window_id) {
+            (None, None) => return Ok(AttestedTarget::desktop()),
+            (pid, Some(window_id)) => {
+                let tool = self
+                    .tools
+                    .get("list_windows")
+                    .ok_or_else(|| "window ownership cannot be attested".to_owned())?;
+                let filter = match pid {
+                    Some(pid) => serde_json::json!({"pid": pid}),
+                    None => serde_json::json!({}),
+                };
+                let windows = tool.invoke(filter).await;
+                if windows.is_error == Some(true) {
+                    return Err(format!("window {window_id} could not be listed"));
+                }
+                let windows = windows.structured_content.unwrap_or(Value::Null);
+                (
+                    crate::attested_target::window_owner(&windows, window_id, pid)?,
+                    AttestedTargetKind::Window,
+                )
+            }
+            (Some(pid), None) => (pid, AttestedTargetKind::Application),
+        };
+        let identity_pid = declared
+            .window_id
+            .zip(self.window_identity_resolver.as_ref())
+            .and_then(|(window_id, resolve)| resolve(pid, window_id))
+            .unwrap_or(pid);
+        let fingerprint = self
+            .attest_process_fingerprint(identity_pid)
+            .await
+            .ok_or_else(|| format!("process {identity_pid} cannot be attested"))?;
+        let app = match self.tools.get("list_apps") {
+            Some(tool) => tool
+                .invoke(serde_json::json!({}))
+                .await
+                .structured_content
+                .and_then(|value| value.get("apps").cloned())
+                .and_then(|apps| {
+                    apps.as_array()?
+                        .iter()
+                        .find(|app| app.get("pid").and_then(Value::as_i64) == Some(identity_pid))
+                        .cloned()
+                }),
+            None => None,
+        };
+        let app_field = |key: &str| {
+            app.as_ref()
+                .and_then(|app| app.get(key))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        };
+        Ok(AttestedTarget {
+            kind,
+            pid: Some(pid),
+            window_id: declared.window_id,
+            executable: fingerprint.executable,
+            process_start_time: fingerprint.start_time,
+            bundle_id: app_field("bundle_id"),
+            app_name: app_field("name"),
+            launch_path: app_field("launch_path"),
+        })
+    }
+
     async fn enrich_application_resource(&self, resource: &mut Value, pid: i64) {
         let pid = resource
             .get("window_id")
@@ -2173,9 +2248,26 @@ impl ToolRegistry {
         // Transports may still reject earlier for defense in depth, but those
         // checks must remain side-effect free. Active consent/grant adapters
         // run only downstream of this boundary so a call cannot prompt twice.
-        if let Err(error) =
-            crate::authorization::authorize_tool_call_with_context(resolved_name, &args, context)
-        {
+        //
+        // A policy that decides on the call's target sees what the driver
+        // resolved from the OS, never only the pid/window_id the caller chose.
+        let attested_target = if crate::policy::requires_attested_target(resolved_name) {
+            match self.attest_desktop_target(&args).await {
+                Ok(target) => Some(target),
+                Err(detail) => return target_unattested_refusal(&detail),
+            }
+        } else {
+            None
+        };
+        let policy_target = attested_target
+            .as_ref()
+            .map(crate::attested_target::AttestedTarget::to_policy_value);
+        if let Err(error) = crate::authorization::authorize_tool_call_with_context(
+            resolved_name,
+            &args,
+            crate::policy::PolicyTarget::Attested(policy_target.as_ref()),
+            context,
+        ) {
             return permission_denied_result(error.to_string());
         }
 
@@ -2557,6 +2649,21 @@ impl ToolRegistry {
             if let Err(mut refusal) = input_admission.admit(lane).await {
                 restore_public_runtime_result(&mut refusal, &runtime_prefix);
                 return refusal;
+            }
+        }
+
+        // Consent prompts and input lanes above can wait. The policy decision
+        // holds only for the target it saw, so prove that target again now.
+        if let Some(approved) = &attested_target {
+            match self.attest_desktop_target(&public_args).await {
+                Ok(current) if current == *approved => {}
+                Ok(_) => {
+                    return protected_refusal(
+                        "target_identity_changed",
+                        "Permission denied: the action's target changed after it was authorized",
+                    )
+                }
+                Err(detail) => return target_unattested_refusal(&detail),
             }
         }
 
@@ -7702,6 +7809,13 @@ fn session_owned_by_other_transport_refusal(
         refusal.insert("owner_transport".to_owned(), Value::from(holder));
     }
     result
+}
+
+fn target_unattested_refusal(detail: &str) -> ToolResult {
+    protected_refusal(
+        "target_identity_unavailable",
+        &format!("Permission denied: the driver could not attest the action's target: {detail}"),
+    )
 }
 
 fn protected_refusal(code: &str, message: &str) -> ToolResult {

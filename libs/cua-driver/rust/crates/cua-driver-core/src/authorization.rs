@@ -1159,10 +1159,12 @@ pub fn risk_metadata_json(tool: &str) -> Value {
     })
 }
 
-/// Canonical daemon-side authorization entry point. Capability policy is
-/// evaluated first. Unknown/unreviewed tools then fail closed before registry
+/// Transport pre-dispatch authorization. Capability policy is evaluated
+/// first. Unknown/unreviewed tools then fail closed before registry
 /// dispatch; migrated resource adapters perform their typed grant check after
-/// this coordinator admits the call into the adapter.
+/// this coordinator admits the call into the adapter. The driver-attested
+/// target is not resolved yet, so target-dependent policy decisions are
+/// deferred to the registry dispatch, which is authoritative.
 pub fn authorize_tool_call(
     tool: &str,
     args: &Value,
@@ -1170,7 +1172,12 @@ pub fn authorize_tool_call(
     let context = crate::session_authorization::configured_registry()
         .and_then(|registry| registry.legacy_context())
         .map_err(crate::policy::AuthorizationError::Loading)?;
-    authorize_tool_call_with_context(tool, args, context.as_ref())
+    authorize_tool_call_with_context(
+        tool,
+        args,
+        crate::policy::PolicyTarget::Pending,
+        context.as_ref(),
+    )
 }
 
 /// Context-aware authorization entry point. The context must originate from
@@ -1179,6 +1186,7 @@ pub fn authorize_tool_call(
 pub fn authorize_tool_call_with_context(
     tool: &str,
     args: &Value,
+    target: crate::policy::PolicyTarget<'_>,
     context: &crate::session_authorization::EffectiveAuthorizationContext,
 ) -> Result<RiskAssessment, crate::policy::AuthorizationError> {
     let tool = crate::tool::renamed_tool(tool).unwrap_or(tool);
@@ -1188,7 +1196,7 @@ pub fn authorize_tool_call_with_context(
             "authorization context expired".to_owned(),
         ));
     }
-    crate::policy::authorize_tool_call(tool, args)?;
+    crate::policy::authorize_tool_call(tool, args, target)?;
     let risk = classify_tool_call(tool, args);
     if risk.class == RiskClass::Unclassified {
         return Err(crate::policy::AuthorizationError::Denied(format!(
@@ -1985,6 +1993,7 @@ mod tests {
                     "window_id": window_id,
                     "strategy": {"kind": "existing_profile"},
                 }),
+                crate::policy::PolicyTarget::Attested(None),
                 &context,
             )
         };

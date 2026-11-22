@@ -681,8 +681,9 @@ pub fn focused_element_window_id_of_pid(pid: i32) -> Option<u32> {
 /// field drawn in its own WindowServer window whose parent is `target`.
 /// Finder's rename field is one: its AX parent is the application (it has no
 /// `AXWindow`), so only WindowServer's parent record ties it to the window.
-pub fn inline_editor_open(pid: i32, target: u32) -> bool {
-    let (role, window) = focused_role_and_window(pid);
+/// The accessibility reads together take at most `budget`.
+pub fn inline_editor_open(pid: i32, target: u32, budget: std::time::Duration) -> bool {
+    let (role, window) = focused_role_and_window(pid, std::time::Instant::now() + budget);
     is_inline_editor(
         role.as_deref(),
         window,
@@ -691,23 +692,49 @@ pub fn inline_editor_open(pid: i32, target: u32) -> bool {
     )
 }
 
-/// The role and own WindowServer window of `pid`'s focused element.
-fn focused_role_and_window(pid: i32) -> (Option<String>, Option<u32>) {
-    // Short reads: a busy app must not stretch foreground delivery.
-    const READ_TIMEOUT_SECONDS: f32 = 0.2;
+/// The role and own WindowServer window of `pid`'s focused element, read
+/// before `deadline`: a busy app must not stretch foreground delivery.
+fn focused_role_and_window(
+    pid: i32,
+    deadline: std::time::Instant,
+) -> (Option<String>, Option<u32>) {
+    // A zero messaging timeout means the system default, so a spent budget
+    // skips the read instead.
+    let remaining = || {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        (!left.is_zero()).then_some(left.as_secs_f32())
+    };
     unsafe {
+        let Some(timeout) = remaining() else {
+            return (None, None);
+        };
         let app = AXUIElementCreateApplication(pid);
         if app.is_null() {
             return (None, None);
         }
-        AXUIElementSetMessagingTimeout(app, READ_TIMEOUT_SECONDS);
+        AXUIElementSetMessagingTimeout(app, timeout);
         let element = copy_element_attr(app, "AXFocusedUIElement");
         CFRelease(app as CFTypeRef);
         let Some(element) = element else {
             return (None, None);
         };
-        AXUIElementSetMessagingTimeout(element, READ_TIMEOUT_SECONDS);
+        let Some(timeout) = remaining() else {
+            CFRelease(element as CFTypeRef);
+            return (None, None);
+        };
+        AXUIElementSetMessagingTimeout(element, timeout);
         let role = copy_string_attr(element, "AXRole");
+        // Only a text field can be an inline editor, so no other role spends
+        // the window lookup's request.
+        if role.as_deref() != Some("AXTextField") {
+            CFRelease(element as CFTypeRef);
+            return (role, None);
+        }
+        let Some(timeout) = remaining() else {
+            CFRelease(element as CFTypeRef);
+            return (role, None);
+        };
+        AXUIElementSetMessagingTimeout(element, timeout);
         let window = ax_get_window_id(element);
         CFRelease(element as CFTypeRef);
         (role, window)

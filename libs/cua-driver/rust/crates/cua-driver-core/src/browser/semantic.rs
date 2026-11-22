@@ -549,8 +549,10 @@ impl SemanticDocument {
             ax_id: source_node.ax_id.clone(),
             frame: source_frame.clone(),
         };
+        // A DOM-supplemented source has no raw AX node, so its first edge
+        // would be a DOM parent, not a proven AX one.
         let mut parent_ax_id = match ancestry.nodes_for(&source_identity) {
-            [] => source_node.parent_ax_id.clone(),
+            [] => return Err(SemanticScopeFailure::BrokenParent),
             [idx] => self.ancestry[*idx].parent_ax_id.clone(),
             _ => return Err(SemanticScopeFailure::Ambiguous),
         };
@@ -2251,6 +2253,13 @@ mod tests {
         );
         assert_eq!(page.selected.len(), 1);
         assert_eq!(page.selected[0].backend_node_id, Some(2));
+
+        // A supplemented source has no raw AX edge to walk from.
+        let source = supplemented.nodes[1].to_ref_entry().unwrap();
+        assert_eq!(
+            supplemented.resolve_ancestor_scope("p1:1", &source, "row"),
+            Err(SemanticScopeFailure::BrokenParent)
+        );
     }
 
     #[test]

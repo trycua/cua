@@ -97,7 +97,9 @@ def test_ffi_reuses_main_slice_or_builds_on_main_dependency_cache():
     # Default build: an exact key hit restores main's library; a miss builds
     # with the producer's command on top of main's Swatinem dependency cache
     # (never a separate `cargo build` of this job's own, which missed it).
-    assert slice_step["with"] == {"triple": "aarch64-apple-darwin"}
+    # `compile-cache: read` restores the compiled workspace crates main's
+    # producer seeded, and never saves from a pull request.
+    assert slice_step["with"] == {"triple": "aarch64-apple-darwin", "compile-cache": "read"}
     assert JOBS["ffi"]["env"]["CUA_RELEASE_REPOSITORY"] == "${{ github.repository }}"
     assert "./.github/actions/rust-cache" not in uses("ffi")
     copy = next(s for s in JOBS["ffi"]["steps"] if s.get("name") == "Stage the library where the Swift jobs expect it")
@@ -137,3 +139,12 @@ def test_the_slice_action_builds_by_default_and_restores_only_on_request():
         text = (ROOT / ".github/workflows" / workflow).read_text()
         assert "spaces-rust-slice" in text
         assert 'build: "false"' not in text
+    # Main's producer is the only job that seeds the compiled-crate cache.
+    producer = yaml.safe_load((ROOT / ".github/workflows/ci-cua-spaces-rust-slice.yml").read_text())
+    producer_slice = [
+        s
+        for job in producer["jobs"].values()
+        for s in job.get("steps", [])
+        if s.get("uses") == "./.github/actions/spaces-rust-slice"
+    ]
+    assert producer_slice and all(s["with"]["compile-cache"] == "seed" for s in producer_slice)

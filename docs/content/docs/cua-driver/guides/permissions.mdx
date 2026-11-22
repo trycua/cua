@@ -302,7 +302,7 @@ absent, and a constraint on an absent field fails unless it sets
 
 | Field | Value |
 |---|---|
-| `kind` | `window` (the call names a window, or an `element_token` from a window's snapshot), `application` (a `pid` alone; the platform picks its window), or `desktop` (no app, so app fields are absent) |
+| `kind` | `window` (the call names a `pid` and `window_id`, or an `element_token` from a window's snapshot), `application` (a `pid` alone; the platform picks its window), or `desktop` (no `pid`, or `scope: desktop` without one, which goes to the focused app; process fields are absent). A `window_id` without its `pid` has no attested target |
 | `pid`, `window_id` | The window's owner as the OS verifies it, and the window. On X11 the owner comes from the X server's X-Resource extension, never the `_NET_WM_PID` a client sets; a window whose owner the server cannot report (a remote client, no XRes 1.2) has no attested target. Wayland sessions cannot verify window owners yet, so only `pid`-only targets attest there |
 | `executable`, `process_start_time` | The process instance, read from the OS for that pid. On Windows a packaged app's window belongs to `ApplicationFrameHost.exe`; the driver reports the hosted app's process instead |
 

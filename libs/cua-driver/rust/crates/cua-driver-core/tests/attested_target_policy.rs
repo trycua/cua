@@ -388,6 +388,40 @@ async fn keystrokes_a_policy_binds_to_one_window_cannot_follow_focus() {
 }
 
 #[tokio::test]
+async fn a_window_named_without_its_pid_is_never_attested_as_that_window() {
+    let (registry, hits) = registry(desktop(), desktop());
+    // Without a pid, a desktop-frame call types into the focused app, so the
+    // window it names is not its target.
+    let result = call(
+        &registry,
+        "type_text",
+        json!({"window_id": 7, "scope": "desktop", "text": "hi"}),
+    )
+    .await;
+    assert_eq!(
+        refusal_code(&result),
+        Some("permission_denied"),
+        "{result:?}"
+    );
+    assert!(
+        format!("{result:?}").contains("target field 'executable' was not attested"),
+        "{result:?}"
+    );
+    let result = call(
+        &registry,
+        "type_text",
+        json!({"window_id": 7, "text": "hi"}),
+    )
+    .await;
+    assert_eq!(
+        refusal_code(&result),
+        Some("target_identity_unavailable"),
+        "{result:?}"
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn a_window_handed_to_another_app_after_authorization_is_refused() {
     let mut after = desktop();
     after.windows = vec![(7, TERMINAL), (8, TERMINAL)];

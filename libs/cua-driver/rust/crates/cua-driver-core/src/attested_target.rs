@@ -105,14 +105,28 @@ pub struct DeclaredTarget {
 }
 
 impl DeclaredTarget {
-    /// Read the declared target from normalized call arguments. A call that
-    /// names only an `element_token` takes its pid and window from
-    /// `token_window`, the snapshot the token belongs to.
+    /// Read the declared target from normalized call arguments, the way
+    /// platform adapters read them. A desktop-frame call without a pid goes
+    /// to the focused application whatever else it names, so it is a desktop
+    /// target. A window must come with its pid, since adapters differ on a
+    /// bare `window_id`. A call that names only an `element_token` takes its
+    /// pid and window from `token_window`, the snapshot the token belongs to.
     pub fn from_args(args: &Value, token_window: Option<(i32, u64)>) -> Result<Self, String> {
         let pid = args.get("pid").and_then(Value::as_i64);
         let window_id = args.get("window_id").and_then(Value::as_u64);
-        if pid.is_some() || window_id.is_some() {
+        let desktop_frame = args.get("scope").and_then(Value::as_str) == Some("desktop")
+            || args.get("coordinate_frame").and_then(Value::as_str) == Some("desktop");
+        if pid.is_none() && desktop_frame {
+            return Ok(Self {
+                pid: None,
+                window_id: None,
+            });
+        }
+        if pid.is_some() {
             return Ok(Self { pid, window_id });
+        }
+        if window_id.is_some() {
+            return Err("a window_id target must also name the window's pid".to_owned());
         }
         if args
             .get("element_token")
@@ -185,6 +199,25 @@ mod tests {
             }
         );
         assert!(DeclaredTarget::from_args(&json!({"element_token": "s:1"}), None).is_err());
+        assert_eq!(
+            DeclaredTarget::from_args(&json!({"window_id": 9}), None).unwrap_err(),
+            "a window_id target must also name the window's pid"
+        );
+        // Adapters send a pid-less desktop-frame call to the focused app.
+        for args in [
+            json!({"window_id": 9, "scope": "desktop"}),
+            json!({"window_id": 9, "coordinate_frame": "desktop"}),
+            json!({"element_token": "s:1", "scope": "desktop"}),
+        ] {
+            assert_eq!(
+                DeclaredTarget::from_args(&args, Some((1, 2))).unwrap(),
+                DeclaredTarget {
+                    pid: None,
+                    window_id: None
+                },
+                "{args}"
+            );
+        }
         assert_eq!(
             DeclaredTarget::from_args(&json!({"x": 1, "y": 2}), None).unwrap(),
             DeclaredTarget {

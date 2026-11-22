@@ -1614,6 +1614,172 @@ mod tests {
         }
     }
 
+    /// `apply_page_occlusion` as it was before overlays were collected once: kept here, unchanged, to prove the
+    /// faster pass marks every node the same.
+    fn apply_page_occlusion_before(
+        nodes: &mut [SemanticNode],
+        dom: &DomIndex,
+        layout: &LayoutIndex,
+    ) {
+        for node in nodes {
+            if node.visibility != BrowserVisibility::InViewport {
+                continue;
+            }
+            let Some(target_backend) = node.backend_node_id else {
+                continue;
+            };
+            let Some(target) = layout.nodes.get(&target_backend) else {
+                continue;
+            };
+            let (Some(target_bounds), Some(target_paint)) = (target.bounds, target.paint_order)
+            else {
+                continue;
+            };
+            let covered = layout.nodes.iter().any(|(&backend, overlay)| {
+                if backend == target_backend
+                    || dom.shares_dom_branch(backend, target_backend)
+                    || overlay
+                        .paint_order
+                        .is_none_or(|paint| paint <= target_paint)
+                    || !overlay
+                        .styles
+                        .get("position")
+                        .is_some_and(|position| matches!(position.as_str(), "fixed" | "absolute"))
+                    || overlay
+                        .styles
+                        .get("pointer-events")
+                        .is_some_and(|value| value == "none")
+                    || layout_hidden(overlay)
+                {
+                    return false;
+                }
+                overlay
+                    .bounds
+                    .is_some_and(|bounds| bounds.has_area() && bounds.covers(target_bounds))
+            });
+            if covered {
+                node.visibility = BrowserVisibility::PageOccluded;
+            }
+        }
+    }
+
+    #[test]
+    fn page_occlusion_marks_every_node_as_before_overlays_were_collected_once() {
+        // A small deterministic generator (xorshift64*), so every run checks the same pages.
+        let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+        let mut next = move |below: u64| {
+            state ^= state >> 12;
+            state ^= state << 25;
+            state ^= state >> 27;
+            state.wrapping_mul(0x2545_F491_4F6C_DD1D) % below
+        };
+        let positions = ["static", "relative", "fixed", "absolute", "sticky"];
+        let hiding = [
+            None,
+            Some(("display", "none")),
+            Some(("visibility", "hidden")),
+            Some(("opacity", "0")),
+            Some(("opacity", "0.5")),
+        ];
+        let visibilities = [
+            BrowserVisibility::InViewport,
+            BrowserVisibility::InViewport,
+            BrowserVisibility::InViewport,
+            BrowserVisibility::NearViewport,
+            BrowserVisibility::Offscreen,
+        ];
+        let mut occluded = 0;
+        for page in 0..2_000 {
+            let count = 1 + next(48) as i64;
+            let mut dom = DomIndex::default();
+            let mut layout = LayoutIndex::default();
+            for backend in 1..=count {
+                // Parents come first, so the DOM is a forest; a few nodes have no DOM entry at all.
+                let parent =
+                    (backend > 1 && next(4) != 0).then(|| 1 + next(backend as u64 - 1) as i64);
+                if next(16) != 0 {
+                    dom.nodes.insert(
+                        backend,
+                        DomMeta {
+                            parent_backend_node_id: parent,
+                            ..Default::default()
+                        },
+                    );
+                }
+                if next(8) == 0 {
+                    continue; // no layout
+                }
+                let mut styles = HashMap::new();
+                styles.insert(
+                    "position".to_owned(),
+                    positions[next(positions.len() as u64) as usize].to_owned(),
+                );
+                if next(4) == 0 {
+                    let value = if next(2) == 0 { "none" } else { "auto" };
+                    styles.insert("pointer-events".to_owned(), value.to_owned());
+                }
+                if let Some((property, value)) = hiding[next(hiding.len() as u64) as usize] {
+                    styles.insert(property.to_owned(), value.to_owned());
+                }
+                // Coordinates on a coarse grid, so that boxes often cover, touch or match one another exactly.
+                let bounds = if next(10) == 0 {
+                    None
+                } else {
+                    let [x, y, width, height] = [8, 8, 6, 6].map(|n| (next(n) * 50) as f64);
+                    Some(Rect {
+                        x,
+                        y,
+                        width,
+                        height,
+                    })
+                };
+                layout.nodes.insert(
+                    backend,
+                    LayoutMeta {
+                        bounds,
+                        paint_order: (next(10) != 0).then(|| next(6) as i64),
+                        styles,
+                        ..Default::default()
+                    },
+                );
+            }
+            let nodes = (1..=count + 2)
+                .map(|backend| SemanticNode {
+                    ax_id: format!("{page}:{backend}"),
+                    parent_ax_id: None,
+                    child_ax_ids: Vec::new(),
+                    // Two nodes past the page, and some with no backend node, have no layout to test.
+                    backend_node_id: (next(12) != 0).then_some(backend),
+                    role: "button".to_owned(),
+                    name: None,
+                    value: None,
+                    states: BTreeMap::new(),
+                    frame: frame(),
+                    visibility: visibilities[next(visibilities.len() as u64) as usize],
+                    actions: vec![BrowserActionKind::Click],
+                    document_order: backend as usize,
+                })
+                .collect::<Vec<_>>();
+            let mut before = nodes.clone();
+            let mut after = nodes;
+            apply_page_occlusion_before(&mut before, &dom, &layout);
+            apply_page_occlusion(&mut after, &dom, &layout);
+            for (old, new) in before.iter().zip(&after) {
+                assert_eq!(
+                    old.visibility, new.visibility,
+                    "page {page}, node {}",
+                    old.ax_id
+                );
+            }
+            occluded += after
+                .iter()
+                .filter(|node| node.visibility == BrowserVisibility::PageOccluded)
+                .count();
+        }
+        // The pages must exercise occlusion, not only pass through it.
+        assert!(occluded > 300, "only {occluded} nodes occluded");
+    }
+
     #[test]
     fn fixed_painted_overlay_marks_covered_action_as_page_occluded() {
         let dom = build_dom_index(&json!({

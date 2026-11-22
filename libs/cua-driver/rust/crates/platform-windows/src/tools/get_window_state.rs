@@ -74,6 +74,35 @@ mod get_window_state_actions_tests {
     }
 
     #[test]
+    fn structured_ids_are_native_and_preserve_disabled_controls() {
+        let mut n = node(Vec::new());
+        n.enabled = Some(false);
+        n.automation_id = Some("counter".into());
+        let entry = build_element_entry(&n, Some(7)).unwrap();
+        assert!(entry.get("actions").is_none());
+        let element: cua_driver_contract::WindowElement = serde_json::from_value(entry).unwrap();
+        assert_eq!(element.id.as_deref(), Some("counter"));
+        assert_eq!(element.enabled, Some(false));
+        assert_eq!(element.element_index, 1);
+        assert!(!crate::uia::nodes_have_actions(std::slice::from_ref(&n)));
+
+        n.actions.push("invoke".into());
+        for (role, in_web_content, automation_id) in [
+            ("Document", false, Some("document-id")),
+            ("Button", true, Some("dom-id")),
+            ("Button", false, Some(" \t")),
+            ("Button", false, None),
+        ] {
+            n.control_type = role.into();
+            n.in_web_content = in_web_content;
+            n.automation_id = automation_id.map(str::to_owned);
+            let entry = build_element_entry(&n, None).unwrap();
+            assert!(entry.get("id").is_none(), "{entry}");
+            assert_eq!(entry["actions"], json!(["invoke"]));
+        }
+    }
+
+    #[test]
     fn element_entry_includes_is_password_when_known() {
         let mut n = node(vec!["set_value".to_owned()]);
         n.is_password = Some(true);
@@ -141,7 +170,7 @@ mod get_window_state_actions_tests {
 // ── get_window_state ─────────────────────────────────────────────────────────
 
 /// Build a single structured element entry for `get_window_state`.
-/// Returns `None` when the node has no `element_index` (non-actionable rows).
+/// Returns `None` when the node has no `element_index`.
 fn build_element_entry(
     n: &crate::uia::UiaNode,
     snapshot_id: Option<u32>,
@@ -167,6 +196,9 @@ fn build_element_entry(
     }
     if let Some(label) = label {
         entry["label"] = json!(label);
+    }
+    if let Some(id) = n.native_automation_id() {
+        entry["id"] = json!(id);
     }
     // Surface the element's value separately from `label` (which collapses
     // name→value→automation_id→help): a control with both a name AND text
@@ -202,7 +234,7 @@ fn build_element_entry(
     Some(entry)
 }
 
-/// The walk's display-only rows (static text, read-only values) as
+/// The walk's unindexed display-only rows (static text, read-only values) as
 /// `observations`. They carry no `element_index` or `element_token` because
 /// no action can target them (#2958).
 fn build_observations(
@@ -260,7 +292,7 @@ impl Tool for GetWindowStateTool {
             // Space validation; no per-call `javascript` field — that's a
             // macOS AppleScript hook).
             description: "Walk a running app's UIA tree and return it ONCE, as compact \
-                Markdown by default (`tree_format:\"markdown\"`). Every actionable element is \
+                Markdown by default (`tree_format:\"markdown\"`). Every indexed element is \
                 tagged `[N]` (an element_index); its element_token is `<snapshot_id>:N`, where \
                 `snapshot_id` is printed in the response header and returned in structuredContent. \
                 Pass `tree_format:\"elements\"` for the structured `elements` array instead \
@@ -268,6 +300,10 @@ impl Tool for GetWindowStateTool {
                 or `\"both\"` for both (about twice the size). `Edit` elements carry \
                 `is_password` (`true` for a password field), and the Markdown row marks a \
                 password field with `password`.\n\n\
+                Native controls with a non-blank UIA AutomationId carry it as `id` in \
+                `elements`, even when disabled or without action patterns. Document nodes \
+                and their descendants omit this field. A row with an ID alone can be read \
+                from the snapshot; check `actions` before using an action.\n\n\
                 Size: a read is bounded by default (`max_elements` 250). When the walk stops at \
                 that budget the response says `Tree truncated at max_elements=…` and `truncated: \
                 true`; pass a larger `max_elements`, or `query` / `max_depth`, to reach the rest. \
@@ -514,8 +550,12 @@ impl Tool for GetWindowStateTool {
                 let mut budget =
                     cua_driver_core::walk_budget::WalkBudget::new(timeout_ms, max_elements);
                 let iconic_before = crate::input::window_is_iconic(hwnd);
-                let mut tree =
-                    crate::uia::walk_tree_budgeted(hwnd, q.as_deref(), max_depth, &mut budget);
+                let mut tree = crate::uia::walk_snapshot_tree_budgeted(
+                    hwnd,
+                    q.as_deref(),
+                    max_depth,
+                    &mut budget,
+                );
                 let kind = if tree.nodes.iter().any(|node| node.msaa_role.is_some()) {
                     crate::uia::snapshot::SnapshotKind::Msaa
                 } else {
@@ -638,9 +678,6 @@ impl Tool for GetWindowStateTool {
                         header + &tr.tree_markdown,
                     ));
                     structured["element_count"] = json!(count);
-                    // Verification consumes only structured rows, which still
-                    // omit non-actionable UIA nodes on Windows. A complete
-                    // native walk cannot prove absence in that projection.
                     structured["elements_complete"] =
                         json!(tr.elements_complete && !observation_only);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
@@ -664,7 +701,7 @@ impl Tool for GetWindowStateTool {
                     // Structured `elements` array — preferred consumption
                     // path. Shape matches the cross-platform spec:
                     // `{element_index, element_token, role, label, depth,
-                    // actions?, parent_index?, frame?: {x,y,w,h}}`. Frame is
+                    // actions?, id?, parent_index?, frame?: {x,y,w,h}}`. Frame is
                     // included when UIA reported a usable BoundingRectangle.
                     let elements: Vec<serde_json::Value> = tr
                         .nodes
@@ -710,15 +747,8 @@ impl Tool for GetWindowStateTool {
                          Issue #22865: use `max_elements` / `max_depth` to bound the \
                          UIA walk on apps with very large trees."
                     );
-                    // Best-effort-background ladder: a UIA walk that ran but found
-                    // zero actionable elements is NOT a clean snapshot — the window
-                    // may be a non-UIA surface (canvas/WebGL/custom-drawn) or its
-                    // tree wasn't ready (Chromium/Electron need an enable + settle).
-                    // Mark it degraded so callers don't read `elements: []` as "this
-                    // window has no controls", and point at the next rung. An empty
-                    // UIA tree means element_index has nothing to bind to, so the
-                    // deliberate move is an element px action — read the screenshot
-                    // already in this response and click by pixel (x,y).
+                    // IDs alone give callers observations, so degrade a walk
+                    // without actions even if it returned indexed elements.
                     if is_msaa {
                         structured["degraded"] = json!(true);
                         structured["degraded_reason"] = json!(
@@ -726,24 +756,36 @@ impl Tool for GetWindowStateTool {
                              Cua Driver used a partial MSAA tree. Treat it as discovery \
                              evidence only; it cannot prove checked state."
                         );
-                    } else if let (0, Some(note)) = (count, walk.note()) {
+                    } else if !crate::uia::nodes_have_actions(&tr.nodes) {
                         structured["degraded"] = json!(true);
-                        structured["degraded_reason"] = json!(note);
-                    } else if count == 0 {
-                        structured["degraded"] = json!(true);
-                        structured["degraded_reason"] = json!(
-                            "ax_tree_empty: the UIA walk returned no actionable elements. \
-                             The window may be a non-UIA surface (canvas/WebGL/custom-drawn) \
-                             or its accessibility tree was not ready (Chromium/Electron \
-                             require a UIA-enable + settle). Do not treat element data as \
-                             authoritative — re-snapshot if the app just launched, otherwise \
-                             switch to the visual path."
-                        );
-                        structured["escalation"] = json!({
-                            "recommended": "px",
-                            "reason": "non-AX surface — act by pixel (x,y) off the \
-                                       screenshot in this response (an element px action)."
-                        });
+                        if let Some(note) = walk.note() {
+                            structured["degraded_reason"] = json!(note);
+                        } else {
+                            let (reason, escalation_reason) = if count == 0 {
+                                (
+                                    "ax_tree_empty: the UIA walk returned no actionable elements. \
+                                 The window may be a non-UIA surface (canvas/WebGL/custom-drawn) \
+                                 or its accessibility tree was not ready (Chromium/Electron \
+                                 require a UIA-enable + settle). Do not treat element data as \
+                                 authoritative — re-snapshot if the app just launched, otherwise \
+                                 switch to the visual path.",
+                                    "non-AX surface — act by pixel (x,y) off the \
+                                 screenshot in this response (an element px action).",
+                                )
+                            } else {
+                                (
+                                    "ax_tree_no_actions: the UIA walk returned indexed native IDs \
+                                 but no actionable elements.",
+                                    "no accessibility actions were found — act by pixel (x,y) \
+                                 off a screenshot of this window.",
+                                )
+                            };
+                            structured["degraded_reason"] = json!(reason);
+                            structured["escalation"] = json!({
+                                "recommended": "px",
+                                "reason": escalation_reason
+                            });
+                        }
                     }
                 }
 

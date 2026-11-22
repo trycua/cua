@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.57.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.9...cua-driver-rs-v0.57.0) (2026-11-21)
+
+
+### Features
+
+* **cua-driver:** sample the Hyprland cursor during recording ([#8084](https://github.com/trycua/cua/issues/8084)) ([e7fbec3](https://github.com/trycua/cua/commit/e7fbec35bf6db7d8771a5b8bccc01516ee58f63f))
+
+
+### Bug Fixes
+
+* **cua-driver:** export EmbeddedDriverDiagnostics from the embedded subpath ([#8068](https://github.com/trycua/cua/issues/8068)) ([69b8f4e](https://github.com/trycua/cua/commit/69b8f4e9b943bdd185deba7963a53f01bea50263))
+* **cua-driver:** label macOS controls through AXTitleUIElement ([#8114](https://github.com/trycua/cua/issues/8114)) ([53430b5](https://github.com/trycua/cua/commit/53430b5b59e33eaeac4c6597d217702d8f39006a))
+* **cua-driver:** print get_guide text from the call command ([#8106](https://github.com/trycua/cua/issues/8106)) ([34217ee](https://github.com/trycua/cua/commit/34217eeb29e2b33215d44379906ad407cdf75430))
+
 ## [0.56.9](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.8...cua-driver-rs-v0.56.9) (2026-11-21)
 
 

@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.58.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.57.0...cua-driver-rs-v0.58.0) (2026-11-22)
+
+
+### Features
+
+* **cua-driver:** add agent_display, a session-owned virtual display on macOS ([#8146](https://github.com/trycua/cua/issues/8146)) ([f4b3a18](https://github.com/trycua/cua/commit/f4b3a18fcc062e406fb107fbeac8f016e59429f8))
+* **cua-driver:** approve macOS permission prompts over Screen Sharing with `permissions vnc` ([#8141](https://github.com/trycua/cua/issues/8141)) ([8fac005](https://github.com/trycua/cua/commit/8fac005bb14de0b8749af91e36e07d7457945bb5))
+
+
+### Bug Fixes
+
+* **cua-driver:** capture ext-listed Wayland windows by their toplevel ([#8144](https://github.com/trycua/cua/issues/8144)) ([4ca7c40](https://github.com/trycua/cua/commit/4ca7c405865b857ea92a8f9e6edc1ba60a4a0e0a))
+
 ## [0.57.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.9...cua-driver-rs-v0.57.0) (2026-11-21)
 
 

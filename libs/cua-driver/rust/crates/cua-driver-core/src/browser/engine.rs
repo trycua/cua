@@ -3135,24 +3135,27 @@ impl BrowserEngine {
         let continuation_token = outcome.continuation.clone();
         // The collection above awaited, so a concurrent snapshot may have
         // superseded the one the ancestor source ref came from. Store this
-        // snapshot only while that ref is still live.
+        // snapshot only while that ref is still live. If the target is gone,
+        // the closure never runs and the ancestor request stays refused.
         let source_ref = scope_entry
             .as_ref()
-            .filter(|_| scope_anchor.is_some())
             .and_then(|(external, _)| parse_ref(external));
-        let mut source_live = true;
+        let mut source_live = scope_anchor.is_none();
         self.store
             .update_target(session, target_id, |stored_target| {
-                if let Some((snap, idx)) = source_ref {
-                    source_live = stored_target
-                        .tabs
-                        .get(tab_id)
-                        .and_then(|tab| tab.snapshots.get(&snap))
-                        .filter(|snapshot| snapshot.generation == stored_target.generation)
-                        .is_some_and(|snapshot| snapshot.refs.contains_key(&idx));
-                    if !source_live {
+                if scope_anchor.is_some() {
+                    let live = source_ref.is_some_and(|(snap, idx)| {
+                        stored_target
+                            .tabs
+                            .get(tab_id)
+                            .and_then(|tab| tab.snapshots.get(&snap))
+                            .filter(|snapshot| snapshot.generation == stored_target.generation)
+                            .is_some_and(|snapshot| snapshot.refs.contains_key(&idx))
+                    });
+                    if !live {
                         return;
                     }
+                    source_live = true;
                 }
                 if let Some(stored_tab) = stored_target.tabs.get_mut(tab_id) {
                     stored_tab.url = url.clone();

@@ -367,21 +367,26 @@ async fn an_element_token_without_a_known_snapshot_window_is_refused() {
 }
 
 #[tokio::test]
-async fn keystrokes_a_policy_binds_to_one_window_cannot_follow_focus() {
-    // A pid-only type_text lands in whichever of the app's windows is
-    // focused when it runs. A policy that requires an exact window refuses
-    // it rather than authorizing whatever window has focus at delivery.
+async fn an_action_naming_only_a_pid_is_never_attested() {
+    // Given a pid alone, the platform picks which of the process's windows
+    // receives the action (the focused one, or on X11 one whose client
+    // claims that pid), so no exact target can be attested for it.
     let (registry, hits) = registry(desktop(), desktop());
-    let result = call(&registry, "type_text", json!({"pid": EDITOR, "text": "hi"})).await;
-    assert_eq!(
-        refusal_code(&result),
-        Some("permission_denied"),
-        "{result:?}"
-    );
-    assert!(
-        format!("{result:?}").contains("'target.kind' is not in the allowed values"),
-        "{result:?}"
-    );
+    for (tool, args) in [
+        ("type_text", json!({"pid": EDITOR, "text": "hi"})),
+        ("click", json!({"pid": EDITOR, "x": 1, "y": 2})),
+    ] {
+        let result = call(&registry, tool, args.clone()).await;
+        assert_eq!(
+            refusal_code(&result),
+            Some("target_identity_unavailable"),
+            "{args}: {result:?}"
+        );
+        assert!(
+            format!("{result:?}").contains("a pid target must also name the window_id"),
+            "{result:?}"
+        );
+    }
     assert_eq!(hits.load(Ordering::SeqCst), 0);
 
     let result = call(
@@ -484,7 +489,12 @@ async fn a_process_replaced_under_the_same_pid_after_authorization_is_refused() 
         executable: "/apps/Editor",
     };
     let (registry, hits) = registry(desktop(), after);
-    let result = call(&registry, "click", json!({"pid": EDITOR, "x": 1, "y": 2})).await;
+    let result = call(
+        &registry,
+        "click",
+        json!({"pid": EDITOR, "window_id": 7, "x": 1, "y": 2}),
+    )
+    .await;
     assert_eq!(
         refusal_code(&result),
         Some("target_identity_changed"),

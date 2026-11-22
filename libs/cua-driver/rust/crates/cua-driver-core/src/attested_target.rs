@@ -64,8 +64,6 @@ pub fn supports_attested_target(tool: &str) -> bool {
 pub enum AttestedTargetKind {
     /// One window, whose owner the driver verified.
     Window,
-    /// A process named by pid alone; the platform picks its window later.
-    Application,
     /// The whole desktop. There is no application identity.
     Desktop,
 }
@@ -118,7 +116,9 @@ impl DeclaredTarget {
     /// - an `element_token` must name a live snapshot window that agrees with
     ///   any declared `pid` and `window_id`, and cannot be combined with a
     ///   pid-less desktop frame;
-    /// - a `window_id` must come with its `pid`;
+    /// - a `pid` and a `window_id` come together. Given a `pid` alone, the
+    ///   platform picks one of the process's windows at delivery, on X11 by a
+    ///   client-claimed `_NET_WM_PID`, so only an exact window is attested;
     /// - a held-pointer continuation must name the held window's `pid` and
     ///   `window_id`, which its adapter refuses unless they match the hold;
     /// - a call with neither is a desktop target.
@@ -163,10 +163,14 @@ impl DeclaredTarget {
                 window_id: Some(token_window),
             });
         }
-        if pid.is_none() && window_id.is_some() {
-            return Err("a window_id target must also name the window's pid".to_owned());
+        match (pid, window_id) {
+            (None, Some(_)) => Err("a window_id target must also name the window's pid".to_owned()),
+            (Some(_), None) => Err(
+                "a pid target must also name the window_id; the platform would pick which of the process's windows receives it"
+                    .to_owned(),
+            ),
+            _ => Ok(Self { pid, window_id }),
         }
-        Ok(Self { pid, window_id })
     }
 }
 
@@ -211,7 +215,6 @@ mod tests {
         let token = Some((1, 2));
         for (args, expected) in [
             (json!({"pid": 7, "window_id": 9}), target(Some(7), Some(9))),
-            (json!({"pid": 7}), target(Some(7), None)),
             (json!({"x": 1, "y": 2}), target(None, None)),
             (json!({"scope": "desktop"}), target(None, None)),
             (json!({"element_token": "s:1"}), target(Some(1), Some(2))),
@@ -234,6 +237,14 @@ mod tests {
             (
                 json!({"window_id": 9}),
                 "a window_id target must also name the window's pid",
+            ),
+            (
+                json!({"pid": 7}),
+                "a pid target must also name the window_id; the platform would pick which of the process's windows receives it",
+            ),
+            (
+                json!({"pid": 7, "coordinate_frame": "desktop", "x": 1, "y": 2}),
+                "a pid target must also name the window_id; the platform would pick which of the process's windows receives it",
             ),
             (
                 json!({"window_id": 9, "scope": "desktop"}),

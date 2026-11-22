@@ -291,7 +291,7 @@ allow:
           allowed: [/System/Applications/TextEdit.app/Contents/MacOS/TextEdit]
     - tool: type_text
       target:
-        kind: { allowed: [window] }   # an exact window, not whichever has focus
+        kind: { allowed: [window] }   # not desktop-wide typing
         executable:
           allowed: [/System/Applications/TextEdit.app/Contents/MacOS/TextEdit]
 ```
@@ -302,8 +302,8 @@ absent, and a constraint on an absent field fails unless it sets
 
 | Field | Value |
 |---|---|
-| `kind` | `window` (the call names a `pid` and `window_id`, or an `element_token` from a window's snapshot), `application` (a `pid` alone; the platform picks its window), or `desktop` (neither; process fields are absent) |
-| `pid`, `window_id` | The window's owner as the OS verifies it, and the window. On X11 the owner comes from the X server's X-Resource extension, never the `_NET_WM_PID` a client sets; a window whose owner the server cannot report (a remote client, no XRes 1.2) has no attested target. Wayland sessions cannot verify window owners yet, so only `pid`-only targets attest there |
+| `kind` | `window` (the call names a `pid` and its `window_id`, or an `element_token` from a window's snapshot) or `desktop` (neither; process fields are absent) |
+| `pid`, `window_id` | The window's owner as the OS verifies it, and the window. On X11 the owner comes from the X server's X-Resource extension, never the `_NET_WM_PID` a client sets; a window whose owner the server cannot report (a remote client, no XRes 1.2) has no attested target. Wayland sessions cannot verify window owners yet, so only desktop targets attest there |
 | `executable`, `process_start_time` | The process instance, read from the OS for that pid. On Windows a packaged app's window belongs to `ApplicationFrameHost.exe`; the driver reports the hosted app's process instead |
 
 App names and bundle ids are not attested fields. `list_apps` matches running
@@ -323,8 +323,10 @@ Before it checks the policy, the driver refuses with
 another pid, an `element_token` names no live snapshot window, or the process
 cannot be identified. It also refuses selectors that could name different
 targets, because platforms resolve them differently: a `window_id` without its
-`pid`, an `element_token` whose window disagrees with the declared `pid` or
-`window_id`, or an `element_token` with `scope: desktop` and no `pid`.
+`pid`, a `pid` without its `window_id` (the platform would pick which of the
+process's windows receives the action), an `element_token` whose window
+disagrees with the declared `pid` or `window_id`, or an `element_token` with
+`scope: desktop` and no `pid`.
 `mouse_drag` and `mouse_button_up` deliver to the window `mouse_button_down`
 holds, so under a `target` rule they must name that window's `pid` and
 `window_id`; the tool refuses ones that do not match the hold. As the last step before the platform tool runs, after
@@ -333,9 +335,8 @@ target again and refuses with `target_identity_changed` if anything differs, for
 new process. A window or process that disappeared by then refuses with
 `target_identity_unavailable`. The OS can still change focus or close a window
 between that last check and input delivery; the check narrows that window,
-it cannot close it. A `pid`-only keyboard action types into the app's focused
-window, so require `kind: window` when the exact window matters. A
-`allow.tools` entry for the same tool allows every target.
+it cannot close it. An `allow.tools` entry for the same tool allows every
+target.
 
 ```bash test="cli-shape" id="cua-driver-serve"
 CUA_DRIVER_POLICY_FILE=~/.cua-driver/policy.yaml cua-driver serve

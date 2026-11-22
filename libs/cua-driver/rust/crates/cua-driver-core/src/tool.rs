@@ -1624,48 +1624,40 @@ impl ToolRegistry {
     ) -> Result<crate::attested_target::AttestedTarget, String> {
         use crate::attested_target::{AttestedTarget, AttestedTargetKind, DeclaredTarget};
         let declared = DeclaredTarget::from_args(tool, args, self.window_for_token(args))?;
-        let (pid, kind) = match (declared.pid, declared.window_id) {
-            (None, None) => return Ok(AttestedTarget::desktop()),
-            (pid, Some(window_id)) => (
-                self.attest_window_owner(window_id, pid).await?,
-                AttestedTargetKind::Window,
-            ),
-            (Some(pid), None) => (pid, AttestedTargetKind::Application),
+        let (Some(declared_pid), Some(window_id)) = (declared.pid, declared.window_id) else {
+            return Ok(AttestedTarget::desktop());
         };
-        let identity_pid = declared
-            .window_id
-            .zip(self.window_identity_resolver.as_ref())
-            .and_then(|(window_id, resolve)| resolve(pid, window_id))
+        let pid = self.attest_window_owner(window_id, declared_pid).await?;
+        let identity_pid = self
+            .window_identity_resolver
+            .as_ref()
+            .and_then(|resolve| resolve(pid, window_id))
             .unwrap_or(pid);
         let fingerprint = self
             .attest_process_fingerprint(identity_pid)
             .await
             .ok_or_else(|| format!("process {identity_pid} cannot be attested"))?;
         Ok(AttestedTarget {
-            kind,
+            kind: AttestedTargetKind::Window,
             pid: Some(pid),
-            window_id: declared.window_id,
+            window_id: Some(window_id),
             executable: fingerprint.executable,
             process_start_time: fingerprint.start_time,
         })
     }
 
-    async fn attest_window_owner(&self, window_id: u64, pid: Option<i64>) -> Result<i64, String> {
+    async fn attest_window_owner(&self, window_id: u64, pid: i64) -> Result<i64, String> {
         if let Some(resolve) = self.window_owner_resolver.clone() {
             let owner = tokio::task::spawn_blocking(move || resolve(window_id))
                 .await
                 .map_err(|error| format!("window {window_id} owner lookup failed: {error}"))??;
-            return crate::attested_target::check_window_owner(window_id, Some(owner), pid);
+            return crate::attested_target::check_window_owner(window_id, Some(owner), Some(pid));
         }
         let tool = self
             .tools
             .get("list_windows")
             .ok_or_else(|| "window ownership cannot be attested".to_owned())?;
-        let filter = match pid {
-            Some(pid) => serde_json::json!({"pid": pid}),
-            None => serde_json::json!({}),
-        };
-        let windows = tool.invoke(filter).await;
+        let windows = tool.invoke(serde_json::json!({"pid": pid})).await;
         if windows.is_error == Some(true) {
             return Err(format!("window {window_id} could not be listed"));
         }
@@ -1673,7 +1665,7 @@ impl ToolRegistry {
         crate::attested_target::check_window_owner(
             window_id,
             crate::attested_target::listed_window_owner(&windows, window_id),
-            pid,
+            Some(pid),
         )
     }
 

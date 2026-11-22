@@ -375,10 +375,7 @@ impl Tool for PressKeyTool {
             move || {
                 let _admission = &admitted;
                 let m: Vec<&str> = mods.iter().map(String::as_str).collect();
-                if elem_idx.is_some()
-                    && delivery.is_background()
-                    && !background_webview_focus
-                {
+                if elem_idx.is_some() && delivery.is_background() && !background_webview_focus {
                     let element = admitted.as_ref().ok_or_else(|| {
                         anyhow::anyhow!("background_unavailable: missing admitted keyboard element")
                     })?;

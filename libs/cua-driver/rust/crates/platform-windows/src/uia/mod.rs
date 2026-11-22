@@ -974,7 +974,8 @@ pub(crate) unsafe fn live_effective_enabled(element: &IUIAutomationElement) -> O
 /// Climb from `element` through `parent` and return `false` at the first
 /// disabled element. A `Window` starts its own scope, so the climb ends at the
 /// first `Window`, the target included, as in [`effective_enabled`]. An
-/// unreadable ancestor or a missing parent ends the climb.
+/// unreadable ancestor counts as enabled and the climb goes on past it; a
+/// missing parent ends it.
 fn scoped_enabled<E>(
     element: E,
     enabled: impl Fn(&E) -> Option<bool>,
@@ -989,11 +990,10 @@ fn scoped_enabled<E>(
         let Some(next) = parent(&current) else {
             break;
         };
-        match enabled(&next) {
-            Some(false) => return Some(false),
-            Some(true) => current = next,
-            None => break,
+        if enabled(&next) == Some(false) {
+            return Some(false);
         }
+        current = next;
     }
     Some(true)
 }
@@ -1388,7 +1388,8 @@ mod tests {
         );
         assert_eq!(
             live_scope(&[("Button", Some(true)), ("Pane", None), disabled_owner]),
-            Some(true)
+            Some(false),
+            "an unreadable ancestor must not hide a disabled one above it"
         );
         assert_eq!(live_scope(&[("Button", None), disabled_owner]), None);
         assert_eq!(live_scope(&[("Window", Some(false))]), Some(false));

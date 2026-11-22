@@ -883,7 +883,7 @@ pub(crate) async fn restore_foreground_polling_best_effort(
                     // Foreground changed but to something we didn't
                     // spawn (e.g. user Alt-Tabbed). Don't touch it.
                     None
-                } else if !unsafe { IsWindow(prior) }.as_bool() {
+                } else if !unsafe { IsWindow(Some(prior)) }.as_bool() {
                     tracing::trace!(
                         target: "launch_app.focus_restore",
                         "prior foreground HWND no longer valid — skipping restore (spawned pid {} owns fg)",
@@ -1266,6 +1266,9 @@ pub fn build_registry_with_provider(
         let state = state.clone();
         r.set_token_window_resolver(Arc::new(move |args| state.snapshots.window_for_token(args)));
     }
+    r.set_window_identity_resolver(Arc::new(|pid, window_id| {
+        crate::win32::hosted_app_pid(u32::try_from(pid).ok()?, window_id).map(i64::from)
+    }));
     let cursor_outcome_reader = {
         let cursor_registry = state.cursor_registry.clone();
         cua_driver_core::session::register_scoped_cursor_outcome_reader(std::sync::Arc::new(

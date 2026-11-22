@@ -1190,7 +1190,7 @@ dependencies = [
 
 [[package]]
 name = "cua-agent-setup"
-version = "0.28.2"
+version = "0.31.0"
 dependencies = [
  "base64",
  "chrono",
@@ -1208,7 +1208,7 @@ dependencies = [
 
 [[package]]
 name = "cua-cursor-motion"
-version = "0.54.0"
+version = "0.57.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1216,7 +1216,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver"
-version = "0.54.0"
+version = "0.57.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1262,7 +1262,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-bindgen"
-version = "0.54.0"
+version = "0.57.0"
 dependencies = [
  "cbindgen",
  "uniffi",
@@ -1270,7 +1270,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-contract"
-version = "0.54.0"
+version = "0.57.0"
 dependencies = [
  "schemars",
  "serde",
@@ -1280,7 +1280,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-core"
-version = "0.54.0"
+version = "0.57.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1315,14 +1315,14 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
- "windows 0.58.0",
+ "windows 0.61.3",
  "zeroize",
  "zune-core",
 ]
 
 [[package]]
 name = "cua-driver-e2e"
-version = "0.54.0"
+version = "0.57.0"
 dependencies = [
  "base64",
  "core-foundation",
@@ -1351,7 +1351,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-sdk"
-version = "0.54.0"
+version = "0.57.0"
 dependencies = [
  "async-trait",
  "core-foundation",
@@ -1371,11 +1371,12 @@ dependencies = [
  "tracing",
  "uniffi",
  "uuid",
+ "windows 0.61.3",
 ]
 
 [[package]]
 name = "cua-driver-testkit"
-version = "0.54.0"
+version = "0.57.0"
 dependencies = [
  "arbitrary",
  "async-trait",
@@ -1396,7 +1397,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-uia"
-version = "0.54.0"
+version = "0.57.0"
 dependencies = [
  "anyhow",
  "cua-driver-core",
@@ -1411,7 +1412,7 @@ dependencies = [
 
 [[package]]
 name = "cua-home"
-version = "0.28.2"
+version = "0.31.0"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -1434,7 +1435,7 @@ dependencies = [
 
 [[package]]
 name = "cua-telemetry"
-version = "0.28.2"
+version = "0.31.0"
 dependencies = [
  "hex",
  "rand 0.9.5",
@@ -1446,7 +1447,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-overlay"
-version = "0.54.0"
+version = "0.57.0"
 dependencies = [
  "anyhow",
  "cua-cursor-motion",
@@ -1466,7 +1467,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-theme-cli"
-version = "0.54.0"
+version = "0.57.0"
 dependencies = [
  "anyhow",
  "cursor-overlay",
@@ -3488,7 +3489,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "platform-linux"
-version = "0.54.0"
+version = "0.57.0"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -3540,7 +3541,7 @@ dependencies = [
 
 [[package]]
 name = "platform-macos"
-version = "0.54.0"
+version = "0.57.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3579,7 +3580,7 @@ dependencies = [
 
 [[package]]
 name = "platform-windows"
-version = "0.54.0"
+version = "0.57.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3598,7 +3599,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
- "windows 0.58.0",
+ "windows 0.61.3",
  "zeroize",
 ]
 
@@ -5540,16 +5541,6 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "windows"
-version = "0.58.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd04d41d93c4992d421894c18c8b43496aa748dd4c081bac0dc93eb0489272b6"
-dependencies = [
- "windows-core 0.58.0",
- "windows-targets 0.52.6",
-]
-
-[[package]]
-name = "windows"
 version = "0.59.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f919aee0a93304be7f62e8e5027811bbba96bcb1de84d6618be56e43f8a32a1"
@@ -5582,26 +5573,13 @@ dependencies = [
 
 [[package]]
 name = "windows-core"
-version = "0.58.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ba6d44ec8c2591c134257ce647b7ea6b20335bf6379a27dac5f1641fcf59f99"
-dependencies = [
- "windows-implement 0.58.0",
- "windows-interface 0.58.0",
- "windows-result 0.2.0",
- "windows-strings 0.1.0",
- "windows-targets 0.52.6",
-]
-
-[[package]]
-name = "windows-core"
 version = "0.59.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "810ce18ed2112484b0d4e15d022e5f598113e220c53e373fb31e67e21670c1ce"
 dependencies = [
  "windows-implement 0.59.0",
- "windows-interface 0.59.3",
- "windows-result 0.3.4",
+ "windows-interface",
+ "windows-result",
  "windows-strings 0.3.1",
  "windows-targets 0.53.5",
 ]
@@ -5613,9 +5591,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c0fdd3ddb90610c7638aa2b3a3ab2904fb9e5cdbecc643ddb3647212781c4ae3"
 dependencies = [
  "windows-implement 0.60.2",
- "windows-interface 0.59.3",
+ "windows-interface",
  "windows-link 0.1.3",
- "windows-result 0.3.4",
+ "windows-result",
  "windows-strings 0.4.2",
 ]
 
@@ -5628,17 +5606,6 @@ dependencies = [
  "windows-core 0.61.2",
  "windows-link 0.1.3",
  "windows-threading",
-]
-
-[[package]]
-name = "windows-implement"
-version = "0.58.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bbd5b46c938e506ecbce286b6628a02171d56153ba733b6c741fc627ec9579b"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -5657,17 +5624,6 @@ name = "windows-implement"
 version = "0.60.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855ddf"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "windows-interface"
-version = "0.58.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "053c4c462dc91d3b1504c6fe5a726dd15e216ba718e84a0e46a88fbe5ded3515"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5722,30 +5678,11 @@ dependencies = [
 
 [[package]]
 name = "windows-result"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d1043d8214f791817bab27572aaa8af63732e11bf84aa21a45a78d6c317ae0e"
-dependencies = [
- "windows-targets 0.52.6",
-]
-
-[[package]]
-name = "windows-result"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56f42bd332cc6c8eac5af113fc0c1fd6a8fd2aa08a0119358686e5160d0586c6"
 dependencies = [
  "windows-link 0.1.3",
-]
-
-[[package]]
-name = "windows-strings"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4cd9b125c486025df0eabcb585e62173c6c9eddcec5d117d3b6e8c30e2ee4d10"
-dependencies = [
- "windows-result 0.2.0",
- "windows-targets 0.52.6",
 ]
 
 [[package]]

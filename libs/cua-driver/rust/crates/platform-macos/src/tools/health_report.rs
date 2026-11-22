@@ -319,7 +319,7 @@ fn check_screen_capture_capability() -> CheckEntry {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-fn application_bundle_identifier_for_pid(pid: u32) -> Option<String> {
+pub(super) fn application_bundle_identifier_for_pid(pid: u32) -> Option<String> {
     use core_foundation::url::kCFURLPOSIXPathStyle;
     use security_framework::os::macos::code_signing::{Flags, GuestAttributes, SecCode};
 

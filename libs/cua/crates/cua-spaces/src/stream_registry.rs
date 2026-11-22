@@ -420,6 +420,7 @@ impl Spaces {
             Route::Direct => ticket,
             Route::Proxied => StreamTicket {
                 needs_gateway_headers: true,
+                quic: None,
                 ..ticket
             },
         };

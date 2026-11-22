@@ -20,8 +20,9 @@ use std::time::{Duration, Instant};
 
 use crate::ax::bindings::{
     copy_action_names, copy_bool_attr, copy_children_bounded, copy_element_attr_result,
-    copy_string_attr, kAXErrorSuccess, perform_action, pid_of_element, AXIsProcessTrusted,
-    AXUIElementCreateApplication, AXUIElementRef, AXUIElementSetMessagingTimeout,
+    copy_string_attr, kAXErrorCannotComplete, kAXErrorSuccess, perform_action, pid_of_element,
+    AXIsProcessTrusted, AXUIElementCreateApplication, AXUIElementRef,
+    AXUIElementSetMessagingTimeout,
 };
 
 const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 2.0;
@@ -611,65 +612,152 @@ unsafe fn resolve_exact_popup_descendant_with_retry(
     }
 }
 
-fn choose_action(actions: &[String], final_segment: bool) -> Option<&'static str> {
-    let supports = |name: &str| actions.iter().any(|action| action == name);
-    let order: &[&str] = if final_segment {
-        &["AXPress", "AXPick", "AXConfirm"]
-    } else {
-        &["AXPress", "AXPick", "AXShowMenu", "AXOpen"]
+/// The on-screen windows `pid` has above the normal window layer: its menus,
+/// popovers and panels. `None` when WindowServer's window list is unreadable.
+fn raised_window_ids(pid: i32) -> Option<Vec<u32>> {
+    let windows = crate::windows::all_windows_any_layer();
+    (!windows.is_empty()).then(|| {
+        windows
+            .iter()
+            .filter(|w| w.pid == pid && w.is_on_screen && w.layer > 0)
+            .map(|w| w.window_id)
+            .collect()
+    })
+}
+
+fn new_raised_windows(pid: i32, before: &[u32]) -> Option<usize> {
+    raised_window_ids(pid).map(|ids| ids.iter().filter(|id| !before.contains(id)).count())
+}
+
+/// Close what a failed path opened from the menu extra `top`: AXCancel on its
+/// menu, then read the result back from WindowServer. Windows in `before`
+/// were on screen before this call and do not count. `Some(true)` once none of
+/// this call's windows is on screen, `None` when that could not be read.
+unsafe fn close_opened_menu(pid: i32, top: &str, before: &[u32]) -> Option<bool> {
+    // An action that reported an error can still open its menu a moment
+    // later; give it the same settle time as a hop before looking.
+    std::thread::sleep(Duration::from_millis(80));
+    if new_raised_windows(pid, before)? == 0 {
+        return Some(true);
+    }
+    if let Ok((_app, menu_bar)) = extras_menu_bar(pid) {
+        if let Ok(item) = resolve_exact_prefix(
+            menu_bar.as_ptr(),
+            pid,
+            std::slice::from_ref(&top.to_owned()),
+        ) {
+            let (children, _) =
+                copy_children_bounded(item.as_ptr(), MAX_SEMANTIC_CHILDREN).unwrap_or_default();
+            for child in children {
+                let child = OwnedAxElement::new(child);
+                if copy_string_attr(child.as_ptr(), "AXRole").as_deref() == Some("AXMenu") {
+                    let _ = perform_action(child.as_ptr(), "AXCancel");
+                }
+            }
+        }
+    }
+    let deadline = Instant::now() + Duration::from_millis(400);
+    loop {
+        if new_raised_windows(pid, before)? == 0 {
+            return Some(true);
+        }
+        if Instant::now() >= deadline {
+            return Some(false);
+        }
+        std::thread::sleep(Duration::from_millis(40));
+    }
+}
+
+/// The refusal for a path that failed after a hop was pressed, saying whether
+/// what it opened was seen to close.
+fn failure_after_press(mut error: MenuExtraError, closed: Option<bool>) -> MenuExtraError {
+    error.message = match closed {
+        Some(true) => format!(
+            "{}. No window this call opened is still on screen.",
+            error.message
+        ),
+        Some(false) | None => format!(
+            "{}. The menu this call opened may still be open.",
+            error.message
+        ),
     };
-    order.iter().copied().find(|action| supports(action))
+    error
 }
 
 fn invoke_path(target: ResolvedTarget, path: &[String]) -> Result<bool, MenuExtraError> {
     let prior_frontmost = crate::apps::frontmost_pid();
     let prior_focused_window =
         prior_frontmost.and_then(crate::ax::bindings::focused_window_id_of_pid);
-    unsafe {
-        for depth in 0..path.len() {
-            let (app, menu_bar) = extras_menu_bar(target.pid)?;
-            let element = match resolve_exact_prefix(menu_bar.as_ptr(), target.pid, &path[..=depth])
-            {
-                Ok(element) => element,
-                Err(error) if depth > 0 && error.code == "menu_path_not_found" => {
-                    resolve_exact_popup_descendant_with_retry(
-                        app.as_ptr(),
-                        target.pid,
-                        &path[depth],
-                        depth,
-                    )?
-                }
-                Err(error) => return Err(error),
-            };
-            if copy_bool_attr(element.as_ptr(), "AXEnabled") == Some(false) {
-                return Err(MenuExtraError::new(
-                    "menu_path_disabled",
-                    format!("path segment {depth} is disabled"),
-                ));
-            }
-            let actions = copy_action_names(element.as_ptr());
-            let action = choose_action(&actions, depth + 1 == path.len()).ok_or_else(|| {
-                MenuExtraError::new(
-                    "menu_action_unavailable",
-                    format!("path segment {depth} has no usable native accessibility action"),
-                )
-            })?;
-            let error = perform_action(element.as_ptr(), action);
-            if error != kAXErrorSuccess {
-                return Err(MenuExtraError::new(
-                    "menu_action_failed",
-                    format!("path segment {depth} action failed with AX error {error}"),
-                ));
-            }
-            if depth + 1 != path.len() {
-                std::thread::sleep(Duration::from_millis(100));
-            }
+    // Unreadable now counts every raised window later as this call's, which
+    // can only make the closed claim more cautious.
+    let windows_before = raised_window_ids(target.pid).unwrap_or_default();
+    // Whether this call pressed a hop (a press that reports an error can
+    // still open its menu), so a failure must close what it opened.
+    let mut pressed = false;
+    let result = unsafe { press_path(&target, path, &mut pressed) };
+    if let Err(error) = result {
+        if !pressed {
+            return Err(error);
         }
+        let closed = unsafe { close_opened_menu(target.pid, &path[0], &windows_before) };
+        return Err(failure_after_press(error, closed));
     }
     let current_frontmost = crate::apps::frontmost_pid();
     let current_focused_window =
         current_frontmost.and_then(crate::ax::bindings::focused_window_id_of_pid);
     Ok(current_frontmost == prior_frontmost && current_focused_window == prior_focused_window)
+}
+
+unsafe fn press_path(
+    target: &ResolvedTarget,
+    path: &[String],
+    pressed: &mut bool,
+) -> Result<(), MenuExtraError> {
+    for depth in 0..path.len() {
+        let (app, menu_bar) = extras_menu_bar(target.pid)?;
+        let element = match resolve_exact_prefix(menu_bar.as_ptr(), target.pid, &path[..=depth]) {
+            Ok(element) => element,
+            Err(error) if depth > 0 && error.code == "menu_path_not_found" => {
+                resolve_exact_popup_descendant_with_retry(
+                    app.as_ptr(),
+                    target.pid,
+                    &path[depth],
+                    depth,
+                )?
+            }
+            Err(error) => return Err(error),
+        };
+        if copy_bool_attr(element.as_ptr(), "AXEnabled") == Some(false) {
+            return Err(MenuExtraError::new(
+                "menu_path_disabled",
+                format!("path segment {depth} is disabled"),
+            ));
+        }
+        let actions = copy_action_names(element.as_ptr());
+        let action = super::invoke_menu::choose_action(&actions, depth + 1 == path.len())
+            .ok_or_else(|| {
+                MenuExtraError::new(
+                    "menu_action_unavailable",
+                    format!("path segment {depth} has no usable native accessibility action"),
+                )
+            })?;
+        *pressed = true;
+        let error = perform_action(element.as_ptr(), action);
+        let final_segment = depth + 1 == path.len();
+        // An app that opens a menu extra's menu answers the press only once the
+        // menu closes, so the press can time out with the menu open. The next
+        // hop resolves from live state, which shows whether it opened.
+        if error != kAXErrorSuccess && (final_segment || error != kAXErrorCannotComplete) {
+            return Err(MenuExtraError::new(
+                "menu_action_failed",
+                format!("path segment {depth} action failed with AX error {error}"),
+            ));
+        }
+        if depth + 1 != path.len() {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+    Ok(())
 }
 
 #[async_trait]
@@ -799,18 +887,6 @@ mod tests {
         assert!(normalize_path(Vec::new()).is_err());
         assert!(normalize_path(vec![" ".into()]).is_err());
         assert!(normalize_path(vec!["x".into(); 17]).is_err());
-    }
-
-    #[test]
-    fn action_priority_distinguishes_intermediate_and_final_segments() {
-        let actions = vec!["AXOpen".into(), "AXPress".into(), "AXPick".into()];
-        assert_eq!(choose_action(&actions, false), Some("AXPress"));
-        assert_eq!(choose_action(&actions, true), Some("AXPress"));
-        assert_eq!(
-            choose_action(&["AXShowMenu".into()], false),
-            Some("AXShowMenu")
-        );
-        assert_eq!(choose_action(&["AXShowMenu".into()], true), None);
     }
 
     #[test]

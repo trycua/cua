@@ -51,6 +51,10 @@ pub const ATTESTED_TARGET_FIELDS: &[&str] = &[
     "process_start_time",
 ];
 
+/// Tools that continue a button `mouse_button_down` holds and deliver to the
+/// held window, whatever window the call names.
+const HELD_POINTER_TOOLS: &[&str] = &["mouse_drag", "mouse_button_up"];
+
 pub fn supports_attested_target(tool: &str) -> bool {
     ATTESTED_TARGET_TOOLS.contains(&tool)
 }
@@ -115,10 +119,21 @@ impl DeclaredTarget {
     ///   any declared `pid` and `window_id`, and cannot be combined with a
     ///   pid-less desktop frame;
     /// - a `window_id` must come with its `pid`;
+    /// - a held-pointer continuation must name the held window's `pid` and
+    ///   `window_id`, which its adapter refuses unless they match the hold;
     /// - a call with neither is a desktop target.
-    pub fn from_args(args: &Value, token_window: Option<(i32, u64)>) -> Result<Self, String> {
+    pub fn from_args(
+        tool: &str,
+        args: &Value,
+        token_window: Option<(i32, u64)>,
+    ) -> Result<Self, String> {
         let pid = args.get("pid").and_then(Value::as_i64);
         let window_id = args.get("window_id").and_then(Value::as_u64);
+        if HELD_POINTER_TOOLS.contains(&tool) && (pid.is_none() || window_id.is_none()) {
+            return Err(format!(
+                "{tool} delivers to the held button's window, so it must name that window's pid and window_id"
+            ));
+        }
         let desktop_frame = args.get("scope").and_then(Value::as_str) == Some("desktop")
             || args.get("coordinate_frame").and_then(Value::as_str) == Some("desktop");
         if args
@@ -210,7 +225,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                DeclaredTarget::from_args(&args, token).unwrap(),
+                DeclaredTarget::from_args("click", &args, token).unwrap(),
                 expected,
                 "{args}"
             );
@@ -242,15 +257,29 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                DeclaredTarget::from_args(&args, token).unwrap_err(),
+                DeclaredTarget::from_args("click", &args, token).unwrap_err(),
                 error,
                 "{args}"
             );
         }
         assert_eq!(
-            DeclaredTarget::from_args(&json!({"element_token": "s:1"}), None).unwrap_err(),
+            DeclaredTarget::from_args("click", &json!({"element_token": "s:1"}), None).unwrap_err(),
             "the element_token does not name a live snapshot window"
         );
+        for tool in HELD_POINTER_TOOLS {
+            for args in [json!({"x": 1, "y": 2}), json!({"pid": 7, "x": 1, "y": 2})] {
+                assert_eq!(
+                    DeclaredTarget::from_args(tool, &args, None).unwrap_err(),
+                    format!(
+                        "{tool} delivers to the held button's window, so it must name that window's pid and window_id"
+                    )
+                );
+            }
+            assert_eq!(
+                DeclaredTarget::from_args(tool, &json!({"pid": 7, "window_id": 9}), None).unwrap(),
+                target(Some(7), Some(9))
+            );
+        }
     }
 
     #[test]

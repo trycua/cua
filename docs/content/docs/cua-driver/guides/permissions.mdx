@@ -324,7 +324,10 @@ another pid, an `element_token` names no live snapshot window, or the process
 cannot be identified. It also refuses selectors that could name different
 targets, because platforms resolve them differently: a `window_id` without its
 `pid`, an `element_token` whose window disagrees with the declared `pid` or
-`window_id`, or an `element_token` with `scope: desktop` and no `pid`. As the last step before the platform tool runs, after
+`window_id`, or an `element_token` with `scope: desktop` and no `pid`.
+`mouse_drag` and `mouse_button_up` deliver to the window `mouse_button_down`
+holds, so under a `target` rule they must name that window's `pid` and
+`window_id`; the tool refuses ones that do not match the hold. As the last step before the platform tool runs, after
 consent, input-lane admission, and any recording capture, it attests the
 target again and refuses with `target_identity_changed` if anything differs, for example a pid reused by a
 new process. A window or process that disappeared by then refuses with

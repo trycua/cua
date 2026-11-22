@@ -1619,10 +1619,11 @@ impl ToolRegistry {
     /// is an error, never a partial descriptor.
     async fn attest_desktop_target(
         &self,
+        tool: &str,
         args: &Value,
     ) -> Result<crate::attested_target::AttestedTarget, String> {
         use crate::attested_target::{AttestedTarget, AttestedTargetKind, DeclaredTarget};
-        let declared = DeclaredTarget::from_args(args, self.window_for_token(args))?;
+        let declared = DeclaredTarget::from_args(tool, args, self.window_for_token(args))?;
         let (pid, kind) = match (declared.pid, declared.window_id) {
             (None, None) => return Ok(AttestedTarget::desktop()),
             (pid, Some(window_id)) => (
@@ -1681,10 +1682,11 @@ impl ToolRegistry {
     async fn reattest_desktop_target(
         &self,
         approved: Option<&crate::attested_target::AttestedTarget>,
+        tool: &str,
         args: &Value,
     ) -> Option<ToolResult> {
         let approved = approved?;
-        match self.attest_desktop_target(args).await {
+        match self.attest_desktop_target(tool, args).await {
             Ok(current) if current == *approved => None,
             Ok(_) => Some(protected_refusal(
                 "target_identity_changed",
@@ -2274,7 +2276,7 @@ impl ToolRegistry {
         // A policy that decides on the call's target sees what the driver
         // resolved from the OS, never only the pid/window_id the caller chose.
         let attested_target = if crate::policy::requires_attested_target(resolved_name) {
-            match self.attest_desktop_target(&args).await {
+            match self.attest_desktop_target(resolved_name, &args).await {
                 Ok(target) => Some(target),
                 Err(detail) => return target_unattested_refusal(&detail),
             }
@@ -2809,7 +2811,7 @@ impl ToolRegistry {
         let lane_refusal = match lane_refusal {
             Some(refusal) => Some(refusal),
             None => {
-                self.reattest_desktop_target(attested_target.as_ref(), &public_args)
+                self.reattest_desktop_target(attested_target.as_ref(), resolved_name, &public_args)
                     .await
             }
         };

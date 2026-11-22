@@ -328,6 +328,12 @@ impl VideoDatagramReassembler {
             return Ok(update);
         }
         if self.latest_packet_id != Some(fragment.packet_id) {
+            // Senders number every video packet: a skipped ID is a frame
+            // whose fragments were all lost.
+            if let Some(latest) = self.latest_packet_id {
+                let skipped = fragment.packet_id - latest - 1;
+                update.dropped_incomplete = update.dropped_incomplete.saturating_add(skipped);
+            }
             if let Some(replaced) = self.pending.take() {
                 update.dropped_incomplete = update.dropped_incomplete.saturating_add(1);
                 update.lost_keyframe |= replaced.keyframe;
@@ -600,6 +606,22 @@ mod tests {
         assert!(update.lost_keyframe);
         assert_eq!(update.packet, Some(vec![2; 100]));
         assert!(reassembler.push(&old[1], now).unwrap().packet.is_none());
+    }
+
+    #[test]
+    fn a_skipped_video_packet_id_counts_as_a_lost_frame() {
+        let now = Instant::now();
+        let mut reassembler = VideoDatagramReassembler::default();
+        let first = fragment_video_packet(5, true, &[1; 100], 1_200).unwrap();
+        assert_eq!(
+            reassembler.push(&first[0], now).unwrap().dropped_incomplete,
+            0
+        );
+        // Every fragment of packets 6 and 7 was lost.
+        let next = fragment_video_packet(8, false, &[2; 100], 1_200).unwrap();
+        let update = reassembler.push(&next[0], now).unwrap();
+        assert_eq!(update.dropped_incomplete, 2);
+        assert_eq!(update.packet, Some(vec![2; 100]));
     }
 
     #[test]

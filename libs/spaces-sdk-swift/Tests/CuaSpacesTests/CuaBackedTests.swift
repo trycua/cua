@@ -114,6 +114,17 @@ struct Fixtures {
         XCTAssertTrue(forStream.isReady)
         XCTAssertEqual(forStream.info.operatingSystem, listed[0].operatingSystem)
 
+        // The clipboard setting a paste checks is the record's now, not the
+        // stream handle's connection-time info.
+        let streamHandle = try await connection.nativeSpace(space.id)
+        let before = try await forStream.clipboardSetting()
+        XCTAssertEqual(before, streamHandle?.info().clipboard)
+        try await connection.native!.setClipboard(space: space.id.rawValue, clipboard: "off")
+        let after = try await forStream.clipboardSetting()
+        XCTAssertEqual(after, "off")
+        XCTAssertNotEqual(streamHandle?.info().clipboard, "off", "the cached handle still has the old setting")
+        try await connection.native!.setClipboard(space: space.id.rawValue, clipboard: "viewing")
+
         // §1, live: many calls in a row, each answered with its own shape.
         for i in 0..<12 {
             let out = try await space.bash("echo step-\(i)")

@@ -296,6 +296,15 @@ Python exposes the same objects:
   endpoint: discard old clients and MCP proxies. `start()` coalesces callers,
   `stop()` is idempotent, and `waitForExit(generation)` reports an unexpected
   exit.
+- **Turn off the agent cursor.** Build the host with
+  `EmbeddedCuaDriverHost.withOptions()` (`with_options()` in Python) and set
+  `noOverlay` (`no_overlay`) to pass `--no-overlay` to the daemon. It is off
+  by default.
+- **Read why a start failed.** Set `captureStderr` (`capture_stderr`) in the
+  same options. After a failed start, `lastDiagnostics()`
+  (`last_diagnostics()`) returns up to the last 65,536 bytes of daemon stderr,
+  the exit code when there is one, and whether the tail was truncated. The text
+  is raw stderr, so keep it out of telemetry.
 - **Check it.** Call `check_permissions`; on macOS embedded mode returns
   `source.attribution: "host"` and never raises its own prompts. Call
   `health_report` with `{"include":["bundle_identity"]}` to confirm the parent

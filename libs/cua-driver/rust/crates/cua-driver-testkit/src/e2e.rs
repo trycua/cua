@@ -10,6 +10,7 @@ use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use cua_driver_contract::ActionEffect;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 
@@ -1294,6 +1295,7 @@ pub fn validate_catalog(
                         &root.join(relative_dir),
                         cell_id,
                         case_requires_action_turn(&result.case),
+                        result.observed_behavior,
                         &mut errors,
                     );
                 }
@@ -1381,11 +1383,14 @@ fn validate_turn_evidence(
     recording_dir: &Path,
     cell_id: &str,
     require_turn: bool,
+    observed_behavior: ObservedBehavior,
     errors: &mut Vec<String>,
 ) {
     let trajectory = recording_dir.join("trajectory.json");
+    let mut state_disabled = false;
     match read_json_value(&trajectory) {
         Ok(manifest) => {
+            state_disabled = manifest["accessibility_tree"] == "disabled";
             if manifest["behavior_video"]["status"] != "finalized" {
                 errors.push(format!(
                     "behavioral video phase is not finalized for {cell_id}: {}",
@@ -1444,12 +1449,21 @@ fn validate_turn_evidence(
         return;
     }
 
+    // A read-only case's oracle describes its reads, not the one action it
+    // probes, so only an action case's observation binds its sole turn.
+    let turn_observation = (require_turn && turns.len() == 1).then_some(observed_behavior);
     for turn in turns {
-        validate_one_turn(&turn, cell_id, errors);
+        validate_one_turn(&turn, cell_id, turn_observation, state_disabled, errors);
     }
 }
 
-fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
+fn validate_one_turn(
+    turn: &Path,
+    cell_id: &str,
+    observed_behavior: Option<ObservedBehavior>,
+    state_disabled: bool,
+    errors: &mut Vec<String>,
+) {
     let turn_name = turn
         .file_name()
         .and_then(|name| name.to_str())
@@ -1464,6 +1478,10 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
             None
         }
     };
+    if let Some(action) = action.as_ref() {
+        validate_action_truthfulness(action, observed_behavior, cell_id, turn_name, errors);
+    }
+
     let manifest_path = turn.join("evidence.json");
     let manifest = match read_json_value(&manifest_path) {
         Ok(manifest) if manifest["schema"] == "cua-turn-evidence/v1" => Some(manifest),
@@ -1579,6 +1597,13 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
                     value[phase]["state"]["status"] == "not_applicable"
                         && value[phase]["state"]["classification"] == NO_TARGET_WINDOW
                 }))
+            // A cell that started recording without the accessibility tree
+            // declares so in its trajectory, and the recorder must agree.
+            || (state_disabled
+                && manifest.as_ref().is_some_and(|value| {
+                    value[phase]["state"]["status"] == "not_applicable"
+                        && value[phase]["state"]["classification"] == STATE_SKIPPED_DISABLED
+                }))
     };
     if state_expected {
         for phase in ["before", "after"] {
@@ -1684,6 +1709,65 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
                 .and_then(|value| value["click"]["classification"].as_str()),
             errors,
         );
+    }
+}
+
+fn validate_action_truthfulness(
+    action: &Value,
+    observed_behavior: Option<ObservedBehavior>,
+    cell_id: &str,
+    turn_name: &str,
+    errors: &mut Vec<String>,
+) {
+    let Some(truth) = action.get("action_truth") else {
+        return;
+    };
+    let Some(raw_effect) = truth.get("effect").and_then(Value::as_str) else {
+        errors.push(format!(
+            "action truth has no effect for {cell_id}/{turn_name}"
+        ));
+        return;
+    };
+    let Ok(effect) = serde_json::from_value::<ActionEffect>(Value::from(raw_effect)) else {
+        errors.push(format!(
+            "action truth has unknown effect '{raw_effect}' for {cell_id}/{turn_name}"
+        ));
+        return;
+    };
+
+    if effect == ActionEffect::Confirmed
+        && !truth
+            .get("evidence")
+            .and_then(Value::as_array)
+            .is_some_and(|evidence| !evidence.is_empty())
+    {
+        errors.push(format!(
+            "confirmed action truth has no evidence for {cell_id}/{turn_name}"
+        ));
+    }
+
+    // Exhaustive so a new effect variant must decide its oracle contradictions.
+    let contradicts = match effect {
+        ActionEffect::Confirmed | ActionEffect::Partial => matches!(
+            observed_behavior,
+            Some(ObservedBehavior::Refused | ObservedBehavior::NoEffect)
+        ),
+        ActionEffect::Unverifiable => observed_behavior == Some(ObservedBehavior::Refused),
+        ActionEffect::SuspectedNoop => matches!(
+            observed_behavior,
+            Some(ObservedBehavior::Delivered | ObservedBehavior::Refused)
+        ),
+        ActionEffect::Refused => observed_behavior == Some(ObservedBehavior::Delivered),
+    };
+    if contradicts {
+        let observed = match observed_behavior {
+            Some(ObservedBehavior::Delivered) => "delivery",
+            Some(ObservedBehavior::Refused) => "refusal",
+            _ => "no effect",
+        };
+        errors.push(format!(
+            "action-truth contradiction for {cell_id}/{turn_name}: independent oracle observed {observed} but action truth claimed {raw_effect}"
+        ));
     }
 }
 
@@ -1817,6 +1901,10 @@ fn semantic_action_without_point(action: &Value) -> bool {
 /// `cua_driver_core::recording::TARGET_UNAVAILABLE`).
 const NO_TARGET_WINDOW: &str = cua_driver_core::recording::TARGET_UNAVAILABLE;
 
+/// Recorder classification for state skipped because the recording was
+/// started without the accessibility tree.
+const STATE_SKIPPED_DISABLED: &str = cua_driver_core::recording::STATE_SKIPPED_DISABLED;
+
 fn validate_capture_status(
     manifest: Option<&Value>,
     path: &[&str],
@@ -1903,6 +1991,155 @@ mod tests {
                 "attempts": [], "fallbacks": [], "escalation": null
             }
         })
+    }
+
+    fn action_with_truth(effect: &str, evidence: serde_json::Value) -> Value {
+        serde_json::json!({
+            "tool": "click",
+            "result_error": false,
+            "arguments": {"pid": 1, "window_id": 2},
+            "action_truth": {
+                "effect": effect,
+                "transport": "windows_uia_invoke",
+                "route": "accessibility",
+                "requested_delivery": "background",
+                "actual_delivery": "background",
+                "delivered_count": 1,
+                "attempts": [],
+                "fallbacks": [],
+                "evidence": evidence,
+                "escalation": null
+            }
+        })
+    }
+
+    fn truthfulness_errors(action: &Value, observed: ObservedBehavior) -> Vec<String> {
+        let mut errors = Vec::new();
+        validate_action_truthfulness(action, Some(observed), "cell", "turn-00001", &mut errors);
+        errors
+    }
+
+    #[test]
+    fn action_truthfulness_allows_conservative_unverifiable_delivery() {
+        let action = action_with_truth("unverifiable", serde_json::json!([]));
+        assert!(truthfulness_errors(&action, ObservedBehavior::Delivered).is_empty());
+    }
+
+    #[test]
+    fn action_truthfulness_accepts_confirmed_delivery_with_evidence() {
+        let action = action_with_truth(
+            "confirmed",
+            serde_json::json!([{"kind":"value_readback","detail":"fixture changed"}]),
+        );
+        assert!(truthfulness_errors(&action, ObservedBehavior::Delivered).is_empty());
+    }
+
+    #[test]
+    fn action_truthfulness_rejects_confirmed_without_evidence() {
+        let action = action_with_truth("confirmed", serde_json::json!([]));
+        let errors = truthfulness_errors(&action, ObservedBehavior::Delivered);
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("confirmed action truth has no evidence")));
+    }
+
+    #[test]
+    fn action_truthfulness_rejects_claims_stronger_than_no_effect_oracle() {
+        for effect in ["confirmed", "partial"] {
+            let action = action_with_truth(
+                effect,
+                serde_json::json!([{"kind":"value_readback","detail":"claimed"}]),
+            );
+            let errors = truthfulness_errors(&action, ObservedBehavior::NoEffect);
+            assert!(
+                errors
+                    .iter()
+                    .any(|error| error.contains("action-truth contradiction")),
+                "{effect}: {errors:?}"
+            );
+        }
+
+        for effect in ["unverifiable", "suspected_noop", "refused"] {
+            let action = action_with_truth(effect, serde_json::json!([]));
+            assert!(
+                truthfulness_errors(&action, ObservedBehavior::NoEffect).is_empty(),
+                "{effect}"
+            );
+        }
+    }
+
+    #[test]
+    fn action_truthfulness_rejects_refusal_mismatch() {
+        let refused = action_with_truth("refused", serde_json::json!([]));
+        assert!(truthfulness_errors(&refused, ObservedBehavior::Refused).is_empty());
+
+        for effect in ["confirmed", "partial", "unverifiable", "suspected_noop"] {
+            let evidence = if effect == "confirmed" {
+                serde_json::json!([{"kind":"value_readback","detail":"claimed"}])
+            } else {
+                serde_json::json!([])
+            };
+            let action = action_with_truth(effect, evidence);
+            let errors = truthfulness_errors(&action, ObservedBehavior::Refused);
+            assert!(
+                errors
+                    .iter()
+                    .any(|error| error.contains("action-truth contradiction")),
+                "{effect}: {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn action_truthfulness_rejects_delivered_but_refused_or_noop_claim() {
+        for effect in ["refused", "suspected_noop"] {
+            let action = action_with_truth(effect, serde_json::json!([]));
+            let errors = truthfulness_errors(&action, ObservedBehavior::Delivered);
+            assert!(
+                errors
+                    .iter()
+                    .any(|error| error.contains("action-truth contradiction")),
+                "{effect}: {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn action_truthfulness_is_backward_compatible_without_internal_truth() {
+        let action = serde_json::json!({"tool":"click","result_error":false,"arguments":{}});
+        assert!(truthfulness_errors(&action, ObservedBehavior::Delivered).is_empty());
+    }
+
+    #[test]
+    fn action_truthfulness_still_checks_internal_claim_without_case_oracle_binding() {
+        let confirmed = action_with_truth("confirmed", serde_json::json!([]));
+        let mut errors = Vec::new();
+        validate_action_truthfulness(&confirmed, None, "cell", "turn-setup", &mut errors);
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("confirmed action truth has no evidence")));
+
+        let refused = action_with_truth("refused", serde_json::json!([]));
+        let mut errors = Vec::new();
+        validate_action_truthfulness(&refused, None, "cell", "turn-setup", &mut errors);
+        assert!(
+            errors.is_empty(),
+            "multi-turn recordings must not guess which turn owns the case-level oracle: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn action_truthfulness_rejects_unknown_or_missing_effect() {
+        let mut action = action_with_truth("future-effect", serde_json::json!([]));
+        let errors = truthfulness_errors(&action, ObservedBehavior::Delivered);
+        assert!(errors.iter().any(|error| error.contains("unknown effect")));
+
+        action["action_truth"]
+            .as_object_mut()
+            .unwrap()
+            .remove("effect");
+        let errors = truthfulness_errors(&action, ObservedBehavior::Delivered);
+        assert!(errors.iter().any(|error| error.contains("has no effect")));
     }
 
     #[test]
@@ -2223,6 +2460,72 @@ mod tests {
     }
 
     #[test]
+    fn catalog_validator_binds_action_truth_to_independent_observation() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        let action_path = turn.join("action.json");
+        let mut action: Value =
+            serde_json::from_slice(&std::fs::read(&action_path).unwrap()).unwrap();
+
+        action["action_truth"] = serde_json::json!({
+            "effect": "unverifiable",
+            "evidence": []
+        });
+        std::fs::write(&action_path, action.to_string()).unwrap();
+        validate_catalog(
+            std::slice::from_ref(&case),
+            std::slice::from_ref(&result),
+            Some(root.path()),
+            true,
+        )
+        .expect("conservative unverifiable claim must remain compatible with delivered oracle");
+
+        action["action_truth"]["effect"] = serde_json::json!("refused");
+        std::fs::write(&action_path, action.to_string()).unwrap();
+        let errors = validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect_err("driver refusal claim must contradict delivered external oracle");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("action-truth contradiction")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn catalog_validator_does_not_bind_a_read_only_case_oracle_to_its_probe_turn() {
+        // A fail-closed read-only case (a stale token, a windowless pid) passes
+        // as delivered when its reads hold, while its one probe is refused.
+        let (root, mut case, _, turn) = complete_turn_fixture();
+        case.driver_route = DriverRoute::AxRead;
+        let evidence = Evidence {
+            video: Some("recordings/cell-pid1-001/recording.mp4".to_owned()),
+            trajectory: Some("recordings/cell-pid1-001/trajectory.json".to_owned()),
+            ..Evidence::default()
+        };
+        let result = CaseResult::evaluate(
+            case.clone(),
+            Observation::delivered(vec![OracleKind::FixtureState], evidence),
+            Duration::from_millis(1),
+        );
+        let action_path = turn.join("action.json");
+        let mut action: Value =
+            serde_json::from_slice(&std::fs::read(&action_path).unwrap()).unwrap();
+        action["result_error"] = serde_json::json!(true);
+        action["action_truth"] = serde_json::json!({"effect": "refused", "evidence": []});
+        std::fs::write(&action_path, action.to_string()).unwrap();
+
+        let errors = validate_catalog(&[case], &[result], Some(root.path()), true)
+            .err()
+            .unwrap_or_default();
+        assert!(
+            !errors
+                .iter()
+                .any(|error| error.contains("action-truth contradiction")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
     fn validator_unknown_dispatched_error_is_not_a_pretarget_refusal() {
         let (root, case, result, turn) = complete_turn_fixture();
         let mut action = semantic_click_fixture();
@@ -2294,6 +2597,26 @@ mod tests {
             Observation::delivered(vec![OracleKind::FixtureState], evidence),
             Duration::from_millis(1),
         );
+        (root, case, result, turn)
+    }
+
+    // A turn fixture whose case-level oracle observed the given refusal, so a
+    // retained `refused` action truth agrees with it.
+    fn refused_turn_fixture(code: RefusalCode) -> (TempDir, CaseSpec, CaseResult, PathBuf) {
+        let (root, _, delivered, turn) = complete_turn_fixture();
+        let oracles = vec![
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+        ];
+        let mut case = delivered_case("cell").expecting_refusal(vec![code]);
+        case.oracles = oracles.clone();
+        let result = CaseResult::evaluate(
+            case.clone(),
+            Observation::refused(code, oracles, "refused", delivered.evidence),
+            Duration::from_millis(1),
+        );
+        assert_eq!(result.test_status, TestStatus::Pass, "{}", result.message);
         (root, case, result, turn)
     }
 
@@ -2656,7 +2979,7 @@ mod tests {
             "after":{"state":{"status":"not_applicable","classification":"action_refused_before_dispatch"},"screenshot":{"status":"captured"}},
             "click":{"status":"not_applicable","classification":"action_refused_before_dispatch"}
         }"#;
-        let (root, case, result, turn) = complete_turn_fixture();
+        let (root, case, result, turn) = refused_turn_fixture(RefusalCode::BackgroundUnavailable);
         std::fs::write(
             turn.join("action.json"),
             br#"{
@@ -2798,6 +3121,50 @@ mod tests {
             .expect("an errored call on a windowless pid needs no image or tree");
     }
 
+    fn disable_turn_state(turn: &Path) {
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"not_applicable","classification":"state_capture_disabled"},"screenshot":{"status":"captured"}},
+                "after":{"state":{"status":"not_applicable","classification":"state_capture_disabled"},"screenshot":{"status":"captured"}},
+                "click":{"status":"captured"}
+            }"#,
+        )
+        .expect("write state-disabled evidence");
+        for file in ["before_state.json", "after_state.json", "app_state.json"] {
+            std::fs::remove_file(turn.join(file)).expect("remove state evidence");
+        }
+    }
+
+    #[test]
+    fn validator_accepts_disabled_state_only_when_the_trajectory_declares_it() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        disable_turn_state(&turn);
+        let errors = validate_catalog(
+            std::slice::from_ref(&case),
+            std::slice::from_ref(&result),
+            Some(root.path()),
+            true,
+        )
+        .expect_err("undeclared disabled state is a missing walk");
+        assert!(errors.iter().any(|error| {
+            error.contains("turn-00001/before state")
+                && error.contains("classified state_capture_disabled")
+        }));
+
+        let trajectory = turn
+            .parent()
+            .expect("recording dir")
+            .join("trajectory.json");
+        let mut manifest = read_json_value(&trajectory).expect("read trajectory");
+        manifest["accessibility_tree"] = Value::String("disabled".to_owned());
+        std::fs::write(&trajectory, serde_json::to_vec(&manifest).expect("encode"))
+            .expect("write trajectory");
+        validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect("a declared tree-less recording needs no state files");
+    }
+
     #[test]
     fn validator_rejects_no_window_classification_on_a_successful_call() {
         let (root, case, result, turn) = complete_turn_fixture();
@@ -2905,7 +3272,7 @@ mod tests {
 
     #[test]
     fn validator_accepts_missing_images_for_typed_minimized_refusal() {
-        let (root, case, result, turn) = complete_turn_fixture();
+        let (root, case, result, turn) = refused_turn_fixture(RefusalCode::WindowMinimized);
         std::fs::write(
             turn.join("action.json"),
             br#"{

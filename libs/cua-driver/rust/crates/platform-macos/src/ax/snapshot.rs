@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 use super::bindings::AXUIElementRef;
-use super::tree::AXNode;
+use super::tree::{AXNode, AX_MESSAGING_TIMEOUT_SECONDS};
 use core_foundation::base::{CFRelease, CFRetain, CFTypeRef};
 use cua_driver_core::snapshot_store::{SnapshotPayload, SnapshotStore};
 
@@ -31,6 +31,13 @@ impl ObservedIdentity {
             ptr as AXUIElementRef,
             ["AXRole", "AXTitle", "AXDescription", "AXIdentifier"],
         );
+        let title =
+            super::tree::title_or_title_element(title.as_deref(), description.as_deref(), || {
+                super::tree::copy_title_element_text(
+                    ptr as AXUIElementRef,
+                    AX_MESSAGING_TIMEOUT_SECONDS,
+                )
+            });
         Self {
             role: role.unwrap_or_else(|| "AXUnknown".into()),
             title: normalized_label(title),

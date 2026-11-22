@@ -13,11 +13,12 @@
 //!  take >4s when reading each property individually).
 
 use cua_driver_core::walk_budget::WalkBudget;
-use windows::core::{Interface, BSTR, HRESULT};
+use windows::core::{Interface, HRESULT};
 use windows::Win32::Foundation::{RPC_E_CHANGED_MODE, TRUE};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
+use windows::Win32::System::Variant::{VARIANT, VT_BOOL, VT_BSTR, VT_I4};
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationCacheRequest, IUIAutomationElement,
     IUIAutomationElementArray, IUIAutomationExpandCollapsePattern, IUIAutomationInvokePattern,
@@ -499,8 +500,10 @@ unsafe fn walk_tree_unsafe(
                 );
 
                 if fallback_nodes.iter().any(|n| n.element_index.is_some()) {
-                    nodes = fallback_nodes;
+                    release_walk_nodes(std::mem::replace(&mut nodes, fallback_nodes));
                     lines = fallback_lines;
+                } else {
+                    release_walk_nodes(fallback_nodes);
                 }
             }
         }
@@ -599,14 +602,11 @@ unsafe fn walk_root_by_pid(
         // pattern below for VT_BOOL.
         let pid: u32 = match elem.GetCurrentPropertyValue(UIA_ProcessIdPropertyId) {
             Ok(v) => {
-                let raw = v.as_raw();
-                if raw.Anonymous.Anonymous.vt != 3
-                /* VT_I4 */
-                {
+                if v.vt() != VT_I4 {
                     walk_state.mark_incomplete();
                     continue;
                 }
-                raw.Anonymous.Anonymous.Anonymous.lVal as u32
+                v.Anonymous.Anonymous.Anonymous.lVal as u32
             }
             Err(e) => {
                 tracing::debug!(target: "uia", "root child {i} ProcessId read failed: {e}");
@@ -997,10 +997,8 @@ fn read_cached_bstr(
 ) -> Option<String> {
     unsafe {
         let variant = element.GetCachedPropertyValue(property_id).ok()?;
-        if variant.as_raw().Anonymous.Anonymous.vt == 8 {
-            let bstr = BSTR::from_raw(variant.as_raw().Anonymous.Anonymous.Anonymous.bstrVal);
-            let s = bstr.to_string();
-            std::mem::forget(bstr);
+        if variant.vt() == VT_BSTR {
+            let s = variant.Anonymous.Anonymous.Anonymous.bstrVal.to_string();
             if s.trim().is_empty() {
                 None
             } else {
@@ -1027,7 +1025,7 @@ fn read_cached_is_password(element: &IUIAutomationElement) -> Option<bool> {
     unsafe {
         variant_bool(
             &element
-                .GetCachedPropertyValueEx(UIA_IsPasswordPropertyId, TRUE)
+                .GetCachedPropertyValueEx(UIA_IsPasswordPropertyId, TRUE.as_bool())
                 .ok()?,
         )
     }
@@ -1035,9 +1033,9 @@ fn read_cached_is_password(element: &IUIAutomationElement) -> Option<bool> {
 
 /// A `VT_BOOL` variant's value; `None` for any other type, including the
 /// not-supported sentinel.
-unsafe fn variant_bool(variant: &windows::core::VARIANT) -> Option<bool> {
-    if variant.as_raw().Anonymous.Anonymous.vt == 11 {
-        Some(variant.as_raw().Anonymous.Anonymous.Anonymous.boolVal != 0)
+unsafe fn variant_bool(variant: &VARIANT) -> Option<bool> {
+    if variant.vt() == VT_BOOL {
+        Some(variant.Anonymous.Anonymous.Anonymous.boolVal.as_bool())
     } else {
         None
     }

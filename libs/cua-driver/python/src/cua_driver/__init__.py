@@ -4,7 +4,7 @@ Agents should configure the bundled ``cua-driver mcp`` executable directly
 through their runtime's MCP client instead of importing a language MCP facade.
 """
 
-__version__ = "0.57.0"  # x-release-please-version
+__version__ = "0.58.0"  # x-release-please-version
 
 from ._native import (
     ActionCompletion,

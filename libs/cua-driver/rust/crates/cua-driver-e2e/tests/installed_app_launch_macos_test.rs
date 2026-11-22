@@ -252,14 +252,12 @@ fn finder_folder_launch_works_without_overlay() {
         DriverRoute::Composite,
         vec![OracleKind::Protocol],
     );
-    execute_case(case, |evidence| {
+    execute_case(case, |_| {
         let temp = tempfile::tempdir().expect("create temp folder");
         let folder = temp.path().canonicalize().expect("canonical temp folder");
-        // The testkit's own daemon runs `serve --no-overlay`.
-        let mut driver = McpDriver::spawn_named("macos-finder-folder-launch-no-overlay")
-            .expect("start test-owned no-overlay daemon");
-        *evidence = recording_evidence(driver.recording_dir());
-        driver.start_behavior_recording();
+        // The testkit's own daemon runs `serve --no-overlay`. It holds no
+        // Screen Recording grant, so the case records no video.
+        let mut driver = McpDriver::spawn().expect("start test-owned no-overlay daemon");
 
         let launch = driver.call(
             "launch_app",

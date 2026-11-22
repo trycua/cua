@@ -44,8 +44,11 @@ fn native_background_key_target(
 }
 
 /// Whether a background element key belongs to an embedded WebView rather
-/// than a native control beside it. A windowless element has no HWND of its
-/// own, so only the WebView focus-click route can reach it.
+/// than a native control beside it. `native` is the element's nearest HWND:
+/// its own, or a windowless element's nearest windowed ancestor. Only an HWND
+/// inside a Chromium window proves WebView content; anything else, including
+/// no HWND at all, keeps the exact-HWND route, which refuses what it cannot
+/// address instead of focus-clicking a native control.
 fn element_in_embedded_webview(
     native: Option<u64>,
     owner: u64,
@@ -53,14 +56,17 @@ fn element_in_embedded_webview(
     parent: impl Fn(u64) -> u64,
 ) -> bool {
     let Some(mut current) = native else {
-        return true;
+        return false;
     };
     for _ in 0..64 {
-        if current == 0 || current == owner {
+        if current == 0 {
             return false;
         }
         if is_chromium(current) {
             return true;
+        }
+        if current == owner {
+            return false;
         }
         current = parent(current);
     }
@@ -279,7 +285,7 @@ impl Tool for PressKeyTool {
                 move || {
                     let native = admitted
                         .as_ref()
-                        .and_then(|element| element.native_window_handle());
+                        .and_then(|element| element.nearest_native_window_handle());
                     element_in_embedded_webview(
                         native,
                         hwnd,
@@ -289,7 +295,7 @@ impl Tool for PressKeyTool {
                 }
             })
             .await
-            .unwrap_or(true);
+            .unwrap_or(false);
         // Native controls are addressed directly below; only the existing
         // WebView focus-click route needs an activation guard.
         let mut noact = if background_webview_focus {
@@ -447,6 +453,7 @@ mod tests {
             is_chromium,
             parent
         ));
+        // A windowless native control's nearest HWND is the owner itself.
         assert!(!element_in_embedded_webview(
             Some(OWNER),
             OWNER,
@@ -456,11 +463,21 @@ mod tests {
     }
 
     #[test]
-    fn webview_elements_take_the_focus_click_route() {
-        assert!(element_in_embedded_webview(
+    fn element_without_a_windowed_ancestor_is_not_webview_content() {
+        assert!(!element_in_embedded_webview(
             None,
             OWNER,
             is_chromium,
+            parent
+        ));
+    }
+
+    #[test]
+    fn webview_elements_take_the_focus_click_route() {
+        assert!(element_in_embedded_webview(
+            Some(OWNER),
+            OWNER,
+            |hwnd| hwnd == OWNER,
             parent
         ));
         assert!(element_in_embedded_webview(

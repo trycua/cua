@@ -4240,9 +4240,38 @@ fn run_same_title_tabs(spec: &BrowserSpec) {
                 assert!(tabs
                     .iter()
                     .any(|tab| tab["url"] == second_server.page_url()));
-                assert!(
-                    tabs.iter().all(|tab| tab["active"].is_null()),
-                    "same-title selection must be unknown instead of guessed: {}",
+                // The title cannot tell the two apart. Where the browser's tab strip says
+                // which tab is selected, the one brought to the front is named and its
+                // sibling is not; where it does not, selection stays unknown, never guessed.
+                let strip = harness_cdp_call(
+                    fixture.cdp_port,
+                    "Target.getTargets",
+                    serde_json::json!({ "filter": [{ "type": "tab" }] }),
+                );
+                let strip_says = strip["targetInfos"].as_array().is_some_and(|tabs| {
+                    tabs.iter().any(|tab| {
+                        tab.pointer("/embedderData/tabActive")
+                            .is_some_and(|v| v.is_boolean())
+                    })
+                });
+                let active = |url: &str| {
+                    tabs.iter()
+                        .find(|tab| tab["url"] == url)
+                        .map(|tab| tab["active"].clone())
+                        .expect("tab listed")
+                };
+                let named = (
+                    active(fixture.server.page_url()),
+                    active(second_server.page_url()),
+                );
+                let expected = if strip_says {
+                    (serde_json::json!(true), serde_json::json!(false))
+                } else {
+                    (serde_json::Value::Null, serde_json::Value::Null)
+                };
+                assert_eq!(
+                    named, expected,
+                    "same-title selection must come from the tab strip, or be unknown (tab strip said: {strip_says}): {}",
                     rebound.raw
                 );
                 Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())

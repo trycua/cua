@@ -1485,8 +1485,14 @@ impl BrowserEngine {
         // Tabs = page targets living in the bound CDP window. Selection is a
         // separate proof from native-window correlation: a representative CDP
         // target is only a window handle and must never be reported as active.
+        // The window title proves the selected tab when exactly one tab's title is in it. When none or several are
+        // (tabs with the same title, such as restored ones never loaded, or a page whose title is still its URL),
+        // the browser's own tab strip says which tab is selected.
         let selected_cdp_target_id =
-            selected_tab_target_id(&native.title, &candidates, candidate.cdp_window_id);
+            match selected_tab_target_id(&native.title, &candidates, candidate.cdp_window_id) {
+                Some(selected) => Some(selected.to_owned()),
+                None => tab_strip_selected_page(&conn, &candidates, candidate.cdp_window_id).await,
+            };
         let mut tabs = IndexMap::new();
         for c in candidates.iter().filter(|c| match candidate.cdp_window_id {
             Some(window_id) => c.cdp_window_id == Some(window_id),
@@ -1500,7 +1506,9 @@ impl BrowserEngine {
                     cdp_target_id: c.cdp_target_id.clone(),
                     title: c.title.clone(),
                     url: c.url.clone(),
-                    active: selected_cdp_target_id.map(|selected| selected == c.cdp_target_id),
+                    active: selected_cdp_target_id
+                        .as_deref()
+                        .map(|selected| selected == c.cdp_target_id),
                     generation: grant.as_ref().map_or(0, |grant| grant.generation),
                     snapshots: HashMap::new(),
                 },
@@ -2968,6 +2976,183 @@ impl BrowserEngine {
             });
         Ok(outcome)
     }
+}
+
+/// The sessions [`tab_strip_selected_page`] opens: the tab's and, beneath it, its page's. They are always detached
+/// from a task of their own, which [`ProbeSessions::detach`] waits for, and which runs to its end even if the bind is
+/// dropped meanwhile; a bind dropped before that spawns it on drop.
+struct ProbeSessions {
+    conn: Arc<CdpConnection>,
+    tab: Option<String>,
+    page: Option<String>,
+}
+
+impl ProbeSessions {
+    fn spawn_detach(&mut self) -> Option<tokio::task::JoinHandle<()>> {
+        let (Some(tab), page) = (self.tab.take(), self.page.take()) else {
+            return None;
+        };
+        let conn = Arc::clone(&self.conn);
+        let runtime = tokio::runtime::Handle::try_current().ok()?;
+        Some(runtime.spawn(async move { detach_probe(&conn, tab, page).await }))
+    }
+
+    async fn detach(&mut self) {
+        if let Some(detaching) = self.spawn_detach() {
+            let _ = detaching.await;
+        }
+    }
+}
+
+impl Drop for ProbeSessions {
+    fn drop(&mut self) {
+        self.spawn_detach();
+    }
+}
+
+/// Detaches a probe's page session on its tab's session, then the tab's; a failed detach is tried once more.
+async fn detach_probe(conn: &CdpConnection, tab: String, page: Option<String>) {
+    if let Some(page) = page {
+        if !detach_session(conn, Some(&tab), &page).await {
+            detach_session(conn, Some(&tab), &page).await;
+        }
+    }
+    if !detach_session(conn, None, &tab).await {
+        detach_session(conn, None, &tab).await;
+    }
+}
+
+/// Detaches `session`, on `on` (the session it was attached beneath) or at the browser; whether the browser said so.
+async fn detach_session(conn: &CdpConnection, on: Option<&str>, session: &str) -> bool {
+    let params = json!({ "sessionId": session });
+    conn.call_with_timeout(on, "Target.detachFromTarget", params, TAB_STRIP_TIMEOUT)
+        .await
+        .is_ok()
+}
+
+/// How long the browser has to answer each step of [`tab_strip_selected_page`].
+const TAB_STRIP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The page of the tab selected in `cdp_window_id`'s tab strip, as the browser says it: the one `tab` target of that
+/// window whose `embedderData.tabActive` is true (Chromium exposes it), and the page that tab holds, found by
+/// auto-attaching that tab's page without pausing it, then detaching. Nothing runs in a page and no tab is
+/// selected; attaching is what a read of that page does too. None when the browser does not say (no tab targets, or not exactly one selected tab in the window) or
+/// when the page is not one of `candidates` in that window.
+async fn tab_strip_selected_page(
+    conn: &Arc<CdpConnection>,
+    candidates: &[CdpWindowCandidate],
+    cdp_window_id: Option<i64>,
+) -> Option<String> {
+    let window_id = cdp_window_id?;
+    let call = |session: Option<&str>, method: &'static str, params: Value| {
+        let session = session.map(str::to_owned);
+        async move {
+            conn.call_with_timeout(session.as_deref(), method, params, TAB_STRIP_TIMEOUT)
+                .await
+                .ok()
+        }
+    };
+    let tabs = call(
+        None,
+        "Target.getTargets",
+        json!({ "filter": [{ "type": "tab" }] }),
+    )
+    .await?;
+    // Each window's selected tab, asked for its window at once.
+    let asked = tabs
+        .get("targetInfos")?
+        .as_array()?
+        .iter()
+        .filter(|tab| {
+            tab["type"].as_str() == Some("tab")
+                && tab
+                    .pointer("/embedderData/tabActive")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+        })
+        .filter_map(|tab| tab["targetId"].as_str())
+        .map(|id| async move {
+            let window = call(
+                None,
+                "Browser.getWindowForTarget",
+                json!({ "targetId": id }),
+            )
+            .await;
+            (window.and_then(|w| w.get("windowId").and_then(Value::as_i64)) == Some(window_id))
+                .then(|| id.to_owned())
+        });
+    let selected = futures_util::future::join_all(asked)
+        .await
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    let [tab] = selected.as_slice() else {
+        return None;
+    };
+
+    let mut events = conn.subscribe();
+    let attached = call(
+        None,
+        "Target.attachToTarget",
+        json!({ "targetId": tab, "flatten": true }),
+    )
+    .await?;
+    let tab_session = attached
+        .get("sessionId")
+        .and_then(Value::as_str)?
+        .to_owned();
+    // Detached however this ends: at once below, or, if the bind is dropped first, from a task of its own.
+    let mut probe = ProbeSessions {
+        conn: Arc::clone(conn),
+        tab: Some(tab_session.clone()),
+        page: None,
+    };
+    let page = async {
+        call(
+            Some(&tab_session),
+            "Target.setAutoAttach",
+            json!({ "autoAttach": true, "waitForDebuggerOnStart": false, "flatten": true }),
+        )
+        .await?;
+        let deadline = tokio::time::Instant::now() + TAB_STRIP_TIMEOUT;
+        loop {
+            let event = tokio::time::timeout_at(deadline, events.recv())
+                .await
+                .ok()??;
+            if event.method != "Target.attachedToTarget"
+                || event.session_id.as_deref() != Some(tab_session.as_str())
+            {
+                continue;
+            }
+            let info = event.params.get("targetInfo")?;
+            let page_session = event
+                .params
+                .get("sessionId")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            // The tab's primary page: a prerender it holds is attached too, as a page with a subtype.
+            if info["type"].as_str() != Some("page") || info.get("subtype").is_some() {
+                if let Some(other) = page_session {
+                    call(
+                        Some(&tab_session),
+                        "Target.detachFromTarget",
+                        json!({ "sessionId": other }),
+                    )
+                    .await;
+                }
+                continue;
+            }
+            probe.page.clone_from(&page_session);
+            break Some(info["targetId"].as_str()?.to_owned());
+        }
+    }
+    .await;
+    probe.detach().await;
+    let page = page?;
+    candidates
+        .iter()
+        .any(|c| c.cdp_window_id == Some(window_id) && c.cdp_target_id == page)
+        .then_some(page)
 }
 
 async fn tab_visibility_proven(conn: &CdpConnection, cdp_session: &str) -> bool {

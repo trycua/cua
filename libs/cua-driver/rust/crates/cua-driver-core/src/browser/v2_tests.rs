@@ -126,6 +126,10 @@ pub(super) struct FixtureState {
     /// Extra page targets living in the bound window, after T1 in the
     /// browser's `Target.getTargets` order.
     sibling_tabs: Vec<Value>,
+    /// The window's tab strip, as Chromium exposes it to a `Target.getTargets`
+    /// filtered to `tab` targets: (tab target id, whether it is the selected
+    /// tab, the page target that tab auto-attaches).
+    tab_strip: Vec<(String, bool, String)>,
     /// Fail the read-only prepare probe without closing the WebSocket.
     fail_get_targets: bool,
     silent_get_targets: bool,
@@ -167,6 +171,7 @@ impl Default for FixtureState {
             main_url: "https://fixture.test/".into(),
             windowless_targets: Vec::new(),
             sibling_tabs: Vec::new(),
+            tab_strip: Vec::new(),
             omit_primary_target: false,
             fail_get_targets: false,
             silent_get_targets: false,
@@ -566,6 +571,37 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                         None => reply,
                     };
                 }
+                // Chromium's filter: the first entry whose type matches (or that
+                // names none) decides, `exclude` dropping it; no match drops it.
+                // Without a filter, tab targets are excluded.
+                let filter = call.params["filter"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_else(|| vec![json!({"type": "tab", "exclude": true}), json!({})]);
+                let kept = |kind: &str| {
+                    filter
+                        .iter()
+                        .find(|entry| entry["type"].as_str().is_none_or(|t| t == kind))
+                        .is_some_and(|entry| entry["exclude"] != true)
+                };
+                let tabs = st
+                    .tab_strip
+                    .iter()
+                    .map(|(tab, selected, _)| {
+                        json!({
+                            "targetId": tab,
+                            "type": "tab",
+                            "title": "Fixture",
+                            "url": "https://fixture.test/",
+                            "attached": false,
+                            "embedderData": { "tabActive": selected },
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                if !kept("page") {
+                    let tabs = if kept("tab") { tabs } else { Vec::new() };
+                    return MockReply::ok(json!({ "targetInfos": tabs }));
+                }
                 let mut infos: Vec<Value> = Vec::new();
                 if !st.omit_primary_target {
                     infos.push(json!({
@@ -578,6 +614,9 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 }
                 infos.extend(st.sibling_tabs.iter().cloned());
                 infos.extend(st.windowless_targets.iter().cloned());
+                if kept("tab") {
+                    infos.extend(tabs);
+                }
                 MockReply::ok(json!({ "targetInfos": infos }))
             }
             "Target.getTargetInfo" => MockReply::ok(json!({
@@ -597,6 +636,8 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     .any(|t| t["targetId"].as_str() == Some(target_id));
                 if windowless {
                     MockReply::err(-32000, "Browser window not found")
+                } else if target_id.starts_with("OTHERWIN") {
+                    MockReply::ok(json!({ "windowId": 99 }))
                 } else if let Some((code, message)) = st.primary_window_error.clone() {
                     MockReply::err(code, &message)
                 } else {
@@ -606,6 +647,16 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             "Browser.getWindowBounds" => MockReply::ok(json!({
                 "bounds": { "left": 0.0, "top": 0.0, "width": 800.0, "height": 600.0 }
             })),
+            "Target.attachToTarget"
+                if st
+                    .tab_strip
+                    .iter()
+                    .any(|(tab, _, _)| call.params["targetId"].as_str() == Some(tab.as_str())) =>
+            {
+                MockReply::ok(
+                    json!({ "sessionId": format!("strip-sess-{}", call.params["targetId"].as_str().unwrap_or("")) }),
+                )
+            }
             "Target.attachToTarget" => {
                 st.tab_sessions += 1;
                 let reply =
@@ -1049,6 +1100,35 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 } else {
                     MockReply::ok(json!({}))
                 }
+            }
+            "Target.setAutoAttach" if sess.starts_with("strip-sess-") => {
+                let tab = &sess["strip-sess-".len()..];
+                let page = st
+                    .tab_strip
+                    .iter()
+                    .find(|(t, _, _)| t == tab)
+                    .map(|(_, _, page)| page.clone());
+                let events = page
+                    .map(|page| {
+                        vec![MockEvent {
+                            method: "Target.attachedToTarget".into(),
+                            session_id: Some(sess.clone()),
+                            params: json!({
+                                "sessionId": format!("strip-page-sess-{page}"),
+                                "targetInfo": { "targetId": page, "type": "page", "url": "https://fixture.test/", "attached": true },
+                                "waitingForDebugger": false,
+                            }),
+                        }]
+                    })
+                    .unwrap_or_default();
+                MockReply::ok(json!({})).with_events(events)
+            }
+            "Target.detachFromTarget"
+                if call.params["sessionId"]
+                    .as_str()
+                    .is_some_and(|s| s.starts_with("strip-")) =>
+            {
+                MockReply::ok(json!({}))
             }
             other => MockReply::method_not_found(other),
         }
@@ -4809,6 +4889,115 @@ async fn bound_tabs_keep_the_browser_order_across_binds() {
         assert_eq!(listed, expected, "{s}");
         assert_eq!(s["tabs"][0]["active"], true, "{s}");
     }
+}
+
+/// A sibling tab with the bound tab's title: the window title alone cannot tell them apart.
+fn same_title_sibling() -> Value {
+    json!({
+        "targetId": "T2",
+        "type": "page",
+        "title": "Fixture",
+        "url": "https://fixture.test/two",
+        "attached": false,
+    })
+}
+
+fn active_by_target(s: &Value) -> Vec<(String, Value)> {
+    s["tabs"]
+        .as_array()
+        .expect("tabs")
+        .iter()
+        .map(|t| (t["url"].as_str().unwrap().to_owned(), t["active"].clone()))
+        .collect()
+}
+
+#[tokio::test]
+async fn same_title_tabs_name_the_one_the_tab_strip_selects() {
+    let f = fixture_with(|st| {
+        st.sibling_tabs.push(same_title_sibling());
+        st.tab_strip = vec![
+            ("TAB1".into(), false, "T1".into()),
+            ("TAB2".into(), true, "T2".into()),
+        ];
+    })
+    .await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(
+        active_by_target(&s),
+        vec![
+            ("https://fixture.test/".to_owned(), json!(false)),
+            ("https://fixture.test/two".to_owned(), json!(true)),
+        ],
+        "{s}"
+    );
+    // The tab strip is read: nothing runs in a page, no tab is selected, and
+    // both sessions are detached, the page's on its tab's session.
+    let st = f.state.lock().unwrap();
+    assert!(!st.calls.iter().any(|(session, method, _)| {
+        (method == "Runtime.evaluate" && session.as_deref().is_some_and(|s| s.starts_with("strip")))
+            || method == "Target.activateTarget"
+            || method == "Page.bringToFront"
+    }));
+    let detached = |on: Option<&str>, id: &str| {
+        st.calls.iter().any(|(session, method, params)| {
+            method == "Target.detachFromTarget"
+                && session.as_deref() == on
+                && params["sessionId"] == id
+        })
+    };
+    assert!(
+        detached(Some("strip-sess-TAB2"), "strip-page-sess-T2"),
+        "the page's session on the tab's"
+    );
+    assert!(detached(None, "strip-sess-TAB2"), "the tab's session");
+}
+
+#[tokio::test]
+async fn a_selected_tab_of_another_window_names_no_tab() {
+    let f = fixture_with(|st| {
+        st.sibling_tabs.push(same_title_sibling());
+        st.tab_strip = vec![("OTHERWIN-TAB".into(), true, "T2".into())];
+    })
+    .await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "ok", "{s}");
+    assert!(
+        active_by_target(&s)
+            .iter()
+            .all(|(_, active)| active.is_null()),
+        "{s}"
+    );
+}
+
+#[tokio::test]
+async fn same_title_tabs_without_a_tab_strip_name_no_tab() {
+    let f = fixture_with(|st| st.sibling_tabs.push(same_title_sibling())).await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "ok", "{s}");
+    assert!(
+        active_by_target(&s)
+            .iter()
+            .all(|(_, active)| active.is_null()),
+        "no proof, no active tab: {s}"
+    );
+}
+
+#[tokio::test]
+async fn a_selected_tab_whose_page_is_not_in_the_window_names_no_tab() {
+    let f = fixture_with(|st| {
+        st.sibling_tabs.push(same_title_sibling());
+        st.tab_strip = vec![("TAB9".into(), true, "T_ELSEWHERE".into())];
+    })
+    .await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "ok", "{s}");
+    assert!(
+        active_by_target(&s)
+            .iter()
+            .all(|(_, active)| active.is_null()),
+        "{s}"
+    );
 }
 
 #[tokio::test]

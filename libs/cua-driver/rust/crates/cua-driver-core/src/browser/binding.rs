@@ -90,10 +90,13 @@ fn title_matches(native_title: &str, candidate_title: &str) -> bool {
 }
 
 /// Prove the selected page in one already-correlated browser window without
-/// activating a target. Chromium exposes the native window title but no
-/// browser-level selected-tab bit. A unique title match is therefore proof;
-/// duplicate, empty, absent, or substring-colliding titles remain unknown.
-/// Embedded single-page endpoints are selected by cardinality.
+/// activating a target, from the native window title: a unique title match is
+/// proof; duplicate, empty, absent, or substring-colliding titles prove
+/// nothing here, and the engine then asks the browser's tab strip where it
+/// says which tab is selected (`tab` targets' `embedderData.tabActive`), or
+/// leaves the selection unknown. A window title that, for a moment, still
+/// uniquely holds another tab's title names that tab. Embedded single-page
+/// endpoints are selected by cardinality.
 pub fn selected_tab_target_id<'a>(
     native_title: &str,
     candidates: &'a [CdpWindowCandidate],

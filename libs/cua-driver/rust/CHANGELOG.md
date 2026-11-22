@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.59.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.58.2...cua-driver-rs-v0.59.0) (2026-11-22)
+
+
+### Features
+
+* **cua-driver:** add metadata-only RuntimeWitnessV0 contract ([#7952](https://github.com/trycua/cua/issues/7952)) ([d4408c5](https://github.com/trycua/cua/commit/d4408c55de191e850dde7d68dabb9050ec0df375))
+
 ## [0.58.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.58.1...cua-driver-rs-v0.58.2) (2026-11-22)
 
 

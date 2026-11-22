@@ -11,13 +11,13 @@
 use cua_driver_contract::{
     ActionResult, ClickInput, ClipboardReadInput, ClipboardWriteInput, DragInput, EndSessionInput,
     EndSessionOutput, GetAgentCursorStateInput, GetCursorPositionInput, GetDesktopStateInput,
-    GetMenuExtraStateInput, GetScreenSizeInput, GetSessionInput, GetWindowStateInput,
-    HotkeyInput, InvokeMenuExtraInput, InvokeMenuInput, ListAppsInput, ListAppsOutput,
-    ListSessionsInput, ListSessionsOutput, ListWindowsInput, ListWindowsOutput, MoveCursorInput,
-    ParseVisualRegionsInput, PressKeyInput, ScrollInput, SessionOutput,
-    SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
-    SetWindowFrameInput, SnapshotImage, StartSessionInput, StartSessionOutput, ToolInput,
-    ToolOutput, TypeTextInput, VerifyStateInput, VerifyStateOutput, WindowStateOutput,
+    GetMenuExtraStateInput, GetScreenSizeInput, GetSessionInput, GetWindowStateInput, HotkeyInput,
+    InvokeMenuExtraInput, InvokeMenuInput, ListAppsInput, ListAppsOutput, ListSessionsInput,
+    ListSessionsOutput, ListWindowsInput, ListWindowsOutput, MoveCursorInput,
+    ParseVisualRegionsInput, PressKeyInput, ScrollInput, SessionOutput, SetAgentCursorEnabledInput,
+    SetAgentCursorMotionInput, SetAgentCursorThemeInput, SetWindowFrameInput, SnapshotImage,
+    StartSessionInput, StartSessionOutput, ToolInput, ToolOutput, TypeTextInput, VerifyStateInput,
+    VerifyStateOutput, WindowStateOutput,
 };
 use cua_driver_core::daemon::{
     is_daemon_listening, request_daemon_metadata, send_request, socket_path_for_namespace,

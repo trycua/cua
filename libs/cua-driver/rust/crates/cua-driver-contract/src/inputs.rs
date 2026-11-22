@@ -733,15 +733,18 @@ pub enum MenuExtraTarget {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct GetMenuExtraStateInput {
+    /// The running application whose extras menu bar is read, by `pid` or `bundle_id`.
     pub application: MenuExtraTarget,
+    /// Deepest level to read below the menu bar (1 to 25, default 12).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "menu_extra_max_depth_schema")]
     pub max_depth: Option<u32>,
+    /// Most accessibility elements to read (1 to 2000, default 500).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "menu_extra_max_elements_schema")]
     pub max_elements: Option<u32>,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
-    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+    /// accepts it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -756,11 +759,14 @@ impl ToolInput for GetMenuExtraStateInput {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct InvokeMenuExtraInput {
+    /// The running application that owns the menu extra, by `pid` or `bundle_id`.
     pub application: MenuExtraTarget,
+    /// Exact labels from the menu extra to the item, e.g. `["Wi-Fi", "Wi-Fi Settings..."]`
+    /// (1 to 16 labels).
     #[schemars(schema_with = "menu_path_schema")]
     pub path: Vec<String>,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
-    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+    /// accepts it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,

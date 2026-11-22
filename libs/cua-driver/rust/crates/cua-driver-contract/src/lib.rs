@@ -53,13 +53,12 @@ pub use cursor::{
 pub use inputs::{
     ActionTarget, CaptureScope, ClickButton, ClickInput, ClickPosition, ClipboardReadInput,
     ClipboardWriteInput, CursorMotionSelection, DesktopScope, DragInput, EndSessionInput,
-    GetAgentCursorStateInput, GetCursorPositionInput, GetDesktopStateInput,
-    GetMenuExtraStateInput, GetScreenSizeInput, GetSessionInput, HotkeyInput, InputDeliveryMode,
-    InvokeMenuExtraInput, InvokeMenuInput, LegacyClickInput, ListSessionsInput, MenuExtraTarget,
-    MoveCursorInput, PressKeyInput, ScrollBy, ScrollDirection, ScrollInput,
-    SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
-    SetWindowFrameInput, StartSessionInput, ToolInput, TypeTextInput,
-    MULTI_CALL_SESSION_DESCRIPTION,
+    GetAgentCursorStateInput, GetCursorPositionInput, GetDesktopStateInput, GetMenuExtraStateInput,
+    GetScreenSizeInput, GetSessionInput, HotkeyInput, InputDeliveryMode, InvokeMenuExtraInput,
+    InvokeMenuInput, LegacyClickInput, ListSessionsInput, MenuExtraTarget, MoveCursorInput,
+    PressKeyInput, ScrollBy, ScrollDirection, ScrollInput, SetAgentCursorEnabledInput,
+    SetAgentCursorMotionInput, SetAgentCursorThemeInput, SetWindowFrameInput, StartSessionInput,
+    ToolInput, TypeTextInput, MULTI_CALL_SESSION_DESCRIPTION,
 };
 pub use outputs::{
     advertised_output_schema, conforming_error_envelope, is_refusal_envelope,

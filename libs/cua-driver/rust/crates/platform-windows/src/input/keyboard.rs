@@ -29,9 +29,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VIRTUAL_KEY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumChildWindows, GetClassNameW, GetGUIThreadInfo, GetParent, GetWindowThreadProcessId,
-    IsChild, PostMessageW, GUITHREADINFO, WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN,
-    WM_SYSKEYUP,
+    EnumChildWindows, GetClassNameW, GetGUIThreadInfo, GetParent, GetWindowTextW,
+    GetWindowThreadProcessId, IsChild, PostMessageW, GUITHREADINFO, WM_CHAR, WM_KEYDOWN, WM_KEYUP,
+    WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
 
@@ -112,6 +112,22 @@ fn owning_exe_basename(hwnd: HWND) -> Option<String> {
         .unwrap_or(&path)
         .to_ascii_lowercase();
     Some(name)
+}
+
+/// Names the current foreground window (title, pid, owning exe) so a stalled
+/// text delivery says which foreign window, such as a system modal, holds focus.
+fn describe_foreground() -> String {
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd.0.is_null() {
+        return "no foreground window".to_string();
+    }
+    let mut title = [0u16; 256];
+    let n = unsafe { GetWindowTextW(hwnd, &mut title) };
+    let title = String::from_utf16_lossy(&title[..n.max(0) as usize]);
+    let mut pid: u32 = 0;
+    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+    let exe = owning_exe_basename(hwnd).unwrap_or_else(|| "unknown process".to_string());
+    format!("title {title:?}, pid {pid}, process {exe}")
 }
 
 /// `true` iff the given HWND should bypass the PostMessage keyboard
@@ -688,7 +704,8 @@ pub fn send_text_synthesized_paced_after_focus(
                         "text_delivery_stalled: the target did not read text units {first}..{last} \
                          of {n} within 2000 ms; {k} earlier units were read. Those units were \
                          inserted and may still appear in the target. Nothing was retried; \
-                         inspect the target before sending the rest.",
+                         inspect the target before sending the rest. Foreground window now: {fg}.",
+                        fg = describe_foreground(),
                     ),
                 }
                 if delay_ms > 0 && last < n {

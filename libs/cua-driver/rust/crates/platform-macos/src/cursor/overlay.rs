@@ -1392,6 +1392,21 @@ fn target_is_frontmost_visible_window(
         return false;
     }
 
+    // NSWorkspace can report the target app active while its window stays
+    // behind another app's: a background click's focus-without-raise prologue
+    // does exactly that. Only the live stack says whether the overlay would
+    // paint over a window covering the target.
+    let covered = windows.iter().any(|window| {
+        window.pid != target.pid
+            && window.is_on_screen
+            && window.layer == 0
+            && window.z_index > target.z_index
+            && crate::windows::overlap_area(&window.bounds, &target.bounds) > 0.0
+    });
+    if covered {
+        return false;
+    }
+
     windows
         .iter()
         .filter(|window| {
@@ -1436,7 +1451,8 @@ fn dispatch_pin_above(win_ptr: usize, target_wid: u64) {
         }
     }
 
-    let windows = crate::windows::visible_windows();
+    let mut windows = crate::windows::visible_windows();
+    windows.retain(|window| !is_overlay_window(window.window_id));
     let raise_front =
         target_is_frontmost_visible_window(target_wid, crate::apps::frontmost_pid(), &windows);
     let payload = Box::new((win_ptr, target_wid, raise_front));
@@ -1945,9 +1961,26 @@ mod tests {
     fn frontmost_target_can_raise_overlay_without_covering_another_app() {
         let target_pid = 100;
         let mut windows = vec![window(10, target_pid, 20), window(11, 200, 10)];
-        // WindowServer may retain another app's window ahead in its global
-        // list; the active app identity is the authoritative cross-app guard.
+        assert!(target_is_frontmost_visible_window(
+            10,
+            Some(target_pid),
+            &windows,
+        ));
+
+        // A background click's focus-without-raise prologue makes NSWorkspace
+        // report the target app active while another app's window still
+        // covers the target (#3332). Raising the overlay then paints the agent
+        // cursor over the user's foreground window.
         windows[1].z_index = Some(30);
+        assert!(!target_is_frontmost_visible_window(
+            10,
+            Some(target_pid),
+            &windows,
+        ));
+
+        // Another app's window ahead that does not overlap the target leaves
+        // nothing for the overlay to paint over.
+        windows[1].bounds.x = 900.0;
         assert!(target_is_frontmost_visible_window(
             10,
             Some(target_pid),

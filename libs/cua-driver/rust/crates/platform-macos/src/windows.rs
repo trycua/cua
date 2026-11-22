@@ -16,6 +16,17 @@ pub struct WindowBounds {
     pub height: f64,
 }
 
+/// The area two window bounds share; zero when they only touch or are apart.
+pub(crate) fn overlap_area(left: &WindowBounds, right: &WindowBounds) -> f64 {
+    let width = (left.x + left.width).min(right.x + right.width) - left.x.max(right.x);
+    let height = (left.y + left.height).min(right.y + right.height) - left.y.max(right.y);
+    if width > 0.0 && height > 0.0 {
+        width * height
+    } else {
+        0.0
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowInfo {
     pub window_id: u32,

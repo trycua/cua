@@ -49,6 +49,8 @@ mod stop;
 mod telemetry;
 mod updater;
 mod version_check;
+mod vnc;
+mod vnc_cli;
 
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
@@ -593,9 +595,10 @@ fn main() {
             tool,
             json_args,
             screenshot_out_file,
+            text,
             socket,
         } => {
-            cli::run_call(&tool, json_args, screenshot_out_file, socket);
+            cli::run_call(&tool, json_args, screenshot_out_file, text, socket);
         }
         cli::Command::Serve {
             socket,
@@ -857,6 +860,9 @@ fn main() {
         cli::Command::Permissions { subcommand, json } => {
             cli::run_permissions_cmd(&subcommand, json);
         }
+        cli::Command::PermissionsVnc { args } => {
+            vnc_cli::run(&args);
+        }
         cli::Command::Autostart { subcommand } => {
             autostart::run_autostart_cmd(&subcommand);
         }
@@ -1024,9 +1030,10 @@ fn main() -> anyhow::Result<()> {
             tool,
             json_args,
             screenshot_out_file,
+            text,
             socket,
         } => {
-            cli::run_call(&tool, json_args, screenshot_out_file, socket);
+            cli::run_call(&tool, json_args, screenshot_out_file, text, socket);
             Ok(())
         }
         cli::Command::Serve {
@@ -1181,6 +1188,10 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::Permissions { subcommand, json } => {
             cli::run_permissions_cmd(&subcommand, json);
+            Ok(())
+        }
+        cli::Command::PermissionsVnc { args } => {
+            vnc_cli::run(&args);
             Ok(())
         }
         cli::Command::Autostart { subcommand } => {

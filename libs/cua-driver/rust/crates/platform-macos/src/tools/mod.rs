@@ -3,6 +3,7 @@
 
 //! MCP tool implementations for macOS.
 
+mod agent_display;
 mod bring_to_front;
 mod calc_cell;
 mod capture_binding;
@@ -1445,6 +1446,7 @@ pub fn register_all(
     ));
     registry.register(Box::new(launch_app::LaunchAppTool));
     registry.register(Box::new(kill_app::KillAppTool));
+    registry.register(Box::new(agent_display::AgentDisplayTool));
     let pid_window_candidates: WindowTargetCandidates = Arc::new(pid_window_target_candidates);
     registry.register(pid_window_guarded(
         bring_to_front::BringToFrontTool,

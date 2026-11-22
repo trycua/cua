@@ -557,6 +557,7 @@ fn handle_activation(dispatcher: &Arc<Dispatcher>, note: &objc2_foundation::NSNo
         pid as i32
     };
 
+    note_activation(activated_pid);
     let restore_pids =
         dispatcher.snapshot_matches(activated_pid, |watch| watch.decide() == Decision::Undo);
     for pid in restore_pids {
@@ -570,6 +571,55 @@ fn restore_focus(pid: i32) {
     unsafe {
         if let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
             let _ = app.activateWithOptions(NSApplicationActivationOptions(0));
+        }
+    }
+}
+
+// ── Activation records ──────────────────────────────────────────────────────
+
+/// Live [`ActivationRecord`]s: the pid each watches and its seen flag.
+static ACTIVATION_RECORDS: Mutex<Vec<(Uuid, i32, Arc<std::sync::atomic::AtomicBool>)>> =
+    Mutex::new(Vec::new());
+
+fn activation_records(
+) -> std::sync::MutexGuard<'static, Vec<(Uuid, i32, Arc<std::sync::atomic::AtomicBool>)>> {
+    ACTIVATION_RECORDS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// While alive, records whether `pid` was activated, from the activation
+/// notification itself, so an activation that is undone or switched away from
+/// within milliseconds is still seen. `Drop` stops recording.
+pub struct ActivationRecord {
+    id: Uuid,
+    seen: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl ActivationRecord {
+    pub fn start(pid: i32) -> Self {
+        FocusStealPreventer::shared();
+        let id = Uuid::new_v4();
+        let seen = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        activation_records().push((id, pid, seen.clone()));
+        Self { id, seen }
+    }
+
+    pub fn seen(&self) -> bool {
+        self.seen.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl Drop for ActivationRecord {
+    fn drop(&mut self) {
+        activation_records().retain(|(id, _, _)| *id != self.id);
+    }
+}
+
+fn note_activation(activated_pid: i32) {
+    for (_, pid, seen) in activation_records().iter() {
+        if *pid == activated_pid {
+            seen.store(true, std::sync::atomic::Ordering::SeqCst);
         }
     }
 }
@@ -599,6 +649,24 @@ mod tests {
         assert!(d
             .snapshot_matches(42, |w| w.epoch() == armed.next())
             .is_empty());
+    }
+
+    /// An activation record sees only its own pid's activation, keeps it
+    /// after the pid loses the front again, and stops recording when dropped.
+    #[test]
+    fn activation_record_keeps_a_brief_activation_of_its_pid() {
+        let record = ActivationRecord::start(-4810);
+        note_activation(-4811);
+        assert!(!record.seen());
+        note_activation(-4810);
+        note_activation(-4811);
+        assert!(record.seen());
+        drop(record);
+        let later = ActivationRecord::start(-4810);
+        assert!(!later.seen());
+        assert!(!activation_records()
+            .iter()
+            .any(|(_, pid, seen)| *pid == -4810 && seen.load(std::sync::atomic::Ordering::SeqCst)));
     }
 
     /// Dispatcher::add returns a handle, the entry is reachable by

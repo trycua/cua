@@ -359,45 +359,36 @@ fn window_info_by_handle(hwnd: u64) -> Option<WindowInfo> {
 /// The facts behind `get_window_state`'s `interaction_context` for `pid`'s
 /// window `target`: every top-level window, of any process, with its
 /// `GW_OWNER` chain, resolved by `related_by_owner_chain` (a dialog can run
-/// in another process). Modality comes from `modal_by_disabled_owner`.
-/// `None` when the windows cannot be enumerated, modality cannot be
-/// established, or a modal or focused window has no title to address it by.
-/// Blocking.
+/// in another process). What blocks the target comes from
+/// `block_disabled_target`. `None` when the windows cannot be enumerated,
+/// the blocker cannot be established, or a modal or focused window has no
+/// title to address it by. Blocking.
 pub(crate) fn interaction_facts(
     pid: u32,
     target: u64,
 ) -> cua_driver_core::window_inspection::InteractionFacts {
     use cua_driver_core::window_inspection::{
-        keep_addressable, modal_by_disabled_owner, related_by_owner_chain, ListedWindow,
+        block_disabled_target, keep_addressable, related_by_owner_chain, ListedWindow,
     };
     use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
     use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
     let foreground = unsafe { GetForegroundWindow() }.0 as usize as u64;
     let enabled = |hwnd: u64| unsafe { IsWindowEnabled(HWND(hwnd as *mut _)) }.as_bool();
     // Titled or not: an untitled dialog is as modal as a titled one.
-    let windows: Vec<(u64, Option<u64>, bool)> = top_level_windows()?
+    let listed: Vec<ListedWindow> = top_level_windows()?
         .into_iter()
-        .map(|(hwnd, viewable)| (hwnd, window_owner(hwnd), viewable))
-        .collect();
-    let shown: Vec<(u64, Option<u64>)> = windows
-        .iter()
-        .filter(|(_, _, viewable)| *viewable)
-        .map(|(hwnd, owner, _)| (*hwnd, *owner))
-        .collect();
-    let modal = modal_by_disabled_owner(target, &shown, enabled, window_owner)?;
-    let listed: Vec<ListedWindow> = windows
-        .into_iter()
-        .map(|(hwnd, owner, viewable)| ListedWindow {
+        .map(|(hwnd, viewable)| ListedWindow {
             window_id: hwnd,
             pid: window_pid(hwnd),
-            owner,
-            modal: modal.contains(&hwnd),
+            owner: window_owner(hwnd),
+            modal: false,
             viewable,
         })
         .collect();
     let related = related_by_owner_chain(target, pid, &listed, Some(foreground), |hwnd| {
         Some((window_owner(hwnd), window_pid(hwnd)))
     })?;
+    let related = block_disabled_target(related, enabled(target), enabled)?;
     // get_window_state addresses titled windows only.
     keep_addressable(related, |hwnd| window_info_by_handle(hwnd).is_some())
 }

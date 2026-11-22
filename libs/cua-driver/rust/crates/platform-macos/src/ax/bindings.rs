@@ -191,7 +191,8 @@ pub unsafe fn copy_string_attr(element: AXUIElementRef, attr_name: &str) -> Opti
 }
 
 /// [`copy_string_attr`], with a failed read kept apart from an attribute the
-/// element does not have or has no string value for.
+/// element does not have or has no value for. A value that is not a string
+/// is a failed read.
 ///
 /// # Safety
 ///
@@ -215,7 +216,7 @@ pub unsafe fn copy_string_attr_or_error(
     let cf_string_type_id = CFStr::type_id();
     if core_foundation::base::CFGetTypeID(value) != cf_string_type_id {
         CFRelease(value);
-        return Ok(None);
+        return Err(kAXErrorIllegalArgument);
     }
     let s = CFStr::wrap_under_create_rule(value as _);
     Ok(Some(s.to_string()))
@@ -845,7 +846,8 @@ pub unsafe fn copy_element_attr(
 }
 
 /// [`copy_element_attr`], with a failed read kept apart from an attribute
-/// the element does not have or has no element value for.
+/// the element does not have or has no value for. A value that is not an
+/// element is a failed read.
 ///
 /// # Safety
 ///
@@ -868,7 +870,7 @@ pub unsafe fn copy_element_attr_or_error(
     }
     if core_foundation::base::CFGetTypeID(value) != AXUIElementGetTypeID() {
         CFRelease(value);
-        return Ok(None);
+        return Err(kAXErrorIllegalArgument);
     }
     Ok(Some(value as AXUIElementRef))
 }

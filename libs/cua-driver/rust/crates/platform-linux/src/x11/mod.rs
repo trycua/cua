@@ -443,15 +443,17 @@ pub fn focused_window_among(candidates: &[u64]) -> Option<u64> {
     read_focused_window_among(&conn, root, candidates)
         .ok()
         .flatten()
+        .flatten()
 }
 
 /// [`focused_window_among`] on `conn`, with a failed read kept apart from a
-/// focus that sits on none of `candidates`.
+/// focus that sits on none of `candidates`: `None` when no window holds the
+/// focus, `Some(None)` when a window outside `candidates` does.
 fn read_focused_window_among(
     conn: &RustConnection,
     root: Window,
     candidates: &[u64],
-) -> Result<Option<u64>> {
+) -> Result<Option<Option<u64>>> {
     let focus = conn.get_input_focus()?.reply()?.focus;
     focused_ancestor(focus, root, candidates, |window| {
         Ok(conn.query_tree(window)?.reply()?.parent)
@@ -463,7 +465,7 @@ fn focused_ancestor(
     root: Window,
     candidates: &[u64],
     parent: impl Fn(Window) -> Result<Window>,
-) -> Result<Option<u64>> {
+) -> Result<Option<Option<u64>>> {
     // 0 is None and 1 is PointerRoot: no window holds the focus.
     if focus <= 1 {
         return Ok(None);
@@ -471,15 +473,15 @@ fn focused_ancestor(
     let mut current = focus;
     for _ in 0..32 {
         if candidates.contains(&u64::from(current)) {
-            return Ok(Some(u64::from(current)));
+            return Ok(Some(Some(u64::from(current))));
         }
         let next = parent(current)?;
         if next == 0 || next == root {
-            return Ok(None);
+            return Ok(Some(None));
         }
         current = next;
     }
-    Ok(None)
+    Ok(Some(None))
 }
 
 /// `WM_TRANSIENT_FOR` of a toplevel: the window it is a dialog of. `None`
@@ -508,7 +510,10 @@ fn read_transient_for(conn: &RustConnection, root: Window, xid: Window) -> Resul
         return Ok(None);
     }
     anyhow::ensure!(
-        reply.type_ == u32::from(AtomEnum::WINDOW) && reply.format == 32,
+        reply.type_ == u32::from(AtomEnum::WINDOW)
+            && reply.format == 32
+            && reply.value_len == 1
+            && reply.bytes_after == 0,
         "malformed WM_TRANSIENT_FOR on window {xid}"
     );
     Ok(reply
@@ -541,14 +546,15 @@ pub fn interaction_facts(
         .filter(|window| window.viewable)
         .map(|window| window.window_id)
         .collect();
-    // The core keyboard focus decides which window takes keys; a window
-    // manager need not publish `_NET_ACTIVE_WINDOW`, so it only fills in
-    // when the focus sits on no client.
+    // The core keyboard focus decides which window takes keys. A window
+    // manager need not publish `_NET_ACTIVE_WINDOW`, and may leave it on a
+    // window that lost the focus to a popup, so it only fills in when no
+    // window holds the focus at all.
     let focused = match read_focused_window_among(&conn, root, &ids).ok()? {
-        Some(window) => Some(window),
+        Some(window) => window,
         None => active_window().filter(|active| ids.contains(active)),
     };
-    cua_driver_core::window_inspection::related_by_owner_chain(
+    let mut related = cua_driver_core::window_inspection::related_by_owner_chain(
         target,
         pid,
         &windows,
@@ -558,11 +564,55 @@ pub fn interaction_facts(
             let owner = read_transient_for(&conn, root, window).ok()?;
             Some((owner, owners.owner_pid(window)))
         },
+    )?;
+    // A modal transient for no window (or the root) is modal to its window
+    // group, not to every window of the process.
+    let target_group = read_window_group(&conn, u32::try_from(target).ok()?).ok()?;
+    for window in &mut related {
+        if window.modal
+            && window.owner == cua_driver_core::window_inspection::WindowOwnership::Unowned
+        {
+            let group = read_window_group(&conn, u32::try_from(window.window_id).ok()?).ok()?;
+            if target_group.is_some() && group.is_some() && group != target_group {
+                window.owner = cua_driver_core::window_inspection::WindowOwnership::OtherWindow;
+            }
+        }
+    }
+    Some(related)
+}
+
+/// The `WM_HINTS` window group of a client, `None` when it names none.
+fn read_window_group(conn: &RustConnection, xid: Window) -> Result<Option<u32>> {
+    const WINDOW_GROUP_HINT: u32 = 1 << 6;
+    let reply = conn
+        .get_property(false, xid, AtomEnum::WM_HINTS, AtomEnum::WM_HINTS, 0, 9)?
+        .reply()?;
+    if reply.type_ == x11rb::NONE {
+        return Ok(None);
+    }
+    anyhow::ensure!(
+        reply.type_ == u32::from(AtomEnum::WM_HINTS) && reply.format == 32,
+        "malformed WM_HINTS on window {xid}"
+    );
+    let hints: Vec<u32> = reply.value32().into_iter().flatten().collect();
+    Ok(match hints.as_slice() {
+        [flags, .., group] if hints.len() == 9 && flags & WINDOW_GROUP_HINT != 0 => Some(*group),
+        _ => None,
+    })
+}
+
+/// Whether `error` says the window no longer exists.
+fn window_gone(error: &anyhow::Error) -> bool {
+    matches!(
+        error.downcast_ref::<x11rb::errors::ReplyError>(),
+        Some(x11rb::errors::ReplyError::X11Error(x11))
+            if x11.error_kind == x11rb::protocol::ErrorKind::Window
     )
 }
 
 /// Every client in `_NET_CLIENT_LIST`, mapped or not, with its owner pid,
-/// `WM_TRANSIENT_FOR` and modality.
+/// `WM_TRANSIENT_FOR` and modality. A client destroyed while it is read is
+/// left out: a window that is gone blocks nothing.
 fn client_list_facts(
     conn: &RustConnection,
     root: Window,
@@ -577,11 +627,9 @@ fn client_list_facts(
     );
     anyhow::ensure!(reply.bytes_after == 0, "_NET_CLIENT_LIST was truncated");
     let owners = OwnerResolver::new(conn);
-    reply
-        .value32()
-        .into_iter()
-        .flatten()
-        .map(|window| {
+    let mut windows = Vec::new();
+    for window in reply.value32().into_iter().flatten() {
+        let read = || -> Result<cua_driver_core::window_inspection::ListedWindow> {
             Ok(cua_driver_core::window_inspection::ListedWindow {
                 window_id: u64::from(window),
                 pid: owners.owner_pid(window),
@@ -590,8 +638,14 @@ fn client_list_facts(
                 viewable: conn.get_window_attributes(window)?.reply()?.map_state
                     == MapState::VIEWABLE,
             })
-        })
-        .collect()
+        };
+        match read() {
+            Ok(facts) => windows.push(facts),
+            Err(error) if window_gone(&error) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(windows)
 }
 
 /// Windows NOT owned by `pid` whose `WM_TRANSIENT_FOR` chain (bounded to
@@ -1031,11 +1085,12 @@ mod tests {
         let candidates = [50];
         assert_eq!(
             focused_ancestor(51, ROOT, &candidates, parent).unwrap(),
-            Some(50)
+            Some(Some(50))
         );
         assert_eq!(
             focused_ancestor(400, ROOT, &candidates, parent).unwrap(),
-            None
+            Some(None),
+            "a window outside the candidates holds the focus"
         );
         // PointerRoot.
         assert_eq!(

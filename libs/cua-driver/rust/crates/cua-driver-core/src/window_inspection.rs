@@ -137,8 +137,13 @@ pub fn related_by_owner_chain(
         let mut links: Vec<(u64, Option<u32>)> = Vec::new();
         let mut next = start;
         while let Some(id) = next {
-            if id == from || links.len() >= MAX_OWNER_CHAIN || links.iter().any(|l| l.0 == id) {
+            // A cycle proves the chain never reaches anything new; a chain
+            // longer than the bound proves nothing.
+            if id == from || links.iter().any(|l| l.0 == id) {
                 break;
+            }
+            if links.len() >= MAX_OWNER_CHAIN {
+                return None;
             }
             let (owner, owner_pid) = read(id)?;
             links.push((id, owner_pid));
@@ -176,56 +181,36 @@ pub fn related_by_owner_chain(
     Some(related)
 }
 
-/// Which owned windows are modal on Win32, where `DialogBox` and an owned
-/// `MessageBox` disable their owner while they run: a disabled owner with
-/// exactly one visible owned window is blocked by that window. Only owners
-/// that are the target or a dialog of it are weighed: a modal of an
-/// unrelated sibling blocks only that sibling. With several owned windows (a
-/// dialog beside a modeless palette), Win32 does not say which one is modal,
-/// and a disabled target owning none is blocked by something not listed:
-/// both are `None`, so the caller reports the relation as unobservable.
-pub fn modal_by_disabled_owner(
-    target: u64,
-    windows: &[(u64, Option<u64>)],
+/// Mark what blocks a Win32 target. A modal loop (`DialogBox`, an owned
+/// `MessageBox`, WPF `ShowDialog`) disables windows while it runs: the
+/// dialog's owner, or every window of its UI thread. So an enabled target is
+/// blocked by nothing, and a disabled one by the only related window still
+/// enabled, whichever window owns it. With none or several enabled, Win32
+/// does not say which one blocks: `None`, so the caller reports the relation
+/// as unobservable.
+pub fn block_disabled_target(
+    mut related: Vec<RelatedWindowFacts>,
+    target_enabled: bool,
     enabled: impl Fn(u64) -> bool,
-    owner_of: impl Fn(u64) -> Option<u64>,
-) -> Option<Vec<u64>> {
-    let reaches_target = |mut id: u64| {
-        for _ in 0..MAX_OWNER_CHAIN {
-            if id == target {
-                return true;
-            }
-            match owner_of(id) {
-                Some(owner) if owner != id => id = owner,
-                _ => return false,
-            }
-        }
-        false
-    };
-    let mut owners: Vec<u64> = windows.iter().filter_map(|(_, owner)| *owner).collect();
-    owners.sort_unstable();
-    owners.dedup();
-    let mut modal = Vec::new();
-    for owner in owners
-        .into_iter()
-        .filter(|owner| !enabled(*owner) && reaches_target(*owner))
-    {
-        let mut owned = windows
-            .iter()
-            .filter(|(_, window_owner)| *window_owner == Some(owner));
-        match (owned.next(), owned.next()) {
-            (Some((hwnd, _)), None) => modal.push(*hwnd),
-            _ => return None,
-        }
+) -> InteractionFacts {
+    for window in &mut related {
+        window.modal = false;
     }
-    if !enabled(target)
-        && !windows
-            .iter()
-            .any(|(hwnd, owner)| *owner == Some(target) && modal.contains(hwnd))
-    {
+    if target_enabled {
+        return Some(related);
+    }
+    let mut live = related
+        .iter_mut()
+        .filter(|window| enabled(window.window_id));
+    let (Some(blocker), None) = (live.next(), live.next()) else {
         return None;
+    };
+    blocker.modal = true;
+    if !matches!(blocker.owner, WindowOwnership::Target) {
+        // It blocks the target though it hangs off another window.
+        blocker.owner = WindowOwnership::Unowned;
     }
-    Some(modal)
+    Some(related)
 }
 
 /// Keep only the windows `get_window_state` can address, so `next_call`
@@ -601,51 +586,54 @@ mod tests {
         );
     }
 
-    fn owner_in(windows: &[(u64, Option<u64>)]) -> impl Fn(u64) -> Option<u64> + '_ {
-        move |id| {
-            windows
-                .iter()
-                .find(|(hwnd, _)| *hwnd == id)
-                .and_then(|(_, owner)| *owner)
-        }
+    #[test]
+    fn a_disabled_targets_only_enabled_related_window_blocks_it() {
+        // WPF ShowDialog: dialog 3 owned by window A (1) disables every
+        // window of the thread, so sibling B (2) and its modeless palette 4
+        // are disabled too.
+        let related = vec![
+            window(1, WindowOwnership::Unowned, false, false),
+            window(3, WindowOwnership::OtherWindow, false, true),
+            window(4, WindowOwnership::Target, false, false),
+        ];
+        let enabled = |hwnd: u64| hwnd == 3;
+        let facts = block_disabled_target(related.clone(), false, enabled).unwrap();
+        let context = interaction_context(&Some(facts));
+        assert_eq!(context["status"], "blocked");
+        assert_eq!(context["related_surfaces"][0]["relation"], "blocks_target");
+        assert_eq!(context["next_call"]["arguments"]["window_id"], 3);
+        // An enabled target is blocked by nothing.
+        let facts = block_disabled_target(related.clone(), true, enabled).unwrap();
+        assert!(facts.iter().all(|window| !window.modal));
+        // The target's own dialog stays its modal child.
+        let own = vec![window(5, WindowOwnership::Target, false, true)];
+        let facts = block_disabled_target(own, false, |hwnd| hwnd == 5).unwrap();
+        assert_eq!(
+            interaction_context(&Some(facts))["related_surfaces"][0]["relation"],
+            "modal_child"
+        );
     }
 
     #[test]
-    fn a_disabled_owners_only_owned_window_is_modal() {
-        // Target 1 is disabled by its dialog 3; window 5 is an unrelated
-        // enabled top-level window.
-        let windows = [(1, None), (3, Some(1)), (5, None)];
+    fn a_disabled_target_with_no_or_several_enabled_windows_is_unknown() {
+        let related = vec![
+            window(2, WindowOwnership::Target, false, false),
+            window(3, WindowOwnership::Target, false, false),
+        ];
         assert_eq!(
-            modal_by_disabled_owner(1, &windows, |hwnd| hwnd != 1, owner_in(&windows)),
-            Some(vec![3])
+            block_disabled_target(related.clone(), false, |_| true),
+            None
         );
-        // An enabled owner's tool window is not modal.
-        assert_eq!(
-            modal_by_disabled_owner(1, &windows, |_| true, owner_in(&windows)),
-            Some(vec![])
-        );
+        assert_eq!(block_disabled_target(related, false, |_| false), None);
     }
 
     #[test]
-    fn a_dialog_beside_a_palette_or_an_unseen_blocker_is_unknown() {
-        // Disabled owner 1 owns dialog 3 and modeless palette 2.
-        let windows = [(1, None), (2, Some(1)), (3, Some(1))];
-        assert_eq!(
-            modal_by_disabled_owner(1, &windows, |hwnd| hwnd != 1, owner_in(&windows)),
-            None
-        );
-        // A disabled sibling 4 with a dialog and a palette leaves the
-        // enabled target 1 unaffected.
-        let siblings = [(1, None), (4, None), (5, Some(4)), (6, Some(4))];
-        assert_eq!(
-            modal_by_disabled_owner(1, &siblings, |hwnd| hwnd != 4, owner_in(&siblings)),
-            Some(vec![])
-        );
-        // The target is disabled but owns nothing visible.
-        assert_eq!(
-            modal_by_disabled_owner(1, &[(1, None)], |hwnd| hwnd != 1, |_| None),
-            None
-        );
+    fn an_owner_chain_past_the_bound_is_unobservable() {
+        // 2 -> 3 -> ... -> 40, never reaching the target or repeating.
+        let mut windows = vec![listed(1, Some(7), None, false)];
+        windows.extend((2..40).map(|id| listed(id, Some(8), Some(id + 1), false)));
+        windows.push(listed(40, Some(8), None, false));
+        assert_eq!(related_by_owner_chain(1, 7, &windows, None, lookup), None);
     }
 
     #[test]

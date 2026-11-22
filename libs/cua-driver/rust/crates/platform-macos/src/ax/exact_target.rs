@@ -825,15 +825,19 @@ unsafe fn read_surfaces(window: AXUIElementRef, surfaces: &mut Vec<AxSurface>) -
     use core_foundation::{base::TCFType, boolean::CFBoolean, string::CFString};
     AXUIElementSetMessagingTimeout(window, INTERACTION_AX_TIMEOUT_S);
     // AXModal: absent (unsupported or no value) is not modal; any other
-    // failure leaves the window's modality unknown.
+    // failure, or a value that is not a boolean, leaves the window's
+    // modality unknown.
     let attr = CFString::new("AXModal");
     let mut value: CFTypeRef = std::ptr::null();
     let err = AXUIElementCopyAttributeValue(window, attr.as_concrete_TypeRef(), &mut value);
     let modal = match err {
         super::bindings::kAXErrorSuccess if !value.is_null() => {
-            let modal = core_foundation::base::CFGetTypeID(value) == CFBoolean::type_id()
-                && bool::from(CFBoolean::wrap_under_get_rule(value as _));
+            let boolean = core_foundation::base::CFGetTypeID(value) == CFBoolean::type_id();
+            let modal = boolean && bool::from(CFBoolean::wrap_under_get_rule(value as _));
             CFRelease(value);
+            if !boolean {
+                return false;
+            }
             modal
         }
         super::bindings::kAXErrorSuccess

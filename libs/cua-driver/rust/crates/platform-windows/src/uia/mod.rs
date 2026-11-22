@@ -22,15 +22,18 @@ use windows::Win32::System::Variant::{VARIANT, VT_BOOL, VT_BSTR, VT_I4};
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationCacheRequest, IUIAutomationElement,
     IUIAutomationElementArray, IUIAutomationExpandCollapsePattern, IUIAutomationInvokePattern,
-    IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern, ToggleState_Off, ToggleState_On,
-    TreeScope, TreeScope_Children, TreeScope_Element, TreeScope_Subtree,
-    UIA_AutomationIdPropertyId, UIA_BoundingRectanglePropertyId, UIA_ControlTypePropertyId,
-    UIA_ExpandCollapsePatternId, UIA_HelpTextPropertyId, UIA_InvokePatternId,
-    UIA_IsEnabledPropertyId, UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId,
-    UIA_NamePropertyId, UIA_ProcessIdPropertyId, UIA_RangeValuePatternId, UIA_ScrollPatternId,
-    UIA_SelectionItemIsSelectedPropertyId, UIA_SelectionItemPatternId, UIA_TextPatternId,
-    UIA_TogglePatternId, UIA_ToggleToggleStatePropertyId, UIA_ValuePatternId,
-    UIA_ValueValuePropertyId,
+    IUIAutomationSelectionItemPattern, ToggleState_Off, ToggleState_On, TreeScope,
+    TreeScope_Children, TreeScope_Element, TreeScope_Subtree, UIA_AutomationIdPropertyId,
+    UIA_BoundingRectanglePropertyId, UIA_ControlTypePropertyId, UIA_ExpandCollapsePatternId,
+    UIA_HelpTextPropertyId, UIA_InvokePatternId, UIA_IsEnabledPropertyId,
+    UIA_IsExpandCollapsePatternAvailablePropertyId, UIA_IsInvokePatternAvailablePropertyId,
+    UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId,
+    UIA_IsRangeValuePatternAvailablePropertyId, UIA_IsScrollPatternAvailablePropertyId,
+    UIA_IsSelectionItemPatternAvailablePropertyId, UIA_IsTextPatternAvailablePropertyId,
+    UIA_IsTogglePatternAvailablePropertyId, UIA_IsValuePatternAvailablePropertyId,
+    UIA_NamePropertyId, UIA_ProcessIdPropertyId, UIA_SelectionItemIsSelectedPropertyId,
+    UIA_SelectionItemPatternId, UIA_ToggleToggleStatePropertyId, UIA_ValueValuePropertyId,
+    UIA_PROPERTY_ID,
 };
 
 pub mod fg_bypass;
@@ -543,7 +546,7 @@ unsafe fn pid_from_hwnd(hwnd: windows::Win32::Foundation::HWND) -> Option<u32> {
 /// the actual XAML tree is registered at the desktop root as a sibling
 /// element with the same `ProcessId`. We enumerate the root's children
 /// (filtered by `ProcessId == target_pid`) and walk descendants from there,
-/// reusing the caller's `cache_req` so the same properties + patterns get
+/// reusing the caller's `cache_req` so the same properties get
 /// pre-fetched as the primary path.
 #[allow(clippy::too_many_arguments)]
 unsafe fn walk_root_by_pid(
@@ -619,7 +622,7 @@ unsafe fn walk_root_by_pid(
         }
         // Match — pull a cached subtree from this element using the same
         // cache_req shape as the primary path so walk_cached_bounded sees the same
-        // properties + patterns.
+        // properties.
         let cached = match elem.BuildUpdatedCache(cache_req) {
             Ok(e) => e,
             Err(e) => {
@@ -703,14 +706,33 @@ unsafe fn cached_children(
     }
 }
 
-/// Cache request carrying every property and pattern the node projection
-/// reads. Callers choose the tree scope and filter.
+/// The action each pattern's availability property advertises, in row order.
+/// The walk caches these booleans rather than the pattern objects: the row
+/// needs only whether a pattern is supported, and caching a pattern makes the
+/// provider build and marshal a pattern object for every element that has it.
+const ACTION_AVAILABILITY: [(UIA_PROPERTY_ID, &str); 8] = [
+    (UIA_IsInvokePatternAvailablePropertyId, "invoke"),
+    (UIA_IsTogglePatternAvailablePropertyId, "toggle"),
+    (UIA_IsSelectionItemPatternAvailablePropertyId, "select"),
+    (UIA_IsExpandCollapsePatternAvailablePropertyId, "expand"),
+    (UIA_IsValuePatternAvailablePropertyId, "set_value"),
+    // RangeValuePattern is exposed by Sliders, ProgressBars, and other
+    // numeric-range controls. Without this entry the slider parent gets
+    // actions=[] → marked non-actionable → no `[N]` index in the flat tree,
+    // making the slider unaddressable by AutomationId.
+    (UIA_IsRangeValuePatternAvailablePropertyId, "set_value"),
+    (UIA_IsTextPatternAvailablePropertyId, "text"),
+    (UIA_IsScrollPatternAvailablePropertyId, "scroll"),
+];
+
+/// Cache request carrying every property the node projection reads. Callers
+/// choose the tree scope and filter.
 unsafe fn node_cache_request(
     automation: &IUIAutomation,
 ) -> windows::core::Result<(IUIAutomationCacheRequest, bool)> {
     let cache_req = automation.CreateCacheRequest()?;
     let mut complete = true;
-    for prop in &[
+    let properties = [
         UIA_ControlTypePropertyId,
         UIA_NamePropertyId,
         UIA_ValueValuePropertyId,
@@ -722,20 +744,12 @@ unsafe fn node_cache_request(
         UIA_BoundingRectanglePropertyId,
         UIA_ToggleToggleStatePropertyId,
         UIA_SelectionItemIsSelectedPropertyId,
-    ] {
-        complete &= cache_req.AddProperty(*prop).is_ok();
-    }
-    for pat in &[
-        UIA_InvokePatternId,
-        UIA_TogglePatternId,
-        UIA_SelectionItemPatternId,
-        UIA_ExpandCollapsePatternId,
-        UIA_ValuePatternId,
-        UIA_RangeValuePatternId,
-        UIA_TextPatternId,
-        UIA_ScrollPatternId,
-    ] {
-        complete &= cache_req.AddPattern(*pat).is_ok();
+    ];
+    for prop in properties
+        .into_iter()
+        .chain(ACTION_AVAILABILITY.map(|(prop, _)| prop))
+    {
+        complete &= cache_req.AddProperty(prop).is_ok();
     }
     Ok((cache_req, complete))
 }
@@ -1062,69 +1076,65 @@ fn read_cached_bounding_rect_full(
 }
 
 fn detect_cached_actions(element: &IUIAutomationElement, control_type: &str) -> Vec<String> {
-    let mut actions = Vec::new();
-    unsafe {
-        if element.GetCachedPattern(UIA_InvokePatternId).is_ok() {
-            actions.push("invoke".into());
-        }
-        if element.GetCachedPattern(UIA_TogglePatternId).is_ok() {
-            actions.push("toggle".into());
-        }
-        if element.GetCachedPattern(UIA_SelectionItemPatternId).is_ok() {
-            actions.push("select".into());
-        }
-        if element
-            .GetCachedPattern(UIA_ExpandCollapsePatternId)
-            .is_ok()
-        {
-            actions.push("expand".into());
-        }
-        if element.GetCachedPattern(UIA_ValuePatternId).is_ok() {
-            actions.push("set_value".into());
-        }
-        // RangeValuePattern is exposed by Sliders, ProgressBars, and other
-        // numeric-range controls. Without this entry the slider parent
-        // gets actions=[] → marked non-actionable → no `[N]` index in the
-        // flat tree, making the slider unaddressable by AutomationId.
-        if element.GetCachedPattern(UIA_RangeValuePatternId).is_ok() {
-            actions.push("set_value".into());
-        }
-        if element.GetCachedPattern(UIA_TextPatternId).is_ok() {
-            actions.push("text".into());
-        }
-        if element.GetCachedPattern(UIA_ScrollPatternId).is_ok() {
-            actions.push("scroll".into());
-        }
-    }
+    actions_from_availability(
+        |prop| read_cached_bool(element, prop) == Some(true),
+        control_type,
+    )
+}
+
+fn actions_from_availability(
+    available: impl Fn(UIA_PROPERTY_ID) -> bool,
+    control_type: &str,
+) -> Vec<String> {
+    let mut actions: Vec<String> = ACTION_AVAILABILITY
+        .iter()
+        .filter(|(prop, _)| available(*prop))
+        .map(|(_, action)| (*action).into())
+        .collect();
     if actions.is_empty() && control_type == "MenuItem" {
         // Some WPF MenuItem peers show up in ControlView with a usable name
-        // and bounding rectangle, but without cached Invoke/ExpandCollapse
-        // patterns. Index them anyway so click can retry live patterns and then
-        // fall back to the coordinate injector if UIA still reports no pattern.
+        // and bounding rectangle, but without Invoke/ExpandCollapse patterns.
+        // Index them anyway so click can retry live patterns and then fall
+        // back to the coordinate injector if UIA still reports no pattern.
         actions.push("invoke".into());
     }
     actions
 }
 
 fn read_cached_selected(element: &IUIAutomationElement) -> Option<bool> {
-    unsafe {
-        if let Ok(pattern) = element.GetCachedPattern(UIA_TogglePatternId) {
-            if let Ok(toggle) = pattern.cast::<IUIAutomationTogglePattern>() {
-                return match toggle.CachedToggleState() {
-                    Ok(state) if state == ToggleState_On => Some(true),
-                    Ok(state) if state == ToggleState_Off => Some(false),
-                    _ => None,
-                };
-            }
-        }
-        if let Ok(pattern) = element.GetCachedPattern(UIA_SelectionItemPatternId) {
-            if let Ok(selection) = pattern.cast::<IUIAutomationSelectionItemPattern>() {
-                return selection
-                    .CachedIsSelected()
-                    .ok()
-                    .map(|selected| selected.as_bool());
-            }
-        }
+    let available = |prop| read_cached_bool(element, prop) == Some(true);
+    let toggle_state = unsafe {
+        element
+            .GetCachedPropertyValue(UIA_ToggleToggleStatePropertyId)
+            .ok()
+            .filter(|variant| variant.vt() == VT_I4)
+            .map(|variant| variant.Anonymous.Anonymous.Anonymous.lVal)
+    };
+    selected_from_cached(
+        available(UIA_IsTogglePatternAvailablePropertyId),
+        toggle_state,
+        available(UIA_IsSelectionItemPatternAvailablePropertyId),
+        read_cached_bool(element, UIA_SelectionItemIsSelectedPropertyId),
+    )
+}
+
+/// Toggle state wins over selection, as for a toggle-and-select list item.
+/// An indeterminate toggle is unknown, not a fall-through to selection.
+fn selected_from_cached(
+    toggle_available: bool,
+    toggle_state: Option<i32>,
+    selection_available: bool,
+    is_selected: Option<bool>,
+) -> Option<bool> {
+    if toggle_available {
+        return match toggle_state {
+            Some(state) if state == ToggleState_On.0 => Some(true),
+            Some(state) if state == ToggleState_Off.0 => Some(false),
+            _ => None,
+        };
+    }
+    if selection_available {
+        return is_selected;
     }
     None
 }
@@ -1271,6 +1281,58 @@ mod tests {
             format_node_line(&enabled),
             "- [7] CheckBox \"Reset\" [id=chk-reset actions=[toggle]]"
         );
+    }
+
+    #[test]
+    fn actions_come_from_pattern_availability_in_row_order() {
+        let available = [
+            UIA_IsScrollPatternAvailablePropertyId,
+            UIA_IsRangeValuePatternAvailablePropertyId,
+            UIA_IsInvokePatternAvailablePropertyId,
+        ];
+        assert_eq!(
+            actions_from_availability(|prop| available.contains(&prop), "Button"),
+            ["invoke", "set_value", "scroll"]
+        );
+        assert_eq!(
+            actions_from_availability(|_| true, "Button"),
+            [
+                "invoke",
+                "toggle",
+                "select",
+                "expand",
+                "set_value",
+                "set_value",
+                "text",
+                "scroll"
+            ]
+        );
+        assert!(actions_from_availability(|_| false, "Button").is_empty());
+        assert_eq!(actions_from_availability(|_| false, "MenuItem"), ["invoke"]);
+    }
+
+    #[test]
+    fn selected_reads_toggle_state_before_selection() {
+        let on = Some(ToggleState_On.0);
+        let off = Some(ToggleState_Off.0);
+        let indeterminate = Some(2);
+        assert_eq!(
+            selected_from_cached(true, on, true, Some(false)),
+            Some(true)
+        );
+        assert_eq!(
+            selected_from_cached(true, off, true, Some(true)),
+            Some(false)
+        );
+        assert_eq!(
+            selected_from_cached(true, indeterminate, true, Some(true)),
+            None
+        );
+        assert_eq!(
+            selected_from_cached(false, on, true, Some(false)),
+            Some(false)
+        );
+        assert_eq!(selected_from_cached(false, on, false, Some(true)), None);
     }
 
     #[test]

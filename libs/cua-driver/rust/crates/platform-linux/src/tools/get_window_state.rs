@@ -239,10 +239,12 @@ fn window_overlays(pid: u32, xid: u64, observe_relations: bool) -> WindowOverlay
     // unobservable rather than reading as "nothing related".
     let own_windows = crate::x11::try_list_windows(Some(pid));
     let cross_pid = crate::x11::try_list_cross_pid_transient_windows(pid);
-    let listed = own_windows.is_ok() && cross_pid.is_ok();
+    // A cross-pid dialog dropped by a failed `WM_TRANSIENT_FOR` read hides
+    // one too; the overlays below still list what was read.
+    let listed = own_windows.is_ok() && matches!(cross_pid, Ok((_, true)));
     let (own_windows, cross_pid) = (
         own_windows.unwrap_or_default(),
-        cross_pid.unwrap_or_default(),
+        cross_pid.map(|(windows, _)| windows).unwrap_or_default(),
     );
     if observe_relations && listed {
         let active = crate::x11::active_window();

@@ -512,13 +512,18 @@ pub fn list_cross_pid_transient_windows(pid: u32) -> Vec<WindowInfo> {
 }
 
 /// [`list_cross_pid_transient_windows`], with a failed read kept apart from
-/// an empty list.
-pub fn try_list_cross_pid_transient_windows(pid: u32) -> Result<Vec<WindowInfo>> {
-    Ok(list_cross_pid_transient_windows_with(
-        pid,
-        try_list_windows(None)?,
-        transient_for,
-    ))
+/// an empty list: `Err` when the window list could not be read, and `false`
+/// beside the windows when a `WM_TRANSIENT_FOR` read failed, which may have
+/// left out a dialog the list would otherwise hold.
+pub fn try_list_cross_pid_transient_windows(pid: u32) -> Result<(Vec<WindowInfo>, bool)> {
+    let complete = std::cell::Cell::new(true);
+    let windows = list_cross_pid_transient_windows_with(pid, try_list_windows(None)?, |xid| {
+        try_transient_for(xid).unwrap_or_else(|_| {
+            complete.set(false);
+            None
+        })
+    });
+    Ok((windows, complete.get()))
 }
 
 fn list_cross_pid_transient_windows_with(

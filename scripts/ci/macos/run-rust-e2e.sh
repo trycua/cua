@@ -406,6 +406,9 @@ EOF
     run_test installed-app-textedit-hotkey-sibling cargo test -p cua-driver-e2e --test installed_app_textedit_macos_test -- \
       --ignored --exact foreground_window_hotkey_reaches_an_unfocused_sibling_of_the_frontmost_app \
       --nocapture --test-threads=1
+    run_test installed-app-textedit-type-text-sibling cargo test -p cua-driver-e2e --test installed_app_textedit_macos_test -- \
+      --ignored --exact foreground_window_type_text_never_lands_in_the_focused_sibling \
+      --nocapture --test-threads=1
     run_test installed-app-calculator env -u CUA_E2E_RECORDINGS_ROOT \
       cargo test -p cua-driver-e2e --test installed_app_calculator_macos_test -- \
       --ignored --nocapture --test-threads=1

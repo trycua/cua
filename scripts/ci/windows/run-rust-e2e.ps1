@@ -42,10 +42,6 @@ if ($null -eq $ffmpeg -or $null -eq $ffprobe) {
 }
 
 & (Join-Path $scriptDir "verify-user-session.ps1")
-# A system "temporary paging file" notice can appear mid-lane and swallow
-# foreground typing; dismiss it for the whole run. See the script header.
-. (Join-Path $scriptDir "dismiss-system-dialogs.ps1")
-$systemDialogGuard = Start-SystemDialogGuard -LogPath (Join-Path $artifactDir "system-dialogs.log")
 if ($RequireGui) { $env:CUA_REQUIRE_GUI = "1" }
 
 # Harness hosts named by CUA_E2E_HARNESS_FILTER (the Rust test reads the same

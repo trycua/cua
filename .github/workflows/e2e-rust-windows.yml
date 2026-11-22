@@ -106,6 +106,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ needs.source.outputs.sha }}
+      - uses: ./.github/actions/windows-pagefile
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
       # Own family for the same reason as the Linux shared leg.
       - uses: ./.github/actions/rust-cache
@@ -152,6 +153,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ needs.source.outputs.sha }}
+      - uses: ./.github/actions/windows-pagefile
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
       - uses: ./.github/actions/rust-cache
         with:
@@ -166,9 +168,6 @@ jobs:
       - name: Ensure FFmpeg for trajectory video
         shell: pwsh
         run: .\scripts\ci\windows\setup-ffmpeg.ps1
-      - name: Self-test the system dialog guard
-        shell: pwsh
-        run: .\scripts\ci\windows\dismiss-system-dialogs.ps1 -SelfTest
       - name: Run native Rust harnesses
         shell: pwsh
         env:
@@ -200,6 +199,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ needs.source.outputs.sha }}
+      - uses: ./.github/actions/windows-pagefile
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
       - uses: ./.github/actions/rust-cache
         with:
@@ -245,6 +245,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ needs.source.outputs.sha }}
+      - uses: ./.github/actions/windows-pagefile
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
       - uses: ./.github/actions/rust-cache
         with:

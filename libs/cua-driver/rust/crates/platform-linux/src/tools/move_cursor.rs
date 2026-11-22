@@ -99,6 +99,7 @@ impl Tool for MoveCursorTool {
         let x = args.f64_or("x", 0.0);
         let y = args.f64_or("y", 0.0);
         let cursor_id = resolve_cursor_key(&args);
+        crate::overlay::send_command_for(cursor_id.clone(), cursor_overlay::OverlayCommand::Unpin);
         // End pointing upper-left (45°) — matches Swift's
         // `AgentCursor.animateAndWait(endAngleDegrees: 45)` convention so the
         // overlay arrow settles to the natural macOS-style pose.

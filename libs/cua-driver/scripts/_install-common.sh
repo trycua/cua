@@ -54,7 +54,7 @@ CUA_DRIVER_VALUE_FLAGS=" --cursor-theme --cursor-reduced-motion --glide-ms --dwe
 --pid-file --expected-pid --type --host-bundle-id --pid --strategy \
 --window-id --session --profile-mode --profile-name --archive \
 --image --capture --experimental-pip-geometry --style --timing \
---effects "
+--effects --server --label "
 
 # Value flags the CLI has since removed. A daemon an older release started
 # can still be running with one on its command line, and it must still be

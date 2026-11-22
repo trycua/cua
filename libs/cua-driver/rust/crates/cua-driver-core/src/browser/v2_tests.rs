@@ -30,6 +30,7 @@ use super::platform::{
 };
 use super::pointer::BrowserPointerTool;
 use super::refusal::BrowserRefusal;
+use super::store::parse_ref;
 use super::tools::{
     browser_protected_resource_scope, BrowserClickTool, BrowserDialogTool, BrowserMotionPolicyTool,
     BrowserNavigateTool, BrowserPrepareTool, BrowserSelectTool, BrowserTypeTool,
@@ -3313,6 +3314,54 @@ async fn semantic_continuation_token_serves_only_one_concurrent_page() {
         &right
     };
     assert_eq!(refused["refusal"]["code"], "browser_ref_stale");
+}
+
+#[tokio::test]
+async fn semantic_ancestor_scope_refuses_a_source_superseded_by_a_concurrent_snapshot() {
+    let f = fixture_with(|state| {
+        state.semantic_scoped_rows = true;
+        state.oopif_present = false;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let seeded = semantic_snapshot_with(&f, &target, &tab, json!({"query": "0.19.89"})).await;
+    let source_ref = seeded["refs"]
+        .as_array()
+        .and_then(|refs| refs.iter().find(|entry| entry["role"] == "link"))
+        .and_then(|entry| entry["ref"].as_str())
+        .expect("version link ref")
+        .to_owned();
+    let snapshot_of = |response: &Value| {
+        response["refs"][0]["ref"]
+            .as_str()
+            .and_then(parse_ref)
+            .map(|(snapshot, _)| snapshot)
+    };
+
+    let (refresh, scoped) = tokio::join!(
+        semantic_snapshot_with(&f, &target, &tab, json!({"query": "0.19.89"})),
+        semantic_snapshot_with(
+            &f,
+            &target,
+            &tab,
+            json!({
+                "scope_ref": source_ref,
+                "scope_ancestor_role": "row",
+                "query": "View release options"
+            }),
+        ),
+    );
+    assert_eq!(refresh["status"], "ok", "{refresh}");
+    if scoped["status"] == "ok" {
+        // Served only if it was stored before the refresh superseded its source.
+        assert!(
+            snapshot_of(&scoped) < snapshot_of(&refresh),
+            "{scoped} {refresh}"
+        );
+    } else {
+        assert_eq!(scoped["refusal"]["code"], "browser_ref_stale", "{scoped}");
+        assert_eq!(scoped["refusal"]["detail"]["reason"], "source_changed");
+    }
 }
 
 #[tokio::test]

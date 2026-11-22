@@ -57,8 +57,8 @@ use super::semantic::{
     SemanticScopeFailure, DEFAULT_SEMANTIC_NODE_BUDGET, SEMANTIC_COMPUTED_STYLES,
 };
 use super::store::{
-    format_ref, BrowserStore, BrowserVisibility, FrameIdentity, FrameKind, FrameRef, RefEntry,
-    SemanticContinuation, SnapshotRecord, TabRecord, TargetRecord,
+    format_ref, parse_ref, BrowserStore, BrowserVisibility, FrameIdentity, FrameKind, FrameRef,
+    RefEntry, SemanticContinuation, SnapshotRecord, TabRecord, TargetRecord,
 };
 use super::types::{
     BindingQuality, BrowserClassification, BrowserEngineFamily, BrowserProcessRole,
@@ -3133,8 +3133,27 @@ impl BrowserEngine {
             0,
         );
         let continuation_token = outcome.continuation.clone();
+        // The collection above awaited, so a concurrent snapshot may have
+        // superseded the one the ancestor source ref came from. Store this
+        // snapshot only while that ref is still live.
+        let source_ref = scope_entry
+            .as_ref()
+            .filter(|_| scope_anchor.is_some())
+            .and_then(|(external, _)| parse_ref(external));
+        let mut source_live = true;
         self.store
             .update_target(session, target_id, |stored_target| {
+                if let Some((snap, idx)) = source_ref {
+                    source_live = stored_target
+                        .tabs
+                        .get(tab_id)
+                        .and_then(|tab| tab.snapshots.get(&snap))
+                        .filter(|snapshot| snapshot.generation == stored_target.generation)
+                        .is_some_and(|snapshot| snapshot.refs.contains_key(&idx));
+                    if !source_live {
+                        return;
+                    }
+                }
                 if let Some(stored_tab) = stored_target.tabs.get_mut(tab_id) {
                     stored_tab.url = url.clone();
                     stored_tab.title = title;
@@ -3171,6 +3190,15 @@ impl BrowserEngine {
                     );
                 }
             });
+        if let (false, Some((external, _)), Some(role)) =
+            (source_live, &scope_entry, scope_ancestor_role)
+        {
+            return Err(semantic_scope_refusal(
+                external,
+                role,
+                SemanticScopeFailure::SourceChanged,
+            ));
+        }
         Ok(outcome)
     }
 }

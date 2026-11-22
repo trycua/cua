@@ -784,7 +784,7 @@ Effect: mutating. Platforms: macOS.
 | <span id="agent_display--display_id"></span>`display_id` | `integer` |  | remove: id returned by create or list. |
 | <span id="agent_display--height"></span>`height` | `integer` |  | create: pixels, default 1080. |
 | <span id="agent_display--name"></span>`name` | `string` |  | create: display name, default "Agent Desktop". |
-| <span id="agent_display--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
+| <span id="agent_display--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 | <span id="agent_display--width"></span>`width` | `integer` |  | create: pixels, default 1920. |
 
 **Example arguments**

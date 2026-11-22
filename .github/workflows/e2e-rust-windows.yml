@@ -166,6 +166,9 @@ jobs:
       - name: Ensure FFmpeg for trajectory video
         shell: pwsh
         run: .\scripts\ci\windows\setup-ffmpeg.ps1
+      - name: Self-test the system dialog guard
+        shell: pwsh
+        run: .\scripts\ci\windows\dismiss-system-dialogs.ps1 -SelfTest
       - name: Run native Rust harnesses
         shell: pwsh
         env:

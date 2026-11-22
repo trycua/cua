@@ -185,13 +185,17 @@ pub fn related_by_owner_chain(
 /// `MessageBox`, WPF `ShowDialog`) disables windows while it runs: the
 /// dialog's owner, or every window of its UI thread. So an enabled target is
 /// blocked by nothing, and a disabled one by the only related window still
-/// enabled, whichever window owns it. With none or several enabled, Win32
-/// does not say which one blocks: `None`, so the caller reports the relation
-/// as unobservable.
+/// enabled that a modal loop could have disabled it for: one the target
+/// owns, or one on the target's UI thread, whichever window owns it. An
+/// enabled window on another thread with no owner link to the target is no
+/// evidence: an app can disable a window for its own reasons. With none or
+/// several candidates, Win32 does not say which one blocks: `None`, so the
+/// caller reports the relation as unobservable.
 pub fn block_disabled_target(
     mut related: Vec<RelatedWindowFacts>,
     target_enabled: bool,
     enabled: impl Fn(u64) -> bool,
+    on_target_thread: impl Fn(u64) -> bool,
 ) -> InteractionFacts {
     for window in &mut related {
         window.modal = false;
@@ -199,9 +203,10 @@ pub fn block_disabled_target(
     if target_enabled {
         return Some(related);
     }
-    let mut live = related
-        .iter_mut()
-        .filter(|window| enabled(window.window_id));
+    let mut live = related.iter_mut().filter(|window| {
+        enabled(window.window_id)
+            && (window.owner == WindowOwnership::Target || on_target_thread(window.window_id))
+    });
     let (Some(blocker), None) = (live.next(), live.next()) else {
         return None;
     };
@@ -597,17 +602,18 @@ mod tests {
             window(4, WindowOwnership::Target, false, false),
         ];
         let enabled = |hwnd: u64| hwnd == 3;
-        let facts = block_disabled_target(related.clone(), false, enabled).unwrap();
+        let same_thread = |_: u64| true;
+        let facts = block_disabled_target(related.clone(), false, enabled, same_thread).unwrap();
         let context = interaction_context(&Some(facts));
         assert_eq!(context["status"], "blocked");
         assert_eq!(context["related_surfaces"][0]["relation"], "blocks_target");
         assert_eq!(context["next_call"]["arguments"]["window_id"], 3);
         // An enabled target is blocked by nothing.
-        let facts = block_disabled_target(related.clone(), true, enabled).unwrap();
+        let facts = block_disabled_target(related.clone(), true, enabled, same_thread).unwrap();
         assert!(facts.iter().all(|window| !window.modal));
-        // The target's own dialog stays its modal child.
+        // The target's own dialog stays its modal child, on any thread.
         let own = vec![window(5, WindowOwnership::Target, false, true)];
-        let facts = block_disabled_target(own, false, |hwnd| hwnd == 5).unwrap();
+        let facts = block_disabled_target(own, false, |hwnd| hwnd == 5, |_| false).unwrap();
         assert_eq!(
             interaction_context(&Some(facts))["related_surfaces"][0]["relation"],
             "modal_child"
@@ -621,10 +627,29 @@ mod tests {
             window(3, WindowOwnership::Target, false, false),
         ];
         assert_eq!(
-            block_disabled_target(related.clone(), false, |_| true),
+            block_disabled_target(related.clone(), false, |_| true, |_| true),
             None
         );
-        assert_eq!(block_disabled_target(related, false, |_| false), None);
+        assert_eq!(
+            block_disabled_target(related, false, |_| false, |_| true),
+            None
+        );
+    }
+
+    #[test]
+    fn an_enabled_window_on_another_thread_does_not_block_a_disabled_target() {
+        // The app disabled window 1 itself; 2 is a modeless window of
+        // another UI thread with no owner link to 1.
+        let related = vec![window(2, WindowOwnership::Unowned, false, true)];
+        assert_eq!(
+            block_disabled_target(related.clone(), false, |_| true, |_| false),
+            None
+        );
+        let other_window = vec![window(3, WindowOwnership::OtherWindow, false, true)];
+        assert_eq!(
+            block_disabled_target(other_window, false, |_| true, |_| false),
+            None
+        );
     }
 
     #[test]

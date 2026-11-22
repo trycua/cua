@@ -573,12 +573,19 @@ pub fn interaction_facts(
             && window.owner == cua_driver_core::window_inspection::WindowOwnership::Unowned
         {
             let group = read_window_group(&conn, u32::try_from(window.window_id).ok()?).ok()?;
-            if target_group.is_some() && group.is_some() && group != target_group {
+            if !same_window_group(target_group, group)? {
                 window.owner = cua_driver_core::window_inspection::WindowOwnership::OtherWindow;
             }
         }
     }
     Some(related)
+}
+
+/// Whether a group-modal window and the target share a `WM_HINTS` window
+/// group. `None` when either names none: membership cannot be established,
+/// so whether the modal blocks the target is unobservable.
+fn same_window_group(target: Option<u32>, modal: Option<u32>) -> Option<bool> {
+    Some(target? == modal?)
 }
 
 /// The `WM_HINTS` window group of a client, `None` when it names none.
@@ -1070,6 +1077,15 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_group_modal_blocks_only_a_target_known_to_share_its_group() {
+        assert_eq!(same_window_group(Some(7), Some(7)), Some(true));
+        assert_eq!(same_window_group(Some(7), Some(8)), Some(false));
+        assert_eq!(same_window_group(None, Some(7)), None);
+        assert_eq!(same_window_group(Some(7), None), None);
+        assert_eq!(same_window_group(None, None), None);
+    }
 
     #[test]
     fn the_focused_ancestor_is_the_listed_client_and_a_failed_read_is_an_error() {

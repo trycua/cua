@@ -360,7 +360,7 @@ fn window_info_by_handle(hwnd: u64) -> Option<WindowInfo> {
 /// window `target`: every top-level window, of any process, with its
 /// `GW_OWNER` chain, resolved by `related_by_owner_chain` (a dialog can run
 /// in another process). What blocks the target comes from
-/// `block_disabled_target`. `None` when the windows cannot be enumerated,
+/// `block_disabled_target`, with the target's UI thread as its evidence. `None` when the windows cannot be enumerated,
 /// the blocker cannot be established, or a modal or focused window has no
 /// title to address it by. Blocking.
 pub(crate) fn interaction_facts(
@@ -388,7 +388,10 @@ pub(crate) fn interaction_facts(
     let related = related_by_owner_chain(target, pid, &listed, Some(foreground), |hwnd| {
         Some((window_owner(hwnd), window_pid(hwnd)))
     })?;
-    let related = block_disabled_target(related, enabled(target), enabled)?;
+    let target_thread = window_thread(target)?;
+    let related = block_disabled_target(related, enabled(target), enabled, |hwnd| {
+        window_thread(hwnd) == Some(target_thread)
+    })?;
     // get_window_state addresses titled windows only.
     keep_addressable(related, |hwnd| window_info_by_handle(hwnd).is_some())
 }
@@ -406,6 +409,12 @@ fn window_pid(hwnd: u64) -> Option<u32> {
     let mut pid = 0;
     unsafe { GetWindowThreadProcessId(HWND(hwnd as *mut _), Some(&mut pid)) };
     (pid != 0).then_some(pid)
+}
+
+/// The UI thread that created a window; `None` when the window is gone.
+fn window_thread(hwnd: u64) -> Option<u32> {
+    let thread = unsafe { GetWindowThreadProcessId(HWND(hwnd as *mut _), None) };
+    (thread != 0).then_some(thread)
 }
 
 /// Every top-level HWND, in z-order, beside whether it is visible and not

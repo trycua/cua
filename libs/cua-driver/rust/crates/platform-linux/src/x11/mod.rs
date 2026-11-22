@@ -466,8 +466,13 @@ pub fn focused_window_among(candidates: &[u64]) -> Option<u64> {
 /// `WM_TRANSIENT_FOR` of a toplevel: the window it is a dialog of. `None`
 /// when unset or pointing at the root (group-transient utility windows).
 pub fn transient_for(xid: u64) -> Option<u64> {
-    let xid = u32::try_from(xid).ok()?;
-    let (conn, screen_num) = RustConnection::connect(None).ok()?;
+    try_transient_for(xid).ok().flatten()
+}
+
+/// [`transient_for`], with a failed read kept apart from an unset property.
+pub fn try_transient_for(xid: u64) -> Result<Option<u64>> {
+    let xid = u32::try_from(xid).map_err(|_| anyhow::anyhow!("window_id is out of X11 range"))?;
+    let (conn, screen_num) = RustConnection::connect(None)?;
     let root = conn.setup().roots[screen_num].root;
     let reply = conn
         .get_property(
@@ -477,12 +482,13 @@ pub fn transient_for(xid: u64) -> Option<u64> {
             AtomEnum::WINDOW,
             0,
             1,
-        )
-        .ok()?
-        .reply()
-        .ok()?;
-    let owner = reply.value32()?.next()?;
-    (owner != 0 && owner != root).then_some(u64::from(owner))
+        )?
+        .reply()?;
+    Ok(reply
+        .value32()
+        .and_then(|mut owners| owners.next())
+        .filter(|&owner| owner != 0 && owner != root)
+        .map(u64::from))
 }
 
 /// Windows NOT owned by `pid` whose `WM_TRANSIENT_FOR` chain (bounded to
@@ -657,23 +663,22 @@ pub fn close_window(xid: u64, pid: u32) -> Result<()> {
 /// `_NET_WM_STATE` carries `_NET_WM_STATE_MODAL`: the dialog blocks input to
 /// the window it is transient for.
 pub fn window_is_modal(xid: u64) -> bool {
-    let Ok(xid) = u32::try_from(xid) else {
-        return false;
-    };
-    let Ok((conn, _)) = RustConnection::connect(None) else {
-        return false;
-    };
-    let (Ok(state_atom), Ok(modal_atom)) = (
-        get_atom(&conn, "_NET_WM_STATE"),
-        get_atom(&conn, "_NET_WM_STATE_MODAL"),
-    ) else {
-        return false;
-    };
-    conn.get_property(false, xid, state_atom, AtomEnum::ATOM, 0, 64)
-        .ok()
-        .and_then(|cookie| cookie.reply().ok())
-        .and_then(|reply| reply.value32().map(|atoms| atoms.collect::<Vec<_>>()))
-        .is_some_and(|atoms| atoms.contains(&modal_atom))
+    try_window_is_modal(xid).unwrap_or(false)
+}
+
+/// [`window_is_modal`], with a failed read kept apart from an unset
+/// `_NET_WM_STATE`.
+pub fn try_window_is_modal(xid: u64) -> Result<bool> {
+    let xid = u32::try_from(xid).map_err(|_| anyhow::anyhow!("window_id is out of X11 range"))?;
+    let (conn, _) = RustConnection::connect(None)?;
+    let state_atom = get_atom(&conn, "_NET_WM_STATE")?;
+    let modal_atom = get_atom(&conn, "_NET_WM_STATE_MODAL")?;
+    let reply = conn
+        .get_property(false, xid, state_atom, AtomEnum::ATOM, 0, 64)?
+        .reply()?;
+    Ok(reply
+        .value32()
+        .is_some_and(|mut atoms| atoms.any(|atom| atom == modal_atom)))
 }
 
 /// `_NET_WM_WINDOW_TYPE` carries `_NET_WM_WINDOW_TYPE_SPLASH`: a startup

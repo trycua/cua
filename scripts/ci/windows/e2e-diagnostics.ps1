@@ -45,6 +45,21 @@ function Get-ForegroundInfo {
     return @($sb.ToString(), $fgPid, $name)
 }
 
+# Read-only page file state. TempPageFile is the documented Win32_PageFileUsage
+# property mapped to HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\
+# Memory Management\TempPageFile: true means Windows created a temporary page
+# file because of a configuration problem at boot, which is what the
+# "Windows created a temporary paging file" notice reports.
+function Get-PageFileState {
+    $mm = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management"
+    $reg = Get-ItemProperty $mm -ErrorAction SilentlyContinue
+    $usage = @(Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue |
+        ForEach-Object { "{0} alloc={1}MB temp={2}" -f $_.Name, $_.AllocatedBaseSize, $_.TempPageFile })
+    $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
+    "PagingFiles=[$($reg.PagingFiles -join ';')] TempPageFile=$($reg.TempPageFile) " +
+        "AutomaticManagedPagefile=$($cs.AutomaticManagedPagefile) usage=[$($usage -join '; ')]"
+}
+
 function Write-Sample {
     $c = Get-Counter -Counter '\Memory\Committed Bytes', '\Memory\Commit Limit', '\Memory\Available MBytes' -ErrorAction SilentlyContinue
     $v = @{}
@@ -70,6 +85,7 @@ switch ($Action) {
     "Start" {
         New-Item -ItemType Directory -Force $out, $stateDir | Out-Null
         (Get-Date).ToUniversalTime().ToString("o") | Set-Content $startFile
+        Write-Host "Page file state at job start: $(Get-PageFileState)"
         $proc = Start-Process pwsh -PassThru -WindowStyle Hidden -ArgumentList @(
             "-NoProfile", "-File", $MyInvocation.MyCommand.Definition,
             "-Action", "Sample", "-OutputDirectory", $OutputDirectory, "-IntervalSeconds", $IntervalSeconds
@@ -101,6 +117,7 @@ switch ($Action) {
             @{ n = "private_mb"; e = { [math]::Round($_.PrivateMemorySize64 / 1MB) } }
         $procs | Export-Csv (Join-Path $out "top-processes.csv") -NoTypeInformation -Encoding utf8
         Write-Host "::group::E2E failure diagnostics"
+        Write-Host "Page file state at failure: $(Get-PageFileState)"
         Write-Host "System events since $($since.ToString('o')): $($events.Count)"
         $events | Where-Object { $_.ProviderName -match "Resource-Exhaustion|Wininit|MMC|Memory|Kernel-Power|Ntfs|disk" -or $_.LevelDisplayName -in "Error", "Warning" } |
             Select-Object -First 25 | ForEach-Object {

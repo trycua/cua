@@ -114,20 +114,25 @@ fn owning_exe_basename(hwnd: HWND) -> Option<String> {
     Some(name)
 }
 
-/// Names the current foreground window (title, pid, owning exe) so a stalled
-/// text delivery says which foreign window, such as a system modal, holds focus.
-fn describe_foreground() -> String {
-    let hwnd = unsafe { GetForegroundWindow() };
+/// Names a window as `<title> (<process>)` so a refusal says which foreign
+/// window, such as a system modal, holds the foreground.
+fn window_label(hwnd: HWND) -> String {
     if hwnd.0.is_null() {
         return "no foreground window".to_string();
     }
     let mut title = [0u16; 256];
     let n = unsafe { GetWindowTextW(hwnd, &mut title) };
     let title = String::from_utf16_lossy(&title[..n.max(0) as usize]);
-    let mut pid: u32 = 0;
-    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
     let exe = owning_exe_basename(hwnd).unwrap_or_else(|| "unknown process".to_string());
-    format!("title {title:?}, pid {pid}, process {exe}")
+    format!("{title} ({exe})")
+}
+
+fn foreign_foreground_error(actual: HWND, detail: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "foreign window holds the foreground: {label}; {detail} Nothing was retried; the \
+         foreground owner must be closed or dismissed before the rest can be sent.",
+        label = window_label(actual),
+    )
 }
 
 /// `true` iff the given HWND should bypass the PostMessage keyboard
@@ -672,13 +677,14 @@ pub fn send_text_synthesized_paced_after_focus(
                 let actual = GetForegroundWindow();
                 if !foreground_matches_target_or_owned_window(ft, actual.0 as usize as u64) {
                     *turn = TypingTurn::Lost;
-                    bail!(
-                        "foreground_lost: foreground moved to HWND {h:?} after {k} of {n} \
-                         text units were read; the remaining {remaining} were not sent. \
-                         Nothing was retried; inspect the target before sending the rest.",
-                        h = actual.0,
-                        remaining = n - k,
-                    );
+                    return Err(foreign_foreground_error(
+                        actual,
+                        &format!(
+                            "{k} of {n} text units were read and the remaining {remaining} were \
+                             not sent.",
+                            remaining = n - k,
+                        ),
+                    ));
                 }
                 let events = batch_events(batch);
                 let read = att.send_and_await_read(&events, Duration::from_secs(2));
@@ -700,13 +706,30 @@ pub fn send_text_synthesized_paced_after_focus(
                          daemon is).",
                         total = events.len()
                     ),
-                    UnitRead::Stalled => bail!(
-                        "text_delivery_stalled: the target did not read text units {first}..{last} \
-                         of {n} within 2000 ms; {k} earlier units were read. Those units were \
-                         inserted and may still appear in the target. Nothing was retried; \
-                         inspect the target before sending the rest. Foreground window now: {fg}.",
-                        fg = describe_foreground(),
-                    ),
+                    UnitRead::Stalled => {
+                        // A stall with a foreign window in front is that window
+                        // swallowing the input, not a slow target: name it.
+                        let actual = GetForegroundWindow();
+                        if !foreground_matches_target_or_owned_window(ft, actual.0 as usize as u64)
+                        {
+                            return Err(foreign_foreground_error(
+                                actual,
+                                &format!(
+                                    "the target did not read text units {first}..{last} of {n} \
+                                     within 2000 ms; {k} earlier units were read. Those units \
+                                     were inserted and may still appear in another window."
+                                ),
+                            ));
+                        }
+                        bail!(
+                            "text_delivery_stalled: the target did not read text units \
+                             {first}..{last} of {n} within 2000 ms; {k} earlier units were read. \
+                             Those units were inserted and may still appear in the target. \
+                             Nothing was retried; inspect the target before sending the rest. \
+                             Foreground window now: {fg}.",
+                            fg = window_label(actual),
+                        )
+                    }
                 }
                 if delay_ms > 0 && last < n {
                     sleep(Duration::from_millis(delay_ms));

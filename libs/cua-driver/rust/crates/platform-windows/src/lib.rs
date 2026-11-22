@@ -145,6 +145,23 @@ pub mod wgc;
 #[cfg(target_os = "windows")]
 pub mod launch_uwp;
 
+/// Hold the process MTA open for the rest of the process (#2298).
+///
+/// Tool calls join and leave the MTA on short-lived threads, and windows-rs
+/// caches agile WinRT factories (the WGC capture pool statics among them) in
+/// process statics. When the last member thread left, COM tore the MTA down
+/// and unloaded those factories' DLLs, so the next capture faulted on a
+/// dangling vtable. The usage cookie is never released.
+#[cfg(target_os = "windows")]
+pub(crate) fn keep_mta_alive() {
+    static HELD: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    HELD.get_or_init(|| {
+        if let Err(e) = unsafe { windows::Win32::System::Com::CoIncrementMTAUsage() } {
+            tracing::warn!("CoIncrementMTAUsage failed: {e}");
+        }
+    });
+}
+
 pub fn register_tools() -> ToolRegistry {
     tools::build_registry(false)
 }

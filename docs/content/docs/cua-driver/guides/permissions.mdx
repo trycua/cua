@@ -279,19 +279,21 @@ allow:
 `constraints` check the arguments the caller sent. A `pid` or `window_id`
 there is a number the caller chose, so it cannot prove which app an action
 reaches. A rule's `target` block checks what the driver attested instead: it
-reads the window's owner, the process instance, and the installed app from the
-operating system, and evaluates the rule on that.
+reads the window's owner and that process's executable from the operating
+system, and evaluates the rule on that.
 
 ```yaml test="config" id="yaml-config-policy-target"
 allow:
   rules:
     - tool: click
       target:                  # driver-attested, never caller input
-        bundle_id: { allowed: [com.apple.TextEdit] }
+        executable:
+          allowed: [/System/Applications/TextEdit.app/Contents/MacOS/TextEdit]
     - tool: type_text
       target:
         kind: { allowed: [window] }   # an exact window, not whichever has focus
-        bundle_id: { allowed: [com.apple.TextEdit] }
+        executable:
+          allowed: [/System/Applications/TextEdit.app/Contents/MacOS/TextEdit]
 ```
 
 The attested target has these fields. A field the platform cannot attest is
@@ -302,8 +304,12 @@ absent, and a constraint on an absent field fails unless it sets
 |---|---|
 | `kind` | `window` (the call names a window, or an `element_token` from a window's snapshot), `application` (a `pid` alone; the platform picks its window), or `desktop` (no app, so app fields are absent) |
 | `pid`, `window_id` | The window's owner as the OS reports it, and the window |
-| `executable`, `process_start_time` | The process instance, read from the OS for that pid |
-| `bundle_id`, `app_name`, `launch_path` | The app as `list_apps` reports it: a bundle id on macOS, an XDG desktop file id on Linux, a package or Start-menu identity on Windows. Windows pairs an unpackaged process with its Start-menu entry by file name only, so constrain `executable` there |
+| `executable`, `process_start_time` | The process instance, read from the OS for that pid. On Windows a packaged app's window belongs to `ApplicationFrameHost.exe`; the driver reports the hosted app's process instead |
+
+App names and bundle ids are not attested fields. `list_apps` matches running
+processes to installed apps by executable or command-line name on Linux and
+Windows, so its names identify what to launch, not which process a window
+belongs to. Use `executable`, with `pattern` for a path that varies.
 
 `target` applies to `click`, `double_click`, `right_click`, `drag`, `scroll`,
 `move_cursor`, `mouse_button_down`, `mouse_button_up`, `mouse_drag`,
@@ -315,15 +321,15 @@ tool, stops the daemon from starting.
 Before it checks the policy, the driver refuses with
 `target_identity_unavailable` when the named window is closed or belongs to
 another pid, an `element_token` names no live snapshot window, or the process
-cannot be identified. After consent and admission, immediately before the
-platform tool runs, it attests the target again and refuses with
-`target_identity_changed` if anything differs, for example a pid reused by a
+cannot be identified. After consent, once the call holds its input lane and
+just before the platform tool runs, it attests the target again and refuses
+with `target_identity_changed` if anything differs, for example a pid reused by a
 new process. A window or process that disappeared by then refuses with
 `target_identity_unavailable`. The OS can still change focus or close a window
 between that last check and input delivery; the check narrows that window,
 it cannot close it. A `pid`-only keyboard action types into the app's focused
 window, so require `kind: window` when the exact window matters. A
-`tools.allow` entry for the same tool allows every target.
+`allow.tools` entry for the same tool allows every target.
 
 ```bash test="cli-shape" id="cua-driver-serve"
 CUA_DRIVER_POLICY_FILE=~/.cua-driver/policy.yaml cua-driver serve
@@ -357,7 +363,7 @@ allow if {
     input.tool == "type_text"
     count(input.arguments.text) <= 500
     input.target.kind == "window"
-    input.target.bundle_id == "com.apple.TextEdit"
+    input.target.executable == "/System/Applications/TextEdit.app/Contents/MacOS/TextEdit"
 }
 ```
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.59.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.59.2...cua-driver-rs-v0.59.3) (2026-11-22)
+
+
+### Bug Fixes
+
+* **cua-driver:** attach to the Windows input queue only after the target processed its activation ([#8550](https://github.com/trycua/cua/issues/8550)) ([1491dec](https://github.com/trycua/cua/commit/1491deca00862100cfaa8e87d1229e8389a32393))
+* **cua-driver:** confirm dom_event browser clicks from the page changes their handlers cause ([#8138](https://github.com/trycua/cua/issues/8138)) ([03f73fb](https://github.com/trycua/cua/commit/03f73fbaf8b8e4a593ca7a3d52801d19666c90d7))
+* **cua-driver:** do not retype a Gecko web write whose AXValue is unreadable ([#8557](https://github.com/trycua/cua/issues/8557)) ([102af6e](https://github.com/trycua/cua/commit/102af6e9513171d89324350681fa528a5b5aec14)), closes [#6269](https://github.com/trycua/cua/issues/6269)
+* **cua-driver:** report foregrounded_window when Chrome comes forward during existing-profile attach ([#7884](https://github.com/trycua/cua/issues/7884)) ([04b60ea](https://github.com/trycua/cua/commit/04b60eafc3d278190e4b0e583e0e0d9ea8fb9c9a))
+
 ## [0.59.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.59.1...cua-driver-rs-v0.59.2) (2026-11-22)
 
 

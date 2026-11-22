@@ -9388,9 +9388,10 @@ mod budget_tests {
         let walk = move |budget: Duration| {
             OP_DEADLINE.scope(tokio::time::Instant::now() + budget, async move {
                 let mut woken = wake_once(u32::MAX, slow_wake);
-                within_half_budget(woken.wait_for(|done| *done))
+                let in_time = within_half_budget(woken.wait_for(|done| *done))
                     .await
-                    .is_some()
+                    .is_some();
+                in_time
             })
         };
         assert!(

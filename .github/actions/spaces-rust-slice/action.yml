@@ -32,6 +32,19 @@ inputs:
       and the caller builds for itself.
     required: false
     default: "true"
+  compile-cache:
+    description: >-
+      How the workspace crates (the 52 `cua-*` crates; rust-cache drops them,
+      so each run used to recompile them, about an hour on a hosted macOS
+      runner) are cached on a miss. "none" (default): not at all; the release
+      (cd-cua-spaces.yml) builds from scratch. "read": restore main's sccache
+      directory and compile only the crates whose source, or whose
+      dependencies' source, changed (a pull request). "seed": compile
+      everything from scratch (SCCACHE_RECACHE, so the library stays a clean
+      build) and write each crate's object to sccache; main saves the
+      directory, once a day, for the pull requests to read (the producer).
+    required: false
+    default: "none"
   verify-key:
     description: >-
       "true": after a build, fail if the compiler or a build script read a
@@ -138,6 +151,16 @@ runs:
         # within the hour. Only the default branch saves it.
         save-if: ${{ github.ref == 'refs/heads/main' }}
         cache-on-failure: true
+    # Content-addressed cache of the workspace crates, the crates rust-cache
+    # drops. After rust-cache on purpose: rust-cache hashes RUSTC_WRAPPER into
+    # the dependency cache's key, and this step exports it.
+    - if: inputs.build == 'true' && steps.cache.outputs.cache-hit != 'true' && inputs.compile-cache != 'none'
+      name: Cache the workspace crates (sccache)
+      uses: ./.github/actions/rust-cache
+      with:
+        workspaces: libs/cua
+        shared-key: swiftui-slice-${{ inputs.triple }}
+        save-if: ${{ inputs.compile-cache == 'seed' }}
     - if: inputs.build == 'true' && steps.cache.outputs.cache-hit != 'true'
       name: Build the slice
       shell: bash
@@ -148,7 +171,17 @@ runs:
         # (build-release.sh sets the same empty default).
         CUA_DEFAULT_ENV: ""
         TRIPLE: ${{ inputs.triple }}
-      run: cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli --target "$TRIPLE"
+        # The producer writes every crate's object without reading one.
+        SCCACHE_RECACHE: ${{ inputs.compile-cache == 'seed' && '1' || '' }}
+      # sccache puts every CARGO_* variable the process has into a crate's
+      # key, so the callers' network tuning (set in the workflow env of the
+      # pull request workflow, not in the producer's) made the keys differ and
+      # every crate miss. The same settings go in as cargo configuration,
+      # which is not hashed, and the variables are removed for this command.
+      run: |
+        env -u CARGO_NET_RETRY -u CARGO_HTTP_TIMEOUT -u CARGO_HTTP_MULTIPLEXING \
+          cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli --target "$TRIPLE" \
+          --config net.retry=10 --config http.timeout=120 --config http.multiplexing=false
     # Ground truth for the key: what rustc and the build scripts really read.
     - if: inputs.build == 'true' && inputs.verify-key == 'true' && steps.cache.outputs.cache-hit != 'true'
       name: The cache key covers every file the build read

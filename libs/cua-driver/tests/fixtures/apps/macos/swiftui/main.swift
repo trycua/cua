@@ -15,6 +15,7 @@
 //   click_target   — Button (AX-addressable) records click / double_click
 //   slider         — Slider drives drag / set_value (slider_value=)
 //   checkable_controls — Toggle(.checkbox) (agreed=)
+//   form_labels    — grouped Form Toggle labelled only by AXTitleUIElement
 //   context_menu   — Button + .contextMenu (Cut/Copy/Paste → menu_action=)
 //   menu_button    — Menu, an AXMenuButton (New Item/New Note → menu_create=)
 //   scroll_target  — ScrollView with a tall body and offset label
@@ -43,6 +44,8 @@ let kSliderAID = "sld-value"
 let kSliderValueAID = "lbl-slider-value"
 let kCheckboxAID = "chk-agree"
 let kCheckStateAID = "lbl-chk-state"
+let kFormToggleLabel = "Launch at login"
+let kFormToggleStateAID = "lbl-form-toggle-state"
 let kContextButtonAID = "btn-context"
 let kMenuActionAID = "lbl-menu-action"
 let kMenuButtonAID = "menu-create"
@@ -98,6 +101,7 @@ struct HarnessRootView: View {
     @State private var clicks = 0
     @State private var sliderValue = 0.0
     @State private var agreed = false
+    @State private var launchAtLogin = false
     @State private var menuAction = "none"
     @State private var menuCreate = "none"
     @State private var scrollOffset = 0
@@ -176,6 +180,18 @@ struct HarnessRootView: View {
                         .font(.system(.body, design: .monospaced))
                         .accessibilityIdentifier(kCheckStateAID)
                 }
+
+                // form_labels — a grouped Form Toggle names its checkbox only
+                // through AXTitleUIElement; AXTitle and AXDescription are empty.
+                section("form_labels")
+                Form {
+                    Toggle(kFormToggleLabel, isOn: $launchAtLogin)
+                }
+                .formStyle(.grouped)
+                .frame(width: 400, height: 80)
+                Text("launch_at_login=" + String(launchAtLogin))
+                    .font(.system(.body, design: .monospaced))
+                    .accessibilityIdentifier(kFormToggleStateAID)
 
                 // context_menu — right-click opens the SwiftUI .contextMenu.
                 section("context_menu")

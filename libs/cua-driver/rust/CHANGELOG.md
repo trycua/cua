@@ -1,5 +1,96 @@
 # Changelog
 
+## [0.59.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.59.0...cua-driver-rs-v0.59.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **cua-driver:** answer sent messages while attached to the target input queue on Windows ([#8522](https://github.com/trycua/cua/issues/8522)) ([e2dcfbd](https://github.com/trycua/cua/commit/e2dcfbdd36b0da1adf84c07bae51a58c82076279))
+* **cua-driver:** tell apps how many wheel clicks a Hyprland scroll was ([#8351](https://github.com/trycua/cua/issues/8351)) ([0a70e8e](https://github.com/trycua/cua/commit/0a70e8ee20cb801fe3f56289300536cf6e484a0a))
+
+## [0.59.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.58.2...cua-driver-rs-v0.59.0) (2026-11-22)
+
+
+### Features
+
+* **cua-driver:** add metadata-only RuntimeWitnessV0 contract ([#7952](https://github.com/trycua/cua/issues/7952)) ([d4408c5](https://github.com/trycua/cua/commit/d4408c55de191e850dde7d68dabb9050ec0df375))
+
+## [0.58.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.58.1...cua-driver-rs-v0.58.2) (2026-11-22)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep foreground type_text out of sibling windows ([#8515](https://github.com/trycua/cua/issues/8515)) ([3d43490](https://github.com/trycua/cua/commit/3d434907b732cfcbd6f70ad2fcdb9cc4e4b26bf0))
+* **cua-driver:** raise the agent cursor after an untargeted move that follows a click ([#8521](https://github.com/trycua/cua/issues/8521)) ([7a96d50](https://github.com/trycua/cua/commit/7a96d50efe6389c31747a03635faf4f4dfb5b1a8)), closes [#2993](https://github.com/trycua/cua/issues/2993)
+
+## [0.58.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.58.0...cua-driver-rs-v0.58.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep the macOS agent cursor under a window covering its background target ([#8511](https://github.com/trycua/cua/issues/8511)) ([ff020d1](https://github.com/trycua/cua/commit/ff020d192b86e18ed9a90f963103a6a3a9a95bf3)), closes [#3332](https://github.com/trycua/cua/issues/3332)
+
+## [0.58.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.57.0...cua-driver-rs-v0.58.0) (2026-11-22)
+
+
+### Features
+
+* **cua-driver:** add agent_display, a session-owned virtual display on macOS ([#8146](https://github.com/trycua/cua/issues/8146)) ([f4b3a18](https://github.com/trycua/cua/commit/f4b3a18fcc062e406fb107fbeac8f016e59429f8))
+* **cua-driver:** approve macOS permission prompts over Screen Sharing with `permissions vnc` ([#8141](https://github.com/trycua/cua/issues/8141)) ([8fac005](https://github.com/trycua/cua/commit/8fac005bb14de0b8749af91e36e07d7457945bb5))
+
+
+### Bug Fixes
+
+* **cua-driver:** capture ext-listed Wayland windows by their toplevel ([#8144](https://github.com/trycua/cua/issues/8144)) ([4ca7c40](https://github.com/trycua/cua/commit/4ca7c405865b857ea92a8f9e6edc1ba60a4a0e0a))
+
+## [0.57.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.9...cua-driver-rs-v0.57.0) (2026-11-21)
+
+
+### Features
+
+* **cua-driver:** sample the Hyprland cursor during recording ([#8084](https://github.com/trycua/cua/issues/8084)) ([e7fbec3](https://github.com/trycua/cua/commit/e7fbec35bf6db7d8771a5b8bccc01516ee58f63f))
+
+
+### Bug Fixes
+
+* **cua-driver:** export EmbeddedDriverDiagnostics from the embedded subpath ([#8068](https://github.com/trycua/cua/issues/8068)) ([69b8f4e](https://github.com/trycua/cua/commit/69b8f4e9b943bdd185deba7963a53f01bea50263))
+* **cua-driver:** label macOS controls through AXTitleUIElement ([#8114](https://github.com/trycua/cua/issues/8114)) ([53430b5](https://github.com/trycua/cua/commit/53430b5b59e33eaeac4c6597d217702d8f39006a))
+* **cua-driver:** print get_guide text from the call command ([#8106](https://github.com/trycua/cua/issues/8106)) ([34217ee](https://github.com/trycua/cua/commit/34217eeb29e2b33215d44379906ad407cdf75430))
+
+## [0.56.9](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.8...cua-driver-rs-v0.56.9) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-driver:** attribute macOS permissions to the responsible process, not the parent pid ([#7880](https://github.com/trycua/cua/issues/7880)) ([0adc9a8](https://github.com/trycua/cua/commit/0adc9a8d19fd94681c1ad4f7aa1b57b96c79c37f))
+
+## [0.56.8](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.7...cua-driver-rs-v0.56.8) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-driver:** press a real Enter for a trailing newline in browser_type ([#7732](https://github.com/trycua/cua/issues/7732)) ([6e883fc](https://github.com/trycua/cua/commit/6e883fcaeb108fbe2e7690ffeb11ecdeb7e98b2d))
+* **cua-driver:** re-pin the macOS agent cursor overlay when the active app changes ([#8478](https://github.com/trycua/cua/issues/8478)) ([ba06efa](https://github.com/trycua/cua/commit/ba06efa4a56bb5da99a39e17b97f9f12cca1254c))
+* **cua-driver:** report the PID of the daemon serving the selected socket ([#7626](https://github.com/trycua/cua/issues/7626)) ([daf0908](https://github.com/trycua/cua/commit/daf0908c3c60536727c3c74e883d9d7e8a66fc5d))
+
+## [0.56.7](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.6...cua-driver-rs-v0.56.7) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-driver:** make accepted HTTP sockets non-inheritable on Windows ([#8469](https://github.com/trycua/cua/issues/8469)) ([6fc8742](https://github.com/trycua/cua/commit/6fc874292d599c555472842f00c98268c80d1ec4))
+
+## [0.56.6](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.5...cua-driver-rs-v0.56.6) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cua-driver:** build every Windows crate against windows 0.61 ([#8444](https://github.com/trycua/cua/issues/8444)) ([d0e4f4d](https://github.com/trycua/cua/commit/d0e4f4dc4e734affa6a1aca1464deddf55a71763))
+* **cua-driver:** build move_cursor action records in its producers ([#8080](https://github.com/trycua/cua/issues/8080)) ([c50d638](https://github.com/trycua/cua/commit/c50d638310f4d56c69789707f2d4b79cbee3dadb))
+* **cua-driver:** match list_windows app filter against unlocalized bundle names ([#8358](https://github.com/trycua/cua/issues/8358)) ([20ddc59](https://github.com/trycua/cua/commit/20ddc5942fc2100825eb719acc03bf74a07de03b)), closes [#6687](https://github.com/trycua/cua/issues/6687)
+* **cua-driver:** report the window covering a verified bring_to_front target ([#8093](https://github.com/trycua/cua/issues/8093)) ([45f5a41](https://github.com/trycua/cua/commit/45f5a417d5b6d68d62af12e0f0a0e247179f63f9))
+* **cua-driver:** send a background pixel click past an element without AXPress ([#8159](https://github.com/trycua/cua/issues/8159)) ([5118278](https://github.com/trycua/cua/commit/5118278c546c1e3e4f19844d144b56228cd30808))
+
 ## [0.56.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.56.4...cua-driver-rs-v0.56.5) (2026-11-21)
 
 

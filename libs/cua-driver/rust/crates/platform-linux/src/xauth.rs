@@ -161,13 +161,14 @@ fn unique_match(candidates: &[Candidate], wanted: Option<u32>) -> Option<&Candid
     matches.next().is_none().then_some(found)
 }
 
-/// The display number of a local `DISPLAY` (`:0`, `:0.0`, `unix:1`), or
+/// The display number of a local `DISPLAY` (`:0`, `:0.0`, `unix:1`,
+/// `unix/:2`), or
 /// `None` for a remote, forwarded or malformed one.
 fn local_display_number(display: &OsStr) -> Option<u32> {
     let display = display.to_str()?;
-    let rest = display
-        .strip_prefix("unix:")
-        .or_else(|| display.strip_prefix(':'))?;
+    let rest = ["unix/:", "unix:", ":"]
+        .iter()
+        .find_map(|prefix| display.strip_prefix(prefix))?;
     let number = rest.split_once('.').map_or(rest, |(number, _)| number);
     parse_number(number)
 }
@@ -188,11 +189,9 @@ fn scan_proc(proc_root: &Path, uid: u32) -> Option<Vec<Candidate>> {
         if name.to_str().and_then(parse_number).is_none() {
             continue;
         }
-        if let Some(candidate) = candidate_from_pid(&entry.path(), uid) {
-            if !candidates.contains(&candidate) {
-                candidates.push(candidate);
-            }
-        }
+        // One entry per process: two servers with the same arguments are
+        // ambiguous, not one.
+        candidates.extend(candidate_from_pid(&entry.path(), uid));
     }
     Some(candidates)
 }
@@ -204,6 +203,7 @@ fn candidate_from_pid(pid_dir: &Path, uid: u32) -> Option<Candidate> {
     if std::fs::metadata(pid_dir).ok()?.uid() != uid {
         return None;
     }
+    let started = start_time(&std::fs::read_to_string(pid_dir.join("stat")).ok()?)?;
     let comm = std::fs::read_to_string(pid_dir.join("comm")).ok()?;
     if !matches!(comm.trim_end_matches('\n'), "Xwayland" | "Xorg" | "X") {
         return None;
@@ -213,19 +213,29 @@ fn candidate_from_pid(pid_dir: &Path, uid: u32) -> Option<Candidate> {
     if !is_private_cookie(Path::new(&candidate.auth), uid) {
         return None;
     }
-    // The process may have exited or been replaced while the cookie was
-    // checked; only adopt what is still the same server.
-    if std::fs::read(pid_dir.join("cmdline")).ok()? != cmdline {
+    // The process may have exited, or its PID been reused, while the cookie
+    // was checked; only adopt what is still the same server.
+    let still = std::fs::read_to_string(pid_dir.join("stat")).ok()?;
+    if start_time(&still)? != started || std::fs::read(pid_dir.join("cmdline")).ok()? != cmdline {
         return None;
     }
     Some(candidate)
 }
 
+/// The start time (field 22) of a `/proc/<pid>/stat` line, which tells a
+/// reused PID from the process that held it before. `comm` (field 2) may hold
+/// spaces and parentheses, so fields are counted after its last `)`.
+fn start_time(stat: &str) -> Option<u64> {
+    let (_, rest) = stat.rsplit_once(')')?;
+    rest.split_ascii_whitespace().nth(19)?.parse().ok()
+}
+
 /// Parse an X server's NUL-separated argv into its display and `-auth` file.
-/// Rejects a missing, empty, relative, repeated or non-UTF-8 `-auth` value and
-/// more than one `:N` display argument.
+/// Rejects an argv without its closing NUL, a missing, empty, relative,
+/// repeated or non-UTF-8 `-auth` value, and more than one `:N` display
+/// argument.
 fn parse_server_args(cmdline: &[u8]) -> Option<Candidate> {
-    let cmdline = cmdline.strip_suffix(b"\0").unwrap_or(cmdline);
+    let cmdline = cmdline.strip_suffix(b"\0")?;
     let mut args = cmdline.split(|&b| b == 0).skip(1);
     let mut display = None;
     let mut auth = None;
@@ -281,13 +291,13 @@ mod tests {
     }
 
     const MUTTER: &[u8] = b"/usr/bin/Xwayland\0:0\0-rootless\0-noreset\0-accessx\0-core\0\
--auth\0/run/user/1000/.mutter-Xwaylandauth.Q1W2E3\0-listenfd\04\0-listenfd\05\0\
--displayfd\06\0-initfd\07\0-byteswappedclients\0";
+-auth\0/run/user/1000/.mutter-Xwaylandauth.Q1W2E3\0-listenfd\x004\0-listenfd\x005\0\
+-displayfd\x006\0-initfd\x007\0-byteswappedclients\0";
     const KWIN: &[u8] = b"/usr/bin/Xwayland\0:1\0-auth\0/run/user/1000/xauth_aBcDeF\0\
--listenfd\067\0-listenfd\068\0-displayfd\061\0-wm\069\0-rootless\0";
-    const GDM_XORG: &[u8] = b"/usr/lib/xorg/Xorg\0vt2\0-displayfd\03\0\
+-listenfd\x0067\0-listenfd\x0068\0-displayfd\x0061\0-wm\x0069\0-rootless\0";
+    const GDM_XORG: &[u8] = b"/usr/lib/xorg/Xorg\0vt2\0-displayfd\x003\0\
 -auth\0/run/user/1000/gdm/Xauthority\0-nolisten\0tcp\0-background\0none\0\
--noreset\0-keeptty\0-novtswitch\0-verbose\03\0";
+-noreset\0-keeptty\0-novtswitch\0-verbose\x003\0";
 
     fn candidate(display: Option<u32>, auth: &str) -> Candidate {
         Candidate {
@@ -342,6 +352,7 @@ mod tests {
             b"Xwayland\0:0\0:1\0-auth\0/a\0",
             b"Xwayland\0:x\0-auth\0/a\0",
             b"Xwayland\0:0\0-auth\0/\xff\0",
+            b"Xwayland\0:0\0-auth\0/a",
             b"",
         ] {
             assert_eq!(parse_server_args(cmdline), None, "{cmdline:?}");
@@ -353,6 +364,7 @@ mod tests {
         assert_eq!(local_display_number(OsStr::new(":0")), Some(0));
         assert_eq!(local_display_number(OsStr::new(":1.0")), Some(1));
         assert_eq!(local_display_number(OsStr::new("unix:2")), Some(2));
+        assert_eq!(local_display_number(OsStr::new("unix/:3")), Some(3));
         assert_eq!(local_display_number(OsStr::new("localhost:10.0")), None);
         assert_eq!(local_display_number(OsStr::new(":")), None);
         assert_eq!(local_display_number(OsStr::new("")), None);
@@ -487,6 +499,8 @@ mod tests {
             let dir = self.root.path().join(pid.to_string());
             std::fs::create_dir(&dir).unwrap();
             std::fs::write(dir.join("comm"), format!("{comm}\n")).unwrap();
+            let stat = format!("{pid} ({comm}) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 4242 0 0\n");
+            std::fs::write(dir.join("stat"), stat).unwrap();
             let cmdline = format!("/usr/bin/{comm}\0{display}\0-auth\0{}\0", auth.display());
             std::fs::write(dir.join("cmdline"), cmdline).unwrap();
         }
@@ -517,6 +531,25 @@ mod tests {
             scan_proc(proc.root.path(), current_euid().wrapping_add(1)).unwrap(),
             vec![]
         );
+    }
+
+    #[test]
+    fn two_servers_with_the_same_arguments_are_ambiguous() {
+        let proc = FakeProc::new();
+        let cookie = proc.cookie("cookie", 0o600);
+        proc.server(100, "Xwayland", ":0", &cookie);
+        proc.server(101, "Xwayland", ":0", &cookie);
+        let candidates = proc.scan();
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(plan(None, None, None, scan_of(candidates)), Action::Keep);
+    }
+
+    #[test]
+    fn reads_start_time_after_the_last_parenthesis() {
+        let stat = "7 (a) b (c)) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 98765 0 0\n";
+        assert_eq!(start_time(stat), Some(98765));
+        assert_eq!(start_time("7 (Xwayland) S 1"), None);
+        assert_eq!(start_time(""), None);
     }
 
     #[test]

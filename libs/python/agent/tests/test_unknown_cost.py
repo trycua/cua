@@ -234,3 +234,36 @@ async def test_tool_result_chunks_have_zero_cost(monkeypatch):
     )
     results = [result async for result in agent.run("hello")]
     assert [result["usage"]["response_cost"] for result in results] == [0.25, 0.0, 0.25]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_token_counts", [False, True])
+async def test_direct_gemini_usage_is_unpriced_and_stops_budget(
+    with_token_counts, monkeypatch, capsys
+):
+    import cua_agent.loops.gemini as loop
+    from cua_agent.callbacks.budget_manager import BudgetManagerCallback
+
+    metadata = (
+        SimpleNamespace(prompt_token_count=3, candidates_token_count=2, total_token_count=5)
+        if with_token_counts
+        else None
+    )
+    response = SimpleNamespace(usage_metadata=metadata, candidates=[])
+    generate_content = MagicMock(return_value=response)
+    client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    monkeypatch.setattr(loop, "_lazy_import_genai", lambda: (None, MagicMock()))
+    monkeypatch.setattr(loop, "_create_gemini_client", lambda model, genai, kwargs: (client, model))
+    monkeypatch.setattr(
+        loop, "_convert_messages_to_gemini_contents", lambda messages, types: ([], (1024, 768))
+    )
+    budget = BudgetManagerCallback(1.0)
+    result = await loop.GeminiComputerUseConfig().predict_step(
+        [], "gemini-2.5-computer-use-preview-test", _on_usage=budget.on_usage
+    )
+    assert result["usage"]["response_cost"] is None
+    if with_token_counts:
+        assert result["usage"]["total_tokens"] == 5
+    assert not await budget.on_run_continue({}, [], [])
+    assert "Cannot enforce budget" in capsys.readouterr().out
+    generate_content.assert_called_once()

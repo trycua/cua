@@ -1619,7 +1619,7 @@ impl ClickTool {
                                 crate::input::ax_actions::is_element_focused(pid, element as usize)
                             })
                         {
-                            crate::input::ax_actions::focus_element(element as usize)?;
+                            let _ = crate::input::ax_actions::focus_element(element as usize);
                         }
                         pressed
                     };

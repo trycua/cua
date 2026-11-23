@@ -139,18 +139,18 @@ fn display_at(x: f64, y: f64) -> Option<u32> {
     (error == 0 && count > 0).then_some(display)
 }
 
-fn start_watching(display: u32) {
-    let started = start(display);
+fn start_watching(display_id: u32) {
+    let started = start(display_id);
     let mut watchers = watchers();
-    watchers.starting.retain(|id| *id != display);
+    watchers.starting.retain(|id| *id != display_id);
     let watcher = match started {
         Ok(watcher) => watcher,
         Err(error) => {
-            tracing::debug!(display_id = display, %error, "damage watch did not start");
+            tracing::debug!(display_id, %error, "damage watch did not start");
             return;
         }
     };
-    watchers.running.push((display, watcher));
+    watchers.running.push((display_id, watcher));
     if !watchers.reaping {
         watchers.reaping = std::thread::Builder::new()
             .name("damage-watch-idle".into())

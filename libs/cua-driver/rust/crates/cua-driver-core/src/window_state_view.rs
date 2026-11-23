@@ -72,6 +72,8 @@ pub struct ViewOptions {
     pub verbose: bool,
     pub full_output: bool,
     pub since: Option<String>,
+    /// False for a screenshot-only read (`include_accessibility_tree:false`).
+    pub tree_read: bool,
 }
 
 /// JSON schema fragments for the shared arguments, so every backend declares
@@ -202,6 +204,10 @@ impl ViewOptions {
             verbose: args.get("verbose").and_then(Value::as_bool) == Some(true),
             full_output,
             since: if full_output { None } else { since },
+            tree_read: args
+                .get("include_accessibility_tree")
+                .and_then(Value::as_bool)
+                != Some(false),
         })
     }
 
@@ -274,12 +280,12 @@ pub fn apply(
     content: &mut [Content],
     structured: &mut Value,
 ) {
-    // A tree read records its rows for the window's ui_tree_revision. A
-    // screenshot-only read carries no rows and leaves the revision alone.
+    // A tree read records its rows, none included, for the window's
+    // ui_tree_revision. A screenshot-only read leaves the revision alone.
     let revision = structured
         .get("tree_markdown")
         .and_then(Value::as_str)
-        .filter(|md| !md.trim().is_empty())
+        .filter(|_| opts.tree_read)
         .map(|md| {
             crate::ui_tree_revision::record(
                 ctx.pid,
@@ -1519,11 +1525,22 @@ mod tests {
     }
 
     #[test]
-    fn a_read_without_rows_has_no_ui_tree_revision() {
-        let (mut content, mut s) = payload("s0000c3b3", "");
-        apply(&opts(json!({})), &ctx(7202), &mut content, &mut s);
-        assert!(s.get("ui_tree_revision").is_none());
-        assert!(!text_of(&content).contains("ui_tree_revision"));
+    fn a_tree_emptied_moves_the_revision_and_a_screenshot_only_read_does_not() {
+        let (mut c0, mut s0) = payload("s0000c3b3", OLD);
+        apply(&opts(json!({})), &ctx(7202), &mut c0, &mut s0);
+        let first = s0["ui_tree_revision"].as_u64().unwrap();
+
+        let (mut c1, mut s1) = payload("s0000c3b4", "");
+        let screenshot_only = opts(json!({"include_accessibility_tree": false}));
+        apply(&screenshot_only, &ctx(7202), &mut c1, &mut s1);
+        assert!(s1.get("ui_tree_revision").is_none());
+        assert!(!text_of(&c1).contains("ui_tree_revision"));
+        assert_eq!(crate::ui_tree_revision::current(9, 7202), Some(first));
+
+        let (mut c2, mut s2) = payload("s0000c3b5", "");
+        apply(&opts(json!({})), &ctx(7202), &mut c2, &mut s2);
+        let emptied = s2["ui_tree_revision"].as_u64().unwrap();
+        assert!(emptied > first, "{emptied} > {first}");
     }
 
     fn query_ctx(window_id: u64, query: &str) -> ViewContext<'static> {
@@ -1544,7 +1561,10 @@ mod tests {
             &mut s,
         );
         let text = text_of(&content);
-        assert!(text.starts_with("window_id=7 pid=9 size=10x10 elements=4 snapshot_id=s000000i1\n"));
+        let revision = s["ui_tree_revision"].as_u64().unwrap();
+        assert!(text.starts_with(&format!(
+            "window_id=7 pid=9 size=10x10 elements=4 snapshot_id=s000000i1 ui_tree_revision={revision}\n"
+        )));
         assert!(
             text.contains("0 of 150 elements match query \"Build|Reload\"."),
             "{text}"
@@ -1579,6 +1599,7 @@ mod tests {
             &mut content,
             &mut s,
         );
+        s.as_object_mut().unwrap().remove("ui_tree_revision");
         assert_eq!(s, before);
         assert!(text_of(&content).ends_with("\n0 of 4 elements match query \"Build|Reload\". A query is a case-insensitive substring of a row's role, label, value or id; \"a|b\" matches either. Try a shorter or different word, or read without query."));
     }
@@ -1588,7 +1609,7 @@ mod tests {
         let mut content = vec![Content::text("window_id=7 pid=9 size=10x10")];
         let mut s = json!({"window_id": 7, "pid": 9, "tree_markdown": "", "element_count": 0});
         apply(
-            &opts(json!({})),
+            &opts(json!({"include_accessibility_tree": false})),
             &query_ctx(7034, "Settings"),
             &mut content,
             &mut s,

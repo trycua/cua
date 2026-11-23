@@ -115,7 +115,8 @@ const MAX_OWNER_CHAIN: usize = 16;
 /// The windows [`interaction_context`] weighs for `target`, owned by `pid`:
 /// every viewable window of `pid`, and every viewable window of another
 /// process whose owner chain reaches one of `pid`'s (a dialog can run in
-/// another process), each with its owner chain resolved against `target`:
+/// another process) or that the target's own chain reaches, each with its
+/// owner chain resolved against `target`:
 /// a dialog of a dialog of the target is still the target's.
 ///
 /// A link outside `windows` (an unmapped or unlisted owner) is read with
@@ -158,10 +159,11 @@ pub fn related_by_owner_chain(
         .filter(|window| window.viewable && window.window_id != target)
     {
         let links = chain(window.window_id, window.owner)?;
-        if window.pid != Some(pid) && !links.iter().any(|link| link.1 == Some(pid)) {
+        let ancestor = ancestors.iter().any(|link| link.0 == window.window_id);
+        if !ancestor && window.pid != Some(pid) && !links.iter().any(|link| link.1 == Some(pid)) {
             continue;
         }
-        let owner = if ancestors.iter().any(|link| link.0 == window.window_id) {
+        let owner = if ancestor {
             WindowOwnership::Ancestor
         } else if links.iter().any(|link| link.0 == target) {
             WindowOwnership::Target
@@ -572,6 +574,20 @@ mod tests {
         assert_eq!(
             interaction_context(&Some(related))["next_call"]["arguments"]["window_id"],
             2
+        );
+        // Another process's window the target is a dialog of is its
+        // ancestor too.
+        let windows = [
+            listed(50, Some(8), None, true),
+            listed(2, Some(7), Some(50), false),
+        ];
+        let related = related_by_owner_chain(2, 7, &windows, None, lookup).unwrap();
+        assert_eq!(
+            related
+                .iter()
+                .map(|w| (w.window_id, w.owner))
+                .collect::<Vec<_>>(),
+            vec![(50, WindowOwnership::Ancestor)]
         );
     }
 

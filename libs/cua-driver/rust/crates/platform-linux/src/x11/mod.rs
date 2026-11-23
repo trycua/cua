@@ -1181,6 +1181,21 @@ mod tests {
             add_other_process_group_modals(&mut related, 10, 1, &windows, None, Some(7), |_| None),
             None
         );
+        // A focused dialog of that group-modal is not blocked by its owner.
+        let windows = [
+            ListedWindow {
+                owner: Some(2),
+                ..listed(4, 10, false)
+            },
+            listed(2, 20, true),
+        ];
+        let mut related = related_by_owner_chain(4, 10, &windows, Some(4), |_| None).unwrap();
+        add_other_process_group_modals(&mut related, 10, 4, &windows, Some(4), Some(7), group)
+            .unwrap();
+        assert_eq!(
+            interaction_context(&Some(related))["status"],
+            "none_observed"
+        );
     }
 
     #[test]
